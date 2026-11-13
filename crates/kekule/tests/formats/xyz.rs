@@ -1,10 +1,11 @@
 use kekule::diagnostics::{DiagnosticKind, Format, FormatErrorDetail, UnsupportedContent};
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{BondOrder, Element, ImplicitHydrogens};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{ANGSTROM, BOHR, KELVIN};
 use kekule::xyz::{
-    self, XyzFrameSelection, XyzInterpretIssue, XyzInterpretOptions, XyzSampleSetInterpretOptions,
+    self, XyzFrameSelection, XyzInterpretIssue, XyzInterpretOptions,
+    XyzStructureSetInterpretOptions,
 };
 
 const WATER: &str = "3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 0.927 0.000\n";
@@ -85,7 +86,7 @@ fn interleaved_molecules_keep_atom_line_order() {
     assert_eq!(instance_of(0), instance_of(4));
     assert_eq!(instance_of(1), instance_of(3));
     assert_ne!(instance_of(0), instance_of(1));
-    let positions = interpretation.model().positions();
+    let positions = interpretation.structure().positions();
     let x = |row: usize| positions.get(row).unwrap().value_in(ANGSTROM).unwrap().x;
     assert!((x(1) - 3.0).abs() < 1e-12 && (x(3) - 3.96).abs() < 1e-12);
     assert_eq!(topology.residues().count(), 2);
@@ -201,11 +202,13 @@ fn frame_selection_follows_the_request() {
 }
 
 #[test]
-fn frames_of_the_same_connectivity_form_a_sample_set() {
+fn frames_of_the_same_connectivity_form_a_structure_set() {
     let stretched = "3\nstretched\nO 0 0 0\nH 1.0 0 0\nH -0.25 0.95 0\n";
     let document = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
-    let interpretation = document.interpret_sample_set(Default::default()).unwrap();
-    let set = interpretation.sample_set();
+    let interpretation = document
+        .interpret_structure_set(Default::default())
+        .unwrap();
+    let set = interpretation.structure_set();
     assert_eq!(set.len(), 2);
     assert_eq!(interpretation.reports().len(), 2);
     assert_eq!(interpretation.reports()[1].comment(), "stretched");
@@ -217,23 +220,23 @@ fn frames_of_the_same_connectivity_form_a_sample_set() {
     assert_eq!(crate::native_fingerprint(set), 0x86ec_939a_2cbb_3e26);
 
     let selected = document
-        .interpret_sample_set(
-            XyzSampleSetInterpretOptions::default()
+        .interpret_structure_set(
+            XyzStructureSetInterpretOptions::default()
                 .with_frames(Some(vec![1]))
                 .unwrap(),
         )
         .unwrap();
     assert_eq!(selected.reports()[0].frame(), 1);
     assert_eq!(
-        crate::native_fingerprint(selected.sample_set()),
+        crate::native_fingerprint(selected.structure_set()),
         0xbe77_888f_6f82_8a84
     );
-    assert!(XyzSampleSetInterpretOptions::default()
+    assert!(XyzStructureSetInterpretOptions::default()
         .with_frames(Some(Vec::new()))
         .is_err());
     let error = document
-        .interpret_sample_set(
-            XyzSampleSetInterpretOptions::default()
+        .interpret_structure_set(
+            XyzStructureSetInterpretOptions::default()
                 .with_frames(Some(vec![0, 0]))
                 .unwrap(),
         )
@@ -245,11 +248,11 @@ fn frames_of_the_same_connectivity_form_a_sample_set() {
 }
 
 #[test]
-fn frames_that_disagree_fail_the_sample_set() {
+fn frames_that_disagree_fail_the_structure_set() {
     let dissociated = "3\n\nO 0 0 0\nH 0.957 0 0\nH -2.4 9.3 0\n";
     let document = xyz::parse_str(&format!("{WATER}{dissociated}"), Default::default()).unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
@@ -261,7 +264,7 @@ fn frames_that_disagree_fail_the_sample_set() {
     let other_atoms = "3\n\nS 0 0 0\nH 0.957 0 0\nH -0.24 0.927 0\n";
     let document = xyz::parse_str(&format!("{WATER}{other_atoms}"), Default::default()).unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(
         error.detail(),
@@ -283,7 +286,7 @@ fn length_units_scale_bond_inference() {
     assert_eq!(interpretation.report().inferred_bonds().len(), 1);
     let distance = interpretation.report().inferred_bonds()[0].distance();
     assert!((distance.value_in(BOHR).unwrap() - 1.4).abs() < 1e-9);
-    let position = interpretation.model().positions().get(1).unwrap();
+    let position = interpretation.structure().positions().get(1).unwrap();
     assert!((position.value_in(BOHR).unwrap().x - 1.4).abs() < 1e-9);
     // Read as angstrom, the same numbers are too far apart to bond.
     assert!(interpret(bohr, Default::default())
@@ -353,7 +356,7 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
     )
     .unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location().unwrap().line(), 8);
@@ -364,7 +367,7 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
     )
     .unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(error.location().unwrap().line(), 6);
     let document = xyz::parse_str(
@@ -373,7 +376,7 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
     )
     .unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert!(matches!(
         error.detail(),
@@ -399,15 +402,17 @@ fn xyz_structures_export_to_pdb_and_mmcif_when_implicit_hydrogens_are_omitted() 
     use kekule::pdb::{self, PdbWriteOptions};
 
     // XYZ lists every atom, so every count is fixed at zero.
-    let model = interpret(WATER, Default::default()).into_model();
+    let structure = interpret(WATER, Default::default()).into_structure();
     let omitted = [WriteOmission::ImplicitHydrogens { atoms: 3 }];
 
     assert_eq!(
-        pdb::write(&model, Default::default()).unwrap_err().kind(),
+        pdb::write(&structure, Default::default())
+            .unwrap_err()
+            .kind(),
         DiagnosticKind::Unsupported
     );
     let options = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let (text, report) = pdb::write(&model, options).unwrap();
+    let (text, report) = pdb::write(&structure, options).unwrap();
     assert_eq!(report.omissions(), omitted);
     let reread = pdb::parse_str(&text, Default::default())
         .unwrap()
@@ -417,13 +422,13 @@ fn xyz_structures_export_to_pdb_and_mmcif_when_implicit_hydrogens_are_omitted() 
     assert_eq!(reread.topology().bond_count(), 2);
 
     assert_eq!(
-        mmcif::write([&model], Default::default())
+        mmcif::write([&structure], Default::default())
             .unwrap_err()
             .kind(),
         DiagnosticKind::Unsupported
     );
     let options = MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let (text, report) = mmcif::write([&model], options.clone()).unwrap();
+    let (text, report) = mmcif::write([&structure], options.clone()).unwrap();
     assert_eq!(report.omissions(), omitted);
     let reread = mmcif::parse_str(&text, Default::default())
         .unwrap()
@@ -432,7 +437,7 @@ fn xyz_structures_export_to_pdb_and_mmcif_when_implicit_hydrogens_are_omitted() 
     assert_eq!(reread.topology().atom_count(), 3);
     // `write_to` returns the same report.
     let mut sink = Vec::new();
-    let streamed = mmcif::write_to(&mut sink, [&model], options).unwrap();
+    let streamed = mmcif::write_to(&mut sink, [&structure], options).unwrap();
     assert_eq!(streamed.omissions(), omitted);
     assert_eq!(String::from_utf8(sink).unwrap(), text);
 }
@@ -442,18 +447,18 @@ fn omitting_implicit_hydrogens_still_rejects_other_chemistry() {
     use kekule::diagnostics::UnrepresentablePolicy;
     use kekule::mmcif::{self, MmcifWriteOptions};
     use kekule::pdb::{self, PdbWriteOptions};
-    use kekule::structure::{Model, Positions};
+    use kekule::structure::{Positions, Structure};
 
     // Carbon-13 is an isotope neither format can name.
     let topology = kekule::smiles::to_topology("[13CH4]").unwrap();
-    let model = Model::new(topology, Positions::zeros(1)).unwrap();
+    let structure = Structure::new(topology, Positions::zeros(1)).unwrap();
     let pdb_options =
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let error = pdb::write(&model, pdb_options).unwrap_err();
+    let error = pdb::write(&structure, pdb_options).unwrap_err();
     assert!(error.message().contains("isotope"), "{error}");
     let mmcif_options =
         MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let error = mmcif::write([&model], mmcif_options).unwrap_err();
+    let error = mmcif::write([&structure], mmcif_options).unwrap_err();
     assert!(error.message().contains("isotope"), "{error}");
 }
 
@@ -481,8 +486,8 @@ fn documents_built_from_atoms_interpret_as_parsed_files() {
         assert_eq!(atoms.element(), text.element());
     }
     assert_eq!(
-        from_atoms.model().positions(),
-        from_text.model().positions()
+        from_atoms.structure().positions(),
+        from_text.structure().positions()
     );
 
     let stretched = "3\nstretched\nO 0 0 0\nH 1.0 0 0\nH -0.240 0.927 0\n";
@@ -491,19 +496,23 @@ fn documents_built_from_atoms_interpret_as_parsed_files() {
         xyz::XyzFrame::new("stretched", water_atoms(1.0)),
     ]);
     let parsed = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
-    let from_atoms = built.interpret_sample_set(Default::default()).unwrap();
-    let from_text = parsed.interpret_sample_set(Default::default()).unwrap();
+    let from_atoms = built.interpret_structure_set(Default::default()).unwrap();
+    let from_text = parsed.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(from_atoms.reports(), from_text.reports());
-    assert_eq!(from_atoms.sample_set().len(), 2);
-    for sample in 0..2 {
+    assert_eq!(from_atoms.structure_set().len(), 2);
+    for geometry in 0..2 {
         assert_eq!(
-            from_atoms.sample_set().get(sample).unwrap().positions(),
-            from_text.sample_set().get(sample).unwrap().positions()
+            from_atoms
+                .structure_set()
+                .get(geometry)
+                .unwrap()
+                .positions(),
+            from_text.structure_set().get(geometry).unwrap().positions()
         );
     }
     for interpretation in [&from_atoms, &from_text] {
         assert_eq!(
-            crate::native_fingerprint(interpretation.sample_set()),
+            crate::native_fingerprint(interpretation.structure_set()),
             0x8953_66ba_1095_4bea
         );
     }
@@ -568,7 +577,7 @@ fn built_documents_fail_as_parsing_would_reject_them() {
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location().map(|at| at.line()), Some(2));
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert!(matches!(
         error.detail(),

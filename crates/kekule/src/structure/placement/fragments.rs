@@ -1,6 +1,6 @@
 //! Named fragments with ideal 3D coordinates and an attachment atom.
 use super::PlacementError;
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{AtomId, BondOrder, Molecule};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::collections::BTreeSet;
@@ -209,11 +209,11 @@ fn load() -> Vec<Fragment> {
                     .map(|field| field.value().trim().to_owned())
                     .expect("bundled fragments carry their fields")
             };
-            let model = record
+            let structure = record
                 .interpret(Default::default())
                 .expect("bundled fragments interpret")
-                .into_model();
-            let topology = model.topology();
+                .into_structure();
+            let topology = structure.topology();
             let atom_at = |field_value: String| {
                 let index: usize = field_value.parse().expect("an atom number");
                 topology
@@ -233,7 +233,7 @@ fn load() -> Vec<Fragment> {
                 .molecule()
                 .clone();
             // Stored positions are in the canonical length unit.
-            let points = model.positions().values().value().to_vec();
+            let points = structure.positions().values().value().to_vec();
             let mut positions = vec![Point3::origin(); points.len()];
             for view in topology.atoms() {
                 let order = molecule

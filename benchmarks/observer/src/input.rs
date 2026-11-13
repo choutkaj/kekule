@@ -1,7 +1,7 @@
 //! Reads one small-molecule input into connected components keyed by source.
 
 use kekule::molecule::Molecule;
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::InstanceAtomId;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule::{molfile, sdf, smiles};
@@ -33,7 +33,7 @@ pub(crate) fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> 
             let interpretation = document
                 .interpret(Default::default())
                 .map_err(|e| Failure::new("parse", e))?;
-            from_model(interpretation.model())
+            from_structure(interpretation.structure())
         }
         "sdf" => {
             let document =
@@ -50,7 +50,7 @@ pub(crate) fn read(format: &str, text: &str) -> Result<Vec<Component>, Failure> 
             let interpretation = record
                 .interpret(Default::default())
                 .map_err(|e| Failure::new("parse", e))?;
-            from_model(interpretation.model())
+            from_structure(interpretation.structure())
         }
         other => Err(Failure::new("request", format!("unknown format {other:?}"))),
     }
@@ -83,8 +83,8 @@ fn read_smiles(text: &str) -> Result<Vec<Component>, Failure> {
 
 /// Molfile and SDF interpretation keeps source atom-block order as the dense
 /// topology order, so a dense atom index is the source row.
-fn from_model(model: &Model) -> Result<Vec<Component>, Failure> {
-    let topology = model.topology();
+fn from_structure(structure: &Structure) -> Result<Vec<Component>, Failure> {
+    let topology = structure.topology();
     topology
         .instances()
         .map(|instance| {
@@ -97,9 +97,9 @@ fn from_model(model: &Model) -> Result<Vec<Component>, Failure> {
                     .atom_index(qualified)
                     .ok_or_else(|| Failure::new("parse", "atom missing from dense layout"))?;
                 source.push(dense.index());
-                let position = model
+                let position = structure
                     .position(qualified)
-                    .expect("atoms come from the model topology");
+                    .expect("atoms come from the structure topology");
                 points.push(
                     position
                         .value_in(ANGSTROM)

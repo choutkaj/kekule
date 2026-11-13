@@ -7,18 +7,18 @@
 //!
 //! The first SDF record must contain explicit hydrogens with 3D coordinates.
 //! The ligand is appended to the optional mmCIF environment to form a larger
-//! model. The example then mimics an edit: it displaces the ligand's last three
-//! heavy atoms (all of them in smaller ligands) and their hydrogens, the "new
-//! group", by up to 0.3 Å. Clean-up takes the molecule of the target atoms out
-//! of the model, parameterizes it with OpenFF Rosemary and the bundled Ash
-//! charges, minimizes the targets with the rest of the molecule fixed, and
-//! writes the coordinates back. `--whole` cleans up the whole ligand instead of
-//! the group.
+//! structure. The example then mimics an edit: it displaces the ligand's last
+//! three heavy atoms (all of them in smaller ligands) and their hydrogens, the
+//! "new group", by up to 0.3 Å. Clean-up takes the molecule of the target
+//! atoms out of the structure, parameterizes it with OpenFF Rosemary and the
+//! bundled Ash charges, minimizes the targets with the rest of the molecule
+//! fixed, and writes the coordinates back. `--whole` cleans up the whole ligand
+//! instead of the group.
 
 use std::{collections::BTreeSet, env, error::Error, fs, ops::ControlFlow, time::Instant};
 
-use kekule::geometry::{Point3, Vector3};
-use kekule::structure::Model;
+use kekule::math::{Point3, Vector3};
+use kekule::structure::Structure;
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT, NANOMETER};
 use kekule::{mmcif, sdf};
@@ -42,14 +42,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let document = sdf::parse_str(&fs::read_to_string(ligand_path)?, Default::default())?;
     let record = document.records().first().ok_or("no SDF records")?;
-    let ligand = record.interpret(Default::default())?.into_model();
+    let ligand = record.interpret(Default::default())?.into_structure();
     let mut system = match paths.get(1) {
         Some(path) => {
             let environment = mmcif::parse_str(&fs::read_to_string(path)?, Default::default())?
                 .interpret(Default::default())?
-                .into_model();
+                .into_structure();
             let mut editor = environment.to_editor();
-            editor.append_model(&ligand)?;
+            editor.append_structure(&ligand)?;
             editor.finish()?
         }
         None => ligand.clone(),
@@ -110,7 +110,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Clean-up: the molecules of the targets, the targets moving.
     let clock = Instant::now();
     let molecules = targets.expand_to_instances();
-    let molecule: Model = system.subset(&molecules)?;
+    let molecule: Structure = system.subset(&molecules)?;
     // Subsets keep dense order, so subset atom `k` is the `k`-th selected atom.
     let moving = molecules
         .indices()
@@ -143,7 +143,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut steps = 0;
     let result = minimize_scoped_with_observer(
         &potential,
-        molecule.as_model_view(),
+        molecule.as_structure_view(),
         &scope,
         // Whole drug-like ligands from ideal geometries can take over 1000 steps.
         &MinimizeOptions::default().with_max_iterations(5_000),
@@ -196,14 +196,17 @@ fn bits(position: Quantity<Point3>) -> [u64; 3] {
 }
 
 /// Compares the analytic gradient with central differences.
-fn check_gradient(potential: &OpenFfPotential, model: &Model) -> Result<(), Box<dyn Error>> {
-    let analytic = potential.evaluate(model.as_model_view())?;
+fn check_gradient(
+    potential: &OpenFfPotential,
+    structure: &Structure,
+) -> Result<(), Box<dyn Error>> {
+    let analytic = potential.evaluate(structure.as_structure_view())?;
     let h = 1e-6;
     let mut worst: f64 = 0.0;
     let mut largest: f64 = 0.0;
-    let mut trial = model.clone();
-    for (index, id) in model.topology().atom_ids().iter().enumerate() {
-        let p = model.position(*id).unwrap().value_in(NANOMETER)?;
+    let mut trial = structure.clone();
+    for (index, id) in structure.topology().atom_ids().iter().enumerate() {
+        let p = structure.position(*id).unwrap().value_in(NANOMETER)?;
         let g = analytic.gradient().into_value()[index];
         for (axis, step) in [
             Vector3::new(h, 0.0, 0.0),
@@ -215,12 +218,12 @@ fn check_gradient(potential: &OpenFfPotential, model: &Model) -> Result<(), Box<
         {
             trial.set_position(*id, Quantity::new(p + step, NANOMETER))?;
             let plus = potential
-                .energy(trial.as_model_view())?
+                .energy(trial.as_structure_view())?
                 .total()
                 .into_value();
             trial.set_position(*id, Quantity::new(p - step, NANOMETER))?;
             let minus = potential
-                .energy(trial.as_model_view())?
+                .energy(trial.as_structure_view())?
                 .total()
                 .into_value();
             let numeric = (plus - minus) / (2.0 * h);

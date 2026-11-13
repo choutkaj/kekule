@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use kekule::diagnostics::{Cancellation, UnrepresentablePolicy};
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::topology::Topology;
@@ -131,7 +131,7 @@ fn write_frames(writer: &mut impl TrajectoryWriter, frames: impl IntoIterator<It
     let set = time_ordered(topology(), frames);
     for frame in &set {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         writer.flush().unwrap();
     }

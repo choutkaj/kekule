@@ -1,10 +1,10 @@
-//! Informational cost of reading one sample set over an XTC file in bursts
+//! Informational cost of reading one structure set over an XTC file in bursts
 //! from a fixed pool of threads, as a host's thread pool reads it: each
 //! burst reads one frame on every thread and waits for all of them, so the
 //! set's pooled readers move between threads from burst to burst.
 //!
 //! The bench's allocator tags every block with the thread that allocated
-//! it and counts the sample arrays (blocks of one frame's positions) that
+//! it and counts the geometry arrays (blocks of one frame's positions) that
 //! another thread frees. Some allocators, such as mimalloc, do not promptly
 //! reuse memory another thread freed, so such frees grow a host's memory.
 //! Run: cargo bench -p kekule --bench pooled_reads -- [ATOMS] [FRAMES] [THREADS]
@@ -20,11 +20,11 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::structure::SampleRead;
+use kekule::structure::StructureSetRead;
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::traj::io::open_indexed_sample_set;
+use kekule::traj::io::open_indexed_structure_set;
 use kekule::traj::io::xtc::{XtcWriteOptions, XtcWriter};
 use kekule::traj::{FrameBuffer, TrajectoryWriter};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
@@ -137,7 +137,7 @@ fn benchmark(
     topology: &Arc<Topology>,
     threads: usize,
 ) -> Result<(), Box<dyn Error>> {
-    let set = open_indexed_sample_set(path, Arc::clone(topology), Default::default())?;
+    let set = open_indexed_structure_set(path, Arc::clone(topology), Default::default())?;
     let frames = set.len();
     let reads = frames * PASSES;
     COUNTED_BYTES.store(
@@ -226,10 +226,12 @@ fn write(
         "bench.xtc",
     )?;
     let mut frame = FrameBuffer::new(Arc::clone(topology));
-    frame.sample_mut().set_cell(Some(PeriodicCell::orthorhombic(
-        Quantity::new(Vector3::new(edge, edge, edge), NANOMETER),
-        [true; 3],
-    )?));
+    frame
+        .geometry_mut()
+        .set_cell(Some(PeriodicCell::orthorhombic(
+            Quantity::new(Vector3::new(edge, edge, edge), NANOMETER),
+            [true; 3],
+        )?));
     let mut state = 0x2545_f491_4f6c_dd1d_u64;
     let mut noise = move || {
         state ^= state << 13;
@@ -249,7 +251,7 @@ fn write(
             })
             .collect::<Vec<_>>();
         frame
-            .sample_mut()
+            .geometry_mut()
             .set_positions(Quantity::new(positions, NANOMETER))?;
         frame.set_step(Some(index as u64));
         frame.set_time(Some(Quantity::new(index as f64 * 0.002, PICOSECOND)))?;

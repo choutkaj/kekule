@@ -8,7 +8,7 @@
 //! are exact, uncapped derivatives, and coordinates are rejected only where a
 //! requested quantity is undefined.
 
-use kekule::geometry::{Point3, Vector3};
+use kekule::math::{Point3, Vector3};
 
 use crate::potential::{InteractionKind, SingularGeometry};
 

@@ -1,6 +1,6 @@
 //! Weighted k-medoids clustering by Partitioning Around Medoids.
 
-use crate::structure::{Partition, SampleSet, SampleStorage};
+use crate::structure::{GeometryStorage, Partition, StructureSet};
 
 use super::hierarchical::ObjectiveDistances;
 use super::{Clustered, ClusteringError, DistanceMatrix};
@@ -32,7 +32,7 @@ impl Clustered<'_> {
     }
 }
 
-impl<S: SampleStorage> SampleSet<S> {
+impl<S: GeometryStorage> StructureSet<S> {
     /// Partitions the members of the set's distribution, or every sample of
     /// a set without one, into `clusters` clusters around medoid members, on
     /// `distances` indexed by member position

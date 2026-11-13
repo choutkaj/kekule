@@ -6,13 +6,13 @@ use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, MergeMismatch, RmsfAccumulator,
     StatisticsError,
 };
-use kekule::structure::{Positions, Sample, SampleSet};
+use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER};
 
@@ -43,7 +43,7 @@ impl Numbers {
 
 /// Frames fluctuating by up to 0.4 nm about a lattice translated by
 /// `offset`, with weights between 0.25 and 4.
-fn weighted_frames(top: &Arc<Topology>, offset: f64) -> (SampleSet, Vec<f64>) {
+fn weighted_frames(top: &Arc<Topology>, offset: f64) -> (StructureSet, Vec<f64>) {
     let mut numbers = Numbers(0x2545_f491_4f6c_dd1d);
     let mut frames = Vec::new();
     let mut weights = Vec::new();
@@ -58,13 +58,13 @@ fn weighted_frames(top: &Arc<Topology>, offset: f64) -> (SampleSet, Vec<f64>) {
                 )
             })
             .collect::<Vec<_>>();
-        frames.push(Sample::new(
+        frames.push(Geometry::new(
             Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
         ));
         weights.push(0.25 + 3.75 * numbers.next());
     }
     (
-        SampleSet::from_samples(Arc::clone(top), frames).unwrap(),
+        StructureSet::from_geometries(Arc::clone(top), frames).unwrap(),
         weights,
     )
 }
@@ -289,7 +289,8 @@ fn contacts_near_the_cutoff_follow_the_distance() {
                 ))
                 .unwrap();
                 let frame =
-                    SampleSet::from_samples(Arc::clone(&top), [Sample::new(positions)]).unwrap();
+                    StructureSet::from_geometries(Arc::clone(&top), [Geometry::new(positions)])
+                        .unwrap();
                 let mut contacts = accumulator.clone();
                 contacts.observe(0, &frame.get(0).unwrap(), 1.0).unwrap();
                 let contacts = contacts.finish().unwrap();
@@ -303,11 +304,11 @@ fn contacts_near_the_cutoff_follow_the_distance() {
     }
 }
 
-fn frame(top: &Arc<Topology>, x: [f64; ATOMS]) -> SampleSet {
+fn frame(top: &Arc<Topology>, x: [f64; ATOMS]) -> StructureSet {
     let points = x.map(|x| Point3::new(x, 0.0, 0.0));
-    SampleSet::from_samples(
+    StructureSet::from_geometries(
         Arc::clone(top),
-        [Sample::new(
+        [Geometry::new(
             Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
         )],
     )
@@ -535,7 +536,7 @@ fn moments_near_overflow_agree_with_moments_far_from_it() {
     let all = AtomSelection::all(Arc::clone(&top));
     let (frames, weights) = weighted_frames(&top, 0.0);
     let scaled = |scale: f64| {
-        SampleSet::from_samples(
+        StructureSet::from_geometries(
             Arc::clone(&top),
             frames.iter().map(|frame| {
                 let points = frame
@@ -545,12 +546,12 @@ fn moments_near_overflow_agree_with_moments_far_from_it() {
                     .iter()
                     .map(|p| Point3::new(p.x * scale, p.y * scale, p.z * scale))
                     .collect::<Vec<_>>();
-                Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
+                Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
             }),
         )
         .unwrap()
     };
-    let reduce = |frames: &SampleSet, ranges: &[Range<usize>]| {
+    let reduce = |frames: &StructureSet, ranges: &[Range<usize>]| {
         let mut rmsf = RmsfAccumulator::new(&all).unwrap();
         for range in ranges {
             let mut partial = RmsfAccumulator::new(&all).unwrap();

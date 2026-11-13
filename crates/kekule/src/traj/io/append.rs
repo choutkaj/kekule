@@ -242,9 +242,9 @@ struct Kept {
 ///     report.dropped_frames(),
 ///     report.dropped_bytes()
 /// );
-/// # let frames = kekule::structure::SampleSet::new(writer.shared_topology());
-/// for sample in &frames {
-///     writer.write_frame(kekule::traj::FrameView::from_sample(sample)?)?;
+/// # let frames = kekule::structure::StructureSet::new(writer.shared_topology());
+/// for geometry in &frames {
+///     writer.write_frame(kekule::traj::FrameView::from_geometry(geometry)?)?;
 ///     writer.flush()?;
 /// }
 /// writer.finish()?;

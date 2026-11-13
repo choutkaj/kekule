@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, Element};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::{
@@ -327,14 +327,14 @@ fn positions(topology: &Topology) -> Vec<Point3> {
 fn base_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
-        .sample_mut()
+        .geometry_mut()
         .set_positions(Quantity::new(positions(topology), NANOMETER))?;
     Ok(frame)
 }
 
 fn dynamic_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = base_frame(topology)?;
-    frame.sample_mut().set_cell(Some(PeriodicCell::new(
+    frame.geometry_mut().set_cell(Some(PeriodicCell::new(
         Quantity::new(
             [
                 Vector3::new(5.0, 0.0, 0.0),

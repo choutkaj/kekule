@@ -10,16 +10,18 @@ use std::num::{NonZeroU16, NonZeroU32};
 use std::sync::Arc;
 
 use super::crc::Crc32;
-use super::encode::{ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, SAMPLES_EXTERNAL, SAMPLES_INLINE};
+use super::encode::{
+    ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, GEOMETRIES_EXTERNAL, GEOMETRIES_INLINE,
+};
 use super::{
-    NativeKind, NativeObject, NativeReadOptions, SampleSetDescription, NATIVE_FORMAT_VERSION,
+    NativeKind, NativeObject, NativeReadOptions, StructureSetDescription, NATIVE_FORMAT_VERSION,
     NATIVE_MAGIC,
 };
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
 };
-use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::io::{StructureInterpretation, StructureSampleSetInterpretation};
+use crate::io::{StructureInterpretation, StructureSetInterpretation};
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{
     Atom, AtomId, AtomRadical, AxisOrientation, AxisStereo, BondId, BondOrder,
     DoubleBondOrientation, DoubleBondStereo, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
@@ -35,12 +37,12 @@ use crate::perception::{
     Perception,
 };
 use crate::properties::{
-    MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey, PropertyValue,
-    RawPropertyTable, StructureProperties, TopologyProperties,
+    GeometryProperties, MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey,
+    PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
-    Distribution, Forces, Members, Model, Order, Partition, Positions, Sample, SampleSet, State,
-    TimeAxis, Velocities,
+    Distribution, Forces, Geometry, Members, Order, Partition, Positions, State, Structure,
+    StructureSet, TimeAxis, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
@@ -76,28 +78,28 @@ pub(crate) fn read_native(
     let object = match kind {
         NativeKind::Molecule => NativeObject::Molecule(Box::new(decoder.molecule()?)),
         NativeKind::Topology => NativeObject::Topology(decoder.topology()?),
-        NativeKind::Model => NativeObject::Model(decoder.model()?),
+        NativeKind::Structure => NativeObject::Structure(decoder.structure()?),
         NativeKind::StructureInterpretation => {
-            let model = decoder.model()?;
+            let structure = decoder.structure()?;
             let report = decoder.report()?;
             NativeObject::StructureInterpretation(Box::new(StructureInterpretation {
-                model,
+                structure,
                 report,
             }))
         }
-        NativeKind::SampleSet => match decoder.sample_set(false)? {
-            Decoded::Inline(set) => NativeObject::SampleSet(*set),
-            Decoded::External(description) => NativeObject::SampleSetDescription(description),
+        NativeKind::StructureSet => match decoder.structure_set(false)? {
+            Decoded::Inline(set) => NativeObject::StructureSet(*set),
+            Decoded::External(description) => NativeObject::StructureSetDescription(description),
         },
-        NativeKind::SampleSetInterpretation => {
-            let Decoded::Inline(set) = decoder.sample_set(true)? else {
-                unreachable!("an interpreted sample set is read with its samples")
+        NativeKind::StructureSetInterpretation => {
+            let Decoded::Inline(set) = decoder.structure_set(true)? else {
+                unreachable!("an interpreted structure set is read with its geometries")
             };
             let mut reports = Vec::with_capacity(set.len().min(CHUNK_BYTES));
             for _ in 0..set.len() {
                 reports.push(decoder.report()?);
             }
-            NativeObject::SampleSetInterpretation(Box::new(StructureSampleSetInterpretation {
+            NativeObject::StructureSetInterpretation(Box::new(StructureSetInterpretation {
                 set: *set,
                 reports,
             }))
@@ -1215,8 +1217,8 @@ impl<R: Read> Decoder<'_, R> {
         self.cells(&present, Self::f64).map(Some)
     }
 
-    fn structure_properties(&mut self, atoms: usize, bonds: usize) -> Result<StructureProperties> {
-        let mut properties = StructureProperties::default();
+    fn geometry_properties(&mut self, atoms: usize, bonds: usize) -> Result<GeometryProperties> {
+        let mut properties = GeometryProperties::default();
         *properties.owner_mut() = self.owner()?;
         *properties.atoms_raw_mut() = self.table(atoms)?;
         *properties.bonds_raw_mut() = self.table(bonds)?;
@@ -1234,32 +1236,32 @@ impl<R: Read> Decoder<'_, R> {
         .with_source(error)
     }
 
-    fn model(&mut self) -> Result<Model> {
+    fn structure(&mut self) -> Result<Structure> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let positions = self.positions(atoms)?;
         let cell = self.cell()?;
         let occupancies = self.scalars(atoms)?;
         let b_factors = self.scalars(atoms)?;
-        let properties = self.structure_properties(atoms, bonds)?;
-        let mut model =
-            Model::new(topology, positions).map_err(|error| self.structure_error(error))?;
-        model.set_cell(cell);
-        model
+        let properties = self.geometry_properties(atoms, bonds)?;
+        let mut structure =
+            Structure::new(topology, positions).map_err(|error| self.structure_error(error))?;
+        structure.set_cell(cell);
+        structure
             .set_occupancies(occupancies)
             .map_err(|error| self.structure_error(error))?;
-        model
+        structure
             .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
             .map_err(|error| self.structure_error(error))?;
-        model
+        structure
             .set_properties(properties)
             .map_err(|error| self.structure_error(error))?;
-        Ok(model)
+        Ok(structure)
     }
 
-    /// A sample set record; an external samples section is rejected when
+    /// A structure set record; an external geometries section is rejected when
     /// `inline` is required.
-    fn sample_set(&mut self, inline: bool) -> Result<Decoded> {
+    fn structure_set(&mut self, inline: bool) -> Result<Decoded> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let owner = self.owner()?;
@@ -1267,32 +1269,32 @@ impl<R: Read> Decoder<'_, R> {
         let order = self.order(count)?;
         let distribution = self.distribution(count)?;
         match self.u8()? {
-            SAMPLES_INLINE => {}
-            SAMPLES_EXTERNAL if !inline => {
-                let description = SampleSetDescription::new(topology, count)
+            GEOMETRIES_INLINE => {}
+            GEOMETRIES_EXTERNAL if !inline => {
+                let description = StructureSetDescription::new(topology, count)
                     .with_properties(owner)
                     .with_order(order)
                     .and_then(|description| description.with_distribution(distribution))
                     .map_err(|error| self.structure_error(error))?;
                 return Ok(Decoded::External(Box::new(description)));
             }
-            SAMPLES_EXTERNAL => {
+            GEOMETRIES_EXTERNAL => {
                 return Err(self.invalid(
-                    "An interpreted sample set stores its samples elsewhere. It must store them in the record.",
+                    "An interpreted structure set stores its geometries elsewhere. It must store them in the record.",
                 ))
             }
             other => {
-                return Err(self.invalid(format!("The samples section tag {other} is unknown.")))
+                return Err(self.invalid(format!("The geometries section tag {other} is unknown.")))
             }
         }
-        let mut samples = Vec::with_capacity(count.min(CHUNK_BYTES));
+        let mut geometries = Vec::with_capacity(count.min(CHUNK_BYTES));
         let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
         for _ in 0..count {
             let positions = self.positions(atoms)?;
             let cell = self.cell()?;
             let occupancies = self.scalars(atoms)?;
             let b_factors = self.scalars(atoms)?;
-            properties.push(self.structure_properties(atoms, bonds)?);
+            properties.push(self.geometry_properties(atoms, bonds)?);
             let velocities = if self.tag("velocities")? {
                 let values = self.vectors(atoms)?;
                 Some(
@@ -1311,28 +1313,28 @@ impl<R: Read> Decoder<'_, R> {
             } else {
                 None
             };
-            let mut sample = Sample::new(positions);
-            sample.set_cell(cell);
-            sample
+            let mut geometry = Geometry::new(positions);
+            geometry.set_cell(cell);
+            geometry
                 .set_occupancies(occupancies)
                 .map_err(|error| self.structure_error(error))?;
-            sample
+            geometry
                 .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
                 .map_err(|error| self.structure_error(error))?;
-            sample
+            geometry
                 .set_velocities(velocities)
                 .map_err(|error| self.structure_error(error))?;
-            sample
+            geometry
                 .set_forces(forces)
                 .map_err(|error| self.structure_error(error))?;
-            samples.push(sample);
+            geometries.push(geometry);
         }
-        let mut set = SampleSet::from_samples(topology, samples)
+        let mut set = StructureSet::from_geometries(topology, geometries)
             .map_err(|error| self.structure_error(error))?;
         *set.properties_mut() = owner;
         for (index, properties) in properties.into_iter().enumerate() {
             set.get_mut(index)
-                .expect("every decoded sample was added")
+                .expect("every decoded geometry was added")
                 .set_properties(properties)
                 .map_err(|error| self.structure_error(error))?;
         }
@@ -1343,7 +1345,7 @@ impl<R: Read> Decoder<'_, R> {
         Ok(Decoded::Inline(Box::new(set)))
     }
 
-    /// The order of a set of `count` samples.
+    /// The order of a set of `count` geometries.
     fn order(&mut self, count: usize) -> Result<Option<Order>> {
         Ok(Some(match self.u8()? {
             0 => return Ok(None),
@@ -1377,7 +1379,7 @@ impl<R: Read> Decoder<'_, R> {
         }))
     }
 
-    /// The distribution over a set of `count` samples.
+    /// The distribution over a set of `count` geometries.
     fn distribution(&mut self, count: usize) -> Result<Option<Distribution>> {
         if !self.tag("distribution")? {
             return Ok(None);
@@ -1388,7 +1390,7 @@ impl<R: Read> Decoder<'_, R> {
                 let listed = self.u32()? as usize;
                 if listed > count {
                     return Err(self.invalid(format!(
-                        "The distribution lists {listed} members of {count} samples."
+                        "The distribution lists {listed} members of {count} geometries."
                     )));
                 }
                 Members::Subset(
@@ -1470,11 +1472,11 @@ impl<R: Read> Decoder<'_, R> {
     }
 }
 
-/// A decoded sample set record: the set, or the description of one whose
-/// samples are stored elsewhere.
+/// A decoded structure set record: the set, or the description of one whose
+/// geometries are stored elsewhere.
 enum Decoded {
-    Inline(Box<SampleSet>),
-    External(Box<SampleSetDescription>),
+    Inline(Box<StructureSet>),
+    External(Box<StructureSetDescription>),
 }
 
 fn bond_order(code: u8) -> Option<BondOrder> {

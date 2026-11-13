@@ -1,5 +1,5 @@
 //! Fingerprints of recorded results: values the retired ensemble,
-//! trajectory, and series paths gave, which the sample set paths must keep
+//! trajectory, and series paths gave, which the structure set paths must keep
 //! bit for bit.
 
 use std::fmt::Debug;

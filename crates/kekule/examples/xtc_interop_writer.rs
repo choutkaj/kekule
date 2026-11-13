@@ -4,7 +4,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
 use kekule::traj::io::xtc::XtcWriteOptions;
@@ -63,9 +63,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         frame
-            .sample_mut()
+            .geometry_mut()
             .set_positions(Quantity::new(positions, NANOMETER))?;
-        frame.sample_mut().set_cell(Some(cell));
+        frame.geometry_mut().set_cell(Some(cell));
         frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
         frame.set_step(Some(step));
         writer.write_frame(frame.frame_view())?;

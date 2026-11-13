@@ -1,5 +1,5 @@
 //! Informational cost of building a biological assembly from an interpreted
-//! mmCIF entry: the time `Assembly::to_model` takes for each of the entry's
+//! mmCIF entry: the time `Assembly::to_structure` takes for each of the entry's
 //! assemblies, and the atoms it places.
 //!
 //! The entry is externally supplied, such as PDB 4RHV (a 60-copy virus
@@ -34,13 +34,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let text = std::fs::read_to_string(&path)?;
     let interpretation =
         mmcif::parse_str(&text, Default::default())?.interpret(Default::default())?;
-    let model = interpretation.model();
+    let structure = interpretation.structure();
     println!(
         "informational only; target={}-{}; deposited atoms={}; minimum and median of {ROUNDS} \
          rounds",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        model.atom_count(),
+        structure.atom_count(),
     );
     println!("| assembly | copies | atoms | build min ms | build median ms |");
     println!("|---|---:|---:|---:|---:|");
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut atoms = 0;
         for _ in 0..ROUNDS {
             let start = Instant::now();
-            let built = assembly.to_model(model, None)?;
+            let built = assembly.to_structure(structure, None)?;
             times.push(start.elapsed());
             atoms = built.atom_count();
             black_box(built);

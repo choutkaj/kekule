@@ -4,16 +4,18 @@ use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentOptions, Coordinates, FitAtoms, NormalizedWeights,
     Pairs, PeriodicPolicy,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::parallel::map_ranges;
-use crate::structure::{visit_sample, Members, Partition, SampleRead, SampleSet, SampleStorage};
+use crate::structure::{
+    visit_geometry, GeometryStorage, Members, Partition, StructureSet, StructureSetRead,
+};
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::run::{FirstFailure, Stop, Tracker};
 use super::{sample_index, undirected, Clustered, ClusteringError, ClusteringRun};
 
-/// Symmetric pairwise distances between the members of one sample set's
+/// Symmetric pairwise distances between the members of one structure set's
 /// distribution, stored once per unordered pair in
 /// [`CANONICAL_LENGTH_UNIT`].
 ///
@@ -21,7 +23,7 @@ use super::{sample_index, undirected, Clustered, ClusteringError, ClusteringRun}
 /// lists the pairs `(i, j)` with `i < j` row by row:
 /// `(0, 1), (0, 2), ..., (0, n - 1), (1, 2), ...`, the order SciPy's
 /// `squareform` uses. Build one from fitted RMSDs with
-/// [`SampleSet::pairwise_fitted_rmsd`] or [`pairwise_fitted_rmsd`], or from
+/// [`StructureSet::pairwise_fitted_rmsd`] or [`pairwise_fitted_rmsd`], or from
 /// any other distances with
 /// [`Self::from_condensed`]. It stores `n (n - 1) / 2` values, so memory
 /// grows quadratically with the member count.
@@ -443,19 +445,19 @@ impl PairFits<'_, '_> {
     }
 }
 
-/// Members loaded by one work item at least: reading a sample costs about
-/// as much as many fits.
+/// Members loaded by one work item at least: reading a geometry costs
+/// about as much as many fits.
 const MEMBERS_PER_WORK_ITEM: usize = 16;
 
 /// Fitted RMSD between every pair of members of `reader`'s distribution, or
-/// of every pair of samples of a reader without one, as
-/// [`SampleSet::pairwise_fitted_rmsd_with`] computes it for a set in
+/// of every pair of geometries of a reader without one, as
+/// [`StructureSet::pairwise_fitted_rmsd_with`] computes it for a set in
 /// memory, with the same matrix and errors.
 ///
 /// Only the fitted atoms of each member are kept: every member is lent or
 /// read once, on `run`'s executor, and its fitted positions copied out, so
 /// memory grows with the members times the fitted atoms rather than with
-/// whole samples. Sample 0 of the members is read once more to check
+/// whole geometries. The first member is read once more to check
 /// `atoms`. Progress counts pairs fitted once the members are loaded;
 /// cancellation is polled before each member is loaded and while fitting.
 ///
@@ -465,20 +467,20 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 ///
 /// ```
 /// use kekule::clustering::{pairwise_fitted_rmsd, ClusteringRun};
-/// use kekule::geometry::Point3;
-/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::math::Point3;
+/// use kekule::structure::{Positions, Geometry, StructureSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, ANGSTROM};
 ///
 /// let topology = kekule::smiles::to_topology("CCO")?;
-/// let mut set = SampleSet::new(topology.clone());
+/// let mut set = StructureSet::new(topology.clone());
 /// for stretch in [1.0, 1.1, 1.2] {
 ///     let points = [
 ///         Point3::new(0.0, 0.0, 0.0),
 ///         Point3::new(1.5 * stretch, 0.0, 0.0),
 ///         Point3::new(2.0, 1.2, 0.0),
 ///     ];
-///     set.push(Sample::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
 /// }
 /// let atoms = AtomSelection::all(topology);
 /// let matrix = pairwise_fitted_rmsd(&set, &atoms, Default::default(), ClusteringRun::default())?;
@@ -488,7 +490,7 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 ///
 /// # Errors
 ///
-/// As [`SampleSet::pairwise_fitted_rmsd_with`], and
+/// As [`StructureSet::pairwise_fitted_rmsd_with`], and
 /// [`ClusteringError::Read`] when a member cannot be read; a failed read
 /// reports the first failing member in member order.
 ///
@@ -498,16 +500,16 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
 /// the executor skips or repeats a work item.
 pub fn pairwise_fitted_rmsd<'a>(
-    reader: &dyn SampleRead,
+    reader: &dyn StructureSetRead,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
     run: ClusteringRun<'_>,
 ) -> Result<DistanceMatrix, ClusteringError> {
     let atoms = undirected(atoms.into())?;
-    let every_sample = Members::All;
+    let every_geometry = Members::All;
     let (samples, count) = match reader.distribution() {
         Some(distribution) => (distribution.members(), distribution.member_count()),
-        None => (&every_sample, reader.len()),
+        None => (&every_geometry, reader.len()),
     };
     let expected = condensed_len(count)?;
     if count == 0 {
@@ -518,7 +520,7 @@ pub fn pairwise_fitted_rmsd<'a>(
         });
     }
     let read_error = |error| ClusteringError::Read(Box::new(error));
-    let sets = visit_sample(reader, sample_index(samples, 0), read_error, |first| {
+    let sets = visit_geometry(reader, sample_index(samples, 0), read_error, |first| {
         Ok(atoms.pair_sets(first, first)?)
     })?;
     check_fit_count(atoms.pair_count())?;
@@ -555,7 +557,7 @@ pub fn pairwise_fitted_rmsd<'a>(
             positions
                 .map(|position| {
                     tracker.poll()?;
-                    visit_sample(
+                    visit_geometry(
                         reader,
                         sample_index(samples, position),
                         read_error,
@@ -626,7 +628,7 @@ fn weighted_medoids(
         .collect()
 }
 
-impl SampleSet {
+impl StructureSet {
     /// Fitted RMSD between every pair of members of the set's distribution,
     /// or of every pair of samples of a set without one, after a
     /// [`fit`](crate::alignment::fit) over `atoms` with the weights and
@@ -648,23 +650,23 @@ impl SampleSet {
     /// spreads them over threads, reports progress, and can be cancelled.
     ///
     /// ```
-    /// use kekule::geometry::Point3;
+    /// use kekule::math::Point3;
     /// use kekule::structure::{
-    ///     Distribution, Partition, Members, Positions, Sample, SampleSet,
+    ///     Distribution, Partition, Members, Positions, Geometry, StructureSet,
     /// };
     /// use kekule::clustering::{Cut, Linkage};
     /// use kekule::topology::AtomSelection;
     /// use kekule::units::{Quantity, ANGSTROM};
     ///
     /// let topology = kekule::smiles::to_topology("CCO")?;
-    /// let mut set = SampleSet::new(topology.clone());
+    /// let mut set = StructureSet::new(topology.clone());
     /// for stretch in [1.0, 1.0, 1.01, 1.3, 1.31] {
     ///     let points = [
     ///         Point3::new(0.0, 0.0, 0.0),
     ///         Point3::new(1.5 * stretch, 0.0, 0.0),
     ///         Point3::new(2.0, 1.2, 0.0),
     ///     ];
-    ///     set.push(Sample::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+    ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
     /// }
     /// // Samples 1 to 4 are the members; sample 0 is left out.
     /// let members = Members::Subset(vec![1, 2, 3, 4]);
@@ -715,21 +717,21 @@ impl SampleSet {
     /// use std::num::NonZeroUsize;
     /// use std::sync::atomic::{AtomicUsize, Ordering};
     /// use kekule::clustering::{ClusteringProgress, ClusteringRun};
-    /// use kekule::geometry::Point3;
+    /// use kekule::math::Point3;
     /// use kekule::parallel::ScopedThreads;
-    /// use kekule::structure::{Positions, Sample, SampleSet};
+    /// use kekule::structure::{Positions, Geometry, StructureSet};
     /// use kekule::topology::AtomSelection;
     /// use kekule::units::{Quantity, ANGSTROM};
     ///
     /// let topology = kekule::smiles::to_topology("CCO")?;
-    /// let mut set = SampleSet::new(topology.clone());
+    /// let mut set = StructureSet::new(topology.clone());
     /// for stretch in [1.0, 1.1, 1.2, 1.3] {
     ///     let points = [
     ///         Point3::new(0.0, 0.0, 0.0),
     ///         Point3::new(1.5 * stretch, 0.0, 0.0),
     ///         Point3::new(2.0, 1.2, 0.0),
     ///     ];
-    ///     set.push(Sample::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+    ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
     /// }
     /// let atoms = AtomSelection::all(topology);
     ///
@@ -767,7 +769,7 @@ impl SampleSet {
     }
 }
 
-impl<S: SampleStorage> SampleSet<S> {
+impl<S: GeometryStorage> StructureSet<S> {
     /// Hierarchical clustering of the members of the set's distribution, or
     /// of every sample of a set without one, on `distances` indexed by
     /// member position ([`Self::pairwise_fitted_rmsd`]), cut into flat

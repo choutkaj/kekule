@@ -3,12 +3,12 @@ use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
-use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
+use super::{fail, invalid_structure, MmcifAtomField, MmcifGeometryField, MmcifWriteIssue};
 use crate::diagnostics::{Capitalized, FormatError};
-use crate::geometry::Point3;
 use crate::io::UnrepresentablePolicy;
+use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{
     Hierarchy, InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, ResidueId,
 };
@@ -38,7 +38,7 @@ pub(super) struct AtomRow {
     pub(super) auth_atom_id: String,
 }
 
-/// One bond of the model, written as a `_struct_conn` row unless the reader
+/// One bond of the structure, written as a `_struct_conn` row unless the reader
 /// derives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ConnectionRow {
@@ -69,7 +69,7 @@ pub(super) struct PreparedModel {
     /// Atoms whose fixed implicit-hydrogen counts the rows leave out.
     pub(super) omitted_hydrogens: usize,
     /// Interpretation-report coordination records left out because they no
-    /// longer match the model.
+    /// longer match the structure.
     pub(super) omitted_coordination: usize,
     /// Dative bonds between residues, stated as `metalc` rows that readers
     /// record as coordination rather than bonds.
@@ -77,7 +77,7 @@ pub(super) struct PreparedModel {
 }
 
 pub(super) fn prepare_model(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     plan: EntityPlan,
     implicit_hydrogens: UnrepresentablePolicy,
     coordinate_precision: usize,
@@ -92,22 +92,22 @@ pub(super) fn prepare_model(
 
     let mut atoms = Vec::new();
     let mut omitted_hydrogens = 0;
-    let hierarchy = model.topology().hierarchy();
-    for (id, molecule) in model.topology().instance_records() {
-        let definition = model
+    let hierarchy = structure.topology().hierarchy();
+    for (id, molecule) in structure.topology().instance_records() {
+        let definition = structure
             .topology()
             .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
         omitted_hydrogens += validate_graph_chemistry(molecule, definition, implicit_hydrogens)?;
         if definition.molecule().atom_ids().any(|atom| {
-            model
+            structure
                 .topology()
                 .atom_site_of(molecule.qualify_atom(atom))
                 .is_some()
         }) {
             collect_macro_rows(
-                model,
+                structure,
                 molecule,
                 definition,
                 hierarchy,
@@ -115,14 +115,14 @@ pub(super) fn prepare_model(
                 &mut atoms,
             )?;
         } else {
-            collect_small_rows(model, molecule, definition, &assignments, &mut atoms)?;
+            collect_small_rows(structure, molecule, definition, &assignments, &mut atoms)?;
         }
     }
 
     // Rows follow dense atom order, so the interpreted block keeps this
     // topology's order and coordinate files written in it stay aligned.
     atoms.sort_by_key(|row| {
-        model
+        structure
             .topology()
             .atom_index(row.atom)
             .expect("prepared atom-site row references a topology atom")
@@ -136,7 +136,7 @@ pub(super) fn prepare_model(
         .collect::<BTreeMap<_, _>>();
     validate_atom_identities(&atoms)?;
     let mut connections = Vec::new();
-    for bond in model.topology().bonds() {
+    for bond in structure.topology().bonds() {
         let order = supported_bond_order(bond.id(), bond.order)?;
         let [left, right] = bond.atoms().map(|atom| atom.id());
         connections.push(ConnectionRow {
@@ -149,11 +149,11 @@ pub(super) fn prepare_model(
     let elements = atoms
         .iter()
         .map(|row| {
-            model
+            structure
                 .topology()
                 .atom(row.atom)
                 .map(|atom| atom.atom().element)
-                .ok_or_else(|| invalid_model(format!("The topology has no {}.", row.atom)))
+                .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
     mark_implied(
@@ -164,7 +164,7 @@ pub(super) fn prepare_model(
         coordinate_precision,
     );
     // Readers record coordination between residues rather than bond it, so
-    // a model's dative bond between residues does not read back as a bond.
+    // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
         .iter()
         .filter(|connection| {
@@ -181,7 +181,7 @@ pub(super) fn prepare_model(
         order: BondOrder::Dative,
         implied: None,
     }));
-    // A polymer link another sample stretches beyond bonding
+    // A polymer link another geometry stretches beyond bonding
     // distance is stated after all, so its partners are checked too.
     let selectors = ConnectionSelectors::new(&atoms);
     for connection in connections
@@ -258,7 +258,7 @@ fn validate_graph_chemistry(
 }
 
 fn collect_macro_rows(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     hierarchy: &Hierarchy,
@@ -267,7 +267,7 @@ fn collect_macro_rows(
 ) -> Result<(), FormatError> {
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
-        let site = model
+        let site = structure
             .topology()
             .atom_site_of(qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
@@ -323,14 +323,14 @@ fn collect_macro_rows(
             label_comp_id: label_comp_id.clone(),
             label_seq_id: residue.label_seq_id(),
             insertion_code: residue.insertion_code().map(str::to_owned),
-            position: model
+            position: structure
                 .position(qualified)
                 .ok_or_else(|| missing_position(qualified))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_position(qualified).with_source(error))?,
-            occupancy: model.occupancy(dense_index(model, qualified)?),
-            b_factor: model
-                .b_factor(dense_index(model, qualified)?)
+            occupancy: structure.occupancy(dense_index(structure, qualified)?),
+            b_factor: structure
+                .b_factor(dense_index(structure, qualified)?)
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_b_factor(qualified).with_source(error))?,
@@ -360,7 +360,7 @@ fn collect_macro_rows(
 }
 
 fn collect_small_rows(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
@@ -393,14 +393,14 @@ fn collect_small_rows(
             label_comp_id: component_id.to_owned(),
             label_seq_id: None,
             insertion_code: None,
-            position: model
+            position: structure
                 .position(qualified)
                 .ok_or_else(|| missing_position(qualified))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_position(qualified).with_source(error))?,
-            occupancy: model.occupancy(dense_index(model, qualified)?),
-            b_factor: model
-                .b_factor(dense_index(model, qualified)?)
+            occupancy: structure.occupancy(dense_index(structure, qualified)?),
+            b_factor: structure
+                .b_factor(dense_index(structure, qualified)?)
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_b_factor(qualified).with_source(error))?,
@@ -476,7 +476,7 @@ impl<'a> ConnectionSelectors<'a> {
     ) -> Result<(), FormatError> {
         let row = &rows[*indexes
             .get(&atom)
-            .ok_or_else(|| invalid_model(format!("{} has no atom row.", Capitalized(atom))))?];
+            .ok_or_else(|| invalid_structure(format!("{} has no atom row.", Capitalized(atom))))?];
         let stated = |field: &Option<String>, candidate: &Option<String>| {
             field.is_none() || field == candidate
         };
@@ -582,36 +582,36 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {
 }
 
 fn invalid_hierarchy(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("The residue or chain of {atom} is invalid."))
+    invalid_structure(format!("The residue or chain of {atom} is invalid."))
 }
 
 fn missing_position(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("{} has no position.", Capitalized(atom)))
+    invalid_structure(format!("{} has no position.", Capitalized(atom)))
 }
 
 fn invalid_position(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("The position of {atom} is invalid."))
+    invalid_structure(format!("The position of {atom} is invalid."))
 }
 
 fn invalid_b_factor(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("The B factor of {atom} is invalid."))
+    invalid_structure(format!("The B factor of {atom} is invalid."))
 }
 
-pub(super) fn validate_sample(
+pub(super) fn validate_geometry(
     model: &PreparedModel,
     candidate: &PreparedModel,
-    sample: usize,
+    geometry: usize,
 ) -> Result<(), FormatError> {
     if candidate.entities != model.entities {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
-            field: MmcifSampleField::Entities,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
+            field: MmcifGeometryField::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
-            field: MmcifSampleField::StructuralAsymmetry,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
+            field: MmcifGeometryField::StructuralAsymmetry,
         }));
     }
     let bonds = |model: &PreparedModel| {
@@ -622,9 +622,9 @@ pub(super) fn validate_sample(
             .collect::<Vec<_>>()
     };
     if bonds(candidate) != bonds(model) {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
-            field: MmcifSampleField::Connectivity,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
+            field: MmcifGeometryField::Connectivity,
         }));
     }
     if candidate.atoms.len() != model.atoms.len()
@@ -634,9 +634,9 @@ pub(super) fn validate_sample(
             .zip(&model.atoms)
             .any(|(left, right)| !same_static_atom_row(left, right))
     {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
-            field: MmcifSampleField::AtomSites,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
+            field: MmcifGeometryField::AtomSites,
         }));
     }
     Ok(())
@@ -662,13 +662,13 @@ fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
 }
 
 fn dense_index(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     atom: InstanceAtomId,
 ) -> Result<crate::topology::TopologyAtomIndex, FormatError> {
-    model
+    structure
         .topology()
         .atom_index(atom)
-        .ok_or_else(|| invalid_model(format!("The topology has no {atom}.")))
+        .ok_or_else(|| invalid_structure(format!("The topology has no {atom}.")))
 }
 
 #[cfg(test)]

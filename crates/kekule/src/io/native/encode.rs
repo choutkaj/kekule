@@ -9,8 +9,8 @@ use super::{
     NATIVE_MAGIC,
 };
 use crate::diagnostics::{counted, DiagnosticKind, Format, FormatError};
-use crate::geometry::{PeriodicCell, Point3, Vector3};
 use crate::io::StructureInterpretationReport;
+use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{
     AtomRadical, AxisOrientation, BondOrder, DoubleBondOrientation, ImplicitHydrogens, Molecule,
     StereoCarrier, StereoDescriptor, StereoElementKind, StereoGroupKind, TetrahedralOrientation,
@@ -20,9 +20,11 @@ use crate::perception::{
     rings::RingBasisModel, valence::ValenceModel, valence::ValenceValidation, Perception,
 };
 use crate::properties::{
-    OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
+    GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
 };
-use crate::structure::{Distribution, Members, Model, ModelView, Order, SampleSet, StructureKind};
+use crate::structure::{
+    Distribution, Members, Order, Structure, StructureKind, StructureSet, StructureView,
+};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -41,17 +43,17 @@ pub(crate) fn write_native_to<'a>(
 ) -> Result {
     let source = source.into();
     let reports = match source.content {
-        NativeContent::InterpretedSampleSet(set, reports) => Some((set.len(), reports)),
+        NativeContent::InterpretedStructureSet(set, reports) => Some((set.len(), reports)),
         _ => None,
     };
-    if let Some((samples, reports)) = reports {
-        if reports.len() != samples {
+    if let Some((geometries, reports)) = reports {
+        if reports.len() != geometries {
             return Err(FormatError::write(
                 Format::Native,
                 DiagnosticKind::Inconsistent,
                 format!(
-                    "The sample set has {} and {}. Give one report per sample.",
-                    counted(samples, "sample", "samples"),
+                    "The structure set has {} and {}. Give one report per geometry.",
+                    counted(geometries, "geometry", "geometries"),
                     counted(
                         reports.len(),
                         "interpretation report",
@@ -71,40 +73,40 @@ pub(crate) fn write_native_to<'a>(
     match source.content {
         NativeContent::Molecule(molecule) => encoder.molecule(molecule)?,
         NativeContent::Topology(topology) => encoder.topology(topology)?,
-        NativeContent::Model(model) => encoder.model(model)?,
-        NativeContent::InterpretedModel(model, report) => {
-            encoder.model(model)?;
+        NativeContent::Structure(structure) => encoder.structure(structure)?,
+        NativeContent::InterpretedStructure(structure, report) => {
+            encoder.structure(structure)?;
             encoder.report(report)?;
         }
-        NativeContent::SampleSet(set) => encoder.sample_set(set)?,
-        NativeContent::InterpretedSampleSet(set, reports) => {
-            encoder.sample_set(set)?;
+        NativeContent::StructureSet(set) => encoder.structure_set(set)?,
+        NativeContent::InterpretedStructureSet(set, reports) => {
+            encoder.structure_set(set)?;
             encoder.reports(reports)?;
         }
-        NativeContent::SampleSetDescription(description) => {
-            encoder.sample_set_head(SetHead {
+        NativeContent::StructureSetDescription(description) => {
+            encoder.structure_set_head(SetHead {
                 topology: description.topology(),
                 properties: description.properties(),
-                sample_count: description.sample_count(),
+                geometry_count: description.geometry_count(),
                 order: description.order(),
                 distribution: description.distribution(),
             })?;
-            encoder.u8(SAMPLES_EXTERNAL)?;
+            encoder.u8(GEOMETRIES_EXTERNAL)?;
         }
     }
     encoder.finish()
 }
 
-/// The samples section's tag for samples stored in the record.
-pub(super) const SAMPLES_INLINE: u8 = 0;
-/// The samples section's tag for samples stored elsewhere.
-pub(super) const SAMPLES_EXTERNAL: u8 = 1;
+/// The geometries section's tag for geometries stored in the record.
+pub(super) const GEOMETRIES_INLINE: u8 = 0;
+/// The geometries section's tag for geometries stored elsewhere.
+pub(super) const GEOMETRIES_EXTERNAL: u8 = 1;
 
-/// The sections of a sample set record before its samples.
+/// The sections of a structure set record before its geometries.
 struct SetHead<'a> {
     topology: &'a Topology,
     properties: &'a OwnerProperties,
-    sample_count: usize,
+    geometry_count: usize,
     order: Option<&'a Order>,
     distribution: Option<&'a Distribution>,
 }
@@ -685,32 +687,32 @@ impl<W: Write> Encoder<'_, W> {
         Ok(())
     }
 
-    fn structure_properties(&mut self, properties: &StructureProperties) -> Result {
+    fn geometry_properties(&mut self, properties: &GeometryProperties) -> Result {
         self.owner(properties.owner())?;
         self.table(properties.atoms())?;
         self.table(properties.bonds())
     }
 
-    fn model(&mut self, model: &Model) -> Result {
-        self.topology(model.topology())?;
-        self.points(model.positions().values().value())?;
-        self.cell(model.cell())?;
-        self.scalars(model.occupancies())?;
-        self.scalars(model.b_factors().map(|values| *values.value()))?;
-        self.structure_properties(model.properties())
+    fn structure(&mut self, structure: &Structure) -> Result {
+        self.topology(structure.topology())?;
+        self.points(structure.positions().values().value())?;
+        self.cell(structure.cell())?;
+        self.scalars(structure.occupancies())?;
+        self.scalars(structure.b_factors().map(|values| *values.value()))?;
+        self.geometry_properties(structure.properties())
     }
 
-    // Sample sets.
+    // Structure sets.
 
-    fn sample_set(&mut self, set: &SampleSet) -> Result {
-        self.sample_set_head(SetHead {
+    fn structure_set(&mut self, set: &StructureSet) -> Result {
+        self.structure_set_head(SetHead {
             topology: set.topology(),
             properties: set.properties(),
-            sample_count: set.len(),
+            geometry_count: set.len(),
             order: set.order(),
             distribution: set.distribution(),
         })?;
-        self.samples(set.iter().map(|sample| sample.as_model_view()))
+        self.geometries(set.iter().map(|geometry| geometry.as_structure_view()))
     }
 
     fn reports(&mut self, reports: &[StructureInterpretationReport]) -> Result {
@@ -720,10 +722,10 @@ impl<W: Write> Encoder<'_, W> {
         Ok(())
     }
 
-    fn sample_set_head(&mut self, head: SetHead<'_>) -> Result {
+    fn structure_set_head(&mut self, head: SetHead<'_>) -> Result {
         self.topology(head.topology)?;
         self.owner(head.properties)?;
-        self.count(head.sample_count)?;
+        self.count(head.geometry_count)?;
         match head.order {
             None => self.u8(0)?,
             Some(Order::Time(axis)) => {
@@ -796,20 +798,20 @@ impl<W: Write> Encoder<'_, W> {
         )
     }
 
-    /// The inline samples section: each sample's positions, cell, site
+    /// The inline geometries section: each geometry's positions, cell, site
     /// values, properties, velocities, and forces.
-    fn samples<'v>(&mut self, samples: impl Iterator<Item = ModelView<'v>>) -> Result {
-        self.u8(SAMPLES_INLINE)?;
-        for view in samples {
+    fn geometries<'v>(&mut self, geometries: impl Iterator<Item = StructureView<'v>>) -> Result {
+        self.u8(GEOMETRIES_INLINE)?;
+        for view in geometries {
             let (velocities, forces) = match view.kind() {
-                StructureKind::Sample(context) => (context.velocities(), context.forces()),
+                StructureKind::InSet(context) => (context.velocities(), context.forces()),
                 _ => (None, None),
             };
             self.points(view.positions().values().value())?;
             self.cell(view.cell())?;
             self.scalars(view.occupancies())?;
             self.scalars(view.b_factors().map(|values| *values.value()))?;
-            self.structure_properties(view.properties())?;
+            self.geometry_properties(view.properties())?;
             match velocities {
                 None => self.u8(0)?,
                 Some(velocities) => {

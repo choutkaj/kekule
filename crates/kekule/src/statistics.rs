@@ -5,7 +5,7 @@
 //! Weights are relative: scaling every weight by one factor changes no
 //! statistic. [`RmsfAccumulator`], [`ContactOccupancyAccumulator`], and
 //! [`GroupContactOccupancyAccumulator`] observe any borrowed structure
-//! ([`AsModelView`]: a model, a sample, or a codec frame such as a streamed
+//! ([`AsStructureView`]: a structure, a geometry of a set, or a codec frame such as a streamed
 //! frame buffer's `frame_view()`) one at a time, with memory bounded by the
 //! selected atoms, pairs, or groups, not the observation count.
 //!
@@ -15,9 +15,9 @@
 //! result is the same whichever threads observed the ranges, and it equals
 //! observing everything in one accumulator up to rounding.
 //!
-//! Sample sets reduce themselves with the same accumulators.
-//! [`SampleSet::rmsf`], [`SampleSet::contact_occupancy`], and
-//! [`SampleSet::group_contact_occupancy`] observe the members of the set's
+//! Structure sets reduce themselves with the same accumulators.
+//! [`StructureSet::rmsf`], [`StructureSet::contact_occupancy`], and
+//! [`StructureSet::group_contact_occupancy`] observe the members of the set's
 //! distribution, each with its probability, its weight divided by the
 //! members' total, and leave the other samples out. Without a distribution
 //! they observe every sample with weight one, taking a trajectory's frames
@@ -26,7 +26,7 @@
 //! observe the frames through an accumulator with explicit weights.
 //!
 //! An accumulator also observes the samples of any
-//! [`SampleRead`], such as a set read from a
+//! [`StructureSetRead`], such as a set read from a
 //! file: [`SampleObservations`] lists the samples and their weights, and
 //! `observe_samples` reads a range of them in order, as a set's own
 //! statistics do.
@@ -38,17 +38,17 @@
 //! # Examples
 //!
 //! ```
-//! use kekule::geometry::Point3;
-//! use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
+//! use kekule::math::Point3;
+//! use kekule::structure::{Distribution, Members, Partition, Positions, Geometry, StructureSet};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, NANOMETER};
 //!
 //! let topology = kekule::smiles::to_topology("CC")?;
-//! let mut ensemble = SampleSet::new(topology.clone());
+//! let mut ensemble = StructureSet::new(topology.clone());
 //! // The first atom sits at x = 0 with weight 3 and at x = 1 with weight 1.
 //! for x in [0.0, 1.0] {
 //!     let points = [Point3::new(x, 0.0, 0.0), Point3::new(0.15, 0.0, 0.0)];
-//!     ensemble.push(Sample::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
+//!     ensemble.push(Geometry::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
 //! }
 //! let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))?
 //!     .with_weights(vec![3.0, 1.0])?;
@@ -73,9 +73,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled};
-use crate::geometry::{Point3, PointGrid, Vector3};
+use crate::math::{Point3, PointGrid, Vector3};
 use crate::structure::{
-    visit_sample, AsModelView, ModelView, SampleRead, SampleReadError, SampleSet, SampleStorage,
+    visit_geometry, AsStructureView, GeometryStorage, StructureSet, StructureSetRead,
+    StructureSetReadError, StructureView,
 };
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -159,7 +160,7 @@ pub enum StatisticsError {
         len: usize,
     },
     /// A sample cannot be read; see the source.
-    Read(SampleReadError),
+    Read(StructureSetReadError),
     /// The observation was cancelled.
     Cancelled(Cancelled),
 }
@@ -271,14 +272,14 @@ impl std::error::Error for StatisticsError {
 /// accumulator gives, up to rounding.
 ///
 /// ```
-/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::structure::{Positions, Geometry, StructureSet};
 /// use kekule::statistics::{RmsfAccumulator, SampleObservations};
 /// use kekule::topology::AtomSelection;
 ///
 /// let topology = kekule::smiles::to_topology("O")?;
-/// let mut set = SampleSet::new(topology.clone());
+/// let mut set = StructureSet::new(topology.clone());
 /// for _ in 0..10 {
-///     set.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+///     set.push(Geometry::new(Positions::zeros(topology.atom_count())), None)?;
 /// }
 /// // Every other sample, observed in two ranges merged in order.
 /// let observations = SampleObservations::of(&set, (0..set.len()).step_by(2))?;
@@ -301,7 +302,7 @@ impl SampleObservations {
     /// The samples a set's statistics observe: the members of the reader's
     /// distribution, each with its probability (its weight over the members'
     /// total), or, without a distribution, every sample with weight one.
-    pub fn all(reader: &(impl SampleRead + ?Sized)) -> Self {
+    pub fn all(reader: &(impl StructureSetRead + ?Sized)) -> Self {
         match reader.distribution() {
             Some(distribution) => {
                 let (samples, weights): (Vec<_>, Vec<_>) = distribution.weighted_members().unzip();
@@ -315,7 +316,7 @@ impl SampleObservations {
     }
 
     /// The listed samples, in the listed order, with the distribution
-    /// restricted to them, as [`SampleSet::select`] restricts it: the listed
+    /// restricted to them, as [`StructureSet::select`] restricts it: the listed
     /// members, each with its weight over the listed members' total, and the
     /// other listed samples left out. Without a distribution every listed
     /// sample is observed with weight one. Ranges and strides are written as
@@ -323,19 +324,18 @@ impl SampleObservations {
     ///
     /// # Errors
     ///
-    /// [`StatisticsError::Read`] with [`SampleReadError::IndexOutOfRange`]
+    /// [`StatisticsError::Read`] with [`StructureSetReadError::IndexOutOfRange`]
     /// for an index past the last sample.
     pub fn of(
-        reader: &(impl SampleRead + ?Sized),
+        reader: &(impl StructureSetRead + ?Sized),
         samples: impl IntoIterator<Item = usize>,
     ) -> Result<Self, StatisticsError> {
         let len = reader.len();
         let samples = samples.into_iter().collect::<Vec<_>>();
         if let Some(&index) = samples.iter().find(|index| **index >= len) {
-            return Err(StatisticsError::Read(SampleReadError::IndexOutOfRange {
-                index,
-                len,
-            }));
+            return Err(StatisticsError::Read(
+                StructureSetReadError::IndexOutOfRange { index, len },
+            ));
         }
         Ok(match reader.distribution() {
             Some(distribution) => {
@@ -386,11 +386,11 @@ impl SampleObservations {
 /// behind every reduction over a reader. A sample the reader lends is not
 /// read.
 fn observe_samples_of(
-    reader: &dyn SampleRead,
+    reader: &dyn StructureSetRead,
     observations: &SampleObservations,
     positions: Range<usize>,
     cancellation: Option<&Cancellation>,
-    mut observe: impl FnMut(usize, ModelView<'_>, f64) -> Result<(), StatisticsError>,
+    mut observe: impl FnMut(usize, StructureView<'_>, f64) -> Result<(), StatisticsError>,
 ) -> Result<(), StatisticsError> {
     let (Some(samples), Some(weights)) = (
         observations.samples.get(positions.clone()),
@@ -403,7 +403,7 @@ fn observe_samples_of(
     };
     for (&index, &weight) in samples.iter().zip(weights) {
         Cancellation::poll(cancellation).map_err(StatisticsError::Cancelled)?;
-        visit_sample(reader, index, StatisticsError::Read, |structure| {
+        visit_geometry(reader, index, StatisticsError::Read, |structure| {
             observe(index, structure, weight)
         })?;
     }
@@ -427,7 +427,7 @@ macro_rules! observe_samples {
         #[doc = concat!("[`", $name, "::observe`].")]
         pub fn observe_samples(
             &mut self,
-            reader: &dyn SampleRead,
+            reader: &dyn StructureSetRead,
             observations: &SampleObservations,
             positions: Range<usize>,
         ) -> Result<(), StatisticsError> {
@@ -443,7 +443,7 @@ macro_rules! observe_samples {
         /// errors of [`Self::observe_samples`]. Either way nothing changes.
         pub fn observe_samples_cancellable(
             &mut self,
-            reader: &dyn SampleRead,
+            reader: &dyn StructureSetRead,
             observations: &SampleObservations,
             positions: Range<usize>,
             cancellation: &Cancellation,
@@ -453,7 +453,7 @@ macro_rules! observe_samples {
 
         fn observe_samples_polling(
             &mut self,
-            reader: &dyn SampleRead,
+            reader: &dyn StructureSetRead,
             observations: &SampleObservations,
             positions: Range<usize>,
             cancellation: Option<&Cancellation>,
@@ -651,9 +651,9 @@ fn combine_into(
 /// use std::sync::Mutex;
 /// use kekule::parallel::{Executor, ScopedThreads};
 /// use kekule::statistics::{RmsfAccumulator, RmsfResult};
-/// use kekule::structure::SampleSet;
+/// use kekule::structure::StructureSet;
 /// use kekule::topology::AtomSelection;
-/// # fn reduce(trajectory: &SampleSet, atoms: &AtomSelection)
+/// # fn reduce(trajectory: &StructureSet, atoms: &AtomSelection)
 /// # -> Result<RmsfResult, Box<dyn std::error::Error>> {
 /// // Four ranges of frames, whatever the thread count.
 /// let (frames, ranges) = (trajectory.len(), 4);
@@ -682,9 +682,9 @@ fn combine_into(
 ///
 /// ```
 /// use kekule::statistics::{RmsfAccumulator, RmsfResult};
-/// use kekule::structure::SampleSet;
+/// use kekule::structure::StructureSet;
 /// use kekule::topology::AtomSelection;
-/// # fn reduce(trajectory: &SampleSet, atoms: &AtomSelection, weights: &[f64])
+/// # fn reduce(trajectory: &StructureSet, atoms: &AtomSelection, weights: &[f64])
 /// # -> Result<RmsfResult, Box<dyn std::error::Error>> {
 /// let mut rmsf = RmsfAccumulator::new(atoms)?;
 /// for (index, (frame, weight)) in trajectory.iter().zip(weights).enumerate() {
@@ -701,7 +701,7 @@ fn combine_into(
 /// ```
 ///
 /// A streamed [`crate::traj::FrameBuffer`] is observed through
-/// `buffer.as_model_view()`.
+/// `buffer.as_structure_view()`.
 #[derive(Debug, Clone)]
 pub struct RmsfAccumulator {
     selection: AtomSelection,
@@ -754,10 +754,10 @@ impl RmsfAccumulator {
     pub fn observe(
         &mut self,
         index: usize,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         weight: f64,
     ) -> Result<(), StatisticsError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         self.selection
             .ensure_compatible(&structure.shared_topology())
@@ -1041,10 +1041,10 @@ impl ContactOccupancyAccumulator {
     pub fn observe(
         &mut self,
         index: usize,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         weight: f64,
     ) -> Result<(), StatisticsError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         if !self.topology.shares_layout(structure.topology()) {
             return Err(StatisticsError::TopologyMismatch { index });
@@ -1250,9 +1250,9 @@ const DIRECT_PAIRS: usize = 256;
 /// parallel, as shown for [`RmsfAccumulator`].
 ///
 /// ```
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::statistics::GroupContactOccupancyAccumulator;
-/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::structure::{Positions, Geometry, StructureSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, NANOMETER};
 ///
@@ -1264,11 +1264,11 @@ const DIRECT_PAIRS: usize = 256;
 /// // Atoms 0 and 1 against atoms 2 and 3. In the first frame atom 1 touches
 /// // atom 2; in the second atom 0 touches atom 3; in the third none touches.
 /// let frames = [[0.0, 1.0, 1.1, 3.0], [0.0, 1.0, 2.0, 0.1], [0.0, 1.0, 2.0, 3.0]];
-/// let trajectory = SampleSet::from_samples(
+/// let trajectory = StructureSet::from_geometries(
 ///     topology.clone(),
 ///     frames.iter().map(|xs| {
 ///         let points = xs.map(|x| Point3::new(x, 0.0, 0.0));
-///         Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
+///         Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
 ///     }),
 /// )?;
 /// let cutoff = Quantity::new(0.2, NANOMETER);
@@ -1485,10 +1485,10 @@ impl GroupContactOccupancyAccumulator {
     pub fn observe(
         &mut self,
         index: usize,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         weight: f64,
     ) -> Result<(), StatisticsError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         if !self.topology.shares_layout(structure.topology()) {
             return Err(StatisticsError::TopologyMismatch { index });
@@ -1699,9 +1699,9 @@ fn probabilities(scaled: Vec<f64>) -> Vec<f64> {
     scaled.into_iter().map(|weight| weight / total).collect()
 }
 
-impl<S: SampleStorage> SampleSet<S>
+impl<S: GeometryStorage> StructureSet<S>
 where
-    Self: SampleRead,
+    Self: StructureSetRead,
 {
     /// Per-atom weighted RMSF about each atom's weighted mean stored position,
     /// as defined by [`RmsfAccumulator`], over the samples statistics see

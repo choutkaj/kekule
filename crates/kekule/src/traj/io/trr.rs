@@ -18,7 +18,7 @@
 //! use std::io::Cursor;
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::{Point3, Vector3};
+//! use kekule::math::{Point3, Vector3};
 //! use kekule::units::{Quantity, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::trr::{
@@ -30,7 +30,7 @@
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! let points = vec![Point3::new(0.25, 0.5, 0.0)];
-//! frame.sample_mut().set_positions(Quantity::new(points, NANOMETER))?;
+//! frame.geometry_mut().set_positions(Quantity::new(points, NANOMETER))?;
 //! let velocity = Vector3::new(1.0, 0.0, 0.0);
 //! frame.set_velocities(Some(Quantity::new([velocity], NANOMETER_PER_PICOSECOND)))?;
 //! frame.set_step(Some(500));
@@ -64,9 +64,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
-use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
-use crate::structure::DecodedSample;
+use crate::math::{PeriodicCell, Point3, Vector3};
+use crate::properties::{GeometryProperties, OwnerProperties, PropertyKey, PropertyValue};
+use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -276,7 +276,7 @@ impl TrrWriteOptions {
     /// cannot carry: by default a frame with any of them fails to write;
     /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
     /// reports a
-    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState)
+    /// [`WriteOmission::GeometryState`](crate::diagnostics::WriteOmission::GeometryState)
     /// for each kind left out (see [`TrrWriter::report`]). The lambda
     /// policy's own requirements are never omitted.
     pub const fn frame_properties(&self) -> UnrepresentablePolicy {
@@ -995,7 +995,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
-    ) -> Result<DecodedSample, TrajectoryIoError> {
+    ) -> Result<DecodedGeometry, TrajectoryIoError> {
         let read = self.read_indexed(index);
         // Taken whether the read succeeds or fails, and whether the frame
         // holds velocities and forces or not, so that the reader keeps no
@@ -1004,7 +1004,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         let velocities = std::mem::take(&mut self.inner.velocities);
         let forces = std::mem::take(&mut self.inner.forces);
         let decoded = read?;
-        Ok(DecodedSample {
+        Ok(DecodedGeometry {
             positions: Quantity::new(positions, NANOMETER),
             cell: decoded.cell,
             velocities: decoded
@@ -2333,7 +2333,7 @@ fn has_unwritten_owner_properties(owner: &OwnerProperties, policy: TrrLambdaPoli
 /// [`has_unwritten_owner_properties`] names are ignored, and atom and bond
 /// properties are left to the caller.
 fn writer_lambda(
-    properties: &StructureProperties,
+    properties: &GeometryProperties,
     policy: TrrLambdaPolicy,
     frame_properties: UnrepresentablePolicy,
     source_label: &str,

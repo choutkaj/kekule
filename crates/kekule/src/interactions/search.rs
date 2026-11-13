@@ -3,10 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::geometry::{Point3, PointGrid, Vector3};
 use crate::io::is_metal;
+use crate::math::{Point3, PointGrid, Vector3};
 use crate::molecule::{AtomId, Element};
-use crate::structure::{AsModelView, ModelView};
+use crate::structure::{AsStructureView, StructureView};
 use crate::topology::{
     AtomSelection, InstanceAtomId, MoleculeInstanceId, ResidueId, Topology, TopologyAtomIndex,
 };
@@ -27,12 +27,12 @@ const DIRECT_PAIRS: usize = 256;
 #[derive(Debug, Clone, Copy)]
 pub struct InteractionSide<'a> {
     features: &'a InteractionFeatures,
-    structure: ModelView<'a>,
+    structure: StructureView<'a>,
     atoms: &'a AtomSelection,
 }
 
 impl<'a> InteractionSide<'a> {
-    /// A side of `structure`, a model, sample, or trajectory frame,
+    /// A side of `structure`, a structure, a geometry of a set, or a trajectory frame,
     /// whose `atoms` take part, with `features` of its topology.
     ///
     /// # Errors
@@ -41,10 +41,10 @@ impl<'a> InteractionSide<'a> {
     /// does not share the features' topology layout.
     pub fn new(
         features: &'a InteractionFeatures,
-        structure: &'a (impl AsModelView + ?Sized),
+        structure: &'a (impl AsStructureView + ?Sized),
         atoms: &'a AtomSelection,
     ) -> Result<Self, InteractionError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         if !structure.topology().shares_layout(features.topology())
             || !atoms.topology().shares_layout(features.topology())
         {
@@ -63,7 +63,7 @@ impl<'a> InteractionSide<'a> {
     }
 
     /// The side's structure.
-    pub const fn structure(&self) -> ModelView<'a> {
+    pub const fn structure(&self) -> StructureView<'a> {
         self.structure
     }
 
@@ -108,7 +108,7 @@ impl<'a> InteractionSide<'a> {
 /// [`InteractionError::InvalidCriterion`] for an invalid criterion.
 pub fn find_interactions_within(
     features: &InteractionFeatures,
-    structure: &(impl AsModelView + ?Sized),
+    structure: &(impl AsStructureView + ?Sized),
     first: &AtomSelection,
     second: &AtomSelection,
     criteria: &InteractionCriteria,

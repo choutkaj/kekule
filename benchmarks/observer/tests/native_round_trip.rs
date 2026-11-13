@@ -2,7 +2,7 @@
 //! interprets round-trips through the native format exactly.
 //!
 //! Small molecules (Molfile, SDF, SMILES) and macromolecular entries (mmCIF,
-//! as models and, for several coordinate models, sample sets)
+//! as structures and, for several coordinate models, structure sets)
 //! are checked for molecular and layout equality, properties,
 //! classifications, perception, and bitwise-identical coordinates. Inputs
 //! Kekule does not interpret are the benchmark's business, not this test's,
@@ -11,10 +11,10 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::Molecule;
 use kekule::native::{self, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions};
-use kekule::structure::{Model, SampleSet};
+use kekule::structure::{Structure, StructureSet};
 use kekule::topology::Topology;
 use kekule::{mmcif, molfile, sdf, smiles};
 
@@ -52,8 +52,8 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         NativeObject::Topology(value) => native::write(value, NativeWriteOptions::default()),
-        NativeObject::Model(value) => native::write(value, NativeWriteOptions::default()),
-        NativeObject::SampleSet(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::Structure(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::StructureSet(value) => native::write(value, NativeWriteOptions::default()),
         other => panic!("unexpected {:?}", other.kind()),
     }
     .expect("re-encodes");
@@ -95,7 +95,7 @@ fn coordinate_bits(points: &[Point3]) -> Vec<[u64; 3]> {
         .collect()
 }
 
-fn assert_same_model(decoded: &Model, source: &Model) {
+fn assert_same_structure(decoded: &Structure, source: &Structure) {
     assert_same_topology(decoded.topology(), source.topology());
     assert_eq!(
         coordinate_bits(decoded.positions().values().value()),
@@ -107,7 +107,7 @@ fn assert_same_model(decoded: &Model, source: &Model) {
     assert_eq!(decoded.properties(), source.properties());
 }
 
-fn assert_same_sample_set(decoded: &SampleSet, source: &SampleSet) {
+fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
     assert_same_topology(decoded.topology(), source.topology());
     assert_eq!(decoded.len(), source.len());
     assert_eq!(decoded.order(), source.order());
@@ -121,14 +121,18 @@ fn assert_same_sample_set(decoded: &SampleSet, source: &SampleSet) {
     }
 }
 
-/// Checks a model with and without perception, so stored perception is
+/// Checks a structure with and without perception, so stored perception is
 /// exercised wherever Kekule can perceive the input.
-fn check_model(mut model: Model) {
-    let decoded = round_trip(&model).into_model().expect("a model");
-    assert_same_model(&decoded, &model);
-    if model.perceive().is_ok() {
-        let decoded = round_trip(&model).into_model().expect("a model");
-        assert_same_model(&decoded, &model);
+fn check_structure(mut structure: Structure) {
+    let decoded = round_trip(&structure)
+        .into_structure()
+        .expect("a structure");
+    assert_same_structure(&decoded, &structure);
+    if structure.perceive().is_ok() {
+        let decoded = round_trip(&structure)
+            .into_structure()
+            .expect("a structure");
+        assert_same_structure(&decoded, &structure);
     }
 }
 
@@ -158,14 +162,14 @@ $$$$
                 if let Ok(document) = sdf::parse_str(&record_text, Default::default()) {
                     for record in document.records() {
                         if let Ok(interpretation) = record.interpret(Default::default()) {
-                            check_model(interpretation.model().clone());
+                            check_structure(interpretation.structure().clone());
                             checked += 1;
                         }
                     }
                 } else if let Ok(interpretation) = molfile::parse_str(&text, Default::default())
                     .and_then(|document| document.interpret(Default::default()))
                 {
-                    check_model(interpretation.into_model());
+                    check_structure(interpretation.into_structure());
                     checked += 1;
                 }
             }
@@ -207,14 +211,16 @@ fn curated_biomolecules_round_trip_exactly() {
             continue;
         };
         if let Ok(interpretation) = document.interpret(Default::default()) {
-            check_model(interpretation.into_model());
+            check_structure(interpretation.into_structure());
             checked += 1;
         }
-        if let Ok(interpretation) = document.interpret_sample_set(Default::default()) {
-            let set = interpretation.into_sample_set();
+        if let Ok(interpretation) = document.interpret_structure_set(Default::default()) {
+            let set = interpretation.into_structure_set();
             if set.len() > 1 {
-                let decoded = round_trip(&set).into_sample_set().expect("a sample set");
-                assert_same_sample_set(&decoded, &set);
+                let decoded = round_trip(&set)
+                    .into_structure_set()
+                    .expect("a structure set");
+                assert_same_structure_set(&decoded, &set);
             }
         }
     }

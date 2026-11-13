@@ -1,9 +1,9 @@
-//! Informational cost of clustering a set of samples in memory: the pairwise
+//! Informational cost of clustering a set of geometries in memory: the pairwise
 //! fitted RMSD matrix, hierarchical clustering on it, and leader clustering.
-//! Run: cargo bench -p kekule --bench clustering_fits -- SYSTEM.cif [SAMPLES] [THREADS]
-//! The samples are an external mmCIF model's coordinates, each turned,
+//! Run: cargo bench -p kekule --bench clustering_fits -- SYSTEM.cif [GEOMETRIES] [THREADS]
+//! The geometries are an external mmCIF structure's coordinates, each turned,
 //! moved, and perturbed by a fixed pseudo-random amount, and fitted on the
-//! model's alpha carbons; this measures fitting cost, not sampling.
+//! structure's alpha carbons; this measures fitting cost, not sampling.
 //! The checksum line changes when any result bit changes.
 
 use std::error::Error;
@@ -12,15 +12,15 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 use kekule::clustering::{ClusteringOptions, ClusteringRun, Cut, Linkage};
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::parallel::ScopedThreads;
-use kekule::structure::{Positions, Sample, SampleSet};
+use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
 
-/// Samples when none are requested.
-const SAMPLES: usize = 400;
+/// Geometries when none are requested.
+const GEOMETRIES: usize = 400;
 /// Runs of each step; the fastest is reported.
 const RUNS: usize = 3;
 
@@ -29,28 +29,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args()
         .skip(1)
         .filter(|argument| !argument.starts_with("--"));
-    let model_path = arguments.next().ok_or("supply an external mmCIF model")?;
-    let samples = arguments
+    let cif_path = arguments.next().ok_or("supply an external mmCIF model")?;
+    let geometries = arguments
         .next()
-        .map_or(Ok(SAMPLES), |count| count.parse())?;
+        .map_or(Ok(GEOMETRIES), |count| count.parse())?;
     let threads: NonZeroUsize = match arguments.next() {
         Some(threads) => threads.parse()?,
         None => std::thread::available_parallelism()?,
     };
-    let model = mmcif::parse_str(&std::fs::read_to_string(model_path)?, Default::default())?
+    let structure = mmcif::parse_str(&std::fs::read_to_string(cif_path)?, Default::default())?
         .interpret(Default::default())?
-        .into_model();
-    let topology = model.shared_topology();
+        .into_structure();
+    let topology = structure.shared_topology();
     let atoms = AtomSelection::for_label_atom_names(topology.clone(), ["CA"])?;
-    let points = model
+    let points = structure
         .positions()
         .clone()
         .into_values()
         .into_unit(ANGSTROM)?
         .into_value();
-    let mut set = SampleSet::new(topology.clone());
+    let mut set = StructureSet::new(topology.clone());
     let mut random = Random(0x2545_f491_4f6c_dd1d);
-    for index in 0..samples {
+    for index in 0..geometries {
         // Four families of conformations, each bending a quarter of the
         // atoms, so that clusters form at 1 Å.
         let family = index % 4;
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         set.push(
-            Sample::new(Positions::new(Quantity::new(moved, ANGSTROM))?),
+            Geometry::new(Positions::new(Quantity::new(moved, ANGSTROM))?),
             None,
         )?;
     }
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!(
-        "{{\"samples\":{samples},\"fitted_atoms\":{},\"threads\":{threads},\"matrix_ms\":{matrix_ms:.1},\"hierarchical_ms\":{hierarchical_ms:.1},\"hierarchical_states\":{hierarchical_states},\"leader_ms\":{leader_ms:.1},\"leader_states\":{leader_states},\"checksum\":\"{:016x}\"}}",
+        "{{\"samples\":{geometries},\"fitted_atoms\":{},\"threads\":{threads},\"matrix_ms\":{matrix_ms:.1},\"hierarchical_ms\":{hierarchical_ms:.1},\"hierarchical_states\":{hierarchical_states},\"leader_ms\":{leader_ms:.1},\"leader_states\":{leader_states},\"checksum\":\"{:016x}\"}}",
         atoms.len(),
         checksum.finish()
     );

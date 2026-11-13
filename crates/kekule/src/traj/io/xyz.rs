@@ -3,11 +3,11 @@
 //! [`XyzReader`] and [`IndexedXyzReader`] read constant-count
 //! element/x/y/z frames whose atom lines follow the topology's dense order and
 //! elements; [`XyzWriter`] writes them deterministically, from trajectory
-//! frames or one frame per sample of a sample set
-//! ([`XyzWriter::write_sample_set`]). XYZ stores positions only: the writer
+//! frames or one frame per geometry of a structure set
+//! ([`XyzWriter::write_structure_set`]). XYZ stores positions only: the writer
 //! rejects a frame's velocities, forces, time, step, occupancies, B-factors
 //! and properties, its
-//! cell, and sample set state unless its options omit them, and reports
+//! cell, and structure set state unless its options omit them, and reports
 //! everything it leaves out, such as bonds, charges and omitted cells, in
 //! [`XyzWriter::report`]. To
 //! obtain a topology from an XYZ file itself, interpret one of its frames
@@ -22,7 +22,7 @@
 //! use std::io::Cursor;
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::io::xyz::{XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter};
@@ -31,7 +31,7 @@
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
-//! frame.sample_mut().set_positions(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
+//! frame.geometry_mut().set_positions(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
 //!
 //! let options = XyzWriteOptions::default().with_decimal_places(3).with_comment("helium");
 //! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
@@ -51,15 +51,15 @@
 use crate::diagnostics::{
     LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
-use crate::io::write_error::{record_multi_model_sample_set, Omissions};
+use crate::io::write_error::{record_multi_model_structure_set, Omissions};
 use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::Element;
-use crate::structure::{DecodedSample, ModelView, Positions, SampleSet};
+use crate::structure::{DecodedGeometry, Positions, StructureSet, StructureView};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -67,7 +67,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
-use super::frame_state::{record, sample_field, site_fields, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, trajectory_field, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
@@ -139,7 +139,7 @@ impl XyzReadOptions {
 
 /// Deterministic strict XYZ writer options.
 ///
-/// The default fails on every cell, frame state, and sample set state XYZ
+/// The default fails on every cell, frame state, and structure set state XYZ
 /// cannot carry.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzWriteOptions {
@@ -149,7 +149,7 @@ pub struct XyzWriteOptions {
     cell: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     frame_properties: UnrepresentablePolicy,
-    sample_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
 }
 
 impl Default for XyzWriteOptions {
@@ -161,7 +161,7 @@ impl Default for XyzWriteOptions {
             cell: UnrepresentablePolicy::Fail,
             frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
-            sample_metadata: UnrepresentablePolicy::Fail,
+            geometry_metadata: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -209,10 +209,13 @@ impl XyzWriteOptions {
         self
     }
 
-    /// Sets [`Self::sample_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
-        self.sample_metadata = sample_metadata;
+    pub const fn with_geometry_metadata(
+        mut self,
+        geometry_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
@@ -232,7 +235,7 @@ impl XyzWriteOptions {
         &self.comment
     }
 
-    /// The periodic cell of a frame or sample, which XYZ cannot carry: by default a structure with a cell fails to write;
+    /// The periodic cell of a frame or geometry, which XYZ cannot carry: by default a structure with a cell fails to write;
     /// [`UnrepresentablePolicy::Omit`] writes its positions and reports
     /// [`WriteOmission::Cell`].
     pub const fn cell(&self) -> UnrepresentablePolicy {
@@ -242,34 +245,34 @@ impl XyzWriteOptions {
     /// A trajectory frame's velocities, forces, time, step, occupancies, and
     /// B-factors, which XYZ cannot carry: by default a frame with any of them
     /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
-    /// and reports a [`WriteOmission::StructureState`],
+    /// and reports a [`WriteOmission::GeometryState`],
     /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
-    /// each kind left out. [`XyzWriter::write_sample_set`] leaves a sample's
+    /// each kind left out. [`XyzWriter::write_structure_set`] leaves a geometry's
     /// occupancies and B-factors out under every policy.
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
         self.frame_metadata
     }
 
-    /// A frame's or sample's atom, bond, and own properties, which XYZ cannot
-    /// carry: by default a frame or sample with any of them fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
-    /// and reports a [`WriteOmission::StructureState`] for each kind left
+    /// A frame's or geometry's atom, bond, and own properties, which XYZ cannot
+    /// carry: by default a frame or geometry with any of them fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
+    /// and reports a [`WriteOmission::GeometryState`] for each kind left
     /// out.
     pub const fn frame_properties(&self) -> UnrepresentablePolicy {
         self.frame_properties
     }
 
-    /// The state of a sample set's samples beyond their positions, cells,
+    /// The state of a structure set's geometries beyond their positions, cells,
     /// and properties, under the rules of `kekule`'s PDB and mmCIF writers:
-    /// an XYZ file reads back as samples without an order or distribution,
-    /// so by default [`XyzWriter::write_sample_set`] fails for a set with a
-    /// sample outside its distribution, unequal weights, more than one
+    /// an XYZ file reads back as geometries without an order or distribution,
+    /// so by default [`XyzWriter::write_structure_set`] fails for a set with a
+    /// geometry outside its distribution, unequal weights, more than one
     /// state, a state energy, a representative that is not its state's
     /// first member, a temperature, or an order, a time order without times
-    /// or steps among them, or a sample with velocities or forces;
+    /// or steps among them, or a geometry with velocities or forces;
     /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
-    /// [`WriteOmission::StructureState`] left out.
-    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
-        self.sample_metadata
+    /// [`WriteOmission::GeometryState`] left out.
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 }
 
@@ -892,13 +895,13 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
-    ) -> Result<DecodedSample, TrajectoryIoError> {
+    ) -> Result<DecodedGeometry, TrajectoryIoError> {
         let read = self.read_indexed(index);
         // Taken whether the read succeeds or fails, so that the reader keeps
         // no array for a read on another thread.
         let positions = std::mem::take(&mut self.reader.positions);
         read?;
-        Ok(DecodedSample {
+        Ok(DecodedGeometry {
             positions: Quantity::new(positions, self.reader.options.length_unit),
             cell: None,
             velocities: None,
@@ -1308,12 +1311,12 @@ impl<W: Write> XyzWriter<W> {
     /// such as the synthetic `UNL` residues `kekule::xyz` gives an
     /// interpreted file, are not counted.
     ///
-    /// Each frame or sample set written then adds what it left out, counted
+    /// Each frame or structure set written then adds what it left out, counted
     /// over every frame written: cells omitted under
     /// [`XyzWriteOptions::cell`], frame state omitted under
     /// [`XyzWriteOptions::frame_metadata`] and
-    /// [`XyzWriteOptions::frame_properties`], sample state omitted under
-    /// [`XyzWriteOptions::sample_metadata`], and samples' occupancies and
+    /// [`XyzWriteOptions::frame_properties`], geometry state omitted under
+    /// [`XyzWriteOptions::geometry_metadata`], and geometries' occupancies and
     /// B factors. The writer writes the same text whatever it reports.
     pub fn report(&self) -> &WriteReport {
         &self.report
@@ -1479,12 +1482,12 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
 }
 
 impl<W: Write> XyzWriter<W> {
-    /// Writes one frame per sample of `set`, in sample order, with the
-    /// sample's positions.
+    /// Writes one frame per geometry of `set`, in geometry order, with the
+    /// geometry's positions.
     ///
     /// The whole set is checked before its first frame is written. The
-    /// samples' membership, places, velocities, and forces follow
-    /// [`XyzWriteOptions::sample_metadata`], their atom, bond, and own
+    /// geometries' membership, places, velocities, and forces follow
+    /// [`XyzWriteOptions::geometry_metadata`], their atom, bond, and own
     /// properties [`XyzWriteOptions::frame_properties`], and their cells
     /// [`XyzWriteOptions::cell`]; occupancies and B factors are always left
     /// out. [`Self::report`] gains everything left out.
@@ -1497,10 +1500,10 @@ impl<W: Write> XyzWriter<W> {
     /// coordinate that is not finite after conversion, or after an earlier
     /// write left a partial frame; [`TrajectoryIoErrorKind::UnsupportedField`]
     /// naming the [`TrajectoryField`] for set or state properties and for a
-    /// cell, sample property, or sample state the options do not omit, with
-    /// [`TrajectoryIoError::frame`] the frame of the first sample concerned;
+    /// cell, geometry property, or geometry state the options do not omit, with
+    /// [`TrajectoryIoError::frame`] the frame of the first geometry concerned;
     /// and [`TrajectoryIoErrorKind::Io`] when the stream fails.
-    pub fn write_sample_set(&mut self, set: &SampleSet) -> Result<(), TrajectoryIoError> {
+    pub fn write_structure_set(&mut self, set: &StructureSet) -> Result<(), TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::WriteFrame,
@@ -1518,11 +1521,11 @@ impl<W: Write> XyzWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Xyz),
                 &self.source_label,
-                "The sample set has no samples.",
+                "The structure set has no geometries.",
             ));
         }
-        // The frame a sample is written as, for errors.
-        let frame = |sample: usize| self.frame_count.saturating_add(sample);
+        // The frame a geometry is written as, for errors.
+        let frame = |geometry: usize| self.frame_count.saturating_add(geometry);
         if !set.properties().is_empty() {
             return Err(writer_field_error(
                 &self.source_label,
@@ -1542,8 +1545,8 @@ impl<W: Write> XyzWriter<W> {
         }
         let factor = self.output_factor()?;
         let mut omitted = Vec::new();
-        for (index, sample) in set.iter().enumerate() {
-            let view = sample.as_model_view();
+        for (index, geometry) in set.iter().enumerate() {
+            let view = geometry.as_structure_view();
             let properties = view.properties();
             if view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
                 return Err(writer_field_error(
@@ -1576,17 +1579,21 @@ impl<W: Write> XyzWriter<W> {
             omitted.extend(state);
         }
         let mut state = Omissions::default();
-        record_multi_model_sample_set(set, self.options.sample_metadata, &mut state).map_err(
-            |(sample, field)| {
-                writer_field_error(&self.source_label, frame(sample - 1), sample_field(field))
+        record_multi_model_structure_set(set, self.options.geometry_metadata, &mut state).map_err(
+            |(geometry, field)| {
+                writer_field_error(
+                    &self.source_label,
+                    frame(geometry - 1),
+                    trajectory_field(field),
+                )
             },
         )?;
-        for sample in set {
-            self.write_positions(sample.as_model_view().positions(), factor)?;
+        for geometry in set {
+            self.write_positions(geometry.as_structure_view().positions(), factor)?;
         }
-        let count = |present: fn(ModelView<'_>) -> bool| {
+        let count = |present: fn(StructureView<'_>) -> bool| {
             set.iter()
-                .filter(|sample| present(sample.as_model_view()))
+                .filter(|geometry| present(geometry.as_structure_view()))
                 .count()
         };
         omitted.extend([

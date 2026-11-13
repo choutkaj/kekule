@@ -1,20 +1,19 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::diagnostics::{
-    Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField,
+    counted, Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
-use crate::geometry::PeriodicCell;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
-    EntityKind, StructureInterpretation, StructureInterpretationReport,
-    StructureSampleSetInterpretation,
+    EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_sample_set, record_sample_set_properties,
+    check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::math::PeriodicCell;
 use crate::molecule::BondOrder;
-use crate::structure::{AsModelView, Model, ModelView, SampleSet, SampleView};
+use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -29,20 +28,20 @@ use entities::{
     entity_plan_from_report, generic_entity_plan, multi_model_entity_plan,
     normalize_entity_classifications,
 };
-use prepare::{prepare_model, validate_sample};
+use prepare::{prepare_model, validate_geometry};
 
 const MAX_COORDINATE_PRECISION: usize = 15;
 
 /// Options of the mmCIF writer.
 ///
 /// The default writes a block named `model` with coordinates to 3 decimal
-/// places and fails on sample state, properties, a periodic cell, or fixed
+/// places and fails on geometry state, properties, a periodic cell, or fixed
 /// implicit-hydrogen counts mmCIF cannot carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
     block_name: String,
     coordinate_precision: usize,
-    sample_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
@@ -96,34 +95,34 @@ impl MmcifWriteOptions {
         Ok(self)
     }
 
-    /// The state of samples that mmCIF cannot carry, whether of a sample set
+    /// The state of geometries that mmCIF cannot carry, whether of a structure set
     /// or a trajectory frame. An mmCIF reader gives one state of equally
-    /// weighted samples without an order, represented by the first sample,
-    /// so by default a set fails to write when a sample is outside its
+    /// weighted geometries without an order, represented by the first geometry,
+    /// so by default a set fails to write when a geometry is outside its
     /// distribution, weights are unequal, it has more than one state, a
     /// state energy, state properties, another representative, a
     /// temperature, or an order, a time order without times or steps
-    /// included, or a sample has velocities or forces; so does a model
-    /// block of one sample with a membership, a place (a frame's time and
+    /// included, or a geometry has velocities or forces; so does a structure
+    /// block of one geometry with a membership, a place (a frame's time and
     /// MD step among them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
     /// the models without them and reports a
-    /// [`WriteOmission::StructureState`] for each field.
-    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
-        self.sample_metadata
+    /// [`WriteOmission::GeometryState`] for each field.
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// Sets [`Self::sample_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
-        self.sample_metadata = sample_metadata;
+    pub fn with_geometry_metadata(mut self, geometry_metadata: UnrepresentablePolicy) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a sample set or of a sample's set, which mmCIF cannot
+    /// properties of a structure set or of a geometry's set, which mmCIF cannot
     /// carry: by default a structure or set with any fails to write, and
     /// under [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::StructureState`]).
+    /// ([`WriteOmission::GeometryState`]).
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -135,14 +134,14 @@ impl MmcifWriteOptions {
         self
     }
 
-    /// The policies for the state of a model block.
+    /// The policies for the state of a structure block.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.sample_metadata, self.properties)
+        StatePolicies::with_sites(self.geometry_metadata, self.properties)
     }
 
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
     /// axes, not in the standard crystallographic orientation, or differing
-    /// between samples. By default such a cell fails to write;
+    /// between geometries. By default such a cell fails to write;
     /// representable cells are always written as `_cell` in space group P 1.
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
@@ -178,7 +177,7 @@ impl Default for MmcifWriteOptions {
         Self {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
-            sample_metadata: UnrepresentablePolicy::Fail,
+            geometry_metadata: UnrepresentablePolicy::Fail,
             properties: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
@@ -251,7 +250,7 @@ pub enum MmcifWriteIssue {
         /// The conflicting classifications.
         classifications: Vec<EntityKind>,
     },
-    /// Entity semantics name a molecule instance the model does not have.
+    /// Entity semantics name a molecule instance the structure does not have.
     UnknownClassifiedMolecule(MoleculeInstanceId),
     /// A hierarchy atom has no biomolecular atom site.
     MissingAtomSite(InstanceAtomId),
@@ -271,8 +270,8 @@ pub enum MmcifWriteIssue {
     MissingAtomProvenance(InstanceAtomId),
     /// Interpretation reports carry atom-level provenance for this atom twice.
     DuplicateAtomProvenance(InstanceAtomId),
-    /// Interpretation reports carry provenance for an atom the model does not
-    /// have.
+    /// Interpretation reports carry provenance for an atom the structure does
+    /// not have.
     UnknownAtomProvenance(InstanceAtomId),
     /// An atom has state the writer does not represent.
     UnsupportedAtomField {
@@ -308,20 +307,20 @@ pub enum MmcifWriteIssue {
         item: String,
     },
     /// The number of interpretation reports does not match the number of
-    /// models.
+    /// structures written.
     ReportCountMismatch {
-        /// The number of models.
+        /// The number of structures.
         expected: usize,
         /// The number of reports.
         actual: usize,
     },
-    /// The 1-based sample `sample` differs from the first sample in state
+    /// The 1-based geometry `geometry` differs from the first geometry in state
     /// one mmCIF block shares between models.
-    IncompatibleSample {
-        /// The 1-based sample number.
-        sample: usize,
+    IncompatibleGeometry {
+        /// The 1-based geometry number.
+        geometry: usize,
         /// The differing state.
-        field: MmcifSampleField,
+        field: MmcifGeometryField,
     },
     /// A periodic cell mmCIF cannot represent, with
     /// [`UnrepresentablePolicy::Fail`].
@@ -329,16 +328,16 @@ pub enum MmcifWriteIssue {
         /// Why the cell cannot be written.
         reason: MmcifCellReason,
     },
-    /// The sample set has no samples.
-    EmptySampleSet,
-    /// The 1-based sample `sample` of a sample set has state mmCIF cannot
-    /// represent, with [`MmcifWriteOptions::sample_metadata`] set to fail. A
-    /// temperature is reported for the first sample.
-    UnrepresentableSample {
-        /// The 1-based sample number.
-        sample: usize,
-        /// The state; see [`MmcifWriteOptions::sample_metadata`].
-        field: StructureField,
+    /// The structure set has no geometries.
+    EmptyStructureSet,
+    /// The 1-based geometry `geometry` of a structure set has state mmCIF cannot
+    /// represent, with [`MmcifWriteOptions::geometry_metadata`] set to fail. A
+    /// temperature is reported for the first geometry.
+    UnrepresentableGeometry {
+        /// The 1-based geometry number.
+        geometry: usize,
+        /// The state; see [`MmcifWriteOptions::geometry_metadata`].
+        field: GeometryField,
     },
 }
 
@@ -387,10 +386,10 @@ impl fmt::Display for MmcifAtomField {
     }
 }
 
-/// Sample state named by [`MmcifWriteIssue::IncompatibleSample`].
+/// Geometry state named by [`MmcifWriteIssue::IncompatibleGeometry`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MmcifSampleField {
+pub enum MmcifGeometryField {
     /// The `_entity` representation.
     Entities,
     /// The `_struct_asym` representation.
@@ -401,7 +400,7 @@ pub enum MmcifSampleField {
     AtomSites,
 }
 
-impl fmt::Display for MmcifSampleField {
+impl fmt::Display for MmcifGeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Entities => "entity representation",
@@ -416,8 +415,8 @@ impl fmt::Display for MmcifSampleField {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MmcifCellReason {
-    /// The samples have different cells; one block has one `_cell`.
-    SampleCellsDiffer,
+    /// The geometries have different cells; one block has one `_cell`.
+    GeometryCellsDiffer,
     /// The cell is not periodic along all three axes.
     PartiallyPeriodic,
     /// The cell does not have `a` along x and `b` in the xy plane, as mmCIF
@@ -430,7 +429,7 @@ pub enum MmcifCellReason {
 impl fmt::Display for MmcifCellReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::SampleCellsDiffer => "The samples have different cells.",
+            Self::GeometryCellsDiffer => "The geometries have different cells.",
             Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
                 "Cell vector a is not along x, or b is not in the xy plane."
@@ -457,7 +456,7 @@ impl MmcifWriteIssue {
             | Self::UnsupportedBondOrder { .. }
             | Self::AmbiguousConnectionSelector(_)
             | Self::UnsupportedTextValue { .. }
-            | Self::UnrepresentableSample { .. }
+            | Self::UnrepresentableGeometry { .. }
             | Self::UnrepresentableCell { .. } => DiagnosticKind::Unsupported,
             Self::MissingEntityClassification(_)
             | Self::DuplicateEntityClassification(_)
@@ -471,9 +470,9 @@ impl MmcifWriteIssue {
             | Self::DuplicateAtomIdentity(_)
             | Self::MissingAtomProvenance(_)
             | Self::DuplicateAtomProvenance(_)
-            | Self::EmptySampleSet
+            | Self::EmptyStructureSet
             | Self::ReportCountMismatch { .. }
-            | Self::IncompatibleSample { .. } => DiagnosticKind::Inconsistent,
+            | Self::IncompatibleGeometry { .. } => DiagnosticKind::Inconsistent,
         }
     }
 }
@@ -552,7 +551,7 @@ impl fmt::Display for MmcifWriteIssue {
             ),
             Self::UnknownClassifiedMolecule(molecule) => write!(
                 f,
-                "The entity classifications name {molecule}. The model has no such instance."
+                "The entity classifications name {molecule}. The structure has no such instance."
             ),
             Self::MissingAtomSite(atom) => {
                 write!(f, "{} has no atom site.", Capitalized(atom))
@@ -579,7 +578,7 @@ impl fmt::Display for MmcifWriteIssue {
             ),
             Self::UnknownAtomProvenance(atom) => write!(
                 f,
-                "The interpretation reports have a source record of {atom}. The model has no such atom."
+                "The interpretation reports have a source record of {atom}. The structure has no such atom."
             ),
             Self::UnsupportedAtomField { atom, field } => write!(
                 f,
@@ -610,16 +609,18 @@ impl fmt::Display for MmcifWriteIssue {
             }
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
-                "There are {actual} interpretation reports for {expected} models."
+                "The block has {} and {}.",
+                counted(*expected, "structure", "structures"),
+                counted(*actual, "interpretation report", "interpretation reports")
             ),
-            Self::IncompatibleSample { sample, field } => write!(
+            Self::IncompatibleGeometry { geometry, field } => write!(
                 f,
-                "Sample {sample} has a different {field} from the first sample."
+                "Geometry {geometry} has a different {field} from the first geometry."
             ),
             Self::UnrepresentableCell { reason } => reason.fmt(f),
-            Self::EmptySampleSet => f.write_str("The sample set has no samples."),
-            Self::UnrepresentableSample { sample, field } => {
-                f.write_str(&unrepresentable_state("mmCIF", *field, Some(*sample)))
+            Self::EmptyStructureSet => f.write_str("The structure set has no geometries."),
+            Self::UnrepresentableGeometry { geometry, field } => {
+                f.write_str(&unrepresentable_state("mmCIF", *field, Some(*geometry)))
             }
         }
     }
@@ -705,8 +706,8 @@ pub(super) fn fail(issue: MmcifWriteIssue) -> FormatError {
         .with_detail(FormatErrorDetail::MmcifWrite(issue))
 }
 
-/// The source model is internally inconsistent or incomplete.
-pub(super) fn invalid_model(message: impl Into<String>) -> FormatError {
+/// The source structure is internally inconsistent or incomplete.
+pub(super) fn invalid_structure(message: impl Into<String>) -> FormatError {
     FormatError::write(Format::Mmcif, DiagnosticKind::Inconsistent, message)
 }
 
@@ -775,22 +776,22 @@ impl MmcifEntityClassifications {
     }
 }
 
-/// One mmCIF data block to write: a model or a sample set, plus the entity
-/// semantics used for its `_entity` and asymmetry assignments.
+/// One mmCIF data block to write: a structure or a structure set, plus the
+/// entity semantics used for its `_entity` and asymmetry assignments.
 ///
-/// Convert from `&Model`, `&SampleSet`, [`SampleView`],
-/// `&StructureInterpretation`, or `&StructureSampleSetInterpretation`;
-/// interpretations keep their source reports. [`Self::model`] accepts any
-/// borrowed model view, such as a sample or a trajectory frame; a sample's
-/// membership, place, velocities, and forces fail to write unless the
-/// write options omit them.
+/// Convert from `&Structure`, `&StructureSet`, [`GeometryView`],
+/// `&StructureInterpretation`, or `&StructureSetInterpretation`;
+/// interpretations keep their source reports. [`Self::structure`] accepts any
+/// borrowed structure view, such as a geometry or a trajectory frame; a
+/// geometry's membership, place, velocities, and forces fail to write unless
+/// the write options omit them.
 ///
 /// A block is named by [`MmcifWriteOptions::block_name`] unless
 /// [`Self::with_block_name`] names it.
 ///
 /// Every hierarchy chain is a structural instance of its own, even when
 /// chains share a label, as the copies
-/// [`ModelEditor::append_model`](crate::structure::ModelEditor::append_model)
+/// [`StructureEditor::append_structure`](crate::structure::StructureEditor::append_structure)
 /// appends do. The first chain with a label keeps it as `label_asym_id`; each
 /// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
 /// on, skipping IDs another chain or asym uses, while `auth_asym_id` keeps
@@ -807,8 +808,8 @@ pub struct MmcifBlockSource<'a> {
 
 #[derive(Debug, Clone, Copy)]
 enum BlockContent<'a> {
-    Model(ModelView<'a>),
-    SampleSet(&'a SampleSet),
+    Structure(StructureView<'a>),
+    StructureSet(&'a StructureSet),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -819,22 +820,22 @@ enum EntitySemantics<'a> {
 }
 
 impl<'a> MmcifBlockSource<'a> {
-    /// One model block with entity kinds derived from canonical topology
+    /// One structure block with entity kinds derived from canonical topology
     /// classification.
-    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+    pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self {
-            content: BlockContent::Model(model.as_model_view()),
+            content: BlockContent::Structure(structure.as_structure_view()),
             entities: EntitySemantics::Canonical,
             block_name: None,
         }
     }
 
-    /// One multi-model block with one model per sample of a sample set, in
-    /// sample order. The state mmCIF cannot carry follows
-    /// [`MmcifWriteOptions::sample_metadata`].
-    pub fn sample_set(set: &'a SampleSet) -> Self {
+    /// One multi-model block with one model per geometry of a structure set, in
+    /// geometry order. The state mmCIF cannot carry follows
+    /// [`MmcifWriteOptions::geometry_metadata`].
+    pub fn structure_set(set: &'a StructureSet) -> Self {
         Self {
-            content: BlockContent::SampleSet(set),
+            content: BlockContent::StructureSet(set),
             entities: EntitySemantics::Canonical,
             block_name: None,
         }
@@ -853,7 +854,7 @@ impl<'a> MmcifBlockSource<'a> {
     }
 
     /// Preserves interpreted mmCIF entity and asymmetry semantics: one report
-    /// for a model block, one per sample for a sample set block.
+    /// for a structure block, one per geometry for a structure set block.
     ///
     /// Atom-level provenance keeps one source entity and structural asymmetry
     /// consistent even when it spans several molecule instances; conflicting
@@ -892,37 +893,37 @@ impl<'a> MmcifBlockSource<'a> {
     }
 }
 
-impl<'a> From<&'a Model> for MmcifBlockSource<'a> {
-    fn from(model: &'a Model) -> Self {
-        Self::model(model)
+impl<'a> From<&'a Structure> for MmcifBlockSource<'a> {
+    fn from(structure: &'a Structure) -> Self {
+        Self::structure(structure)
     }
 }
 
-impl<'a> From<&'a SampleSet> for MmcifBlockSource<'a> {
-    fn from(set: &'a SampleSet) -> Self {
-        Self::sample_set(set)
+impl<'a> From<&'a StructureSet> for MmcifBlockSource<'a> {
+    fn from(set: &'a StructureSet) -> Self {
+        Self::structure_set(set)
     }
 }
 
-impl<'a, R: ?Sized> From<SampleView<'a, R>> for MmcifBlockSource<'a> {
-    fn from(sample: SampleView<'a, R>) -> Self {
+impl<'a, R: ?Sized> From<GeometryView<'a, R>> for MmcifBlockSource<'a> {
+    fn from(geometry: GeometryView<'a, R>) -> Self {
         Self {
-            content: BlockContent::Model(sample.as_model_view()),
+            content: BlockContent::Structure(geometry.as_structure_view()),
             entities: EntitySemantics::Canonical,
             block_name: None,
         }
     }
 }
 
-impl<'a> From<&'a StructureSampleSetInterpretation> for MmcifBlockSource<'a> {
-    fn from(interpretation: &'a StructureSampleSetInterpretation) -> Self {
-        Self::sample_set(interpretation.sample_set()).with_reports(interpretation.reports())
+impl<'a> From<&'a StructureSetInterpretation> for MmcifBlockSource<'a> {
+    fn from(interpretation: &'a StructureSetInterpretation) -> Self {
+        Self::structure_set(interpretation.structure_set()).with_reports(interpretation.reports())
     }
 }
 
 impl<'a> From<&'a StructureInterpretation> for MmcifBlockSource<'a> {
     fn from(interpretation: &'a StructureInterpretation) -> Self {
-        Self::model(interpretation.model())
+        Self::structure(interpretation.structure())
             .with_reports(std::slice::from_ref(interpretation.report()))
     }
 }
@@ -977,28 +978,28 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
             ..options.clone()
         };
         match block.content {
-            BlockContent::Model(view) => {
+            BlockContent::Structure(view) => {
                 write_model_block_to(writer, view, block.entities, &block_options, &mut omissions)?
             }
-            BlockContent::SampleSet(set) => {
+            BlockContent::StructureSet(set) => {
                 let views = set
                     .iter()
-                    .map(|sample| sample.as_model_view())
+                    .map(|geometry| geometry.as_structure_view())
                     .collect::<Vec<_>>();
                 let record_state = |state: &mut Omissions| {
-                    let unrepresentable = |(sample, field)| {
-                        fail(MmcifWriteIssue::UnrepresentableSample { sample, field })
+                    let unrepresentable = |(geometry, field)| {
+                        fail(MmcifWriteIssue::UnrepresentableGeometry { geometry, field })
                     };
-                    record_multi_model_sample_set(set, options.sample_metadata, state)
+                    record_multi_model_structure_set(set, options.geometry_metadata, state)
                         .map_err(unrepresentable)?;
-                    record_sample_set_properties(set, options.properties, state)
+                    record_structure_set_properties(set, options.properties, state)
                         .map_err(unrepresentable)
                 };
                 write_multi_model_block_to(
                     writer,
                     &views,
                     record_state,
-                    MmcifWriteIssue::EmptySampleSet,
+                    MmcifWriteIssue::EmptyStructureSet,
                     block.entities,
                     &block_options,
                     &mut omissions,
@@ -1011,12 +1012,12 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
 
 fn write_model_block_to(
     writer: &mut impl Write,
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
-    check_structure_state(Format::Mmcif, view, options.state_policies())?;
+    check_geometry_state(Format::Mmcif, view, options.state_policies())?;
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
@@ -1050,7 +1051,7 @@ fn write_model_block_to(
     )?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
-    omissions.record_structure_state(view, options.state_policies());
+    omissions.record_geometry_state(view, options.state_policies());
     if cell.is_none() && view.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }
@@ -1075,7 +1076,7 @@ fn block_cell<'a>(
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err(MmcifCellReason::SampleCellsDiffer)
+        Err(MmcifCellReason::GeometryCellsDiffer)
     } else {
         match first.map(cell_parameters).transpose() {
             Ok(parameters) => return Ok(parameters),
@@ -1100,7 +1101,7 @@ fn block_cell<'a>(
 /// state's omissions are recorded once the block has reached the sink.
 fn write_multi_model_block_to(
     writer: &mut impl Write,
-    views: &[ModelView<'_>],
+    views: &[StructureView<'_>],
     record_state: impl FnOnce(&mut Omissions) -> Result<(), FormatError>,
     empty: MmcifWriteIssue,
     entities: EntitySemantics<'_>,
@@ -1123,8 +1124,8 @@ fn write_multi_model_block_to(
     let mut state = Omissions::default();
     record_state(&mut state)?;
     let cell = block_cell(views.iter().map(|view| view.cell()), options.cell)?;
-    let mut samples = views.iter().copied().enumerate();
-    let (_, first_view) = samples.next().ok_or_else(|| fail(empty))?;
+    let mut geometries = views.iter().copied().enumerate();
+    let (_, first_view) = geometries.next().ok_or_else(|| fail(empty))?;
     let first_plan =
         multi_model_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
     let mut first = prepare_model(
@@ -1138,7 +1139,7 @@ fn write_multi_model_block_to(
     let mut atom_serial = 1u64;
     write_atom_rows(writer, &first.atoms, 1, &mut atom_serial, options)?;
 
-    for (index, view) in samples {
+    for (index, view) in geometries {
         let plan = multi_model_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
         let candidate = prepare_model(
             view,
@@ -1146,10 +1147,10 @@ fn write_multi_model_block_to(
             options.implicit_hydrogens,
             options.coordinate_precision,
         )?;
-        validate_sample(&first, &candidate, index + 1)?;
+        validate_geometry(&first, &candidate, index + 1)?;
         // A bond the reader derives in one model but not another is stated.
-        for (connection, sample) in first.connections.iter_mut().zip(&candidate.connections) {
-            if connection.implied != sample.implied {
+        for (connection, geometry) in first.connections.iter_mut().zip(&candidate.connections) {
+            if connection.implied != geometry.implied {
                 connection.implied = None;
             }
         }
@@ -1170,7 +1171,7 @@ fn write_multi_model_block_to(
             structures: views.iter().filter(|view| view.cell().is_some()).count(),
         });
     }
-    // Samples share one topology, so the block omits each atom's count once.
+    // Geometries share one topology, so the block omits each atom's count once.
     omissions.record(WriteOmission::ImplicitHydrogens {
         atoms: first.omitted_hydrogens,
     });

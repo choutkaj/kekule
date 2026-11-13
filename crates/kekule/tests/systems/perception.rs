@@ -3,9 +3,11 @@ use std::error::Error;
 use crate::support::hierarchy_record;
 use std::sync::{Arc, Weak};
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Distribution, Members, Model, Partition, Positions, Sample, SampleSet};
+use kekule::structure::{
+    Distribution, Geometry, Members, Partition, Positions, Structure, StructureSet,
+};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
@@ -185,7 +187,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
 }
 
 #[test]
-fn model_perception_changes_snapshot_preserving_structure_and_existing_bindings() {
+fn structure_perception_changes_snapshot_preserving_geometry_and_existing_bindings() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let selection =
         AtomSelection::from_atoms(Arc::clone(&topology), [topology.atom_ids()[0]]).unwrap();
@@ -196,8 +198,8 @@ fn model_perception_changes_snapshot_preserving_structure_and_existing_bindings(
         NANOMETER,
     ))
     .unwrap();
-    let mut model = Model::new(Arc::clone(&topology), positions).unwrap();
-    let mut properties = model.properties_mut();
+    let mut structure = Structure::new(Arc::clone(&topology), positions).unwrap();
+    let mut properties = structure.properties_mut();
     properties
         .owner_mut()
         .insert(key(), PropertyValue::Int(7))
@@ -218,35 +220,38 @@ fn model_perception_changes_snapshot_preserving_structure_and_existing_bindings(
             Some(PropertyValue::Int(9)),
         )
         .unwrap();
-    model.set_cell(Some(
+    structure.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],
         )
         .unwrap(),
     ));
-    let original = model.clone();
-    let positions_ptr = model.positions().values().value().as_ptr();
-    model.perceive().unwrap();
+    let original = structure.clone();
+    let positions_ptr = structure.positions().values().value().as_ptr();
+    structure.perceive().unwrap();
 
-    assert_default_perception(model.topology());
-    assert!(topology.same_layout(model.topology()));
-    assert!(!Arc::ptr_eq(&topology, &model.shared_topology()));
+    assert_default_perception(structure.topology());
+    assert!(topology.same_layout(structure.topology()));
+    assert!(!Arc::ptr_eq(&topology, &structure.shared_topology()));
     assert!(Arc::ptr_eq(&topology, &original.shared_topology()));
-    assert_eq!(model.positions(), original.positions());
-    assert_eq!(positions_ptr, model.positions().values().value().as_ptr());
-    assert_eq!(model.cell(), original.cell());
-    assert_eq!(model.properties(), original.properties());
+    assert_eq!(structure.positions(), original.positions());
+    assert_eq!(
+        positions_ptr,
+        structure.positions().values().value().as_ptr()
+    );
+    assert_eq!(structure.cell(), original.cell());
+    assert_eq!(structure.properties(), original.properties());
     // The new snapshot keeps the layout, so bindings made before perception
-    // remain usable with the perceived model.
-    assert!(model.topology().shares_layout(&topology));
+    // remain usable with the perceived structure.
+    assert!(structure.topology().shares_layout(&topology));
     selection
-        .ensure_compatible(&model.shared_topology())
+        .ensure_compatible(&structure.shared_topology())
         .unwrap();
     selection
         .ensure_compatible(&original.shared_topology())
         .unwrap();
-    let sliced = model.subset(&selection).unwrap();
+    let sliced = structure.subset(&selection).unwrap();
     assert_eq!(sliced.atom_count(), 1);
     let independent = smiles::to_topology("c1ccccc1").unwrap();
     assert_eq!(
@@ -266,26 +271,27 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
     molecule.perceive().unwrap();
     stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
     assert!(molecule.perception().cip().is_some());
-    let mut model =
-        Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
-    let old = Arc::downgrade(&model.shared_topology());
+    let mut structure =
+        Structure::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count()))
+            .unwrap();
+    let old = Arc::downgrade(&structure.shared_topology());
     assert_eq!(old.strong_count(), 1);
-    model.perceive().unwrap();
+    structure.perceive().unwrap();
     assert!(!Weak::ptr_eq(
         &old,
-        &Arc::downgrade(&model.shared_topology())
+        &Arc::downgrade(&structure.shared_topology())
     ));
-    assert_default_perception(model.topology());
+    assert_default_perception(structure.topology());
     assert_eq!(
-        model.topology().instances().next().unwrap().molecule(),
+        structure.topology().instances().next().unwrap().molecule(),
         &molecule
     );
 }
 
 #[test]
-fn sample_set_perception_preserves_samples_weights_and_set_properties() {
+fn structure_set_perception_preserves_geometries_weights_and_set_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let mut member = Sample::new(Positions::zeros(6));
+    let mut member = Geometry::new(Positions::zeros(6));
     member.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
@@ -306,8 +312,9 @@ fn sample_set_perception_preserves_samples_weights_and_set_properties() {
             Some(PropertyValue::Int(11)),
         )
         .unwrap();
-    let second = Sample::new(Positions::zeros(6));
-    let mut ensemble = SampleSet::from_samples(Arc::clone(&topology), [member, second]).unwrap();
+    let second = Geometry::new(Positions::zeros(6));
+    let mut ensemble =
+        StructureSet::from_geometries(Arc::clone(&topology), [member, second]).unwrap();
     ensemble
         .set_distribution(Some(
             Distribution::new(Members::All, Partition::one_state(2))
@@ -352,14 +359,14 @@ fn sample_set_perception_preserves_samples_weights_and_set_properties() {
         assert_eq!(member.properties(), original.properties());
         assert_eq!(member.weight(), original.weight());
     }
-    let mut empty = SampleSet::new(topology);
+    let mut empty = StructureSet::new(topology);
     empty.perceive().unwrap();
     assert_default_perception(empty.topology());
     assert_eq!(empty.iter().len(), 0);
 }
 
 #[test]
-fn topology_model_and_sample_set_failure_preserve_complete_previous_state() {
+fn topology_structure_and_structure_set_failure_preserve_complete_previous_state() {
     let topology = failing_topology();
     let previous = installed(&topology);
     let error = topology.perceived().unwrap_err();
@@ -372,24 +379,24 @@ fn topology_model_and_sample_set_failure_preserve_complete_previous_state() {
     assert!(error.source().is_some());
     assert_eq!(installed(&topology), previous);
 
-    let mut model = Model::new(
+    let mut structure = Structure::new(
         Arc::clone(&topology),
         Positions::zeros(topology.atom_count()),
     )
     .unwrap();
-    model
+    structure
         .properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(14))
         .unwrap();
-    let before = model.clone();
-    assert_eq!(model.perceive(), Err(error.clone()));
-    assert_eq!(model, before);
-    assert_eq!(installed(model.topology()), previous);
+    let before = structure.clone();
+    assert_eq!(structure.perceive(), Err(error.clone()));
+    assert_eq!(structure, before);
+    assert_eq!(installed(structure.topology()), previous);
 
-    let mut ensemble = SampleSet::from_samples(
+    let mut ensemble = StructureSet::from_geometries(
         Arc::clone(&topology),
-        [Sample::new(Positions::zeros(topology.atom_count()))],
+        [Geometry::new(Positions::zeros(topology.atom_count()))],
     )
     .unwrap();
     ensemble
@@ -407,8 +414,8 @@ fn topology_model_and_sample_set_failure_preserve_complete_previous_state() {
     assert_eq!(ensemble.properties(), before.properties());
     assert_eq!(ensemble.distribution(), before.distribution());
     assert_eq!(
-        ensemble.get(0).unwrap().to_model(),
-        before.get(0).unwrap().to_model()
+        ensemble.get(0).unwrap().to_structure(),
+        before.get(0).unwrap().to_structure()
     );
     assert_eq!(installed(ensemble.topology()), previous);
 }
@@ -528,20 +535,23 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
         Default::default(),
     )
     .unwrap();
-    let model = document.interpret(Default::default()).unwrap().into_model();
-    let ensemble = document
-        .interpret_sample_set(Default::default())
+    let structure = document
+        .interpret(Default::default())
         .unwrap()
-        .into_sample_set();
-    assert_unperceived(model.topology());
-    let mut expected = model.clone();
+        .into_structure();
+    let ensemble = document
+        .interpret_structure_set(Default::default())
+        .unwrap()
+        .into_structure_set();
+    assert_unperceived(structure.topology());
+    let mut expected = structure.clone();
     expected.perceive().unwrap();
 
     // A check that never turns true changes nothing.
     let (never, polls) = requested_after(usize::MAX);
-    let mut perceived = model.clone();
+    let mut perceived = structure.clone();
     perceived.perceive_cancellable(&never).unwrap();
-    assert!(perceived.topology().shares_layout(model.topology()));
+    assert!(perceived.topology().shares_layout(structure.topology()));
     for (left, right) in perceived
         .topology()
         .definitions()
@@ -551,14 +561,14 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     }
     let polls = polls.load(Ordering::Relaxed);
     assert!(
-        polls > model.topology().definitions().len(),
+        polls > structure.topology().definitions().len(),
         "perception polled only {polls} times"
     );
 
     // A check that turns true partway stops perception and keeps the owner.
     for after in [1, polls / 2, polls] {
         let (cancellation, _) = requested_after(after);
-        let mut cancelled = model.clone();
+        let mut cancelled = structure.clone();
         let error = cancelled.perceive_cancellable(&cancellation).unwrap_err();
         assert!(
             matches!(error.source, perception::PerceptionError::Cancelled(_)),
@@ -566,7 +576,7 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
         );
         assert!(Arc::ptr_eq(
             &cancelled.shared_topology(),
-            &model.shared_topology()
+            &structure.shared_topology()
         ));
         assert_unperceived(cancelled.topology());
 

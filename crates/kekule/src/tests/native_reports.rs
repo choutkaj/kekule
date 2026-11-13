@@ -2,19 +2,19 @@
 //! every report field, and rejection of corrupt report sections.
 
 use crate::diagnostics::{DiagnosticKind, Format, SourceLocation};
-use crate::geometry::{Matrix3, Vector3};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
     EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
     SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
-    StructureInterpretIssue, StructureInterpretationReport, StructureSampleSetInterpretation,
+    StructureInterpretIssue, StructureInterpretationReport, StructureSetInterpretation,
 };
+use crate::math::{Matrix3, Vector3};
 use crate::molecule::AtomId;
 use crate::native::{self, NativeReadOptions, NativeSource, NativeWriteOptions};
 use crate::sequence::{CodeOrigin, ResidueCode};
-use crate::structure::{Model, SampleSet};
+use crate::structure::{Structure, StructureSet};
 use crate::topology::{ChainId, InstanceAtomId, MoleculeInstanceId, ResidueId};
 
 const MODELS: &str = "data_demo
@@ -521,25 +521,25 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
 }
 
 /// The first coordinate model of [`MODELS`] and the set of both models,
-/// whose two samples carry stored equal weights.
-pub(super) fn parts() -> (Model, SampleSet) {
+/// whose two geometries carry stored equal weights.
+pub(super) fn parts() -> (Structure, StructureSet) {
     let document = crate::mmcif::parse_str(MODELS, Default::default()).unwrap();
-    let model = document
+    let structure = document
         .interpret(
             crate::macromolecular::StructureInterpretOptions::default()
                 .with_model_selection(crate::macromolecular::ModelSelection::First),
         )
         .unwrap()
-        .into_model();
+        .into_structure();
     let mut set = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
+        .into_structure_set();
     set.distribution_mut()
         .unwrap()
         .set_weights(Some(vec![1.0, 1.0]))
         .unwrap();
-    (model, set)
+    (structure, set)
 }
 
 pub(super) fn read(
@@ -550,17 +550,17 @@ pub(super) fn read(
 
 #[test]
 fn every_report_field_round_trips() {
-    let (model, set) = parts();
-    assert_eq!(super::debug_fingerprint(&set), 0x3f40_ab36_f0b2_dad2);
+    let (structure, set) = parts();
+    assert_eq!(super::debug_fingerprint(&set), 0xbff9_29d2_6f24_4c64);
     let report = report(false);
     let bytes = native::write(
-        NativeSource::interpreted_model(&model, &report),
+        NativeSource::interpreted_structure(&structure, &report),
         NativeWriteOptions::default(),
     )
     .unwrap();
     let decoded = read(&bytes).unwrap().into_interpretation().unwrap();
     assert_eq!(decoded.report(), &report);
-    assert_eq!(decoded.model().positions(), model.positions());
+    assert_eq!(decoded.structure().positions(), structure.positions());
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();
     assert!(
         again == bytes,
@@ -569,18 +569,18 @@ fn every_report_field_round_trips() {
 
     let reports = vec![report, self::report(true)];
     let bytes = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports),
+        NativeSource::interpreted_structure_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap();
     assert_eq!(super::debug_fingerprint(&bytes), 0xde2b_74f7_fb64_0b01);
     let decoded = read(&bytes)
         .unwrap()
-        .into_sample_set_interpretation()
+        .into_structure_set_interpretation()
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&decoded), 0x1648_6503_5a44_75c0);
+    assert_eq!(super::debug_fingerprint(&decoded), 0x63e9_9b07_512b_83a0);
     assert_eq!(decoded.reports(), reports.as_slice());
-    assert_eq!(decoded.sample_set().len(), 2);
+    assert_eq!(decoded.structure_set().len(), 2);
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();
     assert!(
         again == bytes,
@@ -622,7 +622,7 @@ pub(super) fn find(bytes: &[u8], needle: &[u8]) -> usize {
 
 #[test]
 fn decoded_assembly_operations_are_rigid() {
-    let (model, _) = parts();
+    let (structure, _) = parts();
     let mut report = report(false);
     // A mirror, as no reader would have read it.
     report.assemblies[0].generators[0].operations[1].rotation = Matrix3::from_columns(
@@ -631,7 +631,7 @@ fn decoded_assembly_operations_are_rigid() {
         Vector3::new(0.0, 0.0, 1.0),
     );
     let bytes = native::write(
-        NativeSource::interpreted_model(&model, &report),
+        NativeSource::interpreted_structure(&structure, &report),
         NativeWriteOptions::default(),
     )
     .unwrap();
@@ -647,15 +647,15 @@ fn decoded_assembly_operations_are_rigid() {
 
 #[test]
 fn corrupt_report_sections_fail_cleanly() {
-    let (model, _) = parts();
+    let (structure, _) = parts();
     let report = report(true);
-    let plain = native::write(&model, NativeWriteOptions::default()).unwrap();
+    let plain = native::write(&structure, NativeWriteOptions::default()).unwrap();
     let bytes = native::write(
-        NativeSource::interpreted_model(&model, &report),
+        NativeSource::interpreted_structure(&structure, &report),
         NativeWriteOptions::default(),
     )
     .unwrap();
-    // The report follows the model, before the trailer. Only the kind
+    // The report follows the structure, before the trailer. Only the kind
     // byte of the header differs.
     let start = plain.len() - 8;
     assert_eq!((plain[12], bytes[12]), (3, 7));
@@ -711,21 +711,21 @@ fn corrupt_report_sections_fail_cleanly() {
 }
 
 #[test]
-fn interpreted_sample_sets_need_one_report_per_sample() {
+fn interpreted_structure_sets_need_one_report_per_geometry() {
     let (_, set) = parts();
     let reports = vec![report(false)];
     let error = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports),
+        NativeSource::interpreted_structure_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         error.to_string(),
-        "Cannot write the native output. The sample set has 2 samples and 1 interpretation \
-         report. Give one report per sample."
+        "Cannot write the native output. The structure set has 2 geometries and 1 interpretation \
+         report. Give one report per geometry."
     );
-    let interpretation = StructureSampleSetInterpretation {
+    let interpretation = StructureSetInterpretation {
         set,
         reports: Vec::new(),
     };

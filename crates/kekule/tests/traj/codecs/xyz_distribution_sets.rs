@@ -1,11 +1,13 @@
-//! XYZ writing of sample sets with a distribution, one frame per sample.
+//! XYZ writing of structure sets with a distribution, one frame per geometry.
 
 use std::sync::Arc;
 
-use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
-use kekule::geometry::{PeriodicCell, Vector3};
+use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Distribution, Members, Order, Partition, SampleSet, TimeAxis, Velocities};
+use kekule::structure::{
+    Distribution, Members, Order, Partition, StructureSet, TimeAxis, Velocities,
+};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{
@@ -31,14 +33,14 @@ H 0.957 0.0 0.2
 H -0.24 0.927 0.2
 ";
 
-/// The three samples `kekule::xyz` interprets from [`WATERS`] in one state
+/// The three geometries `kekule::xyz` interprets from [`WATERS`] in one state
 /// of equally weighted members.
-fn waters() -> SampleSet {
+fn waters() -> StructureSet {
     let mut set = kekule::xyz::parse_str(WATERS, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
+        .into_structure_set();
     set.set_distribution(Some(
         Distribution::new(Members::All, Partition::one_state(3))
             .unwrap()
@@ -59,16 +61,16 @@ fn options() -> XyzWriteOptions {
 }
 
 fn omit() -> XyzWriteOptions {
-    options().with_sample_metadata(UnrepresentablePolicy::Omit)
+    options().with_geometry_metadata(UnrepresentablePolicy::Omit)
 }
 
 /// Writes `set` and returns the text and report.
 fn write(
-    set: &SampleSet,
+    set: &StructureSet,
     options: XyzWriteOptions,
 ) -> Result<(String, WriteReport), TrajectoryIoError> {
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz")?;
-    writer.write_sample_set(set)?;
+    writer.write_structure_set(set)?;
     let report = writer.report().clone();
     Ok((String::from_utf8(writer.finish()?).unwrap(), report))
 }
@@ -76,13 +78,13 @@ fn write(
 /// Asserts that writing `set` with `options` fails before any byte for
 /// `field` at `frame`, and returns the error.
 fn assert_rejects(
-    set: &SampleSet,
+    set: &StructureSet,
     options: XyzWriteOptions,
     field: TrajectoryField,
     frame: usize,
 ) -> TrajectoryIoError {
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz").unwrap();
-    let error = writer.write_sample_set(set).unwrap_err();
+    let error = writer.write_structure_set(set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(field));
     assert_eq!(error.frame(), Some(frame));
@@ -91,8 +93,8 @@ fn assert_rejects(
     error
 }
 
-fn state_omission(field: StructureField, structures: usize) -> WriteOmission {
-    WriteOmission::StructureState { field, structures }
+fn state_omission(field: GeometryField, geometries: usize) -> WriteOmission {
+    WriteOmission::GeometryState { field, geometries }
 }
 
 /// The text of [`waters`] under [`options`].
@@ -101,7 +103,7 @@ fn plain() -> String {
 }
 
 #[test]
-fn an_equally_weighted_set_writes_one_frame_per_sample_and_reads_back() {
+fn an_equally_weighted_set_writes_one_frame_per_geometry_and_reads_back() {
     let set = waters();
     let (text, report) = write(&set, options()).unwrap();
     assert_eq!(report.omissions(), [BONDS]);
@@ -112,13 +114,13 @@ fn an_equally_weighted_set_writes_one_frame_per_sample_and_reads_back() {
          3\nsample\nO 0.000 0.000 0.200\nH 0.957 0.000 0.200\nH -0.240 0.927 0.200\n"
     );
 
-    // Reading the file back gives the samples without an order or a
-    // distribution: one state of equally weighted samples.
+    // Reading the file back gives the geometries without an order or a
+    // distribution: one state of equally weighted geometries.
     let read = kekule::xyz::parse_str(&text, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
+        .into_structure_set();
     assert_eq!(read.len(), set.len());
     assert_eq!(read.distribution(), None);
     assert_eq!(read.order(), None);
@@ -141,7 +143,7 @@ fn unequal_weights_are_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain());
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Weight, 3)]
+        [BONDS, state_omission(GeometryField::Weight, 3)]
     );
 }
 
@@ -157,7 +159,7 @@ fn several_states_are_rejected_or_omitted_with_a_report() {
     let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::State, 3)]
+        [BONDS, state_omission(GeometryField::State, 3)]
     );
 }
 
@@ -168,7 +170,7 @@ fn energies_are_rejected_or_omitted_with_a_report() {
     distribution
         .regroup(Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap())
         .unwrap();
-    // Only the second state, of the last two samples, has an energy.
+    // Only the second state, of the last two geometries, has an energy.
     distribution
         .state_mut(1)
         .unwrap()
@@ -181,8 +183,8 @@ fn energies_are_rejected_or_omitted_with_a_report() {
         report.omissions(),
         [
             BONDS,
-            state_omission(StructureField::Energy, 2),
-            state_omission(StructureField::State, 3),
+            state_omission(GeometryField::Energy, 2),
+            state_omission(GeometryField::State, 3),
         ]
     );
 }
@@ -199,7 +201,7 @@ fn a_temperature_is_rejected_or_omitted_with_a_report() {
     let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Temperature, 3)]
+        [BONDS, state_omission(GeometryField::Temperature, 3)]
     );
 }
 
@@ -217,7 +219,7 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
     set.get_mut(1).unwrap().set_cell(Some(cell()));
     set.get_mut(2).unwrap().set_cell(Some(cell()));
     assert_rejects(&set, options(), TrajectoryField::PeriodicCell, 1);
-    // A cell is not sample metadata.
+    // A cell is not geometry metadata.
     assert_rejects(&set, omit(), TrajectoryField::PeriodicCell, 1);
     let (text, report) = write(&set, options().with_cell(UnrepresentablePolicy::Omit)).unwrap();
     assert_eq!(text, plain());
@@ -227,7 +229,7 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
     );
 
     // Frames follow the same policy, and the report counts every frame and
-    // sample written.
+    // geometry written.
     let topology = set.shared_topology();
     let frame = Frame::new(set.get(0).unwrap().positions().clone())
         .with_cell(cell())
@@ -247,7 +249,7 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
         writer.report().omissions(),
         [BONDS, WriteOmission::Cell { structures: 1 }]
     );
-    writer.write_sample_set(&set).unwrap();
+    writer.write_structure_set(&set).unwrap();
     assert_eq!(
         writer.report().omissions(),
         [BONDS, WriteOmission::Cell { structures: 3 }]
@@ -264,7 +266,7 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
 }
 
 #[test]
-fn every_kind_of_sample_state_is_reported_together() {
+fn every_kind_of_geometry_state_is_reported_together() {
     let mut set = waters();
     let mut distribution = set.distribution_mut().unwrap();
     distribution
@@ -279,17 +281,17 @@ fn every_kind_of_sample_state_is_reported_together() {
     distribution
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    // The first sample's energy comes before its weight.
+    // The first geometry's energy comes before its weight.
     assert_rejects(&set, options(), TrajectoryField::Energy, 0);
     let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
         [
             BONDS,
-            state_omission(StructureField::Weight, 3),
-            state_omission(StructureField::Energy, 1),
-            state_omission(StructureField::State, 3),
-            state_omission(StructureField::Temperature, 3),
+            state_omission(GeometryField::Weight, 3),
+            state_omission(GeometryField::Energy, 1),
+            state_omission(GeometryField::State, 3),
+            state_omission(GeometryField::Temperature, 3),
         ]
     );
 }
@@ -297,11 +299,11 @@ fn every_kind_of_sample_state_is_reported_together() {
 #[test]
 fn occupancies_and_b_factors_are_always_omitted_with_a_report() {
     let mut set = waters();
-    let mut sample = set.get_mut(0).unwrap();
-    sample
+    let mut geometry = set.get_mut(0).unwrap();
+    geometry
         .set_occupancies(Some(vec![Some(1.0), Some(0.5), None]))
         .unwrap();
-    sample
+    geometry
         .set_b_factors(Some(Quantity::new(
             vec![Some(10.0), None, None],
             kekule::units::SQUARE_ANGSTROM,
@@ -365,19 +367,19 @@ fn foreign_and_empty_sets_are_rejected() {
     let set = waters();
     let other = kekule::smiles::to_topology("O").unwrap();
     let mut writer = XyzWriter::new(Vec::new(), other, options(), "e.xyz").unwrap();
-    let error = writer.write_sample_set(&set).unwrap_err();
+    let error = writer.write_structure_set(&set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
 
-    let empty = SampleSet::new(set.shared_topology());
+    let empty = StructureSet::new(set.shared_topology());
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options(), "e.xyz").unwrap();
-    let error = writer.write_sample_set(&empty).unwrap_err();
+    let error = writer.write_structure_set(&empty).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
     assert!(writer.writer().is_empty());
 }
 
 #[test]
-fn sample_state_rules_match_the_pdb_writer() {
-    // The XYZ writer's sample-state rules are kekule's PDB and mmCIF ones.
+fn geometry_state_rules_match_the_pdb_writer() {
+    // The XYZ writer's geometry-state rules are kekule's PDB and mmCIF ones.
     // PDB omits the fixed implicit-hydrogen counts XYZ interpretation gives.
     let mut set = waters();
     let mut distribution = set.distribution_mut().unwrap();
@@ -388,7 +390,7 @@ fn sample_state_rules_match_the_pdb_writer() {
     let pdb = kekule::pdb::write(
         &set,
         kekule::pdb::PdbWriteOptions::default()
-            .with_sample_metadata(UnrepresentablePolicy::Omit)
+            .with_geometry_metadata(UnrepresentablePolicy::Omit)
             .with_implicit_hydrogens(UnrepresentablePolicy::Omit),
     )
     .unwrap()
@@ -399,15 +401,15 @@ fn sample_state_rules_match_the_pdb_writer() {
             .omissions()
             .iter()
             .copied()
-            .filter(|omission| matches!(omission, WriteOmission::StructureState { .. }))
+            .filter(|omission| matches!(omission, WriteOmission::GeometryState { .. }))
             .collect::<Vec<_>>()
     };
     assert_eq!(state(&xyz), state(&pdb));
     assert_eq!(
         state(&xyz),
         [
-            state_omission(StructureField::Weight, 3),
-            state_omission(StructureField::Temperature, 3),
+            state_omission(GeometryField::Weight, 3),
+            state_omission(GeometryField::Temperature, 3),
         ]
     );
 }
@@ -428,7 +430,7 @@ fn outcome(result: Result<(String, WriteReport), TrajectoryIoError>) -> Outcome 
 
 /// Each set, and what it writes under each policy, is what the ensemble it
 /// replaces converted to and wrote, as recorded before ensembles became
-/// sample sets.
+/// structure sets.
 #[test]
 fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did() {
     let mut weighted = waters();
@@ -470,22 +472,22 @@ fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did()
         )
         .unwrap();
     let mut recorded = Recorded::new(&[
-        0x66fd_f771_a788_11af, // waters
+        0xf14d_cdd2_f26b_1088, // waters
         0x4939_b251_4e51_e9cb, // waters, fail
         0x4939_b251_4e51_e9cb, // waters, omit
-        0x7318_e53a_76d8_e6bd, // weighted
+        0x7e93_965f_759b_09ee, // weighted
         0x6c2d_94d0_1919_47c1, // weighted, fail
-        0x6d81_8fec_dcfd_575a, // weighted, omit
-        0xd213_6ff6_981e_da48, // clustered
+        0x9d0c_c4f1_8a4c_1fcd, // weighted, omit
+        0x0ba9_867b_4244_e045, // clustered
         0x3ebe_6cee_6493_523a, // clustered, fail
-        0x2e5e_8bc9_b17e_38b8, // clustered, omit
-        0x1ec6_bcd7_133f_6010, // boxed
+        0x2c01_a7fc_aaa6_ee15, // clustered, omit
+        0xf3a1_d233_9761_76d3, // boxed
         0x0ebd_2b21_c872_bfdf, // boxed, fail
         0x03c3_ae9e_91dc_8c0c, // boxed, omit
-        0x755a_0a00_9b04_f60a, // occupied
+        0x77cc_a4b8_28e4_f383, // occupied
         0x447b_f888_5d4d_1835, // occupied, fail
         0x447b_f888_5d4d_1835, // occupied, omit
-        0x523d_28cd_6097_828b, // labelled
+        0xd016_a79f_cb50_844c, // labelled
         0x5001_e09a_cc79_1f23, // labelled, fail
         0x5001_e09a_cc79_1f23, // labelled, omit
     ]);
@@ -494,14 +496,14 @@ fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did()
         for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
             recorded.check(&outcome(write(
                 &set,
-                options().with_sample_metadata(policy).with_cell(policy),
+                options().with_geometry_metadata(policy).with_cell(policy),
             )));
         }
     }
 }
 
 #[test]
-fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
+fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     let plain = plain();
 
     // A time order.
@@ -516,7 +518,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Time, 3)]
+        [BONDS, state_omission(GeometryField::Time, 3)]
     );
 
     // A time order without times or steps reads back unordered.
@@ -528,7 +530,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Order, 3)]
+        [BONDS, state_omission(GeometryField::Order, 3)]
     );
 
     // A lone state represented by its second member.
@@ -546,10 +548,10 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Representative, 1)]
+        [BONDS, state_omission(GeometryField::Representative, 1)]
     );
 
-    // Velocities on one sample.
+    // Velocities on one geometry.
     let mut moving = waters();
     moving
         .get_mut(1)
@@ -567,10 +569,10 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Velocities, 1)]
+        [BONDS, state_omission(GeometryField::Velocities, 1)]
     );
 
-    // A sample outside the distribution: XYZ reads every frame back as a
+    // A geometry outside the distribution: XYZ reads every frame back as a
     // member.
     let mut subset = waters();
     subset
@@ -583,11 +585,11 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Membership, 1)]
+        [BONDS, state_omission(GeometryField::Membership, 1)]
     );
 
     // Without a distribution, the frames read back as one state of equally
-    // weighted samples, as from a set with one.
+    // weighted geometries, as from a set with one.
     let mut alone = waters();
     alone.set_distribution(None).unwrap();
     assert_eq!(write(&alone, options()).unwrap().0, plain);
@@ -598,10 +600,10 @@ fn path_writers_report_the_cells_their_frames_omit() {
     let set = waters();
     let frames = set
         .iter()
-        .map(|sample| Frame::new(sample.positions().clone()).with_cell(cell()));
+        .map(|geometry| Frame::new(geometry.positions().clone()).with_cell(cell()));
     let frames = support::time_ordered(set.shared_topology(), frames);
     let path = std::env::temp_dir().join(format!("kekule-traj-{}-cells.xyz", std::process::id()));
-    let saved = kekule::traj::io::write_sample_set(
+    let saved = kekule::traj::io::write_structure_set(
         &path,
         &frames,
         kekule::traj::io::TrajectoryWriteOptions::default()

@@ -1,6 +1,6 @@
 //! Informational cost of native persistence of an interpreted mmCIF entry:
 //! the size of the native encoding and the time to write and read it, of the
-//! model alone and of the model with its interpretation report.
+//! structure alone and of the structure with its interpretation report.
 //!
 //! The entry is externally supplied, such as PDB 6SPB (90,351 atoms) or 7K00
 //! (149,338 atoms):
@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
          {} polymer entities; minimum and median of {ROUNDS} rounds",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        interpretation.model().atom_count(),
+        interpretation.structure().atom_count(),
         interpretation.topology().instance_count(),
         report.instances().len(),
         report.coordination().len(),
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("|---|---:|---:|---:|---:|---:|");
     let options = NativeWriteOptions::default();
     let milliseconds = |time: Duration| time.as_secs_f64() * 1e3;
-    for (name, with_report) in [("model", false), ("model with report", true)] {
+    for (name, with_report) in [("structure", false), ("structure with report", true)] {
         let (mut writes, mut reads) = (Vec::new(), Vec::new());
         let mut size = 0;
         for _ in 0..ROUNDS {
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let bytes = if with_report {
                 native::write(&interpretation, options)?
             } else {
-                native::write(interpretation.model(), options)?
+                native::write(interpretation.structure(), options)?
             };
             writes.push(start.elapsed());
             size = bytes.len();

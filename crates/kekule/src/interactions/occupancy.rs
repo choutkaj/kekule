@@ -84,8 +84,8 @@ impl Scope {
 /// Weighted hydrogen-bond occupancy: for each hydrogen bond, the fraction of
 /// the total observed weight in which it was present.
 ///
-/// An observation is the [`Interactions`] of one structure, such as an
-/// sample or a trajectory frame, with an explicit, finite, positive
+/// An observation is the [`Interactions`] of one structure, such as a
+/// geometry or a trajectory frame, with an explicit, finite, positive
 /// weight. Every observation must come from the same kind of search
 /// ([`super::find_interactions_within`] or
 /// [`super::find_interactions_between`]) over the same topology layouts with
@@ -105,8 +105,8 @@ impl Scope {
 ///     find_interactions_within, HydrogenBondOccupancyAccumulator, InteractionCriteria,
 ///     InteractionFeatures,
 /// };
-/// use kekule::geometry::Point3;
-/// use kekule::structure::{Model, Positions};
+/// use kekule::math::Point3;
+/// use kekule::structure::{Structure, Positions};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, ANGSTROM};
 ///
@@ -118,8 +118,8 @@ impl Scope {
 /// // Bonded at 2.9 Å with weight 3, apart at 5 Å with weight 1.
 /// for (index, (x, weight)) in [(2.9, 3.0), (5.0, 1.0)].into_iter().enumerate() {
 ///     let points = [Point3::new(0.0, 0.0, 0.0), Point3::new(x, 0.0, 0.0)];
-///     let model = Model::new(topology.clone(), Positions::new(Quantity::new(points, ANGSTROM))?)?;
-///     let found = find_interactions_within(&features, &model, &all, &all, &criteria)?;
+///     let structure = Structure::new(topology.clone(), Positions::new(Quantity::new(points, ANGSTROM))?)?;
+///     let found = find_interactions_within(&features, &structure, &all, &all, &criteria)?;
 ///     accumulator.observe(index, &found, weight)?;
 /// }
 /// let occupancy = accumulator.finish()?;

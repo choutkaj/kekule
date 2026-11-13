@@ -4,10 +4,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::structure::Positions;
-use kekule::traj::io::{read_sample_set, write_sample_set};
+use kekule::traj::io::{read_structure_set, write_structure_set};
 use kekule::units::{Quantity, ANGSTROM};
 
 use crate::support::{time_ordered, Frame};
@@ -76,7 +76,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     let interpretation = (mmcif::parse_str(LINKED_ROWS, Default::default()).unwrap())
         .interpret(Default::default())
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     assert_eq!(topology.instance_count(), 2);
     let instances = topology
         .atom_ids()
@@ -93,7 +93,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
         ROW_ELEMENTS
     );
     assert_eq!(
-        row_x(interpretation.model().positions().values().value()),
+        row_x(interpretation.structure().positions().values().value()),
         ROW_X
     );
 
@@ -106,15 +106,15 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     let path = TemporaryPath(
         std::env::temp_dir().join(format!("kekule-atom-order-{}.dcd", std::process::id())),
     );
-    write_sample_set(
+    write_structure_set(
         &path.0,
         &time_ordered(external, [frame]),
         Default::default(),
     )
     .unwrap();
 
-    let loaded = read_sample_set(&path.0, Arc::clone(&topology), Default::default()).unwrap();
-    let frame = loaded.get(0).unwrap().as_model_view();
+    let loaded = read_structure_set(&path.0, Arc::clone(&topology), Default::default()).unwrap();
+    let frame = loaded.get(0).unwrap().as_structure_view();
     assert_eq!(row_x(frame.positions().values().value()), ROW_X);
     for (atom, element) in topology.atom_ids().iter().zip(ROW_ELEMENTS) {
         assert_eq!(

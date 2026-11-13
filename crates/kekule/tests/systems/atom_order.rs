@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::smiles;
-use kekule::structure::{Model, ModelBuilder, Positions};
+use kekule::structure::{Positions, Structure, StructureBuilder};
 use kekule::topology::{
     AtomSelection, InstanceAtomId, MoleculeInstanceId, Topology, TopologyAtomIndex,
     TopologyBuildError, TopologyBuilder,
@@ -45,8 +45,8 @@ fn positions(xs: &[f64]) -> Positions {
     .unwrap()
 }
 
-fn xs(model: &Model) -> Vec<f64> {
-    model
+fn xs(structure: &Structure) -> Vec<f64> {
+    structure
         .positions()
         .values()
         .value()
@@ -60,8 +60,8 @@ fn atom(instance: MoleculeInstanceId, raw: u32) -> InstanceAtomId {
 }
 
 /// Methanol C and O with a water oxygen between them, at x = 0, 1, 2 Å.
-fn interleaved() -> (Model, [InstanceAtomId; 3]) {
-    let mut builder = ModelBuilder::new();
+fn interleaved() -> (Structure, [InstanceAtomId; 3]) {
+    let mut builder = StructureBuilder::new();
     let methanol = builder
         .add_molecule((molecule("CO")).clone(), &positions(&[0.0, 2.0]))
         .unwrap();
@@ -162,12 +162,15 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
 }
 
 #[test]
-fn model_builder_order_moves_positions_with_atoms() {
-    let (model, order) = interleaved();
-    assert_eq!(model.topology().atom_ids(), order);
-    assert_eq!(xs(&model), [0.0, 1.0, 2.0]);
+fn structure_builder_order_moves_positions_with_atoms() {
+    let (structure, order) = interleaved();
+    assert_eq!(structure.topology().atom_ids(), order);
+    assert_eq!(xs(&structure), [0.0, 1.0, 2.0]);
     for (atom, x) in order.into_iter().zip([0.0, 1.0, 2.0]) {
-        assert_eq!((model.position(atom).unwrap().value().x * 10.0).round(), x);
+        assert_eq!(
+            (structure.position(atom).unwrap().value().x * 10.0).round(),
+            x
+        );
     }
 }
 
@@ -185,17 +188,17 @@ fn smiles_topology_keeps_source_order_across_dot_separated_components() {
 
 #[test]
 fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
-    let (model, [carbon, water_oxygen, oxygen]) = interleaved();
-    // Editing handles follow dense order, so editor and model positions agree.
-    let editor = model.to_editor();
-    assert_eq!(editor.positions(), *model.positions());
+    let (structure, [carbon, water_oxygen, oxygen]) = interleaved();
+    // Editing handles follow dense order, so editor and structure positions agree.
+    let editor = structure.to_editor();
+    assert_eq!(editor.positions(), *structure.positions());
     let unchanged = editor.finish().unwrap();
     assert!(Arc::ptr_eq(
         &unchanged.shared_topology(),
-        &model.shared_topology()
+        &structure.shared_topology()
     ));
 
-    let mut editor = model.to_editor();
+    let mut editor = structure.to_editor();
     let [carbon, water_oxygen, oxygen] =
         [carbon, water_oxygen, oxygen].map(|atom| editor.topology().atom_handle(atom).unwrap());
     // Merging the water into methanol keeps every atom in place.
@@ -219,10 +222,10 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
         assert_eq!(ids.atom(handle).unwrap().1.index(), dense);
     }
 
-    let mut editor = model.to_editor();
+    let mut editor = structure.to_editor();
     let water_oxygen = editor
         .topology()
-        .atom_handle(model.topology().atom_ids()[1])
+        .atom_handle(structure.topology().atom_ids()[1])
         .unwrap();
     editor.delete_atom(water_oxygen).unwrap();
     let removed = editor.finish().unwrap();
@@ -238,10 +241,10 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
 }
 
 #[test]
-fn appending_a_model_keeps_its_dense_order_and_positions() {
+fn appending_a_structure_keeps_its_dense_order_and_positions() {
     let (source, _) = interleaved();
-    let mut editor = kekule::structure::ModelEditor::new();
-    let appended = editor.append_model(&source).unwrap();
+    let mut editor = kekule::structure::StructureEditor::new();
+    let appended = editor.append_structure(&source).unwrap();
     for (dense, &atom) in source.topology().atom_ids().iter().enumerate() {
         assert_eq!(
             editor.position(appended.atom(atom).unwrap()).unwrap(),
@@ -249,10 +252,10 @@ fn appending_a_model_keeps_its_dense_order_and_positions() {
             "dense atom {dense}"
         );
     }
-    let model = editor.finish().unwrap();
-    assert_eq!(xs(&model), [0.0, 1.0, 2.0]);
+    let structure = editor.finish().unwrap();
+    assert_eq!(xs(&structure), [0.0, 1.0, 2.0]);
     assert_eq!(
-        model
+        structure
             .topology()
             .atoms()
             .map(|atom| atom.element().symbol())
@@ -263,8 +266,8 @@ fn appending_a_model_keeps_its_dense_order_and_positions() {
 
 #[test]
 fn subsets_and_instance_filters_keep_relative_source_order() {
-    let (model, [carbon, water_oxygen, oxygen]) = interleaved();
-    let topology = model.shared_topology();
+    let (structure, [carbon, water_oxygen, oxygen]) = interleaved();
+    let topology = structure.shared_topology();
 
     let selection =
         AtomSelection::from_atoms(Arc::clone(&topology), [oxygen, water_oxygen]).unwrap();
@@ -273,7 +276,7 @@ fn subsets_and_instance_filters_keep_relative_source_order() {
         subset.correspondence().source_atom_indices(),
         &[TopologyAtomIndex::new(1), TopologyAtomIndex::new(2)]
     );
-    let sliced = model.subset(&selection).unwrap();
+    let sliced = structure.subset(&selection).unwrap();
     assert_eq!(xs(&sliced), [1.0, 2.0]);
 
     let methanol = instance_subset(&topology, [carbon.instance()]).unwrap();

@@ -17,7 +17,7 @@ let expr = select::parse("protein and name CA", SelectParseOptions::default())?;
 let atoms = expr.evaluate(topology.clone(), SelectEvaluateOptions::default())?;
 // Spatial terms need coordinates:
 let near = select::parse("within 5 of resname LIG", SelectParseOptions::default())?;
-let pocket = near.evaluate_structure(&model, SelectEvaluateOptions::default())?;
+let pocket = near.evaluate_structure(&structure, SelectEvaluateOptions::default())?;
 ```
 
 ## Grammar

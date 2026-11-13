@@ -7,8 +7,8 @@ use std::fmt;
 /// `try_build` and `try_finish` of [`MoleculeEditor`](crate::molecule::MoleculeEditor),
 /// [`TopologyBuilder`](crate::topology::TopologyBuilder),
 /// [`TopologyEditor`](crate::topology::edit::TopologyEditor),
-/// [`ModelBuilder`](crate::structure::ModelBuilder) and
-/// [`ModelEditor`](crate::structure::ModelEditor) fail with it, so a caller can
+/// [`StructureBuilder`](crate::structure::StructureBuilder) and
+/// [`StructureEditor`](crate::structure::StructureEditor) fail with it, so a caller can
 /// repair the draft and retry. It is transparent: it displays as its
 /// [`error`](Self::error) and returns that error's
 /// [`source`](std::error::Error::source).

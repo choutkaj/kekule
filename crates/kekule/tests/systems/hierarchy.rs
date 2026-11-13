@@ -136,17 +136,17 @@ fn hierarchy_walks_over_a_million_atoms_cost_what_they_return() {
     // 256 copies of 1AKE with its waters and ligands: 973,824 atoms in
     // 206,848 residues.
     let text = std::fs::read_to_string(super::support::fixture("mmcif/1AKE.cif")).unwrap();
-    let mut model = kekule::mmcif::parse_str(&text, Default::default())
+    let mut structure = kekule::mmcif::parse_str(&text, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     for _ in 0..8 {
-        let mut editor = model.to_editor();
-        editor.append_model(&model).unwrap();
-        model = editor.finish().unwrap();
+        let mut editor = structure.to_editor();
+        editor.append_structure(&structure).unwrap();
+        structure = editor.finish().unwrap();
     }
-    let topology = model.topology();
+    let topology = structure.topology();
     let time = |run: &dyn Fn() -> usize| {
         let mut best = std::time::Duration::MAX;
         let mut count = 0;

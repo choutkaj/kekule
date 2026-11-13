@@ -42,7 +42,7 @@ use crate::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyPercep
 /// is an error, never a truncated result.
 ///
 /// The value is bound to its selection's topology layout and is reusable
-/// across every model, member, and frame of that layout.
+/// across every structure, member, and frame of that layout.
 #[derive(Debug, Clone)]
 pub struct SymmetricSelection {
     selection: AtomSelection,

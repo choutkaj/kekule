@@ -5,7 +5,7 @@ use crate::algorithms::{
     coordinates_are_planar, double_bond_geometry_is_supported, double_bond_orientation_from_points,
     tetrahedral_orientation_from_points, RingMembership, StereoValidationError,
 };
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::molecule::*;
 
 use super::normalization::{
@@ -370,7 +370,7 @@ fn molfile_projection_candidates(
                 .require_incident_bonds(stereo.center)
                 .map_err(|error| {
                     MOLFILE_WRITE
-                        .invalid_model("The molecule is inconsistent.")
+                        .invalid_structure("The molecule is inconsistent.")
                         .with_source(error)
                 })?
                 .filter(|(_, bond)| bond.order == BondOrder::Single)
@@ -398,7 +398,7 @@ fn molfile_projection_candidates(
             ];
             let axis = molecule.require_bond(stereo.axis).map_err(|error| {
                 MOLFILE_WRITE
-                    .invalid_model("The molecule is inconsistent.")
+                    .invalid_structure("The molecule is inconsistent.")
                     .with_source(error)
             })?;
             Ok([axis.a(), axis.b()]

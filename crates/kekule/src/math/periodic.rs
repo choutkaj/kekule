@@ -1,0 +1,328 @@
+//! Exact lattice geometry. Cartesian inputs and outputs are length quantities.
+use super::{PeriodicCell, Vector3};
+use crate::diagnostics::{LimitExceeded, Resource};
+use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
+use std::fmt;
+
+/// Maximum lattice images an exact nearest-image search examines.
+pub const MAX_LATTICE_IMAGES: usize = 1_000_000;
+
+/// A nonfinite, unrepresentable, or excessively expensive periodic calculation.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum LatticeError {
+    /// A Cartesian input is not a length; see the source.
+    Unit(Box<UnitError>),
+    /// The calculation exceeds numerical precision or range.
+    NumericalFailure,
+    /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
+    LimitExceeded(LimitExceeded),
+}
+impl fmt::Display for LatticeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unit(_) => f.write_str("A periodic calculation input is not a length."),
+            Self::NumericalFailure => {
+                f.write_str("The periodic calculation exceeds the numerical precision or range.")
+            }
+            Self::LimitExceeded(limit) => {
+                write!(
+                    f,
+                    "The nearest-image search exceeded its {}.",
+                    limit.describe()
+                )
+            }
+        }
+    }
+}
+
+/// The nearest-image search would examine `images` lattice images, more than
+/// [`MAX_LATTICE_IMAGES`]; `None` means more than `u64` counts.
+fn image_limit(images: Option<u64>) -> LatticeError {
+    let observed = images
+        .and_then(|images| usize::try_from(images).ok())
+        .unwrap_or(usize::MAX);
+    LatticeError::LimitExceeded(LimitExceeded::new(
+        Resource::LatticeImages,
+        MAX_LATTICE_IMAGES,
+        observed.max(MAX_LATTICE_IMAGES + 1),
+    ))
+}
+impl std::error::Error for LatticeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unit(error) => Some(error.as_ref()),
+            Self::NumericalFailure | Self::LimitExceeded(_) => None,
+        }
+    }
+}
+
+impl From<UnitError> for LatticeError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(Box::new(error))
+    }
+}
+
+fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, LatticeError> {
+    Ok(vector.value_in(CANONICAL_LENGTH_UNIT)?)
+}
+
+/// Prepared reciprocal basis and exact bounded nearest-image search.
+///
+/// Supports rotated, skewed, left-handed, and partially periodic cells. Ties are
+/// deterministic. Cartesian inputs accept any length unit and outputs use the
+/// canonical length unit (nm); fractional coordinates and image indices are
+/// dimensionless. No approximate image fallback
+/// is used when the one-million-candidate bound is exceeded.
+#[derive(Debug, Clone)]
+pub struct Lattice {
+    basis: [Vector3; 3],
+    reciprocal: [Vector3; 3],
+    periodic: [bool; 3],
+}
+
+impl Lattice {
+    /// Prepares the reciprocal basis of `cell`.
+    ///
+    /// # Errors
+    ///
+    /// [`LatticeError::NumericalFailure`] when the reciprocal basis is
+    /// not finite, such as for a nearly degenerate cell.
+    pub fn new(cell: PeriodicCell) -> Result<Self, LatticeError> {
+        let [a, b, c] = cell.vectors().into_value();
+        let inverse_volume = 1.0 / a.dot(b.cross(c));
+        let reciprocal = [
+            b.cross(c) * inverse_volume,
+            c.cross(a) * inverse_volume,
+            a.cross(b) * inverse_volume,
+        ];
+        if !reciprocal.iter().all(|v| v.is_finite()) {
+            return Err(LatticeError::NumericalFailure);
+        }
+        Ok(Self {
+            basis: [a, b, c],
+            reciprocal,
+            periodic: cell.periodic_axes(),
+        })
+    }
+
+    /// Fractional coordinates of a Cartesian vector.
+    ///
+    /// # Errors
+    ///
+    /// [`LatticeError::Unit`] when `vector` is not a length, and
+    /// [`LatticeError::NumericalFailure`] when a coordinate is not
+    /// finite.
+    pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], LatticeError> {
+        self.fractional_canonical(canonical(vector)?)
+    }
+
+    /// The Cartesian vector of fractional coordinates.
+    pub fn cartesian(&self, fractional: [f64; 3]) -> Quantity<Vector3> {
+        Quantity::new(self.cartesian_canonical(fractional), CANONICAL_LENGTH_UNIT)
+    }
+
+    /// The shortest lattice image of a displacement, translating only along
+    /// periodic axes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::nearest_image`].
+    pub fn minimum_image(
+        &self,
+        delta: Quantity<Vector3>,
+    ) -> Result<Quantity<Vector3>, LatticeError> {
+        self.minimum_image_canonical(canonical(delta)?)
+            .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
+    }
+
+    /// The shortest lattice image of a displacement and the lattice
+    /// translation, in cell vectors, subtracted to reach it.
+    ///
+    /// Only periodic axes are translated; the index of a non-periodic axis is
+    /// zero.
+    ///
+    /// # Errors
+    ///
+    /// [`LatticeError::Unit`] when `delta` is not a length,
+    /// [`LatticeError::NumericalFailure`] when the search exceeds
+    /// numerical precision or range, and
+    /// [`LatticeError::LimitExceeded`] when more than
+    /// [`MAX_LATTICE_IMAGES`] candidate images would need examination.
+    pub fn nearest_image(
+        &self,
+        delta: Quantity<Vector3>,
+    ) -> Result<(Quantity<Vector3>, [i64; 3]), LatticeError> {
+        self.nearest_image_canonical(canonical(delta)?)
+            .map(|(vector, images)| (Quantity::new(vector, CANONICAL_LENGTH_UNIT), images))
+    }
+
+    /// Shortest nonzero lattice translation along periodic axes.
+    ///
+    /// # Errors
+    ///
+    /// [`LatticeError::NumericalFailure`] when the search exceeds
+    /// numerical precision or range, and
+    /// [`LatticeError::LimitExceeded`] when more than
+    /// [`MAX_LATTICE_IMAGES`] integer candidates would need examination.
+    pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, LatticeError> {
+        self.shortest_translation_canonical()
+            .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
+    }
+
+    pub(crate) fn fractional_canonical(&self, vector: Vector3) -> Result<[f64; 3], LatticeError> {
+        let fractional = self.reciprocal.map(|dual| dual.dot(vector));
+        if !fractional.iter().all(|v| v.is_finite()) {
+            return Err(LatticeError::NumericalFailure);
+        }
+        Ok(fractional)
+    }
+
+    pub(crate) fn cartesian_canonical(&self, fractional: [f64; 3]) -> Vector3 {
+        self.basis[0] * fractional[0]
+            + self.basis[1] * fractional[1]
+            + self.basis[2] * fractional[2]
+    }
+
+    pub(crate) fn minimum_image_canonical(&self, delta: Vector3) -> Result<Vector3, LatticeError> {
+        self.nearest_image_canonical(delta)
+            .map(|(vector, _)| vector)
+    }
+
+    pub(crate) fn nearest_image_canonical(
+        &self,
+        delta: Vector3,
+    ) -> Result<(Vector3, [i64; 3]), LatticeError> {
+        let fractional = self.fractional_canonical(delta)?;
+        let mut images = [0.0; 3];
+        for axis in 0..3 {
+            if self.periodic[axis] {
+                images[axis] = checked_image(fractional[axis])?;
+            }
+        }
+        let mut best = delta - self.cartesian_canonical(images);
+        let mut best_images = images.map(|n| n as i64);
+        let mut best_squared = best.norm_squared();
+        if !best_squared.is_finite() {
+            return Err(LatticeError::NumericalFailure);
+        }
+        // In an exactly orthogonal basis the three image choices are independent.
+        // Besides avoiding enumeration, this handles very elongated rectangular
+        // cells without an unnecessarily large Cartesian search radius.
+        if self.basis[0].dot(self.basis[1]) == 0.0
+            && self.basis[0].dot(self.basis[2]) == 0.0
+            && self.basis[1].dot(self.basis[2]) == 0.0
+        {
+            return Ok((best, best_images));
+        }
+        // If r bounds the best Cartesian residual, reciprocal-vector norms bound
+        // every fractional residual. Enumerating this finite box therefore includes
+        // the true closest lattice image, even for skewed or partially periodic cells.
+        let radius = best_squared.sqrt();
+        let mut bounds = [(0_i64, 0_i64); 3];
+        let mut candidates = 1_u64;
+        for axis in 0..3 {
+            if self.periodic[axis] {
+                let span = radius * self.reciprocal[axis].norm();
+                let padding = 64.0 * f64::EPSILON * (1.0 + fractional[axis].abs() + span);
+                let low = (fractional[axis] - span - padding).ceil();
+                let high = (fractional[axis] + span + padding).floor();
+                if !low.is_finite()
+                    || !high.is_finite()
+                    || low.abs().max(high.abs()) >= 2.0_f64.powi(52)
+                {
+                    return Err(LatticeError::NumericalFailure);
+                }
+                let (low, high) = (low as i64, high as i64);
+                let count = (high - low + 1).max(0) as u64;
+                let next = candidates.checked_mul(count);
+                candidates = next
+                    .filter(|n| *n <= MAX_LATTICE_IMAGES as u64)
+                    .ok_or_else(|| image_limit(next))?;
+                bounds[axis] = (low, high);
+            }
+        }
+        for a in bounds[0].0..=bounds[0].1 {
+            for b in bounds[1].0..=bounds[1].1 {
+                for c in bounds[2].0..=bounds[2].1 {
+                    let residual = delta - self.cartesian_canonical([a as f64, b as f64, c as f64]);
+                    let squared = residual.norm_squared();
+                    if squared < best_squared {
+                        best = residual;
+                        best_squared = squared;
+                        best_images = [a, b, c];
+                    }
+                }
+            }
+        }
+        Ok((best, best_images))
+    }
+}
+
+fn checked_image(value: f64) -> Result<f64, LatticeError> {
+    if !value.is_finite() || value.abs() >= 2.0_f64.powi(52) {
+        return Err(LatticeError::NumericalFailure);
+    }
+    Ok(value.round())
+}
+
+impl Lattice {
+    /// Reciprocal basis lengths, for conservative fractional neighbor bounds.
+    pub(crate) fn reciprocal_norms(&self) -> [f64; 3] {
+        self.reciprocal.map(|v| v.norm())
+    }
+}
+impl Lattice {
+    pub(crate) fn shortest_translation_canonical(&self) -> Result<Vector3, LatticeError> {
+        let mut best = self
+            .basis
+            .iter()
+            .zip(self.periodic)
+            .filter(|(_, p)| *p)
+            .map(|(v, _)| *v)
+            .min_by(|a, b| a.norm().total_cmp(&b.norm()))
+            .expect("at least one periodic axis");
+        if self.basis[0].dot(self.basis[1]) == 0.0
+            && self.basis[0].dot(self.basis[2]) == 0.0
+            && self.basis[1].dot(self.basis[2]) == 0.0
+        {
+            return Ok(best);
+        }
+        let radius = best.norm();
+        let mut bounds = [0_i64; 3];
+        let mut count = 1_u64;
+        for (i, bound) in bounds.iter_mut().enumerate() {
+            if self.periodic[i] {
+                let extent =
+                    (radius * self.reciprocal[i].norm() * (1.0 + 64.0 * f64::EPSILON)).ceil();
+                if !extent.is_finite() || extent > 500_000.0 {
+                    // Along this axis alone, 2 * extent + 1 images exceed the
+                    // bound; `as` saturates an infinite extent.
+                    return Err(image_limit(Some((2.0 * extent + 1.0) as u64)));
+                }
+                *bound = extent as i64;
+                let next = count.checked_mul(2 * (*bound as u64) + 1);
+                count = next
+                    .filter(|n| *n <= MAX_LATTICE_IMAGES as u64)
+                    .ok_or_else(|| image_limit(next))?;
+            }
+        }
+        for a in -bounds[0]..=bounds[0] {
+            for b in -bounds[1]..=bounds[1] {
+                for c in -bounds[2]..=bounds[2] {
+                    if [a, b, c] == [0; 3] {
+                        continue;
+                    }
+                    let candidate = self.cartesian_canonical([a as f64, b as f64, c as f64]);
+                    if candidate.norm() < best.norm() {
+                        best = candidate;
+                    }
+                }
+            }
+        }
+        if !best.is_finite() || best.norm() == 0.0 {
+            return Err(LatticeError::NumericalFailure);
+        }
+        Ok(best)
+    }
+}

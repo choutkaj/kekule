@@ -14,7 +14,7 @@
 
 `kekule` is an experimental chemistry backend scoped for both small molecules and macromolecules. The project is intended to cover regular cheminformatics workflows, as well as modeling-oriented tasks. `kekule` is human-architected and AI-coded.
 
-The architectural contract lives in [`ARCHITECTURE.md`](https://github.com/choutkaj/kekule/blob/main/ARCHITECTURE.md).
+The architectural contract lives in [`SPEC.md`](https://github.com/choutkaj/kekule/blob/main/SPEC.md).
 
 > [!NOTE]
 > `kekule` is in early development and should be considered unstable.
@@ -35,20 +35,20 @@ Sister crates add the rest of the workspace:
 
 ## Concepts
 
-`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. `Topology` is a collection of one or more `Molecule`s together with their hierarchy of chains, residues, and atom sites, read through `ChainView`, `ResidueView`, and `AtomSiteView`. `Molecule`s in `Topology` are not stored naively, but as `MoleculeDefinition`s and instances. For example, a hundred water molecules will be stored as one definition and a hundred instances. Coordinates are detached from `Molecule` and `Topology`: they live in structures. A structure is one set of coordinates and per-atom state of a topology: `Positions`, an optional periodic cell, and structure properties, plus fields specific to the kind of structure.
+`Molecule` is the foundational type storing one molecule without its geometry. `Molecule` must be a connected graph. Its `Graph` owns authoritative chemistry, while its `Perception` stores derived chemical perception such as rings and aromaticity. `Topology` is a collection of one or more `Molecule`s together with their hierarchy of chains, residues, and atom sites, read through `ChainView`, `ResidueView`, and `AtomSiteView`. `Molecule`s in `Topology` are not stored naively, but as `MoleculeDefinition`s and instances. For example, a hundred water molecules will be stored as one definition and a hundred instances. Coordinates are detached from `Molecule` and `Topology`: they live in a `Geometry`, which is where the atoms are plus the per-atom state recorded at that arrangement: `Positions`, an optional periodic cell, and geometry properties, with velocities and forces where a source records them.
 ```text
 Molecule  = Graph + Perception + Properties
 Topology  = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. `Model` is literally a model of one or more molecules. `SampleSet` holds many structures of one system as samples. An optional order places every sample: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution groups all samples or some of them into states, with weights and state energies, as for a conformer ensemble. `SampleSet::from_reader` loads chosen samples of any set, such as every tenth frame of a file. A sample set read from an indexed trajectory file (`traj::io::open_indexed_sample_set`) holds no samples in memory and decodes each one when it is read. `traj::Processed` makes molecules whole, wraps, centers, fits, smooths, and subsets samples as they are read, and statistics, RMSD, and pairwise fits read any set through the `SampleRead` trait.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. A `Structure` is a topology with one geometry of it. A `StructureSet` holds many geometries of one system. An optional order places every geometry: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution reads the geometries as samples drawn from a distribution, grouping all or some of them into states, with weights and state energies, as for a conformer ensemble. `StructureSet::from_reader` loads chosen geometries of any set, such as every tenth frame of a file. A structure set read from an indexed trajectory file (`traj::io::open_indexed_structure_set`) holds no geometries in memory and decodes each one when it is read. `traj::Processed` makes molecules whole, wraps, centers, fits, smooths, and subsets geometries as they are read, and statistics, RMSD, and pairwise fits read any set through the `StructureSetRead` trait.
 
 ```text
-Model        = Topology + positions, cell, occupancies, B-factors, properties
-SampleSet    = Topology + Samples (positions, cell, occupancies, B-factors, velocities, forces, properties)
+Structure    = Topology + positions, cell, occupancies, B-factors, properties
+StructureSet = Topology + Geometries (positions, cell, occupancies, B-factors, velocities, forces, properties)
                + optional Order (times and steps, steps, or coordinate values)
                + optional Distribution (members, weights, states with energies, temperature)
-SampleSet<IndexedFile> = the same, with each sample read from a trajectory file
+StructureSet<IndexedFile> = the same, with each geometry read from a trajectory file
 ```
 
 ## Formats
@@ -111,9 +111,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-### SDF and mmCIF models
+### SDF and mmCIF structures
 
-Load one small molecule from an SDF record and another from an mmCIF data block, inspect and save both models, then combine them into a new model and write it as mmCIF. The example reads
+Load one small molecule from an SDF record and another from an mmCIF data block, inspect and save both structures, then combine them into a new structure and write it as mmCIF. The example reads
 `ligand.sdf` and `cofactor.cif` from the working directory:
 
 ```rust,no_run
@@ -125,15 +125,15 @@ use std::{
 use kekule::{
     mmcif::{self, MmcifBlockSource, MmcifWriteOptions},
     sdf::{self, SdfWriteOptions},
-    structure::Model,
+    structure::Structure,
 };
 
-fn print_model(label: &str, model: &Model) {
+fn print_structure(label: &str, structure: &Structure) {
     println!(
         "{label}: {} molecules, {} atoms, {} bonds",
-        model.topology().instance_count(),
-        model.atom_count(),
-        model.topology().bond_count(),
+        structure.topology().instance_count(),
+        structure.atom_count(),
+        structure.topology().bond_count(),
     );
 }
 
@@ -141,12 +141,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     // SDF is record-oriented. This example deliberately loads one record.
     let sdf_document = sdf::parse_str(&fs::read_to_string("ligand.sdf")?, Default::default())?;
     let sdf_record = sdf_document.records().first().expect("SDF has a record");
-    let sdf_model = sdf_record.interpret(Default::default())?.into_model();
-    assert_eq!(sdf_model.topology().instance_count(), 1);
-    print_model("SDF model", &sdf_model);
+    let sdf_structure = sdf_record.interpret(Default::default())?.into_structure();
+    assert_eq!(sdf_structure.topology().instance_count(), 1);
+    print_structure("SDF structure", &sdf_structure);
     sdf::write_to(
         &mut File::create("ligand-copy.sdf")?,
-        [&sdf_model],
+        [&sdf_structure],
         SdfWriteOptions::default(),
     )?;
 
@@ -154,11 +154,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     // and selects one coordinate model using the default options.
     let cif_document = mmcif::parse_str(&fs::read_to_string("cofactor.cif")?, Default::default())?;
     let cif_interpretation = cif_document.interpret(Default::default())?;
-    let cif_model = cif_interpretation.model();
-    assert_eq!(cif_model.topology().instance_count(), 1);
-    print_model("mmCIF model", cif_model);
+    let cif_structure = cif_interpretation.structure();
+    assert_eq!(cif_structure.topology().instance_count(), 1);
+    print_structure("mmCIF structure", cif_structure);
     // Writing with the interpretation report keeps the source entity semantics.
-    let block = MmcifBlockSource::model(cif_model)
+    let block = MmcifBlockSource::structure(cif_structure)
         .with_reports(std::slice::from_ref(cif_interpretation.report()));
     mmcif::write_to(
         &mut File::create("cofactor-copy.cif")?,
@@ -166,20 +166,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         MmcifWriteOptions::default(),
     )?;
 
-    // Initiate Model builder and combine both Models
-    let mut builder = Model::builder();
+    // Initiate Structure builder and combine both structures
+    let mut builder = Structure::builder();
     builder.add_molecule(
-        sdf_model.topology().instances().next().unwrap().molecule().clone(),
-        sdf_model.positions(),
+        sdf_structure.topology().instances().next().unwrap().molecule().clone(),
+        sdf_structure.positions(),
     )?;
     builder.add_molecule(
-        cif_model.topology().instances().next().unwrap().molecule().clone(),
-        cif_model.positions(),
+        cif_structure.topology().instances().next().unwrap().molecule().clone(),
+        cif_structure.positions(),
     )?;
     let combined = builder.build()?;
-    print_model("combined model", &combined);
+    print_structure("combined structure", &combined);
 
-    // Write the combined Model into mmCIF file
+    // Write the combined Structure into mmCIF file
     mmcif::write_to(
         &mut File::create("combined.cif")?,
         [&combined],
@@ -189,7 +189,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 ```
-The combined-model example intentionally requires one connected small molecule per input. Multi-record SDF documents, multi-block or multi-model mmCIF documents, and macromolecular systems require explicit source selection.
+The combined-structure example intentionally requires one connected small molecule per input. Multi-record SDF documents, multi-block or multi-model mmCIF documents, and macromolecular systems require explicit source selection.
 
 
 ## Contributing

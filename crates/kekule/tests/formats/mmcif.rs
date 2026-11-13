@@ -28,7 +28,7 @@ C C1 GLY A 1 1 0.0 0.0 0.0
 C C2 GLY A 1 1 1.0 0.0 0.0
 "#;
 
-/// The cell of an interpreted model as its diagonal in angstroms, when the
+/// The cell of an interpreted structure as its diagonal in angstroms, when the
 /// cell is orthorhombic, and the report's cell omissions.
 fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIssue>) {
     let interpreted = mmcif::parse_str(text, Default::default())
@@ -42,7 +42,7 @@ fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIss
         .filter(|issue| matches!(issue, StructureInterpretIssue::CellOmitted { .. }))
         .cloned()
         .collect();
-    let cell = interpreted.model().cell().map(|cell| {
+    let cell = interpreted.structure().cell().map(|cell| {
         assert!(cell.is_orthorhombic());
         assert_eq!(cell.periodic_axes(), [true; 3]);
         let [a, b, c] = cell
@@ -56,7 +56,7 @@ fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIss
 }
 
 #[test]
-fn mmcif_cell_is_the_model_cell_only_for_a_whole_unit_cell() {
+fn mmcif_cell_is_the_structure_cell_only_for_a_whole_unit_cell() {
     let cell = |lengths: &str| {
         let [a, b, c]: [&str; 3] = lengths.split(' ').collect::<Vec<_>>().try_into().unwrap();
         format!(
@@ -180,23 +180,23 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         .topology()
         .same_layout(interpreted.topology()));
     assert_eq!(
-        block_interpreted.model().positions(),
-        interpreted.model().positions()
+        block_interpreted.structure().positions(),
+        interpreted.structure().positions()
     );
-    assert_eq!(interpreted.model().topology().instance_count(), 1);
-    assert_ne!(interpreted.model().topology().atom_sites().len(), 0);
-    assert_eq!(interpreted.model().positions().len(), 2);
+    assert_eq!(interpreted.structure().topology().instance_count(), 1);
+    assert_ne!(interpreted.structure().topology().atom_sites().len(), 0);
+    assert_eq!(interpreted.structure().positions().len(), 2);
     assert_eq!(interpreted.molecules().count(), 1);
     assert!(interpreted
         .molecules()
         .all(|molecule| molecule.perception() == &kekule::perception::Perception::default()));
     assert!(interpreted
         .topology()
-        .same_layout(interpreted.model().topology()));
+        .same_layout(interpreted.structure().topology()));
     let owned_topology = method_default.clone().into_topology();
-    let owned_model = method_default.clone().into_model();
+    let owned_structure = method_default.clone().into_structure();
     let owned_molecules = method_default.into_molecules();
-    assert!(owned_topology.same_layout(owned_model.topology()));
+    assert!(owned_topology.same_layout(owned_structure.topology()));
     assert_eq!(
         owned_topology
             .instances()
@@ -207,7 +207,12 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert!(block
         .interpret(Default::default())?
         .into_topology()
-        .same_layout(block.interpret(Default::default())?.into_model().topology()));
+        .same_layout(
+            block
+                .interpret(Default::default())?
+                .into_structure()
+                .topology()
+        ));
     assert_eq!(
         block.interpret(Default::default())?.into_molecules().len(),
         1
@@ -218,12 +223,12 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     let explicit = document.interpret(StructureInterpretOptions::default())?;
     assert_eq!(explicit.report(), interpreted.report());
     for from_document in [
-        document.interpret(Default::default())?.into_model(),
+        document.interpret(Default::default())?.into_structure(),
         document
             .interpret(StructureInterpretOptions::default())?
-            .into_model(),
+            .into_structure(),
     ] {
-        let from_block = block.interpret(Default::default())?.into_model();
+        let from_block = block.interpret(Default::default())?.into_structure();
         assert!(from_document.topology().same_layout(from_block.topology()));
         assert_eq!(from_document.positions(), from_block.positions());
     }
@@ -234,12 +239,17 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert!(document
         .interpret(Default::default())?
         .into_topology()
-        .same_layout(block.interpret(Default::default())?.into_model().topology()));
-    let set = document.interpret_sample_set(Default::default())?;
+        .same_layout(
+            block
+                .interpret(Default::default())?
+                .into_structure()
+                .topology()
+        ));
+    let set = document.interpret_structure_set(Default::default())?;
     assert_eq!(
         set.reports(),
         document
-            .interpret_sample_set(macromolecular::StructureSampleSetInterpretOptions::default())?
+            .interpret_structure_set(macromolecular::StructureSetInterpretOptions::default())?
             .reports()
     );
     assert_eq!(crate::native_fingerprint(&set), 0x2427_352a_afd6_2d3a);
@@ -253,7 +263,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
             "{:?}",
             two_blocks
                 .interpret(Default::default())
-                .map(|interpretation| interpretation.into_model())
+                .map(|interpretation| interpretation.into_structure())
                 .unwrap_err()
         ),
         format!(
@@ -277,7 +287,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         provenance.instance()
     );
     let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(interpreted.model())
+        [mmcif::MmcifBlockSource::structure(interpreted.structure())
             .with_reports(std::slice::from_ref(interpreted.report()))],
         MmcifWriteOptions::default(),
     )
@@ -285,7 +295,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert!(written.starts_with("data_model\n"));
     assert!(mmcif::parse_str(&written, Default::default()).is_ok());
     let custom_written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(interpreted.model())
+        [mmcif::MmcifBlockSource::structure(interpreted.structure())
             .with_reports(std::slice::from_ref(interpreted.report()))],
         MmcifWriteOptions::default()
             .with_block_name("custom".to_owned())
@@ -302,21 +312,21 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
             MmcifWriteIssue::InvalidBlockName(String::new())
         ))
     );
-    let automatic =
-        mmcif::write([interpreted.model()], MmcifWriteOptions::default()).map(|(text, _)| text)?;
+    let automatic = mmcif::write([interpreted.structure()], MmcifWriteOptions::default())
+        .map(|(text, _)| text)?;
     assert!(automatic.contains("1 non-polymer"));
     let mut classifications = MmcifEntityClassifications::new();
     classifications.insert(provenance.instance(), EntityKind::Polymer)?;
     let written = mmcif::write(
-        [mmcif::MmcifBlockSource::model(interpreted.model())
+        [mmcif::MmcifBlockSource::structure(interpreted.structure())
             .with_classifications(&classifications)],
         MmcifWriteOptions::default(),
     )
     .map(|(text, _)| text)?;
     assert!(written.contains("1 polymer"));
-    let model = interpreted.into_model();
-    assert_eq!(model.topology().instance_count(), 1);
-    assert_eq!(model.positions().len(), 2);
+    let structure = interpreted.into_structure();
+    assert_eq!(structure.topology().instance_count(), 1);
+    assert_eq!(structure.positions().len(), 2);
 
     Ok(())
 }
@@ -331,7 +341,7 @@ fn duplicate_agreeing_authoritative_bond_evidence_is_idempotent() {
         .interpret(Default::default())
         .expect("duplicate agreeing connectivity is accepted");
     let graph = interpreted
-        .model()
+        .structure()
         .topology()
         .definitions()
         .next()
@@ -587,8 +597,8 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
     );
 
     // The protein, GDP, the ion, and the inhibitor are separate molecules.
-    let mut model = interpreted.model().clone();
-    model.perceive().unwrap();
+    let mut structure = interpreted.structure().clone();
+    structure.perceive().unwrap();
     let molecule_of = |component: &str| {
         let instances = report
             .instances()
@@ -604,7 +614,7 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
         let [instance] = instances[..] else {
             panic!("{component} is in {} molecules", instances.len());
         };
-        model.topology().instance(instance).unwrap()
+        structure.topology().instance(instance).unwrap()
     };
     let formula = |component: &str| {
         molecular_formula(
@@ -652,13 +662,13 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
         interpreted.topology().bond_count()
     );
 
-    // The model alone carries no coordination.
-    let (model_only, _) = mmcif::write(
-        [mmcif::MmcifBlockSource::model(interpreted.model())],
+    // The structure alone carries no coordination.
+    let (structure_only, _) = mmcif::write(
+        [mmcif::MmcifBlockSource::structure(interpreted.structure())],
         Default::default(),
     )
     .unwrap();
-    assert!(!model_only.contains("metalc"));
+    assert!(!structure_only.contains("metalc"));
 }
 
 #[test]
@@ -734,10 +744,10 @@ fn identical_molecules_share_one_definition_and_edit_alone() {
     }
 
     // Default perception runs once per definition and serves every water.
-    let mut perceived = interpreted.model().clone();
+    let mut perceived = interpreted.structure().clone();
     perceived.perceive().unwrap();
-    let hydrogens = |model: &kekule::structure::Model, instance| {
-        model
+    let hydrogens = |structure: &kekule::structure::Structure, instance| {
+        structure
             .topology()
             .instance(instance)
             .unwrap()
@@ -774,8 +784,8 @@ fn identical_molecules_share_one_definition_and_edit_alone() {
     editor
         .replace_atom(oxygen, Atom::new(element).with_formal_charge(-1))
         .unwrap();
-    let (edited_model, correspondence) = editor.finish_with_correspondence().unwrap();
-    let topology = edited_model.topology();
+    let (edited_structure, correspondence) = editor.finish_with_correspondence().unwrap();
+    let topology = edited_structure.topology();
     assert_eq!(topology.definition_count(), 7);
     let charge = |instance| {
         topology

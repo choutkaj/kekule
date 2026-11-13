@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::topology::Topology;
 use kekule::traj::{
     FrameBuffer, FrameData, FrameView, SeekableTrajectoryReader, TrajectoryIoError,

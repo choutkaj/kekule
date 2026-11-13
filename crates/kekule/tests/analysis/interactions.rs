@@ -10,11 +10,11 @@ use kekule::interactions::{
     find_interactions_between, find_interactions_within, Interaction, InteractionCriteria,
     InteractionEnd, InteractionFeatures, InteractionKind, InteractionRole, InteractionSide,
 };
-use kekule::structure::Model;
+use kekule::structure::Structure;
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::units::{ANGSTROM, DEGREE};
 
-fn load(entry: &str) -> Model {
+fn load(entry: &str) -> Structure {
     let path = format!(
         "{}/tests/fixtures/mmcif/{entry}.cif",
         env!("CARGO_MANIFEST_DIR")
@@ -23,7 +23,7 @@ fn load(entry: &str) -> Model {
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model()
+        .into_structure()
 }
 
 /// `RES<seq>:<atom>` by author residue number and label atom name.
@@ -48,10 +48,10 @@ fn labels(topology: &Topology, end: &InteractionEnd) -> String {
 
 type Found = Vec<(InteractionKind, String, String, Interaction)>;
 
-/// The interactions of one residue's atoms with every atom, in a model
+/// The interactions of one residue's atoms with every atom, in a structure
 /// whose every molecule perceives.
-fn of_ligand(model: &Model, ligand: &str) -> Found {
-    let topology = model.shared_topology();
+fn of_ligand(structure: &Structure, ligand: &str) -> Found {
+    let topology = structure.shared_topology();
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let unperceived = features
         .unperceived_definitions()
@@ -70,7 +70,7 @@ fn of_ligand(model: &Model, ligand: &str) -> Found {
     let all = AtomSelection::all(Arc::clone(&topology));
     let found = find_interactions_within(
         &features,
-        model,
+        structure,
         &ligand,
         &all,
         &InteractionCriteria::default(),
@@ -176,8 +176,8 @@ fn trypsin_benzamidine_3ptb() {
     // Benzamidine's amidinium bridges Asp189 at the bottom of the S1
     // pocket; the calcium site binds Glu70, Asn72, Val75, Glu80, and two
     // waters.
-    let model = load("3PTB");
-    let found = of_ligand(&model, "BEN");
+    let structure = load("3PTB");
+    let found = of_ligand(&structure, "BEN");
     use InteractionKind::*;
     expect(
         &found,
@@ -191,7 +191,7 @@ fn trypsin_benzamidine_3ptb() {
     expect(&found, HydrogenBond, "BEN1:N1", "GLY219:O", 2.8153);
     expect(&found, HydrogenBond, "BEN1:N2", "SER190:OG", 3.0417);
 
-    let calcium = of_ligand(&model, "CA");
+    let calcium = of_ligand(&structure, "CA");
     let ligands = calcium
         .iter()
         .filter(|(kind, ..)| *kind == MetalCoordination)
@@ -275,8 +275,8 @@ fn hydrophobic_contacts_are_reduced_as_plip_reduces_them() {
 fn hydrophobic_contacts_do_not_depend_on_reporting_pi_stacking() {
     // Tacrine's rings stack on Trp84 and Phe330. A search for hydrophobic
     // contacts alone still drops the contacts between those rings.
-    let model = load("1ACJ");
-    let topology = model.shared_topology();
+    let structure = load("1ACJ");
+    let topology = structure.shared_topology();
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let tacrine = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
         atom.residue()
@@ -293,7 +293,7 @@ fn hydrophobic_contacts_do_not_depend_on_reporting_pi_stacking() {
         .with_metal_coordination(defaults.metal_coordination().with_enabled(false));
     for (first, second) in [(&tacrine, &all), (&all, &tacrine), (&all, &all)] {
         let search = |criteria: &InteractionCriteria| {
-            find_interactions_within(&features, &model, first, second, criteria).unwrap()
+            find_interactions_within(&features, &structure, first, second, criteria).unwrap()
         };
         let reported = search(&defaults);
         assert!(reported.interactions().iter().any(|interaction| matches!(
@@ -380,8 +380,8 @@ fn rubredoxin_iron_1iro() {
 #[test]
 fn split_structures_give_the_same_interactions() {
     // 9UOH's inhibitor and everything else, as one structure and as two.
-    let model = load("9UOH");
-    let topology = model.shared_topology();
+    let structure = load("9UOH");
+    let topology = structure.shared_topology();
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let ligand = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
         atom.residue()
@@ -389,21 +389,22 @@ fn split_structures_give_the_same_interactions() {
     });
     let rest = ligand.complement();
     let criteria = InteractionCriteria::default();
-    let within = find_interactions_within(&features, &model, &ligand, &rest, &criteria).unwrap();
+    let within =
+        find_interactions_within(&features, &structure, &ligand, &rest, &criteria).unwrap();
 
-    let ligand_model = model.subset(&ligand).unwrap();
-    let rest_model = model.subset(&rest).unwrap();
+    let ligand_structure = structure.subset(&ligand).unwrap();
+    let rest_structure = structure.subset(&rest).unwrap();
     let (ligand_features, rest_features) = (
-        InteractionFeatures::new(ligand_model.shared_topology()),
-        InteractionFeatures::new(rest_model.shared_topology()),
+        InteractionFeatures::new(ligand_structure.shared_topology()),
+        InteractionFeatures::new(rest_structure.shared_topology()),
     );
     let (ligand_atoms, rest_atoms) = (
-        AtomSelection::all(ligand_model.shared_topology()),
-        AtomSelection::all(rest_model.shared_topology()),
+        AtomSelection::all(ligand_structure.shared_topology()),
+        AtomSelection::all(rest_structure.shared_topology()),
     );
     let between = find_interactions_between(
-        &InteractionSide::new(&ligand_features, &ligand_model, &ligand_atoms).unwrap(),
-        &InteractionSide::new(&rest_features, &rest_model, &rest_atoms).unwrap(),
+        &InteractionSide::new(&ligand_features, &ligand_structure, &ligand_atoms).unwrap(),
+        &InteractionSide::new(&rest_features, &rest_structure, &rest_atoms).unwrap(),
         &criteria,
     )
     .unwrap();

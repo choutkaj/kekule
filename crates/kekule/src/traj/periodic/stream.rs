@@ -1,8 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::structure::{AsModelView, ModelView, Positions, SampleSetError};
+use crate::math::{PeriodicCell, Point3, Vector3};
+use crate::structure::{AsStructureView, Positions, StructureSetError, StructureView};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
@@ -54,7 +54,7 @@ impl MoleculeImager {
         frame_index: usize,
         frame: &mut FrameBuffer,
     ) -> Result<(), PeriodicError> {
-        let positions = self.frame_positions(frame_index, frame.as_model_view(), None)?;
+        let positions = self.frame_positions(frame_index, frame.as_structure_view(), None)?;
         publish_buffer(frame, &positions)
     }
 
@@ -73,7 +73,8 @@ impl MoleculeImager {
         anchors: &AtomSelection,
     ) -> Result<(), PeriodicError> {
         let anchors = self.anchor_groups(anchors)?;
-        let positions = self.frame_positions(frame_index, frame.as_model_view(), Some(&anchors))?;
+        let positions =
+            self.frame_positions(frame_index, frame.as_structure_view(), Some(&anchors))?;
         publish_buffer(frame, &positions)
     }
 
@@ -89,8 +90,8 @@ impl MoleculeImager {
     /// ```
     /// use std::sync::Arc;
     ///
-    /// use kekule::geometry::{PeriodicCell, Point3, Vector3};
-    /// use kekule::structure::{Positions, Sample, SampleSet};
+    /// use kekule::math::{PeriodicCell, Point3, Vector3};
+    /// use kekule::structure::{Positions, Geometry, StructureSet};
     /// use kekule::units::{Quantity, NANOMETER};
     /// use kekule::{smiles, topology::Topology};
     /// use kekule::traj::{periodic::MoleculeImager, FrameBuffer, FrameView};
@@ -103,13 +104,13 @@ impl MoleculeImager {
     /// let frames = [0.95, 0.05].map(|x| {
     ///     let points = vec![Point3::new(x, 0.5, 0.5)];
     ///     let positions = Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap();
-    ///     Sample::new(positions).with_cell(cell)
+    ///     Geometry::new(positions).with_cell(cell)
     /// });
-    /// let trajectory = SampleSet::from_samples(Arc::clone(&topology), frames)?;
+    /// let trajectory = StructureSet::from_geometries(Arc::clone(&topology), frames)?;
     ///
     /// let imager = MoleculeImager::new(Arc::clone(&topology));
     /// let mut frame = FrameBuffer::new(topology);
-    /// frame.copy_from(FrameView::from_sample(trajectory.get(1).unwrap())?)?;
+    /// frame.copy_from(FrameView::from_geometry(trajectory.get(1).unwrap())?)?;
     /// imager.image_onto(1, &mut frame, &trajectory.get(0).unwrap())?;
     /// let x = frame.positions().get(0).unwrap().value_in(NANOMETER)?.x;
     /// assert!((x - 1.05).abs() < 1.0e-12);
@@ -125,12 +126,12 @@ impl MoleculeImager {
         &self,
         frame_index: usize,
         frame: &mut FrameBuffer,
-        reference: &(impl AsModelView + ?Sized),
+        reference: &(impl AsStructureView + ?Sized),
     ) -> Result<(), PeriodicError> {
         let positions = self.reference_positions(
             frame_index,
-            frame.as_model_view(),
-            reference.as_model_view(),
+            frame.as_structure_view(),
+            reference.as_structure_view(),
         )?;
         publish_buffer(frame, &positions)
     }
@@ -138,8 +139,8 @@ impl MoleculeImager {
     pub(crate) fn reference_positions(
         &self,
         frame_index: usize,
-        source: ModelView<'_>,
-        reference: ModelView<'_>,
+        source: StructureView<'_>,
+        reference: StructureView<'_>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(reference.topology()) {
             return Err(PeriodicError::ReferenceTopologyMismatch);
@@ -176,7 +177,7 @@ impl MoleculeImager {
     pub(crate) fn frame_positions(
         &self,
         frame_index: usize,
-        source: ModelView<'_>,
+        source: StructureView<'_>,
         anchors: Option<&[bool]>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(source.topology()) {
@@ -412,7 +413,7 @@ impl TrajectoryUnwrapper {
 
 fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), PeriodicError> {
     frame
-        .sample_mut()
+        .geometry_mut()
         .set_positions(positions.values())
-        .map_err(|error| PeriodicError::Publication(Box::new(SampleSetError::Structure(error))))
+        .map_err(|error| PeriodicError::Publication(Box::new(StructureSetError::Geometry(error))))
 }

@@ -1234,9 +1234,9 @@ fn sparse_subset_retains_only_selected_component_storage() {
 }
 
 #[test]
-fn compact_subset_projects_properties_bonds_and_model_positions() {
-    use crate::geometry::Point3;
-    use crate::structure::{Model, Positions};
+fn compact_subset_projects_properties_bonds_and_structure_positions() {
+    use crate::math::Point3;
+    use crate::structure::{Positions, Structure};
     use crate::units::{Quantity, NANOMETER};
 
     let (molecule, carbon, oxygen, bond) = edited_molecule();
@@ -1348,8 +1348,8 @@ fn compact_subset_projects_properties_bonds_and_model_positions() {
         NANOMETER,
     ))
     .unwrap();
-    let model = Model::new(source, positions).unwrap();
-    let sliced = model.subset(&selection).unwrap();
+    let structure = Structure::new(source, positions).unwrap();
+    let sliced = structure.subset(&selection).unwrap();
     assert_eq!(
         sliced
             .positions()

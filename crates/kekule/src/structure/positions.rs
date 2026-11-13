@@ -1,19 +1,19 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 
 /// A dense numerical coordinate array in Kekule's canonical length unit.
 ///
-/// `Positions` has no topology context. Structural owners such as [`super::Model`]
+/// `Positions` has no topology context. Structural owners such as [`super::Structure`]
 /// validate its length and translate semantic atom identifiers to dense indices.
 /// Construction accepts any compatible length [`crate::units::Unit`] and
 /// converts values once to the library-wide canonical unit. Non-finite values
 /// are rejected.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Positions {
-    // Shared by clones until one is written, so copying a model or starting
+    // Shared by clones until one is written, so copying a structure or starting
     // an editor from one copies no coordinates.
     values: Arc<Vec<Point3>>,
 }

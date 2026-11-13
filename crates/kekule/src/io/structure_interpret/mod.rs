@@ -9,15 +9,15 @@ mod connections;
 pub(crate) use connections::is_metal;
 mod mmcif;
 mod pdb;
-mod sample_set;
 mod sequences;
+mod structure_set;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
-use crate::geometry::PeriodicCell;
-use crate::structure::ModelBuilder;
+use crate::math::PeriodicCell;
+use crate::structure::StructureBuilder;
 use crate::topology::HierarchyBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
@@ -37,11 +37,12 @@ pub use altloc::{
 pub use assemblies::{Assembly, AssemblyError, AssemblyGenerator, AssemblyOperation};
 pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
-    interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_sample_set,
-    interpret_mmcif_sample_set_block,
+    interpret_mmcif_conformations, interpret_mmcif_conformations_block,
+    interpret_mmcif_structure_set, interpret_mmcif_structure_set_block,
 };
 pub(crate) use pdb::{
-    interpret_pdb, interpret_pdb_conformations, interpret_pdb_sample_set, pdb_alternate_locations,
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_structure_set,
+    pdb_alternate_locations,
 };
 pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
@@ -53,7 +54,7 @@ pub use types::{
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
-    StructureSampleSetInterpretOptions, StructureSampleSetInterpretation,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a
@@ -73,7 +74,7 @@ struct StructureSource {
     cell: Option<PeriodicCell>,
     /// Issues found while reading the source.
     issues: Vec<StructureInterpretIssue>,
-    /// The polymer entities the source states, not yet placed in a model.
+    /// The polymer entities the source states, not yet placed in a structure.
     polymer_entities: Vec<PolymerEntity>,
     /// The biological assemblies the source states.
     assemblies: Vec<Assembly>,
@@ -280,7 +281,7 @@ impl PreparedSource {
                     });
             }
         }
-        publish_model(
+        publish_structure(
             &self.connections,
             rows,
             &self.polymer_order,
@@ -292,14 +293,14 @@ impl PreparedSource {
         .map(|mut interpretation| {
             interpretation.report.polymer_entities = sequences::place_polymer_entities(
                 &self.polymer_entities,
-                interpretation.model.topology(),
+                interpretation.structure.topology(),
             );
             interpretation
         })
     }
 }
 
-fn publish_model(
+fn publish_structure(
     connections: &[ConnectionRecord],
     rows: ModelRows,
     polymer_asym_order: &BTreeMap<String, usize>,
@@ -355,7 +356,7 @@ fn publish_model(
             .or_default()
             .push(connection);
     }
-    let mut builder = ModelBuilder::new();
+    let mut builder = StructureBuilder::new();
     let mut definitions = DefinitionReuse::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {
@@ -437,16 +438,16 @@ fn publish_model(
         cancellation,
     )?);
     poll(cancellation)?;
-    let mut model = builder.build().map_err(graph_error)?;
+    let mut structure = builder.build().map_err(graph_error)?;
     poll(cancellation)?;
-    model.set_cell(cell);
-    let mut occupancies = vec![None; model.atom_count()];
-    let mut b_factors = vec![None; model.atom_count()];
+    structure.set_cell(cell);
+    let mut occupancies = vec![None; structure.atom_count()];
+    let mut b_factors = vec![None; structure.atom_count()];
     let b_factor_scale = SQUARE_ANGSTROM
         .conversion_factor_to(SQUARE_NANOMETER)
         .map_err(graph_error)?;
     for (atom, occupancy, b_factor) in qualified_atom_data {
-        let index = model.topology().atom_index(atom).ok_or_else(|| {
+        let index = structure.topology().atom_index(atom).ok_or_else(|| {
             structure_error(
                 DiagnosticKind::Chemistry,
                 None,
@@ -456,10 +457,10 @@ fn publish_model(
         occupancies[index.index()] = occupancy;
         b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }
-    model
+    structure
         .set_occupancies(Some(occupancies))
         .map_err(graph_error)?;
-    model
+    structure
         .set_b_factors(Some(crate::units::Quantity::new(
             b_factors,
             SQUARE_NANOMETER,
@@ -476,5 +477,5 @@ fn publish_model(
         .iter()
         .filter(|instance| instance.entity_kinds().contains(&EntityKind::Water))
         .count();
-    Ok(StructureInterpretation { model, report })
+    Ok(StructureInterpretation { structure, report })
 }

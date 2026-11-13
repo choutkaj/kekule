@@ -12,10 +12,10 @@ use super::{
     HostRequest, HostRole, HostTerm, HostValue, ReferencePoints, SelectEvaluateError,
     SelectEvaluateOptions, SelectionExpr,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::properties::{PropertyColumn, PropertyKey};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{
     AtomSelection, InstanceAtomId, MoleculeClass, ResidueClass, ResidueView, Topology,
     TopologyAtomIndex,
@@ -145,7 +145,7 @@ const NUCLEIC_BACKBONE: [&str; 11] = [
 pub(crate) struct Evaluator<'a> {
     expression: &'a SelectionExpr,
     topology: &'a Arc<Topology>,
-    structure: Option<ModelView<'a>>,
+    structure: Option<StructureView<'a>>,
     options: &'a SelectEvaluateOptions<'a>,
 }
 
@@ -153,7 +153,7 @@ impl<'a> Evaluator<'a> {
     pub(crate) fn new(
         expression: &'a SelectionExpr,
         topology: &'a Arc<Topology>,
-        structure: Option<ModelView<'a>>,
+        structure: Option<StructureView<'a>>,
         options: &'a SelectEvaluateOptions<'a>,
     ) -> Self {
         Self {
@@ -180,7 +180,7 @@ impl<'a> Evaluator<'a> {
         (super::NodeDisplay(node).to_string(), node.span.0.clone())
     }
 
-    fn requires_structure(&self, node: &Node) -> Result<ModelView<'a>> {
+    fn requires_structure(&self, node: &Node) -> Result<StructureView<'a>> {
         self.structure.ok_or_else(|| {
             let (term, span) = self.term(node);
             SelectEvaluateError::RequiresStructure { term, span }

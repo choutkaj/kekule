@@ -3,7 +3,7 @@ use kekule::molecule::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEdito
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles;
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::TopologyBuilder;
 use std::num::NonZeroU32;
 
@@ -233,14 +233,14 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
     )
     .unwrap()
     .0;
-    let model = molfile::parse_str(&mol, Default::default())
+    let structure = molfile::parse_str(&mol, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let options = SdfWriteOptions::default().with_version(version);
-        let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
+        let record = SdfRecordInterpretation::new("M  END", structure.clone(), Vec::new());
         let written = sdf::write(&[record], options).unwrap().0;
         let document = sdf::parse_str(&written, Default::default()).unwrap();
         assert_eq!(document.records().len(), 1);
@@ -249,13 +249,13 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
             document.records()[0]
                 .interpret(Default::default())
                 .unwrap()
-                .into_model()
+                .into_structure()
                 .topology()
                 .atom_count(),
             2
         );
         for title in ["$$$$", " $$$$ "] {
-            let record = SdfRecordInterpretation::new(title, model.clone(), Vec::new());
+            let record = SdfRecordInterpretation::new(title, structure.clone(), Vec::new());
             let mut output = Vec::new();
             assert!(sdf::write_to(&mut output, &[record], options).is_err());
             assert!(output.is_empty());
@@ -316,25 +316,25 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
     for _ in 0..1_000 {
         builder.add_instance(definition).unwrap();
     }
-    let model = Model::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
-    let molfile = molfile::write(&model, molfile::MolfileWriteOptions::default())
+    let structure = Structure::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
+    let molfile = molfile::write(&structure, molfile::MolfileWriteOptions::default())
         .unwrap()
         .0;
-    let sdf = sdf::write(&[model], sdf::SdfWriteOptions::default())
+    let sdf = sdf::write(&[structure], sdf::SdfWriteOptions::default())
         .unwrap()
         .0;
     assert!(molfile.contains("V3000"));
     assert!(sdf.contains("V3000"));
-    let molfile_model = molfile::parse_str(&molfile, Default::default())
+    let molfile_structure = molfile::parse_str(&molfile, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
-    let sdf_model = sdf::parse_str(&sdf, Default::default()).unwrap().records()[0]
+        .into_structure();
+    let sdf_structure = sdf::parse_str(&sdf, Default::default()).unwrap().records()[0]
         .interpret(Default::default())
         .unwrap()
-        .into_model();
-    for mut restored in [molfile_model, sdf_model] {
+        .into_structure();
+    for mut restored in [molfile_structure, sdf_structure] {
         assert_eq!(restored.topology().instance_count(), 1_000);
         assert!(restored
             .topology()

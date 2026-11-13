@@ -7,7 +7,7 @@ use crate::topology::shared_rows::SharedRows;
 use crate::topology::{Hierarchy, MoleculeInstance, TopologyAtomIndex, TopologyBondIndex};
 use crate::DraftError;
 
-/// Internal row projection needed to publish a model's structure arrays.
+/// Internal row projection needed to publish a structure's arrays.
 pub(crate) struct TopologyPublication {
     pub topology: Arc<Topology>,
     pub atom_slots: Vec<usize>,

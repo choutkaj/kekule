@@ -1,6 +1,6 @@
 //! Interpretation of Molfile and SDF records: the represented graph, stereo
-//! from bond marks, atom parities, and 3D coordinates, and one model with one
-//! molecule instance per connected component, with source-line reports.
+//! from bond marks, atom parities, and 3D coordinates, and one structure with
+//! one molecule instance per connected component, with source-line reports.
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
@@ -9,7 +9,7 @@ use crate::chemistry::{
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation, UnsupportedContent};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     MoleculeEditor,
@@ -18,7 +18,7 @@ use crate::stereo::{
     StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
     TetrahedralOrientation, TetrahedralStereo,
 };
-use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
+use crate::structure::{Positions, Structure, StructureBuildError, StructureBuilder};
 use crate::topology::Topology;
 use crate::units::{Quantity, ANGSTROM};
 
@@ -414,26 +414,27 @@ pub enum MolfileInterpretationWarning {
     },
 }
 
-/// One final canonical model and source reports in molecule-instance order.
+/// One final canonical structure and source reports in molecule-instance order.
 ///
 /// Each connected component is one instance. Dense atom order is the source
 /// atom-block order, so components may interleave in the dense order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
-    model: Model,
+    structure: Structure,
     reports: Vec<MolfileInterpretationReport>,
     omitted: Vec<MolfileUnsupported>,
 }
 
 impl MolfileInterpretation {
-    /// The interpreted model, with one molecule instance per connected component.
-    pub fn model(&self) -> &Model {
-        &self.model
+    /// The interpreted structure, with one molecule instance per connected
+    /// component.
+    pub fn structure(&self) -> &Structure {
+        &self.structure
     }
 
-    /// The topology of [`Self::model`].
+    /// The topology of [`Self::structure`].
     pub fn topology(&self) -> &Topology {
-        self.model.topology()
+        self.structure.topology()
     }
 
     /// One component report per molecule instance, in topology instance order.
@@ -464,38 +465,39 @@ impl MolfileInterpretation {
 
     /// Retains the exact topology allocation, including its synthetic hierarchy.
     pub fn into_topology(self) -> std::sync::Arc<Topology> {
-        self.model.shared_topology()
+        self.structure.shared_topology()
     }
 
-    /// The interpreted model, discarding the reports.
-    pub fn into_model(self) -> Model {
-        self.model
+    /// The interpreted structure, discarding the reports.
+    pub fn into_structure(self) -> Structure {
+        self.structure
     }
 
-    /// The model, the component reports, and the omitted content.
+    /// The structure, the component reports, and the omitted content.
     pub fn into_parts(
         self,
     ) -> (
-        Model,
+        Structure,
         Vec<MolfileInterpretationReport>,
         Vec<MolfileUnsupported>,
     ) {
-        (self.model, self.reports, self.omitted)
+        (self.structure, self.reports, self.omitted)
     }
 }
 
 fn publish_molfile_components(
     components: Vec<(Molecule, Positions, MolfileInterpretationReport)>,
     omitted: Vec<MolfileUnsupported>,
-) -> Result<MolfileInterpretation, ModelBuildError> {
-    let mut builder = ModelBuilder::new();
+) -> Result<MolfileInterpretation, StructureBuildError> {
+    let mut builder = StructureBuilder::new();
     let mut reports = Vec::with_capacity(components.len());
     let mut lines = Vec::new();
     let chain = builder.hierarchy_mut().add_chain("A", None)?;
     for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
         let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
         let instance = builder.add_molecule(molecule, &positions)?;
-        let sequence = i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
+        let sequence =
+            i32::try_from(index + 1).map_err(|_| StructureBuildError::CapacityOverflow)?;
         let hierarchy = builder.hierarchy_mut();
         let residue = hierarchy.add_residue(
             chain,
@@ -523,7 +525,7 @@ fn publish_molfile_components(
     lines.sort_unstable_by_key(|&(location, _)| location);
     builder.set_atom_order(lines.into_iter().map(|(_, atom)| atom))?;
     Ok(MolfileInterpretation {
-        model: builder.build()?,
+        structure: builder.build()?,
         reports,
         omitted,
     })
@@ -762,8 +764,12 @@ pub(crate) fn interpret_molfile_document(
         ));
     }
     publish_molfile_components(components, omitted).map_err(|error| {
-        interpret_error(DiagnosticKind::Chemistry, None, "Cannot build the model.")
-            .with_source(error)
+        interpret_error(
+            DiagnosticKind::Chemistry,
+            None,
+            "Cannot build the structure.",
+        )
+        .with_source(error)
     })
 }
 

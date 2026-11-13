@@ -1,8 +1,8 @@
 //! Local geometry optimization over any [`Potential`].
 //!
 //! [`minimize`] runs limited-memory BFGS (L-BFGS) with a strong-Wolfe line
-//! search on all Cartesian coordinates. It reads a borrowed [`ModelView`], so
-//! models, samples, and trajectory frames are minimized the same way,
+//! search on all Cartesian coordinates. It reads a borrowed [`StructureView`], so
+//! structures, geometries, and trajectory frames are minimized the same way,
 //! and returns new [`Positions`] without changing its input. Periodic cells are
 //! passed through to the potential unchanged.
 //!
@@ -27,8 +27,8 @@ use std::fmt;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use kekule::geometry::{Point3, Vector3};
-use kekule::structure::{DenseArrayError, Model, ModelView, Positions, StructureError};
+use kekule::math::{Point3, Vector3};
+use kekule::structure::{DenseArrayError, GeometryError, Positions, Structure, StructureView};
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_CONSTANT_UNIT,
@@ -172,7 +172,7 @@ impl Default for MinimizeOptions {
 /// applies to any view sharing that layout.
 ///
 /// ```
-/// use kekule::geometry::Point3;
+/// use kekule::math::Point3;
 /// use kekule::smiles;
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER, NANOMETER};
@@ -425,17 +425,17 @@ impl Minimization {
     /// [`MinimizationError::IncompatibleTopology`] if `source` does not share
     /// the minimized topology layout, and [`MinimizationError::Position`] if
     /// the coordinates cannot be stored.
-    pub fn to_model(&self, source: ModelView<'_>) -> Result<Model, MinimizationError> {
+    pub fn to_structure(&self, source: StructureView<'_>) -> Result<Structure, MinimizationError> {
         if !self.evaluation.topology().shares_layout(source.topology()) {
             return Err(MinimizationError::IncompatibleTopology);
         }
-        let mut model = source.to_model();
-        model.set_positions(self.positions.values())?;
-        Ok(model)
+        let mut structure = source.to_structure();
+        structure.set_positions(self.positions.values())?;
+        Ok(structure)
     }
 }
 
-/// Minimizes the energy of `model` under `potential`.
+/// Minimizes the energy of `structure` under `potential`.
 ///
 /// A run that stops without converging is still `Ok`; check
 /// [`Minimization::status`].
@@ -448,14 +448,14 @@ impl Minimization {
 ///   trial fails for a reason other than singular geometry.
 /// - [`MinimizationError::NumericalFailure`] if finite evaluations cannot
 ///   produce a representable descent step.
-/// - [`MinimizationError::Position`] or [`MinimizationError::Structure`] if
+/// - [`MinimizationError::Position`] or [`MinimizationError::Geometry`] if
 ///   trial coordinates cannot be stored.
 pub fn minimize<P: Potential + ?Sized>(
     potential: &P,
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     options: &MinimizeOptions,
 ) -> Result<Minimization, MinimizationError> {
-    minimize_with_observer(potential, model, options, |_| ControlFlow::Continue(()))
+    minimize_with_observer(potential, structure, options, |_| ControlFlow::Continue(()))
 }
 
 /// Minimizes like [`minimize`], calling `observer` after every accepted step.
@@ -469,15 +469,15 @@ pub fn minimize<P: Potential + ?Sized>(
 /// As [`minimize`].
 pub fn minimize_with_observer<P: Potential + ?Sized>(
     potential: &P,
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     options: &MinimizeOptions,
     observer: impl FnMut(&MinimizationStep<'_>) -> ControlFlow<()>,
 ) -> Result<Minimization, MinimizationError> {
-    let scope = MinimizationScope::all(model.shared_topology());
-    minimize_scoped_with_observer(potential, model, &scope, options, observer)
+    let scope = MinimizationScope::all(structure.shared_topology());
+    minimize_scoped_with_observer(potential, structure, &scope, options, observer)
 }
 
-/// Minimizes the energy of `model` under `potential` plus the scope's position
+/// Minimizes the energy of `structure` under `potential` plus the scope's position
 /// restraints, moving only the scope's atoms.
 ///
 /// Fixed atoms keep their input coordinates bit for bit and still contribute
@@ -487,14 +487,14 @@ pub fn minimize_with_observer<P: Potential + ?Sized>(
 /// # Errors
 ///
 /// As [`minimize`], and [`MinimizationError::IncompatibleTopology`] if
-/// `scope` does not share the layout of `model`.
+/// `scope` does not share the layout of `structure`.
 pub fn minimize_scoped<P: Potential + ?Sized>(
     potential: &P,
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     scope: &MinimizationScope,
     options: &MinimizeOptions,
 ) -> Result<Minimization, MinimizationError> {
-    minimize_scoped_with_observer(potential, model, scope, options, |_| {
+    minimize_scoped_with_observer(potential, structure, scope, options, |_| {
         ControlFlow::Continue(())
     })
 }
@@ -507,24 +507,24 @@ pub fn minimize_scoped<P: Potential + ?Sized>(
 /// As [`minimize_scoped`].
 pub fn minimize_scoped_with_observer<P: Potential + ?Sized>(
     potential: &P,
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     scope: &MinimizationScope,
     options: &MinimizeOptions,
     mut observer: impl FnMut(&MinimizationStep<'_>) -> ControlFlow<()>,
 ) -> Result<Minimization, MinimizationError> {
     let limits = validate(options)?;
-    if !scope.moving.topology().shares_layout(model.topology()) {
+    if !scope.moving.topology().shares_layout(structure.topology()) {
         return Err(MinimizationError::IncompatibleTopology);
     }
-    let objective = Objective::new(scope, model.positions().values().into_value());
-    let initial = potential.evaluate(model)?;
+    let objective = Objective::new(scope, structure.positions().values().into_value());
+    let initial = potential.evaluate(structure)?;
     let mut search = Search {
         potential,
         objective: &objective,
-        trial: model.to_model(),
+        trial: structure.to_structure(),
         evaluations: 1,
     };
-    let mut current = objective.point(model.positions().clone(), initial)?;
+    let mut current = objective.point(structure.positions().clone(), initial)?;
     let initial_energy = current.evaluation.energy().clone();
     let mut history: VecDeque<Pair> = VecDeque::with_capacity(options.memory);
     let mut iterations = 0;
@@ -799,8 +799,8 @@ fn two_loop(history: &VecDeque<Pair>, gradient: &[f64]) -> Vec<f64> {
 struct Search<'a, P: ?Sized> {
     potential: &'a P,
     objective: &'a Objective,
-    /// Scratch model carrying the topology, cell, and annotations of the input.
-    trial: Model,
+    /// Scratch structure carrying the topology, cell, and annotations of the input.
+    trial: Structure,
     evaluations: usize,
 }
 
@@ -835,7 +835,7 @@ impl<P: Potential + ?Sized> Search<'_, P> {
             CANONICAL_LENGTH_UNIT,
         ))?;
         self.trial.set_positions(positions.values())?;
-        let view = self.trial.as_model_view();
+        let view = self.trial.as_structure_view();
         self.evaluations += 1;
         match self
             .potential
@@ -1062,11 +1062,11 @@ pub enum MinimizationError {
     /// The initial evaluation failed, or a trial failed for a reason other
     /// than singular geometry.
     Evaluation(EvaluationError),
-    /// A [`MinimizationScope`] or the view given to [`Minimization::to_model`]
+    /// A [`MinimizationScope`] or the view given to [`Minimization::to_structure`]
     /// belongs to a different topology layout.
     IncompatibleTopology,
     /// The minimized structure could not be built; see the source.
-    Structure(StructureError),
+    Geometry(GeometryError),
     /// The positions could not be updated; see the source.
     Position(DenseArrayError),
     /// An option could not be converted to the canonical unit; see the
@@ -1085,10 +1085,10 @@ impl fmt::Display for MinimizationError {
                 write!(f, "Cannot continue the minimization. {failure}")
             }
             Self::Evaluation(_) => f.write_str("Cannot evaluate the potential."),
-            Self::IncompatibleTopology => {
-                f.write_str("The model view has a different topology layout from the minimization.")
-            }
-            Self::Structure(_) => f.write_str("Cannot build the minimized structure."),
+            Self::IncompatibleTopology => f.write_str(
+                "The structure view has a different topology layout from the minimization.",
+            ),
+            Self::Geometry(_) => f.write_str("Cannot build the minimized structure."),
             Self::Position(_) => f.write_str("Cannot update the positions."),
             Self::Unit(_) => {
                 f.write_str("Cannot convert a minimization quantity to its canonical unit.")
@@ -1101,7 +1101,7 @@ impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Evaluation(error) => Some(error),
-            Self::Structure(error) => Some(error),
+            Self::Geometry(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
             Self::InvalidOptions(_)
@@ -1118,9 +1118,9 @@ impl From<EvaluationError> for MinimizationError {
     }
 }
 
-impl From<StructureError> for MinimizationError {
-    fn from(error: StructureError) -> Self {
-        Self::Structure(error)
+impl From<GeometryError> for MinimizationError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 

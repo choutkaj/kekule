@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crate::geometry::{PeriodicCell, Point3, Vector3};
-use crate::properties::{OwnerProperties, StructureProperties, StructurePropertiesMut};
+use crate::math::{PeriodicCell, Point3, Vector3};
+use crate::properties::{GeometryProperties, GeometryPropertiesMut, OwnerProperties};
 use crate::structure::scalars::AtomScalars;
 use crate::structure::{
-    DenseArrayError, Forces, ModelView, Place, Positions, Sample, SampleMut, StructureError,
+    DenseArrayError, Forces, Geometry, GeometryError, GeometryMut, Place, Positions, StructureView,
     Velocities,
 };
 use crate::topology::Topology;
@@ -31,7 +31,7 @@ pub struct FrameData<'a> {
     time: Option<Quantity<f64>>,
     step: Option<u64>,
     owner: Option<&'a OwnerProperties>,
-    annotations: Option<&'a StructureProperties>,
+    annotations: Option<&'a GeometryProperties>,
     /// Occupancies and B-factors, shared rather than copied.
     sites: Option<(&'a AtomScalars, &'a AtomScalars)>,
 }
@@ -53,20 +53,20 @@ impl<'a> FrameData<'a> {
     }
 
     /// Borrows every field, including occupancies, B-factors, and all
-    /// structure properties, from a topology-bound frame.
+    /// geometry properties, from a topology-bound frame.
     pub fn from_frame_view(frame: FrameView<'a>) -> Self {
-        let sample = frame.payload();
-        let structure = sample.structure();
+        let geometry = frame.payload();
+        let state = geometry.state();
         Self {
-            positions: sample.positions().values(),
-            cell: sample.cell().copied(),
-            velocities: sample.velocities().map(Velocities::values),
-            forces: sample.forces().map(Forces::values),
+            positions: geometry.positions().values(),
+            cell: geometry.cell().copied(),
+            velocities: geometry.velocities().map(Velocities::values),
+            forces: geometry.forces().map(Forces::values),
             time: frame.time(),
             step: frame.step(),
             owner: None,
-            annotations: Some(sample.properties()),
-            sites: Some((&structure.occupancies, &structure.b_factors)),
+            annotations: Some(geometry.properties()),
+            sites: Some((&state.occupancies, &state.b_factors)),
         }
     }
 
@@ -111,29 +111,29 @@ impl<'a> FrameData<'a> {
 }
 
 /// Reusable caller-owned frame storage bound to one topology snapshot: one
-/// [`Sample`] with its time and MD step.
+/// [`Geometry`] with its time and MD step.
 ///
 /// It accepts frames and readers of any snapshot sharing that layout. Frame
 /// state reads through `Deref` (`buffer.positions()`, `buffer.velocities()`,
 /// ...) and [`Self::time`] and [`Self::step`]; edit it through
-/// [`Self::sample_mut`], [`Self::set_time`], and [`Self::set_step`], or
+/// [`Self::geometry_mut`], [`Self::set_time`], and [`Self::set_step`], or
 /// publish a complete frame with [`Self::replace_from_data`]. Velocity and
 /// force allocations are reused across frames. [`Self::frame_view`] lends
 /// the frame to a [`TrajectoryWriter`](super::TrajectoryWriter).
 ///
-/// To keep a decoded frame, for example in a sample set or a frame cache,
-/// take it out with [`Self::into_sample`] rather than copying it: the sample
+/// To keep a decoded frame, for example in a structure set or a frame cache,
+/// take it out with [`Self::into_geometry`] rather than copying it: the geometry
 /// is bound to the buffer's topology, and its place goes with it into a
-/// time-ordered set ([`SampleSet::push`](crate::structure::SampleSet::push)).
-/// A sample that is no longer needed becomes a buffer again with
-/// [`Self::from_sample`], so the next frame decodes into it without
-/// allocating. A buffer whose sample is shared, such as one cloned out of
-/// it, copies the sample once on the next edit.
+/// time-ordered set ([`StructureSet::push`](crate::structure::StructureSet::push)).
+/// A geometry that is no longer needed becomes a buffer again with
+/// [`Self::from_geometry`], so the next frame decodes into it without
+/// allocating. A buffer whose geometry is shared, such as one cloned out of
+/// it, copies the geometry once on the next edit.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
     topology: Arc<Topology>,
     /// Bound to `topology`.
-    sample: Sample,
+    geometry: Geometry,
     /// In the canonical time unit.
     time: Option<Quantity<f64>>,
     step: Option<u64>,
@@ -142,10 +142,10 @@ pub struct FrameBuffer {
 }
 
 impl std::ops::Deref for FrameBuffer {
-    type Target = Sample;
+    type Target = Geometry;
 
     fn deref(&self) -> &Self::Target {
-        &self.sample
+        &self.geometry
     }
 }
 
@@ -154,31 +154,32 @@ impl FrameBuffer {
     /// the origin and no optional state.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         let topology = topology.into();
-        let sample = Sample::new(Positions::zeros(topology.atom_count()));
-        Self::from_sample(topology, sample).expect("zero positions match the topology atom count")
+        let geometry = Geometry::new(Positions::zeros(topology.atom_count()));
+        Self::from_geometry(topology, geometry)
+            .expect("zero positions match the topology atom count")
     }
 
-    /// A buffer holding `sample` without copying it, bound to `topology`,
+    /// A buffer holding `geometry` without copying it, bound to `topology`,
     /// without a time or step.
     ///
-    /// The sample is validated and its bond property rows bound once, as
-    /// [`SampleSet::push`](crate::structure::SampleSet::push) does; it is
+    /// The geometry is validated and its bond property rows bound once, as
+    /// [`StructureSet::push`](crate::structure::StructureSet::push) does; it is
     /// the buffered frame until the next read replaces it, reusing its
     /// allocations.
     ///
     /// # Errors
     ///
-    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the sample's
+    /// Returns [`TrajectoryIoErrorKind::InvalidGeometry`] when the geometry's
     /// atom count or property rows do not match `topology`.
-    pub fn from_sample(
+    pub fn from_geometry(
         topology: impl Into<Arc<Topology>>,
-        mut sample: Sample,
+        mut geometry: Geometry,
     ) -> Result<Self, TrajectoryIoError> {
         let topology = topology.into();
-        sample.bind(&topology)?;
+        geometry.bind(&topology)?;
         Ok(Self {
             topology,
-            sample,
+            geometry,
             time: None,
             step: None,
             spare_velocities: None,
@@ -186,18 +187,18 @@ impl FrameBuffer {
         })
     }
 
-    /// The buffered frame, without copying it: its sample, bound to the
+    /// The buffered frame, without copying it: its geometry, bound to the
     /// buffer's topology, and its place on a time order.
     ///
-    /// The sample keeps every field of the buffered frame. Spare velocity
+    /// The geometry keeps every field of the buffered frame. Spare velocity
     /// and force allocations are dropped; clear velocities or forces first
     /// to drop those of the frame as well.
-    pub fn into_sample(self) -> (Sample, Place) {
+    pub fn into_geometry(self) -> (Geometry, Place) {
         let place = Place::Time {
             time: self.time,
             step: self.step,
         };
-        (self.sample, place)
+        (self.geometry, place)
     }
 
     /// The topology snapshot the buffer is bound to.
@@ -212,12 +213,12 @@ impl FrameBuffer {
 
     /// The buffered frame bound to its topology.
     pub fn frame_view(&self) -> FrameView<'_> {
-        FrameView::bound(&self.topology, &self.sample, self.time, self.step)
+        FrameView::bound(&self.topology, &self.geometry, self.time, self.step)
     }
 
-    /// The buffered frame as a [`ModelView`], so model analyses apply to it.
-    pub fn as_model_view(&self) -> ModelView<'_> {
-        self.frame_view().as_model_view()
+    /// The buffered frame as a [`StructureView`], so structure analyses apply to it.
+    pub fn as_structure_view(&self) -> StructureView<'_> {
+        self.frame_view().as_structure_view()
     }
 
     /// The simulation time in the canonical time unit, when known.
@@ -230,18 +231,18 @@ impl FrameBuffer {
         self.step
     }
 
-    /// Dimension-preserving editor for the buffered sample.
-    pub fn sample_mut(&mut self) -> SampleMut<'_> {
-        SampleMut::new(&mut self.sample)
+    /// Dimension-preserving editor for the buffered geometry.
+    pub fn geometry_mut(&mut self) -> GeometryMut<'_> {
+        GeometryMut::new(&mut self.geometry)
     }
 
     /// Sets or clears a finite time, converted to the canonical time unit.
     ///
     /// # Errors
     ///
-    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
     /// invalid time; the buffer is then unchanged.
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), GeometryError> {
         self.time = canonical_time(time)?;
         Ok(())
     }
@@ -255,13 +256,13 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`StructureError::Array`] when the count differs from the atom
+    /// Returns [`GeometryError::Array`] when the count differs from the atom
     /// count, a value is not finite, or the unit is not a velocity; the
     /// buffer is then unchanged.
     pub fn set_velocities<T>(
         &mut self,
         velocities: Option<Quantity<T>>,
-    ) -> Result<(), StructureError>
+    ) -> Result<(), GeometryError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -276,10 +277,10 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`StructureError::Array`] when the count differs from the atom
+    /// Returns [`GeometryError::Array`] when the count differs from the atom
     /// count, a value is not finite, or the unit is not a force; the buffer is
     /// then unchanged.
-    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), StructureError>
+    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), GeometryError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -306,11 +307,11 @@ impl FrameBuffer {
         self.publish_forces(None);
         self.step = None;
         self.time = None;
-        let structure = self.sample.structure_in_place();
-        structure.cell = None;
-        structure.occupancies = AtomScalars::default();
-        structure.b_factors = AtomScalars::default();
-        StructurePropertiesMut::new(&mut structure.properties).clear();
+        let state = self.geometry.state_in_place();
+        state.cell = None;
+        state.occupancies = AtomScalars::default();
+        state.b_factors = AtomScalars::default();
+        GeometryPropertiesMut::new(&mut state.properties).clear();
     }
 
     /// Replaces the complete visible frame transactionally.
@@ -321,24 +322,24 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`StructureError::Array`] when positions, velocities, forces or
+    /// Returns [`GeometryError::Array`] when positions, velocities, forces or
     /// atom annotations have the wrong count, a non-finite value or a unit of
-    /// the wrong dimension, [`StructureError::BondCountMismatch`] when bond
+    /// the wrong dimension, [`GeometryError::BondCountMismatch`] when bond
     /// annotations have the wrong row count, and
-    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
     /// invalid time. On error the buffer is unchanged.
-    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), StructureError> {
+    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), GeometryError> {
         self.positions().validate_all(&data.positions)?;
         let time = canonical_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(StructureError::Array(DenseArrayError::CountMismatch {
+                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
                     expected: self.atom_count(),
                     actual: source.atoms().len(),
                 }));
             }
             if source.bonds().len() != self.properties().bonds().len() {
-                return Err(StructureError::BondCountMismatch {
+                return Err(GeometryError::BondCountMismatch {
                     expected: self.properties().bonds().len(),
                     actual: source.bonds().len(),
                 });
@@ -365,26 +366,26 @@ impl FrameBuffer {
         self.publish_forces(forces);
         self.step = data.step;
         self.time = time;
-        let structure = self.sample.structure_in_place();
-        structure
+        let state = self.geometry.state_in_place();
+        state
             .positions
             .set_all(data.positions)
             .expect("positions were validated");
-        structure.cell = data.cell;
+        state.cell = data.cell;
         match data.sites {
             Some((occupancies, b_factors)) => {
-                structure.occupancies.clone_from(occupancies);
-                structure.b_factors.clone_from(b_factors);
+                state.occupancies.clone_from(occupancies);
+                state.b_factors.clone_from(b_factors);
             }
             None => {
-                structure.occupancies = AtomScalars::default();
-                structure.b_factors = AtomScalars::default();
+                state.occupancies = AtomScalars::default();
+                state.b_factors = AtomScalars::default();
             }
         }
         match data.annotations {
-            Some(source) => structure.properties.clone_from(source),
+            Some(source) => state.properties.clone_from(source),
             None => {
-                let mut properties = StructurePropertiesMut::new(&mut structure.properties);
+                let mut properties = GeometryPropertiesMut::new(&mut state.properties);
                 properties.clear();
                 if let Some(owner) = data.owner {
                     *properties.owner_mut() = owner.clone();
@@ -414,7 +415,7 @@ impl FrameBuffer {
     fn stage_velocities<T: AsRef<[Vector3]>>(
         &mut self,
         values: Quantity<T>,
-    ) -> Result<Velocities, StructureError> {
+    ) -> Result<Velocities, GeometryError> {
         let atoms = self.atom_count();
         let mut storage = self
             .spare_velocities
@@ -432,7 +433,7 @@ impl FrameBuffer {
     fn stage_forces<T: AsRef<[Vector3]>>(
         &mut self,
         values: Quantity<T>,
-    ) -> Result<Forces, StructureError> {
+    ) -> Result<Forces, GeometryError> {
         let atoms = self.atom_count();
         let mut storage = self
             .spare_forces
@@ -449,21 +450,21 @@ impl FrameBuffer {
 
     /// Swaps staged storage in; the previous allocation becomes the spare.
     fn publish_velocities(&mut self, velocities: Option<Velocities>) {
-        if velocities.is_none() && self.sample.velocities().is_none() {
+        if velocities.is_none() && self.geometry.velocities().is_none() {
             return;
         }
         let previous =
-            std::mem::replace(&mut self.sample.structure_in_place().velocities, velocities);
+            std::mem::replace(&mut self.geometry.state_in_place().velocities, velocities);
         if previous.is_some() {
             self.spare_velocities = previous;
         }
     }
 
     fn publish_forces(&mut self, forces: Option<Forces>) {
-        if forces.is_none() && self.sample.forces().is_none() {
+        if forces.is_none() && self.geometry.forces().is_none() {
             return;
         }
-        let previous = std::mem::replace(&mut self.sample.structure_in_place().forces, forces);
+        let previous = std::mem::replace(&mut self.geometry.state_in_place().forces, forces);
         if previous.is_some() {
             self.spare_forces = previous;
         }

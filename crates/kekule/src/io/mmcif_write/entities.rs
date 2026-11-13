@@ -1,9 +1,9 @@
 //! Entity classification and source-provenance planning before row preparation.
 use super::one_based_serial;
-use super::{fail, invalid_model, MmcifAtomField, MmcifEntityClassifications, MmcifWriteIssue};
+use super::{fail, invalid_structure, MmcifAtomField, MmcifEntityClassifications, MmcifWriteIssue};
 use crate::diagnostics::FormatError;
 use crate::io::structure_interpret::{EntityKind, StructureInterpretationReport};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{
     AtomSite, Chain, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeInstance,
     MoleculeInstanceId, Residue, ResidueClass, Topology,
@@ -78,33 +78,33 @@ pub(super) struct EntityPlan {
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     /// The report's metal coordination between residues, written as
-    /// `metalc` rows: the records that still match the model.
+    /// `metalc` rows: the records that still match the structure.
     pub(super) coordination: Vec<[InstanceAtomId; 2]>,
     /// The report's coordination records left out because they no longer
-    /// match the model.
+    /// match the structure.
     pub(super) omitted_coordination: usize,
 }
 
 pub(super) fn multi_model_entity_plan(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     classifications: Option<&MmcifEntityClassifications>,
     report: Option<&StructureInterpretationReport>,
 ) -> Result<EntityPlan, FormatError> {
     if let Some(report) = report {
-        entity_plan_from_report(model, report)
+        entity_plan_from_report(structure, report)
     } else {
         let normalized = normalize_entity_classifications(
-            model,
+            structure,
             classifications
                 .into_iter()
                 .flat_map(|set| set.iter().map(|(id, kind)| (id, vec![kind.clone()]))),
         )?;
-        generic_entity_plan(model, &normalized)
+        generic_entity_plan(structure, &normalized)
     }
 }
 
 pub(super) fn entity_plan_from_report(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
     if report
@@ -113,35 +113,36 @@ pub(super) fn entity_plan_from_report(
         .all(|instance| instance.atoms().is_empty())
     {
         let classifications = normalize_entity_classifications(
-            model,
+            structure,
             report
                 .instances()
                 .iter()
                 .map(|instance| (instance.instance(), instance.entity_kinds().to_vec())),
         )?;
-        generic_entity_plan(model, &classifications)
+        generic_entity_plan(structure, &classifications)
     } else {
-        report_entity_plan(model, report)
+        report_entity_plan(structure, report)
     }
 }
 
-/// The label asym IDs of a model's hierarchy chains. Chains may share a label,
-/// as copies [`append_model`](crate::structure::ModelEditor::append_model)
-/// appends do, while mmCIF requires every structural instance to have an ID
-/// of its own. The first chain with a label keeps it; each later one is the
-/// label with a copy serial, `A-2`, `A-3`, and so on, that no chain label or
-/// other written asym uses. Author chain identifiers are written as they are.
+/// The label asym IDs of a structure's hierarchy chains. Chains may share a
+/// label, as copies
+/// [`append_structure`](crate::structure::StructureEditor::append_structure)
+/// appends do, while mmCIF requires every structural instance to have an ID of
+/// its own. The first chain with a label keeps it; each later one is the label
+/// with a copy serial, `A-2`, `A-3`, and so on, that no chain label or other
+/// written asym uses. Author chain identifiers are written as they are.
 struct AsymIds {
     reserved: BTreeSet<String>,
     named: BTreeSet<String>,
 }
 
 impl AsymIds {
-    fn new(model: ModelView<'_>) -> Result<Self, FormatError> {
+    fn new(structure: StructureView<'_>) -> Result<Self, FormatError> {
         let mut reserved = BTreeSet::new();
-        for (chain_id, chain) in model.topology().hierarchy().chains() {
+        for (chain_id, chain) in structure.topology().hierarchy().chains() {
             if chain.label_id().is_empty() {
-                return Err(invalid_model(format!(
+                return Err(invalid_structure(format!(
                     "{} has an empty label ID.",
                     crate::diagnostics::Capitalized(chain_id)
                 )));
@@ -171,11 +172,11 @@ impl AsymIds {
 }
 
 pub(super) fn generic_entity_plan(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<EntityPlan, FormatError> {
-    let hierarchy = model.topology().hierarchy();
-    let mut asym_ids = AsymIds::new(model)?;
+    let hierarchy = structure.topology().hierarchy();
+    let mut asym_ids = AsymIds::new(structure)?;
     let mut entities = Vec::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
@@ -227,8 +228,8 @@ pub(super) fn generic_entity_plan(
         }
     }
 
-    for (id, molecule) in model.topology().instance_records() {
-        let definition = model
+    for (id, molecule) in structure.topology().instance_records() {
+        let definition = structure
             .topology()
             .instance(id)
             .expect("listed instances are topology molecules")
@@ -292,15 +293,15 @@ pub(super) fn generic_entity_plan(
 }
 
 fn report_entity_plan(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
-    let mut asym_ids = AsymIds::new(model)?;
+    let mut asym_ids = AsymIds::new(structure)?;
     let mut seen_instances = BTreeSet::new();
     let mut provenance = BTreeMap::new();
     let mut reserved_entity_ids = BTreeSet::new();
     for instance in report.instances() {
-        if model.topology().instance(instance.instance()).is_none() {
+        if structure.topology().instance(instance.instance()).is_none() {
             return Err(fail(MmcifWriteIssue::UnknownClassifiedMolecule(
                 instance.instance(),
             )));
@@ -312,7 +313,7 @@ fn report_entity_plan(
         }
         for atom in instance.atoms() {
             if atom.atom().instance() != instance.instance()
-                || model.topology().atom(atom.atom()).is_none()
+                || structure.topology().atom(atom.atom()).is_none()
             {
                 return Err(fail(MmcifWriteIssue::UnknownAtomProvenance(atom.atom())));
             }
@@ -325,7 +326,7 @@ fn report_entity_plan(
         }
     }
 
-    let hierarchy = model.topology().hierarchy();
+    let hierarchy = structure.topology().hierarchy();
     let mut entities = Vec::new();
     let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
     let mut asyms = Vec::new();
@@ -418,7 +419,7 @@ fn report_entity_plan(
         }
     }
 
-    for atom in model.topology().atom_ids() {
+    for atom in structure.topology().atom_ids() {
         if !atoms.contains_key(atom) {
             return Err(fail(MmcifWriteIssue::MissingAtomProvenance(*atom)));
         }
@@ -429,7 +430,7 @@ fn report_entity_plan(
         }
     }
 
-    let coordination = report.coordination_in(model.topology());
+    let coordination = report.coordination_in(structure.topology());
 
     Ok(EntityPlan {
         entities,
@@ -634,12 +635,12 @@ fn entity_kind_from_source(
 }
 
 pub(super) fn normalize_entity_classifications(
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<EntityKind>)>,
 ) -> Result<BTreeMap<MoleculeInstanceId, MoleculeEntityKind>, FormatError> {
     let mut explicit = BTreeMap::new();
     for (molecule, source_kinds) in entries {
-        if model.topology().instance(molecule).is_none() {
+        if structure.topology().instance(molecule).is_none() {
             return Err(fail(MmcifWriteIssue::UnknownClassifiedMolecule(molecule)));
         }
         if explicit.contains_key(&molecule) {
@@ -664,7 +665,7 @@ pub(super) fn normalize_entity_classifications(
         };
         explicit.insert(molecule, kind);
     }
-    model
+    structure
         .topology()
         .instance_records()
         .map(|(molecule, _)| {
@@ -674,7 +675,7 @@ pub(super) fn normalize_entity_classifications(
                     canonical: false,
                 },
                 None => MoleculeEntityKind {
-                    kind: canonical_entity_kind(model.topology(), molecule)?,
+                    kind: canonical_entity_kind(structure.topology(), molecule)?,
                     canonical: true,
                 },
             };
@@ -731,7 +732,7 @@ fn carbohydrate_entity_kind(
 }
 
 fn invalid_molecule(molecule: MoleculeInstanceId) -> FormatError {
-    invalid_model(format!("The model has no {molecule}."))
+    invalid_structure(format!("The structure has no {molecule}."))
 }
 
 #[cfg(test)]

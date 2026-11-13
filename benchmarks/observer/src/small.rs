@@ -360,6 +360,8 @@ fn aromaticity_facts(
     options: &Value,
     facts: &mut Facts,
 ) -> Result<(), Failure> {
+    // The protocol key is the aromaticity model, which tasks.py and the RDKit
+    // reference both read as "model".
     let model = match options["model"].as_str() {
         Some("rdkit") | None => AromaticityModel::RdkitLike,
         Some("mdl") => AromaticityModel::Mdl,
@@ -694,12 +696,12 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
             .map_err(|e| Failure::new("write", e))?
         }
         "molfile-v2000" | "molfile-v3000" | "sdf" => {
-            let model = match format {
+            let structure = match format {
                 "mol" => molfile::parse_str(text, Default::default())
                     .map_err(|e| Failure::new("parse", e))?
                     .interpret(Default::default())
                     .map_err(|e| Failure::new("parse", e))?
-                    .into_model(),
+                    .into_structure(),
                 "sdf" => {
                     let document = sdf::parse_str(text, Default::default())
                         .map_err(|e| Failure::new("parse", e))?;
@@ -709,7 +711,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                     record
                         .interpret(Default::default())
                         .map_err(|e| Failure::new("parse", e))?
-                        .into_model()
+                        .into_structure()
                 }
                 other => {
                     return Err(Failure::new(
@@ -719,7 +721,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 }
             };
             if target == "sdf" {
-                let record = sdf::SdfRecordInterpretation::new("", model, vec![]);
+                let record = sdf::SdfRecordInterpretation::new("", structure, vec![]);
                 sdf::write(
                     &[record],
                     sdf::SdfWriteOptions::default()
@@ -734,7 +736,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                     molfile::MolfileWriteVersion::V2000
                 };
                 molfile::write(
-                    &model,
+                    &structure,
                     molfile::MolfileWriteOptions::default().with_version(version),
                 )
                 .map_err(|e| Failure::new("write", e))?

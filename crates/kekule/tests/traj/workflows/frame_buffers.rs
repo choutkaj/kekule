@@ -7,9 +7,9 @@ use std::error::Error;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::structure::{
-    DenseArrayError, Place, Positions, Sample, SampleSetError, StructureError, StructureKind,
+    DenseArrayError, Geometry, GeometryError, Place, Positions, StructureKind, StructureSetError,
 };
 use kekule::traj::io::xyz::{XyzReadOptions, XyzReader};
 use kekule::traj::{
@@ -44,7 +44,7 @@ fn decoded_frames_leave_and_return_to_a_buffer_without_copying() {
     let decoded = buffer.positions().values().value().as_ptr();
 
     // The frame leaves the buffer bound, with the storage it was decoded into.
-    let (sample, place) = buffer.into_sample();
+    let (geometry, place) = buffer.into_geometry();
     assert_eq!(
         place,
         Place::Time {
@@ -52,20 +52,20 @@ fn decoded_frames_leave_and_return_to_a_buffer_without_copying() {
             step: None
         }
     );
-    assert_eq!(sample.positions().values().value().as_ptr(), decoded);
-    assert_eq!(sample.properties().bonds().len(), topology.bond_count());
-    let frame = FrameView::new(&topology, &sample, None, None).unwrap();
-    let view = frame.as_model_view();
+    assert_eq!(geometry.positions().values().value().as_ptr(), decoded);
+    assert_eq!(geometry.properties().bonds().len(), topology.bond_count());
+    let frame = FrameView::new(&topology, &geometry, None, None).unwrap();
+    let view = frame.as_structure_view();
     assert!(matches!(
         view.kind(),
-        StructureKind::Sample(context)
+        StructureKind::InSet(context)
             if matches!(context.place(), Some(Place::Time { .. }))
     ));
     assert!((view.positions().values().value()[1].x - 0.3).abs() < 1.0e-12);
 
     // Storage no longer needed becomes a buffer again; the next frame
     // decodes into the same allocation.
-    let mut buffer = FrameBuffer::from_sample(Arc::clone(&topology), sample).unwrap();
+    let mut buffer = FrameBuffer::from_geometry(Arc::clone(&topology), geometry).unwrap();
     assert_eq!(buffer.positions().values().value().as_ptr(), decoded);
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_eq!(buffer.positions().values().value().as_ptr(), decoded);
@@ -74,7 +74,7 @@ fn decoded_frames_leave_and_return_to_a_buffer_without_copying() {
 }
 
 /// A frame written to memory, from a buffer or a set, is collected as the
-/// sample it shows: the writer path copies no frame.
+/// geometry it shows: the writer path copies no frame.
 #[test]
 fn written_frames_reach_a_memory_writer_without_copying() {
     let topology = support::topology(&["C", "H"], &[(0, 1)]);
@@ -89,25 +89,25 @@ fn written_frames_reach_a_memory_writer_without_copying() {
     let mut decoded = Vec::new();
     while reader.read_next(&mut buffer).unwrap() {
         writer.write_frame(buffer.frame_view()).unwrap();
-        decoded.push(Sample::clone(&buffer));
+        decoded.push(Geometry::clone(&buffer));
     }
-    let set = writer.into_sample_set();
+    let set = writer.into_structure_set();
     assert_eq!(set.len(), 2);
-    for (sample, decoded) in set.iter().zip(&decoded) {
-        assert!(sample.payload().shares_structure_with(decoded));
+    for (geometry, decoded) in set.iter().zip(&decoded) {
+        assert!(geometry.payload().shares_storage_with(decoded));
     }
 
-    // A frame of a set shows the set's own sample, and writing the set
-    // again shares every sample with it.
+    // A frame of a set shows the set's own geometry, and writing the set
+    // again shares every geometry with it.
     let mut writer = MemoryTrajectoryWriter::new(Arc::clone(&topology));
-    for sample in &set {
-        let frame = FrameView::from_sample(sample).unwrap();
-        assert!(std::ptr::eq(frame.payload(), sample.payload()));
+    for geometry in &set {
+        let frame = FrameView::from_geometry(geometry).unwrap();
+        assert!(std::ptr::eq(frame.payload(), geometry.payload()));
         writer.write_frame(frame).unwrap();
     }
-    let copy = writer.into_sample_set();
-    for (copied, sample) in copy.iter().zip(&set) {
-        assert!(copied.payload().shares_structure_with(sample.payload()));
+    let copy = writer.into_structure_set();
+    for (copied, geometry) in copy.iter().zip(&set) {
+        assert!(copied.payload().shares_storage_with(geometry.payload()));
     }
 }
 
@@ -130,8 +130,8 @@ fn a_memory_writer_refuses_frames_whose_time_or_step_columns_differ() {
     assert_eq!(
         error
             .source()
-            .and_then(|source| source.downcast_ref::<SampleSetError>()),
-        Some(&SampleSetError::MissingTime { sample: 1 })
+            .and_then(|source| source.downcast_ref::<StructureSetError>()),
+        Some(&StructureSetError::MissingTime { geometry: 1 })
     );
     assert_eq!(
         error.to_string(),
@@ -149,10 +149,10 @@ fn a_memory_writer_refuses_frames_whose_time_or_step_columns_differ() {
     assert_eq!(
         error
             .source()
-            .and_then(|source| source.downcast_ref::<SampleSetError>()),
-        Some(&SampleSetError::UnexpectedStep { sample: 1 })
+            .and_then(|source| source.downcast_ref::<StructureSetError>()),
+        Some(&StructureSetError::UnexpectedStep { geometry: 1 })
     );
-    assert_eq!(writer.into_sample_set().len(), 1);
+    assert_eq!(writer.into_structure_set().len(), 1);
 }
 
 /// Occupancies and B-factors are frame state like any other: a decoded
@@ -160,7 +160,7 @@ fn a_memory_writer_refuses_frames_whose_time_or_step_columns_differ() {
 #[test]
 fn buffers_keep_no_stale_occupancies_or_b_factors() {
     let topology = support::topology(&["C", "H"], &[(0, 1)]);
-    let mut sited = Sample::new(Positions::zeros(2));
+    let mut sited = Geometry::new(Positions::zeros(2));
     sited.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
     sited
         .set_b_factors(Some(Quantity::new(vec![None, Some(0.2)], SQUARE_NANOMETER)))
@@ -174,29 +174,29 @@ fn buffers_keep_no_stale_occupancies_or_b_factors() {
     let none = (None, None);
     let expected = (Some(vec![Some(0.5), None]), Some(vec![None, Some(0.2)]));
 
-    // A decoded frame replaces the sample's occupancies and B-factors.
+    // A decoded frame replaces the geometry's occupancies and B-factors.
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
         XyzReadOptions::default(),
     )
     .unwrap();
-    let mut buffer = FrameBuffer::from_sample(Arc::clone(&topology), sited.clone()).unwrap();
+    let mut buffer = FrameBuffer::from_geometry(Arc::clone(&topology), sited.clone()).unwrap();
     assert_eq!(sites(&buffer), expected);
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_eq!(sites(&buffer), none);
 
-    // A reset clears those set through the sample editor.
-    let mut sample = buffer.sample_mut();
-    sample.set_occupancies(Some(vec![Some(1.0); 2])).unwrap();
-    sample
+    // A reset clears those set through the geometry editor.
+    let mut geometry = buffer.geometry_mut();
+    geometry.set_occupancies(Some(vec![Some(1.0); 2])).unwrap();
+    geometry
         .set_b_factors(Some(Quantity::new(vec![Some(0.1); 2], SQUARE_NANOMETER)))
         .unwrap();
     buffer.reset_dynamic_state();
     assert_eq!(sites(&buffer), none);
 
     // A copy takes the source's, and a source without them clears them.
-    let source = FrameBuffer::from_sample(Arc::clone(&topology), sited).unwrap();
+    let source = FrameBuffer::from_geometry(Arc::clone(&topology), sited).unwrap();
     buffer.copy_from(source.frame_view()).unwrap();
     assert_eq!(sites(&buffer), expected);
     buffer
@@ -206,15 +206,16 @@ fn buffers_keep_no_stale_occupancies_or_b_factors() {
 }
 
 #[test]
-fn buffers_from_samples_validate_them_against_the_topology() {
+fn buffers_from_geometries_validate_them_against_the_topology() {
     let topology = support::topology(&["C", "H"], &[(0, 1)]);
-    // A detached sample acquires its bond rows.
+    // A detached geometry acquires its bond rows.
     let buffer =
-        FrameBuffer::from_sample(Arc::clone(&topology), Sample::new(Positions::zeros(2))).unwrap();
+        FrameBuffer::from_geometry(Arc::clone(&topology), Geometry::new(Positions::zeros(2)))
+            .unwrap();
     assert_eq!(buffer.properties().bonds().len(), 1);
     assert_eq!(
-        FrameBuffer::from_sample(topology, Sample::new(Positions::zeros(3))).unwrap_err(),
-        TrajectoryIoError::from(StructureError::Array(DenseArrayError::CountMismatch {
+        FrameBuffer::from_geometry(topology, Geometry::new(Positions::zeros(3))).unwrap_err(),
+        TrajectoryIoError::from(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 3,
         }))
@@ -225,17 +226,17 @@ fn buffers_from_samples_validate_them_against_the_topology() {
 fn errors_retain_nested_causes() {
     let position_error =
         Positions::new(Quantity::new([Point3::new(f64::NAN, 0.0, 0.0)], NANOMETER)).unwrap_err();
-    let frame_error = StructureError::from(position_error);
+    let frame_error = GeometryError::from(position_error);
     let trajectory_error = TrajectoryIoError::from(frame_error.clone());
     assert_eq!(
         trajectory_error.kind(),
-        TrajectoryIoErrorKind::InvalidStructure
+        TrajectoryIoErrorKind::InvalidGeometry
     );
     assert_eq!(
         trajectory_error
             .source()
             .unwrap()
-            .downcast_ref::<StructureError>()
+            .downcast_ref::<GeometryError>()
             .map(ToString::to_string),
         Some(frame_error.to_string())
     );

@@ -4,12 +4,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::smiles;
 use kekule::statistics::RmsfAccumulator;
 use kekule::structure::Positions;
 use kekule::topology::AtomSelection;
-use kekule::traj::io::{open_trajectory, write_sample_set};
+use kekule::traj::io::{open_trajectory, write_structure_set};
 use kekule::traj::{
     FrameBuffer, FrameView, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader,
 };
@@ -62,7 +62,7 @@ fn selections_buffers_and_accumulators_survive_set_perception() {
         "kekule-perception-bindings-{}.xyz",
         std::process::id()
     )));
-    write_sample_set(&path.0, &set, Default::default()).unwrap();
+    write_structure_set(&path.0, &set, Default::default()).unwrap();
     let mut reader = open_trajectory(&path.0, set.shared_topology(), Default::default()).unwrap();
     let mut frames = 0;
     while reader.read_next(&mut buffer).unwrap() {
@@ -76,7 +76,7 @@ fn selections_buffers_and_accumulators_survive_set_perception() {
     assert!(independent.same_layout(&topology));
     assert_eq!(
         FrameBuffer::new(independent)
-            .copy_from(FrameView::from_sample(set.get(0).unwrap()).unwrap()),
+            .copy_from(FrameView::from_geometry(set.get(0).unwrap()).unwrap()),
         Err(TrajectoryIoError::new(
             TrajectoryIoErrorKind::TopologyMismatch
         ))

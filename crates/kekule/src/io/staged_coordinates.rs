@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::chemistry::AtomPositionSource;
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::{AtomId, Molecule};
 use crate::structure::{DenseArrayError, Positions};
 use crate::units::{Quantity, Unit, UnitError, ANGSTROM};

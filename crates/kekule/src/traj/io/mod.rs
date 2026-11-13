@@ -4,18 +4,18 @@
 //! [`crate::traj`] and use the rest of Kekule only for topology, structural
 //! state, geometry, and units.
 //!
-//! Start with [`read_sample_set`] to load an entire file into an in-memory
-//! [`crate::structure::SampleSet`] in a time order, and [`write_sample_set`]
+//! Start with [`read_structure_set`] to load an entire file into an in-memory
+//! [`crate::structure::StructureSet`] in a time order, and [`write_structure_set`]
 //! to save one atomically. The writers also take a set without an order,
 //! which reads back in a time order. Every operation takes its options,
 //! which set the codec and field policies; the defaults detect the format.
 //! Use [`open_trajectory`] for sequential processing with
 //! a reusable frame buffer, [`open_indexed_trajectory`] for verified random access,
-//! [`open_indexed_sample_set`] for a sample set that reads each sample from
+//! [`open_indexed_structure_set`] for a structure set that reads each geometry from
 //! the file when asked ([`IndexedFile`]), [`create_trajectory_writer`] for atomic path-backed writing, or
-//! [`create_trajectory_stream_writer`] and [`write_sample_set_to`] for writing
+//! [`create_trajectory_stream_writer`] and [`write_structure_set_to`] for writing
 //! into a host's stream, so that the host places the file. Each operation
-//! takes a topology directly or from its sample set. Path readers expose opening
+//! takes a topology directly or from its structure set. Path readers expose opening
 //! diagnostics through `open_report()` and verified format metadata through
 //! `metadata()`. The [`xyz`], [`dcd`], [`trr`] and [`xtc`] modules hold the
 //! codec-level readers and writers over caller-supplied streams.
@@ -25,23 +25,23 @@
 //! ```
 //! use std::sync::Arc;
 //!
-//! use kekule::geometry::Point3;
-//! use kekule::structure::{Positions, Sample, SampleSet};
+//! use kekule::math::Point3;
+//! use kekule::structure::{Positions, Geometry, StructureSet};
 //! use kekule::units::{Quantity, ANGSTROM};
 //! use kekule::{smiles, topology::Topology};
-//! use kekule::traj::io::{read_sample_set, write_sample_set};
+//! use kekule::traj::io::{read_structure_set, write_structure_set};
 //!
 //! let molecule = smiles::to_molecules("[He]")?.pop().unwrap();
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //! let points = vec![Point3::new(1.5, 0.0, 0.0)];
-//! let sample = Sample::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
-//! let frames = SampleSet::from_samples(Arc::clone(&topology), [sample])?;
+//! let geometry = Geometry::new(Positions::from_vec(Quantity::new(points, ANGSTROM))?);
+//! let frames = StructureSet::from_geometries(Arc::clone(&topology), [geometry])?;
 //!
 //! let path = std::env::temp_dir().join(format!("kekule-traj-io-{}.xyz", std::process::id()));
 //! # let _ = std::fs::remove_file(&path);
 //! // The `.xyz` extension selects the codec; an existing file is never replaced.
-//! write_sample_set(&path, &frames, Default::default())?;
-//! let loaded = read_sample_set(&path, Arc::clone(&topology), Default::default());
+//! write_structure_set(&path, &frames, Default::default())?;
+//! let loaded = read_structure_set(&path, Arc::clone(&topology), Default::default());
 //! std::fs::remove_file(&path)?;
 //! let loaded = loaded?;
 //!
@@ -184,17 +184,19 @@ pub mod xyz;
 
 pub use append::{append_trajectory, KeepFrames, TrajectoryAppendOptions, TrajectoryAppendReport};
 pub use file_reader::{
-    open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory, read_sample_set,
-    IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
+    open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory,
+    read_structure_set, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
-    create_trajectory_stream_writer, create_trajectory_writer, write_sample_set,
-    write_sample_set_to, FileTrajectoryWriter, OverwritePolicy, TrajectoryStreamWriter,
+    create_trajectory_stream_writer, create_trajectory_writer, write_structure_set,
+    write_structure_set_to, FileTrajectoryWriter, OverwritePolicy, TrajectoryStreamWriter,
     TrajectoryWriteOptions,
 };
 pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
 pub use frame_state::FrameTimingPolicy;
-pub use indexed_file::{open_indexed_sample_set, open_indexed_sample_set_from_index, IndexedFile};
+pub use indexed_file::{
+    open_indexed_structure_set, open_indexed_structure_set_from_index, IndexedFile,
+};
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
     detect_trajectory_format, CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata,

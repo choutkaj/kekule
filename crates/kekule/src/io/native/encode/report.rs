@@ -5,13 +5,13 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::io::Write;
 
 use super::{Encoder, Result};
-use crate::geometry::Vector3;
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyOmissionReason, AtomProvenance,
     BondEvidence, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason, EntityKind,
     PolymerEntity, PolymerType, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport,
 };
+use crate::math::Vector3;
 use crate::sequence::CodeOrigin;
 use crate::topology::InstanceAtomId;
 

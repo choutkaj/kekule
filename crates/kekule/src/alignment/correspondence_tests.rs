@@ -1,10 +1,10 @@
 use super::*;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
-use crate::structure::{Model, Positions};
+use crate::structure::{Positions, Structure};
 use crate::topology::{InstanceAtomId, Topology};
 use crate::units::{ANGSTROM, NANOMETER};
 
-fn model(points: &[Point3]) -> Model {
+fn structure(points: &[Point3]) -> Structure {
     let mut editor = MoleculeEditor::new();
     let mut previous = None;
     for _ in points {
@@ -16,7 +16,7 @@ fn model(points: &[Point3]) -> Model {
         }
         previous = Some(atom);
     }
-    Model::new(
+    Structure::new(
         Topology::from_molecule(editor.finish().unwrap().clone()).unwrap(),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
@@ -36,7 +36,11 @@ fn transformed(p: Point3) -> Point3 {
     Point3::new(-p.y + 2., p.x - 3., p.z + 1.)
 }
 
-fn pairs(moving: &Model, reference: &Model, order: &[(usize, usize)]) -> AtomCorrespondence {
+fn pairs(
+    moving: &Structure,
+    reference: &Structure,
+    order: &[(usize, usize)],
+) -> AtomCorrespondence {
     AtomCorrespondence::from_pairs(
         moving.shared_topology(),
         reference.shared_topology(),
@@ -52,8 +56,8 @@ fn pairs(moving: &Model, reference: &Model, order: &[(usize, usize)]) -> AtomCor
 
 #[test]
 fn independent_layouts_align_without_changing_identity_or_coordinates() {
-    let moving = model(&points());
-    let reference = model(&points().map(transformed));
+    let moving = structure(&points());
+    let reference = structure(&points().map(transformed));
     let before = (moving.clone(), reference.clone());
     let correspondence =
         AtomCorrespondence::from_same_layout(moving.shared_topology(), reference.shared_topology())
@@ -63,16 +67,16 @@ fn independent_layouts_align_without_changing_identity_or_coordinates() {
     let selection = AtomSelection::all(moving.shared_topology());
     assert_eq!(
         crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &selection,
             Default::default()
         ),
         Err(AlignmentError::TopologyMismatch)
     );
     let fit = crate::alignment::fit(
-        moving.as_model_view(),
-        reference.as_model_view(),
+        moving.as_structure_view(),
+        reference.as_structure_view(),
         &correspondence,
         Default::default(),
     )
@@ -85,9 +89,9 @@ fn independent_layouts_align_without_changing_identity_or_coordinates() {
 }
 
 #[test]
-fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units() {
+fn explicit_pairs_preserve_order_and_fit_reordered_partial_structures_in_mixed_units() {
     let source = points();
-    let moving = model(&source);
+    let moving = structure(&source);
     let target = [
         transformed(source[2]),
         transformed(source[0]),
@@ -95,9 +99,9 @@ fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units
         transformed(source[3]),
         transformed(source[1]),
     ];
-    let mut reference = model(&target);
+    let mut reference = structure(&target);
     // Keep the same physical positions while exercising a different input unit.
-    reference = Model::new(
+    reference = Structure::new(
         reference.shared_topology(),
         Positions::new(Quantity::new(
             target.map(|p| Point3::new(p.x * 10., p.y * 10., p.z * 10.)),
@@ -120,8 +124,8 @@ fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units
         ))
     );
     let fit = crate::alignment::fit(
-        moving.as_model_view(),
-        reference.as_model_view(),
+        moving.as_structure_view(),
+        reference.as_structure_view(),
         &correspondence,
         Default::default(),
     )
@@ -134,27 +138,27 @@ fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units
 
 #[test]
 fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
-    let moving = model(&points());
+    let moving = structure(&points());
     let mut target = points().map(transformed);
     target[2].x += 0.4;
-    let reference = model(&target);
+    let reference = structure(&target);
     let order = [(3, 3), (0, 0), (2, 2), (1, 1)];
     let correspondence = pairs(&moving, &reference, &order);
     let weights = [8., 1., 4., 2.];
     let options = AlignmentOptions::default().with_weighting(Weighting::Explicit(&weights));
     let fit = crate::alignment::fit(
-        moving.as_model_view(),
-        reference.as_model_view(),
+        moving.as_structure_view(),
+        reference.as_structure_view(),
         &correspondence,
         options,
     )
     .unwrap();
     let reference_on_shared_topology =
-        Model::new(moving.shared_topology(), reference.positions().clone()).unwrap();
+        Structure::new(moving.shared_topology(), reference.positions().clone()).unwrap();
     let reordered_weights = [1., 2., 4., 8.];
     let expected = crate::alignment::fit(
-        moving.as_model_view(),
-        reference_on_shared_topology.as_model_view(),
+        moving.as_structure_view(),
+        reference_on_shared_topology.as_structure_view(),
         &AtomSelection::all(moving.shared_topology()),
         AlignmentOptions::default().with_weighting(Weighting::Explicit(&reordered_weights)),
     )
@@ -169,8 +173,8 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
     assert!(fit.rmsd().into_value() > 0.01);
     for weights in [&[1., 2.][..], &[1., 0., 1., 1.], &[1., f64::NAN, 1., 1.]] {
         assert!(crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &correspondence,
             AlignmentOptions::default().with_weighting(Weighting::Explicit(weights))
         )
@@ -180,8 +184,8 @@ fn correspondence_weights_follow_pairs_and_share_existing_numerical_kernel() {
 
 #[test]
 fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
-    let moving = model(&points());
-    let reference = model(&points());
+    let moving = structure(&points());
+    let reference = structure(&points());
     let a = moving.topology().atom_ids()[0];
     let b = reference.topology().atom_ids()[0];
     let invalid = InstanceAtomId::new(a.instance(), AtomId::new(99));
@@ -221,8 +225,8 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
 
 #[test]
 fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() {
-    let mut moving = model(&points());
-    let mut reference = model(&points());
+    let mut moving = structure(&points());
+    let mut reference = structure(&points());
     let correspondence =
         AtomCorrespondence::from_same_layout(moving.shared_topology(), reference.shared_topology())
             .unwrap();
@@ -233,22 +237,22 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
         .topology()
         .shares_layout(correspondence.moving_topology()));
     assert!(crate::alignment::fit(
-        moving.as_model_view(),
-        reference.as_model_view(),
+        moving.as_structure_view(),
+        reference.as_structure_view(),
         &correspondence,
         Default::default()
     )
     .is_ok());
 
     // An independently published equal topology is a different layout.
-    let rebuilt = model(&points());
+    let rebuilt = structure(&points());
     assert!(rebuilt
         .topology()
         .same_layout(correspondence.moving_topology()));
     assert!(matches!(
         crate::alignment::fit(
-            rebuilt.as_model_view(),
-            reference.as_model_view(),
+            rebuilt.as_structure_view(),
+            reference.as_structure_view(),
             &correspondence,
             Default::default()
         ),
@@ -260,8 +264,8 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
     ));
     assert!(matches!(
         crate::alignment::fit(
-            moving.as_model_view(),
-            rebuilt.as_model_view(),
+            moving.as_structure_view(),
+            rebuilt.as_structure_view(),
             &correspondence,
             Default::default()
         ),
@@ -275,13 +279,13 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
 
 #[test]
 fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
-    let mut moving = model(&points());
-    let reference = model(&[Point3::new(0., 0., 0.); 4]);
+    let mut moving = structure(&points());
+    let reference = structure(&[Point3::new(0., 0., 0.); 4]);
     let correspondence = pairs(&moving, &reference, &[(0, 0), (1, 1), (2, 2), (3, 3)]);
     assert!(matches!(
         crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &correspondence,
             Default::default()
         ),
@@ -290,8 +294,8 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
     let short = pairs(&moving, &reference, &[(0, 0), (1, 1)]);
     assert!(matches!(
         crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &short,
             Default::default()
         ),
@@ -301,15 +305,15 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
     assert!(empty.is_empty());
     assert!(matches!(
         crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &empty,
             Default::default()
         ),
         Err(AlignmentError::InsufficientSelectedAtoms { selected: 0, .. })
     ));
     moving.set_cell(Some(
-        crate::geometry::PeriodicCell::new(
+        crate::math::PeriodicCell::new(
             Quantity::new(
                 [
                     Vector3::new(10., 0., 0.),
@@ -324,8 +328,8 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
     ));
     assert!(matches!(
         crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &correspondence,
             AlignmentOptions::default().with_periodic_policy(PeriodicPolicy::RejectPeriodic)
         ),

@@ -7,7 +7,7 @@ use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrReadOptions, TRR_LAMBDA_PROPERTY};
 use kekule::traj::io::xyz::XyzReadOptions;
 use kekule::traj::io::{
-    read_sample_set, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+    read_structure_set, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule::traj::{TrajectoryFormat, TrajectoryIoErrorKind};
 use kekule::units::{DIMENSIONLESS, NANOMETER, PICOSECOND};
@@ -61,7 +61,7 @@ fn loading_detects_every_supported_format_and_retains_frame_order_and_topology()
         ),
     ] {
         let trajectory =
-            read_sample_set(fixture(name), topology.clone(), Default::default()).unwrap();
+            read_structure_set(fixture(name), topology.clone(), Default::default()).unwrap();
         assert!(Arc::ptr_eq(&topology, &trajectory.shared_topology()));
         assert_eq!(trajectory.len(), 2, "{name}");
         for (frame, expected_x) in trajectory.iter().zip(first_xs) {
@@ -75,7 +75,7 @@ fn loading_detects_every_supported_format_and_retains_frame_order_and_topology()
 #[test]
 fn loading_retains_trr_cell_vectors_time_step_and_properties() {
     let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
-    let trajectory = read_sample_set(
+    let trajectory = read_structure_set(
         fixture("mdanalysis-2.9.0-three-atoms.trr"),
         topology,
         Default::default(),
@@ -113,7 +113,7 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
     fs::rename(&input.0, &mislabeled_path).unwrap();
     input.0 = mislabeled_path;
     // An explicit format must override the conflicting file extension.
-    assert!(read_sample_set(&input.0, linear_carbon_topology(1), Default::default()).is_err());
+    assert!(read_structure_set(&input.0, linear_carbon_topology(1), Default::default()).is_err());
     let options = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Xyz))
         .with_xyz_options(XyzReadOptions::default().with_length_unit(NANOMETER))
@@ -124,7 +124,7 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
                 .with_max_index_bytes(0),
         );
     let owned = Arc::try_unwrap(linear_carbon_topology(1)).unwrap();
-    let trajectory = read_sample_set(&input.0, owned, options).unwrap();
+    let trajectory = read_structure_set(&input.0, owned, options).unwrap();
     assert_eq!(trajectory.len(), 2);
     assert_eq!(
         trajectory.get(0).unwrap().positions().values().value()[0].x,
@@ -138,7 +138,7 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
         assert!(frame.cell().is_none());
         assert!(frame.velocities().is_none());
         assert!(frame.forces().is_none());
-        let stamped = Frame::of_set_sample(frame);
+        let stamped = Frame::of_set_geometry(frame);
         assert!(stamped.time().is_none());
         assert!(stamped.step().is_none());
         assert!(frame.properties().is_empty());
@@ -149,7 +149,7 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
 fn loading_reports_a_late_decode_error_instead_of_returning_a_prefix() {
     let input = TemporaryInput::new(b"1\ncomplete\nC 1 2 3\n1\ntruncated\n");
     let error =
-        read_sample_set(&input.0, linear_carbon_topology(1), Default::default()).unwrap_err();
+        read_structure_set(&input.0, linear_carbon_topology(1), Default::default()).unwrap_err();
     let context = error;
     assert_eq!(context.kind(), TrajectoryIoErrorKind::TruncatedRecord);
     assert_eq!(context.frame(), Some(1));
@@ -163,14 +163,14 @@ fn loading_preserves_resource_limits_and_topology_validation() {
     let water = topology(&["O", "H", "H"], &[(0, 1), (0, 2)]);
     let options = TrajectoryOpenOptions::default()
         .with_limits(TrajectoryIoLimits::default().with_max_frames(1));
-    let error = read_sample_set(&path, water, options).unwrap_err();
+    let error = read_structure_set(&path, water, options).unwrap_err();
     assert_eq!(
         codec_kind(&error),
         Some(TrajectoryIoErrorKind::LimitExceeded)
     );
     // Equal counts do not bypass XYZ's element-order check.
-    assert!(read_sample_set(&path, linear_carbon_topology(3), Default::default()).is_err());
-    assert!(read_sample_set(&path, linear_carbon_topology(2), Default::default()).is_err());
+    assert!(read_structure_set(&path, linear_carbon_topology(3), Default::default()).is_err());
+    assert!(read_structure_set(&path, linear_carbon_topology(2), Default::default()).is_err());
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn loading_preserves_codec_policy_and_open_errors() {
     let options = TrajectoryOpenOptions::default().with_trr_options(
         TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
     );
-    let error = read_sample_set(
+    let error = read_structure_set(
         fixture("mdanalysis-2.9.0-three-atoms.trr"),
         topology.clone(),
         options,
@@ -193,7 +193,7 @@ fn loading_preserves_codec_policy_and_open_errors() {
     let input = TemporaryInput::new(b"");
     fs::remove_file(&input.0).unwrap();
     assert!(matches!(
-        read_sample_set(&input.0, topology, Default::default()),
+        read_structure_set(&input.0, topology, Default::default()),
         Err(error) if error.kind() == TrajectoryIoErrorKind::Io
     ));
 }
@@ -205,7 +205,7 @@ fn loading_rejects_an_empty_file_even_with_an_explicit_format() {
     let topology = linear_carbon_topology(1);
     let options = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Xyz));
-    let error = read_sample_set(&input.0, topology, options).unwrap_err();
+    let error = read_structure_set(&input.0, topology, options).unwrap_err();
     assert_eq!(
         codec_kind(&error),
         Some(TrajectoryIoErrorKind::InvalidHeader)

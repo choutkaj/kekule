@@ -4,7 +4,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut frame = FrameBuffer::new(topology);
     for (step, shift) in [(0, 0.0), (1, 1.0)] {
-        frame.sample_mut().set_positions(Quantity::new(
+        frame.geometry_mut().set_positions(Quantity::new(
             [
                 Point3::new(0.0 + shift, 1.0, 2.0),
                 Point3::new(3.0 + shift, 4.0, 5.0),
@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ],
             ANGSTROM,
         ))?;
-        frame.sample_mut().set_cell(Some(cell));
+        frame.geometry_mut().set_cell(Some(cell));
         frame.set_step(Some(step));
         writer.write_frame(frame.frame_view())?;
     }

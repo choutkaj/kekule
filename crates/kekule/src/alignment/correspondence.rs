@@ -20,7 +20,7 @@ pub use labels::{AmbiguousLabel, AtomLabel, LabelCorrespondence, LabelScheme};
 /// hierarchy labels: chain, residue number, insertion code, and atom name
 /// ([`Self::from_labels`]).
 ///
-/// No coordinates are copied. Reuse this value across models or frames sharing
+/// No coordinates are copied. Reuse this value across structures or frames sharing
 /// its two topology allocations. After an operation publishes a new topology
 /// snapshot (including perception), construct a new correspondence for that snapshot.
 #[derive(Debug, Clone)]

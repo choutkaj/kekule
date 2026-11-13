@@ -158,7 +158,7 @@ pub(super) fn scratch_bytes<T>(values: &Vec<T>) -> Option<usize> {
 
 /// The storage of a dense array once a read fills it with `len` values: its
 /// capacity, or `len` values when the array is smaller, as it is after the
-/// reader gave its storage to a sample. A limit counted this way does not
+/// reader gave its storage to a geometry. A limit counted this way does not
 /// depend on what the reader read before.
 pub(super) fn filled_bytes<T>(values: &Vec<T>, len: usize) -> Option<usize> {
     values

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Forces, Place, Positions, SampleSet, Velocities};
+use kekule::structure::{Forces, Place, Positions, StructureSet, Velocities};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::traj::periodic::{self, PeriodicError};
 use kekule::units::{
@@ -29,7 +29,7 @@ fn frame(points: &[[f64; 3]], cell: Option<PeriodicCell>) -> Frame {
     frame
 }
 
-fn xyz(set: &SampleSet, frame: usize) -> Vec<Point3> {
+fn xyz(set: &StructureSet, frame: usize) -> Vec<Point3> {
     set.get(frame)
         .unwrap()
         .positions()
@@ -40,7 +40,7 @@ fn xyz(set: &SampleSet, frame: usize) -> Vec<Point3> {
 
 /// Copying forms of the in-place periodic operations. Each result is the
 /// next one `recorded`, as the operations gave it on trajectories.
-fn whole(set: &SampleSet, recorded: &mut Recorded) -> Result<SampleSet, PeriodicError> {
+fn whole(set: &StructureSet, recorded: &mut Recorded) -> Result<StructureSet, PeriodicError> {
     let mut copy = set.clone();
     periodic::make_molecules_whole(&mut copy)?;
     recorded.check(&dynamics(&copy));
@@ -48,17 +48,17 @@ fn whole(set: &SampleSet, recorded: &mut Recorded) -> Result<SampleSet, Periodic
 }
 
 fn imaged(
-    set: &SampleSet,
+    set: &StructureSet,
     anchors: &AtomSelection,
     recorded: &mut Recorded,
-) -> Result<SampleSet, PeriodicError> {
+) -> Result<StructureSet, PeriodicError> {
     let mut copy = set.clone();
     periodic::image_molecules(&mut copy, anchors)?;
     recorded.check(&dynamics(&copy));
     Ok(copy)
 }
 
-fn unwrapped(set: &SampleSet, recorded: &mut Recorded) -> Result<SampleSet, PeriodicError> {
+fn unwrapped(set: &StructureSet, recorded: &mut Recorded) -> Result<StructureSet, PeriodicError> {
     let mut copy = set.clone();
     periodic::unwrap_trajectory(&mut copy)?;
     recorded.check(&dynamics(&copy));
@@ -521,7 +521,7 @@ fn empty_trajectories_and_single_atom_molecules_need_no_special_cases() {
         0xa22f_b9f9_89ea_5d22, // single unwrapped
     ]);
     let topology = linear_carbon_topology(1);
-    let empty = SampleSet::new(topology.clone());
+    let empty = StructureSet::new(topology.clone());
     assert!(whole(&empty, &mut recorded).unwrap().is_empty());
     assert!(imaged(
         &empty,

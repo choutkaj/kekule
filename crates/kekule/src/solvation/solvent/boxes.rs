@@ -1,7 +1,7 @@
 use super::center;
-use crate::structure::Model;
+use crate::structure::Structure;
 use crate::{
-    geometry::{PeriodicCell, PeriodicCellError, PeriodicGeometry, PeriodicGeometryError, Vector3},
+    math::{Lattice, LatticeError, PeriodicCell, PeriodicCellError, Vector3},
     units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT},
 };
 use std::fmt;
@@ -36,7 +36,7 @@ pub enum PeriodicBoxOptions {
         shape: BoxShape,
     },
 }
-/// A periodic box could not be built for the model.
+/// A periodic box could not be built for the structure.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PeriodicBoxError {
@@ -51,7 +51,7 @@ pub enum PeriodicBoxError {
     Cell(PeriodicCellError),
     /// Centering the solute or validating the cell geometry failed; see the
     /// source.
-    Geometry(PeriodicGeometryError),
+    Lattice(LatticeError),
 }
 impl fmt::Display for PeriodicBoxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -60,7 +60,7 @@ impl fmt::Display for PeriodicBoxError {
             Self::NotFullyPeriodic => f.write_str("The box is not periodic along all three axes."),
             Self::Unit(_) => f.write_str("The padding is not a length."),
             Self::Cell(error) => error.fmt(f),
-            Self::Geometry(error) => error.fmt(f),
+            Self::Lattice(error) => error.fmt(f),
         }
     }
 }
@@ -69,7 +69,7 @@ impl std::error::Error for PeriodicBoxError {
         match self {
             Self::Unit(e) => Some(e),
             Self::Cell(e) => e.source(),
-            Self::Geometry(e) => e.source(),
+            Self::Lattice(e) => e.source(),
             _ => None,
         }
     }
@@ -88,10 +88,10 @@ impl std::error::Error for PeriodicBoxError {
 /// and positive, [`PeriodicBoxError::Unit`] when it is not a length,
 /// [`PeriodicBoxError::Cell`] when the box vectors form no valid cell,
 /// [`PeriodicBoxError::NotFullyPeriodic`] for a [`PeriodicBoxOptions::Cell`]
-/// that is not periodic along all three axes, and [`PeriodicBoxError::Geometry`]
+/// that is not periodic along all three axes, and [`PeriodicBoxError::Lattice`]
 /// when centering or the cell geometry fails numerically.
 pub fn add_periodic_box(
-    model: &mut Model,
+    structure: &mut Structure,
     options: &PeriodicBoxOptions,
 ) -> Result<(), PeriodicBoxError> {
     let cell = match options {
@@ -107,8 +107,8 @@ pub fn add_periodic_box(
             if !padding.is_finite() || padding <= 0.0 {
                 return Err(PeriodicBoxError::InvalidPadding);
             }
-            let points = model.positions().values();
-            let center = center(points.value()).map_err(PeriodicBoxError::Geometry)?;
+            let points = structure.positions().values();
+            let center = center(points.value()).map_err(PeriodicBoxError::Lattice)?;
             let radius = points
                 .value()
                 .iter()
@@ -140,7 +140,7 @@ pub fn add_periodic_box(
     if cell.periodic_axes() != [true; 3] {
         return Err(PeriodicBoxError::NotFullyPeriodic);
     }
-    PeriodicGeometry::new(cell).map_err(PeriodicBoxError::Geometry)?;
-    model.set_cell(Some(cell));
+    Lattice::new(cell).map_err(PeriodicBoxError::Lattice)?;
+    structure.set_cell(Some(cell));
     Ok(())
 }

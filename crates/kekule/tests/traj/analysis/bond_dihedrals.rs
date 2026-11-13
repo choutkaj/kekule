@@ -1,9 +1,9 @@
 use kekule::{
-    geometry::Point3,
+    math::Point3,
     smiles,
     structure::{
         measure::{self, BondDihedral},
-        Model, Positions,
+        Positions, Structure,
     },
     units::{Quantity, NANOMETER},
 };
@@ -22,22 +22,22 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
         Point3::new(0.0, 1.0, 1.0),
         Point3::new(1.0, 1.0, 0.0),
     ];
-    let model = Model::from_molecule(
+    let structure = Structure::from_molecule(
         molecule.clone(),
         &Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
     .unwrap();
-    let topology = model.shared_topology();
-    let axis = model.topology().bond_ids()[2];
+    let topology = structure.shared_topology();
+    let axis = structure.topology().bond_ids()[2];
     let definition = BondDihedral::new(topology.clone(), axis, Default::default()).unwrap();
     let atoms = definition.atoms().unwrap();
     assert_eq!(
         atoms,
         [
-            model.topology().atom_ids()[0],
-            model.topology().atom_ids()[1],
-            model.topology().atom_ids()[3],
-            model.topology().atom_ids()[4]
+            structure.topology().atom_ids()[0],
+            structure.topology().atom_ids()[1],
+            structure.topology().atom_ids()[3],
+            structure.topology().atom_ids()[4]
         ]
     );
     let mut degenerate = points;
@@ -50,7 +50,7 @@ fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry()
     let angles = trajectory
         .iter()
         .map(|frame| {
-            let view = frame.as_model_view();
+            let view = frame.as_structure_view();
             let prepared = definition.measure(view).unwrap();
             assert_eq!(prepared, measure::bond_dihedral(view, axis).unwrap());
             assert_eq!(

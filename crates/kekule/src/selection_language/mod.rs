@@ -13,10 +13,10 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::parallel::Executor;
 use crate::properties::PropertyKey;
-use crate::structure::{AsModelView, ModelView, Positions};
+use crate::structure::{AsStructureView, Positions, StructureView};
 use crate::substructure::{SubstructureMatchError, SubstructureMatchOptions};
 use crate::topology::{AtomSelection, Topology};
 use crate::units::UnitError;
@@ -77,8 +77,8 @@ impl SelectionExpr {
         eval::Evaluator::new(self, &topology, None, &options).run()
     }
 
-    /// Evaluates the expression against one structure: a model, a sample of
-    /// a set, a trajectory frame, or any other [`AsModelView`]. The result
+    /// Evaluates the expression against one structure view: a structure, a geometry of
+    /// a set, a trajectory frame, or any other [`AsStructureView`]. The result
     /// binds to the structure's topology.
     ///
     /// # Errors
@@ -87,10 +87,10 @@ impl SelectionExpr {
     /// [`RequiresStructure`](SelectEvaluateError::RequiresStructure).
     pub fn evaluate_structure(
         &self,
-        structure: &impl AsModelView,
+        structure: &impl AsStructureView,
         options: SelectEvaluateOptions<'_>,
     ) -> Result<AtomSelection, SelectEvaluateError> {
-        let view = structure.as_model_view();
+        let view = structure.as_structure_view();
         let topology = view.shared_topology();
         eval::Evaluator::new(self, &topology, Some(view), &options).run()
     }
@@ -334,7 +334,7 @@ pub enum HostRole {
 #[derive(Debug, Clone, Copy)]
 pub struct HostRequest<'a> {
     topology: &'a Arc<Topology>,
-    structure: Option<ModelView<'a>>,
+    structure: Option<StructureView<'a>>,
     role: HostRole,
 }
 
@@ -350,7 +350,7 @@ impl<'a> HostRequest<'a> {
     }
 
     /// The evaluated structure, when evaluation has one.
-    pub const fn structure(&self) -> Option<ModelView<'a>> {
+    pub const fn structure(&self) -> Option<StructureView<'a>> {
         self.structure
     }
 

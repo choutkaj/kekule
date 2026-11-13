@@ -205,10 +205,10 @@ impl AtomCorrespondence {
     /// let read = |text: &str| -> Result<_, Box<dyn std::error::Error>> {
     ///     Ok(pdb::parse_str(text, Default::default())?
     ///         .interpret(Default::default())?
-    ///         .into_model())
+    ///         .into_structure())
     /// };
     /// // A model and a template of one water, the template with a second hydrogen.
-    /// let model = read("\
+    /// let structure = read("\
     /// HETATM    1  O   HOH A   1       0.100   0.000   0.000  1.00  0.00           O
     /// HETATM    2  H1  HOH A   1       1.060   0.000   0.000  1.00  0.00           H
     /// END
@@ -221,7 +221,7 @@ impl AtomCorrespondence {
     /// ")?;
     ///
     /// let paired = AtomCorrespondence::from_labels(
-    ///     &AtomSelection::all(model.shared_topology()),
+    ///     &AtomSelection::all(structure.shared_topology()),
     ///     &AtomSelection::all(template.shared_topology()),
     ///     LabelScheme::Author,
     /// )?;

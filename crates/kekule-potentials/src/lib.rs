@@ -3,12 +3,12 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 //! Energies, gradients, and geometry optimization for topology-bound Kekule
-//! models.
+//! structures.
 //!
 //! The crate separates three layers:
 //!
 //! - [`Potential`] is the evaluation contract. It promises an energy and a
-//!   Cartesian gradient for any [`kekule::structure::ModelView`] sharing one
+//!   Cartesian gradient for any [`kekule::structure::StructureView`] sharing one
 //!   topology layout, including snapshots perceived after preparation, and
 //!   assumes nothing about how the energy is built.
 //! - Backends prepare a potential from explicit parameters. The default
@@ -41,21 +41,21 @@
 //! ```no_run
 //! # #[cfg(feature = "openff")]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use kekule::structure::Model;
+//! use kekule::structure::Structure;
 //! use kekule_openff::{ForceField, NaglModel};
 //! use kekule_potentials::{minimize, openff::OpenFfPotential, MinimizeOptions, Potential};
 //!
-//! # fn explicit_hydrogen_model() -> Model { unimplemented!() }
-//! let model = explicit_hydrogen_model();
+//! # fn explicit_hydrogen_structure() -> Structure { unimplemented!() }
+//! let structure = explicit_hydrogen_structure();
 //! let nagl = NaglModel::ash()?;
-//! let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;
+//! let parameters = ForceField::rosemary()?.parameterize(structure.shared_topology(), &nagl)?;
 //! let potential = OpenFfPotential::new(&parameters)?;
 //!
-//! let energy = potential.energy(model.as_model_view())?;
+//! let energy = potential.energy(structure.as_structure_view())?;
 //! println!("single point: {}", energy.total().into_value());
 //!
-//! let result = minimize(&potential, model.as_model_view(), &MinimizeOptions::default())?;
-//! let minimized = result.to_model(model.as_model_view())?;
+//! let result = minimize(&potential, structure.as_structure_view(), &MinimizeOptions::default())?;
+//! let minimized = result.to_structure(structure.as_structure_view())?;
 //! # let _ = minimized;
 //! # Ok(())
 //! # }

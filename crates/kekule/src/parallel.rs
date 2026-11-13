@@ -9,9 +9,9 @@
 //! on it.
 //!
 //! [`dssp::assign_with`](crate::dssp::assign_with),
-//! [`SampleSet::pairwise_fitted_rmsd_with`](crate::structure::SampleSet::pairwise_fitted_rmsd_with)
+//! [`StructureSet::pairwise_fitted_rmsd_with`](crate::structure::StructureSet::pairwise_fitted_rmsd_with)
 //! and
-//! [`SampleSet::cluster_by_radius_with`](crate::structure::SampleSet::cluster_by_radius_with)
+//! [`StructureSet::cluster_by_radius_with`](crate::structure::StructureSet::cluster_by_radius_with)
 //! take an executor, and selections measure `within` on one given by
 //! [`SelectEvaluateOptions::with_executor`](crate::select::SelectEvaluateOptions::with_executor).
 //!

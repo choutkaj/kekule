@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology,
     TopologyBuilder,
@@ -448,15 +448,16 @@ fn typed_class_selections_select_instances_and_residues() {
 #[test]
 fn generic_mmcif_writing_maps_canonical_protein_water_and_small_molecule_classes() {
     let molecule = kekule::smiles::to_molecules("CC").unwrap().pop().unwrap();
-    let model =
-        Model::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count())).unwrap();
-    let written = kekule::mmcif::write([&model], Default::default())
+    let structure =
+        Structure::from_molecule(molecule.clone(), &Positions::zeros(molecule.atom_count()))
+            .unwrap();
+    let written = kekule::mmcif::write([&structure], Default::default())
         .map(|(text, _)| text)
         .unwrap();
     assert!(written.contains("1 non-polymer"));
 
     let (protein, _) = linear_residue_topology(&["ALA", "GLY"], ("N", "C"));
-    let protein = Model::new(protein, Positions::zeros(4)).unwrap();
+    let protein = Structure::new(protein, Positions::zeros(4)).unwrap();
     let written = kekule::mmcif::write([&protein], Default::default())
         .map(|(text, _)| text)
         .unwrap();
@@ -465,7 +466,7 @@ fn generic_mmcif_writing_maps_canonical_protein_water_and_small_molecule_classes
     let mut water_editor = MoleculeEditor::new();
     water_editor.add_atom(atom("O")).unwrap();
     let (water, _) = one_residue_topology(&water_editor.finish().unwrap(), "HOH");
-    let water = Model::new(water, Positions::zeros(1)).unwrap();
+    let water = Structure::new(water, Positions::zeros(1)).unwrap();
     let written = kekule::mmcif::write([&water], Default::default())
         .map(|(text, _)| text)
         .unwrap();
@@ -473,10 +474,10 @@ fn generic_mmcif_writing_maps_canonical_protein_water_and_small_molecule_classes
 }
 
 #[test]
-fn readme_combined_model_workflow_needs_no_mmcif_classification_sidecar() {
+fn readme_combined_structure_workflow_needs_no_mmcif_classification_sidecar() {
     let first = kekule::smiles::to_molecules("CC").unwrap().pop().unwrap();
     let second = kekule::smiles::to_molecules("CO").unwrap().pop().unwrap();
-    let mut builder = Model::builder();
+    let mut builder = Structure::builder();
     let first_id = builder
         .add_molecule(first.clone(), &Positions::zeros(first.atom_count()))
         .unwrap();

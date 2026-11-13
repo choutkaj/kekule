@@ -1,8 +1,8 @@
 use crate::support::hierarchy_record;
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::molecule::{Atom, BondOrder, Element, Molecule, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Model, ModelEditor, Positions};
+use kekule::structure::{Positions, Structure, StructureEditor};
 use kekule::topology::{
     edit::{EditAtomId, EditBondId, TopologyEditor},
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, Topology, TopologyBuilder,
@@ -35,8 +35,8 @@ fn positions(xs: &[f64]) -> Positions {
     ))
     .unwrap()
 }
-fn model(text: &str) -> Model {
-    let mut builder = Model::builder();
+fn structure(text: &str) -> Structure {
+    let mut builder = Structure::builder();
     for molecule in kekule::smiles::to_molecules(text).unwrap() {
         let start = builder.atom_count();
         builder
@@ -53,10 +53,10 @@ fn model(text: &str) -> Model {
     builder.build().unwrap()
 }
 
-fn has_bond(model: &Model, a: usize, b: usize) -> bool {
-    let a = model.topology().atom_ids()[a];
-    let b = model.topology().atom_ids()[b];
-    model.topology().bonds().any(|bond| {
+fn has_bond(structure: &Structure, a: usize, b: usize) -> bool {
+    let a = structure.topology().atom_ids()[a];
+    let b = structure.topology().atom_ids()[b];
+    structure.topology().bonds().any(|bond| {
         let [left, right] = bond.atoms().map(|atom| atom.id());
         (left, right) == (a, b) || (left, right) == (b, a)
     })
@@ -82,7 +82,7 @@ fn split_then_merge_preserves_handles_geometry_and_hierarchy() {
             )
             .unwrap();
     }
-    let source = Model::new(builder.build().unwrap(), positions(&[1.0, 2.0, 3.0])).unwrap();
+    let source = Structure::new(builder.build().unwrap(), positions(&[1.0, 2.0, 3.0])).unwrap();
     let mut editor = source.to_editor();
     let handles = source
         .topology()
@@ -227,7 +227,7 @@ fn cross_instance_bond_merges_but_preserves_distinct_chains() {
         .molecule_instances_mut()
         .insert(key("instance"), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
-    let source = Model::new(builder.build().unwrap(), positions(&[2.0, 6.0])).unwrap();
+    let source = Structure::new(builder.build().unwrap(), positions(&[2.0, 6.0])).unwrap();
     let mut editor = source.to_editor();
     let handles = editor.topology().atom_ids().collect::<Vec<_>>();
     editor
@@ -311,7 +311,7 @@ fn editing_one_reused_occurrence_preserves_others_and_their_perception() {
 
 #[test]
 fn no_op_and_geometry_only_keep_exact_source_topology() {
-    let mut source = model("CO");
+    let mut source = structure("CO");
     source.perceive().unwrap();
     source
         .properties_mut()
@@ -372,7 +372,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         .atoms_mut()
         .insert(key("static"), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
-    let mut source = Model::new(builder.build().unwrap(), positions(&[4.0, 9.0])).unwrap();
+    let mut source = Structure::new(builder.build().unwrap(), positions(&[4.0, 9.0])).unwrap();
     let source_atoms = source.topology().atom_ids().to_vec();
     let row = source.topology().atom_index(source_atoms[1]).unwrap();
     source.set_occupancy(row, Some(0.7)).unwrap();
@@ -430,7 +430,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         None
     );
     assert_eq!(
-        result.atom(new).unwrap().structure_property(&key("live")),
+        result.atom(new).unwrap().geometry_property(&key("live")),
         Some(PropertyValue::Int(8))
     );
     assert_eq!(result.atom_count(), 2);
@@ -447,8 +447,8 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
 }
 
 #[test]
-fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
-    let source = model("CCC");
+fn finish_and_try_finish_publish_the_same_split_structure_and_topology() {
+    let source = structure("CCC");
     let mut editor = source.to_editor();
     let bonds = editor.topology().bond_ids().collect::<Vec<_>>();
     editor
@@ -473,8 +473,8 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
     );
     assert_eq!(finished_topology.instance_count(), 2);
     assert_eq!(finished_topology.bond_count(), 1);
-    let finished: Model = editor.clone().finish().unwrap();
-    let recovered: Model = editor.try_finish().unwrap();
+    let finished: Structure = editor.clone().finish().unwrap();
+    let recovered: Structure = editor.try_finish().unwrap();
     // Independent publications have different snapshot identities. Compare the
     // represented layout and stored values explicitly.
     assert!(finished.topology().same_layout(recovered.topology()));
@@ -515,10 +515,10 @@ fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
 
 #[test]
 fn failures_are_atomic_and_empty_publication_is_recoverable() {
-    let source = model("CC");
+    let source = structure("CC");
     let mut editor = source.to_editor();
     let handles = editor.topology().atom_ids().collect::<Vec<_>>();
-    let mut foreign = ModelEditor::new();
+    let mut foreign = StructureEditor::new();
     let invalid = foreign
         .add_atom(atom("O"), Quantity::new(Point3::origin(), ANGSTROM))
         .unwrap();
@@ -557,7 +557,8 @@ fn append_preserves_sparse_local_ids_dense_order_and_definition_order() {
     let removed = molecule.atom_ids().next().unwrap();
     molecule.delete_atom(removed).unwrap();
     let source =
-        Model::from_molecule(molecule.finish().unwrap().clone(), &positions(&[3.0, 7.0])).unwrap();
+        Structure::from_molecule(molecule.finish().unwrap().clone(), &positions(&[3.0, 7.0]))
+            .unwrap();
     let mut editor = source.to_editor();
     editor
         .add_molecule((self::molecule("O")).clone(), &positions(&[8.0]))
@@ -726,7 +727,7 @@ fn classification_overrides_are_occurrence_and_component_local() {
 
 #[test]
 fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
-    let mut source = model("CC.O");
+    let mut source = structure("CC.O");
     let source_bond = source.topology().bond_ids()[0];
     let row = source.topology().bond_index(source_bond).unwrap();
     source
@@ -810,7 +811,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
 fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
     use kekule::topology::edit::EditBond;
 
-    let source = model("CC.O");
+    let source = structure("CC.O");
     let mut editor = TopologyEditor::from_topology(source.shared_topology());
     let atoms = editor.atom_ids().collect::<Vec<_>>();
     let bond = editor.bond_ids().next().unwrap();
@@ -845,10 +846,10 @@ fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
 }
 
 #[test]
-fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
+fn structure_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
     use kekule::units::Unit;
 
-    let mut editor = model("C").into_editor();
+    let mut editor = structure("C").into_editor();
     let atom = editor.topology().atom_ids().next().unwrap();
     editor
         .properties_mut()
@@ -1027,7 +1028,7 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
         }};
     }
 
-    let source = model("CCC");
+    let source = structure("CCC");
     let mut topology_editor = TopologyEditor::from_topology(source.shared_topology());
     topology_editor
         .properties_mut()
@@ -1075,7 +1076,7 @@ fn editor_property_batches_are_transactional_and_follow_ordered_update_semantics
 fn recovery_keeps_builder_state_and_editor_handles() {
     use std::error::Error;
     let carbon = molecule("C");
-    let mut builder = Model::builder();
+    let mut builder = Structure::builder();
     let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let failed = builder.try_build().unwrap_err();
     assert!(failed.source().is_some());
@@ -1158,7 +1159,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         result
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .structure_property(&key("tag")),
+            .geometry_property(&key("tag")),
         None
     );
 
@@ -1173,13 +1174,13 @@ fn recovery_keeps_builder_state_and_editor_handles() {
 }
 
 #[test]
-fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
+fn resumed_structure_builder_retains_entity_state_and_extends_missing_rows() {
     let mut draft = molecule("NCC").into_editor();
     let removed = draft.atom_ids().next().unwrap();
     draft.delete_atom(removed).unwrap();
     let mut carbon = draft.finish().unwrap();
     carbon.perceive().unwrap();
-    let mut builder = Model::builder();
+    let mut builder = Structure::builder();
     let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
     let first = builder
         .add_instance(definition, &positions(&[2.0, 3.0]))
@@ -1263,7 +1264,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         carbon.perception()
     );
     assert_eq!(
-        result.atom(a).unwrap().structure_property(&key("dynamic")),
+        result.atom(a).unwrap().geometry_property(&key("dynamic")),
         Some(PropertyValue::Int(4))
     );
     assert_eq!(
@@ -1274,7 +1275,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         result
             .atom(result.topology().atom_ids()[4])
             .unwrap()
-            .structure_property(&key("dynamic")),
+            .geometry_property(&key("dynamic")),
         None
     );
     assert!(result.properties().owner().get(&key("old_owner")).is_none());
@@ -1288,7 +1289,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
 
 #[test]
 fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
-    let mut source = model("CCC");
+    let mut source = structure("CCC");
     let ids = source.topology().atom_ids().to_vec();
     let before = source.positions().clone();
     assert!(source
@@ -1351,7 +1352,7 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
         result
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .structure_property(&key("tag")),
+            .geometry_property(&key("tag")),
         Some(PropertyValue::String("valid".into()))
     );
 }
@@ -1395,7 +1396,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
 
 #[test]
 fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
-    let source = model("F[C@](Cl)(Br)CC");
+    let source = structure("F[C@](Cl)(Br)CC");
     let mut editor = source.to_editor();
     let terminal = editor
         .topology()
@@ -1441,7 +1442,7 @@ fn split_publication_preserves_surviving_stereo_and_prunes_changed_centers() {
 
 #[test]
 fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
-    let source = model("C");
+    let source = structure("C");
     let mut first = source.to_editor();
     let mut second = source.to_editor();
     let a = first.topology().atom_ids().next().unwrap();
@@ -1468,7 +1469,7 @@ fn independently_created_or_cleared_drafts_never_accept_foreign_handles() {
 
 #[test]
 fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let a = editor
         .add_atom(bare_atom(6), Quantity::new(Point3::new(1., 0., 0.), BOHR))
         .unwrap();
@@ -1483,16 +1484,16 @@ fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
         .unwrap();
     editor.delete_atom(removed).unwrap();
     let bond = editor.add_bond(a, c, BondOrder::Single).unwrap();
-    let (model, map) = editor.finish_with_correspondence().unwrap();
+    let (structure, map) = editor.finish_with_correspondence().unwrap();
     assert!(map.atom(removed).is_none());
     for (handle, x) in [(a, 1.), (b, 2.), (c, 3.)] {
         let (id, index) = map.atom(handle).unwrap();
-        assert_eq!(model.topology().atom_ids()[index.index()], id);
-        assert!((model.position(id).unwrap().value_in(BOHR).unwrap().x - x).abs() < 1e-12);
+        assert_eq!(structure.topology().atom_ids()[index.index()], id);
+        assert!((structure.position(id).unwrap().value_in(BOHR).unwrap().x - x).abs() < 1e-12);
     }
     let (id, index) = map.bond(bond).unwrap();
-    assert_eq!(model.topology().bond_ids()[index.index()], id);
-    let mut next = model.to_editor();
+    assert_eq!(structure.topology().bond_ids()[index.index()], id);
+    let mut next = structure.to_editor();
     let handle = next.topology().bond_handle(id).unwrap();
     next.delete_bond(handle).unwrap();
     let (split, second) = next.finish_with_correspondence().unwrap();
@@ -1502,16 +1503,21 @@ fn publication_correspondence_tracks_reordering_deletion_and_bonds() {
 
 #[test]
 fn no_op_publication_retains_snapshot_and_foreign_handles_do_not_map() {
-    let mut e = ModelEditor::new();
+    let mut e = StructureEditor::new();
     e.add_atom(bare_atom(2), Quantity::new(Point3::origin(), BOHR))
         .unwrap();
-    let model = e.finish().unwrap();
-    let source = model.shared_topology();
+    let structure = e.finish().unwrap();
+    let source = structure.shared_topology();
     let edit = TopologyEditor::from_topology(source.clone());
-    let handle = edit.atom_handle(model.topology().atom_ids()[0]).unwrap();
+    let handle = edit
+        .atom_handle(structure.topology().atom_ids()[0])
+        .unwrap();
     let (topology, map) = edit.finish_with_correspondence().unwrap();
     assert!(Arc::ptr_eq(&source, &topology));
-    assert_eq!(map.atom(handle).unwrap().0, model.topology().atom_ids()[0]);
+    assert_eq!(
+        map.atom(handle).unwrap().0,
+        structure.topology().atom_ids()[0]
+    );
     let mut foreign = TopologyEditor::new();
     let other = foreign.add_atom(bare_atom(2)).unwrap();
     assert!(map.atom(other).is_none());
@@ -1524,7 +1530,7 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
         .pop()
         .unwrap();
     assert_eq!(molecule.stereo_elements().count(), 1);
-    let mut builder = Model::builder();
+    let mut builder = Structure::builder();
     builder
         .add_molecule(molecule.clone(), &Positions::zeros(5))
         .unwrap();
@@ -1573,7 +1579,7 @@ fn stereo_replacement_is_occurrence_local_and_rejects_changed_source() {
 fn editor_property_guards_reject_deleted_handles_with_the_typed_error() {
     use kekule::topology::edit::TopologyEditError;
 
-    let source = model("CO");
+    let source = structure("CO");
     let value = Some(PropertyValue::Int(1));
     let mut editor = source.shared_topology().to_editor();
     let chain = editor.add_chain("A", None).unwrap();
@@ -1614,19 +1620,19 @@ fn editor_property_guards_reject_deleted_handles_with_the_typed_error() {
         Some(PropertyColumn::Int(vec![Some(1)]))
     );
 
-    // Structure annotations of a model draft resolve handles the same way.
-    let mut model_editor = source.into_editor();
-    let [_, oxygen]: [EditAtomId; 2] = model_editor
+    // Structure annotations of a structure draft resolve handles the same way.
+    let mut structure_editor = source.into_editor();
+    let [_, oxygen]: [EditAtomId; 2] = structure_editor
         .topology()
         .atom_ids()
         .collect::<Vec<_>>()
         .try_into()
         .unwrap();
-    let bond = model_editor.topology().bond_ids().next().unwrap();
-    model_editor.delete_bond(bond).unwrap();
-    model_editor.delete_atom(oxygen).unwrap();
+    let bond = structure_editor.topology().bond_ids().next().unwrap();
+    structure_editor.delete_bond(bond).unwrap();
+    structure_editor.delete_atom(oxygen).unwrap();
     assert_eq!(
-        model_editor
+        structure_editor
             .properties_mut()
             .atoms_mut()
             .set_value(key("tag"), oxygen, value),
@@ -1636,7 +1642,7 @@ fn editor_property_guards_reject_deleted_handles_with_the_typed_error() {
 
 #[test]
 fn owner_only_topology_edits_publish_a_new_topology() {
-    let source = Arc::new(model("C").topology().clone());
+    let source = Arc::new(structure("C").topology().clone());
     let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
     editor
         .properties_mut()

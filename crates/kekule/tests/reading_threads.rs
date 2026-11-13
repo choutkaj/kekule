@@ -1,4 +1,4 @@
-//! A sample read from a file is allocated on the thread that reads it.
+//! A geometry read from a file is allocated on the thread that reads it.
 //!
 //! A pooled reader serves reads from whichever thread takes it, so a buffer
 //! it kept from one read would be allocated on one thread and freed on
@@ -13,16 +13,16 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::UnrepresentablePolicy;
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::structure::{
-    Forces, Order, Place, Positions, Sample, SampleRead, SampleSet, TimeAxis, Velocities,
+    Forces, Geometry, Order, Place, Positions, StructureSet, StructureSetRead, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
-use kekule::traj::io::{open_indexed_sample_set, write_sample_set, TrajectoryWriteOptions};
+use kekule::traj::io::{open_indexed_structure_set, write_structure_set, TrajectoryWriteOptions};
 use kekule::traj::TrajectoryFormat;
 use kekule::units::{
     Quantity, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND,
@@ -124,10 +124,10 @@ fn topology() -> Arc<Topology> {
     Arc::new(builder.build().unwrap())
 }
 
-/// Three samples of a moving chain in a cell, in time order, with
+/// Three geometries of a moving chain in a cell, in time order, with
 /// velocities and forces when `with_vectors` is set.
-fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> SampleSet {
-    let mut set = SampleSet::new(Arc::clone(topology));
+fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> StructureSet {
+    let mut set = StructureSet::new(Arc::clone(topology));
     let axis = TimeAxis::new(
         Some(Quantity::new(Vec::new(), PICOSECOND)),
         Some(Vec::new()),
@@ -145,17 +145,17 @@ fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> SampleSet {
             [true; 3],
         )
         .unwrap();
-        let mut sample =
-            Sample::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
+        let mut geometry =
+            Geometry::new(Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap())
                 .with_cell(cell);
         if with_vectors {
-            sample
+            geometry
                 .set_velocities(Some(
                     Velocities::new(Quantity::new(vectors.clone(), NANOMETER_PER_PICOSECOND))
                         .unwrap(),
                 ))
                 .unwrap();
-            sample
+            geometry
                 .set_forces(Some(
                     Forces::new(Quantity::new(vectors, KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap(),
                 ))
@@ -165,7 +165,7 @@ fn trajectory(topology: &Arc<Topology>, with_vectors: bool) -> SampleSet {
             time: Some(Quantity::new(shift, PICOSECOND)),
             step: Some(u64::from(step)),
         };
-        set.push(sample, Some(place)).unwrap();
+        set.push(geometry, Some(place)).unwrap();
     }
     set
 }
@@ -196,7 +196,7 @@ impl File {
             );
         // Only TRR stores velocities and forces.
         let with_vectors = format == TrajectoryFormat::Trr;
-        write_sample_set(&path, &trajectory(topology, with_vectors), options).unwrap();
+        write_structure_set(&path, &trajectory(topology, with_vectors), options).unwrap();
         Self(path)
     }
 }
@@ -232,7 +232,7 @@ fn a_read_on_another_thread_frees_only_its_own_arrays() {
     ] {
         let file = File::write(&topology, format);
         let set =
-            open_indexed_sample_set(&file.0, Arc::clone(&topology), Default::default()).unwrap();
+            open_indexed_structure_set(&file.0, Arc::clone(&topology), Default::default()).unwrap();
         // One thread at a time, so both reads take the pool's one reader.
         std::thread::scope(|scope| {
             scope.spawn(|| drop(set.read(0).unwrap()));
@@ -311,7 +311,7 @@ fn a_failed_read_keeps_no_array_for_the_next() {
     ] {
         let file = File::write(&topology, format);
         let set =
-            open_indexed_sample_set(&file.0, Arc::clone(&topology), Default::default()).unwrap();
+            open_indexed_structure_set(&file.0, Arc::clone(&topology), Default::default()).unwrap();
         spoil_frame_2(
             &file.0,
             format,
@@ -392,7 +392,8 @@ fn a_dcd_with_fixed_atoms_frees_only_its_own_arrays() {
     ));
     std::fs::write(&path, fixed_atom_dcd()).unwrap();
     let file = File(path);
-    let set = open_indexed_sample_set(&file.0, Arc::clone(&topology), Default::default()).unwrap();
+    let set =
+        open_indexed_structure_set(&file.0, Arc::clone(&topology), Default::default()).unwrap();
     assert_eq!(set.len(), 3);
     // Frame 1 first, then frame 0, then frame 2: each on a thread of its own.
     on_thread(|| drop(set.read(1).unwrap()));

@@ -118,13 +118,13 @@ fn site_ids(
 /// occupancy, B in Å² and coordinates in Å.
 fn hierarchy(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = first_model(document)?;
-    let model = interpretation.model();
+    let structure = interpretation.structure();
     let mut facts = Facts::new();
     for instance in interpretation.report().instances() {
         for atom in instance.atoms() {
-            let view = model
+            let view = structure
                 .atom(atom.atom())
-                .ok_or_else(|| Failure::new("interpret", "reported atom missing from model"))?;
+                .ok_or_else(|| Failure::new("interpret", "reported atom missing from structure"))?;
             let point = view
                 .position()
                 .value_in(ANGSTROM)
@@ -205,11 +205,11 @@ fn residue_class(class: ResidueClass) -> &'static str {
 /// author identifiers, which do not depend on which altloc rows were kept.
 fn classification(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = first_model(document)?;
-    let model = interpretation.model();
+    let structure = interpretation.structure();
     let mut residues: BTreeMap<ResidueId, (String, &'static str)> = BTreeMap::new();
     for instance in interpretation.report().instances() {
         for atom in instance.atoms() {
-            let Some(residue) = model.atom(atom.atom()).and_then(|view| view.residue()) else {
+            let Some(residue) = structure.atom(atom.atom()).and_then(|view| view.residue()) else {
                 continue;
             };
             residues.entry(residue.id()).or_insert_with(|| {
@@ -266,7 +266,7 @@ fn partner(
 /// label chain and sequence number as mkdssp reports them.
 fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = first_model(document)?;
-    let result = match dssp::assign(interpretation.model(), DsspOptions::default()) {
+    let result = match dssp::assign(interpretation.structure(), DsspOptions::default()) {
         Ok(result) => result,
         Err(dssp::DsspError::NoAnalyzableProteinResidues) => return Ok(Facts::new()),
         Err(error) => return Err(Failure::new("dssp", error)),
@@ -317,10 +317,10 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
 /// Cα RMSD of every coordinate model after fitting it onto the first.
 fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .map_err(|e| Failure::new("interpret", e))?;
-    let models = interpretation.sample_set();
-    let topology: Arc<_> = models.shared_topology();
+    let structures = interpretation.structure_set();
+    let topology: Arc<_> = structures.shared_topology();
     let first = &interpretation.reports()[0];
     let alpha = first
         .instances()
@@ -337,13 +337,15 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let count = alpha.len();
     let selection = AtomSelection::from_atoms(Arc::clone(&topology), alpha)
         .map_err(|e| Failure::new("selection", e))?;
-    let rmsd = models
+    let rmsd = structures
         .aligned_rmsd(0usize, &selection, &selection, Default::default())
         .map_err(|e| Failure::new("superposition", e))?
         .value_in(ANGSTROM)
         .map_err(|e| Failure::new("units", e))?;
     let mut facts = vec![json!(["alpha", "count", count])];
     for (report, value) in interpretation.reports().iter().zip(rmsd) {
+        // compare.py matches facts by their full keys and keys the RMSD
+        // tolerance at "model.rmsd", as references/bio.py emits it.
         facts.push(json!(["model", report.selected_model(), "rmsd", value]));
     }
     Ok(facts)

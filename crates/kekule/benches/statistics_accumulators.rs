@@ -8,11 +8,11 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
 use kekule::smiles;
 use kekule::statistics::{ContactOccupancyAccumulator, RmsfAccumulator};
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER};
 
@@ -138,9 +138,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// partial accumulators in range order.
 fn in_parallel<A: Send>(
     executor: &dyn Executor,
-    frames: &[Model],
+    frames: &[Structure],
     empty: impl Fn() -> A + Sync,
-    observe: impl Fn(&mut A, usize, &Model) + Sync,
+    observe: impl Fn(&mut A, usize, &Structure) + Sync,
     merge: impl Fn(&mut A, A),
 ) -> A {
     let chunks = executor.parallelism().get();
@@ -175,7 +175,7 @@ fn topology() -> Result<Arc<Topology>, Box<dyn Error>> {
 
 /// Frames of a cubic lattice with 0.1 nm spacing, each atom displaced by a
 /// deterministic pseudo-random offset of up to 0.05 nm per axis.
-fn frames(topology: &Arc<Topology>) -> Result<Vec<Model>, Box<dyn Error>> {
+fn frames(topology: &Arc<Topology>) -> Result<Vec<Structure>, Box<dyn Error>> {
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
     let mut jitter = move || {
         state ^= state << 13;
@@ -197,7 +197,7 @@ fn frames(topology: &Arc<Topology>) -> Result<Vec<Model>, Box<dyn Error>> {
                 })
                 .collect::<Vec<_>>();
             let positions = Positions::new(Quantity::new(points, NANOMETER))?;
-            Ok(Model::new(Arc::clone(topology), positions)?)
+            Ok(Structure::new(Arc::clone(topology), positions)?)
         })
         .collect()
 }

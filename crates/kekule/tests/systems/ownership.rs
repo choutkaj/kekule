@@ -1,15 +1,16 @@
 use std::cell::Cell;
 use std::error::Error;
 
-use kekule::geometry::Point3;
-use kekule::geometry::{PeriodicCell, Vector3};
+use kekule::math::Point3;
+use kekule::math::{PeriodicCell, Vector3};
 use kekule::molecule::MoleculeEditor;
 use kekule::properties::{
     PropertyColumn, PropertyError, PropertyKey, PropertyValue, PropertyValueRef,
 };
 use kekule::smiles;
 use kekule::structure::{
-    DenseArrayError, Model, ModelError, Positions, Sample, SampleSetError, StructureError,
+    DenseArrayError, Geometry, GeometryError, Positions, Structure, StructureError,
+    StructureSetError,
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
@@ -39,12 +40,12 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     let finite = [Point3::new(1.0, 2.0, 3.0)];
     let invalid = [Point3::new(f64::NAN, 0.0, 0.0)];
     let calls = Cell::new(0);
-    let mut model = Model::new(
+    let mut structure = Structure::new(
         kekule::smiles::to_topology("C").unwrap(),
         Positions::zeros(1),
     )
     .unwrap();
-    model
+    structure
         .set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
@@ -55,12 +56,12 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
         ))
         .unwrap();
     assert_eq!(calls.get(), 1);
-    assert_eq!(model.positions().values().value(), &finite);
+    assert_eq!(structure.positions().values().value(), &finite);
 
     calls.set(0);
-    let before = model.positions().clone();
+    let before = structure.positions().clone();
     assert!(matches!(
-        model.set_positions(Quantity::new(
+        structure.set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
                 first: &invalid,
@@ -68,12 +69,12 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
             },
             CANONICAL_LENGTH_UNIT
         )),
-        Err(StructureError::Array(DenseArrayError::NonFinite {
+        Err(GeometryError::Array(DenseArrayError::NonFinite {
             index: 0
         }))
     ));
     assert_eq!(calls.get(), 1);
-    assert_eq!(model.positions(), &before);
+    assert_eq!(structure.positions(), &before);
 }
 
 #[test]
@@ -124,13 +125,13 @@ fn borrowed_property_reads_retain_string_storage_and_missing_cells() {
     let text = String::from("a property that should be borrowed");
     let pointer = text.as_ptr();
     let row = TopologyAtomIndex::new;
-    let mut sample = Sample::new(Positions::zeros(2));
-    sample
+    let mut geometry = Geometry::new(Positions::zeros(2));
+    geometry
         .properties_mut()
         .atoms_mut()
         .insert(key.clone(), PropertyColumn::String(vec![Some(text), None]))
         .unwrap();
-    let table = sample.properties().atoms();
+    let table = geometry.properties().atoms();
     let value = table.value_ref(&key, row(0)).unwrap().unwrap();
     let PropertyValueRef::String(text) = value else {
         panic!("expected string")
@@ -196,14 +197,14 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let position_error =
         Positions::new(Quantity::new([Point3::origin()], DIMENSIONLESS)).unwrap_err();
     assert!(position_error.source().unwrap().is::<UnitError>());
-    let error = SampleSetError::from(StructureError::from(position_error.clone()));
-    let structure = error.source().unwrap();
-    assert!(structure.is::<StructureError>());
-    // Structure state wraps its array error transparently: it displays the
+    let error = StructureSetError::from(GeometryError::from(position_error.clone()));
+    let geometry = error.source().unwrap();
+    assert!(geometry.is::<GeometryError>());
+    // Geometry state wraps its array error transparently: it displays the
     // array error and continues with the array error's own source.
-    assert_eq!(structure.to_string(), position_error.to_string());
-    assert!(structure.source().unwrap().is::<UnitError>());
-    let error = ModelError::from(position_error.clone());
+    assert_eq!(geometry.to_string(), position_error.to_string());
+    assert!(geometry.source().unwrap().is::<UnitError>());
+    let error = StructureError::from(position_error.clone());
     assert_eq!(error.to_string(), position_error.to_string());
     assert!(error.source().unwrap().is::<UnitError>());
     let cell_error = PeriodicCell::orthorhombic(
@@ -270,7 +271,7 @@ fn borrowed_document_conversion_keeps_source_and_consuming_interpretation_moves_
 #[test]
 fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
     let molecule = smiles::to_molecules("CC").unwrap().pop().unwrap();
-    let source = Model::from_molecule(
+    let source = Structure::from_molecule(
         molecule.clone(),
         &Positions::new(Quantity::new(
             vec![Point3::origin(), Point3::new(1.5, 0.0, 0.0)],
@@ -279,8 +280,8 @@ fn copy_view_materialization_retains_owner_and_creates_independent_geometry() {
         .unwrap(),
     )
     .unwrap();
-    let view = source.as_model_view();
-    let mut owned = view.to_model();
+    let view = source.as_structure_view();
+    let mut owned = view.to_structure();
     assert_eq!(view.atom_count(), source.atom_count());
     assert!(std::sync::Arc::ptr_eq(
         &owned.shared_topology(),

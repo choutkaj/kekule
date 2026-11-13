@@ -29,13 +29,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         .records()
         .first()
         .ok_or("the SDF document has no records")?;
-    let model = record.interpret(Default::default())?.into_model();
+    let structure = record.interpret(Default::default())?.into_structure();
 
-    // Parameterization binds the model's exact topology snapshot.
-    let parameters = ForceField::rosemary()?.parameterize(model.shared_topology(), &nagl)?;
+    // Parameterization binds the structure's exact topology snapshot.
+    let parameters = ForceField::rosemary()?.parameterize(structure.shared_topology(), &nagl)?;
     let potential = OpenFfPotential::new(&parameters)?;
 
-    let energy = potential.energy(model.as_model_view())?;
+    let energy = potential.energy(structure.as_structure_view())?;
     println!("initial energy: {:.4} kJ/mol", energy.total().into_value());
     for component in energy.components() {
         println!(
@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let result = minimize(
         &potential,
-        model.as_model_view(),
+        structure.as_structure_view(),
         &MinimizeOptions::default(),
     )?;
     let final_energy = result.final_evaluation().energy().total().into_value();
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         result.iterations(),
         result.status()
     );
-    let minimized = result.to_model(model.as_model_view())?;
-    println!("minimized model has {} atoms", minimized.atom_count());
+    let minimized = result.to_structure(structure.as_structure_view())?;
+    println!("minimized structure has {} atoms", minimized.atom_count());
     Ok(())
 }

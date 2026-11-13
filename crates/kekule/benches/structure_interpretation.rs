@@ -1,5 +1,5 @@
 //! Informational cost of reading a large mmCIF entry: parsing, interpretation
-//! into a model, and default perception of that model.
+//! into a structure, and default perception of that structure.
 //!
 //! The entry is externally supplied. SeekDelta's request K24 used PDB 6SPB
 //! (90,351 atoms) and 7K00 (149,338 atoms, 7,640 molecules):
@@ -42,21 +42,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         let start = Instant::now();
         let interpretation = document.interpret(Default::default())?;
         phases[1].push(start.elapsed());
-        let mut model = interpretation.into_model();
+        let mut structure = interpretation.into_structure();
         let start = Instant::now();
-        let perceived = model.perceive().map(|_| ());
+        let perceived = structure.perceive().map(|_| ());
         phases[2].push(start.elapsed());
-        outcome = Some((model, perceived));
+        outcome = Some((structure, perceived));
         black_box(document);
     }
-    let (model, perceived) = outcome.expect("at least one round");
-    let topology = model.topology();
+    let (structure, perceived) = outcome.expect("at least one round");
+    let topology = structure.topology();
     println!(
         "informational only; target={}-{}; atoms={}; molecules={}; definitions={}; \
          minimum and median of {ROUNDS} rounds",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        model.atom_count(),
+        structure.atom_count(),
         topology.instance_count(),
         topology.definition_count(),
     );

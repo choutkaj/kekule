@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use super::types::{poll, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError, FormatErrorDetail};
-use crate::geometry::PeriodicCell;
+use crate::math::PeriodicCell;
 use crate::molecule::BondOrder;
 
 use super::super::mmcif_category::MmcifCategory;
@@ -20,13 +20,13 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, LabelConnectionSelector, PartnerSpec,
 };
-use super::sample_set::{interpret_conformations, interpret_models, no_coordinate_models};
 use super::sequences::read_polymer_entities;
+use super::structure_set::{interpret_conformations, interpret_models, no_coordinate_models};
 use super::types::{
-    sample_set_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
+    structure_set_error, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason,
     ConnectivityOptions, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretOptions,
-    StructureSampleSetInterpretation,
+    StructureInterpretation, StructureInterpretationReport, StructureSetInterpretOptions,
+    StructureSetInterpretation,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
@@ -70,20 +70,20 @@ pub(crate) fn interpret_mmcif_block(
 }
 
 /// Interprets explicitly selected or all coordinate models as one
-/// shared-topology unordered sample set.
-pub(crate) fn interpret_mmcif_sample_set(
+/// shared-topology unordered structure set.
+pub(crate) fn interpret_mmcif_structure_set(
     document: &MmcifDocument,
-    options: StructureSampleSetInterpretOptions,
-) -> Result<StructureSampleSetInterpretation, FormatError> {
-    interpret_mmcif_sample_set_block(atom_site_block(document)?, options)
+    options: StructureSetInterpretOptions,
+) -> Result<StructureSetInterpretation, FormatError> {
+    interpret_mmcif_structure_set_block(atom_site_block(document)?, options)
 }
 
 /// Interprets explicitly selected or all coordinate models in one block as
-/// one shared-topology unordered sample set.
-pub(crate) fn interpret_mmcif_sample_set_block(
+/// one shared-topology unordered structure set.
+pub(crate) fn interpret_mmcif_structure_set_block(
     block: &MmcifBlock,
-    options: StructureSampleSetInterpretOptions,
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+    options: StructureSetInterpretOptions,
+) -> Result<StructureSetInterpretation, FormatError> {
     if !block.has_category("_atom_site") {
         return Err(no_coordinate_models());
     }
@@ -103,14 +103,14 @@ pub(crate) fn interpret_mmcif_sample_set_block(
 pub(crate) fn interpret_mmcif_conformations(
     document: &MmcifDocument,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+) -> Result<StructureSetInterpretation, FormatError> {
     interpret_mmcif_conformations_block(atom_site_block(document)?, selections)
 }
 
 pub(crate) fn interpret_mmcif_conformations_block(
     block: &MmcifBlock,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+) -> Result<StructureSetInterpretation, FormatError> {
     interpret_conformations(selections, |options| {
         interpret_mmcif_block(block, options.clone())
     })
@@ -147,7 +147,7 @@ fn atom_site_block(document: &MmcifDocument) -> Result<&MmcifBlock, FormatError>
         .filter(|block| block.has_category("_atom_site"));
     let block = blocks.next().ok_or_else(no_coordinate_models)?;
     if blocks.next().is_some() {
-        return Err(sample_set_error(
+        return Err(structure_set_error(
             DiagnosticKind::Inconsistent,
             "More than one data block has _atom_site data.",
             FormatErrorDetail::MultipleAtomSiteBlocks,

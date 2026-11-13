@@ -57,7 +57,7 @@ pub(crate) fn singleton_loops_as_scalars(input: &str) -> String {
 const SINGLE_SITE: &str = "data_x\nloop_\n_entity.id\n_entity.type\n1 water\nloop_\n_struct_asym.id\n_struct_asym.entity_id\nA 1\nloop_\n_atom_site.type_symbol\n_atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n_atom_site.label_entity_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\nO O HOH A 1 1.0 2.0 3.0\n";
 
 #[test]
-fn mmcif_scalar_categories_support_document_block_and_sample_set_paths() {
+fn mmcif_scalar_categories_support_document_block_and_structure_set_paths() {
     let looped = mmcif::parse_str(SINGLE_SITE, Default::default()).unwrap();
     let scalar =
         mmcif::parse_str(&singleton_loops_as_scalars(SINGLE_SITE), Default::default()).unwrap();
@@ -71,27 +71,30 @@ fn mmcif_scalar_categories_support_document_block_and_sample_set_paths() {
         scalar.blocks()[0].interpret(Default::default()).unwrap(),
     ] {
         assert!(expected.topology().same_layout(actual.topology()));
-        assert_eq!(expected.model().positions(), actual.model().positions());
-        assert_eq!(actual.model().atom_count(), 1);
+        assert_eq!(
+            expected.structure().positions(),
+            actual.structure().positions()
+        );
+        assert_eq!(actual.structure().atom_count(), 1);
         assert_eq!(actual.report().entity_definitions(), 1);
         assert_eq!(actual.report().solvent_molecules(), 1);
-        assert_eq!(actual.model().topology().residues().count(), 1);
+        assert_eq!(actual.structure().topology().residues().count(), 1);
     }
-    let interpreted = scalar.interpret_sample_set(Default::default()).unwrap();
+    let interpreted = scalar.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(
         super::debug_fingerprint(&interpreted),
-        0xc9c4_a1b8_abc3_5a3a
+        0x7ba5_967c_f9fc_063d
     );
-    assert_eq!(interpreted.sample_set().len(), 1);
+    assert_eq!(interpreted.structure_set().len(), 1);
     assert!(interpreted.topology().same_layout(expected.topology()));
     assert_eq!(
         interpreted
-            .sample_set()
+            .structure_set()
             .get(0)
             .unwrap()
-            .as_model_view()
+            .as_structure_view()
             .positions(),
-        expected.model().positions()
+        expected.structure().positions()
     );
     let options = MmcifParseOptions::default().with_max_atom_site_rows(0);
     for input in [
@@ -158,7 +161,9 @@ fn mmcif_present_categories_missing_required_fields_reject_in_both_encodings() {
             "{category}: {scalar_error}"
         );
         assert!(loop_error.location().is_some() && scalar_error.location().is_some());
-        assert!(scalar_doc.interpret_sample_set(Default::default()).is_err());
+        assert!(scalar_doc
+            .interpret_structure_set(Default::default())
+            .is_err());
     }
 }
 
@@ -182,7 +187,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         let error = doc.interpret(Default::default()).unwrap_err();
         assert!(error.message().contains(message), "{error}");
         assert!(error.location().is_some());
-        assert!(doc.interpret_sample_set(Default::default()).is_err());
+        assert!(doc.interpret_structure_set(Default::default()).is_err());
     }
     let doc = mmcif::parse_str(
         &format!("{SINGLE_SITE}data_broken\n_atom_site.label_atom_id O\n"),
@@ -195,7 +200,7 @@ fn mmcif_category_ambiguity_is_rejected_without_normalizing_the_document() {
         .message()
         .contains("More than one data block"));
     assert_eq!(
-        error_detail(doc.interpret_sample_set(Default::default())),
+        error_detail(doc.interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::MultipleAtomSiteBlocks)
     );
 }
@@ -252,20 +257,20 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    assert_eq!(a.model().atom_count(), 3804);
+    assert_eq!(a.structure().atom_count(), 3804);
     assert_eq!(a.topology().bond_count(), 3484);
     assert_eq!(a.topology().instance_count(), 382);
     assert!(a.topology().same_layout(b.topology()));
-    assert_eq!(a.model().positions(), b.model().positions());
-    assert_eq!(a.model().properties(), b.model().properties());
+    assert_eq!(a.structure().positions(), b.structure().positions());
+    assert_eq!(a.structure().properties(), b.structure().properties());
     let protein = crate::topology::AtomSelection::for_molecule_classes(
-        a.model().shared_topology(),
+        a.structure().shared_topology(),
         [crate::topology::MoleculeClass::Protein],
     )
     .unwrap();
     assert_eq!(protein.indices().len(), 3312);
-    assert_eq!(a.model().occupancies(), b.model().occupancies());
-    assert_eq!(a.model().b_factors(), b.model().b_factors());
+    assert_eq!(a.structure().occupancies(), b.structure().occupancies());
+    assert_eq!(a.structure().b_factors(), b.structure().b_factors());
 }
 
 #[test]
@@ -441,8 +446,8 @@ fn mmcif_failures_carry_structured_kinds_and_original_lines() {
     );
     let error = mmcif::parse_str(SINGLE_SITE, Default::default())
         .unwrap()
-        .interpret_sample_set(
-            macromolecular::StructureSampleSetInterpretOptions::default()
+        .interpret_structure_set(
+            macromolecular::StructureSetInterpretOptions::default()
                 .with_model_ids(Some(vec!["9".into()]))
                 .unwrap(),
         )

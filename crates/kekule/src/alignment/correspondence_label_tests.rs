@@ -1,5 +1,5 @@
 use super::*;
-use crate::structure::{Model, Positions};
+use crate::structure::{Positions, Structure};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::ANGSTROM;
 use crate::{mmcif, pdb, smiles};
@@ -20,7 +20,7 @@ fn atom(serial: usize, name: &str, residue: &str, chain: char, number: i32, code
     )
 }
 
-fn read_pdb(records: &[(&str, &str, char, i32, char)]) -> Model {
+fn read_pdb(records: &[(&str, &str, char, i32, char)]) -> Structure {
     let mut text: String = records
         .iter()
         .enumerate()
@@ -33,11 +33,11 @@ fn read_pdb(records: &[(&str, &str, char, i32, char)]) -> Model {
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model()
+        .into_structure()
 }
 
-fn all(model: &Model) -> AtomSelection {
-    AtomSelection::all(model.shared_topology())
+fn all(structure: &Structure) -> AtomSelection {
+    AtomSelection::all(structure.shared_topology())
 }
 
 fn ids(topology: &Topology, indices: &[usize]) -> Vec<InstanceAtomId> {
@@ -131,7 +131,7 @@ fn a_label_correspondence_feeds_the_fits() {
         .rev()
         .map(|p| Point3::new(-p.y + 2., p.x - 3., p.z + 1.))
         .collect();
-    let reference = Model::new(
+    let reference = Structure::new(
         reference.shared_topology(),
         Positions::new(Quantity::new(turned, CANONICAL_LENGTH_UNIT)).unwrap(),
     )
@@ -141,8 +141,8 @@ fn a_label_correspondence_feeds_the_fits() {
             .unwrap();
     assert_eq!(paired_indices(&paired), [(0, 3), (1, 2), (2, 1), (3, 0)]);
     let result = fit(
-        moving.as_model_view(),
-        reference.as_model_view(),
+        moving.as_structure_view(),
+        reference.as_structure_view(),
         &paired,
         AlignmentOptions::default(),
     )
@@ -254,7 +254,7 @@ fn labels_naming_several_atoms_are_refused_by_name() {
     assert_eq!(paired_indices(&paired), [(0, 0)]);
 }
 
-fn read_mmcif(rows: &str) -> Model {
+fn read_mmcif(rows: &str) -> Structure {
     let text = format!(
         "\
 data_test
@@ -280,7 +280,7 @@ _atom_site.pdbx_PDB_model_num
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model()
+        .into_structure()
 }
 
 #[test]

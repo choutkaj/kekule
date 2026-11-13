@@ -1,4 +1,4 @@
-use crate::geometry::Vector3;
+use crate::math::Vector3;
 use crate::structure::DenseArrayError;
 use crate::units::{Quantity, Unit, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
 

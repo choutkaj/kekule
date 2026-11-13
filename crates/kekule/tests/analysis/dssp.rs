@@ -11,19 +11,19 @@ use crate::support::{Interleaved, Reversed};
 
 const CRAMBIN_MMCIF: &str = include_str!("../fixtures/mmcif/1CRN.cif");
 
-fn crambin_model() -> kekule::structure::Model {
+fn crambin_structure() -> kekule::structure::Structure {
     let document = mmcif::parse_str(CRAMBIN_MMCIF, Default::default())
         .expect("checked-in RCSB 1CRN fixture parses");
     document
         .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .expect("checked-in RCSB 1CRN fixture interprets")
-        .into_model()
+        .into_structure()
 }
 
 #[test]
 fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
-    let model = crambin_model();
-    let result = dssp::assign(&model, DsspOptions::default())
+    let structure = crambin_structure();
+    let result = dssp::assign(&structure, DsspOptions::default())
         .expect("crambin has an analyzable protein backbone");
     let residues = result.residues().collect::<Vec<_>>();
     let codes = residues
@@ -101,31 +101,31 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
 }
 
 #[test]
-fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
-    let mut model = crambin_model();
-    let before = model.clone();
-    let assigned = dssp::assign(&model, DsspOptions::default()).expect("initial assignment");
-    assert_eq!(model, before);
+fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_structure() {
+    let mut structure = crambin_structure();
+    let before = structure.clone();
+    let assigned = dssp::assign(&structure, DsspOptions::default()).expect("initial assignment");
+    assert_eq!(structure, before);
 
-    let first_atom = model.topology().atom_ids()[0];
-    let position = model
+    let first_atom = structure.topology().atom_ids()[0];
+    let position = structure
         .position(first_atom)
         .expect("first position")
         .map(|mut point| {
             point.x += 0.25;
             point
         });
-    model
+    structure
         .set_position(first_atom, position)
         .expect("finite coordinate update");
 
     assert_eq!(assigned.residues().count(), 46);
-    assert_ne!(model, before);
+    assert_ne!(structure, before);
 }
 
 #[test]
 fn dssp_rejects_invalid_options_and_residue_limits() {
-    let model = crambin_model();
+    let structure = crambin_structure();
     assert_eq!(
         DsspOptions::default().with_min_polyproline_stretch(4),
         Err(DsspError::InvalidPolyprolineStretch { value: 4 })
@@ -133,7 +133,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
 
     let options = DsspOptions::default().with_limits(DsspLimits::default().with_max_residues(2));
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(&structure, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
             Resource::Residues,
             2
@@ -143,7 +143,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
     let options =
         DsspOptions::default().with_limits(DsspLimits::default().with_max_candidate_pairs(0));
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(&structure, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
             Resource::CandidatePairs,
             0
@@ -152,7 +152,7 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
 
     let options = DsspOptions::default().with_limits(DsspLimits::default().with_max_ladders(0));
     assert_eq!(
-        dssp::assign(&model, options),
+        dssp::assign(&structure, options),
         Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
             Resource::Ladders,
             0
@@ -162,21 +162,21 @@ fn dssp_rejects_invalid_options_and_residue_limits() {
 
 #[test]
 fn dssp_rejects_coordinates_outside_its_spatial_index_range_without_panicking() {
-    let mut model = crambin_model();
-    let first_atom = model.topology().atom_ids()[0];
-    let position = model
+    let mut structure = crambin_structure();
+    let first_atom = structure.topology().atom_ids()[0];
+    let position = structure
         .position(first_atom)
         .expect("first position")
         .map(|mut point| {
             point.x = f32::MAX as f64;
             point
         });
-    model
+    structure
         .set_position(first_atom, position)
-        .expect("coordinate remains finite in the model");
+        .expect("coordinate remains finite in the structure");
 
     assert!(matches!(
-        dssp::assign(&model, DsspOptions::default()),
+        dssp::assign(&structure, DsspOptions::default()),
         Err(DsspError::CoordinateOutOfRange { .. })
     ));
 }
@@ -200,18 +200,18 @@ fn dssp_codes_cover_the_complete_dssp4_alphabet() {
 
 #[test]
 fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
-    let reference = dssp::assign(&crambin_model(), DsspOptions::default()).unwrap();
+    let reference = dssp::assign(&crambin_structure(), DsspOptions::default()).unwrap();
     let source = CRAMBIN_MMCIF.replace("_atom_site.label_seq_id", "_atom_site.audit_sequence");
     let document = mmcif::parse_str(&source, Default::default()).unwrap();
-    let model = document
+    let structure = document
         .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
-        .into_model();
-    assert!(model
+        .into_structure();
+    assert!(structure
         .topology()
         .residues()
         .all(|residue| residue.label_seq_id().is_none()));
-    let assigned = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let assigned = dssp::assign(&structure, DsspOptions::default()).unwrap();
     assert_eq!(assigned.statistics(), reference.statistics());
     for (actual, expected) in assigned.residues().zip(reference.residues()) {
         assert_eq!(
@@ -227,30 +227,30 @@ fn dssp_analyzes_canonical_amino_acids_without_label_sequence_numbers() {
 
 #[test]
 fn dssp_instance_membership_handles_many_reused_solvent_instances() {
-    use kekule::geometry::Point3;
+    use kekule::math::Point3;
     use kekule::molecule::AtomId;
     use kekule::structure::Positions;
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
     use kekule::units::{Quantity, ANGSTROM};
 
-    let mut model = crambin_model().into_builder();
+    let mut structure = crambin_structure().into_builder();
     let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
-    let definition = model.add_molecule_definition(water.clone()).unwrap();
+    let definition = structure.add_molecule_definition(water.clone()).unwrap();
     let water_position =
         Positions::new(Quantity::new(vec![Point3::new(100., 100., 100.)], ANGSTROM)).unwrap();
-    let chain = model.hierarchy_mut().add_chain("water", None).unwrap();
+    let chain = structure.hierarchy_mut().add_chain("water", None).unwrap();
     let mut ignored = Vec::new();
     let count = 10_000;
     for index in 0..count {
-        let instance = model.add_instance(definition, &water_position).unwrap();
+        let instance = structure.add_instance(definition, &water_position).unwrap();
         if index % 11 == 0 {
             ignored.push(instance);
         } else {
-            let residue = model
+            let residue = structure
                 .hierarchy_mut()
                 .add_residue(chain, "HOH", None, None, None)
                 .unwrap();
-            model
+            structure
                 .hierarchy_mut()
                 .add_atom_site(
                     residue,
@@ -260,8 +260,8 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
                 .unwrap();
         }
     }
-    let model = model.build().unwrap();
-    let result = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let structure = structure.build().unwrap();
+    let result = dssp::assign(&structure, DsspOptions::default()).unwrap();
     assert_eq!(result.report().ignored_instances(), ignored);
     assert_eq!(result.statistics().analyzed_residues(), 46);
     assert_eq!(
@@ -272,9 +272,9 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
 
 #[test]
 fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
-    use kekule::geometry::Point3;
+    use kekule::math::Point3;
     use kekule::molecule::AtomId;
-    use kekule::structure::{Model, Positions};
+    use kekule::structure::{Positions, Structure};
     use kekule::topology::{AtomSiteMetadata, InstanceAtomId, TopologyBuilder};
     use kekule::units::{Quantity, ANGSTROM};
 
@@ -332,12 +332,12 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
             )
             .unwrap();
         points.push(Point3::new(100., 0., 0.));
-        let model = Model::new(
+        let structure = Structure::new(
             builder.build().unwrap(),
             Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
         )
         .unwrap();
-        let result = dssp::assign(&model, DsspOptions::default()).unwrap();
+        let result = dssp::assign(&structure, DsspOptions::default()).unwrap();
         if labels || authors {
             keys.reverse();
         }
@@ -354,21 +354,21 @@ fn dssp_numbering_fallback_is_independent_of_unlabeled_solvent_in_the_chain() {
 
 const ADENYLATE_KINASE_MMCIF: &str = include_str!("../fixtures/mmcif/1AKE.cif");
 
-fn adenylate_kinase_model() -> kekule::structure::Model {
+fn adenylate_kinase_structure() -> kekule::structure::Structure {
     mmcif::parse_str(ADENYLATE_KINASE_MMCIF, Default::default())
         .expect("checked-in RCSB 1AKE fixture parses")
         .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .expect("checked-in RCSB 1AKE fixture interprets")
-        .into_model()
+        .into_structure()
 }
 
-/// `copies` copies of `model` on a cubic lattice whose spacing is the
-/// model's largest extent, so neighboring copies touch: residues of
+/// `copies` copies of `structure` on a cubic lattice whose spacing is the
+/// structure's largest extent, so neighboring copies touch: residues of
 /// different copies become hydrogen-bond candidates, and copies repeat chain
 /// labels.
-fn tiled(model: &kekule::structure::Model, copies: usize) -> kekule::structure::Model {
-    use kekule::geometry::Point3;
-    let positions = model.positions().values();
+fn tiled(structure: &kekule::structure::Structure, copies: usize) -> kekule::structure::Structure {
+    use kekule::math::Point3;
+    let positions = structure.positions().values();
     let points = positions.value();
     let (low, high) = points.iter().fold(
         (
@@ -388,11 +388,11 @@ fn tiled(model: &kekule::structure::Model, copies: usize) -> kekule::structure::
     );
     let spacing = (high.x - low.x).max(high.y - low.y).max(high.z - low.z);
     let side = (copies as f64).cbrt().ceil() as usize;
-    let mut editor = kekule::structure::ModelEditor::new();
+    let mut editor = kekule::structure::StructureEditor::new();
     for copy in 0..copies {
         let [x, y, z] =
             [copy % side, copy / side % side, copy / side / side].map(|step| step as f64 * spacing);
-        let mut moved = model.clone();
+        let mut moved = structure.clone();
         moved
             .set_positions(positions.map(|points| {
                 points
@@ -401,9 +401,11 @@ fn tiled(model: &kekule::structure::Model, copies: usize) -> kekule::structure::
                     .collect::<Vec<_>>()
             }))
             .expect("translated positions stay finite");
-        editor.append_model(&moved).expect("copies share no cell");
+        editor
+            .append_structure(&moved)
+            .expect("copies share no cell");
     }
-    editor.finish().expect("appended copies form a model")
+    editor.finish().expect("appended copies form a structure")
 }
 
 fn with_threads(options: DsspOptions, threads: usize) -> DsspOptions {
@@ -412,17 +414,17 @@ fn with_threads(options: DsspOptions, threads: usize) -> DsspOptions {
 
 /// One backbone atom of the analyzed residue at `index`.
 fn backbone_atom(
-    model: &kekule::structure::Model,
+    structure: &kekule::structure::Structure,
     index: usize,
     atom: &str,
 ) -> kekule::topology::InstanceAtomId {
-    let residue = dssp::assign(model, DsspOptions::default())
-        .expect("unmodified model is analyzable")
+    let residue = dssp::assign(structure, DsspOptions::default())
+        .expect("unmodified structure is analyzable")
         .residues()
         .nth(index)
         .expect("residue index within the result")
         .key();
-    model
+    structure
         .topology()
         .residue(residue)
         .expect("analyzed residue is in the hierarchy")
@@ -435,16 +437,17 @@ fn backbone_atom(
 
 #[test]
 fn dssp_threads_return_the_serial_result() {
-    for model in [
-        tiled(&crambin_model(), 27),
-        tiled(&adenylate_kinase_model(), 8),
+    for structure in [
+        tiled(&crambin_structure(), 27),
+        tiled(&adenylate_kinase_structure(), 8),
     ] {
-        let serial = dssp::assign(&model, DsspOptions::default()).expect("tiled model analyzes");
+        let serial =
+            dssp::assign(&structure, DsspOptions::default()).expect("tiled structure analyzes");
         // Enough residues for every stage to split across the threads.
         assert!(serial.residues().len() > 1000);
         for threads in [2, 3, 5, 8, 16] {
-            let parallel = dssp::assign(&model, with_threads(DsspOptions::default(), threads))
-                .expect("tiled model analyzes");
+            let parallel = dssp::assign(&structure, with_threads(DsspOptions::default(), threads))
+                .expect("tiled structure analyzes");
             assert_eq!(parallel, serial, "{threads} threads");
         }
     }
@@ -452,8 +455,8 @@ fn dssp_threads_return_the_serial_result() {
 
 #[test]
 fn dssp_threads_report_the_serial_error() {
-    let model = tiled(&adenylate_kinase_model(), 8);
-    let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let structure = tiled(&adenylate_kinase_structure(), 8);
+    let serial = dssp::assign(&structure, DsspOptions::default()).unwrap();
     let pairs = serial.report().candidate_hydrogen_bond_pairs();
     let ladders = serial.report().generated_ladders();
     let residues = serial.statistics().analyzed_residues();
@@ -470,10 +473,10 @@ fn dssp_threads_report_the_serial_error() {
             .with_max_ladders(ladders),
     ] {
         let options = DsspOptions::default().with_limits(limits);
-        let expected = dssp::assign(&model, options);
+        let expected = dssp::assign(&structure, options);
         for threads in [2, 7] {
             assert_eq!(
-                dssp::assign(&model, with_threads(options, threads)),
+                dssp::assign(&structure, with_threads(options, threads)),
                 expected
             );
         }
@@ -482,13 +485,13 @@ fn dssp_threads_report_the_serial_error() {
     // A degenerate carbonyl early in the table and a coordinate DSSP cannot
     // index later: extraction fails first, as serially.
     let (oxygen, carbon, far) = (
-        backbone_atom(&model, 100, "O"),
-        backbone_atom(&model, 100, "C"),
-        backbone_atom(&model, 3000, "O"),
+        backbone_atom(&structure, 100, "O"),
+        backbone_atom(&structure, 100, "C"),
+        backbone_atom(&structure, 3000, "O"),
     );
-    let mut carbonyl = model.clone();
+    let mut carbonyl = structure.clone();
     carbonyl
-        .set_position(oxygen, model.position(carbon).unwrap())
+        .set_position(oxygen, structure.position(carbon).unwrap())
         .unwrap();
     let mut broken = carbonyl.clone();
     let position = broken.position(far).unwrap().map(|mut point| {
@@ -496,8 +499,8 @@ fn dssp_threads_report_the_serial_error() {
         point
     });
     broken.set_position(far, position).unwrap();
-    for (model, expected) in [(&carbonyl, "degenerate"), (&broken, "out of range")] {
-        let serial = dssp::assign(model, DsspOptions::default());
+    for (structure, expected) in [(&carbonyl, "degenerate"), (&broken, "out of range")] {
+        let serial = dssp::assign(structure, DsspOptions::default());
         match (&serial, expected) {
             (Err(DsspError::DegenerateBackboneGeometry { .. }), "degenerate")
             | (Err(DsspError::CoordinateOutOfRange { .. }), "out of range") => {}
@@ -505,23 +508,23 @@ fn dssp_threads_report_the_serial_error() {
         }
         for threads in [2, 7] {
             assert_eq!(
-                dssp::assign(model, with_threads(DsspOptions::default(), threads)),
+                dssp::assign(structure, with_threads(DsspOptions::default(), threads)),
                 serial
             );
         }
     }
 }
 
-/// The model with the backbone atom `atom` of analyzed residue `index`
+/// The structure with the backbone atom `atom` of analyzed residue `index`
 /// moved by `offset` angstroms along x.
 fn moved(
-    model: &kekule::structure::Model,
+    structure: &kekule::structure::Structure,
     index: usize,
     atom: &str,
     offset: f64,
-) -> kekule::structure::Model {
-    let atom = backbone_atom(model, index, atom);
-    let mut moved = model.clone();
+) -> kekule::structure::Structure {
+    let atom = backbone_atom(structure, index, atom);
+    let mut moved = structure.clone();
     let position = moved.position(atom).unwrap().map(|mut point| {
         point.x += offset / 10.0;
         point
@@ -534,23 +537,25 @@ fn moved(
 fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
     use kekule::dssp::DsspPlan;
 
-    let model = tiled(&adenylate_kinase_model(), 8);
-    let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
-    let mut carbonyl = model.clone();
+    let structure = tiled(&adenylate_kinase_structure(), 8);
+    let serial = dssp::assign(&structure, DsspOptions::default()).unwrap();
+    let mut carbonyl = structure.clone();
     carbonyl
         .set_position(
-            backbone_atom(&model, 100, "O"),
-            model.position(backbone_atom(&model, 100, "C")).unwrap(),
+            backbone_atom(&structure, 100, "O"),
+            structure
+                .position(backbone_atom(&structure, 100, "C"))
+                .unwrap(),
         )
         .unwrap();
-    // Structures of the plan's layout: the model, one whose chain breaks
+    // Structures of the plan's layout: the structure, one whose chain breaks
     // where it did not, one with a degenerate carbonyl, and one with a
     // coordinate DSSP cannot index.
     let frames = [
-        model.clone(),
-        moved(&model, 50, "N", 30.0),
+        structure.clone(),
+        moved(&structure, 50, "N", 30.0),
         carbonyl,
-        moved(&model, 3000, "O", f32::MAX as f64),
+        moved(&structure, 3000, "O", f32::MAX as f64),
     ];
     let options = [
         DsspOptions::default(),
@@ -567,9 +572,9 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
         ),
     ];
     for options in options {
-        let plan = DsspPlan::new(model.shared_topology(), options);
+        let plan = DsspPlan::new(structure.shared_topology(), options);
         assert_eq!(plan.options(), options);
-        assert!(plan.topology().shares_layout(model.topology()));
+        assert!(plan.topology().shares_layout(structure.topology()));
         for (index, frame) in frames.iter().enumerate() {
             let expected = dssp::assign(frame, options);
             assert_eq!(plan.assign(frame), expected, "frame {index}, {options:?}");
@@ -583,13 +588,13 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
     assert_ne!(dssp::assign(&frames[1], DsspOptions::default()), Ok(serial));
 
     let reversed = DsspPlan::new_with(
-        model.shared_topology(),
+        structure.shared_topology(),
         DsspOptions::default(),
         &Reversed(5),
     );
     assert_eq!(
-        reversed.assign(&model),
-        dssp::assign(&model, DsspOptions::default())
+        reversed.assign(&structure),
+        dssp::assign(&structure, DsspOptions::default())
     );
 }
 
@@ -597,12 +602,12 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
 fn dssp_plan_rejects_structures_of_another_layout() {
     use kekule::dssp::DsspPlan;
 
-    let model = adenylate_kinase_model();
-    let plan = DsspPlan::new(model.shared_topology(), DsspOptions::default());
+    let structure = adenylate_kinase_structure();
+    let plan = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
     // An independently read copy has equal contents but not the same layout.
-    let copy = adenylate_kinase_model();
-    assert!(copy.topology().same_layout(model.topology()));
-    for other in [copy, crambin_model()] {
+    let copy = adenylate_kinase_structure();
+    assert!(copy.topology().same_layout(structure.topology()));
+    for other in [copy, crambin_structure()] {
         assert_eq!(plan.assign(&other), Err(DsspError::TopologyMismatch));
     }
     assert_eq!(
@@ -614,22 +619,25 @@ fn dssp_plan_rejects_structures_of_another_layout() {
 #[test]
 #[ignore = "timing of DSSP and DSSP plans on 100k and 1M atoms; run in release with --ignored --nocapture"]
 fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
-    let base = adenylate_kinase_model();
+    let base = adenylate_kinase_structure();
     let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     for (atoms, runs) in [(100_000_usize, 30), (1_000_000, 5)] {
-        let model = tiled(&base, atoms.div_ceil(base.atom_count()));
-        let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+        let structure = tiled(&base, atoms.div_ceil(base.atom_count()));
+        let serial = dssp::assign(&structure, DsspOptions::default()).unwrap();
         let mut report = format!(
             "{} atoms, {} residues:",
-            model.atom_count(),
+            structure.atom_count(),
             serial.residues().len()
         );
         for threads in [1, 2, 4, 6, 8, available] {
             let options = with_threads(DsspOptions::default(), threads);
-            let plan = kekule::dssp::DsspPlan::new(model.shared_topology(), options);
+            let plan = kekule::dssp::DsspPlan::new(structure.shared_topology(), options);
             for (name, assign) in [
-                ("", &(|| dssp::assign(&model, options)) as &dyn Fn() -> _),
-                (" plan", &|| plan.assign(&model)),
+                (
+                    "",
+                    &(|| dssp::assign(&structure, options)) as &dyn Fn() -> _,
+                ),
+                (" plan", &|| plan.assign(&structure)),
             ] {
                 let mut times = (0..runs)
                     .map(|_| {
@@ -654,8 +662,8 @@ fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
 
 #[test]
 fn dssp_executors_return_the_serial_result_in_any_work_order() {
-    let model = tiled(&adenylate_kinase_model(), 8);
-    let serial = dssp::assign(&model, DsspOptions::default()).unwrap();
+    let structure = tiled(&adenylate_kinase_structure(), 8);
+    let serial = dssp::assign(&structure, DsspOptions::default()).unwrap();
     let limited = DsspOptions::default().with_limits(
         DsspLimits::default()
             .with_max_candidate_pairs(serial.report().candidate_hydrogen_bond_pairs() / 2),
@@ -664,12 +672,12 @@ fn dssp_executors_return_the_serial_result_in_any_work_order() {
         [&Reversed(3), &Reversed(16), &Interleaved];
     for executor in executors {
         assert_eq!(
-            dssp::assign_with(&model, DsspOptions::default(), executor).unwrap(),
+            dssp::assign_with(&structure, DsspOptions::default(), executor).unwrap(),
             serial
         );
         assert_eq!(
-            dssp::assign_with(&model, limited, executor),
-            dssp::assign(&model, limited)
+            dssp::assign_with(&structure, limited, executor),
+            dssp::assign(&structure, limited)
         );
     }
 }

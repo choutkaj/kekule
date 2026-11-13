@@ -1,12 +1,12 @@
-//! XYZ writing of sample sets in a step or coordinate order, one frame per
-//! sample.
+//! XYZ writing of structure sets in a step or coordinate order, one frame per
+//! geometry.
 
 use std::sync::Arc;
 
-use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
-use kekule::geometry::{PeriodicCell, Vector3};
+use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Order, Place, Sample, SampleSet};
+use kekule::structure::{Geometry, Order, Place, StructureSet};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
@@ -31,32 +31,32 @@ H -0.24 0.927 0.2
 ";
 
 /// The positions of the frames of [`WATERS`] in a set at `order`, each
-/// sample at the place `place` gives its index.
-fn ordered(order: Order, place: impl Fn(usize) -> Place) -> SampleSet {
+/// geometry at the place `place` gives its index.
+fn ordered(order: Order, place: impl Fn(usize) -> Place) -> StructureSet {
     let read = kekule::xyz::parse_str(WATERS, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
-    let mut set = SampleSet::new(read.shared_topology());
+        .into_structure_set();
+    let mut set = StructureSet::new(read.shared_topology());
     set.set_order(Some(order)).unwrap();
-    for (index, sample) in read.iter().enumerate() {
-        let sample = Sample::new(sample.positions().clone());
-        set.push(sample, Some(place(index))).unwrap();
+    for (index, geometry) in read.iter().enumerate() {
+        let geometry = Geometry::new(geometry.positions().clone());
+        set.push(geometry, Some(place(index))).unwrap();
     }
     set
 }
 
 /// The frames of [`WATERS`] at steps 0, 5, and 10, as an optimization
 /// history.
-fn history() -> SampleSet {
+fn history() -> StructureSet {
     ordered(Order::Step(Vec::new()), |index| {
         Place::Step(5 * index as u64)
     })
 }
 
 /// The frames of [`WATERS`] as a scan of a distance in angstroms.
-fn scan() -> SampleSet {
+fn scan() -> StructureSet {
     let order = Order::Coordinate {
         unit: ANGSTROM,
         values: Vec::new(),
@@ -66,13 +66,13 @@ fn scan() -> SampleSet {
     })
 }
 
-/// [`history`] with every sample in [`cell`].
-fn boxed() -> SampleSet {
+/// [`history`] with every geometry in [`cell`].
+fn boxed() -> StructureSet {
     in_cells(history())
 }
 
-/// `set` with every sample in [`cell`].
-fn in_cells(mut set: SampleSet) -> SampleSet {
+/// `set` with every geometry in [`cell`].
+fn in_cells(mut set: StructureSet) -> StructureSet {
     for index in 0..set.len() {
         set.get_mut(index).unwrap().set_cell(Some(cell()));
     }
@@ -93,16 +93,16 @@ fn options() -> XyzWriteOptions {
 }
 
 fn omit_places() -> XyzWriteOptions {
-    options().with_sample_metadata(UnrepresentablePolicy::Omit)
+    options().with_geometry_metadata(UnrepresentablePolicy::Omit)
 }
 
 /// Writes `set` and returns the text and report.
 fn write(
-    set: &SampleSet,
+    set: &StructureSet,
     options: XyzWriteOptions,
 ) -> Result<(String, WriteReport), TrajectoryIoError> {
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "s.xyz")?;
-    writer.write_sample_set(set)?;
+    writer.write_structure_set(set)?;
     let report = writer.report().clone();
     Ok((String::from_utf8(writer.finish()?).unwrap(), report))
 }
@@ -110,13 +110,13 @@ fn write(
 /// Asserts that writing `set` with `options` fails before any byte for
 /// `field` at `frame`, and returns the error.
 fn assert_rejects(
-    set: &SampleSet,
+    set: &StructureSet,
     options: XyzWriteOptions,
     field: TrajectoryField,
     frame: usize,
 ) -> TrajectoryIoError {
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "s.xyz").unwrap();
-    let error = writer.write_sample_set(set).unwrap_err();
+    let error = writer.write_structure_set(set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(field));
     assert_eq!(error.frame(), Some(frame));
@@ -125,12 +125,12 @@ fn assert_rejects(
     error
 }
 
-fn state_omission(field: StructureField, structures: usize) -> WriteOmission {
-    WriteOmission::StructureState { field, structures }
+fn state_omission(field: GeometryField, geometries: usize) -> WriteOmission {
+    WriteOmission::GeometryState { field, geometries }
 }
 
 #[test]
-fn a_step_or_coordinate_order_writes_one_frame_per_sample_once_its_places_are_omitted() {
+fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_omitted() {
     let history = history();
     let error = assert_rejects(&history, options(), TrajectoryField::OrderStep, 0);
     assert_eq!(error.detail(), Some("XYZ cannot store the order step."));
@@ -138,7 +138,7 @@ fn a_step_or_coordinate_order_writes_one_frame_per_sample_once_its_places_are_om
     assert_eq!(text, TEXT);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::OrderStep, 3)]
+        [BONDS, state_omission(GeometryField::OrderStep, 3)]
     );
 
     let scan = scan();
@@ -151,18 +151,18 @@ fn a_step_or_coordinate_order_writes_one_frame_per_sample_once_its_places_are_om
     assert_eq!(text, TEXT);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::OrderCoordinate, 3)]
+        [BONDS, state_omission(GeometryField::OrderCoordinate, 3)]
     );
 
-    // The file reads back as the samples' positions in set order.
+    // The file reads back as the geometries' positions in set order.
     let read = kekule::xyz::parse_str(&text, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
+        .into_structure_set();
     assert_eq!(read.len(), history.len());
-    for (sample, read) in history.iter().zip(&read) {
-        let written = sample.positions().values();
+    for (geometry, read) in history.iter().zip(&read) {
+        let written = geometry.positions().values();
         let read = read.positions().values();
         for (a, b) in written.value().iter().zip(read.value().iter()) {
             assert!((*a - *b).norm() < 1e-12);
@@ -171,7 +171,7 @@ fn a_step_or_coordinate_order_writes_one_frame_per_sample_once_its_places_are_om
 }
 
 #[test]
-fn sample_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
+fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
     let energy = |value: f64| PropertyValue::real(value, KILOJOULE_PER_MOLE).unwrap();
     let key = || PropertyKey::new("energy").unwrap();
     let mut history = history();
@@ -192,8 +192,8 @@ fn sample_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
         report.omissions(),
         [
             BONDS,
-            state_omission(StructureField::OrderStep, 3),
-            state_omission(StructureField::Properties, 2),
+            state_omission(GeometryField::OrderStep, 3),
+            state_omission(GeometryField::Properties, 2),
         ]
     );
 
@@ -217,7 +217,7 @@ fn cell() -> PeriodicCell {
 }
 
 #[test]
-fn cells_are_rejected_or_omitted_and_samples_follow_written_frames() {
+fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
     let history = history();
     let topology = history.shared_topology();
     let boxed = in_cells(history.clone());
@@ -229,28 +229,28 @@ fn cells_are_rejected_or_omitted_and_samples_follow_written_frames() {
         report.omissions(),
         [
             BONDS,
-            state_omission(StructureField::OrderStep, 3),
+            state_omission(GeometryField::OrderStep, 3),
             WriteOmission::Cell { structures: 3 },
         ]
     );
 
-    // After a frame, errors name the frame a sample would have become.
+    // After a frame, errors name the frame a geometry would have become.
     let frame = Frame::new(history.get(0).unwrap().positions().clone()).bound(&topology);
     let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options(), "s.xyz").unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
-    let error = writer.write_sample_set(&history).unwrap_err();
+    let error = writer.write_structure_set(&history).unwrap_err();
     assert_eq!(error.field(), Some(TrajectoryField::OrderStep));
     assert_eq!(error.frame(), Some(1));
     let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), omitted, "s.xyz").unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
-    writer.write_sample_set(&boxed).unwrap();
+    writer.write_structure_set(&boxed).unwrap();
     let written = String::from_utf8(writer.finish().unwrap()).unwrap();
     assert_eq!(written.lines().count(), 4 * 5);
 }
 
 /// Each set, and what it writes under each pair of place and other
 /// policies, is what the series it replaces converted to and wrote, as
-/// recorded before series became sample sets.
+/// recorded before series became structure sets.
 #[test]
 fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
     let outcome = |result: Result<(String, WriteReport), TrajectoryIoError>| {
@@ -269,8 +269,8 @@ fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
         .unwrap();
     let fail = UnrepresentablePolicy::Fail;
     let omit = UnrepresentablePolicy::Omit;
-    // Places, then sample properties and cells. A set checks every sample's
-    // properties before any place, so sample properties are checked only
+    // Places, then geometry properties and cells. A set checks every geometry's
+    // properties before any place, so geometry properties are checked only
     // with places omitted.
     let cases = [
         (history(), vec![(fail, fail), (omit, fail)]),
@@ -279,19 +279,19 @@ fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
         (boxed(), vec![(fail, fail), (omit, fail), (omit, omit)]),
     ];
     let mut recorded = Recorded::new(&[
-        0xa343_d6fe_8905_ac25, // history
+        0x5818_08d4_7ec2_c2d6, // history
         0x5d60_039d_d2ae_01d3, // history, places fail, rest fail
-        0x557b_ee40_7701_4a6f, // history, places omit, rest fail
-        0xc7a2_15ef_ec11_d93f, // scan
+        0x403b_0a51_0b38_0038, // history, places omit, rest fail
+        0xc51c_2d21_01dc_8838, // scan
         0x7cb3_6b28_1b51_187f, // scan, places fail, rest fail
-        0x779f_1eda_44dc_5c93, // scan, places omit, rest fail
-        0x19f5_8772_5396_7c7b, // valued
+        0xcffa_2a26_dee6_f394, // scan, places omit, rest fail
+        0x38a9_5f64_4947_dbc8, // valued
         0x5001_e09a_cc79_1f23, // valued, places omit, rest fail
-        0xd56e_4571_1877_e511, // valued, places omit, rest omit
-        0xe59a_d794_16ac_794e, // boxed
+        0x2fbe_d1e5_ab1b_2685, // valued, places omit, rest omit
+        0x1ead_39b6_ac66_4969, // boxed
         0x13e3_9b29_c744_e766, // boxed, places fail, rest fail
         0x13e3_9b29_c744_e766, // boxed, places omit, rest fail
-        0xfc16_a448_989e_9f4e, // boxed, places omit, rest omit
+        0x20fe_668a_7a09_abbd, // boxed, places omit, rest omit
     ]);
     for (set, policies) in cases {
         recorded.check(&support::contents(&set));
@@ -299,7 +299,7 @@ fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
             recorded.check(&outcome(write(
                 &set,
                 options()
-                    .with_sample_metadata(places)
+                    .with_geometry_metadata(places)
                     .with_frame_properties(rest)
                     .with_cell(rest),
             )));
@@ -312,10 +312,10 @@ fn foreign_and_empty_ordered_sets_are_rejected() {
     let history = history();
     let other = kekule::smiles::to_topology("O").unwrap();
     let mut writer = XyzWriter::new(Vec::new(), other, omit_places(), "s.xyz").unwrap();
-    let error = writer.write_sample_set(&history).unwrap_err();
+    let error = writer.write_structure_set(&history).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
 
-    let mut empty = SampleSet::new(history.shared_topology());
+    let mut empty = StructureSet::new(history.shared_topology());
     empty.set_order(Some(Order::Step(Vec::new()))).unwrap();
     let mut writer = XyzWriter::new(
         Vec::new(),
@@ -324,7 +324,7 @@ fn foreign_and_empty_ordered_sets_are_rejected() {
         "s.xyz",
     )
     .unwrap();
-    let error = writer.write_sample_set(&empty).unwrap_err();
+    let error = writer.write_structure_set(&empty).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
     assert!(writer.writer().is_empty());
 }

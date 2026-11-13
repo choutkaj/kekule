@@ -7,7 +7,7 @@ use crate::diagnostics::{
     normalize_line_endings, read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded,
     Resource, SourceLocation,
 };
-use crate::geometry::Point3;
+use crate::math::Point3;
 
 use super::structure_documents::{
     interpret_molfile_document, MolfileInterpretOptions, MolfileInterpretation,

@@ -370,7 +370,7 @@ pub enum RingPerceptionError {
     },
     /// The caller's [`Cancellation`] stopped ring perception. Only
     /// cancellable perception, such as
-    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable),
+    /// [`Structure::perceive_cancellable`](crate::structure::Structure::perceive_cancellable),
     /// reports it, as [`PerceptionError::Cancelled`](crate::perception::PerceptionError::Cancelled);
     /// [`perceive_rings`] never does.
     Cancelled(Cancelled),

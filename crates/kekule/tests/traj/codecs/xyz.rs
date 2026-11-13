@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use kekule::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::traj::io::xyz::{
@@ -92,7 +92,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     support::assert_rejects_unrelated_buffer(&mut reader);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.positions().values().value().as_ptr();
-    buffer.sample_mut().set_cell(Some(
+    buffer.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
@@ -110,7 +110,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         .unwrap();
     buffer.set_step(Some(7));
     buffer
-        .sample_mut()
+        .geometry_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -326,7 +326,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     );
     buffer.set_step(None);
     buffer
-        .sample_mut()
+        .geometry_mut()
         .properties_mut()
         .bonds_mut()
         .insert(
@@ -819,7 +819,7 @@ fn interpreted_xyz_topology_streams_every_frame_of_its_file() {
                 .with_frame(kekule::xyz::XyzFrameSelection::First),
         )
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     assert_eq!(topology.bond_count(), 2);
     let mut reader = XyzReader::new(
         Cursor::new(text.as_bytes()),
@@ -929,7 +929,7 @@ fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     let (_, report) = write_one_frame(Arc::clone(&topology));
     // Heavy atoms only: every implicit count is inferred and unperceived.
     assert_eq!(
@@ -965,13 +965,13 @@ H -0.24 0.927 0
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     // Interpretation fixes every count at zero and gives unnamed sites.
     let bonds = [WriteOmission::Bonds { bonds: 2 }];
     let (_, report) = write_one_frame(Arc::clone(&topology));
     assert_eq!(report.omissions(), bonds);
 
-    // Path writers and `write_sample_set` return the codec's report; DCD
+    // Path writers and `write_structure_set` return the codec's report; DCD
     // stores coordinates for a separately supplied topology, so it omits
     // nothing.
     for (extension, expected) in [("xyz", &bonds[..]), ("dcd", &[])] {
@@ -983,11 +983,11 @@ H -0.24 0.927 0
     let set = support::time_ordered(
         Arc::clone(&topology),
         [support::Frame::new(
-            interpretation.model().positions().clone(),
+            interpretation.structure().positions().clone(),
         )],
     );
     let path = temporary_path(Some("xyz"));
-    let saved = kekule::traj::io::write_sample_set(&path, &set, Default::default());
+    let saved = kekule::traj::io::write_structure_set(&path, &set, Default::default());
     let _ = std::fs::remove_file(&path);
     assert_eq!(saved.unwrap().omissions(), bonds);
 }

@@ -836,7 +836,7 @@ impl<'a> InstanceView<'a> {
 /// definitions, topology-global dense atom and bond order, one system
 /// hierarchy of chains, residues, and atom sites, and topology-scoped
 /// properties. It does not own coordinates.
-/// Attach positions through [`crate::structure::Model`] or another structure
+/// Attach positions through [`crate::structure::Structure`] or another structure
 /// type.
 ///
 /// Local [`crate::molecule::AtomId`] and [`crate::molecule::BondId`] values identify
@@ -855,8 +855,8 @@ impl<'a> InstanceView<'a> {
 /// Shared ownership conventionally uses [`std::sync::Arc<Topology>`].
 ///
 /// Every publication mints a new layout identity. [`Self::perceived`] (and
-/// model, ensemble, or trajectory perception) installs new chemistry in a new
-/// snapshot that keeps the same layout identity, because perception never
+/// structure, ensemble, or trajectory perception) installs new chemistry in a
+/// new snapshot that keeps the same layout identity, because perception never
 /// changes atoms, bonds, IDs, dense order, or hierarchy. Clones and annotation
 /// edits through [`Self::properties_mut`] keep it as well. Consumers that only
 /// address atoms and bonds by index, such as selections, structures, frame
@@ -1088,8 +1088,8 @@ impl Topology {
     /// Annotations do not define atoms, bonds, IDs, dense order, or hierarchy,
     /// so editing them keeps this topology's layout identity, as perception
     /// does. Shared topologies are edited through [`std::sync::Arc::make_mut`]
-    /// or the owning model or collection, which replace a shared value with an
-    /// edited snapshot.
+    /// or the owning structure or collection, which replace a shared value with
+    /// an edited snapshot.
     ///
     /// ```
     /// use std::sync::Arc;

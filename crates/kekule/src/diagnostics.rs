@@ -530,7 +530,7 @@ impl<T: fmt::Display> fmt::Display for Capitalized<T> {
 ///
 /// Every Kekule error displays as one or two sentences and does not repeat
 /// its source, so the chain reads as one message, such as `Cannot build the
-/// solvated model. Atom 12 overlaps atom 3.` Errors from outside Kekule in
+/// solvated structure. Atom 12 overlaps atom 3.` Errors from outside Kekule in
 /// the chain, such as I/O errors, get an upper-case first letter and a
 /// closing full stop when they lack them. A cause whose text equals the
 /// previous one, as a transparent wrapper writes it, appears once. The
@@ -757,7 +757,7 @@ pub enum FormatStage {
     /// Reading text into a typed document, without assigning chemical meaning.
     Parse,
     /// Assigning canonical meaning to a parsed document: molecules,
-    /// topologies, models and sample sets.
+    /// topologies, structures and structure sets.
     Interpret,
     /// Encoding canonical values as text, including writing to the sink.
     Write,
@@ -849,10 +849,10 @@ pub enum FormatErrorDetail {
     MmcifWrite(crate::io::MmcifWriteIssue),
     /// A failure specific to the PDB writer.
     PdbWrite(crate::io::PdbWriteIssue),
-    /// The written structure, a model, a sample, or a trajectory frame, has
-    /// this state, which the format cannot carry, and the writer's policy
-    /// for it is [`UnrepresentablePolicy::Fail`].
-    UnrepresentableState(StructureField),
+    /// The written structure, geometry, or trajectory frame has this state,
+    /// which the format cannot carry, and the writer's policy for it is
+    /// [`UnrepresentablePolicy::Fail`].
+    UnrepresentableState(GeometryField),
     /// A configured or built-in resource limit was exceeded; the kind is
     /// [`DiagnosticKind::Limit`].
     LimitExceeded(LimitExceeded),
@@ -883,19 +883,19 @@ pub enum FormatErrorDetail {
         /// The kind the input holds.
         found: crate::io::NativeKind,
     },
-    /// A native sample set record stores its samples elsewhere, so it has
+    /// A native structure set record stores its geometries elsewhere, so it has
     /// none to give; the kind is [`DiagnosticKind::Inconsistent`].
-    NativeExternalSamples {
-        /// The number of samples the record describes.
-        samples: usize,
+    NativeExternalGeometries {
+        /// The number of geometries the record describes.
+        geometries: usize,
     },
 }
 
-/// Structure, sample, or trajectory frame state named by
+/// Geometry, structure set, or trajectory frame state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StructureField {
+pub enum GeometryField {
     /// A sample's relative weight in its set's distribution.
     Weight,
     /// The energy of a sample's state.
@@ -904,43 +904,43 @@ pub enum StructureField {
     State,
     /// The temperature a distribution's populations describe.
     Temperature,
-    /// The properties of a sample set's state.
+    /// The properties of a structure set's state.
     StateProperties,
-    /// A sample set's state representative that is not the state's first
+    /// A structure set's state representative that is not the state's first
     /// member.
     Representative,
-    /// A sample set's time order without times or steps.
+    /// A structure set's time order without times or steps.
     Order,
-    /// A sample's or frame's time in a time order.
+    /// A geometry's or frame's time in a time order.
     Time,
-    /// A sample's or frame's MD step in a time order.
+    /// A geometry's or frame's MD step in a time order.
     Step,
-    /// A sample's or frame's velocities.
+    /// A geometry's or frame's velocities.
     Velocities,
-    /// A sample's or frame's forces.
+    /// A geometry's or frame's forces.
     Forces,
-    /// A sample's or frame's per-atom properties.
+    /// A geometry's or frame's per-atom properties.
     AtomProperties,
-    /// A sample's or frame's per-bond properties.
+    /// A geometry's or frame's per-bond properties.
     BondProperties,
-    /// A sample's or frame's own properties.
+    /// A geometry's or frame's own properties.
     Properties,
-    /// A sample set's own properties.
+    /// A structure set's own properties.
     SetProperties,
     /// A structure's crystallographic occupancies.
     Occupancies,
     /// A structure's crystallographic B factors.
     BFactors,
-    /// A sample's step in a step order.
+    /// A geometry's step in a step order.
     OrderStep,
-    /// A sample's coordinate in a coordinate order.
+    /// A geometry's coordinate in a coordinate order.
     OrderCoordinate,
-    /// A sample set's sample that is outside its distribution, which a file
+    /// A structure set's geometry that is outside its distribution, which a file
     /// whose every structure is a member cannot tell apart.
     Membership,
 }
 
-impl fmt::Display for StructureField {
+impl fmt::Display for GeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Weight => "weight",
@@ -949,15 +949,15 @@ impl fmt::Display for StructureField {
             Self::Temperature => "temperature",
             Self::StateProperties => "state properties",
             Self::Representative => "state representative",
-            Self::Order => "sample order",
+            Self::Order => "geometry order",
             Self::Time => "time",
             Self::Step => "MD step",
             Self::Velocities => "velocities",
             Self::Forces => "forces",
-            Self::AtomProperties => "per-atom structure properties",
-            Self::BondProperties => "per-bond structure properties",
-            Self::Properties => "structure properties",
-            Self::SetProperties => "sample set properties",
+            Self::AtomProperties => "per-atom geometry properties",
+            Self::BondProperties => "per-bond geometry properties",
+            Self::Properties => "geometry properties",
+            Self::SetProperties => "structure set properties",
             Self::Occupancies => "occupancies",
             Self::BFactors => "B factors",
             Self::OrderStep => "order step",
@@ -1439,7 +1439,7 @@ mod tests {
         struct Outer(std::io::Error);
         impl fmt::Display for Outer {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("Cannot build the solvated model.")
+                formatter.write_str("Cannot build the solvated structure.")
             }
         }
         impl std::error::Error for Outer {
@@ -1451,11 +1451,11 @@ mod tests {
         let error = Outer(std::io::Error::other("disk full"));
         assert_eq!(
             ErrorChain::new(&error).to_string(),
-            "Cannot build the solvated model. Disk full."
+            "Cannot build the solvated structure. Disk full."
         );
         assert_eq!(
             format!("{:#}", ErrorChain::new(&error)),
-            "Cannot build the solvated model.
+            "Cannot build the solvated structure.
 Disk full."
         );
 

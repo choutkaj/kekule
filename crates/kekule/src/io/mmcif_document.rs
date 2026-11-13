@@ -12,9 +12,9 @@ use crate::diagnostics::{
 
 use super::structure_interpret::{
     interpret_mmcif, interpret_mmcif_block, interpret_mmcif_conformations,
-    interpret_mmcif_conformations_block, interpret_mmcif_sample_set,
-    interpret_mmcif_sample_set_block, StructureInterpretOptions, StructureInterpretation,
-    StructureSampleSetInterpretOptions, StructureSampleSetInterpretation,
+    interpret_mmcif_conformations_block, interpret_mmcif_structure_set,
+    interpret_mmcif_structure_set_block, StructureInterpretOptions, StructureInterpretation,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 
 /// Number of `_atom_site` columns in a typical wwPDB entry, used to keep the
@@ -157,9 +157,9 @@ impl MmcifDocument {
         &self.blocks
     }
 
-    /// Interprets caller-supplied selections as an unordered sample set, one
-    /// sample per selection in the supplied order, whose distribution covers
-    /// every sample in one state and stores no weights. Repeated selections
+    /// Interprets caller-supplied selections as an unordered structure set, one
+    /// geometry per selection in the supplied order, whose distribution covers
+    /// every geometry in one state and stores no weights. Repeated selections
     /// are retained. Exactly one atom-site
     /// block is required; atom identities, chemistry and topology layout must
     /// agree between selections. No combinations or statistical weights are inferred.
@@ -183,7 +183,7 @@ impl MmcifDocument {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+    ) -> Result<StructureSetInterpretation, FormatError> {
         interpret_mmcif_conformations(self, selections)
     }
 
@@ -225,13 +225,13 @@ impl MmcifDocument {
 
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, in the exactly one structural block as an unordered
-    /// sample set with one report per sample. Its distribution covers every
-    /// sample in one state and stores no weights, as the models weigh the
+    /// structure set with one report per geometry. Its distribution covers every
+    /// geometry in one state and stores no weights, as the models weigh the
     /// same.
     ///
     /// # Errors
     ///
-    /// The errors of [`Self::interpret`] for each sample, with
+    /// The errors of [`Self::interpret`] for each geometry, with
     /// [`FormatErrorDetail::Model`](crate::diagnostics::FormatErrorDetail::Model)
     /// naming the failing model, and
     /// [`Inconsistent`](DiagnosticKind::Inconsistent) errors whose
@@ -240,15 +240,15 @@ impl MmcifDocument {
     /// [`MultipleAtomSiteBlocks`](crate::diagnostics::FormatErrorDetail::MultipleAtomSiteBlocks),
     /// [`UnknownRequestedModel`](crate::diagnostics::FormatErrorDetail::UnknownRequestedModel),
     /// [`DuplicateRequestedModel`](crate::diagnostics::FormatErrorDetail::DuplicateRequestedModel),
-    /// or, when samples disagree,
+    /// or, when geometries disagree,
     /// [`InconsistentAtomSet`](crate::diagnostics::FormatErrorDetail::InconsistentAtomSet),
     /// [`InconsistentDenseAtomOrder`](crate::diagnostics::FormatErrorDetail::InconsistentDenseAtomOrder),
     /// or [`InconsistentTopology`](crate::diagnostics::FormatErrorDetail::InconsistentTopology).
-    pub fn interpret_sample_set(
+    pub fn interpret_structure_set(
         &self,
-        options: StructureSampleSetInterpretOptions,
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
-        interpret_mmcif_sample_set(self, options)
+        options: StructureSetInterpretOptions,
+    ) -> Result<StructureSetInterpretation, FormatError> {
+        interpret_mmcif_structure_set(self, options)
     }
 }
 
@@ -315,7 +315,7 @@ impl MmcifBlock {
         &self.name
     }
 
-    /// Interprets explicit selections from this block as a sample set, as
+    /// Interprets explicit selections from this block as a structure set, as
     /// [`MmcifDocument::interpret_conformations`] does.
     /// See [`MmcifDocument::interpret_conformations`] for compatibility
     /// requirements.
@@ -327,7 +327,7 @@ impl MmcifBlock {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+    ) -> Result<StructureSetInterpretation, FormatError> {
         interpret_mmcif_conformations_block(self, selections)
     }
 
@@ -390,18 +390,18 @@ impl MmcifBlock {
     }
 
     /// Interprets the coordinate models that `options` selects, by default
-    /// all of them, in this block as a sample set, as
-    /// [`MmcifDocument::interpret_sample_set`] does.
+    /// all of them, in this block as a structure set, as
+    /// [`MmcifDocument::interpret_structure_set`] does.
     ///
     /// # Errors
     ///
-    /// As [`MmcifDocument::interpret_sample_set`], except that this block is
+    /// As [`MmcifDocument::interpret_structure_set`], except that this block is
     /// interpreted whatever the other blocks contain.
-    pub fn interpret_sample_set(
+    pub fn interpret_structure_set(
         &self,
-        options: StructureSampleSetInterpretOptions,
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
-        interpret_mmcif_sample_set_block(self, options)
+        options: StructureSetInterpretOptions,
+    ) -> Result<StructureSetInterpretation, FormatError> {
+        interpret_mmcif_structure_set_block(self, options)
     }
 }
 

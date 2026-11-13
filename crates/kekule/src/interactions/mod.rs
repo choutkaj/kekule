@@ -24,18 +24,18 @@
 //! used as stored; cells are ignored, so image periodic structures first.
 //!
 //! [`HydrogenBondOccupancyAccumulator`] reduces the hydrogen bonds of
-//! weighted observations, such as the samples of a set or trajectory frames, to
+//! weighted observations, such as the geometries of a set or trajectory frames, to
 //! occupancies, and merges partial results as the [`crate::statistics`]
 //! accumulators do.
 //!
 //! # Example
 //!
 //! ```
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::interactions::{
 //!     find_interactions_within, InteractionCriteria, InteractionFeatures, InteractionKind,
 //! };
-//! use kekule::structure::{Model, Positions};
+//! use kekule::structure::{Structure, Positions};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM};
 //!
@@ -44,14 +44,14 @@
 //! let topology = kekule::smiles::to_topology("O.O")?;
 //! let points = [Point3::new(0.0, 0.0, 0.0), Point3::new(2.9, 0.0, 0.0)];
 //! let positions = Positions::new(Quantity::new(points, ANGSTROM))?;
-//! let model = Model::new(topology.clone(), positions)?;
+//! let structure = Structure::new(topology.clone(), positions)?;
 //!
 //! let features = InteractionFeatures::new(topology.clone());
 //! let first = AtomSelection::from_atoms(topology.clone(), [topology.atom_ids()[0]])?;
 //! let second = AtomSelection::from_atoms(topology.clone(), [topology.atom_ids()[1]])?;
 //! let found = find_interactions_within(
 //!     &features,
-//!     &model,
+//!     &structure,
 //!     &first,
 //!     &second,
 //!     &InteractionCriteria::default(),
@@ -70,7 +70,7 @@ mod search;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::geometry::{Point3, Vector3};
+use crate::math::{Point3, Vector3};
 use crate::topology::{SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 

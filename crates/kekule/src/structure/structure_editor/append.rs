@@ -1,0 +1,275 @@
+use super::*;
+use crate::math::{Matrix3, Point3, Vector3};
+use crate::properties::PropertyKey;
+use crate::structure::{AsStructureView, Structure, StructureView};
+use crate::topology::{AppendMapping, ChainIds, Topology};
+use crate::topology::{AtomSiteId, ChainId, InstanceAtomId, InstanceBondId, ResidueId};
+
+impl StructureEditor {
+    /// Appends a complete borrowed structure, including its existing coordinates.
+    ///
+    /// Accepts any [`AsStructureView`] source, such as a structure, a geometry,
+    /// or a trajectory frame, without first creating an owned structure. Positions are used as supplied:
+    /// the caller is responsible for their placement in the destination coordinate
+    /// system. No fitting, imaging, bond inference or geometry generation is done.
+    ///
+    /// Molecule definitions retain their reuse within this import, represented
+    /// stereo, perception, classification and definition properties. A molecule
+    /// identical to a definition the draft already holds, from its source or an
+    /// earlier append, becomes an instance of that definition: equal graph in
+    /// local atom order, properties, perception, class, and component and atom
+    /// names of its atoms, as interpretation shares identical molecules.
+    /// Editing one instance later copies its definition and leaves the others.
+    /// Instances, atoms, bonds and hierarchy receive distinct editing identities. Chains are
+    /// kept separate even when their labels coincide; labels and author identifiers
+    /// are preserved. All entity property columns at definition, topology and structure
+    /// scope are transferred, including occupancy, B factors and missing values.
+    /// Incompatible property types or units reject the entire append.
+    ///
+    /// Changed destination topology/structure owner properties are cleared, and source
+    /// topology/structure owner properties are not imported: they do not automatically
+    /// describe the combined system. [`StructureAppend::report`] lists these keys.
+    /// Other owners and all source data remain unchanged. Transferring an arbitrary
+    /// annotation does not guarantee its scientific validity after later edits.
+    ///
+    /// A source without a cell uses the destination cell. A cell-less empty editor
+    /// adopts the source cell. Otherwise a periodic source requires equal periodic
+    /// axes and canonical cell vectors within floating-point conversion roundoff
+    /// (16 machine epsilons times the largest vector component). Callers can set
+    /// the intended cell before retrying. Failure leaves the entire editor unchanged.
+    ///
+    /// ```
+    /// use kekule::{smiles, structure::{Structure, Positions}, math::Point3,
+    ///     units::{Quantity, ANGSTROM}};
+    /// let molecule = smiles::to_molecules("CO")?.pop().unwrap();
+    /// let ligand = Structure::from_molecule(molecule, &Positions::new(Quantity::new(
+    ///     vec![Point3::origin(), Point3::new(1.4, 0.0, 0.0)], ANGSTROM))?)?;
+    /// let mut editor = ligand.to_editor();
+    /// let appended = editor.append_structure(&ligand)?;
+    /// let source_atom = ligand.topology().atom_ids()[0];
+    /// let draft_atom = appended.atom(source_atom).expect("appended atom");
+    /// assert_eq!(editor.position(draft_atom), ligand.position(source_atom));
+    /// let structure = editor.finish()?;
+    /// assert_eq!(structure.atom_count(), 4);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn append_structure(
+        &mut self,
+        source: &(impl AsStructureView + ?Sized),
+    ) -> Result<StructureAppend, StructureEditError> {
+        let source = source.as_structure_view();
+        let cell = match (self.cell().copied(), source.cell().copied()) {
+            (None, cell) if self.topology.is_empty() => cell,
+            (cell, None) => cell,
+            (Some(left), Some(right)) if compatible_cells(left, right) => Some(left),
+            _ => return Err(StructureEditError::IncompatibleAppendCell),
+        };
+        let report = StructureAppendReport {
+            cleared_topology_properties: self
+                .topology
+                .properties()
+                .owner()
+                .keys()
+                .cloned()
+                .collect(),
+            cleared_geometry_properties: self.slots.properties.owner().keys().cloned().collect(),
+            omitted_topology_properties: source
+                .topology()
+                .properties()
+                .owner()
+                .keys()
+                .cloned()
+                .collect(),
+            omitted_geometry_properties: source.properties().owner().keys().cloned().collect(),
+        };
+        let mut staged = self.clone();
+        let (mapping, _) = staged.append_unstaged(source, &|label, author| {
+            (label.to_owned(), author.map(str::to_owned))
+        })?;
+        staged.slots.cell = cell;
+        *self = staged;
+        Ok(StructureAppend { mapping, report })
+    }
+
+    /// Appends a copy of `source` whose positions are moved by `rotation`,
+    /// then `translation` in the canonical length unit, and whose chains take
+    /// the identifiers `chain_ids` gives them, as [`Self::append_structure`]
+    /// appends but without its cell or staging. A failure leaves the draft
+    /// part-way, so only an owner that discards a failed draft calls it; it
+    /// costs the copy, not the draft.
+    pub(crate) fn append_moved_copy(
+        &mut self,
+        source: &Structure,
+        rotation: Matrix3,
+        translation: Vector3,
+        chain_ids: &ChainIds<'_>,
+    ) -> Result<(), StructureEditError> {
+        let (_, atom_rows) = self.append_unstaged(source.as_structure_view(), chain_ids)?;
+        let moved = atom_rows
+            .iter()
+            .copied()
+            .zip(source.positions.values().value().iter())
+            .map(|(row, point)| {
+                let turned = rotation.transform_vector(Vector3::new(point.x, point.y, point.z));
+                (
+                    row,
+                    Point3::new(
+                        turned.x + translation.x,
+                        turned.y + translation.y,
+                        turned.z + translation.z,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.slots.positions.set_canonical_batch(&moved)?;
+        Ok(())
+    }
+
+    /// The append both entry points share, in place: the source's topology,
+    /// positions, site values and entity properties, with its rows in the
+    /// draft.
+    fn append_unstaged(
+        &mut self,
+        source: StructureView<'_>,
+        chain_ids: &ChainIds<'_>,
+    ) -> Result<(AppendMapping, Vec<usize>), StructureEditError> {
+        self.slots.try_reserve_atoms(source.atom_count())?;
+        let mapping = self
+            .topology
+            .append_topology(source.shared_topology(), chain_ids)?;
+        self.slots.resize_slots(
+            self.topology.atom_slot_count(),
+            self.topology.bond_slot_count(),
+        );
+        let atom_rows = source
+            .topology()
+            .atom_ids()
+            .iter()
+            .map(|id| self.topology.atom_slot(mapping.atoms[id]))
+            .collect::<Result<Vec<_>, _>>()?;
+        let bond_rows = source
+            .topology()
+            .bond_ids()
+            .iter()
+            .map(|id| self.topology.bond_slot(mapping.bonds[id]))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.slots.copy_atom_state_from(source, &atom_rows);
+        let properties = &mut self.slots.properties;
+        properties
+            .atoms_raw_mut()
+            .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
+            .map_err(|error| StructureEditError::AppendProperty {
+                domain: crate::properties::PropertyDomain::GeometryAtoms,
+                error: Box::new(error),
+            })?;
+        properties
+            .bonds_raw_mut()
+            .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
+            .map_err(|error| StructureEditError::AppendProperty {
+                domain: crate::properties::PropertyDomain::GeometryBonds,
+                error: Box::new(error),
+            })?;
+        properties.owner_mut().clear();
+        Ok((mapping, atom_rows))
+    }
+}
+
+fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
+    if left.periodic_axes() != right.periodic_axes() {
+        return false;
+    }
+    let left = left.vectors().into_value();
+    let right = right.vectors().into_value();
+    let scale = left
+        .iter()
+        .chain(&right)
+        .flat_map(|v| [v.x.abs(), v.y.abs(), v.z.abs()])
+        .fold(0.0_f64, f64::max);
+    let tolerance = 16.0 * f64::EPSILON * scale;
+    left.iter().zip(&right).all(|(a, b)| {
+        (a.x - b.x).abs() <= tolerance
+            && (a.y - b.y).abs() <= tolerance
+            && (a.z - b.z).abs() <= tolerance
+    })
+}
+
+/// Owner annotations excluded by one successful append, in property-key order.
+/// Entity properties are transferred under [`StructureEditor::append_structure`]'s contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructureAppendReport {
+    pub(crate) cleared_topology_properties: Vec<PropertyKey>,
+    pub(crate) cleared_geometry_properties: Vec<PropertyKey>,
+    pub(crate) omitted_topology_properties: Vec<PropertyKey>,
+    pub(crate) omitted_geometry_properties: Vec<PropertyKey>,
+}
+
+impl StructureAppendReport {
+    /// Destination topology owner keys cleared because the system changed.
+    pub fn cleared_topology_properties(&self) -> &[PropertyKey] {
+        &self.cleared_topology_properties
+    }
+
+    /// Destination geometry owner keys cleared because the structure changed.
+    pub fn cleared_geometry_properties(&self) -> &[PropertyKey] {
+        &self.cleared_geometry_properties
+    }
+
+    /// Source topology owner keys that do not describe the combined system.
+    pub fn omitted_topology_properties(&self) -> &[PropertyKey] {
+        &self.omitted_topology_properties
+    }
+
+    /// Source geometry owner keys that do not describe the combined structure.
+    pub fn omitted_geometry_properties(&self) -> &[PropertyKey] {
+        &self.omitted_geometry_properties
+    }
+}
+
+/// One import's source-to-draft identities and retention report.
+///
+/// Each append has a separate context, even when the same source is appended
+/// repeatedly. The source topology is retained; IDs supplied to this mapping are
+/// interpreted only in that source. Handles remain stable through later edits;
+/// a deleted handle will be rejected by the editor. These handles are only for
+/// use within the draft, before [`StructureEditor::finish`].
+#[derive(Debug, Clone)]
+pub struct StructureAppend {
+    mapping: AppendMapping,
+    report: StructureAppendReport,
+}
+
+impl StructureAppend {
+    /// The source topology in which the IDs passed to this mapping are interpreted.
+    pub fn source_topology(&self) -> &Topology {
+        &self.mapping.source
+    }
+    /// Owner property keys cleared or omitted by this append.
+    pub fn report(&self) -> &StructureAppendReport {
+        &self.report
+    }
+    /// The draft handle of an appended source atom, or `None` when the source
+    /// has no such atom.
+    pub fn atom(&self, source: InstanceAtomId) -> Option<EditAtomId> {
+        self.mapping.atoms.get(&source).copied()
+    }
+    /// The draft handle of an appended source bond, or `None` when the source
+    /// has no such bond.
+    pub fn bond(&self, source: InstanceBondId) -> Option<EditBondId> {
+        self.mapping.bonds.get(&source).copied()
+    }
+    /// The draft handle of an appended source chain, or `None` when the source
+    /// has no such chain.
+    pub fn chain(&self, source: ChainId) -> Option<EditChainId> {
+        self.mapping.chains.get(&source).copied()
+    }
+    /// The draft handle of an appended source residue, or `None` when the
+    /// source has no such residue.
+    pub fn residue(&self, source: ResidueId) -> Option<EditResidueId> {
+        self.mapping.residues.get(&source).copied()
+    }
+    /// The draft handle of an appended source atom site, or `None` when the
+    /// source has no such site.
+    pub fn atom_site(&self, source: AtomSiteId) -> Option<EditAtomSiteId> {
+        self.mapping.sites.get(&source).copied()
+    }
+}

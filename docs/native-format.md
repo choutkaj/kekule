@@ -1,13 +1,13 @@
 # Native serialization format
 
 Kekule's native format is the exact persistence of one canonical owner:
-a `Molecule`, `Topology`, `Model`, or `SampleSet`. A `Model` or `SampleSet`
+a `Molecule`, `Topology`, `Structure`, or `StructureSet`. A `Structure` or `StructureSet`
 may carry its structure interpretation reports, as a
-`StructureInterpretation` or `StructureSampleSetInterpretation`. A sample set
-record may also store only the number of its samples, kept elsewhere, as a
-`SampleSetDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+`StructureInterpretation` or `StructureSetInterpretation`. A structure set
+record may also store only the number of its geometries, kept elsewhere, as a
+`StructureSetDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
-[Identity and reconstruction](../ARCHITECTURE.md#identity-and-reconstruction).
+[Identity and reconstruction](../SPEC.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
 in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
@@ -19,7 +19,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   insertion codes, component IDs, atom-site metadata, and child order), and
   classifications together with whether each was assigned explicitly. It also
   preserves properties at every scope with their units, molecular adjacency
-  order, positions, cells, occupancies, B factors, and a sample set's samples
+  order, positions, cells, occupancies, B factors, and a structure set's geometries
   with their velocities and forces, its order (times and steps, steps, or
   coordinates with their unit), its distribution (members, weights, each
   member's state, each state's representative, energy, and owner properties,
@@ -103,8 +103,8 @@ IEEE-754 bit pattern. There is no padding or alignment.
 file      := header payload trailer
 header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
-kind      := 1 molecule | 2 topology | 3 model | 7 interpreted model
-           | 9 sample set | 10 interpreted sample set
+kind      := 1 molecule | 2 topology | 3 structure | 7 interpreted structure
+           | 9 structure set | 10 interpreted structure set
 flags     := bit 0: perception stored; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
@@ -184,7 +184,7 @@ and scale; any other symbol is dropped, which leaves the unit equal.
 molecule_properties  := owner table(atoms) table(bonds)
 topology_properties  := owner table(instances) table(atoms) table(bonds)
                         table(chains) table(residues) table(atom_sites)
-structure_properties := owner table(atoms) table(bonds)
+geometry_properties := owner table(atoms) table(bonds)
 ```
 
 ### Perception
@@ -261,66 +261,66 @@ reclassification.
 ### Structures
 
 ```text
-model        := topology structure
-sample_set   := topology owner sample_count:count order
-                distribution:opt distribution samples
-order        := 0                                (none)
-              | 1 times:opt [f64; sample_count] steps:opt [u64; sample_count]
-                                                 (time)
-              | 2 [u64; sample_count]            (steps)
-              | 3 unit [f64; sample_count]       (a coordinate in that unit)
-distribution := members weights:opt [f64; member_count]
-                state:u32[member_count]
-                state_count:count state[state_count]
-                temperature:opt f64
-members      := 0                                (every sample)
-              | 1 member_count:count sample:u32[member_count]
-state        := representative:u32 energy:opt f64 owner
-samples      := 0 sample[sample_count]           (inline)
-              | 1                                (stored elsewhere)
-sample       := structure velocities:opt vectors forces:opt vectors
-structure    := positions cell:opt cell occupancies b_factors structure_properties
-positions    := (x:f64 y:f64 z:f64)[atom_count]
-vectors      := (x:f64 y:f64 z:f64)[atom_count]
-cell         := (x:f64 y:f64 z:f64)[3] periodic_axes:u8
-occupancies  := scalars
-b_factors    := scalars
-scalars      := 0 (absent) | 1 present:bits(atom_count) f64[populated]
+structure      := topology geometry_state
+structure_set  := topology owner geometry_count:count order
+                  distribution:opt distribution geometries
+order          := 0                                (none)
+               | 1 times:opt [f64; geometry_count] steps:opt [u64; geometry_count]
+                                                   (time)
+               | 2 [u64; geometry_count]           (steps)
+               | 3 unit [f64; geometry_count]      (a coordinate in that unit)
+distribution   := members weights:opt [f64; member_count]
+                  state:u32[member_count]
+                  state_count:count state[state_count]
+                  temperature:opt f64
+members        := 0                                (every geometry)
+               | 1 member_count:count geometry:u32[member_count]
+state          := representative:u32 energy:opt f64 owner
+geometries     := 0 geometry[geometry_count]       (inline)
+               | 1                                 (stored elsewhere)
+geometry       := geometry_state velocities:opt vectors forces:opt vectors
+geometry_state := positions cell:opt cell occupancies b_factors geometry_properties
+positions      := (x:f64 y:f64 z:f64)[atom_count]
+vectors        := (x:f64 y:f64 z:f64)[atom_count]
+cell           := (x:f64 y:f64 z:f64)[3] periodic_axes:u8
+occupancies    := scalars
+b_factors      := scalars
+scalars        := 0 (absent) | 1 present:bits(atom_count) f64[populated]
 ```
 
 Values are in Kekule's canonical units: positions and cell vectors in nm,
 B factors in nm², velocities in nm/ps, forces in kJ/(mol·nm), energies in
 kJ/mol, temperatures in K, and time in ps. Cell vectors are the columns a, b, c;
 `periodic_axes` bits 0–2 mark a, b, c. Positions and vectors have exactly
-the topology's atom count; structure property tables have one row per
+the topology's atom count; geometry property tables have one row per
 topology atom and bond.
 
-A sample set stores its samples in set order, after what describes them. A
-time order stores times, steps, or both, each for every sample; a step order
-a step per sample; a coordinate order a coordinate per sample in its unit,
+A structure set stores its geometries in set order, after what describes them. A
+time order stores times, steps, or both, each for every geometry; a step order
+a step per geometry; a coordinate order a coordinate per geometry in its unit,
 stored as property units are. Times and coordinates are finite. Without a
 distribution, the set states no weights or states. A distribution's members
-are every sample, or the samples that a strictly ascending list of indices
-names; `member_count` is the sample count for every sample. Weights, one per
+are every geometry, or the geometries that a strictly ascending list of indices
+names; `member_count` is the geometry count for every geometry. Weights, one per
 member, are finite and positive; without them members weigh the same. Each
 member stores the index of its state, and each state the member position of
 its representative. The reader validates the partition: every state index
 names a stored state, and every representative is a member of its own state,
 so no state is empty.
 
-The samples section is inline, or tag `1` for samples stored elsewhere: such
-a record is a `SampleSetDescription`, whose `sample_count` bounds its order
-and distribution as stored samples would. `SampleSetDescription::of`
+The geometries section is inline, or tag `1` for geometries stored elsewhere: such
+a record is a `StructureSetDescription`, whose `geometry_count` bounds its order
+and distribution as stored geometries would. `StructureSetDescription::of`
 describes a set in memory or one read from a trajectory file, so a host
 stores a file's order and distribution beside the file. An interpreted
-sample set stores its samples inline.
+structure set stores its geometries inline.
 
 ### Interpretation reports
 
-An interpreted model is a model followed by its report; an interpreted
-sample set is a sample set followed by one report per sample, in sample
+An interpreted structure is a structure followed by its report; an interpreted
+structure set is a structure set followed by one report per geometry, in geometry
 order. Reports are stored as they are: their IDs name atoms, chains,
-residues, and molecule instances of the model they were interpreted with,
+residues, and molecule instances of the structure they were interpreted with,
 and the reader does not resolve them.
 
 Report columns use two further encodings. `packed(n)` holds `n` unsigned
@@ -463,8 +463,8 @@ rotation, `6` too many operations; `2` to `5` with a `str`), and its line
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
-also bound atom sites and residue site lists; the samples, members, and states of one
-sample set, hierarchy chains and residues, property columns and owner
+also bound atom sites and residue site lists; the geometries, members, and states of one
+structure set, hierarchy chains and residues, property columns and owner
 values, and the entries of report lists; and the byte length of one string.
 The atoms and bonds of one report's instance provenance count against the
 atom and bond limits. The defaults are exported as

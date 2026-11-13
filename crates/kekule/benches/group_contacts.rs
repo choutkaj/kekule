@@ -7,10 +7,10 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kekule::geometry::Point3;
+use kekule::math::Point3;
 use kekule::smiles;
 use kekule::statistics::{ContactOccupancyAccumulator, GroupContactOccupancyAccumulator};
-use kekule::structure::{Positions, Sample, SampleSet, SampleView};
+use kekule::structure::{Geometry, GeometryView, Positions, StructureSet};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER};
 
@@ -199,7 +199,7 @@ fn topology(atoms: usize) -> Result<Arc<Topology>, Box<dyn Error>> {
 
 /// Two frames of the lattice, each atom displaced by up to a third of the
 /// spacing along every axis.
-fn frames(topology: &Arc<Topology>, atoms: usize) -> Result<SampleSet, Box<dyn Error>> {
+fn frames(topology: &Arc<Topology>, atoms: usize) -> Result<StructureSet, Box<dyn Error>> {
     let frame = |seed: u64| {
         let mut state = seed;
         let mut jitter = move || {
@@ -218,16 +218,19 @@ fn frames(topology: &Arc<Topology>, atoms: usize) -> Result<SampleSet, Box<dyn E
                 )
             })
             .collect::<Vec<_>>();
-        Positions::new(Quantity::new(points, NANOMETER)).map(Sample::new)
+        Positions::new(Quantity::new(points, NANOMETER)).map(Geometry::new)
     };
-    Ok(SampleSet::from_samples(
+    Ok(StructureSet::from_geometries(
         Arc::clone(topology),
         [frame(1)?, frame(2)?],
     )?)
 }
 
 /// The median time of one observation, alternating the frames.
-fn observe(trajectory: &SampleSet, mut observe: impl FnMut(usize, &SampleView<'_>)) -> Duration {
+fn observe(
+    trajectory: &StructureSet,
+    mut observe: impl FnMut(usize, &GeometryView<'_>),
+) -> Duration {
     let mut times = (0..PASSES)
         .map(|pass| {
             let frame = trajectory.get(pass % 2).expect("two frames");

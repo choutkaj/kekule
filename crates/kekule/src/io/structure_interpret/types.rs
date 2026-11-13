@@ -13,7 +13,7 @@ use crate::diagnostics::{
     FormatError, FormatErrorDetail, SourceLocation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Model, SampleSet};
+use crate::structure::{Structure, StructureSet};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
@@ -106,7 +106,7 @@ impl EntityMetadataPolicy {
 }
 
 /// Policy for interpreting one coordinate model of an mmCIF data block or a
-/// PDB entry as a [`Model`].
+/// PDB entry as a [`Structure`].
 ///
 /// The default requires a single coordinate model, keeps the
 /// highest-occupancy alternate locations, infers missing entity types, uses
@@ -412,9 +412,9 @@ pub enum StructureInterpretIssue {
         /// The charged atoms, by atom name, with their formal charge in e.
         charged_atoms: Vec<(String, i8)>,
     },
-    /// The model's hydrogens differ from the reference template: a protonation
-    /// variant was selected, or heteroatom charges were adjusted by one per
-    /// added or removed hydrogen.
+    /// The structure's hydrogens differ from the reference template: a
+    /// protonation variant was selected, or heteroatom charges were adjusted by
+    /// one per added or removed hydrogen.
     ProtonationFromHydrogens {
         /// The residue.
         residue: SourceResidueId,
@@ -427,7 +427,7 @@ pub enum StructureInterpretIssue {
         charged_atoms: Vec<(String, i8)>,
     },
     /// The resolved atoms of one residue lie in more than one molecule, for
-    /// example because a bridging atom is missing from the model.
+    /// example because a bridging atom is missing from the structure.
     ResidueFragmented {
         /// The residue.
         residue: SourceResidueId,
@@ -435,7 +435,7 @@ pub enum StructureInterpretIssue {
         fragments: usize,
     },
     /// The source states unit-cell parameters (mmCIF `_cell`, PDB `CRYST1`)
-    /// that are not the model's periodic cell, so the model has none.
+    /// that are not the structure's periodic cell, so the structure has none.
     CellOmitted {
         /// Why the cell was omitted.
         reason: CellOmissionReason,
@@ -785,7 +785,7 @@ impl fmt::Display for Charged<'_> {
     }
 }
 
-/// Why stated unit-cell parameters are not a model's periodic cell.
+/// Why stated unit-cell parameters are not a structure's periodic cell.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CellOmissionReason {
@@ -1351,8 +1351,8 @@ impl StructureInterpretationReport {
     /// The coordination records that still match `topology`, as writers
     /// state them again. A record matches when each partner is a topology
     /// atom whose atom site keeps the atom names, type symbol, and component
-    /// the report recorded for it; a model edited since it was read can hold
-    /// other atoms under the recorded IDs, or none.
+    /// the report recorded for it; a structure edited since it was read can
+    /// hold other atoms under the recorded IDs, or none.
     pub(crate) fn coordination_in(&self, topology: &Topology) -> CoordinationMatch {
         let partners = self
             .coordination
@@ -1398,7 +1398,7 @@ impl StructureInterpretationReport {
     }
 
     /// The polymer entities the block states, in the block's order, with
-    /// their canonical sequences and the model's residues at each position;
+    /// their canonical sequences and the structure's residues at each position;
     /// empty for PDB entries, which state no entities. Entities whose
     /// monomers neither `_entity_poly_seq` nor the atom sites give are left
     /// out. [`crate::sequence`] gives the sequences of the chains of any
@@ -1411,7 +1411,7 @@ impl StructureInterpretationReport {
     /// `_pdbx_struct_assembly`, PDB `REMARK 350` biomolecules. Assemblies
     /// that cannot be read are left out with
     /// [`StructureInterpretIssue::AssemblyOmitted`].
-    /// [`Assembly::to_model`] builds one.
+    /// [`Assembly::to_structure`] builds one.
     pub fn assemblies(&self) -> &[Assembly] {
         &self.assemblies
     }
@@ -1426,32 +1426,32 @@ impl StructureInterpretationReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-/// One final canonical model and its interpretation report.
+/// One final canonical structure and its interpretation report.
 pub struct StructureInterpretation {
-    pub(crate) model: Model,
+    pub(crate) structure: Structure,
     pub(crate) report: StructureInterpretationReport,
 }
 
 impl StructureInterpretation {
-    /// The interpreted model.
-    pub fn model(&self) -> &Model {
-        &self.model
+    /// The interpreted structure.
+    pub fn structure(&self) -> &Structure {
+        &self.structure
     }
 
-    /// How the model was read from its source.
+    /// How the structure was read from its source.
     pub fn report(&self) -> &StructureInterpretationReport {
         &self.report
     }
 
-    /// The topology of [`Self::model`].
+    /// The topology of [`Self::structure`].
     pub fn topology(&self) -> &crate::topology::Topology {
-        self.model.topology()
+        self.structure.topology()
     }
 
     /// Borrows molecule definitions once per occurrence in authoritative
     /// topology instance order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
-        self.model
+        self.structure
             .topology()
             .instances()
             .map(|occurrence| occurrence.molecule())
@@ -1460,26 +1460,26 @@ impl StructureInterpretation {
     /// Clones each molecule definition once per occurrence, in topology instance
     /// order.
     pub fn into_molecules(self) -> Vec<Molecule> {
-        self.model
+        self.structure
             .topology()
             .instances()
             .map(|occurrence| occurrence.molecule().clone())
             .collect()
     }
 
-    /// Retains shared ownership of the model's exact topology allocation.
+    /// Retains shared ownership of the structure's exact topology allocation.
     pub fn into_topology(self) -> Arc<Topology> {
-        self.model.shared_topology()
+        self.structure.shared_topology()
     }
 
-    /// The interpreted model, discarding the report.
-    pub fn into_model(self) -> Model {
-        self.model
+    /// The interpreted structure, discarding the report.
+    pub fn into_structure(self) -> Structure {
+        self.structure
     }
 
-    /// The model and its report.
-    pub fn into_parts(self) -> (Model, StructureInterpretationReport) {
-        (self.model, self.report)
+    /// The structure and its report.
+    pub fn into_parts(self) -> (Structure, StructureInterpretationReport) {
+        (self.structure, self.report)
     }
 }
 
@@ -1515,8 +1515,8 @@ pub(in crate::io) fn poll_every(
     Cancellation::poll_every(cancellation, step).map_err(cancelled)
 }
 
-/// A sample-set-level failure with typed `detail`.
-pub(in crate::io) fn sample_set_error(
+/// A structure-set-level failure with typed `detail`.
+pub(in crate::io) fn structure_set_error(
     kind: DiagnosticKind,
     message: impl Into<String>,
     detail: FormatErrorDetail,
@@ -1524,11 +1524,11 @@ pub(in crate::io) fn sample_set_error(
     FormatError::interpret(Format::Mmcif, kind, message).with_detail(detail)
 }
 
-/// Converts deposited coordinate models to samples, applying `altloc_policy`
-/// within each model. Alternate locations never generate additional samples or
-/// statistical weights. A single coordinate model yields a single sample.
+/// Converts deposited coordinate models to geometries, applying `altloc_policy`
+/// within each model. Alternate locations never generate additional geometries or
+/// statistical weights. A single coordinate model yields a single geometry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructureSampleSetInterpretOptions {
+pub struct StructureSetInterpretOptions {
     entity_metadata: EntityMetadataPolicy,
     altloc_policy: AltLocPolicy,
     connectivity: ConnectivityOptions,
@@ -1536,7 +1536,7 @@ pub struct StructureSampleSetInterpretOptions {
     cancellation: Option<Cancellation>,
 }
 
-impl StructureSampleSetInterpretOptions {
+impl StructureSetInterpretOptions {
     /// Whether missing entity types are inferred or rejected.
     pub const fn entity_metadata(&self) -> EntityMetadataPolicy {
         self.entity_metadata
@@ -1591,7 +1591,7 @@ impl StructureSampleSetInterpretOptions {
     /// An interpretation [`FormatError`] with [`FormatErrorDetail::EmptyModelSelection`](crate::diagnostics::FormatErrorDetail::EmptyModelSelection) for `Some` of an empty list.
     pub fn with_model_ids(mut self, model_ids: Option<Vec<String>>) -> Result<Self, FormatError> {
         if model_ids.as_ref().is_some_and(Vec::is_empty) {
-            return Err(super::sample_set::empty_model_selection());
+            return Err(super::structure_set::empty_model_selection());
         }
         self.model_ids = model_ids;
         Ok(self)
@@ -1600,9 +1600,9 @@ impl StructureSampleSetInterpretOptions {
     /// The cancellation interpretation polls, if any; `None` by default.
     ///
     /// Interpretation polls it between its stages and periodically inside
-    /// them, for every sample, and once it is requested fails with a
+    /// them, for every geometry, and once it is requested fails with a
     /// [`FormatError`] of kind [`DiagnosticKind::Cancelled`] instead of
-    /// returning a partial sample set. It does not change what a completed
+    /// returning a partial structure set. It does not change what a completed
     /// interpretation returns.
     pub fn cancellation(&self) -> Option<&Cancellation> {
         self.cancellation.as_ref()
@@ -1616,7 +1616,7 @@ impl StructureSampleSetInterpretOptions {
     }
 }
 
-impl Default for StructureSampleSetInterpretOptions {
+impl Default for StructureSetInterpretOptions {
     fn default() -> Self {
         Self {
             entity_metadata: EntityMetadataPolicy::InferMissing,
@@ -1628,37 +1628,37 @@ impl Default for StructureSampleSetInterpretOptions {
     }
 }
 
-/// One shared-topology sample set and one report per sample, in sample
+/// One shared-topology structure set and one report per geometry, in geometry
 /// order.
 #[derive(Debug, Clone)]
-pub struct StructureSampleSetInterpretation {
-    pub(crate) set: SampleSet,
+pub struct StructureSetInterpretation {
+    pub(crate) set: StructureSet,
     pub(crate) reports: Vec<StructureInterpretationReport>,
 }
 
-impl StructureSampleSetInterpretation {
-    /// The interpreted sample set, one sample per selected model.
-    pub fn sample_set(&self) -> &SampleSet {
+impl StructureSetInterpretation {
+    /// The interpreted structure set, one geometry per selected model.
+    pub fn structure_set(&self) -> &StructureSet {
         &self.set
     }
 
-    /// One report per sample, in sample order.
+    /// One report per geometry, in geometry order.
     pub fn reports(&self) -> &[StructureInterpretationReport] {
         &self.reports
     }
 
-    /// The topology all samples share.
+    /// The topology all geometries share.
     pub fn topology(&self) -> &Topology {
         self.set.topology()
     }
 
-    /// The interpreted sample set, discarding the reports.
-    pub fn into_sample_set(self) -> SampleSet {
+    /// The interpreted structure set, discarding the reports.
+    pub fn into_structure_set(self) -> StructureSet {
         self.set
     }
 
-    /// The sample set and its per-sample reports.
-    pub fn into_parts(self) -> (SampleSet, Vec<StructureInterpretationReport>) {
+    /// The structure set and its per-geometry reports.
+    pub fn into_parts(self) -> (StructureSet, Vec<StructureInterpretationReport>) {
         (self.set, self.reports)
     }
 }

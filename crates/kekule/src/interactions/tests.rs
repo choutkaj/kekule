@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::geometry::{Point3, Vector3};
-use crate::structure::{Model, Positions};
+use crate::math::{Point3, Vector3};
+use crate::structure::{Positions, Structure};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, ANGSTROM, DEGREE, NANOMETER};
 
@@ -15,7 +15,7 @@ const OUTSIDE: f64 = 1.0 + 1e-9;
 /// Angles just inside and outside a threshold, in degrees.
 const NUDGE: f64 = 1e-6;
 
-fn model(smiles: &str, points: &[Point3]) -> (Arc<Topology>, Model) {
+fn structure(smiles: &str, points: &[Point3]) -> (Arc<Topology>, Structure) {
     let topology = crate::smiles::to_topology(smiles).expect("valid SMILES");
     assert_eq!(
         topology.atom_count(),
@@ -23,8 +23,8 @@ fn model(smiles: &str, points: &[Point3]) -> (Arc<Topology>, Model) {
         "one point per atom of {smiles}"
     );
     let positions = Positions::new(Quantity::new(points.to_vec(), ANGSTROM)).expect("finite");
-    let model = Model::new(Arc::clone(&topology), positions).expect("bound");
-    (topology, model)
+    let structure = Structure::new(Arc::clone(&topology), positions).expect("bound");
+    (topology, structure)
 }
 
 fn select(topology: &Arc<Topology>, atoms: impl IntoIterator<Item = usize>) -> AtomSelection {
@@ -44,11 +44,11 @@ fn find_with(
     second: impl IntoIterator<Item = usize>,
     criteria: &InteractionCriteria,
 ) -> Interactions {
-    let (topology, model) = model(smiles, points);
+    let (topology, structure) = structure(smiles, points);
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let first = select(&topology, first);
     let second = select(&topology, second);
-    find_interactions_within(&features, &model, &first, &second, criteria).expect("search")
+    find_interactions_within(&features, &structure, &first, &second, criteria).expect("search")
 }
 
 fn count(smiles: &str, points: &[Point3], split: usize, kind: InteractionKind) -> usize {
@@ -198,13 +198,13 @@ fn ring_center_and_normal() {
         Vector3::new(1.0, 0.0, 0.0),
         Vector3::new(0.0, 1.0, 0.0),
     );
-    let (topology, model) = model("c1ccccc1", &ring);
+    let (topology, structure) = structure("c1ccccc1", &ring);
     let features = InteractionFeatures::new(topology);
     let (center, normal) = features
         .aromatic_rings()
         .next()
         .unwrap()
-        .center_and_normal(&model)
+        .center_and_normal(&structure)
         .unwrap();
     let center = center.value_in(NANOMETER).unwrap();
     assert!((center - p(0.1, 0.2, 0.3)).norm() < 1e-12);
@@ -575,14 +575,14 @@ fn bond_separation_within_one_molecule() {
     assert_eq!(bonds(5), 1);
     assert_eq!(bonds(6), 0);
     // Across two structures, no bond joins the ends.
-    let (topology, model) = model("OCCCCO", &points);
+    let (topology, structure) = structure("OCCCCO", &points);
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let first = select(&topology, [0]);
     let second = select(&topology, [5]);
     let criteria = InteractionCriteria::default().with_min_bond_separation(6);
     let found = find_interactions_between(
-        &InteractionSide::new(&features, &model, &first).unwrap(),
-        &InteractionSide::new(&features, &model, &second).unwrap(),
+        &InteractionSide::new(&features, &structure, &first).unwrap(),
+        &InteractionSide::new(&features, &structure, &second).unwrap(),
         &criteria,
     )
     .unwrap();
@@ -639,16 +639,16 @@ fn within_and_between_agree() {
         &InteractionCriteria::default(),
     );
 
-    let (left, left_model) = model("CC(=O)[O-]", &acetate);
-    let (right, right_model) = model("C[NH3+]", &amine);
+    let (left, left_structure) = structure("CC(=O)[O-]", &acetate);
+    let (right, right_structure) = structure("C[NH3+]", &amine);
     let (left_features, right_features) = (
         InteractionFeatures::new(Arc::clone(&left)),
         InteractionFeatures::new(Arc::clone(&right)),
     );
     let (left_atoms, right_atoms) = (AtomSelection::all(left), AtomSelection::all(right));
     let between = find_interactions_between(
-        &InteractionSide::new(&left_features, &left_model, &left_atoms).unwrap(),
-        &InteractionSide::new(&right_features, &right_model, &right_atoms).unwrap(),
+        &InteractionSide::new(&left_features, &left_structure, &left_atoms).unwrap(),
+        &InteractionSide::new(&right_features, &right_structure, &right_atoms).unwrap(),
         &InteractionCriteria::default(),
     )
     .unwrap();
@@ -712,7 +712,7 @@ fn disabled_types_and_invalid_criteria() {
             InteractionCriterion::MetalCoordinationDistance,
         ),
     ];
-    let (topology, model) = model("O.O", &points);
+    let (topology, structure) = structure("O.O", &points);
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let all = AtomSelection::all(topology);
     for (criteria, criterion) in invalid {
@@ -721,12 +721,12 @@ fn disabled_types_and_invalid_criteria() {
             Err(InteractionError::InvalidCriterion(criterion))
         );
         assert_eq!(
-            find_interactions_within(&features, &model, &all, &all, &criteria).unwrap_err(),
+            find_interactions_within(&features, &structure, &all, &all, &criteria).unwrap_err(),
             InteractionError::InvalidCriterion(criterion)
         );
     }
     // A structure of another layout is refused.
-    let (_, other) = self::model("O.O", &points);
+    let (_, other) = self::structure("O.O", &points);
     assert_eq!(
         find_interactions_within(
             &features,
@@ -742,7 +742,7 @@ fn disabled_types_and_invalid_criteria() {
 
 #[test]
 fn hydrogen_bond_occupancy_accumulates_and_merges() {
-    let (topology, _) = model("O.O", &[Point3::origin(); 2]);
+    let (topology, _) = structure("O.O", &[Point3::origin(); 2]);
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let all = AtomSelection::all(Arc::clone(&topology));
     let observe = |x: f64| {
@@ -751,10 +751,10 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
             ANGSTROM,
         ))
         .unwrap();
-        let model = Model::new(Arc::clone(&topology), positions).unwrap();
+        let structure = Structure::new(Arc::clone(&topology), positions).unwrap();
         find_interactions_within(
             &features,
-            &model,
+            &structure,
             &all,
             &all,
             &InteractionCriteria::default(),
@@ -809,8 +809,9 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
         ANGSTROM,
     ))
     .unwrap();
-    let model = Model::new(Arc::clone(&topology), positions).unwrap();
-    let other = find_interactions_within(&features, &model, &all, &all, &other_criteria).unwrap();
+    let structure = Structure::new(Arc::clone(&topology), positions).unwrap();
+    let other =
+        find_interactions_within(&features, &structure, &all, &all, &other_criteria).unwrap();
     let mut fresh = HydrogenBondOccupancyAccumulator::new();
     fresh.observe(0, &found, 1.0).unwrap();
     assert_eq!(
@@ -820,7 +821,7 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
     // Another bond separation is another search within one structure.
     let separated = find_interactions_within(
         &features,
-        &model,
+        &structure,
         &all,
         &all,
         &InteractionCriteria::default().with_min_bond_separation(6),
@@ -917,12 +918,12 @@ fn hydrophobic_contacts_keep_the_closest_per_atom_and_residue() {
     let found = find_with(smiles, &points, 1..6, [0], &criteria);
     assert_eq!(contacts(&found), [(1, 0), (5, 0)]);
     // Across two structures, the same.
-    let (topology, model) = model(smiles, &points);
+    let (topology, structure) = structure(smiles, &points);
     let features = InteractionFeatures::new(Arc::clone(&topology));
     let (methane, rest) = (select(&topology, [0]), select(&topology, 1..6));
     let found = find_interactions_between(
-        &InteractionSide::new(&features, &model, &methane).unwrap(),
-        &InteractionSide::new(&features, &model, &rest).unwrap(),
+        &InteractionSide::new(&features, &structure, &methane).unwrap(),
+        &InteractionSide::new(&features, &structure, &rest).unwrap(),
         &criteria,
     )
     .unwrap();

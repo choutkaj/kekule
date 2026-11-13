@@ -1,6 +1,6 @@
 //! Kekule's native binary serialization: exact, versioned persistence of one
-//! molecule, topology, model, or sample set, and of a model or sample set
-//! with its structure interpretation reports.
+//! molecule, topology, structure, or structure set, and of a structure or
+//! structure set with its structure interpretation reports.
 //!
 //! The byte layout is specified in `docs/native-format.md`; the encoder and
 //! decoder here implement that specification and nothing else.
@@ -14,14 +14,14 @@ use std::fmt;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::io::{
-    StructureInterpretation, StructureInterpretationReport, StructureSampleSetInterpretation,
+    StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Model, SampleSet};
+use crate::structure::{Structure, StructureSet};
 use crate::topology::Topology;
 
 pub(crate) use decode::read_native;
-pub use description::SampleSetDescription;
+pub use description::StructureSetDescription;
 pub(crate) use encode::{write_native, write_native_to};
 
 /// The eight bytes every native input starts with.
@@ -56,17 +56,17 @@ pub enum NativeKind {
     Molecule,
     /// A [`Topology`].
     Topology,
-    /// A [`Model`].
-    Model,
-    /// A [`Model`] with the report of its interpretation, a
+    /// A [`Structure`].
+    Structure,
+    /// A [`Structure`] with the report of its interpretation, a
     /// [`StructureInterpretation`].
     StructureInterpretation,
-    /// A [`SampleSet`], with its samples or with only their number
-    /// ([`SampleSetDescription`]).
-    SampleSet,
-    /// A [`SampleSet`] with one interpretation report per sample, a
-    /// [`StructureSampleSetInterpretation`].
-    SampleSetInterpretation,
+    /// A [`StructureSet`], with its geometries or with only their number
+    /// ([`StructureSetDescription`]).
+    StructureSet,
+    /// A [`StructureSet`] with one interpretation report per geometry, a
+    /// [`StructureSetInterpretation`].
+    StructureSetInterpretation,
 }
 
 impl NativeKind {
@@ -74,10 +74,10 @@ impl NativeKind {
         match self {
             Self::Molecule => 1,
             Self::Topology => 2,
-            Self::Model => 3,
+            Self::Structure => 3,
             Self::StructureInterpretation => 7,
-            Self::SampleSet => 9,
-            Self::SampleSetInterpretation => 10,
+            Self::StructureSet => 9,
+            Self::StructureSetInterpretation => 10,
         }
     }
 
@@ -85,18 +85,18 @@ impl NativeKind {
         Some(match code {
             1 => Self::Molecule,
             2 => Self::Topology,
-            3 => Self::Model,
+            3 => Self::Structure,
             7 => Self::StructureInterpretation,
-            9 => Self::SampleSet,
-            10 => Self::SampleSetInterpretation,
+            9 => Self::StructureSet,
+            10 => Self::StructureSetInterpretation,
             _ => return None,
         })
     }
 
-    /// The kind with its indefinite article, such as "an interpreted model".
+    /// The kind with its indefinite article, such as "an interpreted structure".
     fn with_article(self) -> String {
         let article = match self {
-            Self::StructureInterpretation | Self::SampleSetInterpretation => "an",
+            Self::StructureInterpretation | Self::StructureSetInterpretation => "an",
             _ => "a",
         };
         format!("{article} {self}")
@@ -108,21 +108,21 @@ impl fmt::Display for NativeKind {
         formatter.write_str(match self {
             Self::Molecule => "molecule",
             Self::Topology => "topology",
-            Self::Model => "model",
-            Self::StructureInterpretation => "interpreted model",
-            Self::SampleSet => "sample set",
-            Self::SampleSetInterpretation => "interpreted sample set",
+            Self::Structure => "structure",
+            Self::StructureInterpretation => "interpreted structure",
+            Self::StructureSet => "structure set",
+            Self::StructureSetInterpretation => "interpreted structure set",
         })
     }
 }
 
 /// The object a native writer encodes, borrowed from its owner.
 ///
-/// Converts from a borrowed [`Molecule`], [`Topology`], [`Model`],
-/// [`SampleSet`], [`SampleSetDescription`], [`StructureInterpretation`], or
-/// [`StructureSampleSetInterpretation`]. [`Self::interpreted_model`] and
-/// [`Self::interpreted_sample_set`] pair a model or sample set with reports
-/// held apart from it.
+/// Converts from a borrowed [`Molecule`], [`Topology`], [`Structure`],
+/// [`StructureSet`], [`StructureSetDescription`], [`StructureInterpretation`], or
+/// [`StructureSetInterpretation`]. [`Self::interpreted_structure`] and
+/// [`Self::interpreted_structure_set`] pair a structure or structure set with
+/// reports held apart from it.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeSource<'a> {
     pub(super) content: NativeContent<'a>,
@@ -132,38 +132,38 @@ pub struct NativeSource<'a> {
 pub(super) enum NativeContent<'a> {
     Molecule(&'a Molecule),
     Topology(&'a Topology),
-    Model(&'a Model),
-    InterpretedModel(&'a Model, &'a StructureInterpretationReport),
-    SampleSet(&'a SampleSet),
-    InterpretedSampleSet(&'a SampleSet, &'a [StructureInterpretationReport]),
-    SampleSetDescription(&'a SampleSetDescription),
+    Structure(&'a Structure),
+    InterpretedStructure(&'a Structure, &'a StructureInterpretationReport),
+    StructureSet(&'a StructureSet),
+    InterpretedStructureSet(&'a StructureSet, &'a [StructureInterpretationReport]),
+    StructureSetDescription(&'a StructureSetDescription),
 }
 
 impl<'a> NativeSource<'a> {
-    /// A model with the report of its interpretation.
+    /// A structure with the report of its interpretation.
     ///
     /// The report is stored as it is. Its IDs name atoms, chains, and
-    /// residues of the model it was interpreted with.
-    pub const fn interpreted_model(
-        model: &'a Model,
+    /// residues of the structure it was interpreted with.
+    pub const fn interpreted_structure(
+        structure: &'a Structure,
         report: &'a StructureInterpretationReport,
     ) -> Self {
         Self {
-            content: NativeContent::InterpretedModel(model, report),
+            content: NativeContent::InterpretedStructure(structure, report),
         }
     }
 
-    /// A sample set with one interpretation report per sample, in sample
-    /// order, as [`StructureSampleSetInterpretation::reports`] gives them.
+    /// A structure set with one interpretation report per geometry, in geometry
+    /// order, as [`StructureSetInterpretation::reports`] gives them.
     ///
     /// Writing fails with [`DiagnosticKind::Inconsistent`] unless there is
-    /// one report per sample.
-    pub const fn interpreted_sample_set(
-        set: &'a SampleSet,
+    /// one report per geometry.
+    pub const fn interpreted_structure_set(
+        set: &'a StructureSet,
         reports: &'a [StructureInterpretationReport],
     ) -> Self {
         Self {
-            content: NativeContent::InterpretedSampleSet(set, reports),
+            content: NativeContent::InterpretedStructureSet(set, reports),
         }
     }
 
@@ -172,12 +172,12 @@ impl<'a> NativeSource<'a> {
         match self.content {
             NativeContent::Molecule(_) => NativeKind::Molecule,
             NativeContent::Topology(_) => NativeKind::Topology,
-            NativeContent::Model(_) => NativeKind::Model,
-            NativeContent::InterpretedModel(..) => NativeKind::StructureInterpretation,
-            NativeContent::SampleSet(_) | NativeContent::SampleSetDescription(_) => {
-                NativeKind::SampleSet
+            NativeContent::Structure(_) => NativeKind::Structure,
+            NativeContent::InterpretedStructure(..) => NativeKind::StructureInterpretation,
+            NativeContent::StructureSet(_) | NativeContent::StructureSetDescription(_) => {
+                NativeKind::StructureSet
             }
-            NativeContent::InterpretedSampleSet(..) => NativeKind::SampleSetInterpretation,
+            NativeContent::InterpretedStructureSet(..) => NativeKind::StructureSetInterpretation,
         }
     }
 }
@@ -194,17 +194,23 @@ macro_rules! native_source_from {
     )*};
 }
 
-native_source_from!(Molecule, Topology, Model, SampleSet, SampleSetDescription);
+native_source_from!(
+    Molecule,
+    Topology,
+    Structure,
+    StructureSet,
+    StructureSetDescription
+);
 
 impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
     fn from(value: &'a StructureInterpretation) -> Self {
-        Self::interpreted_model(value.model(), value.report())
+        Self::interpreted_structure(value.structure(), value.report())
     }
 }
 
-impl<'a> From<&'a StructureSampleSetInterpretation> for NativeSource<'a> {
-    fn from(value: &'a StructureSampleSetInterpretation) -> Self {
-        Self::interpreted_sample_set(value.sample_set(), value.reports())
+impl<'a> From<&'a StructureSetInterpretation> for NativeSource<'a> {
+    fn from(value: &'a StructureSetInterpretation) -> Self {
+        Self::interpreted_structure_set(value.structure_set(), value.reports())
     }
 }
 
@@ -219,18 +225,18 @@ pub enum NativeObject {
     Molecule(Box<Molecule>),
     /// A topology.
     Topology(Topology),
-    /// A model with its topology.
-    Model(Model),
-    /// A model with its topology and the report of its interpretation.
+    /// A structure with its topology.
+    Structure(Structure),
+    /// A structure with its topology and the report of its interpretation.
     StructureInterpretation(Box<StructureInterpretation>),
-    /// A sample set with its topology and samples.
-    SampleSet(SampleSet),
-    /// A sample set with its topology and one interpretation report per
-    /// sample.
-    SampleSetInterpretation(Box<StructureSampleSetInterpretation>),
-    /// A sample set record that stores the number of its samples, not the
-    /// samples: its topology, properties, order, and distribution.
-    SampleSetDescription(Box<SampleSetDescription>),
+    /// A structure set with its topology and geometries.
+    StructureSet(StructureSet),
+    /// A structure set with its topology and one interpretation report per
+    /// geometry.
+    StructureSetInterpretation(Box<StructureSetInterpretation>),
+    /// A structure set record that stores the number of its geometries, not the
+    /// geometries: its topology, properties, order, and distribution.
+    StructureSetDescription(Box<StructureSetDescription>),
 }
 
 impl NativeObject {
@@ -239,10 +245,10 @@ impl NativeObject {
         match self {
             Self::Molecule(_) => NativeKind::Molecule,
             Self::Topology(_) => NativeKind::Topology,
-            Self::Model(_) => NativeKind::Model,
+            Self::Structure(_) => NativeKind::Structure,
             Self::StructureInterpretation(_) => NativeKind::StructureInterpretation,
-            Self::SampleSet(_) | Self::SampleSetDescription(_) => NativeKind::SampleSet,
-            Self::SampleSetInterpretation(_) => NativeKind::SampleSetInterpretation,
+            Self::StructureSet(_) | Self::StructureSetDescription(_) => NativeKind::StructureSet,
+            Self::StructureSetInterpretation(_) => NativeKind::StructureSetInterpretation,
         }
     }
 
@@ -286,28 +292,28 @@ impl NativeObject {
         }
     }
 
-    /// The decoded model, of a model or of an interpreted model, whose
-    /// report it drops.
+    /// The decoded structure, of a structure or of an interpreted structure,
+    /// whose report it drops.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
     /// [`FormatErrorDetail::NativeKind`] when the object is of another kind.
-    pub fn into_model(self) -> Result<Model, FormatError> {
+    pub fn into_structure(self) -> Result<Structure, FormatError> {
         match self {
-            Self::Model(value) => Ok(value),
-            Self::StructureInterpretation(value) => Ok(value.into_model()),
-            other => Err(other.kind_error(NativeKind::Model)),
+            Self::Structure(value) => Ok(value),
+            Self::StructureInterpretation(value) => Ok(value.into_structure()),
+            other => Err(other.kind_error(NativeKind::Structure)),
         }
     }
 
-    /// The decoded model with the report of its interpretation.
+    /// The decoded structure with the report of its interpretation.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
     /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
-    /// such as a model stored without a report.
+    /// such as a structure stored without a report.
     pub fn into_interpretation(self) -> Result<StructureInterpretation, FormatError> {
         match self {
             Self::StructureInterpretation(value) => Ok(*value),
@@ -315,71 +321,71 @@ impl NativeObject {
         }
     }
 
-    /// The decoded sample set, of a sample set or of an interpreted sample
+    /// The decoded structure set, of a structure set or of an interpreted structure
     /// set, whose reports it drops.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
     /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
-    /// and with [`FormatErrorDetail::NativeExternalSamples`] for a record
-    /// that stores its samples elsewhere.
-    pub fn into_sample_set(self) -> Result<SampleSet, FormatError> {
+    /// and with [`FormatErrorDetail::NativeExternalGeometries`] for a record
+    /// that stores its geometries elsewhere.
+    pub fn into_structure_set(self) -> Result<StructureSet, FormatError> {
         match self {
-            Self::SampleSet(value) => Ok(value),
-            Self::SampleSetInterpretation(value) => Ok(value.into_sample_set()),
-            Self::SampleSetDescription(description) => Err(external_samples(&description)),
-            other => Err(other.kind_error(NativeKind::SampleSet)),
+            Self::StructureSet(value) => Ok(value),
+            Self::StructureSetInterpretation(value) => Ok(value.into_structure_set()),
+            Self::StructureSetDescription(description) => Err(external_geometries(&description)),
+            other => Err(other.kind_error(NativeKind::StructureSet)),
         }
     }
 
-    /// The decoded sample set with one interpretation report per sample.
+    /// The decoded structure set with one interpretation report per geometry.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
     /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
-    /// such as a sample set stored without reports.
-    pub fn into_sample_set_interpretation(
+    /// such as a structure set stored without reports.
+    pub fn into_structure_set_interpretation(
         self,
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+    ) -> Result<StructureSetInterpretation, FormatError> {
         match self {
-            Self::SampleSetInterpretation(value) => Ok(*value),
-            other => Err(other.kind_error(NativeKind::SampleSetInterpretation)),
+            Self::StructureSetInterpretation(value) => Ok(*value),
+            other => Err(other.kind_error(NativeKind::StructureSetInterpretation)),
         }
     }
 
-    /// What the decoded sample set states besides its samples: of a record
-    /// that stores only their number, or of any sample set, whose samples
+    /// What the decoded structure set states besides its geometries: of a record
+    /// that stores only their number, or of any structure set, whose geometries
     /// and reports it drops.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
-    /// [`FormatErrorDetail::NativeKind`] when the object is no sample set.
-    pub fn into_sample_set_description(self) -> Result<SampleSetDescription, FormatError> {
+    /// [`FormatErrorDetail::NativeKind`] when the object is no structure set.
+    pub fn into_structure_set_description(self) -> Result<StructureSetDescription, FormatError> {
         match self {
-            Self::SampleSetDescription(value) => Ok(*value),
-            Self::SampleSet(set) => Ok(SampleSetDescription::of(&set)),
-            Self::SampleSetInterpretation(value) => {
-                Ok(SampleSetDescription::of(value.sample_set()))
+            Self::StructureSetDescription(value) => Ok(*value),
+            Self::StructureSet(set) => Ok(StructureSetDescription::of(&set)),
+            Self::StructureSetInterpretation(value) => {
+                Ok(StructureSetDescription::of(value.structure_set()))
             }
-            other => Err(other.kind_error(NativeKind::SampleSet)),
+            other => Err(other.kind_error(NativeKind::StructureSet)),
         }
     }
 }
 
-fn external_samples(description: &SampleSetDescription) -> FormatError {
-    let samples = description.sample_count();
+fn external_geometries(description: &StructureSetDescription) -> FormatError {
+    let geometries = description.geometry_count();
     FormatError::interpret(
         Format::Native,
         DiagnosticKind::Inconsistent,
         format!(
-            "The input's sample set stores its {} elsewhere.",
-            crate::diagnostics::counted(samples, "sample", "samples")
+            "The input's structure set stores its {} elsewhere.",
+            crate::diagnostics::counted(geometries, "geometry", "geometries")
         ),
     )
-    .with_detail(FormatErrorDetail::NativeExternalSamples { samples })
+    .with_detail(FormatErrorDetail::NativeExternalGeometries { geometries })
 }
 
 /// Options of the native writer.
@@ -516,7 +522,7 @@ impl NativeReadOptions {
         with_max_bonds
     );
     native_limit!(
-        /// Maximum samples of a sample set, counting those a record stores
+        /// Maximum geometries of a structure set, counting those a record stores
         /// only the number of, and its distribution's states, and maximum
         /// entries of any other stored list that atoms or bonds do not
         /// bound: property columns and owner values, hierarchy chains and

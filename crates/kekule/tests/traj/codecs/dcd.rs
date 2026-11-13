@@ -1,7 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{
@@ -42,7 +42,7 @@ fn set_frame(
     cell: Option<PeriodicCell>,
 ) {
     buffer
-        .sample_mut()
+        .geometry_mut()
         .set_positions(Quantity::new(
             coordinates.map(|[x, y, z]| Point3::new(x, y, z)),
             ANGSTROM,
@@ -52,7 +52,7 @@ fn set_frame(
     buffer
         .set_time(time.map(|value| Quantity::new(value, PICOSECOND)))
         .unwrap();
-    buffer.sample_mut().set_cell(cell);
+    buffer.geometry_mut().set_cell(cell);
 }
 
 #[test]
@@ -107,7 +107,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
         )
         .unwrap();
         frame.set_step(Some(4));
-        frame.sample_mut().set_cell(Some(unrepresentable));
+        frame.geometry_mut().set_cell(Some(unrepresentable));
         assert_eq!(
             writer.write_frame(frame.frame_view()),
             Err(codec_error(
@@ -353,7 +353,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
             Vector3::new(0.0, 0.0, -30.0),
         ],
     ] {
-        frame.sample_mut().set_cell(Some(
+        frame.geometry_mut().set_cell(Some(
             PeriodicCell::new(Quantity::new(vectors, ANGSTROM), [true; 3]).unwrap(),
         ));
         assert_eq!(
@@ -369,7 +369,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
         );
         assert_eq!(writer.writer(), &before);
     }
-    frame.sample_mut().set_cell(Some(canonical));
+    frame.geometry_mut().set_cell(Some(canonical));
     writer.write_frame(frame.frame_view()).unwrap();
     let bytes = writer.finish().unwrap().into_inner();
     let mut reader = DcdReader::new(
@@ -676,7 +676,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
         None,
     );
     destination
-        .sample_mut()
+        .geometry_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -922,7 +922,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         Some(cell),
     );
     bond_annotated
-        .sample_mut()
+        .geometry_mut()
         .properties_mut()
         .bonds_mut()
         .insert(

@@ -1,4 +1,4 @@
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::AtomId;
 /// Crate-private coordinate lookup used while normalizing represented stereo.
 ///

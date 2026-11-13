@@ -64,7 +64,7 @@ name = "interactions"
 harness = false
 
 [[bench]]
-name = "model_edit_scale"
+name = "structure_edit_scale"
 harness = false
 
 [[bench]]
@@ -88,7 +88,7 @@ name = "frame_workflow"
 harness = false
 
 [[bench]]
-name = "sample_storage"
+name = "geometry_storage"
 harness = false
 
 [[bench]]

@@ -4,7 +4,7 @@ use super::types::{poll_every, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::Element;
 
 use super::super::element_symbol::parse_structure_element_symbol;

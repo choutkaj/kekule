@@ -5,13 +5,13 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use crate::chemistry::perceive_molecule;
-use crate::geometry::{Point3, Vector3};
 use crate::io::is_metal;
+use crate::math::{Point3, Vector3};
 use crate::molecule::{
     AromaticityModel, AtomId, BondOrder, Element, Molecule, RingBasisModel, ValenceModel,
     ValenceValidation,
 };
-use crate::structure::AsModelView;
+use crate::structure::AsStructureView;
 use crate::topology::{InstanceAtomId, MoleculeDefinitionId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -89,8 +89,8 @@ pub(super) struct HalogenRecord {
 /// and the atoms that can coordinate them, and hydrophobic atoms.
 ///
 /// Features depend only on the topology, so a host perceives them once and
-/// reuses them for every structure sharing its layout: a model, each sample
-/// of an ensemble, and each frame of a trajectory. Each reusable definition
+/// reuses them for every structure view sharing its layout: a structure, each
+/// geometry of a structure set, and each frame of a trajectory. Each reusable definition
 /// is classified once and mapped onto its instances.
 ///
 /// Classification reads elements, formal charges, bonds, hydrogen counts,
@@ -450,9 +450,9 @@ impl<'a> AromaticRing<'a> {
     /// collinear or coincident, so it has no plane.
     pub fn center_and_normal(
         &self,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
     ) -> Result<(Quantity<Point3>, Vector3), InteractionError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         if !structure.topology().shares_layout(self.topology) {
             return Err(InteractionError::TopologyMismatch);
         }

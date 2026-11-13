@@ -1,6 +1,6 @@
 use crate::chemistry::*;
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
-use crate::geometry::Point3;
+use crate::math::Point3;
 use crate::molecule::*;
 use crate::perception::{
     aromaticity as aromaticity_api, aromaticity::*, rings as rings_api, rings::*,
@@ -8,7 +8,7 @@ use crate::perception::{
 };
 use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecordInterpretation};
 use crate::smiles::*;
-use crate::structure::{Model, Positions};
+use crate::structure::{Positions, Structure};
 use crate::{
     descriptors, molfile, perception as perception_api, sdf, smiles as smiles_api,
     stereo as stereo_api,
@@ -202,11 +202,11 @@ pub(super) fn read_molfile_with_report(
 ) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
 {
     let document = molfile::parse_str(input, Default::default())?;
-    let (model, mut reports, _) = document.interpret(Default::default())?.into_parts();
+    let (structure, mut reports, _) = document.interpret(Default::default())?.into_parts();
     if reports.len() != 1 {
         return Err(format!("expected one molfile component, found {}", reports.len()).into());
     }
-    let molecule = model
+    let molecule = structure
         .topology()
         .instances()
         .next()
@@ -315,9 +315,9 @@ impl SdfRecordTestExt for SdfRecordInterpretation {
     }
 }
 
-pub(super) fn test_model(molecule: &Molecule) -> Model {
+pub(super) fn test_structure(molecule: &Molecule) -> Structure {
     let positions = test_positions(vec![Point3::default(); molecule.atom_count()]);
-    Model::from_molecule(molecule.clone(), &positions).expect("test model builds")
+    Structure::from_molecule(molecule.clone(), &positions).expect("test structure builds")
 }
 
 pub(super) fn element_atom(symbol: &str) -> Atom {
@@ -659,7 +659,7 @@ mod mmcif_altloc;
 mod mmcif_contents;
 pub(crate) mod mmcif_syntax;
 mod native_reports;
-mod native_sample_sets;
+mod native_structure_sets;
 mod normalization;
 mod perception;
 mod query;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use kekule::geometry::{PeriodicCell, Point3, Vector3};
+use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
 };
-use kekule::structure::{Distribution, Members, Partition, Positions, Sample, SampleSet};
+use kekule::structure::{Distribution, Geometry, Members, Partition, Positions, StructureSet};
 use kekule::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
 
@@ -17,11 +17,11 @@ fn positions(points: [Point3; 3]) -> Positions {
 }
 
 /// One frame per row, with the three atoms on the x axis.
-fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> SampleSet {
-    SampleSet::from_samples(
+fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> StructureSet {
+    StructureSet::from_geometries(
         top.clone(),
         rows.iter()
-            .map(|row| Sample::new(positions(row.map(|x| Point3::new(x, 0.0, 0.0))))),
+            .map(|row| Geometry::new(positions(row.map(|x| Point3::new(x, 0.0, 0.0))))),
     )
     .unwrap()
 }
@@ -32,9 +32,10 @@ fn weighted(
     structures: impl IntoIterator<Item = Positions>,
     partition: Partition,
     weights: Vec<f64>,
-) -> SampleSet {
+) -> StructureSet {
     let mut set =
-        SampleSet::from_samples(top.clone(), structures.into_iter().map(Sample::new)).unwrap();
+        StructureSet::from_geometries(top.clone(), structures.into_iter().map(Geometry::new))
+            .unwrap();
     let distribution = Distribution::new(Members::All, partition)
         .unwrap()
         .with_weights(weights)
@@ -73,7 +74,8 @@ fn weighted_accumulators_match_hand_computation() {
     let top = linear_carbon_topology();
     let ids = top.atom_ids();
     let structures =
-        SampleSet::from_samples(top.clone(), weighted_structures().map(Sample::new)).unwrap();
+        StructureSet::from_geometries(top.clone(), weighted_structures().map(Geometry::new))
+            .unwrap();
     let pairs = [(ids[0], ids[1]), (ids[1], ids[2])];
     let mut rmsf = RmsfAccumulator::new(&AtomSelection::all(top.clone())).unwrap();
     let mut contacts =
@@ -149,11 +151,11 @@ fn distribution_statistics_use_sample_weights_not_states() {
     }
 
     assert!(matches!(
-        SampleSet::new(top.clone()).rmsf(&AtomSelection::all(top.clone())),
+        StructureSet::new(top.clone()).rmsf(&AtomSelection::all(top.clone())),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        SampleSet::new(top.clone()).contact_occupancy(pairs, Quantity::new(1.0, NANOMETER)),
+        StructureSet::new(top.clone()).contact_occupancy(pairs, Quantity::new(1.0, NANOMETER)),
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
@@ -205,7 +207,7 @@ fn equal_weights_reproduce_frame_counting() {
     let mut ensemble = t.clone();
     let distribution = Distribution::new(Members::All, Partition::state_per_sample(3)).unwrap();
     ensemble.set_distribution(Some(distribution)).unwrap();
-    for (sample, frame) in ensemble
+    for (geometry, frame) in ensemble
         .rmsf(&all)
         .unwrap()
         .values()
@@ -213,15 +215,15 @@ fn equal_weights_reproduce_frame_counting() {
         .iter()
         .zip(rmsf.values().value())
     {
-        close(*sample, *frame);
+        close(*geometry, *frame);
     }
-    for ((_, sample), (_, frame)) in ensemble
+    for ((_, geometry), (_, frame)) in ensemble
         .contact_occupancy(pairs, cutoff)
         .unwrap()
         .contacts()
         .zip(contacts.contacts())
     {
-        close(sample, frame);
+        close(geometry, frame);
     }
 }
 
@@ -410,7 +412,7 @@ fn statistics_reject_empty_or_ambiguous_inputs_and_handle_single_observations() 
         ContactOccupancyAccumulator::new(&top, [(ids[0], ids[1])], Quantity::new(1.0, PICOSECOND)),
         Err(StatisticsError::Unit(_))
     ));
-    let none = SampleSet::new(top.clone());
+    let none = StructureSet::new(top.clone());
     assert!(matches!(
         none.rmsf(&all),
         Err(StatisticsError::NoObservations)
@@ -510,11 +512,11 @@ fn brute_group_contact(
     })
 }
 
-fn frames_trajectory(top: &Arc<Topology>, frames: &[Vec<Point3>]) -> SampleSet {
-    SampleSet::from_samples(
+fn frames_trajectory(top: &Arc<Topology>, frames: &[Vec<Point3>]) -> StructureSet {
+    StructureSet::from_geometries(
         top.clone(),
         frames.iter().map(|points| {
-            Sample::new(Positions::new(Quantity::new(points.clone(), NANOMETER)).unwrap())
+            Geometry::new(Positions::new(Quantity::new(points.clone(), NANOMETER)).unwrap())
         }),
     )
     .unwrap()
@@ -715,7 +717,7 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
         Err(StatisticsError::NoObservations)
     ));
     assert!(matches!(
-        SampleSet::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff),
+        StructureSet::new(top.clone()).group_contact_occupancy(groups(), [(0, 1)], cutoff),
         Err(StatisticsError::NoObservations)
     ));
 

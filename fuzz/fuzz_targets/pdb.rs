@@ -23,28 +23,28 @@ fuzz_target!(|data: &[u8]| {
 
     let options = StructureInterpretOptions::default().with_model_selection(ModelSelection::First);
     if let Ok(interpreted) = document.interpret(options.clone()) {
-        for atom in interpreted.model().topology().atom_ids() {
-            let _ = interpreted.model().topology().atom(*atom);
-            let _ = interpreted.model().position(*atom);
+        for atom in interpreted.structure().topology().atom_ids() {
+            let _ = interpreted.structure().topology().atom(*atom);
+            let _ = interpreted.structure().position(*atom);
         }
         // Whatever the writer accepts reads back with the same atoms.
         if let Ok(written) =
-            kekule::pdb::write(interpreted.model(), Default::default()).map(|(text, _)| text)
+            kekule::pdb::write(interpreted.structure(), Default::default()).map(|(text, _)| text)
         {
             let reread = parse_str(&written, PdbParseOptions::default())
                 .and_then(|document| document.interpret(options))
                 .expect("written PDB reads back");
             assert_eq!(
-                reread.model().topology().atom_count(),
-                interpreted.model().topology().atom_count()
+                reread.structure().topology().atom_count(),
+                interpreted.structure().topology().atom_count()
             );
         }
     }
-    if let Ok(interpreted) = document.interpret_sample_set(Default::default()) {
+    if let Ok(interpreted) = document.interpret_structure_set(Default::default()) {
         for view in interpreted
-            .sample_set()
+            .structure_set()
             .iter()
-            .map(|sample| sample.as_model_view())
+            .map(|geometry| geometry.as_structure_view())
         {
             for atom in view.topology().atom_ids() {
                 let _ = view.topology().atom(*atom);

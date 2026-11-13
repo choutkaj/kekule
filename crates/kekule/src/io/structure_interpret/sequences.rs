@@ -79,10 +79,10 @@ pub enum SequenceSource {
 }
 
 /// One polymer entity of an mmCIF block: its monomers, its canonical
-/// one-letter sequence, and its instances in the interpreted model.
+/// one-letter sequence, and its instances in the interpreted structure.
 ///
 /// Monomers come from `_entity_poly_seq`, which lists the whole polymer,
-/// residues the model does not observe included. Without it, they are the
+/// residues the structure does not observe included. Without it, they are the
 /// residues the atom sites place on the entity, by `label_seq_id`. The
 /// canonical sequence is `_entity_poly.pdbx_seq_one_letter_code_can` without
 /// its line breaks, or else the monomers' codes joined.
@@ -191,8 +191,8 @@ impl PolymerEntityInstance {
         self.author_chain_id.as_deref()
     }
 
-    /// The model's chain of this instance; `None` when the model has no atoms
-    /// of it.
+    /// The structure's chain of this instance; `None` when the structure has no
+    /// atoms of it.
     pub const fn chain(&self) -> Option<ChainId> {
         self.chain
     }
@@ -204,7 +204,7 @@ impl PolymerEntityInstance {
     }
 }
 
-/// One monomer of one entity instance: the model's residue there and its
+/// One monomer of one entity instance: the structure's residue there and its
 /// author numbering.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SequencePosition {
@@ -214,8 +214,8 @@ pub struct SequencePosition {
 }
 
 impl SequencePosition {
-    /// The model's residue at this position; `None` where the model does not
-    /// observe the monomer.
+    /// The structure's residue at this position; `None` where the structure
+    /// does not observe the monomer.
     pub const fn residue(&self) -> Option<ResidueId> {
         self.residue
     }
@@ -234,8 +234,8 @@ impl SequencePosition {
 }
 
 /// The polymer entities a block states, with every instance's positions but
-/// without the model's chains and residues, which [`place_polymer_entities`]
-/// adds.
+/// without the structure's chains and residues, which
+/// [`place_polymer_entities`] adds.
 pub(super) fn read_polymer_entities(
     block: &MmcifBlock,
     rows: &[AtomRow],
@@ -621,7 +621,7 @@ fn required_i32(table: &MmcifCategory<'_>, row: usize, field: Field) -> Result<i
     })
 }
 
-/// Adds the model's chains and residues to the entities' instances.
+/// Adds the structure's chains and residues to the entities' instances.
 pub(super) fn place_polymer_entities(
     entities: &[PolymerEntity],
     topology: &Topology,

@@ -20,35 +20,35 @@ fn topology() -> Arc<Topology> {
 }
 
 #[test]
-fn samples_and_buffers_reject_mismatched_annotation_rows() {
+fn geometries_and_buffers_reject_mismatched_annotation_rows() {
     use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-    use kekule::structure::{Positions, Sample};
+    use kekule::structure::{Geometry, Positions};
     use kekule::traj::{FrameBuffer, FrameData, FrameView};
 
     let topology = topology();
     let key = PropertyKey::new("tag").unwrap();
     let positions = Positions::zeros(1);
     // Annotations of a larger structure do not fit this topology's rows.
-    let mut larger = Sample::new(Positions::zeros(2));
+    let mut larger = Geometry::new(Positions::zeros(2));
     larger
         .properties_mut()
         .atoms_mut()
         .insert(key.clone(), PropertyColumn::Int(vec![Some(7), Some(8)]))
         .unwrap();
     let foreign = larger.properties().clone();
-    let mut frame = Sample::new(positions.clone());
+    let mut frame = Geometry::new(positions.clone());
     let original = frame.properties().clone();
     assert!(frame.set_properties(foreign.clone()).is_err());
     assert_eq!(frame.properties(), &original);
     let mut buffer = FrameBuffer::new(topology);
-    assert!(buffer.sample_mut().set_properties(foreign).is_err());
+    assert!(buffer.geometry_mut().set_properties(foreign).is_err());
     let ethane = support::time_ordered(
         kekule::smiles::to_topology("CC").unwrap(),
-        [support::Frame::of_sample(larger)],
+        [support::Frame::of_geometry(larger)],
     );
     assert!(buffer
         .replace_from_data(FrameData::from_frame_view(
-            FrameView::from_sample(ethane.get(0).unwrap()).unwrap()
+            FrameView::from_geometry(ethane.get(0).unwrap()).unwrap()
         ))
         .is_err());
     assert_eq!(buffer.properties(), &original);

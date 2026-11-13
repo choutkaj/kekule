@@ -1,4 +1,4 @@
-//! Import one complete topology into an already staged model edit.
+//! Import one complete topology into an already staged structure edit.
 use super::*;
 
 /// The label and author identifiers an appended chain takes from its own.
@@ -15,10 +15,10 @@ pub(crate) struct AppendMapping {
 }
 
 impl TopologyEditor {
-    /// The coordinating model operation owns rollback. Source identity is local
-    /// to this import, separate from the editor's original source correspondence.
-    /// `chain_ids` gives each source chain's label and author identifiers in
-    /// the draft from its own.
+    /// The coordinating structure operation owns rollback. Source identity is
+    /// local to this import, separate from the editor's original source
+    /// correspondence. `chain_ids` gives each source chain's label and author
+    /// identifiers in the draft from its own.
     pub(crate) fn append_topology(
         &mut self,
         source: Arc<Topology>,

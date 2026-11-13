@@ -4,7 +4,7 @@
 //! type: definition-invariant annotations are [`MoleculeProperties`] of a
 //! [`crate::molecule::Molecule`], system annotations are [`TopologyProperties`] of a
 //! [`crate::topology::Topology`], and coordinate-dependent annotations are
-//! [`StructureProperties`] of a [`crate::structure::Model`], sample,
+//! [`GeometryProperties`] of a [`crate::structure::Structure`], geometry,
 //! or trajectory frame. Each scope holds [`OwnerProperties`] plus one
 //! [`PropertyTable`] per entity domain, addressed by that domain's identifier
 //! ([`PropertyRow`]).
@@ -1491,13 +1491,13 @@ impl<'a> TopologyPropertiesMut<'a> {
 /// A detached structure payload has atom rows only; bond rows are allocated
 /// when the payload is bound to a topology.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct StructureProperties {
+pub struct GeometryProperties {
     owner: OwnerProperties,
     atoms: PropertyTable<TopologyAtomIndex>,
     bonds: PropertyTable<TopologyBondIndex>,
 }
 
-impl StructureProperties {
+impl GeometryProperties {
     pub(crate) fn new(atoms: usize) -> Self {
         Self {
             owner: OwnerProperties::new(),
@@ -1586,22 +1586,22 @@ impl StructureProperties {
     }
 }
 
-/// Length-preserving mutable access to [`StructureProperties`].
+/// Length-preserving mutable access to [`GeometryProperties`].
 #[derive(Debug)]
-pub struct StructurePropertiesMut<'a> {
-    properties: &'a mut StructureProperties,
+pub struct GeometryPropertiesMut<'a> {
+    properties: &'a mut GeometryProperties,
 }
 
-impl std::ops::Deref for StructurePropertiesMut<'_> {
-    type Target = StructureProperties;
+impl std::ops::Deref for GeometryPropertiesMut<'_> {
+    type Target = GeometryProperties;
 
     fn deref(&self) -> &Self::Target {
         self.properties
     }
 }
 
-impl<'a> StructurePropertiesMut<'a> {
-    pub(crate) fn new(properties: &'a mut StructureProperties) -> Self {
+impl<'a> GeometryPropertiesMut<'a> {
+    pub(crate) fn new(properties: &'a mut GeometryProperties) -> Self {
         Self { properties }
     }
 
@@ -1696,10 +1696,10 @@ pub enum PropertyDomain {
     Residues,
     /// Hierarchy atom sites.
     AtomSites,
-    /// Atoms of a model's structure.
-    ModelAtoms,
-    /// Bonds of a model's structure.
-    ModelBonds,
+    /// Atoms of a geometry.
+    GeometryAtoms,
+    /// Bonds of a geometry.
+    GeometryBonds,
 }
 
 impl fmt::Display for PropertyDomain {
@@ -1711,8 +1711,8 @@ impl fmt::Display for PropertyDomain {
             Self::Chains => "chain",
             Self::Residues => "residue",
             Self::AtomSites => "atom site",
-            Self::ModelAtoms => "model atom",
-            Self::ModelBonds => "model bond",
+            Self::GeometryAtoms => "geometry atom",
+            Self::GeometryBonds => "geometry bond",
         })
     }
 }
@@ -1820,7 +1820,7 @@ mod tests {
     #[test]
     fn detached_structure_bond_rows_bind_once_and_then_must_match() {
         let score = key("score");
-        let mut properties = StructureProperties::new(3);
+        let mut properties = GeometryProperties::new(3);
         properties
             .owner_mut()
             .insert(score.clone(), PropertyValue::Int(9))
@@ -1829,7 +1829,7 @@ mod tests {
         assert!(properties.bonds().is_empty());
         assert!(properties.validate_bond_rows(2).is_ok());
         properties.bind_bond_rows(2);
-        StructurePropertiesMut::new(&mut properties)
+        GeometryPropertiesMut::new(&mut properties)
             .bonds_mut()
             .set_value(
                 score.clone(),

@@ -10,7 +10,7 @@
 use std::{error::Error, fs};
 
 use kekule::structure::{Order, Place};
-use kekule::traj::io::{read_sample_set, write_sample_set};
+use kekule::traj::io::{read_structure_set, write_structure_set};
 use kekule::traj::periodic;
 use kekule::{
     mmcif,
@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let document = mmcif::parse_str(&fs::read_to_string(topology_path)?, Default::default())?;
     let topology = document.interpret(Default::default())?.into_topology();
-    let mut trajectory = read_sample_set(trajectory_path, topology.clone(), Default::default())?;
+    let mut trajectory = read_structure_set(trajectory_path, topology.clone(), Default::default())?;
 
     println!("Frames: {}", trajectory.len());
     println!("Atoms: {}", topology.atom_count());
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("Frame {index}: time_ps={time_ps:?}, step={step:?}, fitted RMSD={rmsd:.3} A");
     }
     if let Some(path) = output {
-        write_sample_set(path, &trajectory, Default::default())?;
+        write_structure_set(path, &trajectory, Default::default())?;
     }
     Ok(())
 }

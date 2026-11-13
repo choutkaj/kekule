@@ -1,21 +1,21 @@
 use super::*;
 use crate::{
-    geometry::{Matrix3, PeriodicCell},
+    math::{Matrix3, PeriodicCell},
     properties::{PropertyKey, PropertyValue},
     smiles,
     structure::Positions,
     units::{ANGSTROM, DEGREE, NANOMETER, PICOSECOND, RADIAN},
 };
 
-fn fixture(smiles: &str, points: &[Point3]) -> Model {
-    Model::new(
+fn fixture(smiles: &str, points: &[Point3]) -> Structure {
+    Structure::new(
         smiles::to_topology(smiles).unwrap(),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
     .unwrap()
 }
 
-fn chain() -> Model {
+fn chain() -> Structure {
     fixture(
         "CCCC",
         &[
@@ -27,11 +27,11 @@ fn chain() -> Model {
     )
 }
 
-fn ids(model: &Model) -> [InstanceAtomId; 4] {
-    model.topology().atom_ids().try_into().unwrap()
+fn ids(structure: &Structure) -> [InstanceAtomId; 4] {
+    structure.topology().atom_ids().try_into().unwrap()
 }
-fn point(model: &Model, atom: InstanceAtomId) -> Point3 {
-    model.position(atom).unwrap().into_value()
+fn point(structure: &Structure, atom: InstanceAtomId) -> Point3 {
+    structure.position(atom).unwrap().into_value()
 }
 fn close(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-10, "{a} != {b}");
@@ -42,7 +42,7 @@ fn close_point(a: Point3, b: Point3) {
 
 #[test]
 fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
-    let mut model = fixture(
+    let mut structure = fixture(
         "CC(C)C.O",
         &[
             Point3::origin(),
@@ -52,19 +52,19 @@ fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
             Point3::new(3.0, 4.0, 5.0),
         ],
     );
-    let atoms = model.topology().atom_ids().to_vec();
-    let baseline = model.clone();
-    let edit = DistanceEdit::new(model.shared_topology(), [atoms[0], atoms[1]]).unwrap();
+    let atoms = structure.topology().atom_ids().to_vec();
+    let baseline = structure.clone();
+    let edit = DistanceEdit::new(structure.shared_topology(), [atoms[0], atoms[1]]).unwrap();
     assert_eq!(
         edit.moving_atoms().atom_ids().collect::<Vec<_>>(),
         atoms[1..4]
     );
     assert_eq!(edit.atoms(), [atoms[0], atoms[1]]);
-    model
+    structure
         .set_distance(atoms[0], atoms[1], Quantity::new(15.0, ANGSTROM))
         .unwrap();
     close(
-        edit.measure(model.as_model_view())
+        edit.measure(structure.as_structure_view())
             .unwrap()
             .value_in(NANOMETER)
             .unwrap(),
@@ -72,15 +72,15 @@ fn distance_moves_entire_branched_fragment_and_preserves_other_instances() {
     );
     for &atom in &atoms[1..4] {
         close_point(
-            point(&model, atom),
+            point(&structure, atom),
             point(&baseline, atom) + Vector3::new(0.5, 0.0, 0.0),
         );
     }
     for &atom in &[atoms[0], atoms[4]] {
-        assert_eq!(point(&model, atom), point(&baseline, atom));
+        assert_eq!(point(&structure, atom), point(&baseline, atom));
     }
     assert!(Arc::ptr_eq(
-        &model.shared_topology(),
+        &structure.shared_topology(),
         &baseline.shared_topology()
     ));
 }
@@ -92,24 +92,24 @@ fn angle_moves_fragment_rigidly_and_reversal_moves_opposite_side() {
     let edit = AngleEdit::new(baseline.shared_topology(), [a, b, c]).unwrap();
     assert_eq!(edit.atoms(), [a, b, c]);
     for target in [0.0, 35.0, 120.0, 180.0] {
-        let mut model = baseline.clone();
-        model
+        let mut structure = baseline.clone();
+        structure
             .set_angle(a, b, c, Quantity::new(target, DEGREE))
             .unwrap();
         close(
-            edit.measure(model.as_model_view())
+            edit.measure(structure.as_structure_view())
                 .unwrap()
                 .value_in(DEGREE)
                 .unwrap(),
             target,
         );
-        assert_eq!(point(&model, a), point(&baseline, a));
-        assert_eq!(point(&model, b), point(&baseline, b));
+        assert_eq!(point(&structure, a), point(&baseline, a));
+        assert_eq!(point(&structure, b), point(&baseline, b));
         close(
-            (point(&model, d) - point(&model, c)).norm(),
+            (point(&structure, d) - point(&structure, c)).norm(),
             (point(&baseline, d) - point(&baseline, c)).norm(),
         );
-        close((point(&model, c) - point(&model, b)).norm(), 1.0);
+        close((point(&structure, c) - point(&structure, b)).norm(), 1.0);
     }
     let mut reversed = baseline.clone();
     reversed
@@ -122,13 +122,13 @@ fn angle_moves_fragment_rigidly_and_reversal_moves_opposite_side() {
 
 #[test]
 fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
-    let mut model = chain();
-    let baseline = model.clone();
-    let [a, b, c, d] = ids(&model);
-    let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d]).unwrap();
+    let mut structure = chain();
+    let baseline = structure.clone();
+    let [a, b, c, d] = ids(&structure);
+    let edit = DihedralEdit::new(structure.shared_topology(), [a, b, c, d]).unwrap();
     assert_eq!(edit.atoms(), [a, b, c, d]);
     close(
-        edit.measure(model.as_model_view())
+        edit.measure(structure.as_structure_view())
             .unwrap()
             .value_in(DEGREE)
             .unwrap(),
@@ -137,10 +137,10 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
     for target in [
         -180.0, -179.0, -90.0, 0.0, 120.0, 179.0, 180.0, 540.0, -720.0,
     ] {
-        edit.apply(&mut model, Quantity::new(target, DEGREE))
+        edit.apply(&mut structure, Quantity::new(target, DEGREE))
             .unwrap();
         let actual = measure::dihedral(
-            model.as_model_view(),
+            structure.as_structure_view(),
             a,
             b,
             c,
@@ -151,20 +151,24 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
         .into_value();
         close(signed_angle(actual - target.to_radians()), 0.0);
         for atom in [a, b, c] {
-            assert_eq!(point(&model, atom), point(&baseline, atom));
+            assert_eq!(point(&structure, atom), point(&baseline, atom));
         }
-        close((point(&model, d) - point(&model, c)).norm(), 2.0_f64.sqrt());
-        let once = model.clone();
-        edit.apply(&mut model, Quantity::new(target, DEGREE))
+        close(
+            (point(&structure, d) - point(&structure, c)).norm(),
+            2.0_f64.sqrt(),
+        );
+        let once = structure.clone();
+        edit.apply(&mut structure, Quantity::new(target, DEGREE))
             .unwrap();
-        close_point(point(&model, d), point(&once, d));
+        close_point(point(&structure, d), point(&once, d));
     }
     // A changed reference plane must be read at application time.
-    model
+    structure
         .set_position(a, Quantity::new(Point3::new(0.0, 0.0, 1.0), NANOMETER))
         .unwrap();
-    edit.apply(&mut model, Quantity::new(0.0, RADIAN)).unwrap();
-    close_point(point(&model, d), Point3::new(1.0, 0.0, 2.0_f64.sqrt()));
+    edit.apply(&mut structure, Quantity::new(0.0, RADIAN))
+        .unwrap();
+    close_point(point(&structure, d), Point3::new(1.0, 0.0, 2.0_f64.sqrt()));
     let mut independent = baseline.clone();
     independent
         .set_dihedral(a, b, c, d, Quantity::new(90.0, DEGREE))
@@ -180,7 +184,7 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
         .unwrap();
     close(
         measure::dihedral(
-            reversed.as_model_view(),
+            reversed.as_structure_view(),
             a,
             b,
             c,
@@ -199,15 +203,18 @@ fn dihedral_scan_uses_current_coordinates_and_matches_measurement_sign() {
 fn half_turn_ties_and_large_finite_targets_wrap_without_overflow() {
     assert_eq!(signed_angle(-PI), PI);
     assert_eq!(signed_angle(PI), PI);
-    let mut model = chain();
-    let [a, b, c, d] = ids(&model);
-    let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d]).unwrap();
+    let mut structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    let edit = DihedralEdit::new(structure.shared_topology(), [a, b, c, d]).unwrap();
     for target in [PI, -PI, f64::MAX, -f64::MAX] {
-        edit.apply(&mut model, Quantity::new(target, RADIAN))
+        edit.apply(&mut structure, Quantity::new(target, RADIAN))
             .unwrap();
         close(
             signed_angle(
-                edit.measure(model.as_model_view()).unwrap().into_value() - signed_angle(target),
+                edit.measure(structure.as_structure_view())
+                    .unwrap()
+                    .into_value()
+                    - signed_angle(target),
             ),
             0.0,
         );
@@ -248,7 +255,7 @@ fn rings_reject_automatic_edits_but_explicit_edits_can_deform_them() {
     }
     close((point(&ring, d) - point(&ring, a)).norm(), 3.0_f64.sqrt());
     close(
-        edit.measure(ring.as_model_view())
+        edit.measure(ring.as_structure_view())
             .unwrap()
             .value_in(DEGREE)
             .unwrap(),
@@ -258,7 +265,7 @@ fn rings_reject_automatic_edits_but_explicit_edits_can_deform_them() {
 
 #[test]
 fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
-    let mut model = fixture(
+    let mut structure = fixture(
         "C.C.C.C",
         &[
             Point3::new(0.0, 1.0, 0.0),
@@ -267,20 +274,20 @@ fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
             Point3::new(3.0, 4.0, 5.0),
         ],
     );
-    let [a, b, c, d] = ids(&model);
-    let topology = model.shared_topology();
+    let [a, b, c, d] = ids(&structure);
+    let topology = structure.shared_topology();
     let moving = AtomSelection::from_atoms(topology.clone(), [b, c]).unwrap();
-    let baseline = model.clone();
+    let baseline = structure.clone();
     let angle = AngleEdit::with_moving_atoms(topology.clone(), [a, b, c], &moving).unwrap();
     angle
-        .apply(&mut model, Quantity::new(45.0, DEGREE))
+        .apply(&mut structure, Quantity::new(45.0, DEGREE))
         .unwrap();
     for atom in [a, b, d] {
-        assert_eq!(point(&model, atom), point(&baseline, atom));
+        assert_eq!(point(&structure, atom), point(&baseline, atom));
     }
     close(
         angle
-            .measure(model.as_model_view())
+            .measure(structure.as_structure_view())
             .unwrap()
             .value_in(DEGREE)
             .unwrap(),
@@ -288,24 +295,24 @@ fn explicit_distance_and_angle_allow_disconnected_atoms_and_keep_pivots() {
     );
     let distance = DistanceEdit::with_moving_atoms(topology.clone(), [a, c], &moving).unwrap();
     distance
-        .apply(&mut model, Quantity::new(2.0, NANOMETER))
+        .apply(&mut structure, Quantity::new(2.0, NANOMETER))
         .unwrap();
     close(
         distance
-            .measure(model.as_model_view())
+            .measure(structure.as_structure_view())
             .unwrap()
             .into_value(),
         2.0,
     );
-    assert_ne!(point(&model, b), point(&baseline, b));
-    assert_eq!(point(&model, d), point(&baseline, d));
+    assert_ne!(point(&structure, b), point(&baseline, b));
+    assert_eq!(point(&structure, d), point(&baseline, d));
 }
 
 #[test]
 fn preparation_validates_references_connectivity_and_selections() {
-    let model = chain();
-    let [a, b, c, d] = ids(&model);
-    let topology = model.shared_topology();
+    let structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    let topology = structure.shared_topology();
     assert_eq!(
         DistanceEdit::new(topology.clone(), [a, a]).unwrap_err(),
         GeometryEditError::RepeatedAtom(a)
@@ -338,19 +345,19 @@ fn preparation_validates_references_connectivity_and_selections() {
         GeometryEditError::TopologyMismatch
     );
     // Consecutive bonds need not be single or chemically rotatable.
-    let unsaturated = fixture("C=CC#N", model.positions().values().value());
+    let unsaturated = fixture("C=CC#N", structure.positions().values().value());
     assert!(DihedralEdit::new(unsaturated.shared_topology(), ids(&unsaturated)).is_ok());
 }
 
 #[test]
 fn prepared_edits_reject_independently_equal_topologies_atomically() {
-    let model = chain();
-    let [a, b, c, d] = ids(&model);
-    let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d]).unwrap();
+    let structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    let edit = DihedralEdit::new(structure.shared_topology(), [a, b, c, d]).unwrap();
     let mut other = chain();
     let baseline = other.clone();
     assert_eq!(
-        edit.measure(other.as_model_view()),
+        edit.measure(other.as_structure_view()),
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(
@@ -358,117 +365,119 @@ fn prepared_edits_reject_independently_equal_topologies_atomically() {
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(other, baseline);
-    let mut clone = model.clone();
+    let mut clone = structure.clone();
     edit.apply(&mut clone, Quantity::new(30.0, DEGREE)).unwrap();
 }
 
 #[test]
-fn invalid_targets_and_units_leave_model_unchanged() {
-    let mut model = chain();
-    let [a, b, c, d] = ids(&model);
-    let baseline = model.clone();
+fn invalid_targets_and_units_leave_structure_unchanged() {
+    let mut structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    let baseline = structure.clone();
     for target in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            model.set_distance(a, b, Quantity::new(target, NANOMETER)),
+            structure.set_distance(a, b, Quantity::new(target, NANOMETER)),
             Err(GeometryEditError::InvalidTarget)
         );
-        assert_eq!(model, baseline);
+        assert_eq!(structure, baseline);
     }
     for target in [-1.0, 181.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
-            model.set_angle(a, b, c, Quantity::new(target, DEGREE)),
+            structure.set_angle(a, b, c, Quantity::new(target, DEGREE)),
             Err(GeometryEditError::InvalidTarget)
         );
-        assert_eq!(model, baseline);
+        assert_eq!(structure, baseline);
     }
     assert_eq!(
-        model.set_dihedral(a, b, c, d, Quantity::new(f64::NAN, DEGREE)),
+        structure.set_dihedral(a, b, c, d, Quantity::new(f64::NAN, DEGREE)),
         Err(GeometryEditError::InvalidTarget)
     );
     assert!(matches!(
-        model.set_angle(a, b, c, Quantity::new(1.0, NANOMETER)),
+        structure.set_angle(a, b, c, Quantity::new(1.0, NANOMETER)),
         Err(GeometryEditError::Unit(_))
     ));
     assert!(matches!(
-        model.set_distance(a, b, Quantity::new(1.0, PICOSECOND)),
+        structure.set_distance(a, b, Quantity::new(1.0, PICOSECOND)),
         Err(GeometryEditError::Unit(_))
     ));
-    assert_eq!(model, baseline);
+    assert_eq!(structure, baseline);
 }
 
 #[test]
 fn degenerate_geometry_is_rejected_without_inventing_axes() {
-    let mut model = chain();
-    let [a, b, c, d] = ids(&model);
-    model
+    let mut structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    structure
         .set_position(a, Quantity::new(Point3::new(-1.0, 0.0, 0.0), NANOMETER))
         .unwrap();
-    let straight = model.clone();
-    model
+    let straight = structure.clone();
+    structure
         .set_angle(a, b, c, Quantity::new(180.0, DEGREE))
         .unwrap();
-    assert_eq!(model, straight);
+    assert_eq!(structure, straight);
     assert_eq!(
-        model.set_angle(a, b, c, Quantity::new(90.0, DEGREE)),
+        structure.set_angle(a, b, c, Quantity::new(90.0, DEGREE)),
         Err(GeometryEditError::DegenerateGeometry)
     );
     assert_eq!(
-        model.set_dihedral(a, b, c, d, Quantity::new(0.0, RADIAN)),
+        structure.set_dihedral(a, b, c, d, Quantity::new(0.0, RADIAN)),
         Err(GeometryEditError::DegenerateGeometry)
     );
-    assert_eq!(model, straight);
-    model.set_position(a, model.position(b).unwrap()).unwrap();
-    let coincident = model.clone();
+    assert_eq!(structure, straight);
+    structure
+        .set_position(a, structure.position(b).unwrap())
+        .unwrap();
+    let coincident = structure.clone();
     assert_eq!(
-        model.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
+        structure.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
         Err(GeometryEditError::DegenerateGeometry)
     );
     assert_eq!(
-        model.set_angle(a, b, c, Quantity::new(90.0, DEGREE)),
+        structure.set_angle(a, b, c, Quantity::new(90.0, DEGREE)),
         Err(GeometryEditError::DegenerateGeometry)
     );
-    assert_eq!(model, coincident);
+    assert_eq!(structure, coincident);
 }
 
 #[test]
 fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
-    let mut model = chain();
-    let [a, b, c, d] = ids(&model);
-    model
+    let mut structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    structure
         .set_position(d, Quantity::new(Point3::new(f64::MAX, 0.0, 0.0), NANOMETER))
         .unwrap();
-    let baseline = model.clone();
+    let baseline = structure.clone();
     assert_eq!(
-        model.set_distance(b, c, Quantity::new(f64::MAX, NANOMETER)),
+        structure.set_distance(b, c, Quantity::new(f64::MAX, NANOMETER)),
         Err(GeometryEditError::NumericalFailure)
     );
-    assert_eq!(model, baseline);
-    let all = AtomSelection::all(model.shared_topology());
+    assert_eq!(structure, baseline);
+    let all = AtomSelection::all(structure.shared_topology());
     assert_eq!(
-        model.translate(
+        structure.translate(
             &all,
             Quantity::new(Vector3::new(f64::MAX, 0.0, 0.0), NANOMETER)
         ),
         Err(GeometryEditError::NumericalFailure)
     );
-    assert_eq!(model, baseline);
+    assert_eq!(structure, baseline);
     let transform =
         RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(f64::MAX, 0.0, 0.0))
             .unwrap();
     assert_eq!(
-        model.transform_atoms(&all, &transform),
+        structure.transform_atoms(&all, &transform),
         Err(GeometryEditError::NumericalFailure)
     );
-    assert_eq!(model, baseline);
-    model
+    assert_eq!(structure, baseline);
+    structure
         .set_position(
             a,
             Quantity::new(Point3::new(-f64::MAX, 0.0, 0.0), NANOMETER),
         )
         .unwrap();
-    let baseline = model.clone();
+    let baseline = structure.clone();
     assert_eq!(
-        model.rotate(
+        structure.rotate(
             &all,
             Quantity::new(Point3::new(f64::MAX, 0.0, 0.0), NANOMETER),
             Vector3::new(0.0, 0.0, 1.0),
@@ -476,41 +485,41 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
         ),
         Err(GeometryEditError::NumericalFailure)
     );
-    assert_eq!(model, baseline);
+    assert_eq!(structure, baseline);
 }
 
 #[test]
 fn finite_but_unachievable_distance_returns_numerical_failure() {
-    let mut model = fixture(
+    let mut structure = fixture(
         "CC",
         &[
             Point3::new(1.0e20, 0.0, 0.0),
             Point3::new(1.0e20 + 1.0e6, 0.0, 0.0),
         ],
     );
-    let [a, b] = model.topology().atom_ids().try_into().unwrap();
-    let baseline = model.clone();
+    let [a, b] = structure.topology().atom_ids().try_into().unwrap();
+    let baseline = structure.clone();
     assert_eq!(
-        model.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
+        structure.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
         Err(GeometryEditError::NumericalFailure)
     );
-    assert_eq!(model, baseline);
+    assert_eq!(structure, baseline);
 }
 
 #[test]
 fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
-    let mut model = chain();
-    let [a, b, c, d] = ids(&model);
-    let baseline = model.clone();
-    let selected = AtomSelection::from_atoms(model.shared_topology(), [c, d]).unwrap();
-    model
+    let mut structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    let baseline = structure.clone();
+    let selected = AtomSelection::from_atoms(structure.shared_topology(), [c, d]).unwrap();
+    structure
         .translate(
             &selected,
             Quantity::new(Vector3::new(10.0, 20.0, 30.0), ANGSTROM),
         )
         .unwrap();
-    close_point(point(&model, c), Point3::new(2.0, 2.0, 3.0));
-    model
+    close_point(point(&structure, c), Point3::new(2.0, 2.0, 3.0));
+    structure
         .rotate(
             &selected,
             Quantity::new(Point3::new(10.0, 20.0, 30.0), ANGSTROM),
@@ -518,19 +527,19 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
             Quantity::new(90.0, DEGREE),
         )
         .unwrap();
-    close_point(point(&model, c), Point3::new(1.0, 3.0, 3.0));
-    close_point(point(&model, d), Point3::new(0.0, 3.0, 4.0));
+    close_point(point(&structure, c), Point3::new(1.0, 3.0, 3.0));
+    close_point(point(&structure, d), Point3::new(0.0, 3.0, 4.0));
     for atom in [a, b] {
-        assert_eq!(point(&model, atom), point(&baseline, atom));
+        assert_eq!(point(&structure, atom), point(&baseline, atom));
     }
     let transform =
         RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(1.0, 0.0, 0.0)).unwrap();
-    model.transform_atoms(&selected, &transform).unwrap();
-    close_point(point(&model, c), Point3::new(2.0, 3.0, 3.0));
+    structure.transform_atoms(&selected, &transform).unwrap();
+    close_point(point(&structure, c), Point3::new(2.0, 3.0, 3.0));
     // Both huge and subnormal finite axes are accepted.
     for scale in [f64::MAX, f64::from_bits(1)] {
-        let mut sample = baseline.clone();
-        sample
+        let mut rotated = baseline.clone();
+        rotated
             .rotate(
                 &selected,
                 Quantity::new(Point3::origin(), NANOMETER),
@@ -538,55 +547,55 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
                 Quantity::new(90.0, DEGREE),
             )
             .unwrap();
-        close_point(point(&sample, c), Point3::new(0.0, 1.0, 0.0));
+        close_point(point(&rotated, c), Point3::new(0.0, 1.0, 0.0));
     }
 }
 
 #[test]
 fn empty_selections_still_validate_binding_and_motion_arguments() {
-    let mut model = chain();
-    let baseline = model.clone();
-    let empty = AtomSelection::empty(model.shared_topology());
+    let mut structure = chain();
+    let baseline = structure.clone();
+    let empty = AtomSelection::empty(structure.shared_topology());
     let zero = Quantity::new(Point3::origin(), NANOMETER);
     let axis = Vector3::new(0.0, 0.0, 1.0);
-    model
+    structure
         .translate(
             &empty,
             Quantity::new(Vector3::new(1.0, 0.0, 0.0), NANOMETER),
         )
         .unwrap();
-    model
+    structure
         .rotate(&empty, zero, axis, Quantity::new(90.0, DEGREE))
         .unwrap();
-    model
+    structure
         .transform_atoms(&empty, &RigidTransform::identity())
         .unwrap();
-    assert_eq!(model, baseline);
+    assert_eq!(structure, baseline);
     assert_eq!(
-        model.rotate(&empty, zero, Vector3::zero(), Quantity::new(0.0, DEGREE)),
+        structure.rotate(&empty, zero, Vector3::zero(), Quantity::new(0.0, DEGREE)),
         Err(GeometryEditError::DegenerateGeometry)
     );
     assert_eq!(
-        model.rotate(&empty, zero, axis, Quantity::new(f64::NAN, DEGREE)),
+        structure.rotate(&empty, zero, axis, Quantity::new(f64::NAN, DEGREE)),
         Err(GeometryEditError::InvalidTarget)
     );
     assert!(matches!(
-        model.rotate(&empty, zero, axis, Quantity::new(1.0, NANOMETER)),
+        structure.rotate(&empty, zero, axis, Quantity::new(1.0, NANOMETER)),
         Err(GeometryEditError::Unit(_))
     ));
     assert!(matches!(
-        model.translate(&empty, Quantity::new(Vector3::zero(), PICOSECOND)),
+        structure.translate(&empty, Quantity::new(Vector3::zero(), PICOSECOND)),
         Err(GeometryEditError::Unit(_))
     ));
     assert_eq!(
-        model.translate(
+        structure.translate(
             &empty,
             Quantity::new(Vector3::new(f64::INFINITY, 0.0, 0.0), NANOMETER)
         ),
         Err(GeometryEditError::NonFiniteInput)
     );
     assert_eq!(
-        model.rotate(
+        structure.rotate(
             &empty,
             Quantity::new(Point3::new(f64::NAN, 0.0, 0.0), NANOMETER),
             axis,
@@ -595,7 +604,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
         Err(GeometryEditError::NonFiniteInput)
     );
     assert_eq!(
-        model.rotate(
+        structure.rotate(
             &empty,
             zero,
             Vector3::new(f64::NAN, 0.0, 0.0),
@@ -605,32 +614,32 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
     );
     let foreign = AtomSelection::empty(chain().shared_topology());
     assert_eq!(
-        model.translate(&foreign, Quantity::new(Vector3::zero(), NANOMETER)),
+        structure.translate(&foreign, Quantity::new(Vector3::zero(), NANOMETER)),
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(
-        model.rotate(&foreign, zero, axis, Quantity::new(0.0, DEGREE)),
+        structure.rotate(&foreign, zero, axis, Quantity::new(0.0, DEGREE)),
         Err(GeometryEditError::TopologyMismatch)
     );
     assert_eq!(
-        model.transform_atoms(&foreign, &RigidTransform::identity()),
+        structure.transform_atoms(&foreign, &RigidTransform::identity()),
         Err(GeometryEditError::TopologyMismatch)
     );
-    assert_eq!(model, baseline);
+    assert_eq!(structure, baseline);
 }
 
 #[test]
 fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
-    let mut model = chain();
-    let [a, b, c, d] = ids(&model);
-    model.set_cell(Some(
+    let mut structure = chain();
+    let [a, b, c, d] = ids(&structure);
+    structure.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(5.0, 6.0, 7.0), NANOMETER),
             [true; 3],
         )
         .unwrap(),
     ));
-    model
+    structure
         .properties_mut()
         .owner_mut()
         .insert(
@@ -638,23 +647,23 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
             PropertyValue::String("preserved".into()),
         )
         .unwrap();
-    let a_index = model.topology().atom_index(a).unwrap();
-    model.set_occupancy(a_index, Some(0.75)).unwrap();
-    let baseline = model.clone();
-    let all = AtomSelection::all(model.shared_topology());
-    model
+    let a_index = structure.topology().atom_index(a).unwrap();
+    structure.set_occupancy(a_index, Some(0.75)).unwrap();
+    let baseline = structure.clone();
+    let all = AtomSelection::all(structure.shared_topology());
+    structure
         .set_distance(b, c, Quantity::new(2.0, NANOMETER))
         .unwrap();
-    model
+    structure
         .set_angle(a, b, c, Quantity::new(100.0, DEGREE))
         .unwrap();
-    model
+    structure
         .set_dihedral(a, b, c, d, Quantity::new(-45.0, DEGREE))
         .unwrap();
-    model
+    structure
         .translate(&all, Quantity::new(Vector3::new(1.0, 0.0, 0.0), NANOMETER))
         .unwrap();
-    model
+    structure
         .rotate(
             &all,
             Quantity::new(Point3::origin(), NANOMETER),
@@ -662,34 +671,34 @@ fn all_edits_preserve_shared_topology_cell_properties_and_chemistry() {
             Quantity::new(30.0, DEGREE),
         )
         .unwrap();
-    model
+    structure
         .transform_atoms(&all, &RigidTransform::identity())
         .unwrap();
     assert!(Arc::ptr_eq(
-        &model.shared_topology(),
+        &structure.shared_topology(),
         &baseline.shared_topology()
     ));
-    assert_eq!(model.cell(), baseline.cell());
-    assert_eq!(model.properties(), baseline.properties());
+    assert_eq!(structure.cell(), baseline.cell());
+    assert_eq!(structure.properties(), baseline.properties());
 }
 
 #[test]
 fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
     for scale in [1.0e-6, 1.0, 1.0e6] {
-        let mut model = chain();
-        let [a, b, c, d] = ids(&model);
-        let points = model
+        let mut structure = chain();
+        let [a, b, c, d] = ids(&structure);
+        let points = structure
             .positions()
             .values()
             .value()
             .iter()
             .map(|p| Point3::new(p.x * scale, p.y * scale, p.z * scale))
             .collect::<Vec<_>>();
-        model
+        structure
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
-        let all = AtomSelection::all(model.shared_topology());
-        model
+        let all = AtomSelection::all(structure.shared_topology());
+        structure
             .rotate(
                 &all,
                 Quantity::new(Point3::origin(), NANOMETER),
@@ -697,19 +706,19 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
                 Quantity::new(37.0, DEGREE),
             )
             .unwrap();
-        model
+        structure
             .translate(
                 &all,
                 Quantity::new(Vector3::new(7.0, -3.0, 1.0) * scale, NANOMETER),
             )
             .unwrap();
-        let before = model.clone();
-        model
+        let before = structure.clone();
+        structure
             .set_distance(b, c, Quantity::new(1.75 * scale, NANOMETER))
             .unwrap();
         close(
             measure::distance(
-                model.as_model_view(),
+                structure.as_structure_view(),
                 b,
                 c,
                 measure::ConnectivityCheck::Unrestricted,
@@ -719,12 +728,12 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
                 / scale,
             1.75,
         );
-        model
+        structure
             .set_angle(a, b, c, Quantity::new(47.0, DEGREE))
             .unwrap();
         close(
             measure::angle(
-                model.as_model_view(),
+                structure.as_structure_view(),
                 a,
                 b,
                 c,
@@ -735,12 +744,12 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .unwrap(),
             47.0,
         );
-        model
+        structure
             .set_dihedral(a, b, c, d, Quantity::new(-139.0, DEGREE))
             .unwrap();
         close(
             measure::dihedral(
-                model.as_model_view(),
+                structure.as_structure_view(),
                 a,
                 b,
                 c,
@@ -752,10 +761,10 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
             .unwrap(),
             -139.0,
         );
-        assert_eq!(point(&model, a), point(&before, a));
-        assert_eq!(point(&model, b), point(&before, b));
+        assert_eq!(point(&structure, a), point(&before, a));
+        assert_eq!(point(&structure, b), point(&before, b));
         close(
-            (point(&model, c) - point(&model, d)).norm() / scale,
+            (point(&structure, c) - point(&structure, d)).norm() / scale,
             2.0_f64.sqrt(),
         );
     }
@@ -763,9 +772,9 @@ fn geometry_edits_work_in_oblique_frames_and_at_different_length_scales() {
 
 #[test]
 fn automatic_fragments_may_contain_a_ring_on_the_moving_side() {
-    let model = fixture("CCC1CC1", &[Point3::origin(); 5]);
-    let atoms = model.topology().atom_ids();
-    let edit = AngleEdit::new(model.shared_topology(), [atoms[0], atoms[1], atoms[2]]).unwrap();
+    let structure = fixture("CCC1CC1", &[Point3::origin(); 5]);
+    let atoms = structure.topology().atom_ids();
+    let edit = AngleEdit::new(structure.shared_topology(), [atoms[0], atoms[1], atoms[2]]).unwrap();
     assert_eq!(
         edit.moving_atoms().atom_ids().collect::<Vec<_>>(),
         atoms[2..]
@@ -781,34 +790,34 @@ fn prepared_selection_is_a_snapshot_and_repeated_definitions_stay_independent() 
     builder.add_instance(definition).unwrap();
     let baseline = chain();
     let points = baseline.positions().values().value().repeat(2);
-    let mut model = Model::new(
+    let mut structure = Structure::new(
         builder.build().unwrap(),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
     .unwrap();
-    let topology = model.shared_topology();
-    let [a, b, c, d] = model.topology().atom_ids()[..4].try_into().unwrap();
+    let topology = structure.shared_topology();
+    let [a, b, c, d] = structure.topology().atom_ids()[..4].try_into().unwrap();
     let mut moving = AtomSelection::from_atoms(topology.clone(), [d]).unwrap();
     let edit = DihedralEdit::with_moving_atoms(topology.clone(), [a, b, c, d], &moving).unwrap();
     moving.clear();
     assert_eq!(edit.moving_atoms().len(), 1);
-    let before = model.clone();
-    edit.apply(&mut model, Quantity::new(-90.0, DEGREE))
+    let before = structure.clone();
+    edit.apply(&mut structure, Quantity::new(-90.0, DEGREE))
         .unwrap();
-    model
+    structure
         .set_distance(b, c, Quantity::new(2.0, NANOMETER))
         .unwrap();
-    for &atom in &model.topology().atom_ids()[4..] {
-        assert_eq!(point(&model, atom), point(&before, atom));
+    for &atom in &structure.topology().atom_ids()[4..] {
+        assert_eq!(point(&structure, atom), point(&before, atom));
     }
 }
 
 #[test]
 fn transform_atoms_uses_rotation_and_translation_together() {
-    let mut model = chain();
-    let baseline = model.clone();
-    let [a, b, c, d] = ids(&model);
-    let selected = AtomSelection::from_atoms(model.shared_topology(), [c, d]).unwrap();
+    let mut structure = chain();
+    let baseline = structure.clone();
+    let [a, b, c, d] = ids(&structure);
+    let selected = AtomSelection::from_atoms(structure.shared_topology(), [c, d]).unwrap();
     let transform = RigidTransform::from_canonical(
         Matrix3::from_columns(
             Vector3::new(0.0, 1.0, 0.0),
@@ -818,10 +827,10 @@ fn transform_atoms_uses_rotation_and_translation_together() {
         Vector3::new(2.0, 3.0, 4.0),
     )
     .unwrap();
-    model.transform_atoms(&selected, &transform).unwrap();
-    close_point(point(&model, c), Point3::new(2.0, 4.0, 4.0));
-    close_point(point(&model, d), Point3::new(1.0, 4.0, 5.0));
+    structure.transform_atoms(&selected, &transform).unwrap();
+    close_point(point(&structure, c), Point3::new(2.0, 4.0, 4.0));
+    close_point(point(&structure, d), Point3::new(1.0, 4.0, 5.0));
     for atom in [a, b] {
-        assert_eq!(point(&model, atom), point(&baseline, atom));
+        assert_eq!(point(&structure, atom), point(&baseline, atom));
     }
 }

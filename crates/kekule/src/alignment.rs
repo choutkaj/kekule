@@ -14,11 +14,11 @@
 //! - [`rmsd`] measures coordinates exactly as stored, without fitting.
 //! - [`aligned_rmsd`] fits on one set of pairs and measures another.
 //! - `superpose`, `rmsd`, and `aligned_rmsd` on a
-//!   [`SampleSet`](crate::structure::SampleSet::superpose) apply the same
-//!   kernels to every sample against a [`Reference`]: a sample of the set
+//!   [`StructureSet`](crate::structure::StructureSet::superpose) apply the same
+//!   kernels to every geometry against a [`Reference`]: a geometry of the set
 //!   or any external view.
-//! - [`sample_rmsd`] and [`sample_aligned_rmsd`] measure listed samples of
-//!   any [`SampleRead`](crate::structure::SampleRead), such as a set read
+//! - [`geometry_rmsd`] and [`geometry_aligned_rmsd`] measure listed geometries of
+//!   any [`StructureSetRead`](crate::structure::StructureSetRead), such as a set read
 //!   from a file, one at a time.
 //!
 //! Each takes its options, [`AlignmentOptions`] or [`AlignedRmsdOptions`], as
@@ -37,9 +37,9 @@
 //!
 //! ```
 //! use kekule::alignment::fit;
-//! use kekule::geometry::Point3;
+//! use kekule::math::Point3;
 //! use kekule::smiles;
-//! use kekule::structure::{Model, Positions};
+//! use kekule::structure::{Structure, Positions};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM};
 //!
@@ -54,19 +54,19 @@
 //!     point.y - 1.0,
 //!     point.z + 0.5,
 //! ));
-//! let moving = Model::new(
+//! let moving = Structure::new(
 //!     topology.clone(),
 //!     Positions::new(Quantity::new(moving_points, ANGSTROM))?,
 //! )?;
-//! let reference = Model::new(
+//! let reference = Structure::new(
 //!     topology.clone(),
 //!     Positions::new(Quantity::new(reference_points, ANGSTROM))?,
 //! )?;
 //! let selection = AtomSelection::all(topology.clone());
 //!
 //! let result = fit(
-//!     moving.as_model_view(),
-//!     reference.as_model_view(),
+//!     moving.as_structure_view(),
+//!     reference.as_structure_view(),
 //!     &selection,
 //!     Default::default(),
 //! )?;
@@ -81,8 +81,8 @@
 use std::fmt;
 
 use crate::diagnostics::Cancelled;
-use crate::geometry::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
-use crate::structure::{ModelView, SampleReadError, StructureError};
+use crate::math::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
+use crate::structure::{GeometryError, StructureSetReadError, StructureView};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -90,8 +90,8 @@ mod collection;
 mod correspondence;
 mod symmetry;
 pub use collection::{
-    sample_aligned_rmsd, sample_aligned_rmsd_cancellable, sample_rmsd, sample_rmsd_cancellable,
-    AlignedRmsdOptions, Reference, SuperpositionReport,
+    geometry_aligned_rmsd, geometry_aligned_rmsd_cancellable, geometry_rmsd,
+    geometry_rmsd_cancellable, AlignedRmsdOptions, Reference, SuperpositionReport,
 };
 pub use correspondence::{
     AmbiguousLabel, AtomCorrespondence, AtomCorrespondenceError, AtomLabel, CorrespondenceSide,
@@ -179,8 +179,8 @@ impl FitAtoms<'_> {
     /// first. Every set has the same length and reference order.
     pub(crate) fn pair_sets(
         self,
-        moving: ModelView<'_>,
-        reference: ModelView<'_>,
+        moving: StructureView<'_>,
+        reference: StructureView<'_>,
     ) -> Result<Vec<Pairs>, AlignmentError> {
         match self {
             Self::Selection(selection) => {
@@ -207,8 +207,8 @@ impl FitAtoms<'_> {
 
 fn check_selection(
     selection: &AtomSelection,
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+    moving: StructureView<'_>,
+    reference: StructureView<'_>,
 ) -> Result<(), AlignmentError> {
     if !moving.topology().shares_layout(reference.topology()) {
         return Err(AlignmentError::TopologyMismatch);
@@ -245,8 +245,8 @@ fn check_selection(
 /// - [`AlignmentError::NumericalFailure`] or
 ///   [`AlignmentError::InvalidRigidTransform`] when the solution is not finite.
 pub fn fit<'a>(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+    moving: StructureView<'_>,
+    reference: StructureView<'_>,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
 ) -> Result<RigidAlignment, AlignmentError> {
@@ -276,8 +276,8 @@ pub fn fit<'a>(
 /// - [`AlignmentError::EmptySelection`] when there are no pairs.
 /// - [`AlignmentError::NumericalFailure`] when the value is not finite.
 pub fn rmsd<'a>(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+    moving: StructureView<'_>,
+    reference: StructureView<'_>,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
 ) -> Result<Quantity<f64>, AlignmentError> {
@@ -309,8 +309,8 @@ pub fn rmsd<'a>(
 /// Any error of [`fit`] for the fit pairs, and of [`rmsd`] for the
 /// measurement pairs.
 pub fn aligned_rmsd<'a>(
-    moving: ModelView<'_>,
-    reference: ModelView<'_>,
+    moving: StructureView<'_>,
+    reference: StructureView<'_>,
     fit: impl Into<FitAtoms<'a>>,
     measurement: impl Into<FitAtoms<'a>>,
     options: AlignedRmsdOptions<'_>,
@@ -348,8 +348,8 @@ pub(crate) struct Coordinates<'a> {
     pub(crate) periodic: bool,
 }
 
-impl<'a> From<ModelView<'a>> for Coordinates<'a> {
-    fn from(view: ModelView<'a>) -> Self {
+impl<'a> From<StructureView<'a>> for Coordinates<'a> {
+    fn from(view: StructureView<'a>) -> Self {
         Self {
             points: *view.positions().values().value(),
             periodic: view.cell().is_some(),
@@ -677,9 +677,9 @@ pub enum AlignmentError {
     },
     /// Periodic coordinates were rejected by policy.
     PeriodicCoordinates {
-        /// Whether the moving model has a cell.
+        /// Whether the moving structure has a cell.
         moving: bool,
-        /// Whether the reference model has a cell.
+        /// Whether the reference structure has a cell.
         reference: bool,
     },
     /// Fixed-size numerical accumulation or decomposition did not produce a
@@ -704,9 +704,9 @@ pub enum AlignmentError {
         source: Box<AlignmentError>,
     },
     /// A fitted transform could not be applied to one item's state.
-    Transform(StructureError),
-    /// A sample cannot be read; see the source.
-    Read(Box<SampleReadError>),
+    Transform(GeometryError),
+    /// A geometry cannot be read; see the source.
+    Read(Box<StructureSetReadError>),
     /// The measurement was cancelled.
     Cancelled(Cancelled),
 }
@@ -715,7 +715,7 @@ impl fmt::Display for AlignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TopologyMismatch => formatter
-                .write_str("The moving and reference models have different topology layouts."),
+                .write_str("The moving and reference structures have different topology layouts."),
             Self::SelectionTopologyMismatch => {
                 formatter.write_str("The atom selection belongs to a different topology layout.")
             }
@@ -742,10 +742,10 @@ impl fmt::Display for AlignmentError {
                 "The alignment weight at selection index {selection_index} is not positive."
             ),
             Self::PeriodicCoordinates { moving, reference } => {
-                let models = match (moving, reference) {
-                    (true, true) => "Both models have",
-                    (true, false) => "The moving model has",
-                    (false, true) => "The reference model has",
+                let structures = match (moving, reference) {
+                    (true, true) => "Both structures have",
+                    (true, false) => "The moving structure has",
+                    (false, true) => "The reference structure has",
                     (false, false) => {
                         return formatter
                             .write_str("Alignment does not support periodic coordinates.")
@@ -753,7 +753,7 @@ impl fmt::Display for AlignmentError {
                 };
                 write!(
                     formatter,
-                    "{models} a periodic cell. Alignment does not support periodic coordinates."
+                    "{structures} a periodic cell. Alignment does not support periodic coordinates."
                 )
             }
             Self::NumericalFailure => {
@@ -1241,9 +1241,9 @@ fn matrix_is_finite(matrix: Matrix) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geometry::PeriodicCell;
+    use crate::math::PeriodicCell;
     use crate::molecule::{Atom, BondOrder, Element};
-    use crate::structure::{Model, Positions};
+    use crate::structure::{Positions, Structure};
     use crate::topology::{AtomSelection, Topology, TopologyBuilder};
     use crate::units::{Quantity, NANOMETER};
     use std::sync::Arc;
@@ -1267,16 +1267,19 @@ mod tests {
         Arc::new(builder.build().unwrap())
     }
 
-    fn model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
+    fn structure(topology: &Arc<Topology>, points: &[Point3]) -> Structure {
         let positions = Positions::new(Quantity::new(points, NANOMETER)).unwrap();
-        Model::new(Arc::clone(topology), positions).unwrap()
+        Structure::new(Arc::clone(topology), positions).unwrap()
     }
 
-    fn models(moving: &[Point3], reference: &[Point3]) -> (Arc<Topology>, Model, Model) {
+    fn structures(
+        moving: &[Point3],
+        reference: &[Point3],
+    ) -> (Arc<Topology>, Structure, Structure) {
         assert_eq!(moving.len(), reference.len());
         let topology = topology(moving.len());
-        let moving = model(&topology, moving);
-        let reference = model(&topology, reference);
+        let moving = structure(&topology, moving);
+        let reference = structure(&topology, reference);
         (topology, moving, reference)
     }
 
@@ -1363,15 +1366,15 @@ mod tests {
     #[test]
     fn identity_fit_reports_canonical_units_and_preserves_inputs() {
         let points = fixture_points();
-        let (topology, moving, reference) = models(&points, &points);
+        let (topology, moving, reference) = structures(&points, &points);
         let selection = all(&topology);
         let moving_before = moving.positions().values().value().to_vec();
         let reference_before = reference.positions().values().value().to_vec();
         let selection_before = selection.clone();
 
         let result = crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &selection,
             Default::default(),
         )
@@ -1399,11 +1402,11 @@ mod tests {
             RigidTransform::from_canonical(Matrix3::identity(), Vector3::new(3.2, -1.7, 4.4))
                 .unwrap();
         let reference = transform_points(&moving, expected);
-        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let (topology, moving_structure, reference_structure) = structures(&moving, &reference);
 
         let result = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &all(&topology),
             Default::default(),
         )
@@ -1425,11 +1428,11 @@ mod tests {
         let moving = fixture_points();
         let expected = non_axis_transform();
         let reference = transform_points(&moving, expected);
-        let (topology, moving, reference_model) = models(&moving, &reference);
+        let (topology, moving, reference_structure) = structures(&moving, &reference);
 
         let result = crate::alignment::fit(
-            moving.as_model_view(),
-            reference_model.as_model_view(),
+            moving.as_structure_view(),
+            reference_structure.as_structure_view(),
             &all(&topology),
             Default::default(),
         )
@@ -1446,14 +1449,14 @@ mod tests {
         let mut reference = transform_points(&moving, expected);
         reference[3] = Point3::new(100.0, -80.0, 40.0);
         reference[4] = Point3::new(-70.0, 60.0, -30.0);
-        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let (topology, moving_structure, reference_structure) = structures(&moving, &reference);
         let selection =
             AtomSelection::from_atoms(topology.clone(), topology.atom_ids()[..3].iter().copied())
                 .unwrap();
 
         let result = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             Default::default(),
         )
@@ -1477,11 +1480,11 @@ mod tests {
         reference[0].x += 0.08;
         reference[1].y -= 0.05;
         reference[4].z += 0.03;
-        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let (topology, moving_structure, reference_structure) = structures(&moving, &reference);
         let selection = all(&topology);
         let result = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             Default::default(),
         )
@@ -1506,11 +1509,11 @@ mod tests {
         let mut reference = transform_points(&moving, expected);
         reference[4].x += 2.5;
         reference[4].y -= 1.5;
-        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let (topology, moving_structure, reference_structure) = structures(&moving, &reference);
         let selection = all(&topology);
         let uniform = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             Default::default(),
         )
@@ -1518,8 +1521,8 @@ mod tests {
         let weights = [10.0, 10.0, 10.0, 10.0, 0.1];
         let scaled_weights = [30.0, 30.0, 30.0, 30.0, 0.3];
         let weighted = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             AlignmentOptions {
                 weighting: Weighting::Explicit(&weights),
@@ -1528,8 +1531,8 @@ mod tests {
         )
         .unwrap();
         let scaled = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             AlignmentOptions {
                 weighting: Weighting::Explicit(&scaled_weights),
@@ -1557,7 +1560,7 @@ mod tests {
         let mut reference = transform_points(&moving, expected);
         reference[0].x += 1.7;
         reference[4].x -= 1.9;
-        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let (topology, moving_structure, reference_structure) = structures(&moving, &reference);
         let atom_ids = topology.atom_ids();
         let selection = AtomSelection::from_atoms(
             topology.clone(),
@@ -1580,8 +1583,8 @@ mod tests {
         let selection_order_weights = [100.0, 1.0, 1.0, 0.1];
         let insertion_order_interpretation = [0.1, 1.0, 1.0, 100.0];
         let selection_order_fit = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             AlignmentOptions {
                 weighting: Weighting::Explicit(&selection_order_weights),
@@ -1590,8 +1593,8 @@ mod tests {
         )
         .unwrap();
         let insertion_order_fit = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &selection,
             AlignmentOptions {
                 weighting: Weighting::Explicit(&insertion_order_interpretation),
@@ -1631,7 +1634,7 @@ mod tests {
             Point3::new(4.000538461538, -1.492384615385, -1.161153846154),
         ];
         let weights = [0.7, 3.25, 1.1, 5.5, 0.4, 2.75];
-        let (topology, moving_model, reference_model) = models(&moving, &reference);
+        let (topology, moving_structure, reference_structure) = structures(&moving, &reference);
 
         // Independent reference: mpmath 1.3.0 at 100 decimal digits, using
         // weighted centroids/cross-covariance and its general SVD, followed by
@@ -1657,8 +1660,8 @@ mod tests {
         let expected_rmsd = 0.029397741136029633_f64;
 
         let result = crate::alignment::fit(
-            moving_model.as_model_view(),
-            reference_model.as_model_view(),
+            moving_structure.as_structure_view(),
+            reference_structure.as_structure_view(),
             &all(&topology),
             AlignmentOptions {
                 weighting: Weighting::Explicit(&weights),
@@ -1676,11 +1679,11 @@ mod tests {
     fn mirrored_coordinates_keep_a_proper_nonzero_residual() {
         let moving = fixture_points();
         let reference = moving.map(|point| Point3::new(-point.x, point.y, point.z));
-        let (topology, moving, reference) = models(&moving, &reference);
+        let (topology, moving, reference) = structures(&moving, &reference);
 
         let result = crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &all(&topology),
             Default::default(),
         )
@@ -1705,11 +1708,11 @@ mod tests {
         ];
         let expected = non_axis_transform();
         let reference = transform_points(&moving, expected);
-        let (topology, moving, reference) = models(&moving, &reference);
+        let (topology, moving, reference) = structures(&moving, &reference);
 
         let result = crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &all(&topology),
             Default::default(),
         )
@@ -1733,12 +1736,12 @@ mod tests {
             Point3::new(0.0, -1.0, 0.0),
             Point3::new(0.0, -1.0, 0.0),
         ];
-        let (topology, moving, reference) = models(&moving, &reference);
+        let (topology, moving, reference) = structures(&moving, &reference);
 
         assert_eq!(
             crate::alignment::fit(
-                moving.as_model_view(),
-                reference.as_model_view(),
+                moving.as_structure_view(),
+                reference.as_structure_view(),
                 &all(&topology),
                 Default::default()
             ),
@@ -1751,7 +1754,7 @@ mod tests {
     #[test]
     fn fewer_than_three_selected_atoms_are_structured_failures() {
         let points = fixture_points();
-        let (topology, moving, reference) = models(&points, &points);
+        let (topology, moving, reference) = structures(&points, &points);
         for count in 0..3 {
             let selection = AtomSelection::from_atoms(
                 topology.clone(),
@@ -1760,8 +1763,8 @@ mod tests {
             .unwrap();
             assert_eq!(
                 crate::alignment::fit(
-                    moving.as_model_view(),
-                    reference.as_model_view(),
+                    moving.as_structure_view(),
+                    reference.as_structure_view(),
                     &selection,
                     Default::default()
                 ),
@@ -1788,11 +1791,11 @@ mod tests {
             Point3::new(1.0, 0.0, 0.0),
             Point3::new(3.0, 0.0, 0.0),
         ];
-        let (topology, moving, reference) = models(&coincident, &valid);
+        let (topology, moving, reference) = structures(&coincident, &valid);
         assert_eq!(
             crate::alignment::fit(
-                moving.as_model_view(),
-                reference.as_model_view(),
+                moving.as_structure_view(),
+                reference.as_structure_view(),
                 &all(&topology),
                 Default::default()
             ),
@@ -1800,11 +1803,11 @@ mod tests {
                 geometry: AlignmentGeometry::Moving,
             })
         );
-        let (topology, moving, reference) = models(&valid, &collinear);
+        let (topology, moving, reference) = structures(&valid, &collinear);
         assert_eq!(
             crate::alignment::fit(
-                moving.as_model_view(),
-                reference.as_model_view(),
+                moving.as_structure_view(),
+                reference.as_structure_view(),
                 &all(&topology),
                 Default::default()
             ),
@@ -1826,21 +1829,21 @@ mod tests {
         };
         for scale in [1.0, 1.0e8] {
             let accepted = points(1.0e-5, scale);
-            let (topology, moving, reference) = models(&accepted, &accepted);
+            let (topology, moving, reference) = structures(&accepted, &accepted);
             assert!(crate::alignment::fit(
-                moving.as_model_view(),
-                reference.as_model_view(),
+                moving.as_structure_view(),
+                reference.as_structure_view(),
                 &all(&topology),
                 Default::default()
             )
             .is_ok());
 
             let rejected = points(1.0e-7, scale);
-            let (topology, moving, reference) = models(&rejected, &rejected);
+            let (topology, moving, reference) = structures(&rejected, &rejected);
             assert!(matches!(
                 crate::alignment::fit(
-                    moving.as_model_view(),
-                    reference.as_model_view(),
+                    moving.as_structure_view(),
+                    reference.as_structure_view(),
                     &all(&topology),
                     Default::default()
                 ),
@@ -1858,13 +1861,13 @@ mod tests {
         let topology_b = topology(points.len());
         assert!(topology_a.same_layout(&topology_b));
         assert!(!Arc::ptr_eq(&topology_a, &topology_b));
-        let moving_a = model(&topology_a, &points);
-        let reference_a = model(&topology_a, &points);
-        let reference_b = model(&topology_b, &points);
+        let moving_a = structure(&topology_a, &points);
+        let reference_a = structure(&topology_a, &points);
+        let reference_b = structure(&topology_b, &points);
         assert_eq!(
             crate::alignment::fit(
-                moving_a.as_model_view(),
-                reference_b.as_model_view(),
+                moving_a.as_structure_view(),
+                reference_b.as_structure_view(),
                 &all(&topology_a),
                 Default::default()
             ),
@@ -1872,8 +1875,8 @@ mod tests {
         );
         assert_eq!(
             crate::alignment::fit(
-                moving_a.as_model_view(),
-                reference_a.as_model_view(),
+                moving_a.as_structure_view(),
+                reference_a.as_structure_view(),
                 &all(&topology_b),
                 Default::default()
             ),
@@ -1884,12 +1887,12 @@ mod tests {
     #[test]
     fn invalid_explicit_weights_are_structured_failures() {
         let points = fixture_points();
-        let (topology, moving, reference) = models(&points, &points);
+        let (topology, moving, reference) = structures(&points, &points);
         let selection = all(&topology);
         let fit = |weights: &[f64]| {
             crate::alignment::fit(
-                moving.as_model_view(),
-                reference.as_model_view(),
+                moving.as_structure_view(),
+                reference.as_structure_view(),
                 &selection,
                 AlignmentOptions {
                     weighting: Weighting::Explicit(weights),
@@ -1932,7 +1935,7 @@ mod tests {
         let moving_points = fixture_points();
         let expected = non_axis_transform();
         let reference_points = transform_points(&moving_points, expected);
-        let (topology, mut moving, mut reference) = models(&moving_points, &reference_points);
+        let (topology, mut moving, mut reference) = structures(&moving_points, &reference_points);
         let cell = PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(3.0, 4.0, 5.0), NANOMETER),
             [true; 3],
@@ -1945,8 +1948,8 @@ mod tests {
 
         assert_eq!(
             crate::alignment::fit(
-                moving.as_model_view(),
-                reference.as_model_view(),
+                moving.as_structure_view(),
+                reference.as_structure_view(),
                 &selection,
                 AlignmentOptions {
                     periodic_policy: PeriodicPolicy::RejectPeriodic,
@@ -1959,8 +1962,8 @@ mod tests {
             })
         );
         let result = crate::alignment::fit(
-            moving.as_model_view(),
-            reference.as_model_view(),
+            moving.as_structure_view(),
+            reference.as_structure_view(),
             &selection,
             Default::default(),
         )
@@ -1983,11 +1986,11 @@ mod tests {
             RigidTransform::from_canonical(rotation, Vector3::new(-4.0e11, 7.0e11, 2.0e11))
                 .unwrap();
         let reference = transform_points(&moving, expected);
-        let (topology, moving, reference_model) = models(&moving, &reference);
+        let (topology, moving, reference_structure) = structures(&moving, &reference);
 
         let result = crate::alignment::fit(
-            moving.as_model_view(),
-            reference_model.as_model_view(),
+            moving.as_structure_view(),
+            reference_structure.as_structure_view(),
             &all(&topology),
             Default::default(),
         )
