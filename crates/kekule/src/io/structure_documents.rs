@@ -614,21 +614,13 @@ pub(crate) fn interpret_molfile_document(
         if let Some(double_bonds) =
             molfile_coordinate_double_bonds(editor.working(), &raw.geometry)?
         {
-            let unasserted = editor
-                .stereo_elements()
-                .filter(|(_, element)| {
-                    !crate::chemistry::molfile_keeps_decoded_stereo(element, Some(&double_bonds))
-                })
-                .map(|(id, _)| id)
-                .collect::<Vec<_>>();
-            for id in &unasserted {
-                editor
-                    .remove_stereo_element(*id)
-                    .expect("collected live stereo element");
-            }
-            publication_report
-                .created_stereo_elements
-                .retain(|id| !unasserted.contains(id));
+            // A drawn configuration the coordinates do not specify was never
+            // asserted, so nothing reports its removal.
+            crate::chemistry::remove_unkept_source_stereo(
+                &mut editor,
+                &double_bonds,
+                &mut publication_report.created_stereo_elements,
+            );
         }
         publication_report
             .created_stereo_elements

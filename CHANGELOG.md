@@ -1576,6 +1576,16 @@ are marked **Breaking:**.
 
 ### Fixed
 
+- SMILES interpretation omits E/Z that directional marks assert at a double
+  bond without E/Z: an aromatic bond, or one whose endpoint bears two
+  identical terminal ligands, as in `C/C(C)=C\CN1CCN(CC#Cc2ccccc2)C[C@H]1CCO`
+  from GEOM-drugs. Such a molecule parsed with a specified configuration
+  that no conformation can carry, so writing any 3D model of it as Molfile
+  or SDF failed ("Cannot encode the specified stereo of bond 2. ..."). The
+  test is the one the Molfile reader and writer apply to coordinates, so
+  E/Z at a bond that only symmetry analysis shows is not stereogenic, as
+  in `C/C=C(/CC)CC`, is still kept. The new
+  `SmilesInterpretationReport::omitted_double_bond_stereo` names the bonds.
 - Memory of a set over a file read from several threads (SeekDelta K73
   follow-ups). A pooled indexed reader allocated the next sample's arrays
   at the end of each read, on the thread that read; the next read, often on

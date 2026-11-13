@@ -14,6 +14,7 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | Isomeric and canonical SMILES | Tetrahedral and ordinary double-bond stereo, isotope labels, disconnected component projections, and supported tetrahedral groups through CXSMILES |
 | SMARTS stereo | Tetrahedral and directional double-bond predicates, Boolean stereo expressions, and enhanced tetrahedral group matching; see the [current dialect](../crates/kekule/src/query/dialect.md) |
 | V2000/V3000 Model output | Coordinate-consistent tetrahedral, double-bond, and atropisomer stereo; validation uses coordinates rounded to the emitted precision |
+| SMILES E/Z input | Directional marks specify E/Z only at a double bond eligible before symmetry analysis; at an aromatic bond, or one whose endpoint bears two identical terminal ligands (`C/C(C)=C/C`), the configuration is omitted and the interpretation report names the bond |
 | Specified E/Z Model output | Supplied coordinates must encode the assertion; conflicting or degenerate drawings fail explicitly |
 | Molfile output of an unasserted alkene | Crossed/either syntax prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
 | Geometry-free Molfile output | Specified E/Z requires a Model; the writer does not synthesize a layout |

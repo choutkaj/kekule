@@ -711,6 +711,116 @@ fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
     );
 }
 
+/// 3D positions in which `molecule` has the configurations its tetrahedral
+/// stereo asserts: the atoms on a circle, each stereocenter lifted above or
+/// below it, in the first pattern of lifts the coordinates do not contradict.
+fn lifted_conformation(molecule: &Molecule) -> Positions {
+    let centers = molecule
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let count = molecule.atom_count() as f64;
+    for lifts in 0..1_u32 << centers.len() {
+        let positions = test_positions(
+            molecule
+                .atom_ids()
+                .enumerate()
+                .map(|(index, atom)| {
+                    let angle = std::f64::consts::TAU * index as f64 / count;
+                    let z = centers
+                        .iter()
+                        .position(|center| *center == atom)
+                        .map_or(0.0, |bit| if lifts >> bit & 1 == 1 { 0.8 } else { -0.8 });
+                    Point3::new(4.0 * angle.cos(), 4.0 * angle.sin(), z)
+                })
+                .collect(),
+        );
+        let inferred = stereo_api::coordinates::infer_coordinate_stereo(
+            molecule,
+            &positions,
+            Default::default(),
+        )
+        .unwrap();
+        if inferred.disagreements().is_empty() {
+            return positions;
+        }
+    }
+    panic!("no lifts give the asserted configurations");
+}
+
+#[test]
+fn sdf_conformations_of_smiles_with_e_z_marks_at_bonds_without_e_z_round_trip() {
+    // GEOM-drugs SMILES that mark the C(CH3)2=C bond. Interpretation omits
+    // that E/Z, so writing a conformation meets no assertion it cannot encode.
+    for source in [
+        "C/C(C)=C\\CN1CCN(CC#Cc2ccccc2)C[C@H]1CCO",
+        "C/C(C)=C/[C@H]1[C@H](C(=O)O)C1(C)C",
+    ] {
+        let mut molecule = read_smiles(source).unwrap();
+        assert!(
+            molecule
+                .stereo_elements()
+                .all(|(_, element)| matches!(element.kind, StereoElementKind::Tetrahedral(_))),
+            "{source}"
+        );
+        let model =
+            Model::from_molecule(molecule.clone(), &lifted_conformation(&molecule)).unwrap();
+        let (text, report) = sdf::write([&model], Default::default()).unwrap();
+        assert!(report.is_empty(), "{source}");
+        let document = sdf::parse_str(&text, Default::default()).unwrap();
+        let record = document.records()[0].interpret(Default::default()).unwrap();
+        // V2000 keeps four decimal places of angstroms.
+        let angstroms = |positions: &Positions| {
+            (0..positions.len())
+                .map(|index| {
+                    positions
+                        .get(index)
+                        .unwrap()
+                        .value_in(crate::units::ANGSTROM)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        for (read, written) in angstroms(record.model().positions())
+            .into_iter()
+            .zip(angstroms(model.positions()))
+        {
+            assert!(
+                (read - written).norm() < 1e-4,
+                "{source}: {read:?} {written:?}"
+            );
+        }
+        let mut reread = record.molecule().clone();
+        assert_eq!(
+            reread
+                .stereo_elements()
+                .map(|(_, element)| std::mem::discriminant(&element.kind))
+                .collect::<Vec<_>>(),
+            molecule
+                .stereo_elements()
+                .map(|(_, element)| std::mem::discriminant(&element.kind))
+                .collect::<Vec<_>>(),
+            "{source}"
+        );
+        perceive(&mut molecule).unwrap();
+        perceive(&mut reread).unwrap();
+        let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
+            .unwrap()
+            .assigned;
+        assert_eq!(expected.len(), reread.stereo_elements().count(), "{source}");
+        assert_eq!(
+            stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
+                .unwrap()
+                .assigned,
+            expected,
+            "{source}"
+        );
+    }
+}
+
 #[test]
 fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
     for smiles in ["F/C(Cl)=C(Br)/I", "[H]/C(F)=C(Cl)/Br"] {

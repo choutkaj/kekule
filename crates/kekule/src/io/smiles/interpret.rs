@@ -6,7 +6,8 @@ use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Range;
 
 use crate::chemistry::{
-    canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
+    canonicalize_molecule_for_publication, has_specified_double_bond_stereo,
+    localize_source_aromatic_bonds, remove_unkept_source_stereo, NormalizationError,
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::diagnostics::{
@@ -123,6 +124,7 @@ pub struct SmilesInterpretationReport {
     atom_mappings: Vec<SmilesAtomMapping>,
     bond_mappings: Vec<SmilesBondMapping>,
     created_stereo_elements: Vec<StereoElementId>,
+    omitted_double_bond_stereo: Vec<BondId>,
 }
 
 impl SmilesInterpretationReport {
@@ -139,6 +141,17 @@ impl SmilesInterpretationReport {
     /// Canonical stereo elements decoded from directional source bond syntax.
     pub fn created_stereo_elements(&self) -> &[StereoElementId] {
         &self.created_stereo_elements
+    }
+
+    /// Double bonds, in bond order, whose directional marks assert an E/Z
+    /// configuration the bond cannot have: the bond is aromatic, or an
+    /// endpoint bears two identical terminal ligands, as the methyls of
+    /// `C/C(C)=C/C` do. No conformation's coordinates state such a
+    /// configuration, so the molecule omits it, as Molfile interpretation
+    /// omits one its coordinates give; the marks stay in the
+    /// [`SmilesDocument`].
+    pub fn omitted_double_bond_stereo(&self) -> &[BondId] {
+        &self.omitted_double_bond_stereo
     }
 }
 
@@ -589,7 +602,7 @@ fn interpret_smiles_program_component(
         &program.tetrahedral_carriers,
         end_offset,
     )?;
-    let publication_report = canonicalize_molecule_for_publication(
+    let mut publication_report = canonicalize_molecule_for_publication(
         editor.working_mut(),
         None,
         &source_stereo,
@@ -603,6 +616,10 @@ fn interpret_smiles_program_component(
         .with_source(error)
     })?;
     debug_assert!(publication_report.warnings.is_empty());
+    let omitted_double_bond_stereo = omit_nonstereogenic_double_bond_stereo(
+        &mut editor,
+        &mut publication_report.created_stereo_elements,
+    );
     super::cx::install_stereo_groups(&mut editor, &source_to_atom, &component.groups)?;
     let (molecule, ids) = editor.finish_with_correspondence().map_err(|error| {
         interpret_error(
@@ -630,14 +647,41 @@ fn interpret_smiles_program_component(
         .into_iter()
         .filter_map(|element| ids.stereo_element(element))
         .collect();
+    let mut omitted_double_bond_stereo = omitted_double_bond_stereo
+        .into_iter()
+        .map(|bond| {
+            ids.bond(bond)
+                .expect("interpreted bonds survive publication")
+        })
+        .collect::<Vec<_>>();
+    omitted_double_bond_stereo.sort_unstable();
     Ok((
         molecule,
         SmilesInterpretationReport {
             atom_mappings,
             bond_mappings,
             created_stereo_elements,
+            omitted_double_bond_stereo,
         },
     ))
+}
+
+/// Removes the E/Z that directional marks assert at double bonds that cannot
+/// have it, by the test Molfile interpretation and writing apply to
+/// coordinates ([`remove_unkept_source_stereo`]), and returns those bonds. A
+/// graph that cannot be perceived keeps every assertion, as Molfile keeps
+/// those of a graph outside the valence model.
+fn omit_nonstereogenic_double_bond_stereo(
+    editor: &mut MoleculeEditor,
+    created: &mut Vec<StereoElementId>,
+) -> Vec<BondId> {
+    if !has_specified_double_bond_stereo(editor.working()) {
+        return Vec::new();
+    }
+    match crate::algorithms::locally_eligible_double_bonds(editor.working()) {
+        Ok(e_z_double_bonds) => remove_unkept_source_stereo(editor, &e_z_double_bonds, created),
+        Err(_) => Vec::new(),
+    }
 }
 
 fn canonicalization_error_offset(
