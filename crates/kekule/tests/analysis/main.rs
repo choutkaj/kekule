@@ -10,10 +10,10 @@ mod fingerprint;
 mod geometry;
 mod interactions;
 mod measurements;
-mod sample_readers;
-mod sample_sets;
 mod solvation;
 mod statistics;
 mod statistics_merge;
+mod structure_set_readers;
+mod structure_sets;
 #[path = "../support/mod.rs"]
 mod support;

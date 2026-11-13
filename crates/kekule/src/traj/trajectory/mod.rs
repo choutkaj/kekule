@@ -1,7 +1,7 @@
 //! Frames, reusable frame buffers, streaming reader/writer contracts, and
 //! the trajectory I/O error type.
 //!
-//! A frame is a [`crate::structure::Sample`] with its time and MD step:
+//! A frame is a [`crate::structure::Geometry`] with its time and MD step:
 //! [`FrameView`] borrows one, and [`FrameBuffer`] provides reusable
 //! validated storage for streaming decoders. The reader and writer traits
 //! publish complete frames transactionally. [`TrajectoryIoError`] reports
@@ -184,7 +184,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
     }
 }
 
-/// Frame or sample set state a trajectory format cannot store.
+/// Frame or structure set state a trajectory format cannot store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TrajectoryField {
@@ -208,7 +208,7 @@ pub enum TrajectoryField {
     BondProperties,
     /// Properties of the frame itself.
     Properties,
-    /// Properties of the sample set.
+    /// Properties of the structure set.
     CollectionProperties,
     /// A member's relative weight in the set's distribution.
     Weight,
@@ -220,18 +220,18 @@ pub enum TrajectoryField {
     Temperature,
     /// Properties of a state.
     StateProperties,
-    /// A sample's step on a step order.
+    /// A geometry's step on a step order.
     OrderStep,
-    /// A sample's coordinate on a coordinate order.
+    /// A geometry's coordinate on a coordinate order.
     OrderCoordinate,
-    /// Whether a sample belongs to its set's distribution.
+    /// Whether a geometry belongs to its set's distribution.
     Membership,
-    /// A sample set's distribution, which a trajectory file cannot store.
+    /// A structure set's distribution, which a trajectory file cannot store.
     Distribution,
-    /// A sample set's state representative that is not the state's first
+    /// A structure set's state representative that is not the state's first
     /// member.
     Representative,
-    /// A sample set's time order without times or steps.
+    /// A structure set's time order without times or steps.
     Order,
 }
 
@@ -257,9 +257,9 @@ impl fmt::Display for TrajectoryField {
             Self::OrderStep => "order step",
             Self::OrderCoordinate => "order coordinate",
             Self::Membership => "distribution membership",
-            Self::Distribution => "sample set distribution",
+            Self::Distribution => "structure set distribution",
             Self::Representative => "state representative",
-            Self::Order => "sample order",
+            Self::Order => "geometry order",
         })
     }
 }
@@ -269,7 +269,7 @@ impl fmt::Display for TrajectoryField {
 /// [`kind`](Self::kind) classifies it; the accessors give the operation,
 /// format, source label, frame, byte offset and counts when known, and
 /// [`source`](std::error::Error::source) the underlying [`std::io::Error`],
-/// [`GeometryError`] or [`SampleSetError`](crate::structure::SampleSetError).
+/// [`GeometryError`] or [`StructureSetError`](crate::structure::StructureSetError).
 /// `Display` gives the context
 /// and never repeats the source.
 ///

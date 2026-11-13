@@ -1,21 +1,21 @@
-//! Sample sets: the order, the distribution, views, and copy on write.
+//! Structure sets: the order, the distribution, views, and copy on write.
 
 use super::*;
 use crate::units::{DEGREE, PICOSECOND};
 
-/// Samples of a one-atom topology at these x positions, unordered and
+/// Geometries of a one-atom topology at these x positions, unordered and
 /// without a distribution.
-fn set_at(xs: &[f64]) -> SampleSet {
-    SampleSet::from_samples(
+fn set_at(xs: &[f64]) -> StructureSet {
+    StructureSet::from_geometries(
         single_atom_topology(),
-        xs.iter().map(|x| Sample::new(single_position(*x))),
+        xs.iter().map(|x| Geometry::new(single_position(*x))),
     )
     .unwrap()
 }
 
-fn xs(set: &SampleSet) -> Vec<f64> {
+fn xs(set: &StructureSet) -> Vec<f64> {
     set.iter()
-        .map(|sample| sample.positions().values().value()[0].x)
+        .map(|geometry| geometry.positions().values().value()[0].x)
         .collect()
 }
 
@@ -53,7 +53,7 @@ fn velocities(x: f64) -> Velocities {
 
 const CANONICAL_VELOCITY: crate::units::Unit = crate::units::CANONICAL_VELOCITY_UNIT;
 
-fn shares_every_sample(a: &SampleSet, b: &SampleSet) -> bool {
+fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b.iter())
@@ -68,21 +68,21 @@ fn requirements_read_as_they_are() {
         "needs an energy for every state"
     );
     assert_eq!(
-        SampleSetError::Missing(Requirement::Distribution).to_string(),
-        "The sample set needs a distribution."
+        StructureSetError::Missing(Requirement::Distribution).to_string(),
+        "The structure set needs a distribution."
     );
     let set = set_at(&[0.0]);
     assert_eq!(
         set.validate_monotonic_time(),
-        Err(SampleSetError::Missing(Requirement::TimeOrder))
+        Err(StructureSetError::Missing(Requirement::TimeOrder))
     );
     assert_eq!(
         set.select_states([0]).unwrap_err(),
-        SampleSetError::Missing(Requirement::Distribution)
+        StructureSetError::Missing(Requirement::Distribution)
     );
     assert_eq!(
         set.collapse().unwrap_err(),
-        SampleSetError::Missing(Requirement::Distribution)
+        StructureSetError::Missing(Requirement::Distribution)
     );
 }
 
@@ -91,7 +91,7 @@ fn an_order_has_one_value_per_sample_in_every_column() {
     let mut set = set_at(&[0.0, 1.0]);
     assert_eq!(
         set.set_order(Some(Order::Step(vec![0]))),
-        Err(SampleSetError::OrderLengthMismatch {
+        Err(StructureSetError::OrderLengthMismatch {
             expected: 2,
             actual: 1
         })
@@ -101,12 +101,12 @@ fn an_order_has_one_value_per_sample_in_every_column() {
             unit: DEGREE,
             values: vec![0.0, f64::NAN],
         })),
-        Err(SampleSetError::NonFiniteOrderValue { sample: 1 })
+        Err(StructureSetError::NonFiniteOrderValue { geometry: 1 })
     );
     assert_eq!(set.order(), None);
     assert_eq!(
         TimeAxis::new(Some(Quantity::new(vec![0.0], PICOSECOND)), Some(vec![0, 1])),
-        Err(SampleSetError::TimeAxisMismatch { times: 1, steps: 2 })
+        Err(StructureSetError::TimeAxisMismatch { times: 1, steps: 2 })
     );
     // Times convert to picoseconds.
     let axis = TimeAxis::new(
@@ -128,30 +128,30 @@ fn an_order_has_one_value_per_sample_in_every_column() {
         })
     );
 
-    // A new sample states exactly the columns the axis has.
+    // A new geometry states exactly the columns the axis has.
     let before = set.clone();
-    let sample = || Sample::new(single_position(2.0));
+    let geometry = || Geometry::new(single_position(2.0));
     assert_eq!(
-        set.push(sample(), None),
-        Err(SampleSetError::PlaceMismatch { sample: 2 })
+        set.push(geometry(), None),
+        Err(StructureSetError::PlaceMismatch { geometry: 2 })
     );
     assert_eq!(
         set.push(
-            sample(),
+            geometry(),
             Some(Place::Time {
                 time: None,
                 step: None
             })
         ),
-        Err(SampleSetError::MissingTime { sample: 2 })
+        Err(StructureSetError::MissingTime { geometry: 2 })
     );
     assert_eq!(
-        set.push(sample(), timed(3.0, 7)),
-        Err(SampleSetError::UnexpectedStep { sample: 2 })
+        set.push(geometry(), timed(3.0, 7)),
+        Err(StructureSetError::UnexpectedStep { geometry: 2 })
     );
     assert_eq!(
-        set.push(sample(), Some(Place::Step(2))),
-        Err(SampleSetError::PlaceMismatch { sample: 2 })
+        set.push(geometry(), Some(Place::Step(2))),
+        Err(StructureSetError::PlaceMismatch { geometry: 2 })
     );
     assert_eq!(set.len(), before.len());
     assert_eq!(set.order(), before.order());
@@ -159,7 +159,7 @@ fn an_order_has_one_value_per_sample_in_every_column() {
         time: Some(ps(3.0)),
         step: None,
     });
-    assert_eq!(set.push(sample(), place), Ok(2));
+    assert_eq!(set.push(geometry(), place), Ok(2));
     assert_eq!(set.get(2).unwrap().place(), place);
     // An axis of steps alone takes a step and no time.
     let mut stepped = set_at(&[0.0]);
@@ -170,17 +170,17 @@ fn an_order_has_one_value_per_sample_in_every_column() {
         .unwrap();
     assert_eq!(
         stepped.push(
-            sample(),
+            geometry(),
             Some(Place::Time {
                 time: None,
                 step: None
             })
         ),
-        Err(SampleSetError::MissingStep { sample: 1 })
+        Err(StructureSetError::MissingStep { geometry: 1 })
     );
     assert_eq!(
-        stepped.push(sample(), timed(1.0, 1)),
-        Err(SampleSetError::UnexpectedTime { sample: 1 })
+        stepped.push(geometry(), timed(1.0, 1)),
+        Err(StructureSetError::UnexpectedTime { geometry: 1 })
     );
     assert_eq!(stepped.len(), 1);
 
@@ -192,7 +192,7 @@ fn an_order_has_one_value_per_sample_in_every_column() {
     }))
     .unwrap();
     scan.push(
-        Sample::new(single_position(1.0)),
+        Geometry::new(single_position(1.0)),
         Some(Place::Coordinate(Quantity::new(2.0, ANGSTROM))),
     )
     .unwrap();
@@ -203,16 +203,16 @@ fn an_order_has_one_value_per_sample_in_every_column() {
     assert!((values[1] - 0.2).abs() < 1e-12);
     assert!(matches!(
         scan.push(
-            Sample::new(single_position(1.0)),
+            Geometry::new(single_position(1.0)),
             Some(Place::Coordinate(Quantity::new(2.0, PICOSECOND))),
         ),
-        Err(SampleSetError::Unit(_))
+        Err(StructureSetError::Unit(_))
     ));
     // An unordered set takes no place.
     let mut unordered = set_at(&[0.0]);
     assert_eq!(
-        unordered.push(Sample::new(single_position(1.0)), Some(Place::Step(1))),
-        Err(SampleSetError::PlaceMismatch { sample: 1 })
+        unordered.push(Geometry::new(single_position(1.0)), Some(Place::Step(1))),
+        Err(StructureSetError::PlaceMismatch { geometry: 1 })
     );
     assert_eq!(unordered.get(0).unwrap().place(), None);
 }
@@ -222,25 +222,25 @@ fn order_values_belong_to_the_set_not_to_its_samples() {
     let mut set = set_at(&[0.0, 1.0, 2.0]);
     set.set_order(Some(time_axis(vec![0.0, 2.0, 4.0], vec![0, 10, 20])))
         .unwrap();
-    // Selecting keeps each sample's value, in the requested order.
+    // Selecting keeps each geometry's value, in the requested order.
     let reversed = set.select([2, 0]).unwrap();
     assert_eq!(xs(&reversed), [2.0, 0.0]);
     assert_eq!(reversed.get(0).unwrap().place(), timed(4.0, 20));
     assert_eq!(reversed.get(1).unwrap().place(), timed(0.0, 0));
     assert_eq!(
         reversed.validate_monotonic_time(),
-        Err(SampleSetError::NonMonotonicTime { sample: 1 })
+        Err(StructureSetError::NonMonotonicTime { geometry: 1 })
     );
     assert_eq!(set.validate_monotonic_time(), Ok(()));
-    // A removed sample claims no place; the later samples keep theirs.
+    // A removed geometry claims no place; the later geometries keep theirs.
     let removed = set.remove(1).unwrap();
-    assert_eq!(removed, Sample::new(single_position(1.0)));
+    assert_eq!(removed, Geometry::new(single_position(1.0)));
     assert_eq!(set.get(1).unwrap().place(), timed(4.0, 20));
     set.set_place(1, timed(3.0, 30)).unwrap();
     assert_eq!(set.order(), Some(&time_axis(vec![0.0, 3.0], vec![0, 30])));
     assert_eq!(
         set.set_place(1, Some(Place::Step(1))),
-        Err(SampleSetError::PlaceMismatch { sample: 1 })
+        Err(StructureSetError::PlaceMismatch { geometry: 1 })
     );
     // A time order without times cannot be checked for monotonic time.
     let mut untimed = set_at(&[0.0]);
@@ -249,10 +249,10 @@ fn order_values_belong_to_the_set_not_to_its_samples() {
         .unwrap();
     assert_eq!(
         untimed.validate_monotonic_time(),
-        Err(SampleSetError::Missing(Requirement::Times))
+        Err(StructureSetError::Missing(Requirement::Times))
     );
     untimed
-        .push(Sample::new(single_position(1.0)), None)
+        .push(Geometry::new(single_position(1.0)), None)
         .unwrap();
     assert_eq!(
         untimed.get(1).unwrap().place(),
@@ -267,11 +267,11 @@ fn order_values_belong_to_the_set_not_to_its_samples() {
 fn any_sample_may_carry_site_fields_and_dynamics() {
     let mut set = set_at(&[0.0]);
     set.set_order(Some(Order::Step(vec![0]))).unwrap();
-    let mut sample = set.get_mut(0).unwrap();
-    sample.set_occupancies(Some(vec![Some(0.5)])).unwrap();
-    sample.set_velocities(Some(velocities(1.0))).unwrap();
+    let mut geometry = set.get_mut(0).unwrap();
+    geometry.set_occupancies(Some(vec![Some(0.5)])).unwrap();
+    geometry.set_velocities(Some(velocities(1.0))).unwrap();
     assert_eq!(
-        sample.set_forces(Some(Forces::zeros(2))),
+        geometry.set_forces(Some(Forces::zeros(2))),
         Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 1,
             actual: 2
@@ -279,15 +279,15 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
     );
     let view = set.get(0).unwrap();
     assert_eq!(view.occupancy(ATOM0), Some(0.5));
-    let StructureKind::Sample(context) = view.as_model_view().kind() else {
-        panic!("a sample's view is a sample");
+    let StructureKind::InSet(context) = view.as_model_view().kind() else {
+        panic!("a geometry's view is a geometry");
     };
     assert_eq!(context.place(), Some(Place::Step(0)));
     assert_eq!(context.membership(), None);
     assert_eq!(context.velocities(), Some(&velocities(1.0)));
     assert_eq!(context.forces(), None);
     assert_eq!(view.as_model_view().occupancy(ATOM0), Some(0.5));
-    // A model keeps the structure and drops the sample's context.
+    // A model keeps the structure and drops the geometry's context.
     let model = view.to_model();
     assert_eq!(model.as_model_view().kind(), StructureKind::Model);
     assert_eq!(model.occupancy(ATOM0), Some(0.5));
@@ -299,10 +299,10 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
         Vector3::new(0.0, 0.0, 1.0),
     );
     let transform = RigidTransform::from_canonical(turn, Vector3::zero()).unwrap();
-    let mut sample = set.get_mut(0).unwrap();
-    sample.apply_rigid_transform(&transform).unwrap();
+    let mut geometry = set.get_mut(0).unwrap();
+    geometry.apply_rigid_transform(&transform).unwrap();
     assert_eq!(
-        sample.velocities().unwrap().values().value(),
+        geometry.velocities().unwrap().values().value(),
         &[Vector3::new(0.0, 1.0, 0.0)]
     );
     assert!(set.get_mut(0).unwrap().take_velocities().is_some());
@@ -313,11 +313,11 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
 fn a_distribution_covers_all_samples_or_a_sorted_subset() {
     assert_eq!(
         Distribution::new(Members::Subset(vec![2, 1]), Partition::one_state(2)),
-        Err(SampleSetError::UnsortedMembers)
+        Err(StructureSetError::UnsortedMembers)
     );
     assert_eq!(
         Distribution::new(Members::Subset(vec![1, 2]), Partition::one_state(3)),
-        Err(SampleSetError::PartitionMismatch {
+        Err(StructureSetError::PartitionMismatch {
             expected: 2,
             actual: 3
         })
@@ -325,9 +325,9 @@ fn a_distribution_covers_all_samples_or_a_sorted_subset() {
     let mut set = set_at(&[0.0, 1.0, 2.0]);
     assert_eq!(
         set.set_distribution(Some(distribution(Members::All, &[0, 0], &[0]))),
-        Err(SampleSetError::CoverageMismatch {
+        Err(StructureSetError::CoverageMismatch {
             covered: 2,
-            samples: 3
+            geometries: 3
         })
     );
     assert_eq!(
@@ -336,10 +336,10 @@ fn a_distribution_covers_all_samples_or_a_sorted_subset() {
             &[0, 0],
             &[0]
         ))),
-        Err(SampleSetError::IndexOutOfRange { index: 3, len: 3 })
+        Err(StructureSetError::IndexOutOfRange { index: 3, len: 3 })
     );
     assert_eq!(set.distribution(), None);
-    // A subset listing every sample is all of them.
+    // A subset listing every geometry is all of them.
     set.set_distribution(Some(distribution(
         Members::Subset(vec![0, 1, 2]),
         &[0, 0, 1],
@@ -362,16 +362,16 @@ fn a_distribution_covers_all_samples_or_a_sorted_subset() {
     assert!(!set.get(0).unwrap().is_representative());
     assert!(set.get(1).unwrap().is_representative());
     assert_eq!(set.state(1).unwrap().representative(), 2);
-    assert_eq!(set.state(1).unwrap().samples().collect::<Vec<_>>(), [2]);
+    assert_eq!(set.state(1).unwrap().geometries().collect::<Vec<_>>(), [2]);
     assert_eq!(set.states().len(), 2);
     assert!(set.state(2).is_none());
     // The view's context reports membership only for members.
-    let StructureKind::Sample(context) = set.get(0).unwrap().as_model_view().kind() else {
-        panic!("a sample's view is a sample");
+    let StructureKind::InSet(context) = set.get(0).unwrap().as_model_view().kind() else {
+        panic!("a geometry's view is a geometry");
     };
     assert_eq!(context.membership(), None);
-    let StructureKind::Sample(context) = set.get(2).unwrap().as_model_view().kind() else {
-        panic!("a sample's view is a sample");
+    let StructureKind::InSet(context) = set.get(2).unwrap().as_model_view().kind() else {
+        panic!("a geometry's view is a geometry");
     };
     assert_eq!(
         context.membership(),
@@ -396,18 +396,18 @@ fn weights_are_finite_positive_and_equal_when_absent() {
     assert_eq!(distribution.effective_sample_size().unwrap(), 2.0);
     assert_eq!(
         distribution.set_weights(Some(vec![1.0])),
-        Err(SampleSetError::WeightCountMismatch {
+        Err(StructureSetError::WeightCountMismatch {
             expected: 2,
             actual: 1
         })
     );
     assert_eq!(
         distribution.set_weights(Some(vec![1.0, -1.0])),
-        Err(SampleSetError::InvalidWeight { sample: 2 })
+        Err(StructureSetError::InvalidWeight { geometry: 2 })
     );
     assert_eq!(
         distribution.set_weight(1, 2.0),
-        Err(SampleSetError::NotMember { sample: 1 })
+        Err(StructureSetError::NotMember { geometry: 1 })
     );
     distribution.set_weight(2, 3.0).unwrap();
     assert_eq!(distribution.weights(), Some(&[1.0, 3.0][..]));
@@ -419,30 +419,30 @@ fn weights_are_finite_positive_and_equal_when_absent() {
 
     // A new member needs a weight once the members have weights.
     assert_eq!(
-        set.push_member(Sample::new(single_position(3.0)), None, 0, None),
-        Err(SampleSetError::WeightRequired)
+        set.push_member(Geometry::new(single_position(3.0)), None, 0, None),
+        Err(StructureSetError::WeightRequired)
     );
     assert_eq!(
-        set.push_member(Sample::new(single_position(3.0)), None, 1, Some(1.0)),
-        Err(SampleSetError::StateOutOfRange {
+        set.push_member(Geometry::new(single_position(3.0)), None, 1, Some(1.0)),
+        Err(StructureSetError::StateOutOfRange {
             state: 1,
             states: 1
         })
     );
     assert_eq!(set.len(), 3);
     assert_eq!(
-        set.push_member(Sample::new(single_position(3.0)), None, 0, Some(0.5)),
+        set.push_member(Geometry::new(single_position(3.0)), None, 0, Some(0.5)),
         Ok(3)
     );
     let state = State::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
         .unwrap();
     assert_eq!(
-        set.push_state(Sample::new(single_position(4.0)), None, state, Some(1.0)),
+        set.push_state(Geometry::new(single_position(4.0)), None, state, Some(1.0)),
         Ok(1)
     );
     // A non-member keeps the distribution as it was.
-    assert_eq!(set.push(Sample::new(single_position(5.0)), None), Ok(5));
+    assert_eq!(set.push(Geometry::new(single_position(5.0)), None), Ok(5));
     let distribution = set.distribution().unwrap();
     assert_eq!(distribution.members(), &Members::Subset(vec![0, 2, 3, 4]));
     assert_eq!(distribution.weights(), Some(&[0.25, 0.75, 0.5, 1.0][..]));
@@ -450,19 +450,19 @@ fn weights_are_finite_positive_and_equal_when_absent() {
     assert_eq!(distribution.partition().representatives(), [0, 3]);
     assert_eq!(
         distribution.ranked_by_energy(),
-        Err(SampleSetError::Missing(Requirement::StateEnergies))
+        Err(StructureSetError::Missing(Requirement::StateEnergies))
     );
     assert_eq!(set.state(1).unwrap().representative(), 4);
     assert_eq!(
         set.state(1).unwrap().energy(),
         Some(Quantity::new(1.0, KILOJOULE_PER_MOLE))
     );
-    // Pushing a non-member into a distribution of every sample lists the
+    // Pushing a non-member into a distribution of every geometry lists the
     // others.
     let mut all = set_at(&[0.0]);
     all.set_distribution(Some(distribution_of_one_state(1)))
         .unwrap();
-    all.push(Sample::new(single_position(1.0)), None).unwrap();
+    all.push(Geometry::new(single_position(1.0)), None).unwrap();
     assert_eq!(
         all.distribution().unwrap().members(),
         &Members::Subset(vec![0])
@@ -500,8 +500,8 @@ fn selecting_and_removing_samples_remaps_the_members() {
     let distribution = selected.distribution().unwrap();
     assert_eq!(distribution.members(), &Members::Subset(vec![0, 2]));
     assert_eq!(distribution.weights(), Some(&[4.0, 3.0][..]));
-    // States in state order: state 0 (sample 3, a new representative),
-    // then state 1 (sample 4, its representative).
+    // States in state order: state 0 (geometry 3, a new representative),
+    // then state 1 (geometry 4, its representative).
     assert_eq!(distribution.partition().assignments(), [1, 0]);
     assert_eq!(distribution.partition().representatives(), [1, 0]);
     assert_eq!(selected.state(0).unwrap().energy(), None);
@@ -529,7 +529,7 @@ fn selecting_and_removing_samples_remaps_the_members() {
     );
     assert_eq!(
         set.select_states([2]).unwrap_err(),
-        SampleSetError::StateOutOfRange {
+        StructureSetError::StateOutOfRange {
             state: 2,
             states: 2
         }
@@ -544,8 +544,8 @@ fn selecting_and_removing_samples_remaps_the_members() {
     // The representative of a state with other members stays.
     assert_eq!(
         removed.remove(0).unwrap_err(),
-        SampleSetError::RepresentativeRemoval {
-            sample: 0,
+        StructureSetError::RepresentativeRemoval {
+            geometry: 0,
             state: 0
         }
     );
@@ -584,7 +584,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
         .unwrap();
     distribution.set_weights(Some(vec![1.0, 2.0, 3.0])).unwrap();
     assert!(!Arc::ptr_eq(&regrouped, &shared));
-    assert!(shares_every_sample(&regrouped, &shared));
+    assert!(shares_every_geometry(&regrouped, &shared));
     assert_eq!(shared.distribution().unwrap().state_count(), 1);
 
     let selected = shared.select([2, 0]).unwrap();
@@ -598,14 +598,14 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
         collapsed.distribution().unwrap().weights(),
         Some(&[1.0 / 3.0, 2.0 / 3.0, 1.0][..])
     );
-    assert!(shares_every_sample(&collapsed, &regrouped));
+    assert!(shares_every_geometry(&collapsed, &regrouped));
     let states = regrouped.select_states([1]).unwrap();
     assert!(Arc::ptr_eq(
         states.get(0).unwrap().payload().structure(),
         shared.get(1).unwrap().payload().structure()
     ));
 
-    // Editing one sample of a clone copies that sample alone.
+    // Editing one geometry of a clone copies that geometry alone.
     let mut edited = (*shared).clone();
     edited
         .get_mut(1)
@@ -623,7 +623,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     assert_eq!(xs(&shared), [0.0, 1.0, 2.0]);
     assert_eq!(xs(&edited), [0.0, 9.0, 2.0]);
 
-    // Replacing positions copies only what the shared sample keeps.
+    // Replacing positions copies only what the shared geometry keeps.
     let mut moved = (*shared).clone();
     moved
         .replace_positions([3.0, 4.0, 5.0].map(single_position))
@@ -632,7 +632,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     assert_eq!(xs(&shared), [0.0, 1.0, 2.0]);
     assert_eq!(
         moved.replace_positions([single_position(0.0)]),
-        Err(SampleSetError::SampleCountMismatch {
+        Err(StructureSetError::GeometryCountMismatch {
             expected: 3,
             actual: 1
         })
@@ -643,7 +643,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 fn distribution_operations_keep_their_results() {
     use crate::tests::debug_fingerprint as fingerprint;
     let mut set = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
-    assert_eq!(fingerprint(&set), 0xae56_a282_43ff_8c80);
+    assert_eq!(fingerprint(&set), 0x9661_9a29_dfa3_cb04);
     let distribution = set.distribution().unwrap();
     assert_eq!(
         fingerprint(&distribution.probabilities()),
@@ -671,12 +671,12 @@ fn distribution_operations_keep_their_results() {
     );
     assert_eq!(
         distribution.covering_population(0.0),
-        Err(SampleSetError::InvalidFraction)
+        Err(StructureSetError::InvalidFraction)
     );
-    assert_eq!(fingerprint(&set.collapse().unwrap()), 0x4877_d1ef_e888_ad46);
+    assert_eq!(fingerprint(&set.collapse().unwrap()), 0x111e_e5db_69d1_366a);
 
     let mut energy_set = energy_conformers(&[3.0, 1.0, 2.0]);
-    assert_eq!(fingerprint(&energy_set), 0x50d9_63cc_18ea_ebda);
+    assert_eq!(fingerprint(&energy_set), 0x5cc5_099f_3348_e72e);
     let distribution = energy_set.distribution().unwrap();
     assert_eq!(
         fingerprint(&distribution.ranked_by_energy()),
@@ -689,7 +689,7 @@ fn distribution_operations_keep_their_results() {
     );
     assert_eq!(
         distribution.within_energy_window(Quantity::new(-1.0, KILOJOULE_PER_MOLE)),
-        Err(SampleSetError::InvalidEnergyWindow)
+        Err(StructureSetError::InvalidEnergyWindow)
     );
     let temperature = Quantity::new(300.0, KELVIN);
     energy_set
@@ -710,7 +710,7 @@ fn distribution_operations_keep_their_results() {
             .distribution_mut()
             .unwrap()
             .set_temperature(Some(Quantity::new(0.0, KELVIN))),
-        Err(SampleSetError::InvalidTemperature)
+        Err(StructureSetError::InvalidTemperature)
     );
 
     // Regrouping merges whole states with their representative's energy.
@@ -736,7 +736,7 @@ fn distribution_operations_keep_their_results() {
             .distribution_mut()
             .unwrap()
             .regroup(Partition::one_state(2)),
-        Err(SampleSetError::PartitionMismatch {
+        Err(StructureSetError::PartitionMismatch {
             expected: 3,
             actual: 2
         })
@@ -749,13 +749,13 @@ fn distribution_operations_keep_their_results() {
 fn sample_views_write_the_sdf_records_they_always_wrote() {
     use crate::tests::debug_fingerprint as fingerprint;
     let mut set = energy_conformers(&[2.5, 1.0]);
-    set.push_member(Sample::new(single_position(1.0)), None, 0, Some(3.0))
+    set.push_member(Geometry::new(single_position(1.0)), None, 0, Some(3.0))
         .unwrap();
     set.distribution_mut()
         .unwrap()
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    assert_eq!(fingerprint(&set), 0x5442_794d_0e77_3138);
+    assert_eq!(fingerprint(&set), 0x797f_f62d_d300_adc4);
     let options = crate::sdf::SdfWriteOptions::default();
     let views = set.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
@@ -772,7 +772,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         values: vec![30.0],
     }))
     .unwrap();
-    assert_eq!(fingerprint(&scan), 0x4371_fa5e_2cee_9445);
+    assert_eq!(fingerprint(&scan), 0xfcff_0753_c475_c131);
     let views = scan.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
         views.iter().map(crate::sdf::SdfRecordSource::model),
@@ -786,7 +786,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
 #[test]
 fn subsets_keep_the_order_and_the_distribution() {
     let (model, atom, _) = model_fixture();
-    let mut set = SampleSet::from_models([model.clone(), model]).unwrap();
+    let mut set = StructureSet::from_models([model.clone(), model]).unwrap();
     set.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
     let state = State::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
@@ -827,17 +827,17 @@ fn subsets_keep_the_order_and_the_distribution() {
     let mut perceived = set.clone();
     perceived.perceive().unwrap();
     assert!(perceived.topology().shares_layout(set.topology()));
-    assert!(shares_every_sample(&perceived, &set));
+    assert!(shares_every_geometry(&perceived, &set));
     assert_eq!(
-        SampleSet::from_models(std::iter::empty()).unwrap_err(),
-        SampleSetError::EmptySource
+        StructureSet::from_models(std::iter::empty()).unwrap_err(),
+        StructureSetError::EmptySource
     );
 }
 
 /// The parts of two sets compared one by one, since a set is not
-/// `PartialEq`; samples must share their structures.
-fn assert_same_set(actual: &SampleSet, expected: &SampleSet) {
-    assert!(shares_every_sample(actual, expected));
+/// `PartialEq`; geometries must share their structures.
+fn assert_same_set(actual: &StructureSet, expected: &StructureSet) {
+    assert!(shares_every_geometry(actual, expected));
     assert_eq!(actual.order(), expected.order());
     assert_eq!(actual.distribution(), expected.distribution());
     assert_eq!(actual.properties(), expected.properties());
@@ -853,8 +853,8 @@ fn replacing_a_sample_keeps_its_place_and_membership() {
             .unwrap(),
     ))
     .unwrap();
-    let previous = set.replace(1, Sample::new(single_position(5.0))).unwrap();
-    assert_eq!(previous, Sample::new(single_position(1.0)));
+    let previous = set.replace(1, Geometry::new(single_position(5.0))).unwrap();
+    assert_eq!(previous, Geometry::new(single_position(1.0)));
     assert_eq!(xs(&set), [0.0, 5.0]);
     assert_eq!(set.get(1).unwrap().place(), Some(Place::Step(4)));
     assert_eq!(set.get(1).unwrap().weight(), Some(2.0));
@@ -863,12 +863,12 @@ fn replacing_a_sample_keeps_its_place_and_membership() {
     let before = set.clone();
     // Two atoms do not bind to a one-atom topology.
     assert!(matches!(
-        set.replace(0, Sample::new(Positions::zeros(2))),
-        Err(SampleSetError::Geometry(_))
+        set.replace(0, Geometry::new(Positions::zeros(2))),
+        Err(StructureSetError::Geometry(_))
     ));
     assert_eq!(
-        set.replace(2, Sample::new(single_position(0.0))),
-        Err(SampleSetError::IndexOutOfRange { index: 2, len: 2 })
+        set.replace(2, Geometry::new(single_position(0.0))),
+        Err(StructureSetError::IndexOutOfRange { index: 2, len: 2 })
     );
     assert_same_set(&set, &before);
 }
@@ -882,7 +882,7 @@ fn the_distribution_guard_keeps_the_members() {
     let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1)).unwrap();
     assert_eq!(
         set.set_distribution(Some(foreign)),
-        Err(SampleSetError::IndexOutOfRange { index: 7, len: 2 })
+        Err(StructureSetError::IndexOutOfRange { index: 7, len: 2 })
     );
     let mut distribution = set.distribution_mut().unwrap();
     assert_eq!(distribution.member_count(), 2);
@@ -903,7 +903,7 @@ fn the_distribution_guard_keeps_the_members() {
 #[test]
 fn weighted_walks_join_members_and_samples() {
     let mut set = set_at(&[0.0, 1.0, 2.0]);
-    // Without a distribution every sample counts once.
+    // Without a distribution every geometry counts once.
     assert_eq!(
         set.weighted_samples().collect::<Vec<_>>(),
         [(0, 1.0), (1, 1.0), (2, 1.0)]
@@ -929,11 +929,11 @@ fn weighted_walks_join_members_and_samples() {
     );
     // Member positions index the weights and probabilities.
     let probabilities = distribution.probabilities().unwrap();
-    for ((sample, weight), (position, probability)) in distribution
+    for ((geometry, weight), (position, probability)) in distribution
         .weighted_members()
         .zip(probabilities.iter().enumerate())
     {
-        assert_eq!(distribution.member_position(sample), Some(position));
+        assert_eq!(distribution.member_position(geometry), Some(position));
         assert_eq!(*probability, weight / 5.0);
     }
     assert_eq!(distribution.ranked_by_weight(), [2, 0]);
@@ -985,7 +985,7 @@ fn duplicates_in_a_selection_become_separate_samples() {
 
 #[test]
 fn collapse_keeps_population_shares_of_any_members() {
-    // Members 0 and 2 of three samples, one state, without weights.
+    // Members 0 and 2 of three geometries, one state, without weights.
     let mut set = set_at(&[0.0, 1.0, 2.0]);
     set.set_order(Some(Order::Step(vec![0, 1, 2]))).unwrap();
     set.set_distribution(Some(distribution(
@@ -1035,7 +1035,7 @@ fn members_pushed_into_a_distribution_of_every_sample() {
         .unwrap();
     assert_eq!(
         set.push_member(
-            Sample::new(single_position(1.0)),
+            Geometry::new(single_position(1.0)),
             Some(Place::Step(1)),
             0,
             None
@@ -1044,7 +1044,7 @@ fn members_pushed_into_a_distribution_of_every_sample() {
     );
     assert_eq!(
         set.push_state(
-            Sample::new(single_position(2.0)),
+            Geometry::new(single_position(2.0)),
             Some(Place::Step(2)),
             State::new(),
             None,
@@ -1058,27 +1058,27 @@ fn members_pushed_into_a_distribution_of_every_sample() {
     assert_eq!(distribution.partition().representatives(), [0, 2]);
     assert_eq!(set.order(), Some(&Order::Step(vec![0, 1, 2])));
 
-    // A sample that does not bind, checked last, changes nothing.
+    // A geometry that does not bind, checked last, changes nothing.
     let before = set.clone();
-    let wide = || Sample::new(Positions::zeros(2));
+    let wide = || Geometry::new(Positions::zeros(2));
     assert!(matches!(
         set.push_member(wide(), Some(Place::Step(3)), 1, None),
-        Err(SampleSetError::Geometry(_))
+        Err(StructureSetError::Geometry(_))
     ));
     assert!(matches!(
         set.push_state(wide(), Some(Place::Step(3)), State::new(), None),
-        Err(SampleSetError::Geometry(_))
+        Err(StructureSetError::Geometry(_))
     ));
     assert!(matches!(
         set.push(wide(), Some(Place::Step(3))),
-        Err(SampleSetError::Geometry(_))
+        Err(StructureSetError::Geometry(_))
     ));
     assert_same_set(&set, &before);
     // Without a distribution there is nothing to join.
     let mut plain = set_at(&[0.0]);
     assert_eq!(
-        plain.push_member(Sample::new(single_position(1.0)), None, 0, None),
-        Err(SampleSetError::Missing(Requirement::Distribution))
+        plain.push_member(Geometry::new(single_position(1.0)), None, 0, None),
+        Err(StructureSetError::Missing(Requirement::Distribution))
     );
     assert_eq!(plain.len(), 1);
 }
@@ -1089,20 +1089,20 @@ fn places_are_set_only_on_an_order_and_inside_the_set() {
     assert_eq!(set.set_place(0, None), Ok(()));
     assert_eq!(
         set.set_place(0, Some(Place::Step(1))),
-        Err(SampleSetError::PlaceMismatch { sample: 0 })
+        Err(StructureSetError::PlaceMismatch { geometry: 0 })
     );
     assert_eq!(
         set.set_place(1, None),
-        Err(SampleSetError::IndexOutOfRange { index: 1, len: 1 })
+        Err(StructureSetError::IndexOutOfRange { index: 1, len: 1 })
     );
     set.set_order(Some(Order::Step(vec![0]))).unwrap();
     assert_eq!(
         set.set_place(3, Some(Place::Step(1))),
-        Err(SampleSetError::IndexOutOfRange { index: 3, len: 1 })
+        Err(StructureSetError::IndexOutOfRange { index: 3, len: 1 })
     );
     assert_eq!(
         set.set_place(0, None),
-        Err(SampleSetError::PlaceMismatch { sample: 0 })
+        Err(StructureSetError::PlaceMismatch { geometry: 0 })
     );
     assert_eq!(set.order(), Some(&Order::Step(vec![0])));
 }
@@ -1127,9 +1127,9 @@ fn empty_selections_and_distributions() {
     assert_eq!(collapsed.distribution().unwrap().state_count(), 0);
     assert_eq!(
         none.distribution().unwrap().probabilities(),
-        Err(SampleSetError::EmptyDistribution)
+        Err(StructureSetError::EmptyDistribution)
     );
-    // Removing the last non-member leaves a distribution of every sample.
+    // Removing the last non-member leaves a distribution of every geometry.
     set.remove(1).unwrap();
     assert_eq!(set.distribution().unwrap().members(), &Members::All);
     assert_eq!(set.order(), Some(&Order::Step(vec![0])));
@@ -1168,14 +1168,14 @@ fn regrouping_a_split_state_drops_its_energy() {
 #[test]
 fn constructors_refuse_mismatched_samples_and_layouts() {
     assert!(matches!(
-        SampleSet::from_samples(
+        StructureSet::from_geometries(
             single_atom_topology(),
             [
-                Sample::new(single_position(0.0)),
-                Sample::new(Positions::zeros(2))
+                Geometry::new(single_position(0.0)),
+                Geometry::new(Positions::zeros(2))
             ],
         ),
-        Err(SampleSetError::Geometry(GeometryError::Array(
+        Err(StructureSetError::Geometry(GeometryError::Array(
             DenseArrayError::CountMismatch {
                 expected: 1,
                 actual: 2
@@ -1185,14 +1185,14 @@ fn constructors_refuse_mismatched_samples_and_layouts() {
     let (model, _, _) = model_fixture();
     let other = Model::new(Arc::new(single_atom_topology()), single_position(0.0)).unwrap();
     assert_eq!(
-        SampleSet::from_models([model, other]).unwrap_err(),
-        SampleSetError::TopologyMismatch
+        StructureSet::from_models([model, other]).unwrap_err(),
+        StructureSetError::TopologyMismatch
     );
 }
 
 #[test]
 fn every_error_reads_as_a_sentence() {
-    use SampleSetError as E;
+    use StructureSetError as E;
     let requirements = [
         (Requirement::TimeOrder, "needs a time order"),
         (Requirement::AnyOrder, "needs an order"),
@@ -1204,14 +1204,14 @@ fn every_error_reads_as_a_sentence() {
             "needs an energy for every state",
         ),
         (Requirement::Temperature, "needs a temperature"),
-        (Requirement::Cell, "needs a periodic cell on every sample"),
-        (Requirement::InMemory, "needs its samples in memory"),
+        (Requirement::Cell, "needs a periodic cell on every geometry"),
+        (Requirement::InMemory, "needs its geometries in memory"),
     ];
     for (requirement, text) in requirements {
         assert_eq!(requirement.to_string(), text);
         assert_eq!(
             E::Missing(requirement).to_string(),
-            format!("The sample set {text}.")
+            format!("The structure set {text}.")
         );
     }
     let unit = Quantity::new(1.0, ANGSTROM)
@@ -1222,7 +1222,7 @@ fn every_error_reads_as_a_sentence() {
         (E::EmptyDistribution, "The distribution has no members."),
         (
             E::IndexOutOfRange { index: 3, len: 1 },
-            "Sample 3 is outside the sample set of 1 sample.",
+            "Geometry 3 is outside the structure set of 1 geometry.",
         ),
         (
             E::StateOutOfRange {
@@ -1232,58 +1232,58 @@ fn every_error_reads_as_a_sentence() {
             "State 2 is outside the distribution of 2 states.",
         ),
         (
-            E::NotMember { sample: 4 },
-            "Sample 4 is outside the distribution.",
+            E::NotMember { geometry: 4 },
+            "Geometry 4 is outside the distribution.",
         ),
         (
             E::TopologyMismatch,
-            "The model has a different topology layout from the sample set.",
+            "The model has a different topology layout from the structure set.",
         ),
         (
-            E::SampleCountMismatch {
+            E::GeometryCountMismatch {
                 expected: 3,
                 actual: 1,
             },
-            "The sample set has 3 samples, but 1 replacement was given.",
+            "The structure set has 3 geometries, but 1 replacement was given.",
         ),
         (
             E::OrderLengthMismatch {
                 expected: 2,
                 actual: 1,
             },
-            "The order has 1 value, but the sample set has 2 samples.",
+            "The order has 1 value, but the structure set has 2 geometries.",
         ),
         (
             E::TimeAxisMismatch { times: 1, steps: 2 },
             "The time axis has 1 time and 2 steps.",
         ),
         (
-            E::NonFiniteOrderValue { sample: 1 },
-            "The order value of sample 1 is not finite.",
+            E::NonFiniteOrderValue { geometry: 1 },
+            "The order value of geometry 1 is not finite.",
         ),
         (
-            E::PlaceMismatch { sample: 1 },
-            "The place of sample 1 is not on the order of the sample set.",
+            E::PlaceMismatch { geometry: 1 },
+            "The place of geometry 1 is not on the order of the structure set.",
         ),
         (
-            E::MissingTime { sample: 1 },
-            "Sample 1 has no time, but the other samples have one.",
+            E::MissingTime { geometry: 1 },
+            "Geometry 1 has no time, but the other geometries have one.",
         ),
         (
-            E::UnexpectedTime { sample: 1 },
-            "Sample 1 has a time, but the other samples have none.",
+            E::UnexpectedTime { geometry: 1 },
+            "Geometry 1 has a time, but the other geometries have none.",
         ),
         (
-            E::MissingStep { sample: 1 },
-            "Sample 1 has no step, but the other samples have one.",
+            E::MissingStep { geometry: 1 },
+            "Geometry 1 has no step, but the other geometries have one.",
         ),
         (
-            E::UnexpectedStep { sample: 1 },
-            "Sample 1 has a step, but the other samples have none.",
+            E::UnexpectedStep { geometry: 1 },
+            "Geometry 1 has a step, but the other geometries have none.",
         ),
         (
-            E::NonMonotonicTime { sample: 2 },
-            "Sample 2 is earlier than the sample before it.",
+            E::NonMonotonicTime { geometry: 2 },
+            "Geometry 2 is earlier than the geometry before it.",
         ),
         (
             E::UnsortedMembers,
@@ -1292,16 +1292,16 @@ fn every_error_reads_as_a_sentence() {
         (
             E::CoverageMismatch {
                 covered: 2,
-                samples: 3,
+                geometries: 3,
             },
-            "The distribution covers 2 samples, but the sample set has 3.",
+            "The distribution covers 2 geometries, but the structure set has 3.",
         ),
         (
             E::PartitionMismatch {
                 expected: 2,
                 actual: 3,
             },
-            "The partition covers 3 samples, but the distribution has 2 members.",
+            "The partition covers 3 geometries, but the distribution has 2 members.",
         ),
         (
             E::WeightCountMismatch {
@@ -1318,8 +1318,8 @@ fn every_error_reads_as_a_sentence() {
             "The partition has 1 state, but 2 states were given.",
         ),
         (
-            E::InvalidWeight { sample: 0 },
-            "The weight of sample 0 is not finite and positive.",
+            E::InvalidWeight { geometry: 0 },
+            "The weight of geometry 0 is not finite and positive.",
         ),
         (
             E::WeightRequired,
@@ -1327,10 +1327,10 @@ fn every_error_reads_as_a_sentence() {
         ),
         (
             E::RepresentativeRemoval {
-                sample: 0,
+                geometry: 0,
                 state: 1,
             },
-            "Sample 0 represents state 1. Remove the state's other samples first.",
+            "Geometry 0 represents state 1. Remove the state's other geometries first.",
         ),
         (
             E::InvalidTemperature,
@@ -1346,11 +1346,11 @@ fn every_error_reads_as_a_sentence() {
         ),
         (
             E::Geometry(GeometryError::NonFiniteTime),
-            "A sample is invalid.",
+            "A geometry is invalid.",
         ),
         (
             E::Subset(crate::topology::TopologySubsetError::EmptySelection),
-            "Cannot subset the sample set.",
+            "Cannot subset the structure set.",
         ),
     ];
     for (error, text) in errors {
@@ -1365,37 +1365,39 @@ fn every_error_reads_as_a_sentence() {
 
 #[test]
 fn failed_and_empty_sample_edits_keep_the_structure_shared() {
-    let shared = Sample::new(single_position(0.0)).with_cell(cell());
-    let mut sample = shared.clone();
-    assert!(sample
+    let shared = Geometry::new(single_position(0.0)).with_cell(cell());
+    let mut geometry = shared.clone();
+    assert!(geometry
         .set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER))
         .is_err());
-    assert!(sample
+    assert!(geometry
         .set_position_at(
             TopologyAtomIndex::new(1),
             Quantity::new(Point3::origin(), NANOMETER)
         )
         .is_err());
-    assert!(sample
+    assert!(geometry
         .set_occupancy(TopologyAtomIndex::new(1), Some(0.5))
         .is_err());
-    assert!(sample.set_occupancies(Some(vec![Some(f64::NAN)])).is_err());
-    assert!(sample
+    assert!(geometry
+        .set_occupancies(Some(vec![Some(f64::NAN)]))
+        .is_err());
+    assert!(geometry
         .set_b_factors(Some(Quantity::new(vec![Some(1.0)], NANOMETER)))
         .is_err());
-    assert!(sample.set_velocities(Some(Velocities::zeros(2))).is_err());
-    sample.set_velocities(None).unwrap();
-    sample.set_forces(None).unwrap();
-    assert_eq!(sample.take_velocities(), None);
-    sample.set_cell(Some(cell()));
-    assert!(sample.shares_structure_with(&shared));
-    // A successful edit copies this sample alone.
-    sample.set_cell(None);
-    assert!(!sample.shares_structure_with(&shared));
+    assert!(geometry.set_velocities(Some(Velocities::zeros(2))).is_err());
+    geometry.set_velocities(None).unwrap();
+    geometry.set_forces(None).unwrap();
+    assert_eq!(geometry.take_velocities(), None);
+    geometry.set_cell(Some(cell()));
+    assert!(geometry.shares_structure_with(&shared));
+    // A successful edit copies this geometry alone.
+    geometry.set_cell(None);
+    assert!(!geometry.shares_structure_with(&shared));
     assert_eq!(shared.cell(), Some(&cell()));
 
     // The same through a set's guard.
-    let mut set = SampleSet::from_samples(single_atom_topology(), [shared.clone()]).unwrap();
+    let mut set = StructureSet::from_geometries(single_atom_topology(), [shared.clone()]).unwrap();
     let before = set.clone();
     assert!(set
         .get_mut(0)
@@ -1403,5 +1405,5 @@ fn failed_and_empty_sample_edits_keep_the_structure_shared() {
         .set_occupancies(Some(vec![Some(1.0), Some(1.0)]))
         .is_err());
     set.get_mut(0).unwrap().set_cell(Some(cell()));
-    assert!(shares_every_sample(&set, &before));
+    assert!(shares_every_geometry(&set, &before));
 }

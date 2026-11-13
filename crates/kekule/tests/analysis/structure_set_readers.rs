@@ -1,5 +1,5 @@
-//! Reductions over any sample reader, such as a set read from a file: equal
-//! to the same reductions of the set in memory, for every sample, a range
+//! Reductions over any geometry reader, such as a set read from a file: equal
+//! to the same reductions of the set in memory, for every geometry, a range
 //! with a stride, and a distribution over part of the set.
 
 use std::num::NonZeroUsize;
@@ -16,13 +16,13 @@ use kekule::statistics::{
     SampleObservations, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Members, Model, Order, Partition, Positions, Sample, SampleRead, SampleReadError,
-    SampleSet, TimeAxis,
+    Distribution, Geometry, Members, Model, Order, Partition, Positions, StructureSet,
+    StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{
-    open_indexed_sample_set, write_sample_set, IndexedFile, TrajectoryWriteOptions,
+    open_indexed_structure_set, write_structure_set, IndexedFile, TrajectoryWriteOptions,
 };
 use kekule::traj::{FitReference, Processed, ProcessingSteps, TrajectoryFormat};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
@@ -58,11 +58,12 @@ fn points(index: usize) -> Vec<Point3> {
 }
 
 /// Ten timed frames of a six-carbon chain.
-fn trajectory() -> SampleSet {
+fn trajectory() -> StructureSet {
     let topology = kekule::smiles::to_topology(&"C".repeat(ATOMS)).unwrap();
-    let frames = (0..10)
-        .map(|index| Sample::new(Positions::new(Quantity::new(points(index), NANOMETER)).unwrap()));
-    let mut set = SampleSet::from_samples(topology, frames).unwrap();
+    let frames = (0..10).map(|index| {
+        Geometry::new(Positions::new(Quantity::new(points(index), NANOMETER)).unwrap())
+    });
+    let mut set = StructureSet::from_geometries(topology, frames).unwrap();
     let times = (0..10).map(|index| 2.0 * index as f64).collect();
     let axis = TimeAxis::new(
         Some(Quantity::new(times, PICOSECOND)),
@@ -84,9 +85,9 @@ impl Drop for Scratch {
 
 /// [`trajectory`] written to a TRR file, read back as a set, and the same
 /// set loaded into memory.
-fn file_and_memory(scratch: &str) -> (Scratch, SampleSet<IndexedFile>, SampleSet) {
+fn file_and_memory(scratch: &str) -> (Scratch, StructureSet<IndexedFile>, StructureSet) {
     let directory = std::env::temp_dir().join(format!(
-        "kekule-sample-readers-{scratch}-{}",
+        "kekule-geometry-readers-{scratch}-{}",
         std::process::id()
     ));
     std::fs::create_dir_all(&directory).unwrap();
@@ -95,14 +96,14 @@ fn file_and_memory(scratch: &str) -> (Scratch, SampleSet<IndexedFile>, SampleSet
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
         TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
     );
-    write_sample_set(&path, &trajectory, options).unwrap();
-    let file =
-        open_indexed_sample_set(&path, trajectory.shared_topology(), Default::default()).unwrap();
+    write_structure_set(&path, &trajectory, options).unwrap();
+    let file = open_indexed_structure_set(&path, trajectory.shared_topology(), Default::default())
+        .unwrap();
     let memory = file.load(0..file.len()).unwrap();
     (Scratch(directory), file, memory)
 }
 
-/// A distribution over samples 1, 2, 4, 5, 7, and 8, weighted, in two
+/// A distribution over geometries 1, 2, 4, 5, 7, and 8, weighted, in two
 /// states.
 fn partial() -> Distribution {
     Distribution::new(
@@ -140,11 +141,11 @@ fn bits(values: &[f64]) -> Vec<u64> {
 const CUTOFF: f64 = 0.45;
 
 /// Checks that every statistic of `observations` of `reader` equals the
-/// statistic of `expected`, a set in memory holding just those samples.
+/// statistic of `expected`, a set in memory holding just those geometries.
 fn statistics_match(
-    reader: &dyn SampleRead,
+    reader: &dyn StructureSetRead,
     observations: &SampleObservations,
-    expected: &SampleSet,
+    expected: &StructureSet,
 ) {
     let topology = Arc::clone(reader.topology());
     let cutoff = Quantity::new(CUTOFF, NANOMETER);
@@ -201,8 +202,8 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
     for distribution in [None, Some(partial())] {
         file.set_distribution(distribution.clone()).unwrap();
         memory.set_distribution(distribution).unwrap();
-        for reader in [&file as &dyn SampleRead, &memory] {
-            // Every sample, or every member.
+        for reader in [&file as &dyn StructureSetRead, &memory] {
+            // Every geometry, or every member.
             statistics_match(reader, &SampleObservations::all(reader), &memory);
             // A range with a stride.
             let listed = (1..9).step_by(3);
@@ -226,10 +227,9 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
     assert_eq!(SampleObservations::of(&file, [0, 3, 6]).unwrap().len(), 0);
     assert_eq!(
         SampleObservations::of(&file, [2, 10]),
-        Err(StatisticsError::Read(SampleReadError::IndexOutOfRange {
-            index: 10,
-            len: 10
-        }))
+        Err(StatisticsError::Read(
+            StructureSetReadError::IndexOutOfRange { index: 10, len: 10 }
+        ))
     );
 }
 
@@ -241,7 +241,7 @@ fn a_sample_listed_twice_is_observed_twice() {
         file.set_distribution(distribution.clone()).unwrap();
         memory.set_distribution(distribution).unwrap();
         let selected = memory.select(listed).unwrap();
-        for reader in [&file as &dyn SampleRead, &memory] {
+        for reader in [&file as &dyn StructureSetRead, &memory] {
             let observations = SampleObservations::of(reader, listed).unwrap();
             assert_eq!(observations.samples(), listed);
             assert_eq!(
@@ -313,7 +313,7 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
         Positions::new(Quantity::new(points(11), NANOMETER)).unwrap(),
     )
     .unwrap();
-    // A distribution does not restrict which samples are measured.
+    // A distribution does not restrict which geometries are measured.
     file.set_distribution(Some(partial())).unwrap();
     memory.set_distribution(Some(partial())).unwrap();
 
@@ -321,13 +321,13 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
     let held_aligned = memory.aligned_rmsd(3, &fit, &measured, aligned).unwrap();
     let held_model = memory.rmsd(&model, &fit, options).unwrap();
     let listed = [9, 0, 3, 3, 6];
-    for reader in [&file as &dyn SampleRead, &memory] {
-        let read = alignment::sample_rmsd(reader, 0..10, 3, &fit, options).unwrap();
+    for reader in [&file as &dyn StructureSetRead, &memory] {
+        let read = alignment::geometry_rmsd(reader, 0..10, 3, &fit, options).unwrap();
         assert_eq!(bits(read.value()), bits(held.value()));
         let read =
-            alignment::sample_aligned_rmsd(reader, 0..10, 3, &fit, &measured, aligned).unwrap();
+            alignment::geometry_aligned_rmsd(reader, 0..10, 3, &fit, &measured, aligned).unwrap();
         assert_eq!(bits(read.value()), bits(held_aligned.value()));
-        let read = alignment::sample_rmsd(reader, listed, &model, &fit, options).unwrap();
+        let read = alignment::geometry_rmsd(reader, listed, &model, &fit, options).unwrap();
         assert_eq!(
             bits(read.value()),
             listed.map(|index| held_model.value()[index].to_bits())
@@ -337,17 +337,17 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
             alignment::sample_rmsd_cancellable(reader, listed, 3, &fit, options, &cancelled),
             Err(AlignmentError::Cancelled(_))
         ));
-        let none = alignment::sample_rmsd(reader, [0_usize; 0], 3, &fit, options).unwrap();
+        let none = alignment::geometry_rmsd(reader, [0_usize; 0], 3, &fit, options).unwrap();
         assert!(none.value().is_empty());
     }
     assert!(matches!(
-        alignment::sample_rmsd(&file, [0], 10, &fit, options),
+        alignment::geometry_rmsd(&file, [0], 10, &fit, options),
         Err(AlignmentError::ReferenceOutOfRange { .. })
     ));
     assert!(matches!(
-        alignment::sample_rmsd(&file, [0, 10], 3, &fit, options),
+        alignment::geometry_rmsd(&file, [0, 10], 3, &fit, options),
         Err(AlignmentError::Read(error))
-            if *error == SampleReadError::IndexOutOfRange { index: 10, len: 10 }
+            if *error == StructureSetReadError::IndexOutOfRange { index: 10, len: 10 }
     ));
 }
 
@@ -370,14 +370,14 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
                 ClusteringRun::default(),
                 ClusteringRun::default().with_executor(&threads),
             ] {
-                for reader in [&file as &dyn SampleRead, &memory] {
+                for reader in [&file as &dyn StructureSetRead, &memory] {
                     let read =
                         clustering::pairwise_fitted_rmsd(reader, &atoms, Default::default(), run)
                             .unwrap();
                     assert_eq!(read, held);
                 }
             }
-            // The file's samples cluster as the set in memory does.
+            // The file's geometries cluster as the set in memory does.
             for linkage in [Linkage::Single, Linkage::Average] {
                 assert_eq!(
                     file.cluster_hierarchical(&held, linkage, Cut::Count(2)),
@@ -399,7 +399,7 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
     ));
 }
 
-/// Several threads fit the processed samples of one file at once, each on
+/// Several threads fit the processed geometries of one file at once, each on
 /// threads of its own, and all get the matrix of the set in memory.
 #[test]
 fn pairwise_fitted_rmsd_over_processed_samples_runs_from_several_threads() {
@@ -408,7 +408,7 @@ fn pairwise_fitted_rmsd_over_processed_samples_runs_from_several_threads() {
     let fit = selection(&topology, &[0, 1, 2, 3]);
     let steps = ProcessingSteps::default()
         .with_center(fit.clone())
-        .with_fit(fit, FitReference::Sample(2));
+        .with_fit(fit, FitReference::Geometry(2));
     let file = Processed::new(file, steps.clone()).unwrap();
     let memory = Processed::new(memory, steps).unwrap();
     let atoms = selection(&topology, &[1, 2, 4, 5]);
@@ -452,10 +452,11 @@ fn a_reduction_over_a_cut_file_names_the_sample_it_cannot_read() {
     let error = accumulator
         .observe_samples_cancellable(&file, &observations, 0..10, &Cancellation::new(|| false))
         .unwrap_err();
-    let StatisticsError::Read(SampleReadError::Trajectory { sample, source }) = &error else {
+    let StatisticsError::Read(StructureSetReadError::Trajectory { geometry, source }) = &error
+    else {
         panic!("{error:?}");
     };
-    assert_eq!(*sample, 7);
+    assert_eq!(*geometry, 7);
     assert_eq!(source.frame(), Some(7));
-    assert_eq!(error.to_string(), "Cannot read sample 7.");
+    assert_eq!(error.to_string(), "Cannot read geometry 7.");
 }

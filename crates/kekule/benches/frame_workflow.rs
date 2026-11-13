@@ -3,7 +3,7 @@
 //! Real coordinates and annotations are repeated to isolate container costs;
 //! this measures API overhead, not physical trajectory sampling or scaling limits.
 
-use kekule::structure::{Order, Sample, SampleSet, TimeAxis};
+use kekule::structure::{Geometry, Order, StructureSet, TimeAxis};
 use kekule::{mmcif, topology::AtomSelection};
 use std::{error::Error, hint::black_box, time::Instant};
 
@@ -14,10 +14,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let model = mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
         .interpret(Default::default())?
         .into_model();
-    let mut frame = Sample::new(model.positions().clone());
+    let mut frame = Geometry::new(model.positions().clone());
     frame.set_cell(model.cell().copied());
     let mut trajectory =
-        SampleSet::from_samples(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
+        StructureSet::from_geometries(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
     trajectory.set_order(Some(Order::Time(TimeAxis::default())))?;
     let atoms = AtomSelection::all(trajectory.shared_topology());
     let iterations = 1_000_000;

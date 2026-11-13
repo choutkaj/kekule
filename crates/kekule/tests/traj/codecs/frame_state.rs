@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Forces, Order, Place, Positions, SampleSet, TimeAxis, Velocities};
+use kekule::structure::{Forces, Order, Place, Positions, StructureSet, TimeAxis, Velocities};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{
     DcdFrameTimingPolicy, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
@@ -20,7 +20,7 @@ use kekule::traj::io::trr::{
 };
 use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
-use kekule::traj::io::{write_sample_set_to, FrameTimingPolicy, TrajectoryWriteOptions};
+use kekule::traj::io::{write_structure_set_to, FrameTimingPolicy, TrajectoryWriteOptions};
 use kekule::traj::{
     FrameView, TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryWriter,
@@ -873,11 +873,11 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     }
 }
 
-/// Saving a sample set reports the occupancies and B-factors its codec
+/// Saving a structure set reports the occupancies and B-factors its codec
 /// left out once, as the codec counted them, and refuses them by default.
 #[test]
-fn saved_sample_sets_report_occupancies_and_b_factors_once() {
-    let mut set = SampleSet::new(topology());
+fn saved_structure_sets_report_occupancies_and_b_factors_once() {
+    let mut set = StructureSet::new(topology());
     set.set_order(Some(Order::Time(
         TimeAxis::new(None, Some(Vec::new())).unwrap(),
     )))
@@ -890,15 +890,15 @@ fn saved_sample_sets_report_occupancies_and_b_factors_once() {
             time: None,
             step: Some(index as u64),
         };
-        set.push(frame.sample, Some(place)).unwrap();
+        set.push(frame.geometry, Some(place)).unwrap();
     }
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd);
     let error =
-        write_sample_set_to(&mut Cursor::new(Vec::new()), &set, options.clone()).unwrap_err();
+        write_structure_set_to(&mut Cursor::new(Vec::new()), &set, options.clone()).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(TrajectoryField::Occupancies));
     assert_eq!(error.frame(), Some(0));
-    let report = write_sample_set_to(
+    let report = write_structure_set_to(
         &mut Cursor::new(Vec::new()),
         &set,
         options.with_frame_metadata(OMIT),

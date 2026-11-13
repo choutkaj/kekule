@@ -11,7 +11,7 @@ use kekule::{
     },
     structure::{
         measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck, MeasurementError},
-        Model, Positions, Sample, SampleSet,
+        Geometry, Model, Positions, StructureSet,
     },
     topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId},
     units::{Quantity, DEGREE, NANOMETER},
@@ -418,14 +418,14 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
     );
     assert_ne!(first, second);
     let expected = selected.measure(model.as_model_view()).unwrap();
-    let member = Sample::new(model.positions().clone()).with_cell(
+    let member = Geometry::new(model.positions().clone()).with_cell(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
         )
         .unwrap(),
     );
-    let ensemble = SampleSet::from_samples(model.shared_topology(), [member]).unwrap();
+    let ensemble = StructureSet::from_geometries(model.shared_topology(), [member]).unwrap();
     assert_eq!(
         selected
             .measure(ensemble.get(0).unwrap().as_model_view())

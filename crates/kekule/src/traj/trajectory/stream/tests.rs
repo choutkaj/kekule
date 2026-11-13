@@ -3,16 +3,16 @@
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use crate::structure::{Forces, Place, Positions, Sample, Velocities};
+use crate::structure::{Forces, Geometry, Place, Positions, Velocities};
 use crate::topology::TopologyBuilder;
 use crate::traj::TrajectoryIoErrorKind;
 use crate::units::{Quantity, NANOMETER, PICOSECOND};
 
 use super::*;
 
-/// Sequential and seekable reader over the samples of a time-ordered set.
+/// Sequential and seekable reader over the geometries of a time-ordered set.
 struct MemoryTrajectoryReader<'a> {
-    set: &'a SampleSet,
+    set: &'a StructureSet,
     cursor: usize,
 }
 
@@ -27,7 +27,7 @@ impl fmt::Debug for MemoryTrajectoryReader<'_> {
 }
 
 impl<'a> MemoryTrajectoryReader<'a> {
-    fn new(set: &'a SampleSet) -> Self {
+    fn new(set: &'a StructureSet) -> Self {
         Self { set, cursor: 0 }
     }
 }
@@ -42,10 +42,10 @@ impl TrajectoryReader for MemoryTrajectoryReader<'_> {
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        let Some(sample) = self.set.get(self.cursor) else {
+        let Some(geometry) = self.set.get(self.cursor) else {
             return Ok(false);
         };
-        destination.copy_from(FrameView::from_sample(sample)?)?;
+        destination.copy_from(FrameView::from_geometry(geometry)?)?;
         self.cursor += 1;
         Ok(true)
     }
@@ -61,11 +61,11 @@ impl SeekableTrajectoryReader for MemoryTrajectoryReader<'_> {
         index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        let sample = self
+        let geometry = self
             .set
             .get(index)
             .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
-        destination.copy_from(FrameView::from_sample(sample)?)?;
+        destination.copy_from(FrameView::from_geometry(geometry)?)?;
         Ok(())
     }
 }
@@ -92,8 +92,8 @@ fn linear_carbon_topology(atom_count: usize) -> Arc<Topology> {
 
 /// Four frames carrying every kind of frame state, at times `0.5 i` ps and
 /// steps `10 i`.
-fn annotated() -> SampleSet {
-    let mut set = SampleSet::new(linear_carbon_topology(3));
+fn annotated() -> StructureSet {
+    let mut set = StructureSet::new(linear_carbon_topology(3));
     let times = Quantity::new(Vec::new(), PICOSECOND);
     set.set_order(Some(Order::Time(
         TimeAxis::new(Some(times), Some(Vec::new())).unwrap(),
@@ -103,7 +103,7 @@ fn annotated() -> SampleSet {
         .insert(PropertyKey::new("run").unwrap(), PropertyValue::Int(7))
         .unwrap();
     for index in 0..4 {
-        let mut sample = Sample::new(
+        let mut geometry = Geometry::new(
             Positions::new(Quantity::new(
                 [
                     Point3::new(index as f64, 0.0, 0.0),
@@ -114,16 +114,16 @@ fn annotated() -> SampleSet {
             ))
             .unwrap(),
         );
-        sample.set_velocities(Some(Velocities::zeros(3))).unwrap();
-        sample.set_forces(Some(Forces::zeros(3))).unwrap();
-        sample.set_cell(Some(
+        geometry.set_velocities(Some(Velocities::zeros(3))).unwrap();
+        geometry.set_forces(Some(Forces::zeros(3))).unwrap();
+        geometry.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
                 [true; 3],
             )
             .unwrap(),
         ));
-        let mut properties = sample.properties_mut();
+        let mut properties = geometry.properties_mut();
         properties
             .owner_mut()
             .insert(
@@ -142,7 +142,7 @@ fn annotated() -> SampleSet {
             time: Some(Quantity::new(index as f64 * 0.5, PICOSECOND)),
             step: Some(index * 10),
         };
-        set.push(sample, Some(place)).unwrap();
+        set.push(geometry, Some(place)).unwrap();
         set.get_mut(index as usize)
             .unwrap()
             .properties_mut()
@@ -156,16 +156,16 @@ fn annotated() -> SampleSet {
     set
 }
 
-/// The buffered frame's sample and place.
-fn buffered(buffer: &FrameBuffer) -> (Sample, Place) {
+/// The buffered frame's geometry and place.
+fn buffered(buffer: &FrameBuffer) -> (Geometry, Place) {
     let frame = buffer.frame_view();
     (frame.payload().clone(), frame.place())
 }
 
-/// Sample `index` of `set` with its place.
-fn stored(set: &SampleSet, index: usize) -> (Sample, Place) {
-    let sample = set.get(index).unwrap();
-    (sample.payload().clone(), sample.place().unwrap())
+/// Geometry `index` of `set` with its place.
+fn stored(set: &StructureSet, index: usize) -> (Geometry, Place) {
+    let geometry = set.get(index).unwrap();
+    (geometry.payload().clone(), geometry.place().unwrap())
 }
 
 #[test]
@@ -249,9 +249,11 @@ fn members_and_samples_off_a_time_order_are_not_frames() {
     assert_eq!(buffered(&destination), before);
 }
 
-/// The sample payloads of `set` in order.
-fn payloads(set: &SampleSet) -> Vec<Sample> {
-    set.iter().map(|sample| sample.payload().clone()).collect()
+/// The geometry payloads of `set` in order.
+fn payloads(set: &StructureSet) -> Vec<Geometry> {
+    set.iter()
+        .map(|geometry| geometry.payload().clone())
+        .collect()
 }
 
 #[test]
@@ -265,7 +267,7 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     while reader.read_next(&mut buffer).unwrap() {
         writer.write_frame(buffer.frame_view()).unwrap();
     }
-    let streamed = writer.into_sample_set();
+    let streamed = writer.into_structure_set();
     assert_eq!(streamed.order(), set.order());
     assert_eq!(payloads(&streamed), payloads(&set));
     // A reader has no set properties to keep.
@@ -274,7 +276,7 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     let atoms = AtomSelection::from_atoms(set.shared_topology(), [ids[0], ids[1]]).unwrap();
 
     // Every atom, requested out of order and with a duplicate.
-    let loaded = SampleSet::from_reader(&set, [3, 1, 3]).unwrap();
+    let loaded = StructureSet::from_reader(&set, [3, 1, 3]).unwrap();
     assert_eq!(
         crate::tests::debug_fingerprint(
             &loaded
@@ -291,7 +293,7 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     assert_eq!(loaded.len(), 3);
     assert!(loaded.topology().shares_layout(set.topology()));
     assert_eq!(loaded.get(0).unwrap().place(), set.get(3).unwrap().place());
-    let positions = |sample: usize| loaded.get(sample).unwrap().positions().clone();
+    let positions = |geometry: usize| loaded.get(geometry).unwrap().positions().clone();
     assert_eq!(positions(0), *set.get(3).unwrap().positions());
     assert_eq!(positions(1), *set.get(1).unwrap().positions());
     assert_eq!(positions(2), positions(0));
@@ -299,11 +301,11 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     let frame = set.get(3).unwrap();
     assert_eq!(first.cell(), frame.cell());
     assert_eq!(first.properties(), frame.properties());
-    let from_stream = SampleSet::from_reader(&streamed, [3, 1, 3]).unwrap();
+    let from_stream = StructureSet::from_reader(&streamed, [3, 1, 3]).unwrap();
     assert_eq!(payloads(&from_stream), payloads(&loaded));
 
     // An atom subset with a stride.
-    let loaded = SampleSet::from_reader(&set, (1..4).step_by(2))
+    let loaded = StructureSet::from_reader(&set, (1..4).step_by(2))
         .unwrap()
         .subset(&atoms)
         .unwrap();
@@ -327,16 +329,16 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     assert_eq!(loaded.topology().atom_count(), 2);
     assert_eq!(loaded.topology().bond_count(), 1);
     assert!(loaded.properties().is_empty());
-    let sample = loaded.get(1).unwrap();
+    let geometry = loaded.get(1).unwrap();
     let frame = set.get(3).unwrap();
-    assert_eq!(sample.place(), frame.place());
+    assert_eq!(geometry.place(), frame.place());
     assert_eq!(
-        sample.positions().values().value().to_vec(),
+        geometry.positions().values().value().to_vec(),
         frame.positions().values().value()[..2].to_vec()
     );
-    assert_eq!(sample.cell(), frame.cell());
-    assert!(sample.properties().owner().is_empty());
-    let atoms_table = sample.properties().atoms();
+    assert_eq!(geometry.cell(), frame.cell());
+    assert!(geometry.properties().owner().is_empty());
+    let atoms_table = geometry.properties().atoms();
     let atom_key = PropertyKey::new("atom").unwrap();
     let atom_values = [0, 1].map(|index| {
         atoms_table
@@ -345,13 +347,13 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     });
     assert_eq!(atom_values, [Some(PropertyValue::Int(1)), None]);
     let bond_key = PropertyKey::new("bond").unwrap();
-    let bond = sample
+    let bond = geometry
         .properties()
         .bonds()
         .value(&bond_key, crate::topology::TopologyBondIndex::new(0))
         .unwrap();
     assert_eq!(bond, Some(PropertyValue::Int(4)));
-    let from_stream = SampleSet::from_reader(&streamed, (1..4).step_by(2))
+    let from_stream = StructureSet::from_reader(&streamed, (1..4).step_by(2))
         .unwrap()
         .subset(&atoms)
         .unwrap();
@@ -360,9 +362,9 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     assert_eq!(from_stream.topology().bond_count(), 1);
 
     // No frames make an empty set.
-    assert!(SampleSet::from_reader(&set, []).unwrap().is_empty());
+    assert!(StructureSet::from_reader(&set, []).unwrap().is_empty());
     assert_eq!(
-        SampleSet::from_reader(&set, [1, 5, 4]).unwrap_err(),
-        crate::structure::SampleReadError::IndexOutOfRange { index: 5, len: 4 }
+        StructureSet::from_reader(&set, [1, 5, 4]).unwrap_err(),
+        crate::structure::StructureSetReadError::IndexOutOfRange { index: 5, len: 4 }
     );
 }

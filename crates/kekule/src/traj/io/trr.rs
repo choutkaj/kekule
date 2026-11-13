@@ -30,7 +30,7 @@
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! let points = vec![Point3::new(0.25, 0.5, 0.0)];
-//! frame.sample_mut().set_positions(Quantity::new(points, NANOMETER))?;
+//! frame.geometry_mut().set_positions(Quantity::new(points, NANOMETER))?;
 //! let velocity = Vector3::new(1.0, 0.0, 0.0);
 //! frame.set_velocities(Some(Quantity::new([velocity], NANOMETER_PER_PICOSECOND)))?;
 //! frame.set_step(Some(500));
@@ -66,7 +66,7 @@ use std::sync::Arc;
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, OwnerProperties, PropertyKey, PropertyValue};
-use crate::structure::DecodedSample;
+use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -995,7 +995,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
-    ) -> Result<DecodedSample, TrajectoryIoError> {
+    ) -> Result<DecodedGeometry, TrajectoryIoError> {
         let read = self.read_indexed(index);
         // Taken whether the read succeeds or fails, and whether the frame
         // holds velocities and forces or not, so that the reader keeps no
@@ -1004,7 +1004,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         let velocities = std::mem::take(&mut self.inner.velocities);
         let forces = std::mem::take(&mut self.inner.forces);
         let decoded = read?;
-        Ok(DecodedSample {
+        Ok(DecodedGeometry {
             positions: Quantity::new(positions, NANOMETER),
             cell: decoded.cell,
             velocities: decoded

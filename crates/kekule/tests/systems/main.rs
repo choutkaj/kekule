@@ -1,4 +1,4 @@
-//! Topologies, hierarchies, models, sample sets, selections, and their editors.
+//! Topologies, hierarchies, models, structure sets, selections, and their editors.
 
 mod atom_order;
 mod classification;

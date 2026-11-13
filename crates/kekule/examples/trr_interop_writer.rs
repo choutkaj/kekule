@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let mut frame = FrameBuffer::new(topology);
     for (step, shift) in [(0, 0.0), (1, 0.1)] {
-        frame.sample_mut().set_positions(Quantity::new(
+        frame.geometry_mut().set_positions(Quantity::new(
             [
                 Point3::new(0.0 + shift, 0.1, 0.2),
                 Point3::new(0.3 + shift, 0.4, 0.5),
@@ -59,7 +59,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             ],
             NANOMETER,
         ))?;
-        frame.sample_mut().set_cell(Some(cell));
+        frame.geometry_mut().set_cell(Some(cell));
         frame.set_velocities(Some(Quantity::new(
             [
                 Vector3::new(1.0, 2.0, 3.0),
@@ -78,8 +78,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         )))?;
         frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
         frame.set_step(Some(step));
-        frame.sample_mut().properties_mut().owner_mut().clear();
-        frame.sample_mut().properties_mut().owner_mut().insert(
+        frame.geometry_mut().properties_mut().owner_mut().clear();
+        frame.geometry_mut().properties_mut().owner_mut().insert(
             PropertyKey::new("gromacs.trr.lambda")?,
             PropertyValue::Real {
                 value: 0.125 + step as f64 * 0.125,

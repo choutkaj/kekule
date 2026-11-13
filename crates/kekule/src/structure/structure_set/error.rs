@@ -1,4 +1,4 @@
-//! The failures of [`super::SampleSet`] operations.
+//! The failures of [`super::StructureSet`] operations.
 
 use std::fmt;
 
@@ -6,7 +6,7 @@ use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
 
-/// What an operation needs and a sample set lacks.
+/// What an operation needs and a structure set lacks.
 ///
 /// Its `Display` text, such as "needs a time order", can be shown as it is,
 /// for example beside an operation a host cannot offer for a set.
@@ -27,9 +27,9 @@ pub enum Requirement {
     StateEnergies,
     /// A distribution with a temperature.
     Temperature,
-    /// A periodic cell on every sample.
+    /// A periodic cell on every geometry.
     Cell,
-    /// Every sample held in memory.
+    /// Every geometry held in memory.
     InMemory,
 }
 
@@ -43,16 +43,16 @@ impl fmt::Display for Requirement {
             Self::Weights => "needs weights",
             Self::StateEnergies => "needs an energy for every state",
             Self::Temperature => "needs a temperature",
-            Self::Cell => "needs a periodic cell on every sample",
-            Self::InMemory => "needs its samples in memory",
+            Self::Cell => "needs a periodic cell on every geometry",
+            Self::InMemory => "needs its geometries in memory",
         })
     }
 }
 
-/// Failure of a [`super::SampleSet`] operation.
+/// Failure of a [`super::StructureSet`] operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum SampleSetError {
+pub enum StructureSetError {
     /// The operation needs something the set lacks, such as a time order or
     /// a distribution.
     Missing(Requirement),
@@ -60,11 +60,11 @@ pub enum SampleSetError {
     EmptySource,
     /// Probabilities were asked of a distribution without members.
     EmptyDistribution,
-    /// A sample index is outside the set.
+    /// A geometry index is outside the set.
     IndexOutOfRange {
-        /// The requested sample index.
+        /// The requested geometry index.
         index: usize,
-        /// The number of samples.
+        /// The number of geometries.
         len: usize,
     },
     /// A state index is outside the distribution.
@@ -74,24 +74,24 @@ pub enum SampleSetError {
         /// The number of states.
         states: usize,
     },
-    /// A sample is not a member of the distribution.
+    /// A geometry is not a member of the distribution.
     NotMember {
-        /// The sample's index.
-        sample: usize,
+        /// The geometry's index.
+        geometry: usize,
     },
     /// A model's topology layout differs from the others'
     /// ([`Topology::same_layout`](crate::topology::Topology::same_layout)).
     TopologyMismatch,
-    /// A set-wide replacement has the wrong number of samples.
-    SampleCountMismatch {
-        /// The set's sample count.
+    /// A set-wide replacement has the wrong number of geometries.
+    GeometryCountMismatch {
+        /// The set's geometry count.
         expected: usize,
         /// The number of replacements supplied.
         actual: usize,
     },
-    /// An order has a different number of values than the set has samples.
+    /// An order has a different number of values than the set has geometries.
     OrderLengthMismatch {
-        /// The set's sample count.
+        /// The set's geometry count.
         expected: usize,
         /// The number of values.
         actual: usize,
@@ -105,50 +105,50 @@ pub enum SampleSetError {
     },
     /// An order value, a time or a coordinate, is not finite.
     NonFiniteOrderValue {
-        /// The index of the sample the value belongs to.
-        sample: usize,
+        /// The index of the geometry the value belongs to.
+        geometry: usize,
     },
     /// A place is of another kind than the set's order, or a place was
     /// given to an unordered set, or none to an ordered one.
     PlaceMismatch {
-        /// The index of the sample the place belongs to.
-        sample: usize,
+        /// The index of the geometry the place belongs to.
+        geometry: usize,
     },
-    /// A sample has no time on a time axis with times.
+    /// A geometry has no time on a time axis with times.
     MissingTime {
-        /// The sample's index.
-        sample: usize,
+        /// The geometry's index.
+        geometry: usize,
     },
-    /// A sample has a time on a time axis without times.
+    /// A geometry has a time on a time axis without times.
     UnexpectedTime {
-        /// The sample's index.
-        sample: usize,
+        /// The geometry's index.
+        geometry: usize,
     },
-    /// A sample has no MD step on a time axis with steps.
+    /// A geometry has no MD step on a time axis with steps.
     MissingStep {
-        /// The sample's index.
-        sample: usize,
+        /// The geometry's index.
+        geometry: usize,
     },
-    /// A sample has an MD step on a time axis without steps.
+    /// A geometry has an MD step on a time axis without steps.
     UnexpectedStep {
-        /// The sample's index.
-        sample: usize,
+        /// The geometry's index.
+        geometry: usize,
     },
-    /// A sample's time is earlier than the previous sample's
-    /// ([`super::SampleSet::validate_monotonic_time`]).
+    /// A geometry's time is earlier than the previous geometry's
+    /// ([`super::StructureSet::validate_monotonic_time`]).
     NonMonotonicTime {
-        /// The index of the out-of-order sample.
-        sample: usize,
+        /// The index of the out-of-order geometry.
+        geometry: usize,
     },
-    /// The members of a distribution are not increasing sample indices.
+    /// The members of a distribution are not increasing geometry indices.
     UnsortedMembers,
-    /// A distribution of every sample ([`Members::All`](super::Members::All))
-    /// covers another number of samples than the set has.
+    /// A distribution of every geometry ([`Members::All`](super::Members::All))
+    /// covers another number of geometries than the set has.
     CoverageMismatch {
-        /// The number of samples the distribution covers.
+        /// The number of geometries the distribution covers.
         covered: usize,
-        /// The set's sample count.
-        samples: usize,
+        /// The set's geometry count.
+        geometries: usize,
     },
     /// A partition groups another number of members than the distribution
     /// lists ([`Distribution::new`](super::Distribution::new),
@@ -156,7 +156,7 @@ pub enum SampleSetError {
     PartitionMismatch {
         /// The number of members.
         expected: usize,
-        /// The partition's sample count.
+        /// The partition's geometry count.
         actual: usize,
     },
     /// Weights were given in a different number than the distribution has
@@ -176,8 +176,8 @@ pub enum SampleSetError {
     },
     /// A weight is not finite and positive.
     InvalidWeight {
-        /// The index of the sample the weight belongs to.
-        sample: usize,
+        /// The index of the geometry the weight belongs to.
+        geometry: usize,
     },
     /// A new member came without a weight, and the distribution has
     /// weights. Pass one, or clear the weights first.
@@ -186,8 +186,8 @@ pub enum SampleSetError {
     /// choose another representative with
     /// [`super::DistributionMut::regroup`] first.
     RepresentativeRemoval {
-        /// The representative sample.
-        sample: usize,
+        /// The representative geometry.
+        geometry: usize,
         /// Its state.
         state: usize,
     },
@@ -197,7 +197,7 @@ pub enum SampleSetError {
     InvalidEnergyWindow,
     /// A population fraction is not in `(0, 1]`.
     InvalidFraction,
-    /// A sample's structural state is invalid; see the source.
+    /// A geometry's structural state is invalid; see the source.
     Geometry(GeometryError),
     /// Projecting the topology onto a selection failed; see the source.
     Subset(TopologySubsetError),
@@ -206,39 +206,39 @@ pub enum SampleSetError {
     Unit(Box<UnitError>),
 }
 
-impl fmt::Display for SampleSetError {
+impl fmt::Display for StructureSetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         use crate::diagnostics::counted;
         match self {
-            Self::Missing(requirement) => write!(formatter, "The sample set {requirement}."),
+            Self::Missing(requirement) => write!(formatter, "The structure set {requirement}."),
             Self::EmptySource => formatter.write_str("There are no models to collect."),
             Self::EmptyDistribution => formatter.write_str("The distribution has no members."),
             Self::IndexOutOfRange { index, len } => write!(
                 formatter,
-                "Sample {index} is outside the sample set of {}.",
-                counted(*len, "sample", "samples")
+                "Geometry {index} is outside the structure set of {}.",
+                counted(*len, "geometry", "geometries")
             ),
             Self::StateOutOfRange { state, states } => write!(
                 formatter,
                 "State {state} is outside the distribution of {}.",
                 counted(*states, "state", "states")
             ),
-            Self::NotMember { sample } => {
-                write!(formatter, "Sample {sample} is outside the distribution.")
+            Self::NotMember { geometry } => {
+                write!(formatter, "Geometry {geometry} is outside the distribution.")
             }
             Self::TopologyMismatch => formatter
-                .write_str("The model has a different topology layout from the sample set."),
-            Self::SampleCountMismatch { expected, actual } => write!(
+                .write_str("The model has a different topology layout from the structure set."),
+            Self::GeometryCountMismatch { expected, actual } => write!(
                 formatter,
-                "The sample set has {}, but {} given.",
-                counted(*expected, "sample", "samples"),
+                "The structure set has {}, but {} given.",
+                counted(*expected, "geometry", "geometries"),
                 given(*actual, "replacement", "replacements")
             ),
             Self::OrderLengthMismatch { expected, actual } => write!(
                 formatter,
-                "The order has {}, but the sample set has {}.",
+                "The order has {}, but the structure set has {}.",
                 counted(*actual, "value", "values"),
-                counted(*expected, "sample", "samples")
+                counted(*expected, "geometry", "geometries")
             ),
             Self::TimeAxisMismatch { times, steps } => write!(
                 formatter,
@@ -246,48 +246,48 @@ impl fmt::Display for SampleSetError {
                 counted(*times, "time", "times"),
                 counted(*steps, "step", "steps")
             ),
-            Self::NonFiniteOrderValue { sample } => {
+            Self::NonFiniteOrderValue { geometry } => {
                 write!(
                     formatter,
-                    "The order value of sample {sample} is not finite."
+                    "The order value of geometry {geometry} is not finite."
                 )
             }
-            Self::PlaceMismatch { sample } => write!(
+            Self::PlaceMismatch { geometry } => write!(
                 formatter,
-                "The place of sample {sample} is not on the order of the sample set."
+                "The place of geometry {geometry} is not on the order of the structure set."
             ),
-            Self::MissingTime { sample } => write!(
+            Self::MissingTime { geometry } => write!(
                 formatter,
-                "Sample {sample} has no time, but the other samples have one."
+                "Geometry {geometry} has no time, but the other geometries have one."
             ),
-            Self::UnexpectedTime { sample } => write!(
+            Self::UnexpectedTime { geometry } => write!(
                 formatter,
-                "Sample {sample} has a time, but the other samples have none."
+                "Geometry {geometry} has a time, but the other geometries have none."
             ),
-            Self::MissingStep { sample } => write!(
+            Self::MissingStep { geometry } => write!(
                 formatter,
-                "Sample {sample} has no step, but the other samples have one."
+                "Geometry {geometry} has no step, but the other geometries have one."
             ),
-            Self::UnexpectedStep { sample } => write!(
+            Self::UnexpectedStep { geometry } => write!(
                 formatter,
-                "Sample {sample} has a step, but the other samples have none."
+                "Geometry {geometry} has a step, but the other geometries have none."
             ),
-            Self::NonMonotonicTime { sample } => write!(
+            Self::NonMonotonicTime { geometry } => write!(
                 formatter,
-                "Sample {sample} is earlier than the sample before it."
+                "Geometry {geometry} is earlier than the geometry before it."
             ),
             Self::UnsortedMembers => {
                 formatter.write_str("The members of the distribution are not in increasing order.")
             }
-            Self::CoverageMismatch { covered, samples } => write!(
+            Self::CoverageMismatch { covered, geometries } => write!(
                 formatter,
-                "The distribution covers {}, but the sample set has {samples}.",
-                counted(*covered, "sample", "samples")
+                "The distribution covers {}, but the structure set has {geometries}.",
+                counted(*covered, "geometry", "geometries")
             ),
             Self::PartitionMismatch { expected, actual } => write!(
                 formatter,
                 "The partition covers {}, but the distribution has {}.",
-                counted(*actual, "sample", "samples"),
+                counted(*actual, "geometry", "geometries"),
                 counted(*expected, "member", "members")
             ),
             Self::WeightCountMismatch { expected, actual } => write!(
@@ -302,15 +302,15 @@ impl fmt::Display for SampleSetError {
                 counted(*expected, "state", "states"),
                 given(*actual, "state", "states")
             ),
-            Self::InvalidWeight { sample } => write!(
+            Self::InvalidWeight { geometry } => write!(
                 formatter,
-                "The weight of sample {sample} is not finite and positive."
+                "The weight of geometry {geometry} is not finite and positive."
             ),
             Self::WeightRequired => formatter
                 .write_str("The new member has no weight, but the other members have weights."),
-            Self::RepresentativeRemoval { sample, state } => write!(
+            Self::RepresentativeRemoval { geometry, state } => write!(
                 formatter,
-                "Sample {sample} represents state {state}. Remove the state's other samples first."
+                "Geometry {geometry} represents state {state}. Remove the state's other geometries first."
             ),
             Self::InvalidTemperature => {
                 formatter.write_str("The temperature is not finite and positive.")
@@ -321,8 +321,8 @@ impl fmt::Display for SampleSetError {
             Self::InvalidFraction => {
                 formatter.write_str("The population fraction is not greater than 0 and at most 1.")
             }
-            Self::Geometry(_) => formatter.write_str("A sample is invalid."),
-            Self::Subset(_) => formatter.write_str("Cannot subset the sample set."),
+            Self::Geometry(_) => formatter.write_str("A geometry is invalid."),
+            Self::Subset(_) => formatter.write_str("Cannot subset the structure set."),
             Self::Unit(error) => error.fmt(formatter),
         }
     }
@@ -334,7 +334,7 @@ fn given(count: usize, one: &str, many: &str) -> String {
     format!("{} {verb}", crate::diagnostics::counted(count, one, many))
 }
 
-impl std::error::Error for SampleSetError {
+impl std::error::Error for StructureSetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Geometry(error) => Some(error),
@@ -345,25 +345,25 @@ impl std::error::Error for SampleSetError {
     }
 }
 
-impl From<Requirement> for SampleSetError {
+impl From<Requirement> for StructureSetError {
     fn from(requirement: Requirement) -> Self {
         Self::Missing(requirement)
     }
 }
 
-impl From<GeometryError> for SampleSetError {
+impl From<GeometryError> for StructureSetError {
     fn from(error: GeometryError) -> Self {
         Self::Geometry(error)
     }
 }
 
-impl From<TopologySubsetError> for SampleSetError {
+impl From<TopologySubsetError> for StructureSetError {
     fn from(error: TopologySubsetError) -> Self {
         Self::Subset(error)
     }
 }
 
-impl From<UnitError> for SampleSetError {
+impl From<UnitError> for StructureSetError {
     fn from(error: UnitError) -> Self {
         Self::Unit(Box::new(error))
     }

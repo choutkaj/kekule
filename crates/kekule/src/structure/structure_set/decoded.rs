@@ -1,4 +1,4 @@
-//! A codec's decoded frame state as a [`Sample`].
+//! A codec's decoded frame state as a [`Geometry`].
 
 use std::sync::Arc;
 
@@ -8,11 +8,11 @@ use crate::structure::{DenseArrayError, Forces, GeometryError, Positions, Veloci
 use crate::topology::Topology;
 use crate::units::Quantity;
 
-use super::{Sample, SampleStructure};
+use super::{Geometry, GeometryState};
 
 /// The state of a frame a codec decoded, in the units it decoded them in:
 /// positions, cell, velocities, forces, and frame properties.
-pub(crate) struct DecodedSample {
+pub(crate) struct DecodedGeometry {
     pub(crate) positions: Quantity<Vec<Point3>>,
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) velocities: Option<Quantity<Vec<Vector3>>>,
@@ -20,11 +20,11 @@ pub(crate) struct DecodedSample {
     pub(crate) owner: Option<OwnerProperties>,
 }
 
-impl Sample {
-    /// A decoded frame of `topology`'s atoms as a sample, keeping the
+impl Geometry {
+    /// A decoded frame of `topology`'s atoms as a geometry, keeping the
     /// decoded arrays and converting them to canonical units in place.
     pub(crate) fn from_decoded(
-        frame: DecodedSample,
+        frame: DecodedGeometry,
         topology: &Topology,
     ) -> Result<Self, GeometryError> {
         let atoms = topology.atom_count();
@@ -59,7 +59,7 @@ impl Sample {
         if let Some(owner) = frame.owner {
             *properties.owner_mut() = owner;
         }
-        let mut structure = SampleStructure::from_frame_state(positions, frame.cell, properties);
+        let mut structure = GeometryState::from_frame_state(positions, frame.cell, properties);
         structure.velocities = velocities;
         structure.forces = forces;
         Ok(Self::from_structure(Arc::new(structure)))

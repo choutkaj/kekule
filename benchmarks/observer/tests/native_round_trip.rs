@@ -2,7 +2,7 @@
 //! interprets round-trips through the native format exactly.
 //!
 //! Small molecules (Molfile, SDF, SMILES) and macromolecular entries (mmCIF,
-//! as models and, for several coordinate models, sample sets)
+//! as models and, for several coordinate models, structure sets)
 //! are checked for molecular and layout equality, properties,
 //! classifications, perception, and bitwise-identical coordinates. Inputs
 //! Kekule does not interpret are the benchmark's business, not this test's,
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use kekule::math::Point3;
 use kekule::molecule::Molecule;
 use kekule::native::{self, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions};
-use kekule::structure::{Model, SampleSet};
+use kekule::structure::{Model, StructureSet};
 use kekule::topology::Topology;
 use kekule::{mmcif, molfile, sdf, smiles};
 
@@ -53,7 +53,7 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
         }
         NativeObject::Topology(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::Model(value) => native::write(value, NativeWriteOptions::default()),
-        NativeObject::SampleSet(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::StructureSet(value) => native::write(value, NativeWriteOptions::default()),
         other => panic!("unexpected {:?}", other.kind()),
     }
     .expect("re-encodes");
@@ -107,7 +107,7 @@ fn assert_same_model(decoded: &Model, source: &Model) {
     assert_eq!(decoded.properties(), source.properties());
 }
 
-fn assert_same_sample_set(decoded: &SampleSet, source: &SampleSet) {
+fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
     assert_same_topology(decoded.topology(), source.topology());
     assert_eq!(decoded.len(), source.len());
     assert_eq!(decoded.order(), source.order());
@@ -210,11 +210,13 @@ fn curated_biomolecules_round_trip_exactly() {
             check_model(interpretation.into_model());
             checked += 1;
         }
-        if let Ok(interpretation) = document.interpret_sample_set(Default::default()) {
-            let set = interpretation.into_sample_set();
+        if let Ok(interpretation) = document.interpret_structure_set(Default::default()) {
+            let set = interpretation.into_structure_set();
             if set.len() > 1 {
-                let decoded = round_trip(&set).into_sample_set().expect("a sample set");
-                assert_same_sample_set(&decoded, &set);
+                let decoded = round_trip(&set)
+                    .into_structure_set()
+                    .expect("a structure set");
+                assert_same_structure_set(&decoded, &set);
             }
         }
     }

@@ -8,7 +8,7 @@ use crate::diagnostics::{
 };
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
-use crate::structure::{Model, ModelBuilder, Positions, Sample, SampleSet};
+use crate::structure::{Geometry, Model, ModelBuilder, Positions, StructureSet};
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, Unit, ANGSTROM};
 
@@ -33,7 +33,7 @@ pub enum XyzFrameSelection {
     Index(usize),
 }
 
-/// Options shared by single-frame and sample set interpretation.
+/// Options shared by single-frame and structure set interpretation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Common {
     length_unit: Unit,
@@ -166,15 +166,15 @@ impl XyzInterpretOptions {
     common_options!();
 }
 
-/// Options of [`XyzDocument::interpret_sample_set`].
+/// Options of [`XyzDocument::interpret_structure_set`].
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct XyzSampleSetInterpretOptions {
+pub struct XyzStructureSetInterpretOptions {
     frames: Option<Vec<usize>>,
     common: Common,
 }
 
-impl XyzSampleSetInterpretOptions {
-    /// Zero-based indices of the frames to interpret, in sample order;
+impl XyzStructureSetInterpretOptions {
+    /// Zero-based indices of the frames to interpret, in geometry order;
     /// `None`, the default, selects every frame in source order.
     pub fn frames(&self) -> Option<&[usize]> {
         self.frames.as_deref()
@@ -357,37 +357,37 @@ impl XyzInterpretation {
     }
 }
 
-/// Several frames interpreted as one unordered sample set without a
-/// distribution, with one report per sample.
+/// Several frames interpreted as one unordered structure set without a
+/// distribution, with one report per geometry.
 #[derive(Debug, Clone)]
-pub struct XyzSampleSetInterpretation {
-    set: SampleSet,
+pub struct XyzStructureSetInterpretation {
+    set: StructureSet,
     reports: Vec<XyzInterpretationReport>,
 }
 
-impl XyzSampleSetInterpretation {
-    /// The interpreted sample set, one sample per selected frame.
-    pub fn sample_set(&self) -> &SampleSet {
+impl XyzStructureSetInterpretation {
+    /// The interpreted structure set, one geometry per selected frame.
+    pub fn structure_set(&self) -> &StructureSet {
         &self.set
     }
 
-    /// One report per sample, in sample order.
+    /// One report per geometry, in geometry order.
     pub fn reports(&self) -> &[XyzInterpretationReport] {
         &self.reports
     }
 
-    /// The topology all samples share.
+    /// The topology all geometries share.
     pub fn topology(&self) -> &Topology {
         self.set.topology()
     }
 
-    /// The interpreted sample set, discarding the reports.
-    pub fn into_sample_set(self) -> SampleSet {
+    /// The interpreted structure set, discarding the reports.
+    pub fn into_structure_set(self) -> StructureSet {
         self.set
     }
 
-    /// The sample set and its per-sample reports.
-    pub fn into_parts(self) -> (SampleSet, Vec<XyzInterpretationReport>) {
+    /// The structure set and its per-geometry reports.
+    pub fn into_parts(self) -> (StructureSet, Vec<XyzInterpretationReport>) {
         (self.set, self.reports)
     }
 }
@@ -454,12 +454,12 @@ fn unknown_frame(index: usize) -> FormatError {
     })
 }
 
-/// The selected frames as a sample set without a distribution: an XYZ file
+/// The selected frames as a structure set without a distribution: an XYZ file
 /// states no weights or states.
-pub(crate) fn interpret_xyz_sample_set(
+pub(crate) fn interpret_xyz_structure_set(
     document: &XyzDocument,
-    options: &XyzSampleSetInterpretOptions,
-) -> Result<XyzSampleSetInterpretation, FormatError> {
+    options: &XyzStructureSetInterpretOptions,
+) -> Result<XyzStructureSetInterpretation, FormatError> {
     let frames = document.frames();
     if frames.is_empty() {
         return Err(no_frames());
@@ -491,7 +491,7 @@ pub(crate) fn interpret_xyz_sample_set(
         .build_model(common.length_unit)
         .map_err(|error| in_frame(error, first_index))?;
     let (first_model, first_report) = (model, first.report);
-    let mut set = SampleSet::new(first_model.shared_topology());
+    let mut set = StructureSet::new(first_model.shared_topology());
     let shared_bonds = bond_identity(&first_report.bonds);
     let mut reports = Vec::with_capacity(selected.len());
     push_sample(&mut set, first.points, common.length_unit, first_index)?;
@@ -531,23 +531,23 @@ pub(crate) fn interpret_xyz_sample_set(
         reports.push(analysed.report);
     }
     drop(first_model);
-    Ok(XyzSampleSetInterpretation { set, reports })
+    Ok(XyzStructureSetInterpretation { set, reports })
 }
 
 fn bond_identity(bonds: &[XyzInferredBond]) -> Vec<([TopologyAtomIndex; 2], BondOrder)> {
     bonds.iter().map(|bond| (bond.atoms, bond.order)).collect()
 }
 
-/// Appends one frame as a sample of the set.
+/// Appends one frame as a geometry of the set.
 fn push_sample(
-    set: &mut SampleSet,
+    set: &mut StructureSet,
     points: Vec<Point3>,
     unit: Unit,
     frame: usize,
 ) -> Result<(), FormatError> {
     let positions = Positions::from_vec(Quantity::new(points, unit))
         .map_err(|error| sample_error(error, frame))?;
-    set.push(Sample::new(positions), None)
+    set.push(Geometry::new(positions), None)
         .map(|_| ())
         .map_err(|error| sample_error(error, frame))
 }
@@ -557,7 +557,7 @@ fn geometry_error(error: impl std::error::Error + Send + Sync + 'static) -> Form
     interpret_error(DiagnosticKind::Chemistry, "Cannot build the structure.").with_source(error)
 }
 
-/// A failure to add `frame` to the sample set, keeping its cause.
+/// A failure to add `frame` to the structure set, keeping its cause.
 fn sample_error(
     error: impl std::error::Error + Send + Sync + 'static,
     frame: usize,
@@ -565,7 +565,7 @@ fn sample_error(
     in_frame(
         interpret_error(
             DiagnosticKind::Chemistry,
-            "Cannot add the frame to the sample set.",
+            "Cannot add the frame to the structure set.",
         )
         .with_source(error),
         frame,

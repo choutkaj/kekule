@@ -1,4 +1,4 @@
-//! Frame selection, replacement, editing, and extraction of sample sets in
+//! Frame selection, replacement, editing, and extraction of structure sets in
 //! a time order.
 
 use std::sync::Arc;
@@ -7,7 +7,8 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Forces, Order, Place, Positions, Sample, SampleSet, SampleSetError, TimeAxis, Velocities,
+    Forces, Geometry, Order, Place, Positions, StructureSet, StructureSetError, TimeAxis,
+    Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyBondIndex};
 use kekule::traj::FrameView;
@@ -42,14 +43,14 @@ fn time_order() -> Order {
 }
 
 /// Four frames carrying every kind of frame state.
-fn annotated() -> SampleSet {
-    let mut set = SampleSet::new(chain(3));
+fn annotated() -> StructureSet {
+    let mut set = StructureSet::new(chain(3));
     set.set_order(Some(time_order())).unwrap();
     set.properties_mut()
         .insert(PropertyKey::new("run").unwrap(), PropertyValue::Int(7))
         .unwrap();
     for index in 0..4 {
-        let mut sample = Sample::new(
+        let mut geometry = Geometry::new(
             Positions::new(Quantity::new(
                 [
                     Point3::new(index as f64, 0.0, 0.0),
@@ -60,16 +61,16 @@ fn annotated() -> SampleSet {
             ))
             .unwrap(),
         );
-        sample.set_velocities(Some(Velocities::zeros(3))).unwrap();
-        sample.set_forces(Some(Forces::zeros(3))).unwrap();
-        sample.set_cell(Some(
+        geometry.set_velocities(Some(Velocities::zeros(3))).unwrap();
+        geometry.set_forces(Some(Forces::zeros(3))).unwrap();
+        geometry.set_cell(Some(
             PeriodicCell::orthorhombic(
                 Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
                 [true; 3],
             )
             .unwrap(),
         ));
-        let mut properties = sample.properties_mut();
+        let mut properties = geometry.properties_mut();
         properties
             .owner_mut()
             .insert(
@@ -84,9 +85,9 @@ fn annotated() -> SampleSet {
                 PropertyColumn::Int(vec![Some(1), None, Some(3)]),
             )
             .unwrap();
-        set.push(sample, timed(index as f64 * 0.5, index * 10))
+        set.push(geometry, timed(index as f64 * 0.5, index * 10))
             .unwrap();
-        // Bond rows exist once the sample is bound to the topology.
+        // Bond rows exist once the geometry is bound to the topology.
         set.get_mut(index as usize)
             .unwrap()
             .properties_mut()
@@ -117,7 +118,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
     }
     assert_eq!(
         selected.validate_monotonic_time(),
-        Err(SampleSetError::NonMonotonicTime { sample: 1 })
+        Err(StructureSetError::NonMonotonicTime { geometry: 1 })
     );
     let strided = original.select((0..4).step_by(2)).unwrap();
     assert_eq!(strided.get(1).unwrap().place(), timed(1.0, 20));
@@ -130,7 +131,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
     assert_eq!(empty.properties(), original.properties());
     assert_eq!(
         original.select([0, 4]).unwrap_err(),
-        SampleSetError::IndexOutOfRange { index: 4, len: 4 }
+        StructureSetError::IndexOutOfRange { index: 4, len: 4 }
     );
     assert_eq!(format!("{original:?}"), before);
     let atoms = AtomSelection::all(original.shared_topology());
@@ -155,10 +156,10 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
     // The replacement takes the replaced frame's time and step.
     assert_eq!(original.get(1).unwrap().place(), timed(0.5, 10));
     let before = format!("{original:?}");
-    let invalid = Sample::new(Positions::zeros(2));
+    let invalid = Geometry::new(Positions::zeros(2));
     assert_eq!(
         original.replace(4, invalid.clone()).unwrap_err(),
-        SampleSetError::IndexOutOfRange { index: 4, len: 4 }
+        StructureSetError::IndexOutOfRange { index: 4, len: 4 }
     );
     assert!(original.replace(1, invalid).is_err());
     assert_eq!(format!("{original:?}"), before);
@@ -170,25 +171,25 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
     let mut set = annotated();
     let key = PropertyKey::new("bond").unwrap();
     let before = set.get(0).unwrap().payload().clone();
-    let smaller = Sample::new(Positions::zeros(2)).properties().clone();
+    let smaller = Geometry::new(Positions::zeros(2)).properties().clone();
     {
-        let mut sample = set.get_mut(0).unwrap();
-        assert!(sample.set_velocities(Some(Velocities::zeros(4))).is_err());
-        assert!(sample.set_forces(Some(Forces::zeros(4))).is_err());
-        assert!(sample
+        let mut geometry = set.get_mut(0).unwrap();
+        assert!(geometry.set_velocities(Some(Velocities::zeros(4))).is_err());
+        assert!(geometry.set_forces(Some(Forces::zeros(4))).is_err());
+        assert!(geometry
             .set_positions(Quantity::new([Point3::origin(); 2], NANOMETER))
             .is_err());
-        assert!(sample.set_properties(smaller).is_err());
+        assert!(geometry.set_properties(smaller).is_err());
     }
     assert_eq!(
         set.set_place(0, timed(f64::NAN, 0)),
-        Err(SampleSetError::NonFiniteOrderValue { sample: 0 })
+        Err(StructureSetError::NonFiniteOrderValue { geometry: 0 })
     );
     assert_eq!(set.get(0).unwrap().payload(), &before);
     assert_eq!(set.get(0).unwrap().place(), timed(0.0, 0));
     {
-        let mut sample = set.get_mut(0).unwrap();
-        let mut properties = sample.properties_mut();
+        let mut geometry = set.get_mut(0).unwrap();
+        let mut properties = geometry.properties_mut();
         properties.bonds_mut().remove(&key);
         assert!(properties
             .bonds_mut()
@@ -203,11 +204,11 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
             .bonds_mut()
             .set_value(key, TopologyBondIndex::new(1), Some(PropertyValue::Int(9)))
             .unwrap();
-        sample
+        geometry
             .set_positions(Quantity::new([Point3::origin(); 3], NANOMETER))
             .unwrap();
         // Invariants do not depend on Drop.
-        std::mem::forget(sample);
+        std::mem::forget(geometry);
     }
     set.set_place(0, timed(0.0, 500)).unwrap();
     assert_eq!(set.get(0).unwrap().place(), timed(0.0, 500));
@@ -233,7 +234,7 @@ fn consuming_extraction_moves_complete_frames() {
             )
         })
         .collect();
-    let frames = set.into_samples();
+    let frames = set.into_geometries();
     assert_eq!(frames, expected);
     for (frame, (positions, velocities, forces)) in frames.iter().zip(pointers) {
         assert_eq!(frame.positions().values().value().as_ptr(), positions);
@@ -243,12 +244,12 @@ fn consuming_extraction_moves_complete_frames() {
         );
         assert_eq!(frame.forces().unwrap().values().value().as_ptr(), forces);
     }
-    let mut set = SampleSet::from_samples(Arc::clone(&topology), frames).unwrap();
+    let mut set = StructureSet::from_geometries(Arc::clone(&topology), frames).unwrap();
     set.set_order(order).unwrap();
     assert_eq!(set.get(3).unwrap().place(), timed(1.5, 30));
     let pointer = set.get(0).unwrap().positions().values().value().as_ptr();
-    let frames = set.into_samples();
+    let frames = set.into_geometries();
     assert_eq!(frames, expected);
     assert_eq!(frames[0].positions().values().value().as_ptr(), pointer);
-    assert!(SampleSet::new(topology).into_samples().is_empty());
+    assert!(StructureSet::new(topology).into_geometries().is_empty());
 }

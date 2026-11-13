@@ -3,8 +3,8 @@
 //!
 //! These operations change positions only, in place. The shared topology, cells,
 //! velocities, forces, order, distribution, and all properties are retained.
-//! Set functions publish only after every sample succeeds; clone the set first
-//! to keep the original. Every processed sample must have a periodic cell.
+//! Set functions publish only after every geometry succeeds; clone the set first
+//! to keep the original. Every processed geometry must have a periodic cell.
 //!
 //! Molecules and bonds come from the authoritative topology. No bonds are guessed
 //! from distances or hierarchy. Orthorhombic, triclinic, rotated, and partially
@@ -14,7 +14,7 @@
 //! search permits up to one million candidates per displacement and fails explicitly
 //! for cells requiring more; it never substitutes an approximate image silently.
 //!
-//! Set functions operate on an in-memory [`SampleSet`], whose samples they
+//! Set functions operate on an in-memory [`StructureSet`], whose geometries they
 //! call frames; [`MoleculeImager`] and [`TrajectoryUnwrapper`] apply the same
 //! operations to streamed [`FrameBuffer`](crate::traj::FrameBuffer)s.
 //!
@@ -26,7 +26,7 @@
 //! use std::sync::Arc;
 //!
 //! use kekule::math::{PeriodicCell, Point3, Vector3};
-//! use kekule::structure::{Positions, Sample, SampleSet};
+//! use kekule::structure::{Positions, Geometry, StructureSet};
 //! use kekule::units::{Quantity, NANOMETER};
 //! use kekule::{smiles, topology::Topology};
 //! use kekule::traj::periodic;
@@ -37,8 +37,8 @@
 //! let cell = PeriodicCell::orthorhombic(lengths, [true; 3])?;
 //! let points = vec![Point3::new(0.125, 0.0, 0.0), Point3::new(0.875, 0.0, 0.0)];
 //! let positions = Positions::from_vec(Quantity::new(points, NANOMETER))?;
-//! let frame = Sample::new(positions).with_cell(cell);
-//! let mut trajectory = SampleSet::from_samples(topology, [frame])?;
+//! let frame = Geometry::new(positions).with_cell(cell);
+//! let mut trajectory = StructureSet::from_geometries(topology, [frame])?;
 //!
 //! periodic::make_molecules_whole(&mut trajectory)?;
 //! let frame = trajectory.get(0).unwrap();
@@ -53,11 +53,11 @@
 //!
 //! ```no_run
 //! use kekule::{mmcif, topology::AtomSelection};
-//! use kekule::traj::{io::read_sample_set, periodic};
+//! use kekule::traj::{io::read_structure_set, periodic};
 //!
 //! let document = mmcif::parse_str(&std::fs::read_to_string("system.cif")?, Default::default())?;
 //! let topology = document.interpret(Default::default())?.into_topology();
-//! let mut trajectory = read_sample_set("trajectory.xtc", topology.clone(), Default::default())?;
+//! let mut trajectory = read_structure_set("trajectory.xtc", topology.clone(), Default::default())?;
 //! periodic::make_molecules_whole(&mut trajectory)?;
 //!
 //! // A continuous path through time, retaining the initial molecular images.
@@ -99,7 +99,9 @@ use std::collections::VecDeque;
 use std::fmt;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::structure::{AsModelView, DenseArrayError, Place, Positions, SampleSet, SampleSetError};
+use crate::structure::{
+    AsModelView, DenseArrayError, Place, Positions, StructureSet, StructureSetError,
+};
 use crate::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use crate::traj::FrameView;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -182,7 +184,7 @@ pub enum PeriodicError {
         source: Box<DenseArrayError>,
     },
     /// Valid positions could not be published into the destination.
-    Publication(Box<SampleSetError>),
+    Publication(Box<StructureSetError>),
 }
 
 impl fmt::Display for PeriodicError {
@@ -258,7 +260,7 @@ impl std::error::Error for PeriodicError {
 /// an ill-conditioned cell or out-of-range coordinates, and
 /// [`PeriodicError::Position`] or [`PeriodicError::Publication`] when the
 /// result cannot be stored. On error the set is unchanged.
-pub fn make_molecules_whole(trajectory: &mut SampleSet) -> Result<(), PeriodicError> {
+pub fn make_molecules_whole(trajectory: &mut StructureSet) -> Result<(), PeriodicError> {
     let positions = whole_positions(trajectory, None)?;
     publish(trajectory, positions)
 }
@@ -283,7 +285,7 @@ pub fn make_molecules_whole(trajectory: &mut SampleSet) -> Result<(), PeriodicEr
 /// no atom, and the errors of [`make_molecules_whole`]. On error the set is
 /// unchanged.
 pub fn image_molecules(
-    trajectory: &mut SampleSet,
+    trajectory: &mut StructureSet,
     anchors: &AtomSelection,
 ) -> Result<(), PeriodicError> {
     let positions = whole_positions(trajectory, Some(anchors))?;
@@ -326,7 +328,7 @@ pub fn image_molecules(
 /// [`PeriodicError::Publication`] when the result cannot be stored. On error
 /// the set is unchanged.
 pub fn image_onto(
-    trajectory: &mut SampleSet,
+    trajectory: &mut StructureSet,
     reference: &(impl AsModelView + ?Sized),
 ) -> Result<(), PeriodicError> {
     let imager = MoleculeImager::new(trajectory.shared_topology());
@@ -341,7 +343,7 @@ pub fn image_onto(
 
 /// Unwraps a trajectory through time using fractional-coordinate continuity.
 ///
-/// The samples are the frames, in set order, and the times of a time order
+/// The geometries are the frames, in set order, and the times of a time order
 /// are their times; a set of another order or none has no times. Frame zero
 /// is unchanged. For each subsequent frame, integer periodic images
 /// are chosen so each atom moves less than half a cell in each periodic
@@ -367,17 +369,18 @@ pub fn image_onto(
 /// [`PeriodicError::NumericalFailure`] for out-of-range coordinates, and
 /// [`PeriodicError::Position`] or [`PeriodicError::Publication`] when the
 /// result cannot be stored. On error the set is unchanged.
-pub fn unwrap_trajectory(trajectory: &mut SampleSet) -> Result<(), PeriodicError> {
+pub fn unwrap_trajectory(trajectory: &mut StructureSet) -> Result<(), PeriodicError> {
     let mut unwrapper = TrajectoryUnwrapper::new(trajectory.shared_topology());
     let positions = trajectory
         .iter()
         .enumerate()
-        .map(|(index, sample)| {
-            let time = match sample.place() {
+        .map(|(index, geometry)| {
+            let time = match geometry.place() {
                 Some(Place::Time { time, .. }) => time,
                 _ => None,
             };
-            let frame = FrameView::bound(sample.topology_handle(), sample.payload(), time, None);
+            let frame =
+                FrameView::bound(geometry.topology_handle(), geometry.payload(), time, None);
             unwrapper.next_positions(index, frame)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -385,7 +388,7 @@ pub fn unwrap_trajectory(trajectory: &mut SampleSet) -> Result<(), PeriodicError
 }
 
 fn whole_positions(
-    trajectory: &SampleSet,
+    trajectory: &StructureSet,
     anchors: Option<&AtomSelection>,
 ) -> Result<Vec<Positions>, PeriodicError> {
     let imager = MoleculeImager::new(trajectory.shared_topology());
@@ -401,7 +404,7 @@ fn whole_positions(
         .collect()
 }
 
-fn publish(trajectory: &mut SampleSet, positions: Vec<Positions>) -> Result<(), PeriodicError> {
+fn publish(trajectory: &mut StructureSet, positions: Vec<Positions>) -> Result<(), PeriodicError> {
     trajectory
         .replace_positions(positions)
         .map_err(|error| PeriodicError::Publication(Box::new(error)))
@@ -706,11 +709,11 @@ mod tests {
                 let axes = std::array::from_fn(|axis| mask & (1 << axis) != 0);
                 let cell = PeriodicCell::new(Quantity::new(basis, NANOMETER), axes).unwrap();
                 let lattice = Lattice::new(Some(cell), 7).unwrap();
-                for sample in 0..19 {
+                for geometry in 0..19 {
                     let delta = Vector3::new(
-                        f64::from((sample * 17) % 31 - 15) / 11.0,
-                        f64::from((sample * 11) % 29 - 14) / 9.0,
-                        f64::from((sample * 7) % 23 - 11) / 8.0,
+                        f64::from((geometry * 17) % 31 - 15) / 11.0,
+                        f64::from((geometry * 11) % 29 - 14) / 9.0,
+                        f64::from((geometry * 7) % 23 - 11) / 8.0,
                     );
                     let (nearest, images) = lattice.nearest_image(delta).unwrap();
                     let mut exhaustive = f64::INFINITY;

@@ -85,7 +85,7 @@ impl Scope {
 /// the total observed weight in which it was present.
 ///
 /// An observation is the [`Interactions`] of one structure, such as an
-/// sample or a trajectory frame, with an explicit, finite, positive
+/// geometry or a trajectory frame, with an explicit, finite, positive
 /// weight. Every observation must come from the same kind of search
 /// ([`super::find_interactions_within`] or
 /// [`super::find_interactions_between`]) over the same topology layouts with

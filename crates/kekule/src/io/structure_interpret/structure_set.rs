@@ -1,28 +1,27 @@
 //! Assembles interpreted coordinate models or explicit conformation
-//! selections into one shared-topology sample set: an ensemble of equally
-//! weighted samples in one state.
+//! selections into one shared-topology structure set: an ensemble of equally
+//! weighted geometries in one state.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::structure::{
-    Distribution, Members, Partition, Sample, SampleSet, SampleSetError, State,
+    Distribution, Geometry, Members, Partition, State, StructureSet, StructureSetError,
 };
 
 use super::types::{
-    sample_set_error, StructureInterpretOptions, StructureInterpretation,
-    StructureInterpretationReport, StructureSampleSetInterpretOptions,
-    StructureSampleSetInterpretation,
+    structure_set_error, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport, StructureSetInterpretOptions, StructureSetInterpretation,
 };
 use super::{PreparedSource, StructureSource};
 
 /// Interprets explicitly selected or all of the `available` coordinate models
-/// of one source as one shared-topology unordered sample set.
+/// of one source as one shared-topology unordered structure set.
 pub(super) fn interpret_models(
     available: Vec<String>,
-    options: StructureSampleSetInterpretOptions,
-    source: impl FnOnce(&StructureSampleSetInterpretOptions) -> Result<StructureSource, FormatError>,
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+    options: StructureSetInterpretOptions,
+    source: impl FnOnce(&StructureSetInterpretOptions) -> Result<StructureSource, FormatError>,
+) -> Result<StructureSetInterpretation, FormatError> {
     if available.is_empty() {
         return Err(no_coordinate_models());
     }
@@ -33,7 +32,7 @@ pub(super) fn interpret_models(
     let mut seen = BTreeSet::new();
     for model in &selected {
         if !seen.insert(model.clone()) {
-            return Err(sample_set_error(
+            return Err(structure_set_error(
                 DiagnosticKind::Inconsistent,
                 format!("Coordinate model {model:?} is requested twice."),
                 FormatErrorDetail::DuplicateRequestedModel {
@@ -42,7 +41,7 @@ pub(super) fn interpret_models(
             ));
         }
         if !available.contains(model) {
-            return Err(sample_set_error(
+            return Err(structure_set_error(
                 DiagnosticKind::Inconsistent,
                 format!("Coordinate model {model:?} does not exist."),
                 FormatErrorDetail::UnknownRequestedModel {
@@ -79,9 +78,9 @@ pub(super) fn interpret_models(
 pub(super) fn interpret_conformations(
     selections: &[StructureInterpretOptions],
     interpret: impl Fn(&StructureInterpretOptions) -> Result<StructureInterpretation, FormatError>,
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+) -> Result<StructureSetInterpretation, FormatError> {
     if selections.is_empty() {
-        return Err(sample_set_error(
+        return Err(structure_set_error(
             DiagnosticKind::Inconsistent,
             "The conformation selection is empty.",
             FormatErrorDetail::EmptyConformationSelection,
@@ -97,7 +96,7 @@ pub(super) fn interpret_conformations(
 
 /// An explicit coordinate-model selection is empty.
 pub(super) fn empty_model_selection() -> FormatError {
-    sample_set_error(
+    structure_set_error(
         DiagnosticKind::Inconsistent,
         "The coordinate model selection is empty.",
         FormatErrorDetail::EmptyModelSelection,
@@ -106,7 +105,7 @@ pub(super) fn empty_model_selection() -> FormatError {
 
 /// The source contains no coordinate models.
 pub(super) fn no_coordinate_models() -> FormatError {
-    sample_set_error(
+    structure_set_error(
         DiagnosticKind::Inconsistent,
         "The input has no coordinate models.",
         FormatErrorDetail::NoCoordinateModels,
@@ -119,7 +118,7 @@ fn in_model(error: FormatError, model_id: String) -> FormatError {
 }
 
 fn inconsistent_atom_set(model_id: String) -> FormatError {
-    sample_set_error(
+    structure_set_error(
         DiagnosticKind::Inconsistent,
         format!("Coordinate model {model_id:?} has other atoms than the first model."),
         FormatErrorDetail::InconsistentAtomSet { model_id },
@@ -127,18 +126,18 @@ fn inconsistent_atom_set(model_id: String) -> FormatError {
 }
 
 fn inconsistent_dense_atom_order(model_id: String) -> FormatError {
-    sample_set_error(
+    structure_set_error(
         DiagnosticKind::Inconsistent,
         format!("Coordinate model {model_id:?} orders its atoms differently from the first model."),
         FormatErrorDetail::InconsistentDenseAtomOrder { model_id },
     )
 }
 
-fn assembly_error(error: SampleSetError) -> FormatError {
+fn assembly_error(error: StructureSetError) -> FormatError {
     FormatError::interpret(
         Format::Mmcif,
         DiagnosticKind::Chemistry,
-        "Cannot assemble the sample set.",
+        "Cannot assemble the structure set.",
     )
     .with_source(error)
 }
@@ -146,16 +145,16 @@ fn assembly_error(error: SampleSetError) -> FormatError {
 fn assemble(
     first: StructureInterpretation,
     remaining: impl Iterator<Item = Result<StructureInterpretation, FormatError>>,
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+) -> Result<StructureSetInterpretation, FormatError> {
     let shared_topology = first.model.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
-    let mut set = SampleSet::new(Arc::clone(&shared_topology));
+    let mut set = StructureSet::new(Arc::clone(&shared_topology));
     let empty = Distribution::new(Members::All, Partition::one_state(0)).map_err(assembly_error)?;
     set.set_distribution(Some(empty)).map_err(assembly_error)?;
     let (first_model, first_report) = first.into_parts();
     // Coordinate models are equally weighted draws of one distribution: one
     // state without weights.
-    set.push_state(Sample::from_model(first_model), None, State::new(), None)
+    set.push_state(Geometry::from_model(first_model), None, State::new(), None)
         .map_err(assembly_error)?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
@@ -175,7 +174,7 @@ fn assemble(
             );
         }
         if !shared_topology.same_layout(model.topology()) {
-            return Err(sample_set_error(
+            return Err(structure_set_error(
                 DiagnosticKind::Inconsistent,
                 format!(
                     "Coordinate model {model_id:?} differs from the first model in its molecules, chemistry, bonds or residues."
@@ -188,11 +187,11 @@ fn assemble(
         {
             return Err(inconsistent_dense_atom_order(model_id));
         }
-        set.push_member(Sample::from_model(model), None, 0, None)
+        set.push_member(Geometry::from_model(model), None, 0, None)
             .map_err(assembly_error)?;
         reports.push(report);
     }
-    Ok(StructureSampleSetInterpretation { set, reports })
+    Ok(StructureSetInterpretation { set, reports })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

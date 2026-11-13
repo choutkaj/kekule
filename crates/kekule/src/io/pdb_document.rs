@@ -13,11 +13,12 @@ use crate::diagnostics::{
 use crate::math::Point3;
 
 use super::structure_interpret::{
-    interpret_pdb, interpret_pdb_conformations, interpret_pdb_sample_set, pdb_alternate_locations,
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_structure_set,
+    pdb_alternate_locations,
 };
 use super::{
     AltLocResidue, StructureInterpretOptions, StructureInterpretation,
-    StructureSampleSetInterpretOptions, StructureSampleSetInterpretation,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 
 /// Syntax and resource limits for parsing a PDB entry.
@@ -607,26 +608,26 @@ impl PdbDocument {
     }
 
     /// Interprets the coordinate models that `options` selects, by default
-    /// all of them, as an unordered sample set with one report per sample.
-    /// Its distribution covers every sample in one state and stores no
+    /// all of them, as an unordered structure set with one report per geometry.
+    /// Its distribution covers every geometry in one state and stores no
     /// weights, as the models weigh the same; occupancy is not converted
     /// into a weight.
     ///
     /// # Errors
     ///
     /// As
-    /// [`MmcifDocument::interpret_sample_set`](super::MmcifDocument::interpret_sample_set),
+    /// [`MmcifDocument::interpret_structure_set`](super::MmcifDocument::interpret_structure_set),
     /// in [`Format::Pdb`].
-    pub fn interpret_sample_set(
+    pub fn interpret_structure_set(
         &self,
-        options: StructureSampleSetInterpretOptions,
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
-        interpret_pdb_sample_set(self, options).map_err(pdb)
+        options: StructureSetInterpretOptions,
+    ) -> Result<StructureSetInterpretation, FormatError> {
+        interpret_pdb_structure_set(self, options).map_err(pdb)
     }
 
     /// Interprets explicit model and alternate-location selections, in the
-    /// supplied order, as a sample set, as
-    /// [`Self::interpret_sample_set`] gives one. Atom identities, chemistry,
+    /// supplied order, as a structure set, as
+    /// [`Self::interpret_structure_set`] gives one. Atom identities, chemistry,
     /// and topology layout must agree between selections.
     ///
     /// # Errors
@@ -637,7 +638,7 @@ impl PdbDocument {
     pub fn interpret_conformations(
         &self,
         selections: &[StructureInterpretOptions],
-    ) -> Result<StructureSampleSetInterpretation, FormatError> {
+    ) -> Result<StructureSetInterpretation, FormatError> {
         interpret_pdb_conformations(self, selections).map_err(pdb)
     }
 

@@ -1,5 +1,5 @@
 //! Superposition, RMSD, weighted statistics, clustering, and Boltzmann
-//! populations of sample sets: the values the retired ensemble, trajectory,
+//! populations of structure sets: the values the retired ensemble, trajectory,
 //! and series paths gave, and restricted to the members of a distribution
 //! over part of a set.
 
@@ -22,8 +22,8 @@ use kekule::statistics::{
     ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Members, Model, Order, Partition, Positions, Requirement, Sample, SampleSet,
-    SampleSetError, State, TimeAxis, Velocities,
+    Distribution, Geometry, Members, Model, Order, Partition, Positions, Requirement, State,
+    StructureSet, StructureSetError, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
@@ -110,18 +110,18 @@ fn collinear() -> Vec<Point3> {
 }
 
 const WEIGHTS: [f64; 8] = [1.0, 3.0, 0.5, 2.0, 1.5, 4.0, 0.25, 1.0];
-/// The state of each sample of [`ensemble`], its first sample representing it.
+/// The state of each geometry of [`ensemble`], its first geometry representing it.
 const STATES: [usize; 8] = [0, 0, 1, 1, 2, 2, 2, 3];
 const ENERGIES: [f64; 4] = [1.5, 0.0, 4.0, 0.7];
 
-/// Unordered samples of [`points`] `0..count`.
-fn unordered(count: usize) -> SampleSet {
-    let samples = (0..count).map(|index| Sample::new(positions(points(index))));
-    SampleSet::from_samples(topology(), samples).unwrap()
+/// Unordered geometries of [`points`] `0..count`.
+fn unordered(count: usize) -> StructureSet {
+    let geometries = (0..count).map(|index| Geometry::new(positions(points(index))));
+    StructureSet::from_geometries(topology(), geometries).unwrap()
 }
 
-/// Eight weighted samples in four states, with state energies or without.
-fn ensemble(energies: bool) -> SampleSet {
+/// Eight weighted geometries in four states, with state energies or without.
+fn ensemble(energies: bool) -> StructureSet {
     let mut set = unordered(8);
     let states = ENERGIES.map(|energy| {
         if energies {
@@ -144,28 +144,28 @@ fn ensemble(energies: bool) -> SampleSet {
 }
 
 /// Eight frames two picoseconds apart, with velocities.
-fn trajectory() -> SampleSet {
-    let samples = (0..8).map(|index| {
-        let mut sample = Sample::new(positions(points(index)));
+fn trajectory() -> StructureSet {
+    let geometries = (0..8).map(|index| {
+        let mut geometry = Geometry::new(positions(points(index)));
         let velocities = (0..ATOMS)
             .map(|atom| Vector3::new(atom as f64, 1.0, -(index as f64)))
             .collect::<Vec<_>>();
-        sample
+        geometry
             .set_velocities(Some(
                 Velocities::new(Quantity::new(velocities, CANONICAL_VELOCITY_UNIT)).unwrap(),
             ))
             .unwrap();
-        sample
+        geometry
     });
-    let mut set = SampleSet::from_samples(topology(), samples).unwrap();
+    let mut set = StructureSet::from_geometries(topology(), geometries).unwrap();
     let times = (0..8).map(|index| 2.0 * index as f64).collect::<Vec<_>>();
     let axis = TimeAxis::new(Some(Quantity::new(times, PICOSECOND)), None).unwrap();
     set.set_order(Some(Order::Time(axis))).unwrap();
     set
 }
 
-/// Six samples of a scan of one angle.
-fn series() -> SampleSet {
+/// Six geometries of a scan of one angle.
+fn series() -> StructureSet {
     let mut set = unordered(6);
     let values = (0..6).map(|index| 30.0 * index as f64).collect();
     set.set_order(Some(Order::Coordinate {
@@ -178,9 +178,9 @@ fn series() -> SampleSet {
 
 /// What a set holds apart from its topology, whose layout identity differs
 /// between runs.
-fn contents(set: &SampleSet) -> impl Debug {
+fn contents(set: &StructureSet) -> impl Debug {
     (
-        samples(set),
+        geometries(set),
         set.order().cloned(),
         set.distribution().cloned(),
         set.properties().clone(),
@@ -192,11 +192,11 @@ fn fixtures_are_the_sets_the_retired_collections_converted_to() {
     // The sets the retired ensemble, trajectory, and series fixtures
     // converted to, and the extreme ensemble of the Boltzmann checks.
     let mut recorded = Recorded::new(&[
-        0x483cfe19f0a18ac0,
-        0xd5cc0b35c5417e11,
-        0x1a76e5f22f445a61,
-        0x966ccd61cea2ed4b,
-        0x523a1a405fd5d75e,
+        0x5fc83223b464ac24,
+        0x774245ee1d22d7ad,
+        0xd73ec02d570e765d,
+        0x686d98249eb9038b,
+        0xf74af6e81faa6f7a,
     ]);
     recorded.check(&contents(&ensemble(true)));
     recorded.check(&contents(&ensemble(false)));
@@ -214,8 +214,10 @@ fn selection(topology: &Arc<Topology>, atoms: &[usize]) -> AtomSelection {
     AtomSelection::from_atoms(Arc::clone(topology), atoms.iter().map(|atom| ids[*atom])).unwrap()
 }
 
-fn samples(set: &SampleSet) -> Vec<Sample> {
-    set.iter().map(|sample| sample.payload().clone()).collect()
+fn geometries(set: &StructureSet) -> Vec<Geometry> {
+    set.iter()
+        .map(|geometry| geometry.payload().clone())
+        .collect()
 }
 
 fn bits(values: &[f64]) -> Vec<u64> {
@@ -273,7 +275,7 @@ const CUTOFF: f64 = 0.62;
 
 /// Every statistic of `set`: the RMSF over all atoms and over three, and
 /// the contact and group contact occupancies.
-fn statistics(set: &SampleSet) -> impl Debug + PartialEq {
+fn statistics(set: &StructureSet) -> impl Debug + PartialEq {
     let topology = set.shared_topology();
     let cutoff = Quantity::new(CUTOFF, NANOMETER);
     let rmsf = [all(Arc::clone(&topology)), selection(&topology, &[1, 4, 5])]
@@ -297,8 +299,8 @@ type AlignmentResults = (
 );
 
 /// Measures and then superposes a set with one set of atoms, weights, and
-/// options, against `reference` or else its sample `index`.
-fn alignments(set: &mut SampleSet, reference: Option<&Model>, index: usize) -> AlignmentResults {
+/// options, against `reference` or else its geometry `index`.
+fn alignments(set: &mut StructureSet, reference: Option<&Model>, index: usize) -> AlignmentResults {
     let topology = set.shared_topology();
     let fit = selection(&topology, &[0, 1, 2, 3]);
     let measured = selection(&topology, &[2, 3, 4, 5]);
@@ -325,30 +327,30 @@ fn alignments(set: &mut SampleSet, reference: Option<&Model>, index: usize) -> A
 }
 
 #[test]
-fn sample_set_alignments_keep_the_retired_values() {
+fn structure_set_alignments_keep_the_retired_values() {
     // Fingerprints of the values the retired paths gave.
     let mut recorded = Recorded::new(&[
         0xa708ddfed8a897b0,
-        0xe202c0ff94569e93,
+        0x09d4654d2788ed2f,
         0xa708ddfed8a897b0,
-        0x1e17e9213f02d2af,
+        0xde6b72c6afe8f797,
         0x7d356d80e26864d5,
-        0x3a12790618c63a4e,
+        0x1778f93bf2568fda,
         0xa46e16252c8a8818,
-        0x386c5202f641f2d1,
+        0x8b60a38a15003ee9,
         0xa46e16252c8a8818,
-        0x02ca2a82a915f61b,
+        0x92e5d1e483871d4b,
         0xef9aa5844b998ecc,
-        0xb4af5961268f022b,
+        0x8ad435bcdd7707a3,
         0xd0250a17c77174b1,
-        0x67d5d880aeec533e,
+        0x1a2abdde993e8a8a,
         0xd0250a17c77174b1,
-        0x97d42d31e553ca52,
+        0x434c38a5bc6bdb2e,
         0x4f8e715505afaaa7,
-        0x01173cb6e0ee6b4e,
+        0x8d130dc2f8772296,
     ]);
     let model = Model::new(topology(), positions(points(11))).unwrap();
-    // A sample of the set, an independent view, and a reference out of range.
+    // A geometry of the set, an independent view, and a reference out of range.
     for (reference, index) in [(None, 3), (Some(&model), 0), (None, 9)] {
         // Velocities rotate with the frames, and the order is kept.
         for fixture in [ensemble(true), trajectory(), series()] {
@@ -356,7 +358,7 @@ fn sample_set_alignments_keep_the_retired_values() {
             let results = alignments(&mut set, reference, index);
             assert_eq!(results.2.is_ok(), index < fixture.len());
             recorded.check(&results);
-            recorded.check(&samples(&set));
+            recorded.check(&geometries(&set));
             assert_eq!(set.order(), fixture.order());
             assert_eq!(set.distribution(), fixture.distribution());
         }
@@ -364,8 +366,8 @@ fn sample_set_alignments_keep_the_retired_values() {
 }
 
 #[test]
-fn sample_set_alignment_covers_non_members_and_keeps_the_distribution() {
-    // A failing sample outside the distribution still fails the fit, and a
+fn structure_set_alignment_covers_non_members_and_keeps_the_distribution() {
+    // A failing geometry outside the distribution still fails the fit, and a
     // fit keeps the order and the distribution.
     let mut set = trajectory();
     let distribution =
@@ -389,7 +391,7 @@ fn sample_set_alignment_covers_non_members_and_keeps_the_distribution() {
         .unwrap()
         .set_positions(Quantity::new(collinear(), NANOMETER))
         .unwrap();
-    let before = samples(&broken);
+    let before = geometries(&broken);
     assert_eq!(
         broken.superpose(6, &atoms, Default::default()),
         Err(AlignmentError::Item {
@@ -399,11 +401,11 @@ fn sample_set_alignment_covers_non_members_and_keeps_the_distribution() {
             }),
         })
     );
-    assert_eq!(samples(&broken), before);
+    assert_eq!(geometries(&broken), before);
 }
 
 #[test]
-fn sample_set_statistics_keep_the_retired_values() {
+fn structure_set_statistics_keep_the_retired_values() {
     // Fingerprints of the values the retired paths gave.
     let mut recorded = Recorded::new(&[0x9c767ac7a8c90863, 0x9c767ac7a8c90863, 0x3a279110203f7b17]);
     for energies in [true, false] {
@@ -416,7 +418,7 @@ fn sample_set_statistics_keep_the_retired_values() {
     let rmsf = set.rmsf(&all(set.shared_topology())).unwrap();
     assert_eq!(rmsf.total_weight(), 8.0);
 
-    let empty = SampleSet::new(self::topology());
+    let empty = StructureSet::new(self::topology());
     assert_eq!(
         empty.rmsf(&all(empty.shared_topology())).unwrap_err(),
         StatisticsError::NoObservations
@@ -429,10 +431,10 @@ fn sample_set_statistics_keep_the_retired_values() {
 
 /// The members of `set`'s distribution as a set of their own, unordered,
 /// with their weights and states, and without velocities.
-fn members(set: &SampleSet) -> SampleSet {
+fn members(set: &StructureSet) -> StructureSet {
     let members = set
         .weighted_samples()
-        .map(|(sample, _)| sample)
+        .map(|(geometry, _)| geometry)
         .collect::<Vec<_>>();
     let mut members = set.select(members).unwrap();
     members.set_order(None).unwrap();
@@ -444,7 +446,7 @@ fn members(set: &SampleSet) -> SampleSet {
 
 /// A time-ordered set of eight frames whose distribution covers frames 2,
 /// 3, 5, 6, and 7, weighted, in two states with energies.
-fn equilibrated() -> SampleSet {
+fn equilibrated() -> StructureSet {
     let mut set = trajectory();
     let states = [0.0, 2.5].map(|energy| {
         State::new()
@@ -518,7 +520,7 @@ fn statistics_over_part_of_a_time_ordered_set_observe_its_members_alone() {
 /// radii by weight and, with `energies`, by energy, hierarchical clusters of
 /// every count and one height under three linkages, and k-medoids of every
 /// count.
-fn clusterings(set: &SampleSet, energies: bool) -> impl Debug + PartialEq {
+fn clusterings(set: &StructureSet, energies: bool) -> impl Debug + PartialEq {
     let atoms = all(set.shared_topology());
     // The two shapes are two clusters of one radius.
     let shapes = set
@@ -556,7 +558,7 @@ fn clusterings(set: &SampleSet, energies: bool) -> impl Debug + PartialEq {
 }
 
 #[test]
-fn sample_set_clusterings_keep_the_retired_values() {
+fn structure_set_clusterings_keep_the_retired_values() {
     // Fingerprints of the values the retired paths gave.
     let mut recorded = Recorded::new(&[
         0x38518c62c0a59494,
@@ -574,8 +576,8 @@ fn sample_set_clusterings_keep_the_retired_values() {
     let radius = Quantity::new(0.1, NANOMETER);
     assert_eq!(
         set.cluster_by_radius(radius, &atoms, by_energy),
-        Err(ClusteringError::SampleSet(Box::new(
-            SampleSetError::Missing(Requirement::StateEnergies)
+        Err(ClusteringError::StructureSet(Box::new(
+            StructureSetError::Missing(Requirement::StateEnergies)
         )))
     );
     let matrix = set
@@ -598,20 +600,20 @@ fn sample_set_clusterings_keep_the_retired_values() {
     let refusal = set
         .cluster_by_radius(radius, &atoms, by_energy)
         .unwrap_err();
-    assert_eq!(refusal.to_string(), "Cannot cluster the sample set.");
+    assert_eq!(refusal.to_string(), "Cannot cluster the structure set.");
     assert_eq!(
         std::error::Error::source(&refusal).unwrap().to_string(),
-        "The sample set needs an energy for every state."
+        "The structure set needs an energy for every state."
     );
 
     // A trajectory's frames, as a set without a distribution, cluster as
-    // equally weighted samples did.
+    // equally weighted geometries did.
     let set = trajectory();
     recorded.check(&clusterings(&set, false));
     assert_eq!(
         set.cluster_by_radius(radius, &atoms, by_energy),
-        Err(ClusteringError::SampleSet(Box::new(
-            SampleSetError::Missing(Requirement::Distribution)
+        Err(ClusteringError::StructureSet(Box::new(
+            StructureSetError::Missing(Requirement::Distribution)
         )))
     );
 }
@@ -629,7 +631,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
     assert_eq!(matrix.member_count(), 5);
-    // Entry (0, 1) is between the first two members, samples 2 and 3.
+    // Entry (0, 1) is between the first two members, geometries 2 and 3.
     let fit = kekule::alignment::fit(
         set.get(2).unwrap().as_model_view(),
         set.get(3).unwrap().as_model_view(),
@@ -640,10 +642,10 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
     let distance = matrix.get(0, 1).unwrap().into_value();
     assert!((distance - fit.rmsd().into_value()).abs() < 1.0e-12);
 
-    // Even and odd samples have different shapes: two medoids group the
+    // Even and odd geometries have different shapes: two medoids group the
     // members by shape, each member by its position.
     let states = set.cluster_k_medoids(&matrix, 2).unwrap();
-    let shapes = [2, 3, 5, 6, 7].map(|sample| sample % 2);
+    let shapes = [2, 3, 5, 6, 7].map(|geometry| geometry % 2);
     for (position, state) in states.assignments().iter().enumerate() {
         let representative = states.representatives()[*state];
         assert_eq!(shapes[position], shapes[representative]);
@@ -681,7 +683,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
         broken.pairwise_fitted_rmsd(&atoms, Default::default()),
         Ok(matrix.clone())
     );
-    // A failing member is named by its sample index.
+    // A failing member is named by its geometry index.
     broken
         .get_mut(5)
         .unwrap()
@@ -704,7 +706,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
             .to_string(),
         "Cannot fit samples 2 and 5."
     );
-    // The heaviest member, sample 5, leads; sample 3, visited next, fails
+    // The heaviest member, geometry 5, leads; geometry 3, visited next, fails
     // to fit onto it.
     assert_eq!(
         broken.cluster_by_radius(Quantity::new(0.05, NANOMETER), &atoms, Default::default()),
@@ -718,7 +720,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
 }
 
 #[test]
-fn sample_set_clustering_runs_on_threads_report_progress_and_cancel() {
+fn structure_set_clustering_runs_on_threads_report_progress_and_cancel() {
     let set = equilibrated();
     let atoms = all(set.shared_topology());
     let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
@@ -775,15 +777,15 @@ fn a_set_without_a_distribution_installs_its_clusters_as_one() {
     assert_eq!(set.distribution().unwrap().partition(), &states);
     assert_eq!(set.states().len(), 2);
     // Frames of one shape share a state.
-    for sample in set.iter() {
-        let representative = sample.state().unwrap().representative();
-        assert_eq!(sample.index() % 2, representative % 2);
+    for geometry in set.iter() {
+        let representative = geometry.state().unwrap().representative();
+        assert_eq!(geometry.index() % 2, representative % 2);
     }
 }
 
-/// Three samples whose weights are near the floating-point limits, in two
+/// Three geometries whose weights are near the floating-point limits, in two
 /// states with energies.
-fn extreme() -> SampleSet {
+fn extreme() -> StructureSet {
     let mut set = unordered(3);
     let states = [0.0, 1.0].map(|energy| {
         State::new()
@@ -856,20 +858,20 @@ fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
     let mut distribution = set.distribution_mut().unwrap();
     assert_eq!(
         distribution.assign_boltzmann_populations(Quantity::new(300.0, KELVIN)),
-        Err(SampleSetError::Missing(Requirement::StateEnergies))
+        Err(StructureSetError::Missing(Requirement::StateEnergies))
     );
     assert_eq!(
         distribution.assign_boltzmann_populations(Quantity::new(-1.0, KELVIN)),
-        Err(SampleSetError::InvalidTemperature)
+        Err(StructureSetError::InvalidTemperature)
     );
     assert!(matches!(
         distribution.assign_boltzmann_populations(Quantity::new(300.0, NANOMETER)),
-        Err(SampleSetError::Unit(_))
+        Err(StructureSetError::Unit(_))
     ));
     assert_eq!(set.distribution().cloned(), before);
     assert_eq!(
-        SampleSetError::Missing(Requirement::StateEnergies).to_string(),
-        "The sample set needs an energy for every state."
+        StructureSetError::Missing(Requirement::StateEnergies).to_string(),
+        "The structure set needs an energy for every state."
     );
 
     // A state far above the others underflows.
@@ -886,7 +888,7 @@ fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
         set.distribution_mut()
             .unwrap()
             .assign_boltzmann_populations(cold),
-        Err(SampleSetError::InvalidWeight { sample: 2 })
+        Err(StructureSetError::InvalidWeight { geometry: 2 })
     );
     assert_eq!(set.distribution().cloned(), before);
 }

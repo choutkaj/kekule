@@ -199,7 +199,7 @@ See the [crate overview](crates/kekule/src/lib.rs),
 [molecular owner](crates/kekule/src/molecule/owner.rs),
 [topology types](crates/kekule/src/topology/mod.rs),
 [structure types](crates/kekule/src/structure/mod.rs),
-[sample sets](crates/kekule/src/structure/sample_set.rs), and
+[structure sets](crates/kekule/src/structure/sample_set.rs), and
 [streaming contracts](crates/kekule/src/traj/trajectory/mod.rs).
 
 ## Represented and derived chemistry
@@ -268,7 +268,7 @@ Owning perception runs once per reusable definition and publishes atomically.
 A definition whose installed perception is the default profile's, installed by
 perception and unchanged since, is shared rather than perceived again, so
 perceiving after an edit costs the definitions the edit changed.
-A successful model or sample set perception operation installs a new
+A successful model or structure set perception operation installs a new
 shared topology snapshot without copying coordinate payloads or static topology
 state. The snapshot keeps the source's layout identity, so existing selections,
 prepared potentials, and streaming bindings stay attached to their original
@@ -469,8 +469,8 @@ repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Structure (model or sample) | `StructureProperties` | Dense atoms and bonds |
-| Sample set | `OwnerProperties` | Owner values only |
+| Geometry | `GeometryProperties` | Dense atoms and bonds |
+| Structure set | `OwnerProperties` | Owner values only |
 | State of a distribution | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
@@ -511,22 +511,22 @@ values. Exact units, tolerances, and conversion policies belong with
 
 ## Geometry and structure ownership
 
-A model or sample set owns its shared topology once. Samples store flat
+A model or structure set owns its shared topology once. Samples store flat
 payloads, not nested models; a detached sample has atom rows only and
 acquires bond rows when a set or a frame buffer binds it. The structure of a
 sample is shared storage, copied on write per sample, so copies of a set that
 differ only in order, weights, or grouping share every coordinate. Borrowed
 `ModelView` access, obtained through the sealed `AsModelView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
-kernels across models, samples, frames, and buffers. A view's `kind()` is
-`StructureKind::Model` or `StructureKind::Sample` with a `SampleContext`: the
-sample's place in its order, its membership (weight, state, whether it
+kernels across models, geometries, frames, and buffers. A view's `kind()`
+is `StructureKind::Model` or `StructureKind::InSet` with a `SetContext`: the
+geometry's place in its order, its membership (weight, state, whether it
 represents the state, the state's energy, and the temperature), and its
 velocities and forces. A frame of a codec or buffer reports its time and
 step as its place, so writers and reductions never lose that state silently.
 Structure writers hold a sample to one policy, `sample_metadata`, for all of
 that state, whether it belongs to a set or a frame. Per-atom, per-bond, and
-own properties of a structure, and the properties of its sample set, follow a
+own properties of a structure, and the properties of its structure set, follow a
 second policy, `properties`. Molfile and SDF, which store no occupancies or B
 factors, put them under `sample_metadata`. Each of these fails by default. Owned
 projections (`to_model`) explicitly materialize a model while sharing the
@@ -561,7 +561,7 @@ geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
 [positions](crates/kekule/src/structure/positions.rs),
 [models](crates/kekule/src/structure/model.rs),
-[sample sets](crates/kekule/src/structure/sample_set.rs),
+[structure sets](crates/kekule/src/structure/sample_set.rs),
 [measurements](crates/kekule/src/structure/measure.rs), and
 [alignment](crates/kekule/src/alignment.rs).
 
@@ -577,7 +577,7 @@ closure, relaxation, or periodic imaging. See the
 
 ## Trajectories and streaming
 
-A trajectory, a sample set of a time order, represents one fixed-topology
+A trajectory, a structure set of a time order, represents one fixed-topology
 epoch. Changing chemistry or hierarchy requires a new topology and explicitly
 constructed geometry for the next epoch. Frame selection is separate from
 atom subsetting: requested order, duplicates, and empty selections are
@@ -615,24 +615,24 @@ transactionally. A buffer hands its frame out as a sample with its place,
 and takes a sample back, by moving it; the sample stays bound and validated. Eager reads use the same decoder path through clean EOF.
 Path writers stage output and publish only a completed nonempty trajectory;
 stream writers write the same bytes into a host's `Write + Seek` stream and
-leave placing the file to the host. `write_sample_set` writes a sample set
+leave placing the file to the host. `write_structure_set` writes a structure set
 of a time order, or of none, without a distribution through both, and
-`read_sample_set` reads a file as a sample set of a time order. Codec writers append frames whole and in
+`read_structure_set` reads a file as a structure set of a time order. Codec writers append frames whole and in
 order and never rewrite one, so after a flush the stream holds a complete
 trajectory, a DCD header counting its frames, that another process can read
 while it grows. Frame state a codec cannot carry fails
 unless the caller sets `UnrepresentablePolicy::Omit` for its kind (frame
 metadata, frame properties, or the cell), and the writer reports what it
 left out. Occupancies and B factors, which no trajectory format stores, are
-frame metadata of every codec, so `write_sample_set` returns the codec's
+frame metadata of every codec, so `write_structure_set` returns the codec's
 report as it is; collection properties are rejected rather than discarded. A codec
 never invents frame state, except the times and steps XTC and TRR number
 under an explicit `FrameTimingPolicy::Number` and DCD numbers on its header's
 step sequence under an explicit `DcdFrameTimingPolicy::Number`, which reports
 each frame step and time it replaces.
 
-`open_indexed_sample_set` opens a file as a `SampleSet<IndexedFile>`,
-`open_indexed_sample_set_from_index` opens it from a kept frame index, and
+`open_indexed_structure_set` opens a file as a `StructureSet<IndexedFile>`,
+`open_indexed_structure_set_from_index` opens it from a kept frame index, and
 `IndexedFileTrajectoryReader::into_sample_set` makes one from a reader the
 host opened, without opening or scanning the file again. The
 set's order is the index's time axis, and it exposes the index and its
@@ -668,17 +668,17 @@ A host keeping the frame index, or a live clone, makes each growing refresh
 copy the offsets. A distribution over every sample becomes one over the
 samples it covered, so appended frames are not members;
 `Distribution::extended_to` is the same operation, and
-`SampleSetDescription::extended_to` applies it to a saved description,
+`StructureSetDescription::extended_to` applies it to a saved description,
 which takes the longer set's order. A
 clone of the set reads nothing: it shares the set's reader, file object and
 index, starts with an empty pool, and forks its own reader at its first
 refresh, so a host hands it to an analysis while the set goes on refreshing.
 Refreshing either one changes only that one. A failed
-read names the sample (`SampleReadError::Trajectory`). `load` reads every
+read names the sample (`StructureSetReadError::Trajectory`). `load` reads every
 sample, or listed ones, into a set in memory that keeps their order values
 and restricts the distribution, as `select` does.
 
-`Processed` reads another `SampleRead` and runs `ProcessingSteps` on each
+`Processed` reads another `StructureSetRead` and runs `ProcessingSteps` on each
 sample as it is read: make whole or wrap, center, fit onto a sample of the
 same reader or onto given positions, smooth over an odd window, and project
 onto an atom subset, in that order. Each step is optional. Wrapping images
@@ -706,7 +706,7 @@ else it read, so a host caches in front of it.
 Loaded and streaming transformations share kernels. Collection operations,
 including superposition and periodic preprocessing, change the collection in
 place and stage all affected state before publication; clone first to keep the
-source. Superposition and RMSD are methods of sample sets, against one of
+source. Superposition and RMSD are methods of structure sets, against one of
 the set's samples or an independent view; streaming superposition applies the
 same kernel to a buffer. Streaming tools take the caller's frame index for
 diagnostics. Superposition rotates cells, velocities, and forces consistently.
@@ -721,7 +721,7 @@ RMSF and contact occupancy, of atom pairs or of pairs of atom groups, are
 weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
-`SampleSet` methods observe each member of the distribution with its
+`StructureSet` methods observe each member of the distribution with its
 probability, its weight over the members' total, and leave the other samples
 out; a set without a distribution observes every sample with weight one,
 taking them as equally weighted equilibrium samples, and other weights are
@@ -750,9 +750,9 @@ is explicit. These are separate analysis results, not new topology state or a
 generic reduction framework.
 
 Clustering is weight-aware and groups the members of a distribution: those
-of a sample set, or every sample of a set without one. It returns a
+of a structure set, or every sample of a set without one. It returns a
 `Partition`, the grouping type a distribution owns, and never changes the
-set. A sample set's distances and partitions are indexed by member
+set. A structure set's distances and partitions are indexed by member
 position, so `DistributionMut::regroup` installs a partition directly, and a
 set without a distribution takes it as a new distribution of every sample;
 errors name sample indices. `DistributionMut::regroup` applies a partition without changing any weight or sample
@@ -769,7 +769,7 @@ shape its clusters. Pairwise fits and leader clustering may run on a
 `ClusteringRun`; fits split into contiguous ranges merged in a fixed order,
 and leader clustering still places members one at a time, so every executor
 and thread count returns the single-threaded result or error.
-`clustering::pairwise_fitted_rmsd` fits the members of any `SampleRead`,
+`clustering::pairwise_fitted_rmsd` fits the members of any `StructureSetRead`,
 reading each member once and keeping only its fitted atoms, through the
 loop of a set's pairwise fits; clustering a matrix works for sets of either
 storage. See [clustering](crates/kekule/src/clustering.rs),
@@ -807,11 +807,11 @@ and merge rules of the weighted statistics. See
 
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
-[sample sets](crates/kekule/src/structure/sample_set.rs),
+[structure sets](crates/kekule/src/structure/sample_set.rs),
 [collection alignment](crates/kekule/src/alignment/collection.rs),
 [frame buffers](crates/kekule/src/traj/trajectory/buffer.rs),
 [file I/O](crates/kekule/src/traj/io/mod.rs),
-[sample sets read from files](crates/kekule/src/traj/io/indexed_file.rs),
+[structure sets read from files](crates/kekule/src/traj/io/indexed_file.rs),
 [lazy processing](crates/kekule/src/traj/processed.rs),
 [sample readers](crates/kekule/src/structure/sample_set/read.rs),
 [periodic operations](crates/kekule/src/traj/periodic.rs),
@@ -898,13 +898,13 @@ ways: `kekule::xyz` interprets its frames into structures through this
 pipeline, and `kekule::traj` streams its coordinates against a topology, such
 as the one that interpretation produced. Writing XYZ keeps elements and
 coordinates only, so the writer reports the topology content it leaves out in
-the shared write report. It writes a sample set as one frame per sample,
+the shared write report. It writes a structure set as one frame per sample,
 with the PDB writer's rules for sample state: a sample
 outside the distribution, unequal weights, several states, energies, state
 properties, a representative that is not its state's first member, a
 temperature, a place in the order, a time order without times or steps,
 velocities, and forces fail or are omitted with a report under
-`sample_metadata`. XYZ interprets frames as a sample set without a
+`sample_metadata`. XYZ interprets frames as a structure set without a
 distribution, since the file states none.
 
 | Format scope | Interpretation and projection |
@@ -912,9 +912,9 @@ distribution, since the file states none.
 | SMILES record | All connected components, with topology projection |
 | Molfile | One model with topology and molecule projections |
 | SDF record | Model, title, fields, and reports; each record independent |
-| CIF data block | One model, or compatible coordinate models as a sample set of one unweighted state |
-| PDB entry | One model, or compatible coordinate models as a sample set of one unweighted state |
-| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as a sample set without a distribution |
+| CIF data block | One model, or compatible coordinate models as a structure set of one unweighted state |
+| PDB entry | One model, or compatible coordinate models as a structure set of one unweighted state |
+| XYZ file | One frame as a model, or frames of the same atoms and inferred bonds as a structure set without a distribution |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
@@ -931,14 +931,14 @@ carry. mmCIF preserves label/author hierarchy identities and interprets
 all coordinate-model candidates against the same identity, chemistry, and dense
 layout. PDB carries author identities only: a residue is a run of consecutive
 records, and a number that recurs after other residues names a new residue.
-Malformed rows in unselected models still fail validation. Sample set assembly
+Malformed rows in unselected models still fail validation. Structure set assembly
 releases redundant topologies while transferring structure payloads; multiple
 coordinate models do not imply temporal trajectory semantics.
 
 mmCIF alternate rows remain in the source document. Interpretation selects whole
 residue alternatives or explicitly constrained groups and records its choices in
 the format report. Occupancy ranks representatives, not whole-structure
-probabilities. Assembling coordinate models into a sample set never expands
+probabilities. Assembling coordinate models into a structure set never expands
 alternate labels; caller-supplied conformation selections must pass the same identity and
 topology checks. mmCIF carries no model weights, so every coordinate model
 becomes a sample of one state without weights; occupancy is never converted
@@ -974,7 +974,7 @@ XYZ states elements and coordinates only. Its interpretation applies the
 same distance rule to the whole frame: every bond is inferred and single, or
 dative between a metal and a non-metal, every atom fixes zero implicit
 hydrogens because the file lists all atoms, and nothing assigns bond orders
-or charges. Each frame infers its own bonds, and the frames of a sample set must
+or charges. Each frame infers its own bonds, and the frames of a structure set must
 agree on them. The report lists every bond with its distance and cutoff,
 fallback radii, and contacts too close to bond. A host that holds atoms as
 elements and positions builds the same document from them and has it
@@ -1075,7 +1075,7 @@ export.
   sample outside the distribution is marked with `kekule.member` `false`
   instead. State and set properties, structure properties, occupancies, and B
   factors fail unless omitted. Only the explicit `sdf::sample_set` assembles records into a
-  sample set, whose order the steps or coordinates give. It has a
+  structure set, whose order the steps or coordinates give. It has a
   distribution only when a record has a distribution field, one state per
   record unless the records name their states, and weights only when a
   record has a weight. A coordinate unit travels as the symbol of a unit
@@ -1089,7 +1089,7 @@ export.
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
   step, velocities, or forces. A Molfile cannot carry a sample's weight or
   its state's energy. mmCIF distinguishes independent model blocks from one
-  sample set's multi-model block, which, like a PDB entry, reads back as one
+  structure set's multi-model block, which, like a PDB entry, reads back as one
   state of equal weights without an energy or temperature, so writing unequal
   weights, several states, any energy, a temperature, or one sample as a model
   block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
@@ -1157,7 +1157,7 @@ export.
   Given interpretation reports, the writer states their metal coordination
   as `LINK` records before the coordinates, with the atom records'
   identifiers and the symmetry operator `1555`. `LINK` records belong to
-  the entry, not to a model, so a sample set states the coordination every
+  the entry, not to a model, so a structure set states the coordination every
   sample's report states. The rest are left out and reported, and so are
   records naming a chain written as a segment identifier, records between
   two metals, which readers would take for a bond, and records whose
@@ -1227,11 +1227,11 @@ native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
 Exact persistence is the `native` format module, the one owner of Kekule's
-binary encoding of molecules, topologies, models, and sample sets. A model or sample set may carry its structure interpretation reports, stored
+binary encoding of molecules, topologies, models, and structure sets. A model or structure set may carry its structure interpretation reports, stored
 as they are, so that an application that saves structures in native files
-keeps what the source stated beyond the structure. A sample set record may
+keeps what the source stated beyond the structure. A structure set record may
 also keep its samples elsewhere and store only their number, with its
-topology, order, and distribution, as a `SampleSetDescription`. It stores
+topology, order, and distribution, as a `StructureSetDescription`. It stores
 each owner's authoritative state, including
 explicit or inferred class assignments and adjacency order, and reconstructs
 it only through those owners' validating paths: molecule publication,

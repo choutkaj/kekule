@@ -8,13 +8,13 @@ use crate::io::{
     ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
     EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
     SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
-    StructureInterpretIssue, StructureInterpretationReport, StructureSampleSetInterpretation,
+    StructureInterpretIssue, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::math::{Matrix3, Vector3};
 use crate::molecule::AtomId;
 use crate::native::{self, NativeReadOptions, NativeSource, NativeWriteOptions};
 use crate::sequence::{CodeOrigin, ResidueCode};
-use crate::structure::{Model, SampleSet};
+use crate::structure::{Model, StructureSet};
 use crate::topology::{ChainId, InstanceAtomId, MoleculeInstanceId, ResidueId};
 
 const MODELS: &str = "data_demo
@@ -521,8 +521,8 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
 }
 
 /// The first coordinate model of [`MODELS`] and the set of both models,
-/// whose two samples carry stored equal weights.
-pub(super) fn parts() -> (Model, SampleSet) {
+/// whose two geometries carry stored equal weights.
+pub(super) fn parts() -> (Model, StructureSet) {
     let document = crate::mmcif::parse_str(MODELS, Default::default()).unwrap();
     let model = document
         .interpret(
@@ -532,9 +532,9 @@ pub(super) fn parts() -> (Model, SampleSet) {
         .unwrap()
         .into_model();
     let mut set = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
+        .into_structure_set();
     set.distribution_mut()
         .unwrap()
         .set_weights(Some(vec![1.0, 1.0]))
@@ -551,7 +551,7 @@ pub(super) fn read(
 #[test]
 fn every_report_field_round_trips() {
     let (model, set) = parts();
-    assert_eq!(super::debug_fingerprint(&set), 0xaee8_1413_b55e_5100);
+    assert_eq!(super::debug_fingerprint(&set), 0x72ce_aeac_d3d9_a600);
     let report = report(false);
     let bytes = native::write(
         NativeSource::interpreted_model(&model, &report),
@@ -569,18 +569,18 @@ fn every_report_field_round_trips() {
 
     let reports = vec![report, self::report(true)];
     let bytes = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports),
+        NativeSource::interpreted_structure_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap();
     assert_eq!(super::debug_fingerprint(&bytes), 0xde2b_74f7_fb64_0b01);
     let decoded = read(&bytes)
         .unwrap()
-        .into_sample_set_interpretation()
+        .into_structure_set_interpretation()
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&decoded), 0x2197_62b3_fc13_a71a);
+    assert_eq!(super::debug_fingerprint(&decoded), 0x1ee8_7ab5_615c_43bc);
     assert_eq!(decoded.reports(), reports.as_slice());
-    assert_eq!(decoded.sample_set().len(), 2);
+    assert_eq!(decoded.structure_set().len(), 2);
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();
     assert!(
         again == bytes,
@@ -711,21 +711,21 @@ fn corrupt_report_sections_fail_cleanly() {
 }
 
 #[test]
-fn interpreted_sample_sets_need_one_report_per_sample() {
+fn interpreted_structure_sets_need_one_report_per_sample() {
     let (_, set) = parts();
     let reports = vec![report(false)];
     let error = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports),
+        NativeSource::interpreted_structure_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         error.to_string(),
-        "Cannot write the native output. The sample set has 2 samples and 1 interpretation \
-         report. Give one report per sample."
+        "Cannot write the native output. The structure set has 2 geometries and 1 interpretation \
+         report. Give one report per geometry."
     );
-    let interpretation = StructureSampleSetInterpretation {
+    let interpretation = StructureSetInterpretation {
         set,
         reports: Vec::new(),
     };

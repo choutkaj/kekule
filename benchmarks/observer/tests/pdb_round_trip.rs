@@ -17,7 +17,7 @@ use kekule::diagnostics::{DiagnosticKind, FormatErrorDetail};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
 use kekule::pdb::{self, PdbWriteIssue};
-use kekule::structure::{Model, ModelView, SampleSet};
+use kekule::structure::{Model, ModelView, StructureSet};
 use kekule::topology::{Topology, TopologyAtomIndex};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -214,14 +214,14 @@ fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
     Ok(reread)
 }
 
-fn round_trip_models(models: &SampleSet, label: &str) {
+fn round_trip_models(models: &StructureSet, label: &str) {
     let written = pdb::write(models, Default::default())
         .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{label}: models do not write: {error}"));
     let reread = pdb::parse_str(&written, Default::default())
-        .and_then(|document| document.interpret_sample_set(Default::default()))
+        .and_then(|document| document.interpret_structure_set(Default::default()))
         .unwrap_or_else(|error| panic!("{label}: written models do not read back: {error}"))
-        .into_sample_set();
+        .into_structure_set();
     assert_eq!(reread.len(), models.len(), "{label}: models");
     for (index, (left, right)) in reread.iter().zip(models.iter()).enumerate() {
         assert_same_structure(
@@ -258,9 +258,9 @@ fn curated_biomolecules_round_trip_through_pdb() {
                 continue;
             }
         }
-        if let Ok(interpretation) = document.interpret_sample_set(Default::default()) {
-            if interpretation.sample_set().len() > 1 {
-                round_trip_models(interpretation.sample_set(), &label);
+        if let Ok(interpretation) = document.interpret_structure_set(Default::default()) {
+            if interpretation.structure_set().len() > 1 {
+                round_trip_models(interpretation.structure_set(), &label);
                 multi_model += 1;
             }
         }

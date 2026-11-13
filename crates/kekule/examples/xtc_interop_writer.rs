@@ -63,9 +63,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect::<Vec<_>>();
         frame
-            .sample_mut()
+            .geometry_mut()
             .set_positions(Quantity::new(positions, NANOMETER))?;
-        frame.sample_mut().set_cell(Some(cell));
+        frame.geometry_mut().set_cell(Some(cell));
         frame.set_time(Some(Quantity::new(step as f64 * 0.25, PICOSECOND)))?;
         frame.set_step(Some(step));
         writer.write_frame(frame.frame_view())?;

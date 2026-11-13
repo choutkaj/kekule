@@ -968,8 +968,10 @@ fn coordinate_models_become_samples() {
     assert_eq!(second.topology().atom_count(), 3);
     assert_eq!(second.topology().bond_count(), 2);
 
-    let set = document.interpret_sample_set(Default::default()).unwrap();
-    assert_eq!(set.sample_set().len(), 2);
+    let set = document
+        .interpret_structure_set(Default::default())
+        .unwrap();
+    assert_eq!(set.structure_set().len(), 2);
     assert_eq!(crate::native_fingerprint(&set), 0x1cd5_e03e_d0b4_e079);
     let models = set
         .reports()
@@ -1190,9 +1192,9 @@ fn a_ter_record_ends_the_residue_it_follows() {
         .concat(),
     );
     let set = (pdb::parse_str(&models, Default::default()).unwrap())
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
-    assert_eq!(set.sample_set().len(), 2);
+    assert_eq!(set.structure_set().len(), 2);
     assert_eq!(crate::native_fingerprint(&set), 0xd3e5_ee11_62ce_d370);
     let occurrences = set
         .reports()
@@ -2060,7 +2062,7 @@ fn read_model(text: &str) -> kekule::structure::Model {
 fn separately_read_models_become_samples_with_their_own_state() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::properties::{PropertyKey, PropertyValue};
-    use kekule::structure::{Distribution, Members, Partition, SampleSet, SampleSetError};
+    use kekule::structure::{Distribution, Members, Partition, StructureSet, StructureSetError};
     use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};
     use kekule::units::{Quantity, ANGSTROM, SQUARE_NANOMETER};
 
@@ -2103,25 +2105,25 @@ fn separately_read_models_become_samples_with_their_own_state() {
         .unwrap();
     let expected = [first.clone(), second.clone()];
 
-    let one_state = |set: SampleSet, partition| {
+    let one_state = |set: StructureSet, partition| {
         let mut set = set;
         set.set_distribution(Some(Distribution::new(Members::All, partition).unwrap()))
             .unwrap();
         set
     };
     let set = one_state(
-        SampleSet::from_models([first, second]).unwrap(),
+        StructureSet::from_models([first, second]).unwrap(),
         Partition::one_state(2),
     );
     assert!(std::sync::Arc::ptr_eq(&set.shared_topology(), &topology));
     assert_eq!(set.distribution().unwrap().state_count(), 1);
-    for (sample, model) in set.iter().zip(&expected) {
-        assert_eq!(sample.weight(), Some(1.0));
-        assert_eq!(sample.positions(), model.positions());
-        assert_eq!(sample.cell(), model.cell());
-        assert_eq!(sample.occupancies(), model.occupancies());
-        assert_eq!(sample.b_factors(), model.b_factors());
-        assert_eq!(sample.properties(), model.properties());
+    for (geometry, model) in set.iter().zip(&expected) {
+        assert_eq!(geometry.weight(), Some(1.0));
+        assert_eq!(geometry.positions(), model.positions());
+        assert_eq!(geometry.cell(), model.cell());
+        assert_eq!(geometry.occupancies(), model.occupancies());
+        assert_eq!(geometry.b_factors(), model.b_factors());
+        assert_eq!(geometry.properties(), model.properties());
     }
     let second = set.get(1).unwrap();
     assert_eq!(second.cell(), Some(&cell));
@@ -2138,14 +2140,14 @@ fn separately_read_models_become_samples_with_their_own_state() {
 
     // The partition the caller passes is kept.
     let conformers = one_state(
-        SampleSet::from_models([read_model(CRAMBIN), read_model(CRAMBIN)]).unwrap(),
+        StructureSet::from_models([read_model(CRAMBIN), read_model(CRAMBIN)]).unwrap(),
         Partition::state_per_sample(2),
     );
     assert_eq!(conformers.distribution().unwrap().state_count(), 2);
 
     // A different topology is refused.
     assert_eq!(
-        SampleSet::from_models([read_model(CRAMBIN), read_model(ADENYLATE_KINASE)]).unwrap_err(),
-        SampleSetError::TopologyMismatch
+        StructureSet::from_models([read_model(CRAMBIN), read_model(ADENYLATE_KINASE)]).unwrap_err(),
+        StructureSetError::TopologyMismatch
     );
 }

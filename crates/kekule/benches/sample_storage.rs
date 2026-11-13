@@ -1,7 +1,7 @@
-//! Informational cost of reading samples from an XTC file through a sample
+//! Informational cost of reading geometries from an XTC file through a geometry
 //! set, against the indexed reader it wraps, and of processing them as they
 //! are read, against the streaming adapters.
-//! Run: cargo bench -p kekule --bench sample_storage -- SYSTEM.cif [TRAJECTORY.xtc]
+//! Run: cargo bench -p kekule --bench geometry_storage -- SYSTEM.cif [TRAJECTORY.xtc]
 //! The topology comes from an external mmCIF model, in its cell or a box
 //! around its atoms. The frames
 //! come from an external XTC file of the same atoms, or else are the model's
@@ -16,11 +16,11 @@ use std::time::Instant;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif;
-use kekule::structure::{Sample, SampleRead};
+use kekule::structure::{Geometry, StructureSetRead};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::io::{
-    create_trajectory_stream_writer, open_indexed_sample_set, open_indexed_trajectory,
+    create_trajectory_stream_writer, open_indexed_structure_set, open_indexed_trajectory,
     TrajectoryWriteOptions,
 };
 use kekule::traj::periodic::MoleculeImager;
@@ -56,15 +56,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let topology = model.shared_topology();
 
-    let scratch = std::env::temp_dir().join(format!("kekule-bench-samples-{}", std::process::id()));
+    let scratch =
+        std::env::temp_dir().join(format!("kekule-bench-geometries-{}", std::process::id()));
     let path = match arguments.next() {
         Some(path) => PathBuf::from(path),
         None => {
             std::fs::create_dir_all(&scratch)?;
             let path = scratch.join("repeated.xtc");
-            let mut frame = FrameBuffer::from_sample(
+            let mut frame = FrameBuffer::from_geometry(
                 Arc::clone(&topology),
-                Sample::new(model.positions().clone()).with_cell(cell),
+                Geometry::new(model.positions().clone()).with_cell(cell),
             )?;
             let file = std::io::BufWriter::new(std::fs::File::create(&path)?);
             let mut writer = create_trajectory_stream_writer(
@@ -103,7 +104,7 @@ fn benchmark(path: &Path, topology: &Arc<Topology>) -> Result<(), Box<dyn Error>
     }
     let raw = per_frame(start);
 
-    let set = open_indexed_sample_set(path, Arc::clone(topology), Default::default())?;
+    let set = open_indexed_structure_set(path, Arc::clone(topology), Default::default())?;
     let start = Instant::now();
     for _ in 0..PASSES {
         for index in 0..frames {
@@ -147,7 +148,7 @@ fn benchmark(path: &Path, topology: &Arc<Topology>) -> Result<(), Box<dyn Error>
 
     let steps = ProcessingSteps::default()
         .with_whole(true)
-        .with_fit(atoms, FitReference::Sample(0));
+        .with_fit(atoms, FitReference::Geometry(0));
     let processed = Processed::new(&set, steps)?;
     let start = Instant::now();
     for _ in 0..PASSES {
@@ -164,7 +165,7 @@ fn benchmark(path: &Path, topology: &Arc<Topology>) -> Result<(), Box<dyn Error>
         std::thread::available_parallelism()?.get()
     );
     println!(
-        "| atoms | frames | indexed reader us/frame | sample set read us/frame | overhead us/frame | {THREADS} threads us/frame | streaming whole+fit us/frame | processed whole+fit us/frame |"
+        "| atoms | frames | indexed reader us/frame | structure set read us/frame | overhead us/frame | {THREADS} threads us/frame | streaming whole+fit us/frame | processed whole+fit us/frame |"
     );
     println!("|---:|---:|---:|---:|---:|---:|---:|---:|");
     println!(

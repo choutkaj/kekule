@@ -15,8 +15,8 @@ use kekule::pdb::{
 };
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
-    Distribution, Members, Model, ModelBuilder, Order, Partition, Positions, Sample, SampleSet,
-    Velocities,
+    Distribution, Geometry, Members, Model, ModelBuilder, Order, Partition, Positions,
+    StructureSet, Velocities,
 };
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{Quantity, ANGSTROM, DEGREE, KELVIN, MOLAR, NANOMETER};
@@ -462,11 +462,14 @@ fn residues_must_be_consecutive_in_dense_order() {
     ));
 }
 
-/// Samples of `positions` in one state of equally weighted members, as
+/// Geometries of `positions` in one state of equally weighted members, as
 /// readers of formats with weights write them.
-fn one_state(topology: Arc<Topology>, positions: impl IntoIterator<Item = Positions>) -> SampleSet {
+fn one_state(
+    topology: Arc<Topology>,
+    positions: impl IntoIterator<Item = Positions>,
+) -> StructureSet {
     let mut set =
-        SampleSet::from_samples(topology, positions.into_iter().map(Sample::new)).unwrap();
+        StructureSet::from_geometries(topology, positions.into_iter().map(Geometry::new)).unwrap();
     let members = set.len();
     set.set_distribution(Some(
         Distribution::new(Members::All, Partition::one_state(members))
@@ -479,7 +482,7 @@ fn one_state(topology: Arc<Topology>, positions: impl IntoIterator<Item = Positi
 }
 
 #[test]
-fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
+fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
     let topology = smiles::to_topology("C").unwrap();
     let positions = |x: f64| {
         Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
@@ -493,12 +496,12 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
     assert_eq!(crate::fingerprint(&written), 0xac79_8dcd_f341_ece8);
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
-    assert_eq!(reread.sample_set().len(), 2);
+    assert_eq!(reread.structure_set().len(), 2);
     assert_eq!(crate::native_fingerprint(&reread), 0x2dcc_e32f_274e_b5a5);
     assert_eq!(
-        pdb::write(reread.sample_set(), Default::default())
+        pdb::write(reread.structure_set(), Default::default())
             .map(|(text, _)| text)
             .unwrap(),
         written
@@ -514,14 +517,14 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSample {
-            sample: 2,
+        PdbWriteIssue::UnrepresentableGeometry {
+            geometry: 2,
             field: StructureField::State
         }
     ));
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The state of sample 2 has no PDB representation."
+        "Cannot write the PDB output. The state of geometry 2 has no PDB representation."
     );
     set.distribution_mut()
         .unwrap()
@@ -534,16 +537,16 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSample {
-            sample: 2,
+        PdbWriteIssue::UnrepresentableGeometry {
+            geometry: 2,
             field: StructureField::Energy
         }
     ));
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The state energy of sample 2 has no PDB representation."
+        "Cannot write the PDB output. The state energy of geometry 2 has no PDB representation."
     );
-    let options = PdbWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
+    let options = PdbWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit);
     let (_, report) = pdb::write(&set, options).unwrap();
     assert_eq!(
         report.omissions(),
@@ -558,7 +561,7 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
             }
         ]
     );
-    // A lone sample's weight is relative to samples the entry does not hold.
+    // A lone geometry's weight is relative to geometries the entry does not hold.
     let lone = set.get(0).unwrap();
     let error = pdb::write(pdb::PdbSource::structure(&lone), Default::default()).unwrap_err();
     assert_eq!(
@@ -569,7 +572,7 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
     );
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The weight of the sample has no PDB representation."
+        "Cannot write the PDB output. The weight of the geometry has no PDB representation."
     );
     let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
     assert_eq!(
@@ -589,8 +592,8 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
     let error = pdb::write(&warm, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSample {
-            sample: 1,
+        PdbWriteIssue::UnrepresentableGeometry {
+            geometry: 1,
             field: StructureField::Temperature
         }
     ));
@@ -610,14 +613,14 @@ fn sample_sets_write_models_and_sample_state_fails_unless_omitted() {
 }
 
 #[test]
-fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
+fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     let topology = smiles::to_topology("C").unwrap();
     let positions = |x: f64| {
         Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
     };
-    let mut scan = SampleSet::from_samples(
+    let mut scan = StructureSet::from_geometries(
         Arc::clone(&topology),
-        (0..3).map(|index| Sample::new(positions(f64::from(index)))),
+        (0..3).map(|index| Geometry::new(positions(f64::from(index)))),
     )
     .unwrap();
     scan.set_order(Some(Order::Coordinate {
@@ -628,16 +631,16 @@ fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
     let error = pdb::write(&scan, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSample {
-            sample: 1,
+        PdbWriteIssue::UnrepresentableGeometry {
+            geometry: 1,
             field: StructureField::OrderCoordinate
         }
     ));
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The order coordinate of sample 1 has no PDB representation."
+        "Cannot write the PDB output. The order coordinate of geometry 1 has no PDB representation."
     );
-    let options = PdbWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
+    let options = PdbWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit);
     let (written, report) = pdb::write(&scan, options).unwrap();
     assert_eq!(
         report.omissions(),
@@ -649,26 +652,27 @@ fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
     assert_eq!(written.matches("MODEL ").count(), 3);
     assert_eq!(written.matches("ENDMDL").count(), 3);
     assert_eq!(crate::fingerprint(&written), 0xe5b3_1cce_48b6_9862);
-    // The models read back as one state of the samples' positions.
+    // The models read back as one state of the geometries' positions.
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(crate::native_fingerprint(&reread), 0xe477_f52c_3492_7442);
-    let read = reread.sample_set();
+    let read = reread.structure_set();
     assert_eq!(read.len(), 3);
-    for (sample, source) in read.iter().zip(&scan) {
-        assert_eq!(sample.positions(), source.positions());
+    for (geometry, source) in read.iter().zip(&scan) {
+        assert_eq!(geometry.positions(), source.positions());
     }
 
-    // A step order fails on its steps, and a lone sample on its own.
-    let mut history = SampleSet::from_samples(topology, [Sample::new(positions(0.0))]).unwrap();
+    // A step order fails on its steps, and a lone geometry on its own.
+    let mut history =
+        StructureSet::from_geometries(topology, [Geometry::new(positions(0.0))]).unwrap();
     history.set_order(Some(Order::Step(vec![3]))).unwrap();
     let error = pdb::write(&history, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableSample {
-            sample: 1,
+        PdbWriteIssue::UnrepresentableGeometry {
+            geometry: 1,
             field: StructureField::OrderStep
         }
     ));
@@ -682,7 +686,7 @@ fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
     );
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The order step of the sample has no PDB representation."
+        "Cannot write the PDB output. The order step of the geometry has no PDB representation."
     );
     let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
     assert_eq!(
@@ -695,7 +699,8 @@ fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
 
     // Plural state is named with a plural verb.
     let mut moving =
-        SampleSet::from_samples(history.shared_topology(), [Sample::new(positions(0.0))]).unwrap();
+        StructureSet::from_geometries(history.shared_topology(), [Geometry::new(positions(0.0))])
+            .unwrap();
     moving
         .get_mut(0)
         .unwrap()
@@ -704,20 +709,20 @@ fn ordered_sample_sets_write_models_and_their_places_fail_unless_omitted() {
     let error = pdb::write(&moving, Default::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The velocities of sample 1 have no PDB representation."
+        "Cannot write the PDB output. The velocities of geometry 1 have no PDB representation."
     );
     let lone = moving.get(0).unwrap();
     let error = pdb::write(pdb::PdbSource::structure(&lone), Default::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The velocities of the sample have no PDB representation."
+        "Cannot write the PDB output. The velocities of the geometry have no PDB representation."
     );
 
-    // An empty sample set is no entry.
-    let empty = SampleSet::new(smiles::to_topology("C").unwrap());
+    // An empty structure set is no entry.
+    let empty = StructureSet::new(smiles::to_topology("C").unwrap());
     let error = pdb::write(&empty, options).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-    assert!(matches!(issue(&error), PdbWriteIssue::EmptySampleSet));
+    assert!(matches!(issue(&error), PdbWriteIssue::EmptyStructureSet));
 }
 
 #[test]
@@ -1129,7 +1134,7 @@ fn coordination_link_records_would_not_select_is_reported() {
 }
 
 #[test]
-fn sample_sets_state_the_coordination_every_sample_states() {
+fn structure_sets_state_the_coordination_every_sample_states() {
     // The same entry without its first LINK record and its CONECT records,
     // which list the coordination again, states three of the four
     // iron-sulfur records.
@@ -1155,10 +1160,13 @@ fn sample_sets_state_the_coordination_every_sample_states() {
     );
     let options = PdbWriteOptions::default();
 
-    // LINK records belong to the entry, so samples that agree keep them all.
+    // LINK records belong to the entry, so geometries that agree keep them all.
     let agreeing = [full.report().clone(), full.report().clone()];
-    let (written, report) =
-        pdb::write(PdbSource::sample_set(&set).with_reports(&agreeing), options).unwrap();
+    let (written, report) = pdb::write(
+        PdbSource::structure_set(&set).with_reports(&agreeing),
+        options,
+    )
+    .unwrap();
     assert_eq!(records(&written, "LINK").len(), 4);
     assert_eq!(crate::fingerprint(&written), 0x711e_553b_58aa_2bf7);
     assert!(written.starts_with("LINK"));
@@ -1167,10 +1175,10 @@ fn sample_sets_state_the_coordination_every_sample_states() {
         .iter()
         .any(|omission| matches!(omission, WriteOmission::Coordination { .. })));
 
-    // A record one sample does not state is left out of the entry.
+    // A record one geometry does not state is left out of the entry.
     let differing = [full.report().clone(), partial.report().clone()];
     let (written, report) = pdb::write(
-        PdbSource::sample_set(&set).with_reports(&differing),
+        PdbSource::structure_set(&set).with_reports(&differing),
         options,
     )
     .unwrap();
@@ -1181,7 +1189,7 @@ fn sample_sets_state_the_coordination_every_sample_states() {
         .contains(&WriteOmission::Coordination { records: 1 }));
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(crate::native_fingerprint(&reread), 0x7290_b363_5bb4_2fcc);
     for report in reread.reports() {
@@ -1189,14 +1197,17 @@ fn sample_sets_state_the_coordination_every_sample_states() {
     }
     // The order of the reports does not matter.
     let reversed = [partial.report().clone(), full.report().clone()];
-    let written = pdb::write(PdbSource::sample_set(&set).with_reports(&reversed), options)
-        .unwrap()
-        .0;
+    let written = pdb::write(
+        PdbSource::structure_set(&set).with_reports(&reversed),
+        options,
+    )
+    .unwrap()
+    .0;
     assert_eq!(records(&written, "LINK").len(), 3);
     assert_eq!(crate::fingerprint(&written), 0x7343_a984_b5dc_32c9);
 
     let error = pdb::write(
-        PdbSource::sample_set(&set).with_reports(std::slice::from_ref(full.report())),
+        PdbSource::structure_set(&set).with_reports(std::slice::from_ref(full.report())),
         options,
     )
     .unwrap_err();

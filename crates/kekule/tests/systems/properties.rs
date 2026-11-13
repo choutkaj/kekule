@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kekule::molecule::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
-use kekule::structure::{GeometryError, Model, Positions, Sample, SampleSet};
+use kekule::structure::{Geometry, GeometryError, Model, Positions, StructureSet};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, Topology,
     TopologyBuildError, TopologyBuilder,
@@ -165,8 +165,8 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     );
     assert_eq!(model.properties(), &original);
 
-    // A detached sample has no bond rows yet.
-    let mut member = Sample::new(Positions::zeros(2));
+    // A detached geometry has no bond rows yet.
+    let mut member = Geometry::new(Positions::zeros(2));
     let detached = member.properties().clone();
     assert_eq!(
         member.set_properties(bound.clone()),
@@ -177,7 +177,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     );
     assert_eq!(member.properties(), &detached);
 
-    let mut set = SampleSet::from_samples(Arc::clone(&ethane), [member]).unwrap();
+    let mut set = StructureSet::from_geometries(Arc::clone(&ethane), [member]).unwrap();
     assert_eq!(set.get(0).unwrap().properties().bonds().len(), 1);
     set.get_mut(0)
         .unwrap()
@@ -224,7 +224,8 @@ fn owner_topology_property_edits_keep_layout_without_touching_other_holders() {
     );
 
     let set = || {
-        SampleSet::from_samples(Arc::clone(&topology), [Sample::new(Positions::zeros(3))]).unwrap()
+        StructureSet::from_geometries(Arc::clone(&topology), [Geometry::new(Positions::zeros(3))])
+            .unwrap()
     };
     let (mut first, mut second) = (set(), set());
     first

@@ -30,7 +30,7 @@ fn reused_streaming_buffers_agree_with_loaded_trajectory_statistics() {
     let mut buffer = FrameBuffer::new(t.shared_topology());
     for (index, frame) in t.iter().enumerate() {
         buffer
-            .copy_from(FrameView::from_sample(frame).unwrap())
+            .copy_from(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         rmsf.observe(index, &buffer.as_model_view(), 1.0).unwrap();
         contacts

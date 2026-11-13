@@ -453,7 +453,7 @@ fn deterministic_mmcif_parser_and_interpreters_fuzz_smoke_are_panic_free() {
                     StructureInterpretOptions::default()
                         .with_model_selection(ModelSelection::First),
                 );
-                let _ = document.interpret_sample_set(Default::default());
+                let _ = document.interpret_structure_set(Default::default());
             })
             .expect("mmCIF parser or interpreter smoke mutation panicked");
         }
@@ -525,7 +525,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
         .expect_err("metadata block has no model");
     assert!(model_error.message().contains("no _atom_site category"));
     assert_eq!(
-        error_detail(block.interpret_sample_set(Default::default())),
+        error_detail(block.interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::NoCoordinateModels)
     );
 }
@@ -1156,9 +1156,9 @@ fn multiple_coordinate_models_require_explicit_selection() {
 }
 
 #[test]
-fn sample_set_options_reject_an_empty_explicit_model_selection() {
-    let result = macromolecular::StructureSampleSetInterpretOptions::default()
-        .with_model_ids(Some(Vec::new()));
+fn structure_set_options_reject_an_empty_explicit_model_selection() {
+    let result =
+        macromolecular::StructureSetInterpretOptions::default().with_model_ids(Some(Vec::new()));
     assert_eq!(
         result.err().and_then(|error| error.detail().cloned()),
         Some(FormatErrorDetail::EmptyModelSelection)
@@ -1175,30 +1175,30 @@ fn document_interpreters_reject_multiple_atom_site_blocks() {
         .message()
         .contains("More than one data block has _atom_site data."));
     assert_eq!(
-        error_detail(document.interpret_sample_set(Default::default())),
+        error_detail(document.interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::MultipleAtomSiteBlocks)
     );
 }
 
 #[test]
-fn sample_set_block_interpretation_matches_exactly_one_document_helper() {
+fn structure_set_block_interpretation_matches_exactly_one_document_helper() {
     let document = parse(MULTI_MODEL);
     let from_document = document
-        .interpret_sample_set(Default::default())
-        .expect("document sample set interprets");
+        .interpret_structure_set(Default::default())
+        .expect("document structure set interprets");
     let from_block = document.blocks()[0]
-        .interpret_sample_set(Default::default())
-        .expect("block sample set interprets");
-    assert_eq!(debug_fingerprint(&from_document), 0xc41c_672c_1406_da85);
-    assert_eq!(debug_fingerprint(&from_block), 0xc41c_672c_1406_da85);
+        .interpret_structure_set(Default::default())
+        .expect("block structure set interprets");
+    assert_eq!(debug_fingerprint(&from_document), 0x6442_4b03_442a_651f);
+    assert_eq!(debug_fingerprint(&from_block), 0x6442_4b03_442a_651f);
     let method_default = document.blocks()[0]
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .expect("default block method interprets");
     let method_explicit = document.blocks()[0]
-        .interpret_sample_set(macromolecular::StructureSampleSetInterpretOptions::default())
+        .interpret_structure_set(macromolecular::StructureSetInterpretOptions::default())
         .expect("explicit block method interprets");
     let document_method = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .expect("document method delegates to its structural block");
 
     assert_eq!(from_document.reports(), from_block.reports());
@@ -1206,24 +1206,24 @@ fn sample_set_block_interpretation_matches_exactly_one_document_helper() {
     assert_eq!(document_method.reports(), method_default.reports());
     assert!(method_default
         .topology()
-        .same_layout(method_default.sample_set().topology()));
+        .same_layout(method_default.structure_set().topology()));
     assert!(method_default
         .clone()
-        .into_sample_set()
+        .into_structure_set()
         .topology()
         .same_layout(method_default.topology()));
     assert!(from_document
-        .sample_set()
+        .structure_set()
         .topology()
-        .same_layout(from_block.sample_set().topology()));
+        .same_layout(from_block.structure_set().topology()));
     assert_eq!(
-        from_document.sample_set().len(),
-        from_block.sample_set().len()
+        from_document.structure_set().len(),
+        from_block.structure_set().len()
     );
     for (document_member, block_member) in from_document
-        .sample_set()
+        .structure_set()
         .iter()
-        .zip(from_block.sample_set().iter())
+        .zip(from_block.structure_set().iter())
     {
         assert_eq!(document_member.positions(), block_member.positions());
         assert_eq!(document_member.properties(), block_member.properties());
@@ -1233,10 +1233,10 @@ fn sample_set_block_interpretation_matches_exactly_one_document_helper() {
 #[test]
 fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let interpreted = (parse(MULTI_MODEL))
-        .interpret_sample_set(Default::default())
-        .expect("consistent coordinate models form a sample set");
-    assert_eq!(debug_fingerprint(&interpreted), 0xc41c_672c_1406_da85);
-    let set = interpreted.sample_set();
+        .interpret_structure_set(Default::default())
+        .expect("consistent coordinate models form a structure set");
+    assert_eq!(debug_fingerprint(&interpreted), 0x6442_4b03_442a_651f);
+    let set = interpreted.structure_set();
     assert_eq!(set.len(), 2);
     assert_eq!(interpreted.reports().len(), 2);
     let shared_topology = set.shared_topology();
@@ -1270,22 +1270,22 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
 }
 
 #[test]
-fn sample_set_preparation_preserves_selected_order_reports_and_shared_connectivity() {
+fn structure_set_preparation_preserves_selected_order_reports_and_shared_connectivity() {
     let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
     let document = parse(&input);
     for (model_ids, fingerprint) in [
-        (vec!["2", "1"], 0xa115_cf3c_80dd_0cf9),
-        (vec!["2"], 0xdd19_ebcb_21eb_f116),
+        (vec!["2", "1"], 0x4fc1_63e7_527b_4b81),
+        (vec!["2"], 0xea01_70e0_d913_ff9a),
     ] {
         let interpreted = document
-            .interpret_sample_set(
-                macromolecular::StructureSampleSetInterpretOptions::default()
+            .interpret_structure_set(
+                macromolecular::StructureSetInterpretOptions::default()
                     .with_model_ids(Some(model_ids.iter().map(|id| (*id).to_owned()).collect()))
                     .unwrap(),
             )
             .unwrap();
         assert_eq!(debug_fingerprint(&interpreted), fingerprint);
-        assert_eq!(interpreted.sample_set().len(), model_ids.len());
+        assert_eq!(interpreted.structure_set().len(), model_ids.len());
         assert_eq!(interpreted.topology().bond_count(), 1);
         assert_eq!(
             interpreted
@@ -1302,7 +1302,7 @@ fn sample_set_preparation_preserves_selected_order_reports_and_shared_connectivi
             BondOrder::Double
         );
         for ((member, report), model_id) in interpreted
-            .sample_set()
+            .structure_set()
             .iter()
             .zip(interpreted.reports())
             .zip(model_ids)
@@ -1323,18 +1323,18 @@ fn sample_set_preparation_preserves_selected_order_reports_and_shared_connectivi
 }
 
 #[test]
-fn sample_set_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
+fn structure_set_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
     let changed = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 N C1");
     assert_eq!(
-        error_detail(parse(&changed).interpret_sample_set(Default::default())),
+        error_detail(parse(&changed).interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::InconsistentTopology {
             model_id: "2".to_owned()
         })
     );
     let invalid = MULTI_MODEL.replace("HETATM 3 C C1", "HETATM 3 Xx C1");
     let error = (parse(&invalid))
-        .interpret_sample_set(
-            macromolecular::StructureSampleSetInterpretOptions::default()
+        .interpret_structure_set(
+            macromolecular::StructureSetInterpretOptions::default()
                 .with_model_ids(Some(vec!["1".into()]))
                 .unwrap(),
         )
@@ -1352,7 +1352,7 @@ fn sample_set_preparation_rejects_changed_chemistry_and_invalid_omitted_rows() {
 fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
     let inconsistent = MULTI_MODEL.replace("HETATM 4 O O1 LIG A 1 6.2 0.0 0.0 0.90 21.0 2\n", "");
     assert_eq!(
-        error_detail((parse(&inconsistent)).interpret_sample_set(Default::default())),
+        error_detail((parse(&inconsistent)).interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::InconsistentAtomSet {
             model_id: "2".to_owned()
         })
@@ -1360,14 +1360,14 @@ fn multimodel_interpretation_rejects_inconsistent_atom_sets() {
 }
 
 #[test]
-fn sample_set_identity_distinguishes_repeated_residues_and_insertion_codes() {
+fn structure_set_identity_distinguishes_repeated_residues_and_insertion_codes() {
     let interpreted = (parse(REPEATED_RESIDUE_MODELS))
-        .interpret_sample_set(Default::default())
-        .expect("stable repeated-residue identities form a sample set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x6a12_640a_7a55_4d5b);
+        .interpret_structure_set(Default::default())
+        .expect("stable repeated-residue identities form a structure set");
+    assert_eq!(debug_fingerprint(&interpreted), 0x3c75_9dff_72ba_97e5);
 
-    assert_eq!(interpreted.sample_set().len(), 2);
-    assert_eq!(interpreted.sample_set().topology().atom_count(), 3);
+    assert_eq!(interpreted.structure_set().len(), 2);
+    assert_eq!(interpreted.structure_set().topology().atom_count(), 3);
     let atoms = interpreted.reports()[0]
         .instances()
         .iter()
@@ -1385,14 +1385,14 @@ fn sample_set_identity_distinguishes_repeated_residues_and_insertion_codes() {
 }
 
 #[test]
-fn sample_set_identity_preserves_repeated_nonpolymer_occurrences() {
+fn structure_set_identity_preserves_repeated_nonpolymer_occurrences() {
     let interpreted = (parse(REPEATED_NONPOLYMER_MODELS))
-        .interpret_sample_set(Default::default())
-        .expect("stable occurrence discriminators form a sample set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x0da8_5029_b06b_452c);
+        .interpret_structure_set(Default::default())
+        .expect("stable occurrence discriminators form a structure set");
+    assert_eq!(debug_fingerprint(&interpreted), 0xed1f_5ad3_467f_9ca8);
 
-    assert_eq!(interpreted.sample_set().len(), 2);
-    assert_eq!(interpreted.sample_set().topology().instance_count(), 2);
+    assert_eq!(interpreted.structure_set().len(), 2);
+    assert_eq!(interpreted.structure_set().topology().instance_count(), 2);
     for report in interpreted.reports() {
         let occurrences = report
             .instances()
@@ -1405,7 +1405,7 @@ fn sample_set_identity_preserves_repeated_nonpolymer_occurrences() {
 }
 
 #[test]
-fn sample_set_identity_classifies_reordered_rows_as_dense_order_mismatch() {
+fn structure_set_identity_classifies_reordered_rows_as_dense_order_mismatch() {
     let reordered = r#"
 data_reordered_instances
 loop_
@@ -1436,7 +1436,7 @@ HETATM 3 C C1 LIG B XB 1 15.0 0.0 0.0 2
 HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 "#;
     assert_eq!(
-        error_detail((parse(reordered)).interpret_sample_set(Default::default())),
+        error_detail((parse(reordered)).interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::InconsistentDenseAtomOrder {
             model_id: "2".to_owned()
         })
@@ -1444,13 +1444,13 @@ HETATM 4 C C1 LIG A XA 1 10.0 0.0 0.0 2
 }
 
 #[test]
-fn sample_set_identity_detects_true_repeated_atom_set_mismatch() {
+fn structure_set_identity_detects_true_repeated_atom_set_mismatch() {
     let mismatched = REPEATED_RESIDUE_MODELS.replace(
         "ATOM 6 C CA GLY A X 1 8 101 . . 14.0 0.0 0.0 2",
         "ATOM 6 C CA GLY A X 1 9 101 . . 14.0 0.0 0.0 2",
     );
     assert_eq!(
-        error_detail((parse(&mismatched)).interpret_sample_set(Default::default())),
+        error_detail((parse(&mismatched)).interpret_structure_set(Default::default())),
         Some(FormatErrorDetail::InconsistentAtomSet {
             model_id: "2".to_owned()
         })
@@ -1458,7 +1458,7 @@ fn sample_set_identity_detects_true_repeated_atom_set_mismatch() {
 }
 
 #[test]
-fn sample_set_identity_excludes_selected_alternate_location_but_reports_preserve_it() {
+fn structure_set_identity_excludes_selected_alternate_location_but_reports_preserve_it() {
     let input = r#"
 data_altloc_models
 loop_
@@ -1486,10 +1486,10 @@ ATOM 3 C CA GLY A 1 1 A 0.1 10.0 0.0 0.0 2
 ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
 "#;
     let interpreted = (parse(input))
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .expect("selected altloc is provenance rather than atom identity");
-    assert_eq!(debug_fingerprint(&interpreted), 0x0355_49dd_b8ec_079e);
-    let set = interpreted.sample_set();
+    assert_eq!(debug_fingerprint(&interpreted), 0x99aa_8a26_3a53_e9c0);
+    let set = interpreted.structure_set();
     assert_eq!(set.len(), 2);
     assert_eq!(set.topology().atom_count(), 1);
     let selected_positions = set

@@ -9,7 +9,7 @@ use kekule::properties::{
 };
 use kekule::smiles;
 use kekule::structure::{
-    DenseArrayError, GeometryError, Model, ModelError, Positions, Sample, SampleSetError,
+    DenseArrayError, Geometry, GeometryError, Model, ModelError, Positions, StructureSetError,
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
@@ -124,13 +124,13 @@ fn borrowed_property_reads_retain_string_storage_and_missing_cells() {
     let text = String::from("a property that should be borrowed");
     let pointer = text.as_ptr();
     let row = TopologyAtomIndex::new;
-    let mut sample = Sample::new(Positions::zeros(2));
-    sample
+    let mut geometry = Geometry::new(Positions::zeros(2));
+    geometry
         .properties_mut()
         .atoms_mut()
         .insert(key.clone(), PropertyColumn::String(vec![Some(text), None]))
         .unwrap();
-    let table = sample.properties().atoms();
+    let table = geometry.properties().atoms();
     let value = table.value_ref(&key, row(0)).unwrap().unwrap();
     let PropertyValueRef::String(text) = value else {
         panic!("expected string")
@@ -196,7 +196,7 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let position_error =
         Positions::new(Quantity::new([Point3::origin()], DIMENSIONLESS)).unwrap_err();
     assert!(position_error.source().unwrap().is::<UnitError>());
-    let error = SampleSetError::from(GeometryError::from(position_error.clone()));
+    let error = StructureSetError::from(GeometryError::from(position_error.clone()));
     let structure = error.source().unwrap();
     assert!(structure.is::<GeometryError>());
     // Structure state wraps its array error transparently: it displays the

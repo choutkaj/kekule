@@ -13,10 +13,10 @@ use crate::support::{cip_labels, try_cip_labels};
 #[test]
 fn perception_is_idempotent_and_never_rewrites_represented_chemistry() {
     let mut failures = Vec::new();
-    for sample in molecules() {
-        let mut fail = |message: &str| failures.push((sample.label.clone(), message.to_owned()));
-        let mut molecule = sample.perceived();
-        if molecule != sample.molecule {
+    for geometry in molecules() {
+        let mut fail = |message: &str| failures.push((geometry.label.clone(), message.to_owned()));
+        let mut molecule = geometry.perceived();
+        if molecule != geometry.molecule {
             fail("perception changed the molecule");
         }
         let first = molecule.perception().clone();
@@ -28,7 +28,7 @@ fn perception_is_idempotent_and_never_rewrites_represented_chemistry() {
             fail("reperception differs");
         }
         let labels = cip_labels(&mut molecule);
-        if molecule != sample.molecule {
+        if molecule != geometry.molecule {
             fail("CIP assignment changed the molecule");
         }
         if cip_labels(&mut molecule) != labels {
@@ -44,21 +44,21 @@ fn perception_is_idempotent_and_never_rewrites_represented_chemistry() {
 #[test]
 fn explicit_hydrogen_round_trip_preserves_identity() {
     let mut failures = Vec::new();
-    for sample in molecules() {
-        let mut fail = |message: String| failures.push((sample.label.clone(), message));
-        let mut original = sample.perceived();
+    for geometry in molecules() {
+        let mut fail = |message: String| failures.push((geometry.label.clone(), message));
+        let mut original = geometry.perceived();
         let canonical = smiles::write(&original, SmilesWriteOptions::canonical()).ok();
         let labels = cip_labels(&mut original);
         // Addition keeps every existing atom ID, so the foci are unchanged.
         let mut explicit = original.clone();
         explicit
             .add_hydrogens(Default::default())
-            .unwrap_or_else(|error| panic!("{}: {error}", sample.label));
+            .unwrap_or_else(|error| panic!("{}: {error}", geometry.label));
         explicit.perceive().unwrap();
         let mut collapsed = explicit.clone();
         let removal = collapsed
             .remove_hydrogens()
-            .unwrap_or_else(|error| panic!("{}: {error}", sample.label));
+            .unwrap_or_else(|error| panic!("{}: {error}", geometry.label));
         collapsed.perceive().unwrap();
         let collapsed_labels = labels
             .iter()

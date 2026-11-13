@@ -30,9 +30,9 @@ use super::{io_context, reserve_index_for_push, SharedFile, TrajectoryIoLimits};
 const WHOLE_FILE_HASH_BYTES: u64 = 256 * 1024;
 /// Bytes hashed at each end of a larger file.
 const EDGE_HASH_BYTES: u64 = 64 * 1024;
-/// Bytes of each evenly spaced interior sample of a larger file.
+/// Bytes of each evenly spaced interior geometry of a larger file.
 const SAMPLE_HASH_BYTES: u64 = 4 * 1024;
-/// Interior samples of a larger file.
+/// Interior geometries of a larger file.
 const SAMPLE_COUNT: u64 = 16;
 
 const INDEX_MAGIC: [u8; 8] = *b"KEKTRIDX";
@@ -205,7 +205,7 @@ impl TrajectoryFileFingerprint {
         let mut hash = Fnv1a::new();
         hash.write(&byte_count.to_le_bytes());
         let mut buffer = [0_u8; 8192];
-        for (start, length) in sample_ranges(byte_count) {
+        for (start, length) in geometry_ranges(byte_count) {
             file.seek(SeekFrom::Start(start))?;
             let mut offset = start;
             let end = start + length;
@@ -490,13 +490,14 @@ fn is_dcd_signature(start: &[u8; 8]) -> bool {
 }
 
 /// The `(start, length)` byte ranges a fingerprint hashes, in order.
-fn sample_ranges(byte_count: u64) -> impl Iterator<Item = (u64, u64)> {
+fn geometry_ranges(byte_count: u64) -> impl Iterator<Item = (u64, u64)> {
     let whole = (byte_count <= WHOLE_FILE_HASH_BYTES).then_some((0, byte_count));
     let sampled = (byte_count > WHOLE_FILE_HASH_BYTES).then(move || {
-        let interior = (1..=SAMPLE_COUNT).map(move |sample| {
-            let start = u128::from(byte_count) * u128::from(sample) / u128::from(SAMPLE_COUNT + 1);
+        let interior = (1..=SAMPLE_COUNT).map(move |geometry| {
+            let start =
+                u128::from(byte_count) * u128::from(geometry) / u128::from(SAMPLE_COUNT + 1);
             (
-                u64::try_from(start).expect("a sample starts inside the file"),
+                u64::try_from(start).expect("a geometry starts inside the file"),
                 SAMPLE_HASH_BYTES,
             )
         });
@@ -1125,7 +1126,7 @@ impl TrajectoryFrameIndex {
     ///
     /// It detects what the fingerprint of a file detects: other bytes, more
     /// or fewer of them, and so any change to a prefix of up to 256 KiB.
-    /// The hash of a longer prefix samples its content, its first and last
+    /// The hash of a longer prefix geometries its content, its first and last
     /// 64 KiB and sixteen 4 KiB blocks between, so a change to bytes
     /// between the blocks of the same size goes unnoticed, as for a whole
     /// file; reading a frame still verifies it. The frame-count fields of a
@@ -1822,13 +1823,13 @@ mod tests {
 
     #[test]
     fn sample_ranges_cover_small_files_whole_and_stay_inside_large_ones() {
-        assert_eq!(sample_ranges(0).collect::<Vec<_>>(), [(0, 0)]);
+        assert_eq!(geometry_ranges(0).collect::<Vec<_>>(), [(0, 0)]);
         assert_eq!(
-            sample_ranges(WHOLE_FILE_HASH_BYTES).collect::<Vec<_>>(),
+            geometry_ranges(WHOLE_FILE_HASH_BYTES).collect::<Vec<_>>(),
             [(0, WHOLE_FILE_HASH_BYTES)]
         );
         let large = WHOLE_FILE_HASH_BYTES + 1;
-        let ranges = sample_ranges(large).collect::<Vec<_>>();
+        let ranges = geometry_ranges(large).collect::<Vec<_>>();
         assert_eq!(ranges.len(), 18);
         assert!(ranges
             .iter()

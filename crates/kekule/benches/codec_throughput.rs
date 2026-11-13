@@ -327,14 +327,14 @@ fn positions(topology: &Topology) -> Vec<Point3> {
 fn base_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame
-        .sample_mut()
+        .geometry_mut()
         .set_positions(Quantity::new(positions(topology), NANOMETER))?;
     Ok(frame)
 }
 
 fn dynamic_frame(topology: &Arc<Topology>) -> Result<FrameBuffer, Box<dyn Error>> {
     let mut frame = base_frame(topology)?;
-    frame.sample_mut().set_cell(Some(PeriodicCell::new(
+    frame.geometry_mut().set_cell(Some(PeriodicCell::new(
         Quantity::new(
             [
                 Vector3::new(5.0, 0.0, 0.0),

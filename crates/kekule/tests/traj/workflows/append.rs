@@ -131,7 +131,7 @@ fn write_frames(writer: &mut impl TrajectoryWriter, frames: impl IntoIterator<It
     let set = time_ordered(topology(), frames);
     for frame in &set {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         writer.flush().unwrap();
     }

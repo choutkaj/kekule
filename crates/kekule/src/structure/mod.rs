@@ -13,27 +13,27 @@
 //!   ([`ModelAppend`], [`ModelAppendReport`]). [`ModelEditor::topology_mut`]
 //!   ([`ModelEditorTopologyMut`]) and [`ModelEditor::properties_mut`]
 //!   ([`ModelEditorPropertiesMut`]) reach annotations without geometry.
-//! - [`SampleSet`]: many structures of one shared topology as [`Sample`]s,
+//! - [`StructureSet`]: many structures of one shared topology as [`Geometry`]s,
 //!   each shared and copied on write, with an optional [`Order`] that places
-//!   every sample ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
-//!   an optional [`Distribution`] over all samples or some of them
+//!   every geometry ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
+//!   an optional [`Distribution`] over all geometries or some of them
 //!   ([`Members`]) grouped into [`State`]s by a [`Partition`]. A trajectory,
-//!   a conformer ensemble, and a scan are sample sets. [`SampleView`],
-//!   [`SampleMut`], and [`StateView`] read and edit them, and
+//!   a conformer ensemble, and a scan are structure sets. [`GeometryView`],
+//!   [`GeometryMut`], and [`StateView`] read and edit them, and
 //!   [`DistributionMut`] edits the distribution; the set's operations fail
-//!   with a [`SampleSetError`]. Its storage ([`SampleStorage`]) is a type
+//!   with a [`StructureSetError`]. Its storage ([`GeometryStorage`]) is a type
 //!   parameter: [`InMemory`] by default, or a file's
-//!   ([`crate::traj::io::IndexedFile`]), whose samples are read on demand.
+//!   ([`crate::traj::io::IndexedFile`]), whose geometries are read on demand.
 //!   Sets of either storage, and a host's own readers, read through
-//!   [`SampleRead`], which fails with [`SampleReadError`];
-//!   [`SampleSet::from_reader`] loads chosen samples of any reader into
+//!   [`StructureSetRead`], which fails with [`StructureSetReadError`];
+//!   [`StructureSet::from_reader`] loads chosen geometries of any reader into
 //!   memory. File codecs and streaming live in [`crate::traj`].
 //! - Borrowed access: [`ModelView`] is the common input of coordinate-dependent
-//!   kernels. Models, samples ([`SampleView`]), and codec frames
+//!   kernels. Models, geometries ([`GeometryView`]), and codec frames
 //!   ([`crate::traj::FrameView`]) all borrow as one without copying
 //!   ([`AsModelView`]); [`ModelAtomView`] pairs one topology atom with its
 //!   structure state. [`ModelView::kind`] says whether a view borrows a model
-//!   or a sample ([`StructureKind`]); a sample's [`SampleContext`] reports
+//!   or a geometry ([`StructureKind`]); a geometry's [`SetContext`] reports
 //!   its place, [`Membership`], velocities, and forces, so that state is
 //!   never silently dropped.
 //! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
@@ -49,7 +49,7 @@
 //! Owners accept semantic atom and bond IDs (and, in `*_at` methods, dense
 //! indexes), translate IDs to dense indexes, and check every array's length.
 //! Each owner has its own error type ([`ModelError`], [`ModelBuildError`],
-//! [`ModelEditError`], [`SampleSetError`], [`PartitionError`],
+//! [`ModelEditError`], [`StructureSetError`], [`PartitionError`],
 //! [`GeometryEditError`]); [`GeometryError`] and [`DenseArrayError`] report
 //! invalid structure state shared by all of them.
 //!
@@ -86,9 +86,9 @@
 //! model.set_distance(b, c, Quantity::new(1.6, ANGSTROM))?;
 //! let edit = DihedralEdit::new(model.shared_topology(), [a, b, c, d])?;
 //! for degrees in [-180.0, -60.0, 60.0, 180.0] {
-//!     let mut sample = model.clone();
-//!     edit.apply(&mut sample, Quantity::new(degrees, DEGREE))?;
-//!     // Evaluate or collect sample; model remains the scan baseline.
+//!     let mut geometry = model.clone();
+//!     edit.apply(&mut geometry, Quantity::new(degrees, DEGREE))?;
+//!     // Evaluate or collect geometry; model remains the scan baseline.
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -124,9 +124,9 @@ mod model_state;
 mod partition;
 pub mod placement;
 mod positions;
-mod sample_set;
 pub(crate) mod scalars;
 mod state;
+mod structure_set;
 
 pub use dynamics::{Forces, Velocities};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
@@ -141,14 +141,17 @@ pub use model_editor::{
 };
 pub use partition::{Partition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
-pub(crate) use sample_set::{check_bound, sealed as sample_storage, visit_sample, DecodedSample};
-pub use sample_set::{
-    Distribution, DistributionMut, InMemory, Members, Membership, Order, Place, Requirement,
-    Sample, SampleContext, SampleIter, SampleMut, SampleRead, SampleReadError, SampleSet,
-    SampleSetError, SampleStorage, SampleView, State, StateIter, StateView, TimeAxis,
-};
 pub(crate) use state::subset_rows;
 pub use state::GeometryError;
+pub(crate) use structure_set::{
+    check_bound, sealed as geometry_storage, visit_geometry, DecodedGeometry,
+};
+pub use structure_set::{
+    Distribution, DistributionMut, Geometry, GeometryIter, GeometryMut, GeometryStorage,
+    GeometryView, InMemory, Members, Membership, Order, Place, Requirement, SetContext, State,
+    StateIter, StateView, StructureSet, StructureSetError, StructureSetRead, StructureSetReadError,
+    TimeAxis,
+};
 
 #[cfg(test)]
 mod model_tests;

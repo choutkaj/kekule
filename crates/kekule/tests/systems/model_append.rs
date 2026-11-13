@@ -2,7 +2,7 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::structure::{
-    Distribution, Members, Model, ModelEditError, ModelEditor, Partition, Positions, SampleSet,
+    Distribution, Members, Model, ModelEditError, ModelEditor, Partition, Positions, StructureSet,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId,
@@ -820,7 +820,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
 #[test]
 fn borrowed_member_sample_and_plain_finish_need_no_intermediate_model() {
     let source = annotated(None);
-    let mut set = SampleSet::from_models([source.clone()]).unwrap();
+    let mut set = StructureSet::from_models([source.clone()]).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
     ))

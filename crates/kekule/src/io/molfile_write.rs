@@ -36,7 +36,7 @@ pub enum MolfileWriteVersion {
 pub struct MolfileWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
-    sample_metadata: UnrepresentablePolicy,
+    set_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
 }
 
@@ -68,8 +68,8 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// The state that a Molfile cannot carry of a sample, whether of a
-    /// sample set or a trajectory frame: its membership in the set's
+    /// The state that a Molfile cannot carry of a geometry, whether of a
+    /// structure set or a trajectory frame: its membership in the set's
     /// distribution, its state's properties, its place in the set's order (a
     /// frame's time and MD step among them), and its velocities and forces;
     /// and the occupancies and B factors of any model. By default writing a
@@ -77,19 +77,19 @@ impl MolfileWriteOptions {
     /// [`UnrepresentablePolicy::Omit`] the report names each
     /// ([`WriteOmission::StructureState`], [`WriteOmission::Occupancies`],
     /// [`WriteOmission::BFactors`]).
-    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
-        self.sample_metadata
+    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
+        self.set_metadata
     }
 
-    /// Sets [`Self::sample_metadata`].
+    /// Sets [`Self::set_metadata`].
     #[must_use]
-    pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
-        self.sample_metadata = sample_metadata;
+    pub const fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
+        self.set_metadata = set_metadata;
         self
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a sample's set, which a Molfile cannot carry: by
+    /// properties of a geometry's set, which a Molfile cannot carry: by
     /// default a structure with any fails to write, and under
     /// [`UnrepresentablePolicy::Omit`] the report names each
     /// ([`WriteOmission::StructureState`]).
@@ -142,7 +142,7 @@ impl<'a> MolfileSource<'a> {
         }
     }
 
-    /// A geometry-bearing model, sample of a sample set, or trajectory frame.
+    /// A geometry-bearing model, geometry of a structure set, or trajectory frame.
     pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
         Self {
             content: MolfileContent::Model(model.as_model_view()),
@@ -195,8 +195,7 @@ pub(crate) fn write_molfile<'a>(
             Ok((text, WriteReport::default()))
         }
         MolfileContent::Model(model) => {
-            let policies =
-                StatePolicies::positions_only(options.sample_metadata, options.properties);
+            let policies = StatePolicies::positions_only(options.set_metadata, options.properties);
             check_cell(model, options.cell)?;
             check_structure_state(Format::Molfile, model, policies)?;
             let text = render_model(model, source.title, options.version)?;

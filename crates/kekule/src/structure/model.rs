@@ -20,7 +20,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
-use super::{DenseArrayError, GeometryError, Positions, SampleContext};
+use super::{DenseArrayError, GeometryError, Positions, SetContext};
 
 /// One concrete structure of one topology.
 ///
@@ -28,7 +28,7 @@ use super::{DenseArrayError, GeometryError, Positions, SampleContext};
 /// topology's dense atom order: a position for every atom, an optional
 /// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
 /// structure properties. The topology stays coordinate-free and may be
-/// shared with other models, samples, trajectory frames, selections,
+/// shared with other models, geometries, trajectory frames, selections,
 /// and prepared potentials.
 ///
 /// Read and change structure state through the model's own
@@ -175,7 +175,7 @@ impl Model {
     }
 
     /// Applies a rigid transform to the whole model transactionally:
-    /// positions move and the cell rotates, as for samples and
+    /// positions move and the cell rotates, as for geometries and
     /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
     /// while keeping the cell.
     ///
@@ -390,7 +390,7 @@ pub(crate) mod sealed {
 }
 
 /// Anything that can be borrowed as a [`ModelView`] without copying: models,
-/// views, samples, and trajectory frames.
+/// views, geometries, and trajectory frames.
 ///
 /// Each implementor also has an inherent `as_model_view` method, so the trait
 /// only needs importing for generic code. This trait is sealed; other
@@ -422,27 +422,28 @@ impl<'a> From<&'a Model> for ModelView<'a> {
     }
 }
 
-/// What a [`ModelView`] borrows: a model, or one sample of a collection of
+/// What a [`ModelView`] borrows: a model, or one geometry of a collection of
 /// structures with what its collection records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
-/// it so that a sample's place, membership, velocities, and forces are
+/// it so that a geometry's place, membership, velocities, and forces are
 /// written, rejected, or deliberately omitted, never silently dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum StructureKind<'a> {
-    /// A [`Model`], or a view materialized as one.
+    /// A [`Model`], or a view materialized as one: a structure held on its
+    /// own, with no set around it.
     Model,
-    /// A sample of a [`SampleSet`](super::SampleSet), a trajectory frame, or
-    /// a frame buffer, with its [`SampleContext`].
-    Sample(SampleContext<'a>),
+    /// A geometry of a [`StructureSet`](super::StructureSet), a trajectory frame,
+    /// or a frame buffer, with its [`SetContext`].
+    InSet(SetContext<'a>),
 }
 
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
-/// Models, samples, trajectory frames, and frame buffers all borrow as a
-/// view, and [`Self::kind`] says whether it is a model or a sample.
+/// Models, geometries, trajectory frames, and frame buffers all borrow as a
+/// view, and [`Self::kind`] says whether it is a model or a geometry.
 /// Accessors return borrows with the view's full lifetime. A view of a
 /// trajectory frame has no occupancies or B-factors. Views preserve exact
 /// topology identity.
@@ -480,7 +481,7 @@ impl<'a> ModelView<'a> {
         }
     }
 
-    /// Whether this view borrows a model or a sample, with the sample's
+    /// Whether this view borrows a model or a geometry, with the geometry's
     /// place, membership, velocities, and forces.
     ///
     /// ```
@@ -584,7 +585,7 @@ impl<'a> ModelView<'a> {
     }
 
     /// Materializes this borrowed structure as an owned model, dropping any
-    /// sample state reported by [`Self::kind`]. A view of a
+    /// geometry state reported by [`Self::kind`]. A view of a
     /// trajectory frame yields a model without occupancies or B-factors.
     pub fn to_model(self) -> Model {
         Model {

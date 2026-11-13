@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::math::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Positions, Sample, SampleSet};
+use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
@@ -99,7 +99,7 @@ fn frame(step: u64) -> Frame {
     frame
 }
 
-fn trajectory(steps: std::ops::Range<u64>) -> SampleSet {
+fn trajectory(steps: std::ops::Range<u64>) -> StructureSet {
     time_ordered(topology(), steps.map(frame))
 }
 
@@ -136,9 +136,9 @@ fn growing() -> TrajectoryOpenOptions {
 }
 
 /// The complete encoding of `set` in `format`.
-fn encoded(format: TrajectoryFormat, set: &SampleSet) -> Vec<u8> {
+fn encoded(format: TrajectoryFormat, set: &StructureSet) -> Vec<u8> {
     let mut stream = Cursor::new(Vec::new());
-    kekule::traj::io::write_sample_set_to(&mut stream, set, options(format)).unwrap();
+    kekule::traj::io::write_structure_set_to(&mut stream, set, options(format)).unwrap();
     stream.into_inner()
 }
 
@@ -164,7 +164,7 @@ fn append(path: &Path, bytes: &[u8]) {
 }
 
 /// The x coordinates of frame `frame`, to the precision every format keeps.
-fn assert_close(read: &Sample, step: u64, context: &str) {
+fn assert_close(read: &Geometry, step: u64, context: &str) {
     let expected = frame(step);
     let pairs = read
         .positions()
@@ -196,7 +196,7 @@ fn every_format_follows_a_file_its_writer_appends_to() {
         .unwrap();
         for frame in written.iter().take(2) {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
         }
         writer.flush().unwrap();
@@ -213,7 +213,7 @@ fn every_format_follows_a_file_its_writer_appends_to() {
 
         for frame in written.iter().skip(2) {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
         }
         writer.flush().unwrap();
@@ -668,7 +668,7 @@ fn every_flush_leaves_a_complete_trajectory_a_strict_reader_opens() {
         .unwrap();
         for (count, frame) in written.iter().enumerate() {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
             writer.flush().unwrap();
             let read = scanned(&path);
@@ -705,7 +705,7 @@ fn a_reader_refreshing_while_a_writer_appends_sees_every_frame_whole() {
             let written = trajectory(0..FRAMES);
             for (index, frame) in written.iter().enumerate() {
                 writer
-                    .write_frame(FrameView::from_sample(frame).unwrap())
+                    .write_frame(FrameView::from_geometry(frame).unwrap())
                     .unwrap();
                 if index % 3 != 1 {
                     writer.flush().unwrap();

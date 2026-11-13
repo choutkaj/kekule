@@ -235,11 +235,11 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         .interpret(Default::default())?
         .into_topology()
         .same_layout(block.interpret(Default::default())?.into_model().topology()));
-    let set = document.interpret_sample_set(Default::default())?;
+    let set = document.interpret_structure_set(Default::default())?;
     assert_eq!(
         set.reports(),
         document
-            .interpret_sample_set(macromolecular::StructureSampleSetInterpretOptions::default())?
+            .interpret_structure_set(macromolecular::StructureSetInterpretOptions::default())?
             .reports()
     );
     assert_eq!(crate::native_fingerprint(&set), 0x2427_352a_afd6_2d3a);

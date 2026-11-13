@@ -2,7 +2,7 @@
 //!
 //! [`minimize`] runs limited-memory BFGS (L-BFGS) with a strong-Wolfe line
 //! search on all Cartesian coordinates. It reads a borrowed [`ModelView`], so
-//! models, samples, and trajectory frames are minimized the same way,
+//! models, geometries, and trajectory frames are minimized the same way,
 //! and returns new [`Positions`] without changing its input. Periodic cells are
 //! passed through to the potential unchanged.
 //!
@@ -804,8 +804,8 @@ struct Search<'a, P: ?Sized> {
     evaluations: usize,
 }
 
-/// A line-search sample: `phi = E(x + alpha d)` and `dphi = g . d`.
-struct Sample {
+/// A line-search geometry: `phi = E(x + alpha d)` and `dphi = g . d`.
+struct Geometry {
     alpha: f64,
     phi: f64,
     dphi: f64,
@@ -815,12 +815,12 @@ struct Sample {
 impl<P: Potential + ?Sized> Search<'_, P> {
     /// Evaluates `x + alpha d`. Singular coordinates yield an infinite energy;
     /// coordinates that round back to `x` yield `None`.
-    fn sample(
+    fn geometry(
         &mut self,
         from: &Point,
         direction: &[f64],
         alpha: f64,
-    ) -> Result<Option<Sample>, MinimizationError> {
+    ) -> Result<Option<Geometry>, MinimizationError> {
         let x: Vec<f64> = from
             .x
             .iter()
@@ -842,13 +842,13 @@ impl<P: Potential + ?Sized> Search<'_, P> {
             .evaluate(view)
             .and_then(|evaluation| self.objective.point(positions, evaluation))
         {
-            Ok(point) => Ok(Some(Sample {
+            Ok(point) => Ok(Some(Geometry {
                 alpha,
                 phi: point.energy(),
                 dphi: dot(&point.gradient, direction),
                 point: Some(point),
             })),
-            Err(error) if error.is_invalid_geometry() => Ok(Some(Sample {
+            Err(error) if error.is_invalid_geometry() => Ok(Some(Geometry {
                 alpha,
                 phi: f64::INFINITY,
                 dphi: f64::NAN,
@@ -872,9 +872,9 @@ impl<P: Potential + ?Sized> Search<'_, P> {
         budget: usize,
     ) -> Result<Option<Point>, MinimizationError> {
         let phi0 = from.energy();
-        let armijo = |s: &Sample| s.phi.is_finite() && s.phi <= phi0 + ARMIJO * s.alpha * slope;
-        let curvature = |s: &Sample| s.dphi.abs() <= -CURVATURE * slope;
-        let start = Sample {
+        let armijo = |s: &Geometry| s.phi.is_finite() && s.phi <= phi0 + ARMIJO * s.alpha * slope;
+        let curvature = |s: &Geometry| s.dphi.abs() <= -CURVATURE * slope;
+        let start = Geometry {
             alpha: 0.0,
             phi: phi0,
             dphi: slope,
@@ -887,51 +887,51 @@ impl<P: Potential + ?Sized> Search<'_, P> {
                 return Ok(previous.point);
             }
             used += 1;
-            let Some(sample) = self.sample(from, direction, alpha)? else {
+            let Some(geometry) = self.geometry(from, direction, alpha)? else {
                 return Ok(previous.point);
             };
-            if !armijo(&sample) || (previous.alpha > 0.0 && sample.phi >= previous.phi) {
-                break (previous, sample);
+            if !armijo(&geometry) || (previous.alpha > 0.0 && geometry.phi >= previous.phi) {
+                break (previous, geometry);
             }
-            if curvature(&sample) {
-                return Ok(sample.point);
+            if curvature(&geometry) {
+                return Ok(geometry.point);
             }
-            if sample.dphi >= 0.0 {
-                break (sample, previous);
+            if geometry.dphi >= 0.0 {
+                break (geometry, previous);
             }
             if alpha >= alpha_max {
                 // The displacement bound is reached with sufficient decrease.
-                return Ok(sample.point);
+                return Ok(geometry.point);
             }
             alpha = (2.0 * alpha).min(alpha_max);
-            previous = sample;
+            previous = geometry;
         };
         // `lo` always satisfies sufficient decrease and has the lowest energy.
         while used < budget {
             used += 1;
             let trial = interpolate(&lo, &hi);
-            let Some(sample) = self.sample(from, direction, trial)? else {
+            let Some(geometry) = self.geometry(from, direction, trial)? else {
                 break;
             };
-            if !armijo(&sample) || sample.phi >= lo.phi {
-                hi = sample;
+            if !armijo(&geometry) || geometry.phi >= lo.phi {
+                hi = geometry;
             } else {
-                if curvature(&sample) {
-                    return Ok(sample.point);
+                if curvature(&geometry) {
+                    return Ok(geometry.point);
                 }
-                if sample.dphi * (hi.alpha - lo.alpha) >= 0.0 {
+                if geometry.dphi * (hi.alpha - lo.alpha) >= 0.0 {
                     hi = lo;
                 }
-                lo = sample;
+                lo = geometry;
             }
         }
         Ok(lo.point)
     }
 }
 
-/// Safeguarded cubic interpolation of the minimum between two samples, with
+/// Safeguarded cubic interpolation of the minimum between two geometries, with
 /// bisection when the cubic is undefined or leaves the inner interval.
-fn interpolate(lo: &Sample, hi: &Sample) -> f64 {
+fn interpolate(lo: &Geometry, hi: &Geometry) -> f64 {
     let (a, b) = (lo.alpha, hi.alpha);
     let midpoint = 0.5 * (a + b);
     let (left, right) = (a.min(b), a.max(b));

@@ -13,8 +13,8 @@ use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Distribution, Forces, Members, Model, ModelView, Order, Partition, Positions, Sample,
-    SampleSet, State, TimeAxis, Velocities,
+    Distribution, Forces, Geometry, Members, Model, ModelView, Order, Partition, Positions, State,
+    StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::FrameView;
@@ -521,10 +521,10 @@ fn sdf_writes_independent_models_and_set_samples_in_order() {
     );
 }
 
-/// `models` as the samples of one distribution in the states of
+/// `models` as the geometries of one distribution in the states of
 /// `partition`, every member weighing 1.
-fn distributed(models: impl IntoIterator<Item = Model>, partition: Partition) -> SampleSet {
-    let mut set = SampleSet::from_models(models).unwrap();
+fn distributed(models: impl IntoIterator<Item = Model>, partition: Partition) -> StructureSet {
+    let mut set = StructureSet::from_models(models).unwrap();
     let members = set.len();
     set.set_distribution(Some(
         Distribution::new(Members::All, partition)
@@ -538,7 +538,7 @@ fn distributed(models: impl IntoIterator<Item = Model>, partition: Partition) ->
 
 /// Two methane conformers, one state each, weighted 1:3 with state energies
 /// 0 and 5 kJ/mol.
-fn weighted_set() -> SampleSet {
+fn weighted_set() -> StructureSet {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let later = Model::new(
         first.shared_topology(),
@@ -558,9 +558,9 @@ fn weighted_set() -> SampleSet {
     set
 }
 
-/// Four methane samples weighted 1 to 4 in two states, {1, 3} represented
+/// Four methane geometries weighted 1 to 4 in two states, {1, 3} represented
 /// by 3 and {0, 2} represented by 2, the latter at -2.5 kJ/mol, at 300 K.
-fn clustered_set() -> SampleSet {
+fn clustered_set() -> StructureSet {
     let first = model("C", &[[0.0, 0.0, 0.0]]);
     let models = (0..4).map(|index| {
         Model::new(
@@ -590,7 +590,7 @@ fn clustered_set() -> SampleSet {
     set
 }
 
-/// Every sample's weight, the partition, every state energy in kJ/mol, and
+/// Every geometry's weight, the partition, every state energy in kJ/mol, and
 /// the temperature in kelvin.
 type SetMetadata = (
     Vec<Option<f64>>,
@@ -599,10 +599,10 @@ type SetMetadata = (
     Option<f64>,
 );
 
-fn set_metadata(set: &SampleSet) -> SetMetadata {
+fn set_metadata(set: &StructureSet) -> SetMetadata {
     let distribution = set.distribution();
     (
-        set.iter().map(|sample| sample.weight()).collect(),
+        set.iter().map(|geometry| geometry.weight()).collect(),
         distribution.map(|distribution| distribution.partition().clone()),
         set.states()
             .map(|state| {
@@ -654,7 +654,7 @@ fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
             ],
         ]
     );
-    let reread = sdf::sample_set(&records).unwrap();
+    let reread = sdf::structure_set(&records).unwrap();
     assert_eq!(set_metadata(&reread), set_metadata(&set));
     assert_eq!(crate::native_fingerprint(&reread), 0x4ae5_cd3f_eab9_4c61);
     assert_eq!(
@@ -668,7 +668,7 @@ fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
         .replace(">  <kekule.state>\n0\n\n", "")
         .replace(">  <kekule.state>\n1\n\n", "")
         .replace(">  <kekule.representative>\ntrue\n\n", "");
-    let read = sdf::sample_set(&interpret_records(&foreign)).unwrap();
+    let read = sdf::structure_set(&interpret_records(&foreign)).unwrap();
     assert_eq!(set_metadata(&read), set_metadata(&set));
     assert_eq!(crate::native_fingerprint(&read), 0x4ae5_cd3f_eab9_4c61);
     // Records without any of the fields have no distribution.
@@ -677,44 +677,44 @@ fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
             .unwrap()
             .0,
     );
-    let read = sdf::sample_set(&plain).unwrap();
+    let read = sdf::structure_set(&plain).unwrap();
     assert_eq!(read.distribution(), None);
     assert_eq!(crate::native_fingerprint(&read), 0x6708_332a_1f3d_942d);
 
     let malformed = text.replacen(">  <kekule.weight>\n3\n", ">  <kekule.weight>\nheavy\n", 1);
     assert_eq!(
-        sdf::sample_set(&interpret_records(&malformed))
+        sdf::structure_set(&interpret_records(&malformed))
             .unwrap_err()
             .to_string(),
         "Cannot interpret the SDF input in record 2. The data field \"kekule.weight\" holds \"heavy\", not a number."
     );
     // An invalid weight names its record alone.
     let negative = text.replacen(">  <kekule.weight>\n3\n", ">  <kekule.weight>\n-3\n", 1);
-    let error = sdf::sample_set(&interpret_records(&negative)).unwrap_err();
+    let error = sdf::structure_set(&interpret_records(&negative)).unwrap_err();
     assert_eq!(
         error.to_string(),
         "Cannot interpret the SDF input in record 2. The data field \"kekule.weight\" holds an invalid weight."
     );
     assert!(std::error::Error::source(&error).is_none());
     let fields = [SdfDataField::new(sdf::STATE_FIELD, "2")];
-    let sample = sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields);
+    let geometry = sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
-        described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()),
+        described(sdf::write([geometry], SdfWriteOptions::default()).unwrap_err()),
         (
             DiagnosticKind::Inconsistent,
             Some(FormatErrorDetail::DataField {
                 name: sdf::STATE_FIELD.to_owned(),
             }),
-            "The data field \"kekule.state\" is reserved for the data of the sample.".to_owned(),
+            "The data field \"kekule.state\" is reserved for the data of the geometry.".to_owned(),
         )
     );
-    // So does a field the sample does not write, such as a second
-    // representative marker on a sample that represents nothing.
+    // So does a field the geometry does not write, such as a second
+    // representative marker on a geometry that represents nothing.
     let clustered = clustered_set();
     let fields = [SdfDataField::new(sdf::REPRESENTATIVE_FIELD, "true")];
-    let sample = sdf::SdfRecordSource::from(clustered.get(0).unwrap()).with_data_fields(&fields);
+    let geometry = sdf::SdfRecordSource::from(clustered.get(0).unwrap()).with_data_fields(&fields);
     assert_eq!(
-        described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()).1,
+        described(sdf::write([geometry], SdfWriteOptions::default()).unwrap_err()).1,
         Some(FormatErrorDetail::DataField {
             name: sdf::REPRESENTATIVE_FIELD.to_owned(),
         })
@@ -748,7 +748,7 @@ fn sdf_round_trips_one_state_and_clustered_states() {
             field(sdf::TEMPERATURE_FIELD, "300"),
         ]
     );
-    let reread = sdf::sample_set(&records).unwrap();
+    let reread = sdf::structure_set(&records).unwrap();
     assert_eq!(set_metadata(&reread), set_metadata(&set));
     assert_eq!(crate::native_fingerprint(&reread), 0x1460_5a70_893d_3b93);
     for (left, right) in reread.iter().zip(set.iter()) {
@@ -762,14 +762,14 @@ fn sdf_round_trips_one_state_and_clustered_states() {
     distribution.set_temperature(None).unwrap();
     let text_one = sdf::write(&one, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text_one), 0x8638_8572_626a_81dc);
-    let reread = sdf::sample_set(&interpret_records(&text_one)).unwrap();
+    let reread = sdf::structure_set(&interpret_records(&text_one)).unwrap();
     assert_eq!(set_metadata(&reread), set_metadata(&one));
     assert_eq!(crate::native_fingerprint(&reread), 0xca61_de19_5bcd_2aec);
     assert_eq!(reread.distribution().unwrap().state_count(), 1);
 
     // Records that do not describe a partition are rejected.
     let error = |text: &str| {
-        sdf::sample_set(&interpret_records(text))
+        sdf::structure_set(&interpret_records(text))
             .unwrap_err()
             .to_string()
     };
@@ -807,7 +807,7 @@ fn sdf_round_trips_one_state_and_clustered_states() {
 fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
     use StructureField::{Energy, State, Temperature, Weight};
     let mut set = weighted_set();
-    let message = |set: &SampleSet| {
+    let message = |set: &StructureSet| {
         mmcif::write([set], MmcifWriteOptions::default())
             .map(|(text, _)| text)
             .unwrap_err()
@@ -815,7 +815,7 @@ fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
     };
     assert_eq!(
         message(&set),
-        "Cannot write the mmCIF output. The state energy of sample 1 has no mmCIF representation."
+        "Cannot write the mmCIF output. The state energy of geometry 1 has no mmCIF representation."
     );
     let mut distribution = set.distribution_mut().unwrap();
     for state in 0..2 {
@@ -827,12 +827,12 @@ fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
     }
     assert_eq!(
         message(&set),
-        "Cannot write the mmCIF output. The weight of sample 2 has no mmCIF representation."
+        "Cannot write the mmCIF output. The weight of geometry 2 has no mmCIF representation."
     );
     set.distribution_mut().unwrap().set_weight(1, 1.0).unwrap();
     assert_eq!(
         message(&set),
-        "Cannot write the mmCIF output. The state of sample 2 has no mmCIF representation."
+        "Cannot write the mmCIF output. The state of geometry 2 has no mmCIF representation."
     );
     let mut distribution = set.distribution_mut().unwrap();
     distribution.regroup(Partition::one_state(2)).unwrap();
@@ -849,7 +849,7 @@ fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
         .unwrap();
     let (omitted, report) = mmcif::write(
         [&clustered_set()],
-        MmcifWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit),
+        MmcifWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit),
     )
     .unwrap();
     assert_eq!(
@@ -862,11 +862,11 @@ fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
     assert_eq!(crate::fingerprint(&omitted), 0xa348_4d3d_7813_ac6a);
     let reread = mmcif::parse_str(&omitted, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(crate::native_fingerprint(&reread), 0xab5b_7b59_ab44_b17c);
     assert_eq!(
-        set_metadata(reread.sample_set()),
+        set_metadata(reread.structure_set()),
         (
             vec![Some(1.0); 4],
             Some(Partition::one_state(4)),
@@ -886,39 +886,42 @@ fn mmcif_rejects_the_weights_states_energies_and_temperature_it_cannot_carry() {
 /// none, time, MD step, velocities, forces.
 struct StatefulFrames {
     topology: Arc<Topology>,
-    samples: Vec<Sample>,
+    geometries: Vec<Geometry>,
 }
 
 impl StatefulFrames {
     fn new() -> Self {
         let topology = model("C", &[[0.0; 3]]).shared_topology();
-        let mut samples = vec![Sample::new(Positions::zeros(1)); 5];
+        let mut geometries = vec![Geometry::new(Positions::zeros(1)); 5];
         let zero = || vec![Vector3::new(0.0, 0.0, 0.0)];
         let velocities =
             Velocities::from_vec(Quantity::new(zero(), NANOMETER_PER_PICOSECOND)).unwrap();
-        samples[3].set_velocities(Some(velocities)).unwrap();
+        geometries[3].set_velocities(Some(velocities)).unwrap();
         let forces =
             Forces::from_vec(Quantity::new(zero(), KILOJOULE_PER_MOLE_PER_NANOMETER)).unwrap();
-        samples[4].set_forces(Some(forces)).unwrap();
-        Self { topology, samples }
+        geometries[4].set_forces(Some(forces)).unwrap();
+        Self {
+            topology,
+            geometries,
+        }
     }
 
     /// The frames, the second at 2 ps and the third at MD step 7.
     fn views(&self) -> Vec<FrameView<'_>> {
-        self.samples
+        self.geometries
             .iter()
             .enumerate()
-            .map(|(index, sample)| {
+            .map(|(index, geometry)| {
                 let time = (index == 1).then(|| Quantity::new(2.0, PICOSECOND));
                 let step = (index == 2).then_some(7);
-                FrameView::new(&self.topology, sample, time, step).unwrap()
+                FrameView::new(&self.topology, geometry, time, step).unwrap()
             })
             .collect()
     }
 }
 
 /// Writes one structure view as a Molfile, an SDF record and an mmCIF model
-/// block, each with sample state set to `policy`.
+/// block, each with geometry state set to `policy`.
 fn write_structure(
     view: ModelView<'_>,
     policy: UnrepresentablePolicy,
@@ -926,17 +929,17 @@ fn write_structure(
     [
         molfile::write(
             molfile::MolfileSource::model(&view),
-            MolfileWriteOptions::default().with_sample_metadata(policy),
+            MolfileWriteOptions::default().with_set_metadata(policy),
         )
         .map(|(text, _)| text),
         sdf::write(
             [sdf::SdfRecordSource::model(&view)],
-            SdfWriteOptions::default().with_sample_metadata(policy),
+            SdfWriteOptions::default().with_set_metadata(policy),
         )
         .map(|(text, _)| text),
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&view)],
-            MmcifWriteOptions::default().with_sample_metadata(policy),
+            MmcifWriteOptions::default().with_set_metadata(policy),
         )
         .map(|(text, _)| text),
     ]
@@ -956,7 +959,7 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
         .unwrap();
     let frames = StatefulFrames::new();
     let frames = frames.views();
-    // Expected detail per writer (Molfile, SDF, mmCIF); SDF writes sample
+    // Expected detail per writer (Molfile, SDF, mmCIF); SDF writes geometry
     // weights, states, and state energies as data fields.
     let rows: [(ModelView<'_>, [Option<StructureField>; 3]); 7] = [
         (
@@ -1001,9 +1004,11 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
                     );
                 }
                 None if format == Format::Sdf && row < 2 => {
-                    // Both SDF paths write the sample's own data fields.
-                    let sample = set.get(row).unwrap();
-                    let typed = sdf::write([sample], SdfWriteOptions::default()).unwrap().0;
+                    // Both SDF paths write the geometry's own data fields.
+                    let geometry = set.get(row).unwrap();
+                    let typed = sdf::write([geometry], SdfWriteOptions::default())
+                        .unwrap()
+                        .0;
                     assert_eq!(failed[writer].as_ref().unwrap(), &typed);
                     assert!(typed.contains(
                         ">  <kekule.weight>
@@ -1022,7 +1027,7 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
     let error = sdf::write(frames.clone(), SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the SDF output in record 2. The time of the sample has no SDF representation."
+        "Cannot write the SDF output in record 2. The time of the geometry has no SDF representation."
     );
     let error = molfile::write(
         molfile::MolfileSource::model(&frames[2].as_model_view()),
@@ -1031,18 +1036,18 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
     .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the Molfile output. The MD step of the sample has no Molfile representation."
+        "Cannot write the Molfile output. The MD step of the geometry has no Molfile representation."
     );
 }
 
 /// A three-step optimization history and a two-point distance scan of one
 /// methane carbon.
-fn methane_series() -> (SampleSet, SampleSet) {
+fn methane_series() -> (StructureSet, StructureSet) {
     let topology = model("C", &[[0.0; 3]]).shared_topology();
-    let samples = |count| (0..count).map(|_| Sample::new(Positions::zeros(1)));
-    let mut history = SampleSet::from_samples(Arc::clone(&topology), samples(3)).unwrap();
+    let geometries = |count| (0..count).map(|_| Geometry::new(Positions::zeros(1)));
+    let mut history = StructureSet::from_geometries(Arc::clone(&topology), geometries(3)).unwrap();
     history.set_order(Some(Order::Step(vec![0, 4, 9]))).unwrap();
-    let mut scan = SampleSet::from_samples(topology, samples(2)).unwrap();
+    let mut scan = StructureSet::from_geometries(topology, geometries(2)).unwrap();
     scan.set_order(Some(Order::Coordinate {
         unit: ANGSTROM,
         values: vec![1.25, 1.5],
@@ -1081,11 +1086,13 @@ fn sdf_ordered_samples_carry_their_step_or_coordinate_through_data_fields() {
         ]
     );
 
-    // A caller's fields come first, such as a sample's energy, but cannot
-    // give a sample another place.
+    // A caller's fields come first, such as a geometry's energy, but cannot
+    // give a geometry another place.
     let energy = [SdfDataField::new("energy", "-3.5")];
-    let sample = sdf::SdfRecordSource::from(history.get(1).unwrap()).with_data_fields(&energy);
-    let text = sdf::write([sample], SdfWriteOptions::default()).unwrap().0;
+    let geometry = sdf::SdfRecordSource::from(history.get(1).unwrap()).with_data_fields(&energy);
+    let text = sdf::write([geometry], SdfWriteOptions::default())
+        .unwrap()
+        .0;
     assert_eq!(crate::fingerprint(&text), 0x3b6b_1074_f00f_9ca7);
     assert_eq!(
         data_fields(&interpret_records(&text)),
@@ -1097,15 +1104,16 @@ fn sdf_ordered_samples_carry_their_step_or_coordinate_through_data_fields() {
         sdf::COORDINATE_UNIT_FIELD,
     ] {
         let fields = [SdfDataField::new(name, "1")];
-        let sample = sdf::SdfRecordSource::from(history.get(0).unwrap()).with_data_fields(&fields);
+        let geometry =
+            sdf::SdfRecordSource::from(history.get(0).unwrap()).with_data_fields(&fields);
         assert_eq!(
-            described(sdf::write([sample], SdfWriteOptions::default()).unwrap_err()),
+            described(sdf::write([geometry], SdfWriteOptions::default()).unwrap_err()),
             (
                 DiagnosticKind::Inconsistent,
                 Some(FormatErrorDetail::DataField {
                     name: name.to_owned()
                 }),
-                format!("The data field {name:?} is reserved for the data of the sample."),
+                format!("The data field {name:?} is reserved for the data of the geometry."),
             )
         );
     }
@@ -1119,9 +1127,9 @@ fn single_structure_writers_fail_on_a_sample_place_unless_told_to_omit_it() {
         (&history, StructureField::OrderStep, "order step"),
         (&scan, StructureField::OrderCoordinate, "order coordinate"),
     ] {
-        let sample = set.get(1).unwrap();
-        let view = sample.as_model_view();
-        let plain = sample.to_model();
+        let geometry = set.get(1).unwrap();
+        let view = geometry.as_model_view();
+        let plain = geometry.to_model();
         let state = Some(FormatErrorDetail::UnrepresentableState(field));
 
         let error = molfile::write(
@@ -1136,14 +1144,14 @@ fn single_structure_writers_fail_on_a_sample_place_unless_told_to_omit_it() {
         assert_eq!(
             error.to_string(),
             format!(
-                "Cannot write the Molfile output. The {name} of the sample has no Molfile representation."
+                "Cannot write the Molfile output. The {name} of the geometry has no Molfile representation."
             )
         );
         // Omitting the place writes exactly the bare model.
         assert_eq!(
             molfile::write(
                 molfile::MolfileSource::model(&view),
-                MolfileWriteOptions::default().with_sample_metadata(omit),
+                MolfileWriteOptions::default().with_set_metadata(omit),
             )
             .unwrap()
             .0,
@@ -1164,12 +1172,12 @@ fn single_structure_writers_fail_on_a_sample_place_unless_told_to_omit_it() {
         assert_eq!(
             error.to_string(),
             format!(
-                "Cannot write the mmCIF output. The {name} of the sample has no mmCIF representation."
+                "Cannot write the mmCIF output. The {name} of the geometry has no mmCIF representation."
             )
         );
         let (text, report) = mmcif::write(
             [mmcif::MmcifBlockSource::model(&view)],
-            MmcifWriteOptions::default().with_sample_metadata(omit),
+            MmcifWriteOptions::default().with_set_metadata(omit),
         )
         .unwrap();
         assert_eq!(
@@ -1291,9 +1299,9 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
     assert_eq!(crate::fingerprint(&text), 0x37db_812f_437b_970d);
     let members = mmcif::parse_str(&text, Default::default())
         .unwrap()
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .sample_set()
+        .structure_set()
         .iter()
         .map(|member| member.as_model_view().cell().is_some())
         .collect::<Vec<_>>();
@@ -1304,13 +1312,13 @@ fn mmcif_writes_a_whole_periodic_cell_as_p1_and_reads_it_back() {
             .map(|(text, _)| text)
             .unwrap_err()
             .to_string(),
-        "Cannot write the mmCIF output. The samples have different cells."
+        "Cannot write the mmCIF output. The geometries have different cells."
     );
     let pdb_options =
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
     assert_eq!(
         pdb::write(&set, pdb_options).unwrap_err().to_string(),
-        "Cannot write the PDB output. The samples have different cells."
+        "Cannot write the PDB output. The geometries have different cells."
     );
     let (text, _) = mmcif::write([&set], omit).unwrap();
     assert_eq!(crate::fingerprint(&text), 0xd84b_4cef_cb89_042c);
@@ -1511,7 +1519,7 @@ fn mmcif_blocks_take_their_own_names_and_read_back_under_them() {
 }
 
 #[test]
-fn mmcif_distinguishes_independent_models_from_a_sample_set() {
+fn mmcif_distinguishes_independent_models_from_a_structure_set() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
     let independent = mmcif::write(
@@ -1530,7 +1538,7 @@ fn mmcif_distinguishes_independent_models_from_a_sample_set() {
     assert!(independent.starts_with("data_model_1\n"));
     assert!(independent.contains("data_model_2\n"));
     assert!(independent_document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .is_err());
 
     let shared = first.shared_topology();
@@ -1544,25 +1552,24 @@ fn mmcif_distinguishes_independent_models_from_a_sample_set() {
     )
     .unwrap();
     let set = distributed([first.clone(), second], Partition::one_state(2));
-    let set_text =
-        mmcif::write(
-            [mmcif::MmcifBlockSource::sample_set(&set)
-                .with_classifications(&classifications(&first))],
-            MmcifWriteOptions::default(),
-        )
-        .map(|(text, _)| text)
-        .unwrap();
+    let set_text = mmcif::write(
+        [mmcif::MmcifBlockSource::structure_set(&set)
+            .with_classifications(&classifications(&first))],
+        MmcifWriteOptions::default(),
+    )
+    .map(|(text, _)| text)
+    .unwrap();
     assert_eq!(crate::fingerprint(&set_text), 0xd958_9ed3_ad5a_420d);
     let set_document = mmcif::parse_str(&set_text, Default::default()).unwrap();
     assert_eq!(set_document.blocks().len(), 1);
     let parsed = set_document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(crate::native_fingerprint(&parsed), 0x7b46_6ec6_7f47_b53d);
-    assert_eq!(parsed.sample_set().len(), 2);
+    assert_eq!(parsed.structure_set().len(), 2);
     assert!(
         (parsed
-            .sample_set()
+            .structure_set()
             .get(0)
             .unwrap()
             .positions()
@@ -1577,7 +1584,7 @@ fn mmcif_distinguishes_independent_models_from_a_sample_set() {
     );
     assert!(
         (parsed
-            .sample_set()
+            .structure_set()
             .get(1)
             .unwrap()
             .positions()
@@ -1596,9 +1603,9 @@ fn mmcif_distinguishes_independent_models_from_a_sample_set() {
         .unwrap();
     assert_eq!(crate::fingerprint(&round_trip), 0xd958_9ed3_ad5a_420d);
     let reparsed = (mmcif::parse_str(&round_trip, Default::default()).unwrap())
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap();
-    assert_eq!(reparsed.sample_set().len(), 2);
+    assert_eq!(reparsed.structure_set().len(), 2);
 }
 
 #[test]
@@ -1918,7 +1925,7 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
 }
 
 #[test]
-fn mmcif_streaming_matches_string_output_for_models_and_a_sample_set() {
+fn mmcif_streaming_matches_string_output_for_models_and_a_structure_set() {
     let first = model("CO", &[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]);
     let unrelated = model("N", &[[3.0, 0.0, 0.0]]);
     let models = [first.clone(), unrelated.clone()];
@@ -1971,14 +1978,13 @@ fn mmcif_streaming_matches_string_output_for_models_and_a_sample_set() {
     )
     .unwrap();
     let set = distributed([first.clone(), second], Partition::one_state(2));
-    let expected_set =
-        mmcif::write(
-            [mmcif::MmcifBlockSource::sample_set(&set)
-                .with_classifications(&classifications(&first))],
-            MmcifWriteOptions::default(),
-        )
-        .map(|(text, _)| text)
-        .unwrap();
+    let expected_set = mmcif::write(
+        [mmcif::MmcifBlockSource::structure_set(&set)
+            .with_classifications(&classifications(&first))],
+        MmcifWriteOptions::default(),
+    )
+    .map(|(text, _)| text)
+    .unwrap();
     assert_eq!(crate::fingerprint(&expected_set), 0xd958_9ed3_ad5a_420d);
     let mut streamed_set = BoundedChunkWriter {
         bytes: Vec::new(),
@@ -1986,10 +1992,8 @@ fn mmcif_streaming_matches_string_output_for_models_and_a_sample_set() {
     };
     mmcif::write_to(
         &mut streamed_set,
-        [
-            mmcif::MmcifBlockSource::sample_set(&set)
-                .with_classifications(&classifications(&first)),
-        ],
+        [mmcif::MmcifBlockSource::structure_set(&set)
+            .with_classifications(&classifications(&first))],
         MmcifWriteOptions::default(),
     )
     .unwrap();
@@ -2003,9 +2007,9 @@ fn mmcif_streaming_matches_string_output_for_models_and_a_sample_set() {
     assert_eq!(document.blocks().len(), 1);
     assert_eq!(
         document
-            .interpret_sample_set(Default::default())
+            .interpret_structure_set(Default::default())
             .unwrap()
-            .sample_set()
+            .structure_set()
             .len(),
         2
     );
@@ -2021,7 +2025,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     .unwrap();
 
     // Each model block carries its own reports, so a mismatch is reported
-    // per block in the same shape as a sample set block's.
+    // per block in the same shape as a structure set block's.
     let model_error = mmcif::write(
         [mmcif::MmcifBlockSource::model(&first).with_reports(&[])],
         MmcifWriteOptions::default(),
@@ -2044,7 +2048,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
 
     let set = distributed([first, second], Partition::one_state(2));
     let set_error = mmcif::write(
-        [mmcif::MmcifBlockSource::sample_set(&set).with_reports(&[])],
+        [mmcif::MmcifBlockSource::structure_set(&set).with_reports(&[])],
         MmcifWriteOptions::default(),
     )
     .map(|(text, _)| text)
@@ -2217,31 +2221,31 @@ fn outcome<T: std::fmt::Debug>(result: Result<T, FormatError>) -> String {
 }
 
 /// The fingerprint of every structure writer's outcome for one view with
-/// sample state set to `policy`.
+/// geometry state set to `policy`.
 fn view_outcomes(view: ModelView<'_>, policy: UnrepresentablePolicy) -> u64 {
     crate::fingerprint(
         [
             outcome(
                 molfile::write(
                     molfile::MolfileSource::model(&view),
-                    MolfileWriteOptions::default().with_sample_metadata(policy),
+                    MolfileWriteOptions::default().with_set_metadata(policy),
                 )
                 .map(|(text, _)| text),
             ),
             outcome(
                 sdf::write(
                     [sdf::SdfRecordSource::model(&view)],
-                    SdfWriteOptions::default().with_sample_metadata(policy),
+                    SdfWriteOptions::default().with_set_metadata(policy),
                 )
                 .map(|(text, _)| text),
             ),
             outcome(mmcif::write(
                 [mmcif::MmcifBlockSource::model(&view)],
-                MmcifWriteOptions::default().with_sample_metadata(policy),
+                MmcifWriteOptions::default().with_set_metadata(policy),
             )),
             outcome(pdb::write(
                 pdb::PdbSource::structure(&view),
-                PdbWriteOptions::default().with_sample_metadata(policy),
+                PdbWriteOptions::default().with_set_metadata(policy),
             )),
         ]
         .join("\n"),
@@ -2261,17 +2265,17 @@ fn sample_and_frame_views_write_their_state_or_fail_on_it() {
     let (history, scan) = methane_series();
     let views = set
         .iter()
-        .map(|sample| sample.as_model_view())
+        .map(|geometry| geometry.as_model_view())
         .chain(
             frames
                 .views()
                 .into_iter()
                 .map(|frame| frame.as_model_view()),
         )
-        .chain(history.iter().map(|sample| sample.as_model_view()))
-        .chain(scan.iter().map(|sample| sample.as_model_view()))
+        .chain(history.iter().map(|geometry| geometry.as_model_view()))
+        .chain(scan.iter().map(|geometry| geometry.as_model_view()))
         .collect::<Vec<_>>();
-    // Molfile, SDF, mmCIF, and PDB outcomes of two weighted samples, the
+    // Molfile, SDF, mmCIF, and PDB outcomes of two weighted geometries, the
     // five stateful frames, and the step and coordinate places.
     let expected = [
         (
@@ -2321,17 +2325,17 @@ fn sample_and_frame_views_write_their_state_or_fail_on_it() {
     }
 }
 
-/// Two methane samples, both timed and stepped, the second with velocities.
-fn timed_set() -> SampleSet {
+/// Two methane geometries, both timed and stepped, the second with velocities.
+fn timed_set() -> StructureSet {
     let topology = model("C", &[[0.0; 3]]).shared_topology();
-    let mut samples = vec![Sample::new(Positions::zeros(1)); 2];
+    let mut geometries = vec![Geometry::new(Positions::zeros(1)); 2];
     let velocities = Velocities::from_vec(Quantity::new(
         vec![Vector3::new(0.0, 0.0, 0.0)],
         NANOMETER_PER_PICOSECOND,
     ))
     .unwrap();
-    samples[1].set_velocities(Some(velocities)).unwrap();
-    let mut set = SampleSet::from_samples(topology, samples).unwrap();
+    geometries[1].set_velocities(Some(velocities)).unwrap();
+    let mut set = StructureSet::from_geometries(topology, geometries).unwrap();
     set.set_order(Some(Order::Time(
         TimeAxis::new(
             Some(Quantity::new(vec![0.0, 1.0], PICOSECOND)),
@@ -2343,7 +2347,7 @@ fn timed_set() -> SampleSet {
     set
 }
 
-/// Two methane samples at 1 and 2 Å.
+/// Two methane geometries at 1 and 2 Å.
 fn plain_models() -> [Model; 2] {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let second = Model::new(
@@ -2355,7 +2359,7 @@ fn plain_models() -> [Model; 2] {
 }
 
 #[test]
-fn sample_sets_write_their_distribution_and_order_or_fail_on_them() {
+fn structure_sets_write_their_distribution_and_order_or_fail_on_them() {
     let distributed_sets = [
         (
             distributed(plain_models(), Partition::one_state(2)),
@@ -2382,15 +2386,15 @@ fn sample_sets_write_their_distribution_and_order_or_fail_on_them() {
                 0x4eb2_d1a7_b204_40e5,
                 0x81d7_5a99_ec97_0c6a,
                 0x2b8b_46ef_6646_0b65,
-                0xbbe3_1999_ab83_f2d7,
-                0xdf37_195a_9864_3d89,
+                0x8aba_052b_a262_3bbb,
+                0xb666_49e6_a9dd_829d,
                 0x33fb_5b41_17c5_491a,
-                0xbbe3_1999_ab83_f2d7,
-                0xdf37_195a_9864_3d89,
+                0x8aba_052b_a262_3bbb,
+                0xb666_49e6_a9dd_829d,
                 0x5009_da48_133d_9c9b,
-                0xc4ff_34d0_8ff6_7f07,
+                0xf512_9294_4996_18cb,
                 0x0d1a_586e_2139_0dc0,
-                0xcdbf_839b_9364_bcab,
+                0x5765_85f7_861d_ffbf,
                 0x64ee_b24c_080e_d552,
                 0xb8c0_bcdb_13d4_d055,
             ],
@@ -2418,9 +2422,9 @@ fn sample_sets_write_their_distribution_and_order_or_fail_on_them() {
     for (policy, fingerprints) in expected {
         let pdb_options = PdbWriteOptions::default()
             .with_implicit_hydrogens(UnrepresentablePolicy::Omit)
-            .with_sample_metadata(policy);
-        let mmcif_options = MmcifWriteOptions::default().with_sample_metadata(policy);
-        let sdf_options = SdfWriteOptions::default().with_sample_metadata(policy);
+            .with_set_metadata(policy);
+        let mmcif_options = MmcifWriteOptions::default().with_set_metadata(policy);
+        let sdf_options = SdfWriteOptions::default().with_set_metadata(policy);
         let mut outcomes = Vec::new();
         for (set, _) in &distributed_sets {
             outcomes.push(outcome(pdb::write(set, pdb_options)));
@@ -2446,7 +2450,7 @@ fn sample_sets_write_their_distribution_and_order_or_fail_on_them() {
 }
 
 #[test]
-fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
+fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
     let set = timed_set();
     let pdb_options =
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
@@ -2454,11 +2458,11 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The time of sample 1 has no PDB representation."
+        "Cannot write the PDB output. The time of geometry 1 has no PDB representation."
     );
     let (text, report) = pdb::write(
         &set,
-        pdb_options.with_sample_metadata(UnrepresentablePolicy::Omit),
+        pdb_options.with_set_metadata(UnrepresentablePolicy::Omit),
     )
     .unwrap();
     let state = |field, structures| WriteOmission::StructureState { field, structures };
@@ -2467,15 +2471,15 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
         state(StructureField::Step, 2),
         state(StructureField::Velocities, 1),
     ]));
-    // The positions are the samples' positions.
+    // The positions are the geometries' positions.
     let models = set
         .iter()
-        .map(|sample| sample.to_model())
+        .map(|geometry| geometry.to_model())
         .collect::<Vec<_>>();
     let bare = distributed(models, Partition::one_state(2));
     assert_eq!(text, pdb::write(&bare, pdb_options).unwrap().0);
 
-    // A sample outside the distribution is a model all the same; the file
+    // A geometry outside the distribution is a model all the same; the file
     // cannot say it is no member.
     let mut subset = bare.clone();
     subset
@@ -2488,15 +2492,15 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::UnrepresentableSample {
-                sample: 1,
+            MmcifWriteIssue::UnrepresentableGeometry {
+                geometry: 1,
                 field: StructureField::Membership,
             }
         ))
     );
     let (text, report) = mmcif::write(
         [&subset],
-        MmcifWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit),
+        MmcifWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit),
     )
     .unwrap();
     assert_eq!(report.omissions(), [state(StructureField::Membership, 1)]);
@@ -2507,8 +2511,8 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
             .0
     );
 
-    // A sample set without samples writes nothing.
-    let empty = SampleSet::new(bare.shared_topology());
+    // A structure set without geometries writes nothing.
+    let empty = StructureSet::new(bare.shared_topology());
     for error in [
         pdb::write(&empty, pdb_options).unwrap_err(),
         mmcif::write([&empty], MmcifWriteOptions::default()).unwrap_err(),
@@ -2517,7 +2521,7 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
         assert!(
             error
                 .to_string()
-                .ends_with("The sample set has no samples."),
+                .ends_with("The structure set has no geometries."),
             "{error}"
         );
     }
@@ -2525,7 +2529,7 @@ fn sample_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
 
 #[test]
 fn a_sample_with_a_place_and_a_membership_writes_both_in_sdf() {
-    let mut set = SampleSet::from_models([model("C", &[[0.0; 3]])]).unwrap();
+    let mut set = StructureSet::from_models([model("C", &[[0.0; 3]])]).unwrap();
     set.set_order(Some(Order::Step(vec![7]))).unwrap();
     let state = State::new()
         .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
@@ -2577,7 +2581,7 @@ $$$$
 }
 
 #[test]
-fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
+fn structure_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::structure::TimeAxis;
     let plain = distributed(plain_models(), Partition::one_state(2));
@@ -2621,14 +2625,14 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
         (&labelled, StructureField::StateProperties, 1, 1),
         (&late, StructureField::Representative, 2, 1),
     ];
-    for (set, field, sample, structures) in cases {
+    for (set, field, geometry, structures) in cases {
         // The order belongs to the whole set.
         let lost = |format| match field {
-            StructureField::Order => format!("The sample order has no {format} representation."),
+            StructureField::Order => format!("The geometry order has no {format} representation."),
             StructureField::StateProperties => {
-                format!("The {field} of sample {sample} have no {format} representation.")
+                format!("The {field} of geometry {geometry} have no {format} representation.")
             }
-            _ => format!("The {field} of sample {sample} has no {format} representation."),
+            _ => format!("The {field} of geometry {geometry} has no {format} representation."),
         };
         let error = pdb::write(set, pdb_options).unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{error}");
@@ -2644,12 +2648,12 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
         assert_eq!(
             error.detail(),
             Some(&FormatErrorDetail::MmcifWrite(
-                MmcifWriteIssue::UnrepresentableSample { sample, field }
+                MmcifWriteIssue::UnrepresentableGeometry { geometry, field }
             )),
             "{error}"
         );
 
-        let (text, report) = pdb::write(set, pdb_options.with_sample_metadata(omit)).unwrap();
+        let (text, report) = pdb::write(set, pdb_options.with_set_metadata(omit)).unwrap();
         assert_eq!(text, pdb_text, "{field}");
         let lost = state(field, structures);
         assert_eq!(
@@ -2661,11 +2665,8 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
                 .collect::<Vec<_>>(),
             "{field}"
         );
-        let (text, report) = mmcif::write(
-            [set],
-            MmcifWriteOptions::default().with_sample_metadata(omit),
-        )
-        .unwrap();
+        let (text, report) =
+            mmcif::write([set], MmcifWriteOptions::default().with_set_metadata(omit)).unwrap();
         assert_eq!(text, mmcif_text, "{field}");
         assert_eq!(
             report.omissions(),
@@ -2689,7 +2690,7 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
             .unwrap(),
         ))
         .unwrap();
-    let (_, report) = pdb::write(&clustered, pdb_options.with_sample_metadata(omit)).unwrap();
+    let (_, report) = pdb::write(&clustered, pdb_options.with_set_metadata(omit)).unwrap();
     assert!(report
         .omissions()
         .contains(&state(StructureField::State, 2)));
@@ -2700,12 +2701,12 @@ fn sample_sets_report_or_refuse_the_order_and_states_pdb_and_mmcif_lose() {
 }
 
 #[test]
-fn mmcif_sample_sets_check_the_report_count_before_their_state() {
+fn mmcif_structure_sets_check_the_report_count_before_their_state() {
     // The set's state energies alone would fail to write.
     let set = weighted_set();
     let reports = Vec::new();
     let error = mmcif::write(
-        [mmcif::MmcifBlockSource::sample_set(&set).with_reports(&reports)],
+        [mmcif::MmcifBlockSource::structure_set(&set).with_reports(&reports)],
         MmcifWriteOptions::default(),
     )
     .unwrap_err();
@@ -2728,7 +2729,7 @@ fn structure_fields_name_the_state_a_format_loses() {
         (Temperature, "temperature"),
         (StateProperties, "state properties"),
         (Representative, "state representative"),
-        (Order, "sample order"),
+        (Order, "geometry order"),
         (Time, "time"),
         (Step, "MD step"),
         (Velocities, "velocities"),
@@ -2739,7 +2740,7 @@ fn structure_fields_name_the_state_a_format_loses() {
         (OrderStep, "order step"),
         (OrderCoordinate, "order coordinate"),
         (Membership, "distribution membership"),
-        (SetProperties, "sample set properties"),
+        (SetProperties, "structure set properties"),
         (Occupancies, "occupancies"),
         (BFactors, "B factors"),
     ];
@@ -2769,7 +2770,7 @@ fn mmcif_samples_share_the_first_sample_s_entities() {
     );
     let reports = [from_pdb.report().clone(), from_mmcif.report().clone()];
     let error = mmcif::write(
-        [mmcif::MmcifBlockSource::sample_set(&set).with_reports(&reports)],
+        [mmcif::MmcifBlockSource::structure_set(&set).with_reports(&reports)],
         MmcifWriteOptions::default(),
     )
     .unwrap_err();
@@ -2777,15 +2778,15 @@ fn mmcif_samples_share_the_first_sample_s_entities() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::IncompatibleSample {
-                sample: 2,
+            MmcifWriteIssue::IncompatibleGeometry {
+                geometry: 2,
                 field: kekule::mmcif::MmcifSampleField::Entities,
             }
         ))
     );
     assert_eq!(
         error.to_string(),
-        "Cannot write the mmCIF output. Sample 2 has a different entity representation from the first sample."
+        "Cannot write the mmCIF output. Geometry 2 has a different entity representation from the first geometry."
     );
 }
 
@@ -2861,7 +2862,7 @@ fn molfile_and_sdf_report_what_they_leave_out() {
     // The times, steps, velocities, and forces of frames.
     let frames = StatefulFrames::new();
     let frames = frames.views();
-    let metadata = SdfWriteOptions::default().with_sample_metadata(omit);
+    let metadata = SdfWriteOptions::default().with_set_metadata(omit);
     let (_, report) = sdf::write(frames.clone(), metadata).unwrap();
     assert_eq!(
         report.omissions(),
@@ -2872,13 +2873,13 @@ fn molfile_and_sdf_report_what_they_leave_out() {
             state(ForceField, 1),
         ]
     );
-    // Counted over a time-ordered set's samples.
+    // Counted over a time-ordered set's geometries.
     let (_, report) = sdf::write(&timed_set(), metadata).unwrap();
     assert_eq!(
         report.omissions(),
         [state(Time, 2), state(Step, 2), state(VelocityField, 1)]
     );
-    let molfile_metadata = MolfileWriteOptions::default().with_sample_metadata(omit);
+    let molfile_metadata = MolfileWriteOptions::default().with_set_metadata(omit);
     for (frame, field) in frames
         .iter()
         .skip(1)
@@ -2888,7 +2889,7 @@ fn molfile_and_sdf_report_what_they_leave_out() {
             molfile::write(molfile::MolfileSource::model(frame), molfile_metadata).unwrap();
         assert_eq!(report.omissions(), [state(field, 1)]);
     }
-    // A Molfile of a sample cannot carry its membership, which SDF writes.
+    // A Molfile of a geometry cannot carry its membership, which SDF writes.
     let mut weighted = weighted_set();
     weighted
         .distribution_mut()
@@ -2908,8 +2909,8 @@ fn molfile_and_sdf_report_what_they_leave_out() {
     assert!(report.is_empty());
 }
 
-/// `count` methane samples, sample `i` at `i` Å along x.
-fn methane_set(count: usize) -> SampleSet {
+/// `count` methane geometries, geometry `i` at `i` Å along x.
+fn methane_set(count: usize) -> StructureSet {
     let first = model("C", &[[0.0, 0.0, 0.0]]);
     let models = (0..count).map(|index| {
         Model::new(
@@ -2922,12 +2923,12 @@ fn methane_set(count: usize) -> SampleSet {
         )
         .unwrap()
     });
-    SampleSet::from_models(models).unwrap()
+    StructureSet::from_models(models).unwrap()
 }
 
-/// Four methane samples with a distribution over samples 1 and 3 in one
+/// Four methane geometries with a distribution over geometries 1 and 3 in one
 /// state each, weighted, with state energies and a temperature.
-fn subset_set() -> SampleSet {
+fn subset_set() -> StructureSet {
     let mut set = methane_set(4);
     let states = vec![
         State::new()
@@ -2952,8 +2953,8 @@ fn subset_set() -> SampleSet {
 }
 
 /// The set the records of `text` form.
-fn read_back(text: &str) -> Result<SampleSet, FormatError> {
-    sdf::sample_set(&interpret_records(text))
+fn read_back(text: &str) -> Result<StructureSet, FormatError> {
+    sdf::structure_set(&interpret_records(text))
 }
 
 /// The data fields of a record outside the distribution.
@@ -2973,7 +2974,7 @@ fn sdf_round_trips_a_distribution_over_some_samples() {
     assert_eq!(fields[0], outside_fields());
     assert_eq!(fields[2], outside_fields());
     assert!(fields[1].iter().any(|(name, _)| name == sdf::WEIGHT_FIELD));
-    let read = sdf::sample_set(&records).unwrap();
+    let read = sdf::structure_set(&records).unwrap();
     assert_eq!(read.len(), 4);
     assert_eq!(read.distribution(), set.distribution());
     let distribution = read.distribution().unwrap();
@@ -2989,11 +2990,12 @@ fn sdf_round_trips_a_distribution_over_some_samples() {
         text
     );
 
-    // A sample of a set with a distribution owns every distribution field
+    // A geometry of a set with a distribution owns every distribution field
     // name, whether it is a member or not.
-    for (sample, name) in [(0, sdf::STATE_FIELD), (1, sdf::MEMBER_FIELD)] {
+    for (geometry, name) in [(0, sdf::STATE_FIELD), (1, sdf::MEMBER_FIELD)] {
         let fields = [SdfDataField::new(name, "0")];
-        let record = sdf::SdfRecordSource::from(set.get(sample).unwrap()).with_data_fields(&fields);
+        let record =
+            sdf::SdfRecordSource::from(set.get(geometry).unwrap()).with_data_fields(&fields);
         assert_eq!(
             described(sdf::write([record], SdfWriteOptions::default()).unwrap_err()),
             (
@@ -3001,7 +3003,7 @@ fn sdf_round_trips_a_distribution_over_some_samples() {
                 Some(FormatErrorDetail::DataField {
                     name: name.to_owned()
                 }),
-                format!("The data field {name:?} is reserved for the data of the sample."),
+                format!("The data field {name:?} is reserved for the data of the geometry."),
             ),
             "{name}"
         );
@@ -3011,10 +3013,10 @@ fn sdf_round_trips_a_distribution_over_some_samples() {
 #[test]
 fn sdf_takes_only_a_marked_record_as_outside_the_distribution() {
     let error =
-        |records: &[SdfRecordInterpretation]| sdf::sample_set(records).unwrap_err().to_string();
+        |records: &[SdfRecordInterpretation]| sdf::structure_set(records).unwrap_err().to_string();
     // A record stripped of its fields among the records of a distribution
-    // over every sample is refused, not taken as outside.
-    let set = distributed(methane_set(3).iter().map(|sample| sample.to_model()), {
+    // over every geometry is refused, not taken as outside.
+    let set = distributed(methane_set(3).iter().map(|geometry| geometry.to_model()), {
         Partition::state_per_sample(3)
     });
     let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
@@ -3087,7 +3089,7 @@ fn sdf_writes_and_reads_records_outside_the_distribution_alone() {
     );
     // The records form a set whose distribution has no members, which
     // writes back the same.
-    let read = sdf::sample_set(&records).unwrap();
+    let read = sdf::structure_set(&records).unwrap();
     assert_eq!(read.len(), 2);
     assert_eq!(
         read.distribution().unwrap().members(),
@@ -3150,7 +3152,7 @@ fn sdf_writes_weights_only_for_a_weighted_distribution() {
 fn sdf_judges_each_record_by_its_own_sample() {
     let set = subset_set();
     // Interpreted records of members, which carry their distribution fields
-    // as their own, written with a sample outside the distribution.
+    // as their own, written with a geometry outside the distribution.
     let members = interpret_records(
         &sdf::write(
             [set.get(1).unwrap(), set.get(3).unwrap()],
@@ -3175,7 +3177,7 @@ fn sdf_judges_each_record_by_its_own_sample() {
     );
     assert_eq!(distribution.states(), set.distribution().unwrap().states());
 
-    // A sample outside the distribution of another set is marked all the
+    // A geometry outside the distribution of another set is marked all the
     // same.
     let other = subset_set();
     let records = [
@@ -3295,22 +3297,22 @@ fn molfile_and_sdf_refuse_or_report_sites_and_properties() {
         let (molfile_omit, molfile_other) = if properties {
             (
                 MolfileWriteOptions::default().with_properties(omit),
-                MolfileWriteOptions::default().with_sample_metadata(omit),
+                MolfileWriteOptions::default().with_set_metadata(omit),
             )
         } else {
             (
-                MolfileWriteOptions::default().with_sample_metadata(omit),
+                MolfileWriteOptions::default().with_set_metadata(omit),
                 MolfileWriteOptions::default().with_properties(omit),
             )
         };
         let (sdf_omit, sdf_other) = if properties {
             (
                 SdfWriteOptions::default().with_properties(omit),
-                SdfWriteOptions::default().with_sample_metadata(omit),
+                SdfWriteOptions::default().with_set_metadata(omit),
             )
         } else {
             (
-                SdfWriteOptions::default().with_sample_metadata(omit),
+                SdfWriteOptions::default().with_set_metadata(omit),
                 SdfWriteOptions::default().with_properties(omit),
             )
         };
@@ -3349,14 +3351,14 @@ fn molfile_and_sdf_refuse_or_report_sites_and_properties() {
         assert_eq!(report.omissions(), [omission], "{field:?}");
     }
 
-    // A sample's sites and properties name the sample.
+    // A geometry's sites and properties name the geometry.
     let (model, _, _) = models_with_unwritable_state().remove(0);
-    let set = SampleSet::from_models([model]).unwrap();
+    let set = StructureSet::from_models([model]).unwrap();
     assert_eq!(
         sdf::write(&set, SdfWriteOptions::default())
             .unwrap_err()
             .to_string(),
-        "Cannot write the SDF output in record 1. The occupancies of the sample have no SDF \
+        "Cannot write the SDF output in record 1. The occupancies of the geometry have no SDF \
          representation."
     );
 }
@@ -3368,7 +3370,7 @@ fn sdf_and_molfile_refuse_or_report_set_and_state_properties() {
     let key = || PropertyKey::new("note").unwrap();
     let state = |field, structures| WriteOmission::StructureState { field, structures };
 
-    // The set's own properties, which every record of its samples loses.
+    // The set's own properties, which every record of its geometries loses.
     let mut set = methane_set(2);
     let bare = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     set.properties_mut()
@@ -3377,7 +3379,7 @@ fn sdf_and_molfile_refuse_or_report_set_and_state_properties() {
     let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the SDF output in record 1. The sample set properties have no SDF \
+        "Cannot write the SDF output in record 1. The structure set properties have no SDF \
          representation."
     );
     assert_eq!(
@@ -3400,7 +3402,7 @@ fn sdf_and_molfile_refuse_or_report_set_and_state_properties() {
         )
         .unwrap_err()
         .to_string(),
-        "Cannot write the Molfile output. The sample set properties have no Molfile \
+        "Cannot write the Molfile output. The structure set properties have no Molfile \
          representation."
     );
 
@@ -3418,12 +3420,12 @@ fn sdf_and_molfile_refuse_or_report_set_and_state_properties() {
     let error = sdf::write(&labelled, SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the SDF output in record 4. The state properties of the sample have no \
+        "Cannot write the SDF output in record 4. The state properties of the geometry have no \
          SDF representation."
     );
     let (text, report) = sdf::write(
         &labelled,
-        SdfWriteOptions::default().with_sample_metadata(omit),
+        SdfWriteOptions::default().with_set_metadata(omit),
     )
     .unwrap();
     assert_eq!(text, bare);
@@ -3434,7 +3436,7 @@ fn sdf_and_molfile_refuse_or_report_set_and_state_properties() {
     // A Molfile loses the membership whole.
     let (_, report) = molfile::write(
         molfile::MolfileSource::model(&labelled.get(3).unwrap()),
-        MolfileWriteOptions::default().with_sample_metadata(omit),
+        MolfileWriteOptions::default().with_set_metadata(omit),
     )
     .unwrap();
     assert_eq!(
@@ -3492,8 +3494,8 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
         .omissions()
         .contains(&state(StructureField::Properties, 1)));
 
-    // A set's properties and a sample's.
-    let mut set = SampleSet::from_models([plain.clone(), plain.clone()]).unwrap();
+    // A set's properties and a geometry's.
+    let mut set = StructureSet::from_models([plain.clone(), plain.clone()]).unwrap();
     let bare_pdb = pdb::write(&set, PdbWriteOptions::default()).unwrap().0;
     let bare_mmcif = mmcif::write([&set], mmcif_default()).unwrap().0;
     set.properties_mut()
@@ -3513,15 +3515,15 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::PdbWrite(
-            pdb::PdbWriteIssue::UnrepresentableSample {
-                sample: 1,
+            pdb::PdbWriteIssue::UnrepresentableGeometry {
+                geometry: 1,
                 field: StructureField::SetProperties,
             }
         ))
     );
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The sample set properties have no PDB representation."
+        "Cannot write the PDB output. The structure set properties have no PDB representation."
     );
     let expected = [
         state(StructureField::SetProperties, 2),
@@ -3536,12 +3538,12 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     assert!(expected
         .iter()
         .all(|omission| report.omissions().contains(omission)));
-    // Without the set's properties, the sample's name it.
+    // Without the set's properties, the geometry's name it.
     set.properties_mut().clear();
     assert_eq!(
         mmcif_issue(mmcif::write([&set], mmcif_default())),
-        Some(MmcifWriteIssue::UnrepresentableSample {
-            sample: 2,
+        Some(MmcifWriteIssue::UnrepresentableGeometry {
+            geometry: 2,
             field: StructureField::AtomProperties,
         })
     );

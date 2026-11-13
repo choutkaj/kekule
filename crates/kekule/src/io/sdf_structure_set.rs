@@ -1,7 +1,7 @@
-//! Explicit assembly of interpreted SDF records into one sample set.
+//! Explicit assembly of interpreted SDF records into one structure set.
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::structure::{
-    Distribution, Members, Order, Partition, Sample, SampleSet, SampleSetError,
+    Distribution, Geometry, Members, Order, Partition, StructureSet, StructureSetError,
 };
 use crate::units::{named_unit, Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
@@ -12,11 +12,11 @@ use super::sdf_write::{
     SDF_WEIGHT_FIELD,
 };
 
-fn set_error(error: SampleSetError) -> FormatError {
+fn set_error(error: StructureSetError) -> FormatError {
     FormatError::interpret(
         Format::Sdf,
         DiagnosticKind::Inconsistent,
-        "The records do not form a sample set.",
+        "The records do not form a structure set.",
     )
     .with_source(error)
 }
@@ -167,8 +167,8 @@ impl RecordFields {
     }
 }
 
-/// Assembles interpreted SDF records, in order, into one sample set on the
-/// first record's topology, record `i` becoming sample `i`. Every record must
+/// Assembles interpreted SDF records, in order, into one structure set on the
+/// first record's topology, record `i` becoming geometry `i`. Every record must
 /// have the same topology layout
 /// ([`Topology::same_layout`](crate::topology::Topology::same_layout)).
 ///
@@ -177,10 +177,10 @@ impl RecordFields {
 /// [`SDF_ENERGY_FIELD`], [`SDF_TEMPERATURE_FIELD`], or [`SDF_MEMBER_FIELD`]),
 /// and none otherwise.
 /// The distribution has weights only when a record has [`SDF_WEIGHT_FIELD`],
-/// each sample's weight being its record's (1.0 when absent). Records
+/// each geometry's weight being its record's (1.0 when absent). Records
 /// without [`SDF_STATE_FIELD`] are one state each, with the energy of
 /// [`SDF_ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as
-/// the SDF writer emits for samples of a distribution, are grouped by it:
+/// the SDF writer emits for geometries of a distribution, are grouped by it:
 /// states are numbered in ascending order of its values, each represented
 /// by the one record marked with [`SDF_REPRESENTATIVE_FIELD`], which alone
 /// may carry the state's energy. A record marked with [`SDF_MEMBER_FIELD`]
@@ -190,25 +190,25 @@ impl RecordFields {
 /// from every member or the same on every member. Records that all lie
 /// outside the distribution give a distribution without members.
 ///
-/// The samples are ordered by the records' [`SDF_STEP_FIELD`] or, in the
+/// The geometries are ordered by the records' [`SDF_STEP_FIELD`] or, in the
 /// unit [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
 /// every record carries one.
-pub(crate) fn sdf_sample_set<'a>(
+pub(crate) fn sdf_structure_set<'a>(
     records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
-) -> Result<SampleSet, FormatError> {
+) -> Result<StructureSet, FormatError> {
     let records = records.into_iter().collect::<Vec<_>>();
     let topology = records
         .first()
-        .ok_or_else(|| set_error(SampleSetError::EmptySource))?
+        .ok_or_else(|| set_error(StructureSetError::EmptySource))?
         .model()
         .shared_topology();
-    let mut samples = Vec::with_capacity(records.len());
+    let mut geometries = Vec::with_capacity(records.len());
     let mut weights = Vec::with_capacity(records.len());
     let mut fields = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
         let number = index + 1;
         if !record.model().topology().same_layout(&topology) {
-            return Err(set_error(SampleSetError::TopologyMismatch).in_record(number));
+            return Err(set_error(StructureSetError::TopologyMismatch).in_record(number));
         }
         let read = RecordFields::read(record, number)?;
         let weight = read.weight.unwrap_or(1.0);
@@ -220,11 +220,11 @@ pub(crate) fn sdf_sample_set<'a>(
                 "holds an invalid weight.",
             ));
         }
-        samples.push(Sample::new(record.model().positions().clone()));
+        geometries.push(Geometry::new(record.model().positions().clone()));
         weights.push(weight);
         fields.push(read);
     }
-    let mut set = SampleSet::from_samples(topology, samples).map_err(set_error)?;
+    let mut set = StructureSet::from_geometries(topology, geometries).map_err(set_error)?;
     if fields.iter().any(RecordFields::any) {
         let members = (0..fields.len())
             .filter(|&index| !fields[index].outside)
@@ -259,7 +259,7 @@ pub(crate) fn sdf_sample_set<'a>(
             }
             distribution
                 .state_mut(state)
-                .expect("every sample has a state")
+                .expect("every geometry has a state")
                 .set_energy(Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
                 .map_err(|error| {
                     invalid(

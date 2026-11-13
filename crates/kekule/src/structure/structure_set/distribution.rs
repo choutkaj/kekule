@@ -1,11 +1,11 @@
-//! The distribution of a [`super::SampleSet`]: which samples are members,
+//! The distribution of a [`super::StructureSet`]: which samples are members,
 //! their weights, and their grouping into states.
 
 use crate::properties::OwnerProperties;
 use crate::structure::{GeometryError, Partition};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
-use super::{Membership, Requirement, SampleSetError};
+use super::{Membership, Requirement, StructureSetError};
 
 /// Which samples of a set a [`Distribution`] covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +117,7 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 /// A conformer set is one state per conformer; an NMR bundle or the frames
 /// of a trajectory are one state of many members, and clustering makes
 /// several. A distribution installed in a set is edited through the
-/// [`DistributionMut`] guard of [`super::SampleSet::distribution_mut`],
+/// [`DistributionMut`] guard of [`super::StructureSet::distribution_mut`],
 /// which never changes which samples are members; the set's own editing,
 /// selecting, and removing do, and remap the members.
 ///
@@ -154,18 +154,18 @@ impl Distribution {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::UnsortedMembers`] when a subset's indices do not
-    /// increase, and [`SampleSetError::PartitionMismatch`] when the partition
+    /// [`StructureSetError::UnsortedMembers`] when a subset's indices do not
+    /// increase, and [`StructureSetError::PartitionMismatch`] when the partition
     /// covers another number of samples than the subset lists. A
     /// distribution of [`Members::All`] is checked against its set when it
     /// is installed.
-    pub fn new(members: Members, partition: Partition) -> Result<Self, SampleSetError> {
+    pub fn new(members: Members, partition: Partition) -> Result<Self, StructureSetError> {
         if let Members::Subset(indices) = &members {
             if indices.windows(2).any(|pair| pair[0] >= pair[1]) {
-                return Err(SampleSetError::UnsortedMembers);
+                return Err(StructureSetError::UnsortedMembers);
             }
             if indices.len() != partition.sample_count() {
-                return Err(SampleSetError::PartitionMismatch {
+                return Err(StructureSetError::PartitionMismatch {
                     expected: indices.len(),
                     actual: partition.sample_count(),
                 });
@@ -182,7 +182,7 @@ impl Distribution {
 
     /// Returns this distribution with one finite, positive weight per
     /// member, in member order; see [`DistributionMut::set_weights`].
-    pub fn with_weights(mut self, weights: Vec<f64>) -> Result<Self, SampleSetError> {
+    pub fn with_weights(mut self, weights: Vec<f64>) -> Result<Self, StructureSetError> {
         self.set_weights(Some(weights))?;
         Ok(self)
     }
@@ -192,10 +192,10 @@ impl Distribution {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::StateCountMismatch`] for another number of states.
-    pub fn with_states(mut self, states: Vec<State>) -> Result<Self, SampleSetError> {
+    /// [`StructureSetError::StateCountMismatch`] for another number of states.
+    pub fn with_states(mut self, states: Vec<State>) -> Result<Self, StructureSetError> {
         if states.len() != self.states.len() {
-            return Err(SampleSetError::StateCountMismatch {
+            return Err(StructureSetError::StateCountMismatch {
                 expected: self.states.len(),
                 actual: states.len(),
             });
@@ -206,7 +206,10 @@ impl Distribution {
 
     /// Returns this distribution with a temperature; see
     /// [`DistributionMut::set_temperature`].
-    pub fn with_temperature(mut self, temperature: Quantity<f64>) -> Result<Self, SampleSetError> {
+    pub fn with_temperature(
+        mut self,
+        temperature: Quantity<f64>,
+    ) -> Result<Self, StructureSetError> {
         self.set_temperature(Some(temperature))?;
         Ok(self)
     }
@@ -285,10 +288,10 @@ impl Distribution {
     /// its members. A subset listing all `len` samples becomes
     /// [`Members::All`]. The weights, the partition, the states with their
     /// energies and properties, and the temperature are kept bit for bit.
-    /// [`SampleSet::refresh`](super::SampleSet::refresh) gives a set's
+    /// [`StructureSet::refresh`](super::StructureSet::refresh) gives a set's
     /// distribution so when the file grows. A subset does not record how
     /// many samples it was made for, so a `len` shorter than that is not
-    /// detected; [`SampleSetDescription::extended_to`](crate::native::SampleSetDescription::extended_to)
+    /// detected; [`StructureSetDescription::extended_to`](crate::native::StructureSetDescription::extended_to)
     /// checks it against the saved sample count.
     ///
     /// ```
@@ -305,24 +308,24 @@ impl Distribution {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::CoverageMismatch`] when a distribution of every
+    /// [`StructureSetError::CoverageMismatch`] when a distribution of every
     /// sample covers more than `len`, and
-    /// [`SampleSetError::IndexOutOfRange`] when a subset lists a sample past
+    /// [`StructureSetError::IndexOutOfRange`] when a subset lists a sample past
     /// them.
-    pub fn extended_to(mut self, len: usize) -> Result<Self, SampleSetError> {
+    pub fn extended_to(mut self, len: usize) -> Result<Self, StructureSetError> {
         self.extend(len)?;
         Ok(self)
     }
 
     /// Re-expresses this distribution in place for a set of `len` samples,
     /// as [`Self::extended_to`] does; failure changes nothing.
-    pub(crate) fn extend(&mut self, len: usize) -> Result<(), SampleSetError> {
+    pub(crate) fn extend(&mut self, len: usize) -> Result<(), StructureSetError> {
         if self.members == Members::All {
             let covered = self.member_count();
             if covered > len {
-                return Err(SampleSetError::CoverageMismatch {
+                return Err(StructureSetError::CoverageMismatch {
                     covered,
-                    samples: len,
+                    geometries: len,
                 });
             }
             self.members = normalized((0..covered).collect(), len);
@@ -347,9 +350,9 @@ impl Distribution {
     /// by the total weight.
     ///
     /// Fails without members or when a probability would underflow to zero.
-    pub fn probabilities(&self) -> Result<Vec<f64>, SampleSetError> {
+    pub fn probabilities(&self) -> Result<Vec<f64>, StructureSetError> {
         if self.member_count() == 0 {
-            return Err(SampleSetError::EmptyDistribution);
+            return Err(StructureSetError::EmptyDistribution);
         }
         let scaled = self.scaled_weights();
         let total = scaled.iter().sum::<f64>();
@@ -364,9 +367,9 @@ impl Distribution {
     /// of its members divided by the total weight. The shares sum to one.
     ///
     /// Fails without members or when a share would underflow to zero.
-    pub fn state_probabilities(&self) -> Result<Vec<f64>, SampleSetError> {
+    pub fn state_probabilities(&self) -> Result<Vec<f64>, StructureSetError> {
         if self.member_count() == 0 {
-            return Err(SampleSetError::EmptyDistribution);
+            return Err(StructureSetError::EmptyDistribution);
         }
         let scaled = self.scaled_state_populations();
         let total = scaled.iter().sum::<f64>();
@@ -375,8 +378,8 @@ impl Distribution {
             .enumerate()
             .map(|(state, population)| {
                 let representative = self.member(self.partition.representatives()[state]);
-                checked_weight(population / total).ok_or(SampleSetError::InvalidWeight {
-                    sample: representative,
+                checked_weight(population / total).ok_or(StructureSetError::InvalidWeight {
+                    geometry: representative,
                 })
             })
             .collect()
@@ -388,9 +391,9 @@ impl Distribution {
     ///
     /// It is the member count for equal weights and approaches one when a
     /// single member dominates. Fails without members.
-    pub fn effective_sample_size(&self) -> Result<f64, SampleSetError> {
+    pub fn effective_sample_size(&self) -> Result<f64, StructureSetError> {
         if self.member_count() == 0 {
-            return Err(SampleSetError::EmptyDistribution);
+            return Err(StructureSetError::EmptyDistribution);
         }
         let scaled = self.scaled_weights();
         let total = scaled.iter().sum::<f64>();
@@ -430,14 +433,14 @@ impl Distribution {
     ///
     /// `fraction` must lie in `(0, 1]`; `1` selects every state, including
     /// those too light to change a floating-point total. Pass the result to
-    /// [`super::SampleSet::select_states`] to keep, for example, 95% of a
+    /// [`super::StructureSet::select_states`] to keep, for example, 95% of a
     /// Boltzmann population. Fails without members.
-    pub fn covering_population(&self, fraction: f64) -> Result<Vec<usize>, SampleSetError> {
+    pub fn covering_population(&self, fraction: f64) -> Result<Vec<usize>, StructureSetError> {
         if !(fraction > 0.0 && fraction <= 1.0) {
-            return Err(SampleSetError::InvalidFraction);
+            return Err(StructureSetError::InvalidFraction);
         }
         if self.member_count() == 0 {
-            return Err(SampleSetError::EmptyDistribution);
+            return Err(StructureSetError::EmptyDistribution);
         }
         let ranked = self.ranked_by_population();
         if fraction == 1.0 {
@@ -461,7 +464,7 @@ impl Distribution {
     /// State indices by ascending energy; equal energies keep state order.
     ///
     /// Fails with `Missing(StateEnergies)` if any state has no energy.
-    pub fn ranked_by_energy(&self) -> Result<Vec<usize>, SampleSetError> {
+    pub fn ranked_by_energy(&self) -> Result<Vec<usize>, StructureSetError> {
         let energies = self.state_energies()?;
         let mut indices = (0..energies.len()).collect::<Vec<_>>();
         indices.sort_by(|&a, &b| {
@@ -481,10 +484,10 @@ impl Distribution {
     pub fn within_energy_window(
         &self,
         window: Quantity<f64>,
-    ) -> Result<Vec<usize>, SampleSetError> {
+    ) -> Result<Vec<usize>, StructureSetError> {
         let window = window.value_in(CANONICAL_ENERGY_UNIT)?;
         if !(window.is_finite() && window >= 0.0) {
-            return Err(SampleSetError::InvalidEnergyWindow);
+            return Err(StructureSetError::InvalidEnergyWindow);
         }
         let energies = self.state_energies()?;
         let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
@@ -499,20 +502,20 @@ impl Distribution {
     fn set_temperature(
         &mut self,
         temperature: Option<Quantity<f64>>,
-    ) -> Result<(), SampleSetError> {
+    ) -> Result<(), StructureSetError> {
         self.temperature = temperature
             .map(|temperature| {
                 let kelvin = checked_temperature(temperature)?;
-                Ok::<_, SampleSetError>(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT))
+                Ok::<_, StructureSetError>(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT))
             })
             .transpose()?;
         Ok(())
     }
 
-    fn set_weights(&mut self, weights: Option<Vec<f64>>) -> Result<(), SampleSetError> {
+    fn set_weights(&mut self, weights: Option<Vec<f64>>) -> Result<(), StructureSetError> {
         if let Some(weights) = &weights {
             if weights.len() != self.member_count() {
-                return Err(SampleSetError::WeightCountMismatch {
+                return Err(StructureSetError::WeightCountMismatch {
                     expected: self.member_count(),
                     actual: weights.len(),
                 });
@@ -526,14 +529,14 @@ impl Distribution {
     }
 
     /// Every state energy in [`CANONICAL_ENERGY_UNIT`].
-    pub(crate) fn state_energies(&self) -> Result<Vec<f64>, SampleSetError> {
+    pub(crate) fn state_energies(&self) -> Result<Vec<f64>, StructureSetError> {
         self.states
             .iter()
             .map(|state| {
                 state
                     .energy()
                     .map(Quantity::into_value)
-                    .ok_or(SampleSetError::Missing(Requirement::StateEnergies))
+                    .ok_or(StructureSetError::Missing(Requirement::StateEnergies))
             })
             .collect()
     }
@@ -605,28 +608,28 @@ impl Distribution {
 
     /// `weight` when it is finite and positive; the error names the member
     /// at `position`.
-    fn checked_weight(&self, weight: f64, position: usize) -> Result<f64, SampleSetError> {
-        checked_weight(weight).ok_or(SampleSetError::InvalidWeight {
-            sample: self.member(position),
+    fn checked_weight(&self, weight: f64, position: usize) -> Result<f64, StructureSetError> {
+        checked_weight(weight).ok_or(StructureSetError::InvalidWeight {
+            geometry: self.member(position),
         })
     }
 
     /// Checks this distribution against a set of `len` samples, and lists
     /// every sample as [`Members::All`].
-    pub(crate) fn bind(&mut self, len: usize) -> Result<(), SampleSetError> {
+    pub(crate) fn bind(&mut self, len: usize) -> Result<(), StructureSetError> {
         match &self.members {
             Members::All => {
                 if self.member_count() != len {
-                    return Err(SampleSetError::CoverageMismatch {
+                    return Err(StructureSetError::CoverageMismatch {
                         covered: self.member_count(),
-                        samples: len,
+                        geometries: len,
                     });
                 }
             }
             Members::Subset(indices) => {
                 if let Some(&last) = indices.last() {
                     if last >= len {
-                        return Err(SampleSetError::IndexOutOfRange { index: last, len });
+                        return Err(StructureSetError::IndexOutOfRange { index: last, len });
                     }
                 }
                 if indices.len() == len {
@@ -643,20 +646,20 @@ impl Distribution {
         &self,
         weight: Option<f64>,
         sample: usize,
-    ) -> Result<(), SampleSetError> {
+    ) -> Result<(), StructureSetError> {
         match (weight, &self.weights) {
-            (None, Some(_)) => Err(SampleSetError::WeightRequired),
+            (None, Some(_)) => Err(StructureSetError::WeightRequired),
             (Some(weight), _) => checked_weight(weight)
                 .map(|_| ())
-                .ok_or(SampleSetError::InvalidWeight { sample }),
+                .ok_or(StructureSetError::InvalidWeight { geometry: sample }),
             (None, None) => Ok(()),
         }
     }
 
     /// Checks that `state` exists.
-    pub(crate) fn check_state(&self, state: usize) -> Result<(), SampleSetError> {
+    pub(crate) fn check_state(&self, state: usize) -> Result<(), StructureSetError> {
         if state >= self.states.len() {
-            return Err(SampleSetError::StateOutOfRange {
+            return Err(StructureSetError::StateOutOfRange {
                 state,
                 states: self.states.len(),
             });
@@ -711,7 +714,7 @@ impl Distribution {
 
     /// Checks that sample `sample` can be removed: it is not the
     /// representative of a state with other members.
-    pub(crate) fn check_remove(&self, sample: usize) -> Result<(), SampleSetError> {
+    pub(crate) fn check_remove(&self, sample: usize) -> Result<(), StructureSetError> {
         let Some(position) = self.member_position(sample) else {
             return Ok(());
         };
@@ -719,7 +722,10 @@ impl Distribution {
         let representative = self.partition.representatives()[state] == position;
         let alone = self.partition.samples(state).nth(1).is_none();
         if representative && !alone {
-            return Err(SampleSetError::RepresentativeRemoval { sample, state });
+            return Err(StructureSetError::RepresentativeRemoval {
+                geometry: sample,
+                state,
+            });
         }
         Ok(())
     }
@@ -873,7 +879,7 @@ impl Distribution {
     /// Each state's representative, as a sample index, with the
     /// distribution of a set of just those samples: one state each, weighted
     /// by its population relative to the largest member weight.
-    pub(crate) fn collapse(&self) -> Result<(Vec<usize>, Self), SampleSetError> {
+    pub(crate) fn collapse(&self) -> Result<(Vec<usize>, Self), StructureSetError> {
         let representatives = self
             .partition
             .representatives()
@@ -885,7 +891,8 @@ impl Distribution {
             .into_iter()
             .zip(&representatives)
             .map(|(population, sample)| {
-                checked_weight(population).ok_or(SampleSetError::InvalidWeight { sample: *sample })
+                checked_weight(population)
+                    .ok_or(StructureSetError::InvalidWeight { geometry: *sample })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let distribution = Self {
@@ -915,19 +922,19 @@ impl Distribution {
     }
 }
 
-/// Mutable access to the distribution of a [`super::SampleSet`]
-/// ([`super::SampleSet::distribution_mut`]).
+/// Mutable access to the distribution of a [`super::StructureSet`]
+/// ([`super::StructureSet::distribution_mut`]).
 ///
 /// Reads use `Deref`. There is deliberately no `DerefMut`: the guard changes
 /// weights, the grouping into states, the states' energies and properties,
 /// and the temperature, but never which samples are members, so the
 /// distribution always fits its set. Replace or clear the whole
-/// distribution with [`super::SampleSet::set_distribution`], which checks
+/// distribution with [`super::StructureSet::set_distribution`], which checks
 /// it against the set.
 ///
 /// ```compile_fail,E0594
-/// use kekule::structure::{Distribution, Partition, Members, SampleSet};
-/// fn replace(set: &mut SampleSet) {
+/// use kekule::structure::{Distribution, Partition, Members, StructureSet};
+/// fn replace(set: &mut StructureSet) {
 ///     let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1));
 ///     *set.distribution_mut().unwrap() = foreign.unwrap();
 /// }
@@ -957,10 +964,10 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::WeightCountMismatch`] for another number of weights
-    /// than members, and [`SampleSetError::InvalidWeight`] for the first
+    /// [`StructureSetError::WeightCountMismatch`] for another number of weights
+    /// than members, and [`StructureSetError::InvalidWeight`] for the first
     /// weight that is not finite and positive.
-    pub fn set_weights(&mut self, weights: Option<Vec<f64>>) -> Result<(), SampleSetError> {
+    pub fn set_weights(&mut self, weights: Option<Vec<f64>>) -> Result<(), StructureSetError> {
         self.distribution.set_weights(weights)
     }
 
@@ -969,14 +976,14 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::NotMember`] when `sample` is not a member, and
-    /// [`SampleSetError::InvalidWeight`] for a weight that is not finite and
+    /// [`StructureSetError::NotMember`] when `sample` is not a member, and
+    /// [`StructureSetError::InvalidWeight`] for a weight that is not finite and
     /// positive.
-    pub fn set_weight(&mut self, sample: usize, weight: f64) -> Result<(), SampleSetError> {
+    pub fn set_weight(&mut self, sample: usize, weight: f64) -> Result<(), StructureSetError> {
         let distribution = &mut *self.distribution;
         let position = distribution
             .member_position(sample)
-            .ok_or(SampleSetError::NotMember { sample })?;
+            .ok_or(StructureSetError::NotMember { geometry: sample })?;
         let weight = distribution.checked_weight(weight, position)?;
         let count = distribution.member_count();
         distribution.weights.get_or_insert_with(|| vec![1.0; count])[position] = weight;
@@ -988,7 +995,7 @@ impl DistributionMut<'_> {
     ///
     /// Fails without members, or when a scaled weight would underflow to
     /// zero. Failure changes nothing.
-    pub fn normalize_weights(&mut self) -> Result<(), SampleSetError> {
+    pub fn normalize_weights(&mut self) -> Result<(), StructureSetError> {
         self.distribution.weights = Some(self.distribution.probabilities()?);
         Ok(())
     }
@@ -998,12 +1005,12 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::InvalidTemperature`] and [`SampleSetError::Unit`];
+    /// [`StructureSetError::InvalidTemperature`] and [`StructureSetError::Unit`];
     /// failure changes nothing.
     pub fn set_temperature(
         &mut self,
         temperature: Option<Quantity<f64>>,
-    ) -> Result<(), SampleSetError> {
+    ) -> Result<(), StructureSetError> {
         self.distribution.set_temperature(temperature)
     }
 
@@ -1020,19 +1027,19 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::InvalidTemperature`] and [`SampleSetError::Unit`]
+    /// [`StructureSetError::InvalidTemperature`] and [`StructureSetError::Unit`]
     /// for a temperature that is not finite and positive,
     /// `Missing(StateEnergies)` when a state has no energy, and
-    /// [`SampleSetError::InvalidWeight`] when a weight would underflow to
+    /// [`StructureSetError::InvalidWeight`] when a weight would underflow to
     /// zero (keep only the states within an energy window first, with
     /// [`Distribution::within_energy_window`] and
-    /// [`super::SampleSet::select_states`]). Failure changes nothing.
+    /// [`super::StructureSet::select_states`]). Failure changes nothing.
     pub fn assign_boltzmann_populations(
         &mut self,
         temperature: Quantity<f64>,
-    ) -> Result<(), SampleSetError> {
+    ) -> Result<(), StructureSetError> {
         let kelvin = checked_temperature(temperature)?;
-        let thermal_energy = thermal_energy(kelvin).ok_or(SampleSetError::InvalidTemperature)?;
+        let thermal_energy = thermal_energy(kelvin).ok_or(StructureSetError::InvalidTemperature)?;
         let distribution = &mut *self.distribution;
         let energies = distribution.state_energies()?;
         let weights = (0..distribution.member_count())
@@ -1044,8 +1051,8 @@ impl DistributionMut<'_> {
             &weights,
             distribution.partition.assignments(),
         )
-        .map_err(|position| SampleSetError::InvalidWeight {
-            sample: distribution.member(position),
+        .map_err(|position| StructureSetError::InvalidWeight {
+            geometry: distribution.member(position),
         })?;
         distribution.weights = Some(weights);
         distribution.temperature = Some(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT));
@@ -1071,11 +1078,11 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`SampleSetError::PartitionMismatch`] when `partition` covers another
+    /// [`StructureSetError::PartitionMismatch`] when `partition` covers another
     /// number of samples than there are members; failure changes nothing.
-    pub fn regroup(&mut self, partition: Partition) -> Result<(), SampleSetError> {
+    pub fn regroup(&mut self, partition: Partition) -> Result<(), StructureSetError> {
         if partition.sample_count() != self.distribution.member_count() {
-            return Err(SampleSetError::PartitionMismatch {
+            return Err(StructureSetError::PartitionMismatch {
                 expected: self.distribution.member_count(),
                 actual: partition.sample_count(),
             });
@@ -1192,11 +1199,11 @@ fn checked_weight(weight: f64) -> Option<f64> {
 }
 
 /// A finite, positive temperature in [`CANONICAL_TEMPERATURE_UNIT`].
-fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, SampleSetError> {
+fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, StructureSetError> {
     let temperature = temperature.value_in(CANONICAL_TEMPERATURE_UNIT)?;
     if temperature.is_finite() && temperature > 0.0 {
         Ok(temperature)
     } else {
-        Err(SampleSetError::InvalidTemperature)
+        Err(StructureSetError::InvalidTemperature)
     }
 }

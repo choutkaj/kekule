@@ -1,6 +1,6 @@
 //! Streaming superposition.
 //!
-//! In-memory superposition and RMSD are sample set methods in
+//! In-memory superposition and RMSD are structure set methods in
 //! [`crate::alignment`] (`set.superpose(0, &selection, options)`,
 //! `set.rmsd(&reference, &correspondence, options)`, ...). This module
 //! adds the streaming counterpart, [`FrameSuperposer`].
@@ -39,7 +39,7 @@ use crate::traj::FrameBuffer;
 
 /// A borrowed reference and fitting pairs for superposing streamed frames.
 ///
-/// Uses the same kernel as in-memory sample set superposition. Each call fits
+/// Uses the same kernel as in-memory structure set superposition. Each call fits
 /// one buffered frame and transforms its positions, cell, velocities, and
 /// forces together. To keep a reference while reusing its input buffer,
 /// retain it first, for example with `buffer.frame_view().to_model()`.
@@ -117,7 +117,7 @@ impl<'a> FrameSuperposer<'a> {
             self.options,
         )?;
         buffer
-            .sample_mut()
+            .geometry_mut()
             .apply_rigid_transform(&alignment.transform())
             .map_err(AlignmentError::Transform)?;
         Ok(alignment)

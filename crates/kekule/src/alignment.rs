@@ -14,11 +14,11 @@
 //! - [`rmsd`] measures coordinates exactly as stored, without fitting.
 //! - [`aligned_rmsd`] fits on one set of pairs and measures another.
 //! - `superpose`, `rmsd`, and `aligned_rmsd` on a
-//!   [`SampleSet`](crate::structure::SampleSet::superpose) apply the same
-//!   kernels to every sample against a [`Reference`]: a sample of the set
+//!   [`StructureSet`](crate::structure::StructureSet::superpose) apply the same
+//!   kernels to every geometry against a [`Reference`]: a geometry of the set
 //!   or any external view.
-//! - [`sample_rmsd`] and [`sample_aligned_rmsd`] measure listed samples of
-//!   any [`SampleRead`](crate::structure::SampleRead), such as a set read
+//! - [`geometry_rmsd`] and [`geometry_aligned_rmsd`] measure listed geometries of
+//!   any [`StructureSetRead`](crate::structure::StructureSetRead), such as a set read
 //!   from a file, one at a time.
 //!
 //! Each takes its options, [`AlignmentOptions`] or [`AlignedRmsdOptions`], as
@@ -82,7 +82,7 @@ use std::fmt;
 
 use crate::diagnostics::Cancelled;
 use crate::math::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
-use crate::structure::{GeometryError, ModelView, SampleReadError};
+use crate::structure::{GeometryError, ModelView, StructureSetReadError};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -90,7 +90,7 @@ mod collection;
 mod correspondence;
 mod symmetry;
 pub use collection::{
-    sample_aligned_rmsd, sample_aligned_rmsd_cancellable, sample_rmsd, sample_rmsd_cancellable,
+    geometry_aligned_rmsd, geometry_rmsd, sample_aligned_rmsd_cancellable, sample_rmsd_cancellable,
     AlignedRmsdOptions, Reference, SuperpositionReport,
 };
 pub use correspondence::{
@@ -705,8 +705,8 @@ pub enum AlignmentError {
     },
     /// A fitted transform could not be applied to one item's state.
     Transform(GeometryError),
-    /// A sample cannot be read; see the source.
-    Read(Box<SampleReadError>),
+    /// A geometry cannot be read; see the source.
+    Read(Box<StructureSetReadError>),
     /// The measurement was cancelled.
     Cancelled(Cancelled),
 }

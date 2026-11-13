@@ -529,8 +529,8 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
     close_point(point(&model, c), Point3::new(2.0, 3.0, 3.0));
     // Both huge and subnormal finite axes are accepted.
     for scale in [f64::MAX, f64::from_bits(1)] {
-        let mut sample = baseline.clone();
-        sample
+        let mut geometry = baseline.clone();
+        geometry
             .rotate(
                 &selected,
                 Quantity::new(Point3::origin(), NANOMETER),
@@ -538,7 +538,7 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
                 Quantity::new(90.0, DEGREE),
             )
             .unwrap();
-        close_point(point(&sample, c), Point3::new(0.0, 1.0, 0.0));
+        close_point(point(&geometry, c), Point3::new(0.0, 1.0, 0.0));
     }
 }
 

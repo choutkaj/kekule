@@ -11,13 +11,13 @@ use kekule::mmcif::MmcifWriteOptions;
 use kekule::molecule::{AtomId, Molecule};
 use kekule::native::{
     self, NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
-    SampleSetDescription, NATIVE_FORMAT_VERSION,
+    StructureSetDescription, NATIVE_FORMAT_VERSION,
 };
 use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Members, Model, Order, Partition, Place, Positions, Sample, SampleSet,
-    State, TimeAxis, Velocities,
+    Distribution, Forces, Geometry, Members, Model, Order, Partition, Place, Positions, State,
+    StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
@@ -45,8 +45,8 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
         }
         NativeObject::Topology(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::Model(value) => native::write(value, NativeWriteOptions::default()),
-        NativeObject::SampleSet(value) => native::write(value, NativeWriteOptions::default()),
-        NativeObject::SampleSetDescription(value) => {
+        NativeObject::StructureSet(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::StructureSetDescription(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         NativeObject::StructureInterpretation(value) => {
@@ -441,8 +441,8 @@ fn interpreted_conformations_keep_one_report_per_sample() {
         .iter()
         .all(|report| !report.alternate_locations().is_empty()));
     assert_ne!(interpretation.reports()[0], interpretation.reports()[1]);
-    // The conformations are one state of equally weighted samples.
-    let distribution = interpretation.sample_set().distribution().unwrap();
+    // The conformations are one state of equally weighted geometries.
+    let distribution = interpretation.structure_set().distribution().unwrap();
     assert_eq!(distribution.state_count(), 1);
     assert_eq!(distribution.weights(), None);
     assert_eq!(
@@ -451,10 +451,10 @@ fn interpreted_conformations_keep_one_report_per_sample() {
     );
 
     let decoded = round_trip(&interpretation)
-        .into_sample_set_interpretation()
+        .into_structure_set_interpretation()
         .unwrap();
     assert_eq!(decoded.reports(), interpretation.reports());
-    assert_same_sample_set(decoded.sample_set(), interpretation.sample_set());
+    assert_same_structure_set(decoded.structure_set(), interpretation.structure_set());
     let written = |source| {
         mmcif::write([source], MmcifWriteOptions::default())
             .unwrap()
@@ -469,9 +469,9 @@ fn interpreted_conformations_keep_one_report_per_sample() {
     let bytes = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
     let set = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
-        .into_sample_set()
+        .into_structure_set()
         .unwrap();
-    assert_same_sample_set(&set, interpretation.sample_set());
+    assert_same_structure_set(&set, interpretation.structure_set());
 }
 
 #[test]
@@ -523,7 +523,7 @@ fn reports_are_stored_only_when_given() {
     }
 }
 
-fn assert_same_sample_set(decoded: &SampleSet, source: &SampleSet) {
+fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
     assert_same_topology(decoded.topology(), source.topology());
     assert_eq!(decoded.properties(), source.properties());
     assert_eq!(decoded.len(), source.len());
@@ -538,11 +538,11 @@ fn assert_same_sample_set(decoded: &SampleSet, source: &SampleSet) {
     assert_eq!(decoded.distribution(), source.distribution());
 }
 
-/// Three water samples with every per-sample field: a cell, occupancies, B
+/// Three water geometries with every per-geometry field: a cell, occupancies, B
 /// factors, properties, velocities, and forces on the first, none on the
 /// second, and velocities alone on the third.
-fn rich_samples() -> Vec<Sample> {
-    let mut first = Sample::new(positions(0.5)).with_cell(cell());
+fn rich_samples() -> Vec<Geometry> {
+    let mut first = Geometry::new(positions(0.5)).with_cell(cell());
     first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
     first
         .set_b_factors(Some(Quantity::new(
@@ -572,13 +572,13 @@ fn rich_samples() -> Vec<Sample> {
             .unwrap(),
         ))
         .unwrap();
-    let mut third = Sample::new(positions(f64::MIN_POSITIVE));
+    let mut third = Geometry::new(positions(f64::MIN_POSITIVE));
     third.set_velocities(Some(velocities())).unwrap();
-    vec![first, Sample::new(positions(1.0)), third]
+    vec![first, Geometry::new(positions(1.0)), third]
 }
 
-fn rich_set() -> SampleSet {
-    let mut set = SampleSet::from_samples(water_topology(), rich_samples()).unwrap();
+fn rich_set() -> StructureSet {
+    let mut set = StructureSet::from_geometries(water_topology(), rich_samples()).unwrap();
     set.properties_mut()
         .insert(key("method"), PropertyValue::String("REMD".into()))
         .unwrap();
@@ -586,7 +586,7 @@ fn rich_set() -> SampleSet {
 }
 
 #[test]
-fn sample_sets_keep_every_order_kind_and_sample_field() {
+fn structure_sets_keep_every_order_kind_and_sample_field() {
     let times = |values: Vec<f64>| Some(Quantity::new(values, PICOSECOND));
     let orders = [
         None,
@@ -609,8 +609,8 @@ fn sample_sets_keep_every_order_kind_and_sample_field() {
     for order in orders {
         let mut set = rich_set();
         set.set_order(order.clone()).unwrap();
-        let decoded = round_trip(&set).into_sample_set().unwrap();
-        assert_same_sample_set(&decoded, &set);
+        let decoded = round_trip(&set).into_structure_set().unwrap();
+        assert_same_structure_set(&decoded, &set);
         assert_eq!(decoded.order(), order.as_ref());
     }
     // A coordinate keeps its sign bit and unit.
@@ -620,30 +620,30 @@ fn sample_sets_keep_every_order_kind_and_sample_field() {
         values: vec![-0.0, 1.0, 2.0],
     }))
     .unwrap();
-    let decoded = round_trip(&scan).into_sample_set().unwrap();
+    let decoded = round_trip(&scan).into_structure_set().unwrap();
     let Some(Order::Coordinate { unit, values }) = decoded.order() else {
         panic!("a coordinate order");
     };
     assert_eq!((*unit, values[0].to_bits()), (DEGREE, (-0.0_f64).to_bits()));
 
     // An empty set keeps its order.
-    let mut empty = SampleSet::new(water_topology());
+    let mut empty = StructureSet::new(water_topology());
     empty
         .set_order(Some(Order::Coordinate {
             unit: ANGSTROM,
             values: Vec::new(),
         }))
         .unwrap();
-    let decoded = round_trip(&empty).into_sample_set().unwrap();
-    assert_same_sample_set(&decoded, &empty);
+    let decoded = round_trip(&empty).into_structure_set().unwrap();
+    assert_same_structure_set(&decoded, &empty);
 }
 
 #[test]
-fn sample_sets_keep_their_distribution() {
+fn structure_sets_keep_their_distribution() {
     let distributions = [
-        // Every sample, one state, without weights.
+        // Every geometry, one state, without weights.
         Distribution::new(Members::All, Partition::one_state(3)).unwrap(),
-        // Every sample, weighted, a state each with energies and a temperature.
+        // Every geometry, weighted, a state each with energies and a temperature.
         Distribution::new(Members::All, Partition::state_per_sample(3))
             .unwrap()
             .with_weights(vec![0.25, 3.0, 1.0e-300])
@@ -660,8 +660,8 @@ fn sample_sets_keep_their_distribution() {
             .unwrap()
             .with_temperature(Quantity::new(298.15, kekule::units::KELVIN))
             .unwrap(),
-        // A subset: samples 0 and 2, clustered into one state represented by
-        // sample 2, with state properties.
+        // A subset: geometries 0 and 2, clustered into one state represented by
+        // geometry 2, with state properties.
         Distribution::new(
             Members::Subset(vec![0, 2]),
             Partition::new(vec![0, 0], vec![1]).unwrap(),
@@ -683,13 +683,13 @@ fn sample_sets_keep_their_distribution() {
         let mut set = rich_set();
         set.set_distribution(Some(distribution)).unwrap();
         set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
-        let decoded = round_trip(&set).into_sample_set().unwrap();
-        assert_same_sample_set(&decoded, &set);
+        let decoded = round_trip(&set).into_structure_set().unwrap();
+        assert_same_structure_set(&decoded, &set);
     }
 }
 
 #[test]
-fn interpreted_sample_sets_keep_one_report_per_sample() {
+fn interpreted_structure_sets_keep_one_report_per_sample() {
     let text = std::fs::read_to_string(fixture("mmcif/1AKE.cif")).unwrap();
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let selections = ["A", "B"].map(|label| {
@@ -701,41 +701,44 @@ fn interpreted_sample_sets_keep_one_report_per_sample() {
     assert_eq!(bytes[12], 10);
     let interpretation = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
-        .into_sample_set_interpretation()
+        .into_structure_set_interpretation()
         .unwrap();
     assert_eq!(interpretation.reports(), conformations.reports());
-    assert_same_sample_set(interpretation.sample_set(), conformations.sample_set());
+    assert_same_structure_set(
+        interpretation.structure_set(),
+        conformations.structure_set(),
+    );
     let decoded = round_trip(&interpretation)
-        .into_sample_set_interpretation()
+        .into_structure_set_interpretation()
         .unwrap();
     assert_eq!(decoded.reports(), interpretation.reports());
-    assert_same_sample_set(decoded.sample_set(), interpretation.sample_set());
+    assert_same_structure_set(decoded.structure_set(), interpretation.structure_set());
 
     // A set and its reports held apart write the same bytes; a set needs one
-    // report per sample.
+    // report per geometry.
     let (set, reports) = interpretation.clone().into_parts();
     let apart = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports),
+        NativeSource::interpreted_structure_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap();
     assert!(apart == bytes);
     let error = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports[..1]),
+        NativeSource::interpreted_structure_set(&set, &reports[..1]),
         NativeWriteOptions::default(),
     )
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         error.to_string(),
-        "Cannot write the native output. The sample set has 2 samples and 1 interpretation report. Give one report per sample."
+        "Cannot write the native output. The structure set has 2 geometries and 1 interpretation report. Give one report per geometry."
     );
     // A reader that wants the set alone drops the reports.
     let alone = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
-        .into_sample_set()
+        .into_structure_set()
         .unwrap();
-    assert_same_sample_set(&alone, &set);
+    assert_same_structure_set(&alone, &set);
     let error = native::read(
         native::write(&set, NativeWriteOptions::default())
             .unwrap()
@@ -743,43 +746,43 @@ fn interpreted_sample_sets_keep_one_report_per_sample() {
         NativeReadOptions::default(),
     )
     .unwrap()
-    .into_sample_set_interpretation()
+    .into_structure_set_interpretation()
     .unwrap_err();
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::NativeKind {
             expected: NativeKind::SampleSetInterpretation,
-            found: NativeKind::SampleSet,
+            found: NativeKind::StructureSet,
         })
     );
 }
 
 #[test]
-fn sample_set_descriptions_store_the_number_of_samples() {
+fn structure_set_descriptions_store_the_number_of_samples() {
     let mut set = rich_set();
     set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::Subset(vec![1]), Partition::one_state(1)).unwrap(),
     ))
     .unwrap();
-    let description = SampleSetDescription::of(&set);
-    assert_eq!(description.sample_count(), 3);
+    let description = StructureSetDescription::of(&set);
+    assert_eq!(description.geometry_count(), 3);
     let decoded = round_trip(&description);
-    assert_eq!(decoded.kind(), NativeKind::SampleSet);
-    let error = decoded.clone().into_sample_set().unwrap_err();
+    assert_eq!(decoded.kind(), NativeKind::StructureSet);
+    let error = decoded.clone().into_structure_set().unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         error.detail(),
-        Some(&FormatErrorDetail::NativeExternalSamples { samples: 3 })
+        Some(&FormatErrorDetail::NativeExternalGeometries { geometries: 3 })
     );
     assert_eq!(
         error.to_string(),
-        "Cannot interpret the native input. The input's sample set stores its 3 samples elsewhere."
+        "Cannot interpret the native input. The input's structure set stores its 3 geometries elsewhere."
     );
-    let decoded = decoded.into_sample_set_description().unwrap();
+    let decoded = decoded.into_structure_set_description().unwrap();
     assert_same_topology(decoded.topology(), set.topology());
     assert_eq!(decoded.properties(), set.properties());
-    assert_eq!(decoded.sample_count(), 3);
+    assert_eq!(decoded.geometry_count(), 3);
     assert_eq!(decoded.order(), set.order());
     assert_eq!(decoded.distribution(), set.distribution());
 
@@ -791,18 +794,18 @@ fn sample_set_descriptions_store_the_number_of_samples() {
         NativeReadOptions::default(),
     )
     .unwrap()
-    .into_sample_set_description()
+    .into_structure_set_description()
     .unwrap();
-    assert_eq!(full.sample_count(), 3);
+    assert_eq!(full.geometry_count(), 3);
     assert_eq!(full.order(), set.order());
 
-    // The count is bounded like stored samples, and the order and
+    // The count is bounded like stored geometries, and the order and
     // distribution are checked against it.
     let bytes = native::write(&description, NativeWriteOptions::default()).unwrap();
     let limited = NativeReadOptions::default().with_max_items(2).unwrap();
     let error = native::read(bytes.as_slice(), limited).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Limit);
-    assert!(SampleSetDescription::new(water_topology(), 2)
+    assert!(StructureSetDescription::new(water_topology(), 2)
         .with_order(Some(Order::Step(vec![1, 2, 3])))
         .is_err());
     for len in 0..bytes.len() {
@@ -811,11 +814,11 @@ fn sample_set_descriptions_store_the_number_of_samples() {
 }
 
 #[test]
-fn distributed_and_ordered_sample_sets_are_one_kind() {
+fn distributed_and_ordered_structure_sets_are_one_kind() {
     let clustered = water_set(Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap());
-    let mut timed = SampleSet::from_samples(
+    let mut timed = StructureSet::from_geometries(
         water_topology(),
-        (0..2u32).map(|index| Sample::new(positions(f64::from(index)))),
+        (0..2u32).map(|index| Geometry::new(positions(f64::from(index)))),
     )
     .unwrap();
     timed
@@ -824,7 +827,7 @@ fn distributed_and_ordered_sample_sets_are_one_kind() {
         )))
         .unwrap();
     let mut scan =
-        SampleSet::from_samples(water_topology(), [Sample::new(positions(0.0))]).unwrap();
+        StructureSet::from_geometries(water_topology(), [Geometry::new(positions(0.0))]).unwrap();
     scan.set_order(Some(Order::Coordinate {
         unit: DEGREE,
         values: vec![-0.0],
@@ -838,7 +841,7 @@ fn distributed_and_ordered_sample_sets_are_one_kind() {
         let bytes = native::write(set, NativeWriteOptions::default()).unwrap();
         assert_eq!(bytes[12], 9);
         assert_eq!(crate::fingerprint(&bytes), expected);
-        assert_same_sample_set(&round_trip(set).into_sample_set().unwrap(), set);
+        assert_same_structure_set(&round_trip(set).into_structure_set().unwrap(), set);
     }
 }
 
@@ -872,10 +875,10 @@ fn cell() -> PeriodicCell {
     .unwrap()
 }
 
-/// Four samples of water: the first with a cell, an occupancy, and an
+/// Four geometries of water: the first with a cell, an occupancy, and an
 /// owner property, the last with the smallest positive coordinate.
-fn water_samples() -> Vec<Sample> {
-    let mut first = Sample::new(positions(0.5)).with_cell(cell());
+fn water_samples() -> Vec<Geometry> {
+    let mut first = Geometry::new(positions(0.5)).with_cell(cell());
     first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
     first
         .properties_mut()
@@ -884,16 +887,16 @@ fn water_samples() -> Vec<Sample> {
         .unwrap();
     vec![
         first,
-        Sample::new(positions(1.0)),
-        Sample::new(positions(2.0)),
-        Sample::new(positions(f64::MIN_POSITIVE)),
+        Geometry::new(positions(1.0)),
+        Geometry::new(positions(2.0)),
+        Geometry::new(positions(f64::MIN_POSITIVE)),
     ]
 }
 
-/// The water samples in the states of `partition`, weighted down to the
+/// The water geometries in the states of `partition`, weighted down to the
 /// smallest positive weight.
-fn water_set(partition: Partition) -> SampleSet {
-    let mut set = SampleSet::from_samples(water_topology(), water_samples()).unwrap();
+fn water_set(partition: Partition) -> StructureSet {
+    let mut set = StructureSet::from_geometries(water_topology(), water_samples()).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::All, partition)
             .unwrap()
@@ -906,10 +909,10 @@ fn water_set(partition: Partition) -> SampleSet {
 
 /// Asserts that a set round trips and encodes to the bytes `expected`
 /// fingerprints, returning the decoded set.
-fn round_trip_set(set: &SampleSet, expected: u64) -> SampleSet {
+fn round_trip_set(set: &StructureSet, expected: u64) -> StructureSet {
     assert_eq!(crate::native_fingerprint(set), expected);
-    let decoded = round_trip(set).into_sample_set().unwrap();
-    assert_same_sample_set(&decoded, set);
+    let decoded = round_trip(set).into_structure_set().unwrap();
+    assert_same_structure_set(&decoded, set);
     for (left, right) in decoded.iter().zip(set.iter()) {
         assert_eq!(
             left.weight().map(f64::to_bits),
@@ -974,11 +977,11 @@ fn clustered_distributions_keep_their_partition_and_state_properties() {
 
 #[test]
 fn time_orders_keep_time_step_velocities_and_forces() {
-    let samples = (0..3u32).map(|index| {
-        let mut sample = Sample::new(positions(f64::from(index)));
+    let geometries = (0..3u32).map(|index| {
+        let mut geometry = Geometry::new(positions(f64::from(index)));
         if index != 1 {
-            sample.set_cell(Some(cell()));
-            sample
+            geometry.set_cell(Some(cell()));
+            geometry
                 .set_velocities(Some(
                     Velocities::from_vec(Quantity::new(
                         vec![Vector3::new(1.0, 2.0, 3.0); 2],
@@ -987,7 +990,7 @@ fn time_orders_keep_time_step_velocities_and_forces() {
                     .unwrap(),
                 ))
                 .unwrap();
-            sample
+            geometry
                 .set_forces(Some(
                     Forces::from_vec(Quantity::new(
                         vec![Vector3::new(-1.0, 0.5, 0.0); 2],
@@ -997,9 +1000,9 @@ fn time_orders_keep_time_step_velocities_and_forces() {
                 ))
                 .unwrap();
         }
-        sample
+        geometry
     });
-    let mut set = SampleSet::from_samples(water_topology(), samples).unwrap();
+    let mut set = StructureSet::from_geometries(water_topology(), geometries).unwrap();
     let times = (0..3u32).map(|index| f64::from(index) * 0.002).collect();
     let steps = (0..3u64).map(|index| u64::MAX - index).collect();
     set.set_order(Some(Order::Time(
@@ -1019,16 +1022,16 @@ fn time_orders_keep_time_step_velocities_and_forces() {
     round_trip_set(&set, 0x4e84_32d6_85a6_eacb);
 
     // A time order without times or steps keeps having none.
-    let mut untimed = SampleSet::from_samples(
+    let mut untimed = StructureSet::from_geometries(
         water_topology(),
-        [Sample::new(positions(0.0)), Sample::new(positions(1.0))],
+        [Geometry::new(positions(0.0)), Geometry::new(positions(1.0))],
     )
     .unwrap();
     untimed
         .set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
         .unwrap();
     let decoded = round_trip_set(&untimed, 0x1b2a_c843_8dcc_2f53);
-    assert!(decoded.iter().all(|sample| sample.place()
+    assert!(decoded.iter().all(|geometry| geometry.place()
         == Some(Place::Time {
             time: None,
             step: None
@@ -1038,12 +1041,12 @@ fn time_orders_keep_time_step_velocities_and_forces() {
 #[test]
 fn step_and_coordinate_orders_keep_places_cells_and_values() {
     // An optimization history: steps, energies, a cell, and atom values.
-    let samples = (0..3).map(|index| {
-        let mut sample = Sample::new(positions(f64::from(index)));
+    let geometries = (0..3).map(|index| {
+        let mut geometry = Geometry::new(positions(f64::from(index)));
         if index == 1 {
-            sample = sample.with_cell(cell());
+            geometry = geometry.with_cell(cell());
         }
-        sample
+        geometry
             .properties_mut()
             .owner_mut()
             .insert(
@@ -1051,9 +1054,9 @@ fn step_and_coordinate_orders_keep_places_cells_and_values() {
                 PropertyValue::real(-1.5 - f64::from(index), KILOJOULE_PER_MOLE).unwrap(),
             )
             .unwrap();
-        sample
+        geometry
     });
-    let mut history = SampleSet::from_samples(water_topology(), samples).unwrap();
+    let mut history = StructureSet::from_geometries(water_topology(), geometries).unwrap();
     history
         .set_order(Some(Order::Step(vec![0, 7, u64::MAX])))
         .unwrap();
@@ -1076,9 +1079,9 @@ fn step_and_coordinate_orders_keep_places_cells_and_values() {
     assert_eq!(decoded.get(2).unwrap().place(), Some(Place::Step(u64::MAX)));
 
     // A relaxed scan in degrees, swept back, with a negative zero.
-    let mut scan = SampleSet::from_samples(
+    let mut scan = StructureSet::from_geometries(
         water_topology(),
-        (0..4).map(|index| Sample::new(positions(f64::from(index)))),
+        (0..4).map(|index| Geometry::new(positions(f64::from(index)))),
     )
     .unwrap();
     scan.set_order(Some(Order::Coordinate {
@@ -1088,13 +1091,13 @@ fn step_and_coordinate_orders_keep_places_cells_and_values() {
     .unwrap();
     let decoded = round_trip_set(&scan, 0x02a0_cc46_8fab_4ee9);
     let Some(Place::Coordinate(first)) = decoded.get(0).unwrap().place() else {
-        panic!("a coordinate order places its samples by coordinate");
+        panic!("a coordinate order places its geometries by coordinate");
     };
     assert_eq!(first.value().to_bits(), (-0.0_f64).to_bits());
     assert_eq!(first.unit(), DEGREE);
 
     // An empty set keeps its order's unit.
-    let mut empty = SampleSet::new(water_topology());
+    let mut empty = StructureSet::new(water_topology());
     empty
         .set_order(Some(Order::Coordinate {
             unit: ANGSTROM,
@@ -1104,10 +1107,10 @@ fn step_and_coordinate_orders_keep_places_cells_and_values() {
     let decoded = round_trip_set(&empty, 0x93e3_20f6_6457_161b);
     assert!(decoded.is_empty());
 
-    // The sample count is bounded; every truncation fails cleanly.
+    // The geometry count is bounded; every truncation fails cleanly.
     let bytes = native::write(&scan, NativeWriteOptions::default()).unwrap();
     let decoded = native::read(bytes.as_slice(), NativeReadOptions::default()).unwrap();
-    assert_eq!(decoded.kind(), NativeKind::SampleSet);
+    assert_eq!(decoded.kind(), NativeKind::StructureSet);
     let limited = NativeReadOptions::default().with_max_items(3).unwrap();
     let error = native::read(bytes.as_slice(), limited).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Limit);
@@ -1233,7 +1236,7 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
     assert_eq!(error.byte_offset(), Some(12));
 
     // Version 4, whose ensemble, trajectory, and series kinds version 5
-    // replaces with sample sets, is rejected with no migration.
+    // replaces with structure sets, is rejected with no migration.
     for version in [2u32, 4] {
         let mut older = bytes.clone();
         older[8..12].copy_from_slice(&version.to_le_bytes());

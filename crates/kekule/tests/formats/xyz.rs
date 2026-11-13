@@ -4,7 +4,8 @@ use kekule::molecule::{BondOrder, Element, ImplicitHydrogens};
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{ANGSTROM, BOHR, KELVIN};
 use kekule::xyz::{
-    self, XyzFrameSelection, XyzInterpretIssue, XyzInterpretOptions, XyzSampleSetInterpretOptions,
+    self, XyzFrameSelection, XyzInterpretIssue, XyzInterpretOptions,
+    XyzStructureSetInterpretOptions,
 };
 
 const WATER: &str = "3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 0.927 0.000\n";
@@ -201,11 +202,13 @@ fn frame_selection_follows_the_request() {
 }
 
 #[test]
-fn frames_of_the_same_connectivity_form_a_sample_set() {
+fn frames_of_the_same_connectivity_form_a_structure_set() {
     let stretched = "3\nstretched\nO 0 0 0\nH 1.0 0 0\nH -0.25 0.95 0\n";
     let document = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
-    let interpretation = document.interpret_sample_set(Default::default()).unwrap();
-    let set = interpretation.sample_set();
+    let interpretation = document
+        .interpret_structure_set(Default::default())
+        .unwrap();
+    let set = interpretation.structure_set();
     assert_eq!(set.len(), 2);
     assert_eq!(interpretation.reports().len(), 2);
     assert_eq!(interpretation.reports()[1].comment(), "stretched");
@@ -217,23 +220,23 @@ fn frames_of_the_same_connectivity_form_a_sample_set() {
     assert_eq!(crate::native_fingerprint(set), 0x86ec_939a_2cbb_3e26);
 
     let selected = document
-        .interpret_sample_set(
-            XyzSampleSetInterpretOptions::default()
+        .interpret_structure_set(
+            XyzStructureSetInterpretOptions::default()
                 .with_frames(Some(vec![1]))
                 .unwrap(),
         )
         .unwrap();
     assert_eq!(selected.reports()[0].frame(), 1);
     assert_eq!(
-        crate::native_fingerprint(selected.sample_set()),
+        crate::native_fingerprint(selected.structure_set()),
         0xbe77_888f_6f82_8a84
     );
-    assert!(XyzSampleSetInterpretOptions::default()
+    assert!(XyzStructureSetInterpretOptions::default()
         .with_frames(Some(Vec::new()))
         .is_err());
     let error = document
-        .interpret_sample_set(
-            XyzSampleSetInterpretOptions::default()
+        .interpret_structure_set(
+            XyzStructureSetInterpretOptions::default()
                 .with_frames(Some(vec![0, 0]))
                 .unwrap(),
         )
@@ -245,11 +248,11 @@ fn frames_of_the_same_connectivity_form_a_sample_set() {
 }
 
 #[test]
-fn frames_that_disagree_fail_the_sample_set() {
+fn frames_that_disagree_fail_the_structure_set() {
     let dissociated = "3\n\nO 0 0 0\nH 0.957 0 0\nH -2.4 9.3 0\n";
     let document = xyz::parse_str(&format!("{WATER}{dissociated}"), Default::default()).unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
@@ -261,7 +264,7 @@ fn frames_that_disagree_fail_the_sample_set() {
     let other_atoms = "3\n\nS 0 0 0\nH 0.957 0 0\nH -0.24 0.927 0\n";
     let document = xyz::parse_str(&format!("{WATER}{other_atoms}"), Default::default()).unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(
         error.detail(),
@@ -353,7 +356,7 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
     )
     .unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location().unwrap().line(), 8);
@@ -364,7 +367,7 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
     )
     .unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert_eq!(error.location().unwrap().line(), 6);
     let document = xyz::parse_str(
@@ -373,7 +376,7 @@ fn later_frames_keep_element_errors_and_locate_mismatches() {
     )
     .unwrap();
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert!(matches!(
         error.detail(),
@@ -491,19 +494,23 @@ fn documents_built_from_atoms_interpret_as_parsed_files() {
         xyz::XyzFrame::new("stretched", water_atoms(1.0)),
     ]);
     let parsed = xyz::parse_str(&format!("{WATER}{stretched}"), Default::default()).unwrap();
-    let from_atoms = built.interpret_sample_set(Default::default()).unwrap();
-    let from_text = parsed.interpret_sample_set(Default::default()).unwrap();
+    let from_atoms = built.interpret_structure_set(Default::default()).unwrap();
+    let from_text = parsed.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(from_atoms.reports(), from_text.reports());
-    assert_eq!(from_atoms.sample_set().len(), 2);
-    for sample in 0..2 {
+    assert_eq!(from_atoms.structure_set().len(), 2);
+    for geometry in 0..2 {
         assert_eq!(
-            from_atoms.sample_set().get(sample).unwrap().positions(),
-            from_text.sample_set().get(sample).unwrap().positions()
+            from_atoms
+                .structure_set()
+                .get(geometry)
+                .unwrap()
+                .positions(),
+            from_text.structure_set().get(geometry).unwrap().positions()
         );
     }
     for interpretation in [&from_atoms, &from_text] {
         assert_eq!(
-            crate::native_fingerprint(interpretation.sample_set()),
+            crate::native_fingerprint(interpretation.structure_set()),
             0x8953_66ba_1095_4bea
         );
     }
@@ -568,7 +575,7 @@ fn built_documents_fail_as_parsing_would_reject_them() {
     assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
     assert_eq!(error.location().map(|at| at.line()), Some(2));
     let error = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap_err();
     assert!(matches!(
         error.detail(),

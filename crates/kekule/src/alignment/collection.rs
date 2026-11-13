@@ -1,10 +1,10 @@
-//! Superposition and RMSD over every sample of a [`SampleSet`], and RMSD
-//! over listed samples of any [`SampleRead`], through one implementation.
+//! Superposition and RMSD over every geometry of a [`StructureSet`], and RMSD
+//! over listed geometries of any [`StructureSetRead`], through one implementation.
 
 use crate::diagnostics::Cancellation;
 use crate::math::RigidTransform;
 use crate::structure::{
-    visit_sample, AsModelView, ModelView, Sample, SampleRead, SampleSet, SampleView,
+    visit_geometry, AsModelView, Geometry, GeometryView, ModelView, StructureSet, StructureSetRead,
 };
 use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -294,17 +294,17 @@ fn item_aligned_rmsd<'a>(
     )
 }
 
-/// The RMSD of each of `samples` of `reader` to the reference, each lent
+/// The RMSD of each of `geometries` of `reader` to the reference, each lent
 /// or read in turn, polling `cancellation` before each.
-fn sample_values(
-    reader: &dyn SampleRead,
-    samples: impl IntoIterator<Item = usize>,
+fn geometry_values(
+    reader: &dyn StructureSetRead,
+    geometries: impl IntoIterator<Item = usize>,
     reference: Reference<'_>,
     measured: Measured<'_, '_>,
     cancellation: Option<&Cancellation>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let read_error = |error| AlignmentError::Read(Box::new(error));
-    let held: Sample;
+    let held: Geometry;
     let reference = match reference {
         Reference::View(view) => view,
         Reference::Index(index) => {
@@ -316,7 +316,7 @@ fn sample_values(
                 Some(view) => view.as_model_view(),
                 None => {
                     held = reader.read(index).map_err(read_error)?;
-                    SampleView::new(reader, index, &held)
+                    GeometryView::new(reader, index, &held)
                         .map_err(read_error)?
                         .as_model_view()
                 }
@@ -324,16 +324,16 @@ fn sample_values(
         }
     };
     let topology = reader.topology();
-    let mut samples = samples.into_iter().peekable();
-    if samples.peek().is_none() {
+    let mut geometries = geometries.into_iter().peekable();
+    if geometries.peek().is_none() {
         Measurement::new(topology, None, reference, measured)?;
         return Ok(Quantity::new(Vec::new(), CANONICAL_LENGTH_UNIT));
     }
     let mut measurement = None;
-    let mut values = Vec::with_capacity(samples.size_hint().0);
-    for index in samples {
+    let mut values = Vec::with_capacity(geometries.size_hint().0);
+    for index in geometries {
         Cancellation::poll(cancellation).map_err(AlignmentError::Cancelled)?;
-        let value = visit_sample(reader, index, read_error, |moving| {
+        let value = visit_geometry(reader, index, read_error, |moving| {
             let measurement = match &measurement {
                 Some(measurement) => measurement,
                 None => measurement.insert(Measurement::new(
@@ -352,32 +352,32 @@ fn sample_values(
     Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
 }
 
-/// Direct RMSD from each of `samples` of `reader`, in the listed order, to
-/// `reference`, measured as stored, as [`SampleSet::rmsd`] measures every
-/// sample of a set in memory.
+/// Direct RMSD from each of `geometries` of `reader`, in the listed order, to
+/// `reference`, measured as stored, as [`StructureSet::rmsd`] measures every
+/// geometry of a set in memory.
 ///
-/// `reference` is a sample index of `reader` or any borrowed view. Each
-/// sample is lent when the reader lends it and read otherwise, one at a
-/// time, so memory stays that of one sample. Ranges and strides are written
-/// as `(start..end).step_by(stride)`. The samples are measured on the
+/// `reference` is a geometry index of `reader` or any borrowed view. Each
+/// geometry is lent when the reader lends it and read otherwise, one at a
+/// time, so memory stays that of one geometry. Ranges and strides are written
+/// as `(start..end).step_by(stride)`. The geometries are measured on the
 /// calling thread; to spread them over threads, split the list and measure
 /// each part.
 ///
 /// ```
-/// use kekule::alignment::sample_rmsd;
+/// use kekule::alignment::geometry_rmsd;
 /// use kekule::math::Point3;
-/// use kekule::structure::{Positions, Sample, SampleSet};
+/// use kekule::structure::{Positions, Geometry, StructureSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::units::{Quantity, NANOMETER};
 ///
 /// let topology = kekule::smiles::to_topology("CCO")?;
-/// let mut set = SampleSet::new(topology.clone());
+/// let mut set = StructureSet::new(topology.clone());
 /// for x in [0.0, 0.1, 0.2, 0.3] {
 ///     let points = [Point3::new(x, 0.0, 0.0), Point3::new(0.1, 0.0, 0.0), Point3::new(0.0, 0.1, 0.0)];
-///     set.push(Sample::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
+///     set.push(Geometry::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
 /// }
 /// let atoms = AtomSelection::all(topology);
-/// let every_other = sample_rmsd(&set, (0..set.len()).step_by(2), 0, &atoms, Default::default())?;
+/// let every_other = geometry_rmsd(&set, (0..set.len()).step_by(2), 0, &atoms, Default::default())?;
 /// let all = set.rmsd(0, &atoms, Default::default())?;
 /// assert_eq!(every_other.value(), &[all.value()[0], all.value()[2]]);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -386,75 +386,75 @@ fn sample_values(
 /// # Errors
 ///
 /// [`AlignmentError::ReferenceOutOfRange`] for a reference index past the
-/// last sample, [`AlignmentError::Read`] when a sample cannot be read,
+/// last geometry, [`AlignmentError::Read`] when a geometry cannot be read,
 /// [`AlignmentError::Item`] wrapping the failure of the first failing
-/// sample, named by its sample index, and otherwise the errors of
+/// geometry, named by its geometry index, and otherwise the errors of
 /// [`rmsd`](super::rmsd) for the pairing and weights.
-pub fn sample_rmsd<'a>(
-    reader: &dyn SampleRead,
-    samples: impl IntoIterator<Item = usize>,
+pub fn geometry_rmsd<'a>(
+    reader: &dyn StructureSetRead,
+    geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let measured = Measured::Direct(atoms.into(), options);
-    sample_values(reader, samples, reference.into(), measured, None)
+    geometry_values(reader, geometries, reference.into(), measured, None)
 }
 
-/// [`sample_rmsd`], stopping when `cancellation` is requested.
+/// [`geometry_rmsd`], stopping when `cancellation` is requested.
 ///
 /// # Errors
 ///
 /// [`AlignmentError::Cancelled`] when cancelled, without partial values,
-/// and the errors of [`sample_rmsd`].
+/// and the errors of [`geometry_rmsd`].
 pub fn sample_rmsd_cancellable<'a>(
-    reader: &dyn SampleRead,
-    samples: impl IntoIterator<Item = usize>,
+    reader: &dyn StructureSetRead,
+    geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
     cancellation: &Cancellation,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let measured = Measured::Direct(atoms.into(), options);
-    sample_values(
+    geometry_values(
         reader,
-        samples,
+        geometries,
         reference.into(),
         measured,
         Some(cancellation),
     )
 }
 
-/// RMSD over `measurement` pairs of each of `samples` of `reader`, in the
+/// RMSD over `measurement` pairs of each of `geometries` of `reader`, in the
 /// listed order, after fitting it onto `reference` over `fit` pairs, as
-/// [`SampleSet::aligned_rmsd`] measures every sample of a set in memory;
-/// samples are reached as [`sample_rmsd`] reaches them.
+/// [`StructureSet::aligned_rmsd`] measures every geometry of a set in memory;
+/// geometries are reached as [`geometry_rmsd`] reaches them.
 ///
 /// # Errors
 ///
-/// As [`sample_rmsd`], with the errors of
+/// As [`geometry_rmsd`], with the errors of
 /// [`aligned_rmsd`](super::aligned_rmsd) for the pairings and weights.
-pub fn sample_aligned_rmsd<'a>(
-    reader: &dyn SampleRead,
-    samples: impl IntoIterator<Item = usize>,
+pub fn geometry_aligned_rmsd<'a>(
+    reader: &dyn StructureSetRead,
+    geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
     fit: impl Into<FitAtoms<'a>>,
     measurement: impl Into<FitAtoms<'a>>,
     options: AlignedRmsdOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let measured = Measured::Aligned(fit.into(), measurement.into(), options);
-    sample_values(reader, samples, reference.into(), measured, None)
+    geometry_values(reader, geometries, reference.into(), measured, None)
 }
 
-/// [`sample_aligned_rmsd`], stopping when `cancellation` is requested.
+/// [`geometry_aligned_rmsd`], stopping when `cancellation` is requested.
 ///
 /// # Errors
 ///
 /// [`AlignmentError::Cancelled`] when cancelled, without partial values,
-/// and the errors of [`sample_aligned_rmsd`].
+/// and the errors of [`geometry_aligned_rmsd`].
 pub fn sample_aligned_rmsd_cancellable<'a>(
-    reader: &dyn SampleRead,
-    samples: impl IntoIterator<Item = usize>,
+    reader: &dyn StructureSetRead,
+    geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
     fit: impl Into<FitAtoms<'a>>,
     measurement: impl Into<FitAtoms<'a>>,
@@ -462,9 +462,9 @@ pub fn sample_aligned_rmsd_cancellable<'a>(
     cancellation: &Cancellation,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let measured = Measured::Aligned(fit.into(), measurement.into(), options);
-    sample_values(
+    geometry_values(
         reader,
-        samples,
+        geometries,
         reference.into(),
         measured,
         Some(cancellation),
@@ -552,11 +552,11 @@ fn item_error(index: usize, source: AlignmentError) -> AlignmentError {
     }
 }
 
-impl SampleSet {
-    /// Fits every sample onto `reference` and applies each transform in place.
+impl StructureSet {
+    /// Fits every geometry onto `reference` and applies each transform in place.
     ///
-    /// Every sample is fitted, members of the distribution or not.
-    /// `reference` is a sample index of this set or any borrowed view
+    /// Every geometry is fitted, members of the distribution or not.
+    /// `reference` is a geometry index of this set or any borrowed view
     /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
     /// [`AtomSelection`](crate::topology::AtomSelection) or
     /// [`SymmetricSelection`](super::SymmetricSelection) of this layout, or an
@@ -573,9 +573,9 @@ impl SampleSet {
     ///
     /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
     /// the set, [`AlignmentError::Item`] wrapping the failure of the first
-    /// failing sample, and otherwise the errors of [`fit`](super::fit) for
+    /// failing geometry, and otherwise the errors of [`fit`](super::fit) for
     /// the pairing and weights. [`AlignmentError::Transform`] when a fitted
-    /// transform cannot be applied to a sample.
+    /// transform cannot be applied to a geometry.
     pub fn superpose<'a>(
         &mut self,
         reference: impl Into<Reference<'a>>,
@@ -597,10 +597,10 @@ impl SampleSet {
         Ok(report)
     }
 
-    /// Direct RMSD from every sample to `reference`, measured as stored.
+    /// Direct RMSD from every geometry to `reference`, measured as stored.
     ///
     /// Never fits or changes the set. Values are in [`CANONICAL_LENGTH_UNIT`],
-    /// one per sample in set order, members of the distribution or not: plot
+    /// one per geometry in set order, members of the distribution or not: plot
     /// them against the order's values, or weight the members' values by
     /// their weights for distribution statistics. `options` selects the pair
     /// weights and the periodic policy.
@@ -609,7 +609,7 @@ impl SampleSet {
     ///
     /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
     /// the set, [`AlignmentError::Item`] wrapping the failure of the first
-    /// failing sample, and otherwise the errors of [`rmsd`](super::rmsd) for
+    /// failing geometry, and otherwise the errors of [`rmsd`](super::rmsd) for
     /// the pairing and weights.
     pub fn rmsd<'a>(
         &self,
@@ -627,19 +627,19 @@ impl SampleSet {
         )
     }
 
-    /// Fits every sample on `fit` pairs and measures RMSD over `measurement`
+    /// Fits every geometry on `fit` pairs and measures RMSD over `measurement`
     /// pairs, without changing the set or copying coordinates.
     ///
     /// For example, fit a protein backbone and measure ligand motion, or fit
     /// the atoms a scan holds fixed and measure the ones it moves. `options`
     /// holds the fit options and the measurement weights. Values are in
-    /// [`CANONICAL_LENGTH_UNIT`], one per sample in set order.
+    /// [`CANONICAL_LENGTH_UNIT`], one per geometry in set order.
     ///
     /// # Errors
     ///
     /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
     /// the set, [`AlignmentError::Item`] wrapping the failure of the first
-    /// failing sample, and otherwise the errors of
+    /// failing geometry, and otherwise the errors of
     /// [`aligned_rmsd`](super::aligned_rmsd) for the pairing and weights.
     pub fn aligned_rmsd<'a>(
         &self,

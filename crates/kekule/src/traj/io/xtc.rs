@@ -30,7 +30,7 @@
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! let points = vec![Point3::new(0.25, 0.5, 0.0)];
-//! frame.sample_mut().set_positions(Quantity::new(points, NANOMETER))?;
+//! frame.geometry_mut().set_positions(Quantity::new(points, NANOMETER))?;
 //! frame.set_step(Some(100));
 //! frame.set_time(Some(Quantity::new(0.5, PICOSECOND)))?;
 //!
@@ -61,7 +61,7 @@ use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::structure::DecodedSample;
+use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -1356,13 +1356,13 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
     pub(crate) fn read_decoded(
         &mut self,
         index: usize,
-    ) -> Result<DecodedSample, TrajectoryIoError> {
+    ) -> Result<DecodedGeometry, TrajectoryIoError> {
         let read = self.read_indexed(index);
         // Taken whether the read succeeds or fails, so that the reader keeps
         // no array for a read on another thread.
         let positions = std::mem::take(&mut self.inner.positions);
         let info = read?;
-        Ok(DecodedSample {
+        Ok(DecodedGeometry {
             positions: Quantity::new(positions, NANOMETER),
             cell: info.cell,
             velocities: None,

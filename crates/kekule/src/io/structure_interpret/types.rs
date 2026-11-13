@@ -13,7 +13,7 @@ use crate::diagnostics::{
     FormatError, FormatErrorDetail, SourceLocation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Model, SampleSet};
+use crate::structure::{Model, StructureSet};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
@@ -1515,8 +1515,8 @@ pub(in crate::io) fn poll_every(
     Cancellation::poll_every(cancellation, step).map_err(cancelled)
 }
 
-/// A sample-set-level failure with typed `detail`.
-pub(in crate::io) fn sample_set_error(
+/// A geometry-set-level failure with typed `detail`.
+pub(in crate::io) fn structure_set_error(
     kind: DiagnosticKind,
     message: impl Into<String>,
     detail: FormatErrorDetail,
@@ -1524,11 +1524,11 @@ pub(in crate::io) fn sample_set_error(
     FormatError::interpret(Format::Mmcif, kind, message).with_detail(detail)
 }
 
-/// Converts deposited coordinate models to samples, applying `altloc_policy`
-/// within each model. Alternate locations never generate additional samples or
-/// statistical weights. A single coordinate model yields a single sample.
+/// Converts deposited coordinate models to geometries, applying `altloc_policy`
+/// within each model. Alternate locations never generate additional geometries or
+/// statistical weights. A single coordinate model yields a single geometry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructureSampleSetInterpretOptions {
+pub struct StructureSetInterpretOptions {
     entity_metadata: EntityMetadataPolicy,
     altloc_policy: AltLocPolicy,
     connectivity: ConnectivityOptions,
@@ -1536,7 +1536,7 @@ pub struct StructureSampleSetInterpretOptions {
     cancellation: Option<Cancellation>,
 }
 
-impl StructureSampleSetInterpretOptions {
+impl StructureSetInterpretOptions {
     /// Whether missing entity types are inferred or rejected.
     pub const fn entity_metadata(&self) -> EntityMetadataPolicy {
         self.entity_metadata
@@ -1591,7 +1591,7 @@ impl StructureSampleSetInterpretOptions {
     /// An interpretation [`FormatError`] with [`FormatErrorDetail::EmptyModelSelection`](crate::diagnostics::FormatErrorDetail::EmptyModelSelection) for `Some` of an empty list.
     pub fn with_model_ids(mut self, model_ids: Option<Vec<String>>) -> Result<Self, FormatError> {
         if model_ids.as_ref().is_some_and(Vec::is_empty) {
-            return Err(super::sample_set::empty_model_selection());
+            return Err(super::structure_set::empty_model_selection());
         }
         self.model_ids = model_ids;
         Ok(self)
@@ -1600,9 +1600,9 @@ impl StructureSampleSetInterpretOptions {
     /// The cancellation interpretation polls, if any; `None` by default.
     ///
     /// Interpretation polls it between its stages and periodically inside
-    /// them, for every sample, and once it is requested fails with a
+    /// them, for every geometry, and once it is requested fails with a
     /// [`FormatError`] of kind [`DiagnosticKind::Cancelled`] instead of
-    /// returning a partial sample set. It does not change what a completed
+    /// returning a partial structure set. It does not change what a completed
     /// interpretation returns.
     pub fn cancellation(&self) -> Option<&Cancellation> {
         self.cancellation.as_ref()
@@ -1616,7 +1616,7 @@ impl StructureSampleSetInterpretOptions {
     }
 }
 
-impl Default for StructureSampleSetInterpretOptions {
+impl Default for StructureSetInterpretOptions {
     fn default() -> Self {
         Self {
             entity_metadata: EntityMetadataPolicy::InferMissing,
@@ -1628,37 +1628,37 @@ impl Default for StructureSampleSetInterpretOptions {
     }
 }
 
-/// One shared-topology sample set and one report per sample, in sample
+/// One shared-topology structure set and one report per geometry, in geometry
 /// order.
 #[derive(Debug, Clone)]
-pub struct StructureSampleSetInterpretation {
-    pub(crate) set: SampleSet,
+pub struct StructureSetInterpretation {
+    pub(crate) set: StructureSet,
     pub(crate) reports: Vec<StructureInterpretationReport>,
 }
 
-impl StructureSampleSetInterpretation {
-    /// The interpreted sample set, one sample per selected model.
-    pub fn sample_set(&self) -> &SampleSet {
+impl StructureSetInterpretation {
+    /// The interpreted structure set, one geometry per selected model.
+    pub fn structure_set(&self) -> &StructureSet {
         &self.set
     }
 
-    /// One report per sample, in sample order.
+    /// One report per geometry, in geometry order.
     pub fn reports(&self) -> &[StructureInterpretationReport] {
         &self.reports
     }
 
-    /// The topology all samples share.
+    /// The topology all geometries share.
     pub fn topology(&self) -> &Topology {
         self.set.topology()
     }
 
-    /// The interpreted sample set, discarding the reports.
-    pub fn into_sample_set(self) -> SampleSet {
+    /// The interpreted structure set, discarding the reports.
+    pub fn into_structure_set(self) -> StructureSet {
         self.set
     }
 
-    /// The sample set and its per-sample reports.
-    pub fn into_parts(self) -> (SampleSet, Vec<StructureInterpretationReport>) {
+    /// The structure set and its per-geometry reports.
+    pub fn into_parts(self) -> (StructureSet, Vec<StructureInterpretationReport>) {
         (self.set, self.reports)
     }
 }

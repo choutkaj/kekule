@@ -317,9 +317,9 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
 /// Cα RMSD of every coordinate model after fitting it onto the first.
 fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .map_err(|e| Failure::new("interpret", e))?;
-    let models = interpretation.sample_set();
+    let models = interpretation.structure_set();
     let topology: Arc<_> = models.shared_topology();
     let first = &interpretation.reports()[0];
     let alpha = first

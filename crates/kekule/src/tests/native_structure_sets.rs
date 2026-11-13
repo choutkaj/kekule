@@ -1,13 +1,13 @@
-//! Rejection of hostile sample set records, kinds 9 and 10: every stored
+//! Rejection of hostile structure set records, kinds 9 and 10: every stored
 //! member, assignment, representative, weight, order value, and section tag
 //! is checked against the set, and no truncation or corruption panics.
 
 use super::native_reports::{find, parts, read, report, resealed};
 use crate::diagnostics::{DiagnosticKind, Format};
 use crate::math::Point3;
-use crate::native::{self, NativeSource, NativeWriteOptions, SampleSetDescription};
+use crate::native::{self, NativeSource, NativeWriteOptions, StructureSetDescription};
 use crate::structure::{
-    Distribution, Members, Order, Partition, Positions, Sample, SampleSet, State, TimeAxis,
+    Distribution, Geometry, Members, Order, Partition, Positions, State, StructureSet, TimeAxis,
 };
 use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 
@@ -22,22 +22,22 @@ const ENERGY: f64 = -12.345_678_9;
 const TEMPERATURE: f64 = 312.345_678;
 const X: [f64; 3] = [0.111_111, 0.222_222, 0.333_333];
 
-/// Three one-atom samples at [`X`] nm in `order`, without a distribution.
-fn samples(order: Order) -> SampleSet {
+/// Three one-atom geometries at [`X`] nm in `order`, without a distribution.
+fn geometries(order: Order) -> StructureSet {
     let topology = crate::smiles::to_topology("O").unwrap();
-    let samples = X.map(|x| {
-        Sample::new(Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap())
+    let geometries = X.map(|x| {
+        Geometry::new(Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap())
     });
-    let mut set = SampleSet::from_samples(topology, samples).unwrap();
+    let mut set = StructureSet::from_geometries(topology, geometries).unwrap();
     set.set_order(Some(order)).unwrap();
     set
 }
 
-/// [`samples`] in a step order of [`STEPS`], with a distribution over
-/// samples 0 and 2 weighted [`WEIGHTS`], in two states: state 0 of sample 2
-/// at [`ENERGY`], state 1 of sample 0, at [`TEMPERATURE`].
-fn set() -> SampleSet {
-    let mut set = samples(Order::Step(STEPS.to_vec()));
+/// [`geometries`] in a step order of [`STEPS`], with a distribution over
+/// geometries 0 and 2 weighted [`WEIGHTS`], in two states: state 0 of geometry 2
+/// at [`ENERGY`], state 1 of geometry 0, at [`TEMPERATURE`].
+fn set() -> StructureSet {
+    let mut set = geometries(Order::Step(STEPS.to_vec()));
     let distribution = Distribution::new(
         Members::Subset(vec![0, 2]),
         Partition::new(vec![1, 0], vec![1, 0]).unwrap(),
@@ -65,7 +65,7 @@ struct Layout {
     weights: usize,
     assignments: usize,
     representative: usize,
-    samples: usize,
+    geometries: usize,
 }
 
 impl Layout {
@@ -81,14 +81,14 @@ impl Layout {
             weights: start + 15,
             assignments: start + 31,
             representative: start + 43,
-            samples: find(bytes, &TEMPERATURE.to_le_bytes()) + 8,
+            geometries: find(bytes, &TEMPERATURE.to_le_bytes()) + 8,
         };
         assert_eq!(find(bytes, &WEIGHTS[0].to_le_bytes()), layout.weights);
         assert_eq!(
             find(bytes, &ENERGY.to_le_bytes()),
             layout.representative + 5
         );
-        assert_eq!(bytes[layout.samples], 0, "samples in the record");
+        assert_eq!(bytes[layout.geometries], 0, "geometries in the record");
         layout
     }
 }
@@ -131,7 +131,7 @@ fn u32s(values: &[u32]) -> Vec<u8> {
 fn stored_distributions_are_checked_against_their_set() {
     let set = set();
     let bytes = native::write(&set, NativeWriteOptions::default()).unwrap();
-    let decoded = read(&bytes).unwrap().into_sample_set().unwrap();
+    let decoded = read(&bytes).unwrap().into_structure_set().unwrap();
     assert_eq!(decoded.order(), set.order());
     assert_eq!(decoded.distribution(), set.distribution());
     let at = Layout::of(&bytes);
@@ -141,11 +141,11 @@ fn stored_distributions_are_checked_against_their_set() {
         (at.members, u32s(&[2, 0]), stored, "unsorted members"),
         (at.members, u32s(&[0, 0]), stored, "duplicate members"),
         (at.members, u32s(&[0, 7]), stored, "a member out of range"),
-        // More members than samples.
+        // More members than geometries.
         (
             at.listed,
             u32s(&[4]),
-            "The distribution lists 4 members of 3 samples.",
+            "The distribution lists 4 members of 3 geometries.",
             "too many members",
         ),
         // An assignment to a state that does not exist.
@@ -178,12 +178,12 @@ fn stored_distributions_are_checked_against_their_set() {
             stored,
             "negative",
         ),
-        // An unknown samples tag.
+        // An unknown geometries tag.
         (
-            at.samples,
+            at.geometries,
             vec![7],
-            "The samples section tag 7 is unknown.",
-            "a samples tag",
+            "The geometries section tag 7 is unknown.",
+            "a geometries tag",
         ),
     ];
     for (offset, patch, message, case) in cases {
@@ -207,10 +207,10 @@ fn stored_distributions_are_checked_against_their_set() {
 #[test]
 fn stored_order_values_and_positions_are_finite() {
     let times = [0.5, 1.5, 2.5];
-    let timed = samples(Order::Time(
+    let timed = geometries(Order::Time(
         TimeAxis::new(Some(Quantity::new(times.to_vec(), PICOSECOND)), None).unwrap(),
     ));
-    let scan = samples(Order::Coordinate {
+    let scan = geometries(Order::Coordinate {
         unit: DEGREE,
         values: times.to_vec(),
     });
@@ -234,14 +234,14 @@ fn stored_order_values_and_positions_are_finite() {
 }
 
 #[test]
-fn interpreted_sample_sets_store_their_samples_and_one_report_each() {
+fn interpreted_structure_sets_store_their_samples_and_one_report_each() {
     let (_, mut set) = parts();
     set.set_order(Some(Order::Step(STEPS[..2].to_vec())))
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&set), 0xf307_a469_20a7_f979);
+    assert_eq!(super::debug_fingerprint(&set), 0xcfef_2cfe_dd15_5679);
     let reports = vec![report(false), report(false)];
     let bytes = native::write(
-        NativeSource::interpreted_sample_set(&set, &reports),
+        NativeSource::interpreted_structure_set(&set, &reports),
         NativeWriteOptions::default(),
     )
     .unwrap();
@@ -250,21 +250,21 @@ fn interpreted_sample_sets_store_their_samples_and_one_report_each() {
     let plain = native::write(&set, NativeWriteOptions::default()).unwrap();
     assert_eq!(bytes[13..plain.len() - 8], plain[13..plain.len() - 8]);
 
-    // The samples tag follows a distribution of every sample, weighted, in
+    // The geometries tag follows a distribution of every geometry, weighted, in
     // one state without an energy, and without a temperature.
     let steps = find(&bytes, &STEPS[0].to_le_bytes());
     let start = steps + 16;
     assert_eq!(bytes[start..start + 3], [1, 0, 1]);
     assert_eq!(bytes[start + 3..start + 11], 1.0f64.to_le_bytes());
-    let samples = start + 41;
-    assert_eq!(bytes[samples - 1..=samples], [0, 0]);
+    let geometries = start + 41;
+    assert_eq!(bytes[geometries - 1..=geometries], [0, 0]);
     assert_invalid(
-        &patched(&bytes, samples, &[1]),
-        "An interpreted sample set stores its samples elsewhere.",
-        "external samples",
+        &patched(&bytes, geometries, &[1]),
+        "An interpreted structure set stores its geometries elsewhere.",
+        "external geometries",
     );
 
-    // A report fewer or more than the samples.
+    // A report fewer or more than the geometries.
     let reported = &bytes[plain.len() - 8..bytes.len() - 8];
     let one = &reported[..reported.len() / 2];
     assert_eq!(one, &reported[one.len()..]);
@@ -297,12 +297,12 @@ fn sweep(bytes: &[u8]) {
 }
 
 #[test]
-fn every_truncation_and_corruption_of_a_sample_set_fails_cleanly() {
+fn every_truncation_and_corruption_of_a_structure_set_fails_cleanly() {
     let set = set();
     sweep(&native::write(&set, NativeWriteOptions::default()).unwrap());
     sweep(
         &native::write(
-            &SampleSetDescription::of(&set),
+            &StructureSetDescription::of(&set),
             NativeWriteOptions::default(),
         )
         .unwrap(),

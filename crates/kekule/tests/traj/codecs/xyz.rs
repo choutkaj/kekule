@@ -92,7 +92,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     support::assert_rejects_unrelated_buffer(&mut reader);
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     let pointer = buffer.positions().values().value().as_ptr();
-    buffer.sample_mut().set_cell(Some(
+    buffer.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
@@ -110,7 +110,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
         .unwrap();
     buffer.set_step(Some(7));
     buffer
-        .sample_mut()
+        .geometry_mut()
         .properties_mut()
         .owner_mut()
         .insert(
@@ -326,7 +326,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     );
     buffer.set_step(None);
     buffer
-        .sample_mut()
+        .geometry_mut()
         .properties_mut()
         .bonds_mut()
         .insert(
@@ -971,7 +971,7 @@ H -0.24 0.927 0
     let (_, report) = write_one_frame(Arc::clone(&topology));
     assert_eq!(report.omissions(), bonds);
 
-    // Path writers and `write_sample_set` return the codec's report; DCD
+    // Path writers and `write_structure_set` return the codec's report; DCD
     // stores coordinates for a separately supplied topology, so it omits
     // nothing.
     for (extension, expected) in [("xyz", &bonds[..]), ("dcd", &[])] {
@@ -987,7 +987,7 @@ H -0.24 0.927 0
         )],
     );
     let path = temporary_path(Some("xyz"));
-    let saved = kekule::traj::io::write_sample_set(&path, &set, Default::default());
+    let saved = kekule::traj::io::write_structure_set(&path, &set, Default::default());
     let _ = std::fs::remove_file(&path);
     assert_eq!(saved.unwrap().omissions(), bonds);
 }

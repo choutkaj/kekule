@@ -181,7 +181,7 @@ pub(super) fn prepare_model(
         order: BondOrder::Dative,
         implied: None,
     }));
-    // A polymer link another sample stretches beyond bonding
+    // A polymer link another geometry stretches beyond bonding
     // distance is stated after all, so its partners are checked too.
     let selectors = ConnectionSelectors::new(&atoms);
     for connection in connections
@@ -600,17 +600,17 @@ fn invalid_b_factor(atom: InstanceAtomId) -> FormatError {
 pub(super) fn validate_sample(
     model: &PreparedModel,
     candidate: &PreparedModel,
-    sample: usize,
+    geometry: usize,
 ) -> Result<(), FormatError> {
     if candidate.entities != model.entities {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
             field: MmcifSampleField::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
             field: MmcifSampleField::StructuralAsymmetry,
         }));
     }
@@ -622,8 +622,8 @@ pub(super) fn validate_sample(
             .collect::<Vec<_>>()
     };
     if bonds(candidate) != bonds(model) {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
             field: MmcifSampleField::Connectivity,
         }));
     }
@@ -634,8 +634,8 @@ pub(super) fn validate_sample(
             .zip(&model.atoms)
             .any(|(left, right)| !same_static_atom_row(left, right))
     {
-        return Err(fail(MmcifWriteIssue::IncompatibleSample {
-            sample,
+        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+            geometry,
             field: MmcifSampleField::AtomSites,
         }));
     }

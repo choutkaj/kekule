@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::structure::{AsModelView, ModelView, Positions, SampleSetError};
+use crate::structure::{AsModelView, ModelView, Positions, StructureSetError};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
@@ -90,7 +90,7 @@ impl MoleculeImager {
     /// use std::sync::Arc;
     ///
     /// use kekule::math::{PeriodicCell, Point3, Vector3};
-    /// use kekule::structure::{Positions, Sample, SampleSet};
+    /// use kekule::structure::{Positions, Geometry, StructureSet};
     /// use kekule::units::{Quantity, NANOMETER};
     /// use kekule::{smiles, topology::Topology};
     /// use kekule::traj::{periodic::MoleculeImager, FrameBuffer, FrameView};
@@ -103,13 +103,13 @@ impl MoleculeImager {
     /// let frames = [0.95, 0.05].map(|x| {
     ///     let points = vec![Point3::new(x, 0.5, 0.5)];
     ///     let positions = Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap();
-    ///     Sample::new(positions).with_cell(cell)
+    ///     Geometry::new(positions).with_cell(cell)
     /// });
-    /// let trajectory = SampleSet::from_samples(Arc::clone(&topology), frames)?;
+    /// let trajectory = StructureSet::from_geometries(Arc::clone(&topology), frames)?;
     ///
     /// let imager = MoleculeImager::new(Arc::clone(&topology));
     /// let mut frame = FrameBuffer::new(topology);
-    /// frame.copy_from(FrameView::from_sample(trajectory.get(1).unwrap())?)?;
+    /// frame.copy_from(FrameView::from_geometry(trajectory.get(1).unwrap())?)?;
     /// imager.image_onto(1, &mut frame, &trajectory.get(0).unwrap())?;
     /// let x = frame.positions().get(0).unwrap().value_in(NANOMETER)?.x;
     /// assert!((x - 1.05).abs() < 1.0e-12);
@@ -412,7 +412,7 @@ impl TrajectoryUnwrapper {
 
 fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), PeriodicError> {
     frame
-        .sample_mut()
+        .geometry_mut()
         .set_positions(positions.values())
-        .map_err(|error| PeriodicError::Publication(Box::new(SampleSetError::Geometry(error))))
+        .map_err(|error| PeriodicError::Publication(Box::new(StructureSetError::Geometry(error))))
 }

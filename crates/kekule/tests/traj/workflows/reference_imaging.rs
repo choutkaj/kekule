@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Forces, Positions, SampleSet, Velocities};
+use kekule::structure::{Forces, Positions, StructureSet, Velocities};
 use kekule::topology::TopologyBuilder;
 use kekule::traj::periodic::{self, MoleculeImager, PeriodicError};
 use kekule::traj::{FrameBuffer, FrameView};
@@ -60,7 +60,7 @@ fn close(actual: &[Point3], expected: &[[f64; 3]]) {
 /// Images `set[frame]` onto `set[reference]` through a buffer, whose
 /// positions and cell are the next ones `recorded`.
 fn imaged(
-    set: &SampleSet,
+    set: &StructureSet,
     frame: usize,
     reference: usize,
     recorded: &mut Recorded,
@@ -68,7 +68,7 @@ fn imaged(
     let imager = MoleculeImager::new(set.shared_topology());
     let mut buffer = FrameBuffer::new(set.shared_topology());
     buffer
-        .copy_from(FrameView::from_sample(set.get(frame).unwrap()).unwrap())
+        .copy_from(FrameView::from_geometry(set.get(frame).unwrap()).unwrap())
         .unwrap();
     imager.image_onto(frame, &mut buffer, &set.get(reference).unwrap())?;
     recorded.check(&(buffer.positions().clone(), buffer.cell().copied()));
@@ -214,7 +214,7 @@ fn imaging_onto_a_reference_requires_the_frame_cell_and_is_transactional() {
     // A frame without a cell has no lattice to image by.
     let mut buffer = FrameBuffer::new(topology.clone());
     buffer
-        .copy_from(FrameView::from_sample(set.get(1).unwrap()).unwrap())
+        .copy_from(FrameView::from_geometry(set.get(1).unwrap()).unwrap())
         .unwrap();
     let snapshot = format!("{buffer:?}");
     assert_eq!(
@@ -243,7 +243,7 @@ fn imaging_onto_a_reference_requires_the_frame_cell_and_is_transactional() {
     );
     let mut buffer = FrameBuffer::new(topology);
     buffer
-        .copy_from(FrameView::from_sample(set.get(0).unwrap()).unwrap())
+        .copy_from(FrameView::from_geometry(set.get(0).unwrap()).unwrap())
         .unwrap();
     let snapshot = format!("{buffer:?}");
     assert_eq!(

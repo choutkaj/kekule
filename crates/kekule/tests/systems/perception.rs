@@ -5,7 +5,9 @@ use std::sync::{Arc, Weak};
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{Distribution, Members, Model, Partition, Positions, Sample, SampleSet};
+use kekule::structure::{
+    Distribution, Geometry, Members, Model, Partition, Positions, StructureSet,
+};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
@@ -283,9 +285,9 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 }
 
 #[test]
-fn sample_set_perception_preserves_samples_weights_and_set_properties() {
+fn structure_set_perception_preserves_samples_weights_and_set_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
-    let mut member = Sample::new(Positions::zeros(6));
+    let mut member = Geometry::new(Positions::zeros(6));
     member.set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
@@ -306,8 +308,9 @@ fn sample_set_perception_preserves_samples_weights_and_set_properties() {
             Some(PropertyValue::Int(11)),
         )
         .unwrap();
-    let second = Sample::new(Positions::zeros(6));
-    let mut ensemble = SampleSet::from_samples(Arc::clone(&topology), [member, second]).unwrap();
+    let second = Geometry::new(Positions::zeros(6));
+    let mut ensemble =
+        StructureSet::from_geometries(Arc::clone(&topology), [member, second]).unwrap();
     ensemble
         .set_distribution(Some(
             Distribution::new(Members::All, Partition::one_state(2))
@@ -352,14 +355,14 @@ fn sample_set_perception_preserves_samples_weights_and_set_properties() {
         assert_eq!(member.properties(), original.properties());
         assert_eq!(member.weight(), original.weight());
     }
-    let mut empty = SampleSet::new(topology);
+    let mut empty = StructureSet::new(topology);
     empty.perceive().unwrap();
     assert_default_perception(empty.topology());
     assert_eq!(empty.iter().len(), 0);
 }
 
 #[test]
-fn topology_model_and_sample_set_failure_preserve_complete_previous_state() {
+fn topology_model_and_structure_set_failure_preserve_complete_previous_state() {
     let topology = failing_topology();
     let previous = installed(&topology);
     let error = topology.perceived().unwrap_err();
@@ -387,9 +390,9 @@ fn topology_model_and_sample_set_failure_preserve_complete_previous_state() {
     assert_eq!(model, before);
     assert_eq!(installed(model.topology()), previous);
 
-    let mut ensemble = SampleSet::from_samples(
+    let mut ensemble = StructureSet::from_geometries(
         Arc::clone(&topology),
-        [Sample::new(Positions::zeros(topology.atom_count()))],
+        [Geometry::new(Positions::zeros(topology.atom_count()))],
     )
     .unwrap();
     ensemble
@@ -530,9 +533,9 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     .unwrap();
     let model = document.interpret(Default::default()).unwrap().into_model();
     let ensemble = document
-        .interpret_sample_set(Default::default())
+        .interpret_structure_set(Default::default())
         .unwrap()
-        .into_sample_set();
+        .into_structure_set();
     assert_unperceived(model.topology());
     let mut expected = model.clone();
     expected.perceive().unwrap();

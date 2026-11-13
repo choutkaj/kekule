@@ -1,7 +1,7 @@
 //! Frame state the trajectory writers leave out or give frames themselves.
 
 use crate::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
-use crate::structure::Sample;
+use crate::structure::Geometry;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use crate::traj::{
@@ -93,14 +93,14 @@ pub(crate) fn unrepresentable_frame_state<const N: usize>(
     Ok(fields.map(|(present, field, _)| omission(field, usize::from(present))))
 }
 
-/// Whether `sample` records an occupancy, and whether it records a
+/// Whether `geometry` records an occupancy, and whether it records a
 /// B-factor: the site fields no trajectory format stores.
-pub(crate) fn site_fields(sample: &Sample) -> (bool, bool) {
+pub(crate) fn site_fields(geometry: &Geometry) -> (bool, bool) {
     (
-        sample
+        geometry
             .occupancies()
             .is_some_and(|values| values.iter().any(Option::is_some)),
-        sample
+        geometry
             .b_factors()
             .is_some_and(|values| values.value().iter().any(Option::is_some)),
     )
@@ -134,7 +134,7 @@ fn structure_field(field: TrajectoryField) -> StructureField {
     }
 }
 
-/// The trajectory field that names the sample state `field`.
+/// The trajectory field that names the geometry state `field`.
 pub(crate) fn sample_field(field: StructureField) -> TrajectoryField {
     match field {
         StructureField::Weight => TrajectoryField::Weight,

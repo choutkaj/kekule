@@ -1,4 +1,4 @@
-//! One sample of a [`super::SampleSet`] and the structure it shares.
+//! One geometry of a [`super::StructureSet`] and the structure it shares.
 
 use std::sync::Arc;
 
@@ -17,10 +17,10 @@ use crate::structure::{
     DenseArrayError, Forces, GeometryError, Model, Positions, StructureKind, Velocities,
 };
 
-/// The structure state of a sample, shared between clones and copied on
+/// The structure state of a geometry, shared between clones and copied on
 /// write.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct SampleStructure {
+pub(crate) struct GeometryState {
     pub(crate) positions: Positions,
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) occupancies: AtomScalars,
@@ -30,7 +30,7 @@ pub(crate) struct SampleStructure {
     pub(crate) forces: Option<Forces>,
 }
 
-impl SampleStructure {
+impl GeometryState {
     /// Positions alone: no cell, site fields, properties, or dynamics.
     pub(crate) fn new(positions: Positions) -> Self {
         let properties = GeometryProperties::new(positions.len());
@@ -168,90 +168,90 @@ impl SampleStructure {
     }
 }
 
-/// One sample of a [`super::SampleSet`]: positions in dense topology atom
+/// One geometry of a [`super::StructureSet`]: positions in dense topology atom
 /// order, an optional periodic cell, structure properties, and, only when
 /// stated, occupancies, B-factors, velocities, and forces.
 ///
-/// A sample has no place and no weight: an order's values and a
-/// distribution's weights belong to the set, so a sample taken out of its set
-/// claims neither. The sample carries no topology. It is *bound* to one when
+/// A geometry has no place and no weight: an order's values and a
+/// distribution's weights belong to the set, so a geometry taken out of its set
+/// claims neither. The geometry carries no topology. It is *bound* to one when
 /// it has a property row per atom and bond of that topology: a set binds the
-/// samples it takes, and [`Self::bind`] binds a sample outside a set, as a
+/// geometries it takes, and [`Self::bind`] binds a geometry outside a set, as a
 /// [`FrameView`](crate::traj::FrameView) of it needs.
 ///
-/// The structure is shared storage: cloning a sample, and therefore a set,
-/// copies no coordinates. Editing a sample whose storage is shared copies
-/// that one sample (copy on write), so the other holders are unaffected. An
+/// The structure is shared storage: cloning a geometry, and therefore a set,
+/// copies no coordinates. Editing a geometry whose storage is shared copies
+/// that one geometry (copy on write), so the other holders are unaffected. An
 /// edit that fails, and one that changes nothing such as clearing absent
 /// velocities or setting the same cell, keeps the storage shared.
 ///
 /// ```
-/// use kekule::structure::{Positions, Sample};
-/// let sample = Sample::new(Positions::zeros(3));
-/// let mut moved = sample.clone();
-/// assert!(moved.shares_structure_with(&sample));
+/// use kekule::structure::{Positions, Geometry};
+/// let geometry = Geometry::new(Positions::zeros(3));
+/// let mut moved = geometry.clone();
+/// assert!(moved.shares_structure_with(&geometry));
 /// moved.set_occupancies(Some(vec![Some(0.5); 3]))?;
-/// assert!(!moved.shares_structure_with(&sample));
-/// assert_eq!(sample.occupancies(), None);
+/// assert!(!moved.shares_structure_with(&geometry));
+/// assert_eq!(geometry.occupancies(), None);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
-pub struct Sample {
-    structure: Arc<SampleStructure>,
+pub struct Geometry {
+    structure: Arc<GeometryState>,
 }
 
-impl Sample {
-    /// A non-periodic sample without properties, occupancies, B-factors,
+impl Geometry {
+    /// A non-periodic geometry without properties, occupancies, B-factors,
     /// velocities, or forces.
     ///
-    /// The sample is bound to no topology: it has no bond rows. A set binds
+    /// The geometry is bound to no topology: it has no bond rows. A set binds
     /// it when it takes it; bind it with [`Self::bind`] to use it outside a
     /// set, such as in a [`FrameView`](crate::traj::FrameView) of a topology
     /// with bonds.
     pub fn new(positions: Positions) -> Self {
-        Self::from_structure(Arc::new(SampleStructure::new(positions)))
+        Self::from_structure(Arc::new(GeometryState::new(positions)))
     }
 
-    /// A sample holding a model's positions, cell, occupancies, B-factors,
+    /// A geometry holding a model's positions, cell, occupancies, B-factors,
     /// and structure properties, moving them without copying; the model's
     /// topology is dropped.
     pub fn from_model(model: Model) -> Self {
-        Self::from_structure(Arc::new(SampleStructure::from_model(model)))
+        Self::from_structure(Arc::new(GeometryState::from_model(model)))
     }
 
-    pub(crate) const fn from_structure(structure: Arc<SampleStructure>) -> Self {
+    pub(crate) const fn from_structure(structure: Arc<GeometryState>) -> Self {
         Self { structure }
     }
 
-    pub(crate) fn structure(&self) -> &Arc<SampleStructure> {
+    pub(crate) fn structure(&self) -> &Arc<GeometryState> {
         &self.structure
     }
 
-    pub(crate) fn structure_mut(&mut self) -> &mut Arc<SampleStructure> {
+    pub(crate) fn structure_mut(&mut self) -> &mut Arc<GeometryState> {
         &mut self.structure
     }
 
     /// The structure for editing in place: one shared with a clone is
     /// copied first, once. The caller keeps it bound and valid.
-    pub(crate) fn structure_in_place(&mut self) -> &mut SampleStructure {
+    pub(crate) fn structure_in_place(&mut self) -> &mut GeometryState {
         Arc::make_mut(&mut self.structure)
     }
 
-    /// Binds the sample to `topology`, as a set binds the samples it takes:
+    /// Binds the geometry to `topology`, as a set binds the geometries it takes:
     /// checks that it has a position per atom, and gives it a property row
     /// per bond unless it has them already. Binding never copies
-    /// positions of a sample whose storage only it holds, and a bound
-    /// sample stays as it is, sharing its storage.
+    /// positions of a geometry whose storage only it holds, and a bound
+    /// geometry stays as it is, sharing its storage.
     ///
     /// ```
-    /// use kekule::structure::{Positions, Sample};
+    /// use kekule::structure::{Positions, Geometry};
     /// use kekule::traj::FrameView;
     ///
     /// let topology = kekule::smiles::to_topology("CO")?;
-    /// let mut sample = Sample::new(Positions::zeros(topology.atom_count()));
-    /// assert!(FrameView::new(&topology, &sample, None, None).is_err());
-    /// sample.bind(&topology)?;
-    /// let frame = FrameView::new(&topology, &sample, None, Some(0))?;
+    /// let mut geometry = Geometry::new(Positions::zeros(topology.atom_count()));
+    /// assert!(FrameView::new(&topology, &geometry, None, None).is_err());
+    /// geometry.bind(&topology)?;
+    /// let frame = FrameView::new(&topology, &geometry, None, Some(0))?;
     /// assert_eq!(frame.step(), Some(0));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -262,10 +262,10 @@ impl Sample {
     /// [`GeometryError::BondCountMismatch`] for bond rows of another
     /// topology. A failed binding changes nothing.
     pub fn bind(&mut self, topology: &Topology) -> Result<(), GeometryError> {
-        SampleStructure::bind(&mut self.structure, topology)
+        GeometryState::bind(&mut self.structure, topology)
     }
 
-    /// This sample projected onto the dense atom and bond rows of a
+    /// This geometry projected onto the dense atom and bond rows of a
     /// topology subset.
     pub(crate) fn projected(
         &self,
@@ -286,7 +286,7 @@ impl Sample {
     /// Moves every position by `shift` in place, copying a shared structure
     /// once; the cell, velocities, and forces do not change under a
     /// translation. On failure some positions have moved, so the caller
-    /// drops the sample.
+    /// drops the geometry.
     pub(crate) fn translate_in_place(&mut self, shift: Vector3) -> Result<(), GeometryError> {
         for (index, point) in self.positions_in_place().iter_mut().enumerate() {
             *point = *point + shift;
@@ -299,7 +299,7 @@ impl Sample {
 
     /// Applies a rigid transform in place, as
     /// [`Self::apply_rigid_transform`] does, copying a shared structure
-    /// once. On failure the sample is partly transformed, so the caller
+    /// once. On failure the geometry is partly transformed, so the caller
     /// drops it.
     pub(crate) fn transform_in_place(
         &mut self,
@@ -324,7 +324,7 @@ impl Sample {
         Ok(())
     }
 
-    /// Returns this sample with a periodic cell.
+    /// Returns this geometry with a periodic cell.
     #[must_use]
     pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
         self.set_cell(Some(cell));
@@ -332,24 +332,24 @@ impl Sample {
     }
 
     /// Number of atoms, the length of every dense per-atom array of the
-    /// sample.
+    /// geometry.
     pub fn atom_count(&self) -> usize {
         self.structure.positions.len()
     }
 
-    /// Whether this sample and `other` share one structure's storage, so
+    /// Whether this geometry and `other` share one structure's storage, so
     /// that neither has copied the other's coordinates. Clones share until
     /// one of them is edited.
     pub fn shares_structure_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.structure, &other.structure)
     }
 
-    /// Per-atom velocities (nm/ps), or `None` when the sample has none.
+    /// Per-atom velocities (nm/ps), or `None` when the geometry has none.
     pub fn velocities(&self) -> Option<&Velocities> {
         self.structure.velocities.as_ref()
     }
 
-    /// Per-atom forces (kJ/(mol·nm)), or `None` when the sample has none.
+    /// Per-atom forces (kJ/(mol·nm)), or `None` when the geometry has none.
     pub fn forces(&self) -> Option<&Forces> {
         self.structure.forces.as_ref()
     }
@@ -407,7 +407,7 @@ impl Sample {
         self.edit(|structure| Ok(structure.positions.set(atom.index(), position)?))
     }
 
-    /// Replaces the periodic cell; `None` makes the sample non-periodic.
+    /// Replaces the periodic cell; `None` makes the geometry non-periodic.
     /// Positions are not wrapped or rescaled.
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
         if self.structure.cell != cell {
@@ -417,7 +417,7 @@ impl Sample {
 
     /// Replaces every structure annotation with rows of the same
     /// dimensions, for example ones copied from another structure of the
-    /// same topology. A sample not yet in a set accepts no bond rows.
+    /// same topology. A geometry not yet in a set accepts no bond rows.
     pub fn set_properties(&mut self, properties: GeometryProperties) -> Result<(), GeometryError> {
         check_property_rows(
             self.structure.positions.len(),
@@ -493,7 +493,7 @@ impl Sample {
         Ok(())
     }
 
-    fn storage_ref(&self) -> &SampleStructure {
+    fn storage_ref(&self) -> &GeometryState {
         &self.structure
     }
 
@@ -502,12 +502,12 @@ impl Sample {
     /// edit keeps the structure shared.
     fn edit<R>(
         &mut self,
-        edit: impl FnOnce(&mut SampleStructure) -> Result<R, GeometryError>,
+        edit: impl FnOnce(&mut GeometryState) -> Result<R, GeometryError>,
     ) -> Result<R, GeometryError> {
         if let Some(owned) = Arc::get_mut(&mut self.structure) {
             return edit(owned);
         }
-        let mut copy = SampleStructure::clone(&self.structure);
+        let mut copy = GeometryState::clone(&self.structure);
         let result = edit(&mut copy)?;
         self.structure = Arc::new(copy);
         Ok(result)
@@ -517,51 +517,51 @@ impl Sample {
     site_readers!();
 }
 
-/// Dimension-preserving mutable access to one sample of a
-/// [`super::SampleSet`].
+/// Dimension-preserving mutable access to one geometry of a
+/// [`super::StructureSet`].
 ///
 /// Reads use `Deref`. There is deliberately no `DerefMut`; replace a whole
-/// sample through [`super::SampleSet::replace`]. The sample's place and
-/// weight belong to the set ([`super::SampleSet::set_place`],
+/// geometry through [`super::StructureSet::replace`]. The geometry's place and
+/// weight belong to the set ([`super::StructureSet::set_place`],
 /// [`super::DistributionMut::set_weight`]).
 #[derive(Debug)]
-pub struct SampleMut<'a> {
-    sample: &'a mut Sample,
+pub struct GeometryMut<'a> {
+    geometry: &'a mut Geometry,
 }
 
-impl<'a> SampleMut<'a> {
-    pub(crate) fn new(sample: &'a mut Sample) -> Self {
-        Self { sample }
+impl<'a> GeometryMut<'a> {
+    pub(crate) fn new(geometry: &'a mut Geometry) -> Self {
+        Self { geometry }
     }
 }
 
-impl std::ops::Deref for SampleMut<'_> {
-    type Target = Sample;
+impl std::ops::Deref for GeometryMut<'_> {
+    type Target = Geometry;
 
     fn deref(&self) -> &Self::Target {
-        self.sample
+        self.geometry
     }
 }
 
-impl SampleMut<'_> {
-    /// Sets or clears velocities; see [`Sample::set_velocities`].
+impl GeometryMut<'_> {
+    /// Sets or clears velocities; see [`Geometry::set_velocities`].
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), GeometryError> {
-        self.sample.set_velocities(velocities)
+        self.geometry.set_velocities(velocities)
     }
 
-    /// Sets or clears forces; see [`Sample::set_forces`].
+    /// Sets or clears forces; see [`Geometry::set_forces`].
     pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), GeometryError> {
-        self.sample.set_forces(forces)
+        self.geometry.set_forces(forces)
     }
 
     /// Removes velocities, returning them.
     pub fn take_velocities(&mut self) -> Option<Velocities> {
-        self.sample.take_velocities()
+        self.geometry.take_velocities()
     }
 
     /// Removes forces, returning them.
     pub fn take_forces(&mut self) -> Option<Forces> {
-        self.sample.take_forces()
+        self.geometry.take_forces()
     }
 
     /// Applies a rigid transform transactionally: positions move; the cell,
@@ -570,73 +570,73 @@ impl SampleMut<'_> {
         &mut self,
         transform: &RigidTransform,
     ) -> Result<(), GeometryError> {
-        self.sample.apply_rigid_transform(transform)
+        self.geometry.apply_rigid_transform(transform)
     }
 
-    /// Replaces every position; see [`Sample::set_positions`].
+    /// Replaces every position; see [`Geometry::set_positions`].
     pub fn set_positions<T: AsRef<[Point3]>>(
         &mut self,
         positions: Quantity<T>,
     ) -> Result<(), GeometryError> {
-        self.sample.set_positions(positions)
+        self.geometry.set_positions(positions)
     }
 
-    /// Sets one position; see [`Sample::set_position_at`].
+    /// Sets one position; see [`Geometry::set_position_at`].
     pub fn set_position_at(
         &mut self,
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
     ) -> Result<(), GeometryError> {
-        self.sample.set_position_at(atom, position)
+        self.geometry.set_position_at(atom, position)
     }
 
-    /// Replaces the periodic cell; see [`Sample::set_cell`].
+    /// Replaces the periodic cell; see [`Geometry::set_cell`].
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        self.sample.set_cell(cell);
+        self.geometry.set_cell(cell);
     }
 
-    /// Replaces every structure annotation; see [`Sample::set_properties`].
+    /// Replaces every structure annotation; see [`Geometry::set_properties`].
     pub fn set_properties(&mut self, properties: GeometryProperties) -> Result<(), GeometryError> {
-        self.sample.set_properties(properties)
+        self.geometry.set_properties(properties)
     }
 
     /// Length-preserving mutable access to structure annotations; see
-    /// [`Sample::properties_mut`].
+    /// [`Geometry::properties_mut`].
     pub fn properties_mut(&mut self) -> GeometryPropertiesMut<'_> {
-        self.sample.properties_mut()
+        self.geometry.properties_mut()
     }
 
-    /// Sets or clears one occupancy; see [`Sample::set_occupancy`].
+    /// Sets or clears one occupancy; see [`Geometry::set_occupancy`].
     pub fn set_occupancy(
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<f64>,
     ) -> Result<(), GeometryError> {
-        self.sample.set_occupancy(atom, value)
+        self.geometry.set_occupancy(atom, value)
     }
 
-    /// Replaces or clears every occupancy; see [`Sample::set_occupancies`].
+    /// Replaces or clears every occupancy; see [`Geometry::set_occupancies`].
     pub fn set_occupancies(
         &mut self,
         values: Option<Vec<Option<f64>>>,
     ) -> Result<(), GeometryError> {
-        self.sample.set_occupancies(values)
+        self.geometry.set_occupancies(values)
     }
 
-    /// Sets or clears one B-factor; see [`Sample::set_b_factor`].
+    /// Sets or clears one B-factor; see [`Geometry::set_b_factor`].
     pub fn set_b_factor(
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<Quantity<f64>>,
     ) -> Result<(), GeometryError> {
-        self.sample.set_b_factor(atom, value)
+        self.geometry.set_b_factor(atom, value)
     }
 
-    /// Replaces or clears every B-factor; see [`Sample::set_b_factors`].
+    /// Replaces or clears every B-factor; see [`Geometry::set_b_factors`].
     pub fn set_b_factors(
         &mut self,
         values: Option<Quantity<Vec<Option<f64>>>>,
     ) -> Result<(), GeometryError> {
-        self.sample.set_b_factors(values)
+        self.geometry.set_b_factors(values)
     }
 }

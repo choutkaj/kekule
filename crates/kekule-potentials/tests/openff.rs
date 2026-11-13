@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Distribution, Members, Model, ModelView, Partition, Positions};
-use kekule::structure::{Order, Sample, SampleSet, TimeAxis};
+use kekule::structure::{Geometry, Order, StructureSet, TimeAxis};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::traj::FrameBuffer;
 use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
@@ -327,7 +327,7 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
         potential.energy(periodic.as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
-    let set = SampleSet::from_models([periodic]).unwrap();
+    let set = StructureSet::from_models([periodic]).unwrap();
     assert_eq!(
         potential.evaluate(set.get(0).unwrap().as_model_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
@@ -341,7 +341,7 @@ fn distribution_members_and_trajectory_frames_evaluate_like_models() {
     let model = model(&topology);
     let expected = potential.evaluate(model.as_model_view()).unwrap();
 
-    let mut members = SampleSet::from_models([model.clone()]).unwrap();
+    let mut members = StructureSet::from_models([model.clone()]).unwrap();
     members
         .set_distribution(Some(
             Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
@@ -353,8 +353,8 @@ fn distribution_members_and_trajectory_frames_evaluate_like_models() {
             .unwrap(),
         expected
     );
-    let frame = Sample::new(model.positions().clone());
-    let mut trajectory = SampleSet::from_samples(Arc::clone(&topology), [frame]).unwrap();
+    let frame = Geometry::new(model.positions().clone());
+    let mut trajectory = StructureSet::from_geometries(Arc::clone(&topology), [frame]).unwrap();
     trajectory
         .set_order(Some(Order::Time(TimeAxis::default())))
         .unwrap();
@@ -366,7 +366,7 @@ fn distribution_members_and_trajectory_frames_evaluate_like_models() {
     );
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
-        .sample_mut()
+        .geometry_mut()
         .set_positions(model.positions().values())
         .unwrap();
     assert_eq!(

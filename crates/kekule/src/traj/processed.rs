@@ -1,4 +1,4 @@
-//! Samples processed as they are read: [`Processed`] and its
+//! Geometries processed as they are read: [`Processed`] and its
 //! [`ProcessingSteps`].
 
 use std::fmt;
@@ -8,14 +8,14 @@ use crate::alignment::{self, AlignmentOptions};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::OwnerProperties;
 use crate::structure::{
-    subset_rows, DenseArrayError, Distribution, GeometryError, Model, ModelError, Order, Positions,
-    Sample, SampleRead, SampleReadError, SampleView,
+    subset_rows, DenseArrayError, Distribution, Geometry, GeometryError, GeometryView, Model,
+    ModelError, Order, Positions, StructureSetRead, StructureSetReadError,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
 
 use super::periodic::{MoleculeImager, PeriodicError};
 
-/// The steps a [`Processed`] reader runs on every sample as it is read.
+/// The steps a [`Processed`] reader runs on every geometry as it is read.
 /// Each is optional; they run in this order:
 ///
 /// 1. Make whole ([`Self::with_whole`]) or wrap ([`Self::with_wrap`]).
@@ -23,40 +23,40 @@ use super::periodic::{MoleculeImager, PeriodicError};
 ///    [`super::periodic::make_molecules_whole`] does. Wrapping makes every
 ///    molecule whole and images the molecules around the anchor atoms, as
 ///    [`super::periodic::image_molecules`] does: the molecules that hold an
-///    anchor atom are imaged next to each other, the sample is translated
+///    anchor atom are imaged next to each other, the geometry is translated
 ///    so that the centroid of their atoms lies at the center of the cell
 ///    along every periodic axis, and every other molecule moves to its
 ///    periodic image nearest that centroid, so it lies within half a cell
-///    of it. A sample without a cell skips this step, where those two
+///    of it. A geometry without a cell skips this step, where those two
 ///    functions fail with
 ///    [`PeriodicError::MissingCell`](super::periodic::PeriodicError::MissingCell),
 ///    so a trajectory whose frames have no box is read as stored;
-///    [`Processed::skipped_periodic_steps`] tells such a sample.
-/// 2. Center ([`Self::with_center`]): the sample translated so that the
+///    [`Processed::skipped_periodic_steps`] tells such a geometry.
+/// 2. Center ([`Self::with_center`]): the geometry translated so that the
 ///    centroid of the centered atoms lies at the center of its cell, half
 ///    the sum of all three cell vectors, periodic or not. Centering on the
 ///    anchor atoms after wrapping moves them to where wrapping put them, so
-///    the wrapped molecules stay in the cell. A sample without a cell is
-///    translated so that the centroid lies where it lies in sample 0 of the
-///    reader below, as stored; in a reader where only some samples have a
+///    the wrapped molecules stay in the cell. A geometry without a cell is
+///    translated so that the centroid lies where it lies in geometry 0 of the
+///    reader below, as stored; in a reader where only some geometries have a
 ///    cell, the two kinds are centered on different targets.
-/// 3. Fit ([`Self::with_fit`]): the sample superposed onto a reference
+/// 3. Fit ([`Self::with_fit`]): the geometry superposed onto a reference
 ///    through the fitted atoms, as
 ///    [`FrameSuperposer`](super::analysis::FrameSuperposer) does with
 ///    default options; positions move, and the cell, velocities, and forces
 ///    rotate.
 /// 4. Smooth ([`Self::with_smoothing`]): positions averaged over a window of
-///    samples centered on the sample, fewer at the ends, each processed by
-///    steps 1–3. A sample of the window with a cell has each of its
+///    geometries centered on the geometry, fewer at the ends, each processed by
+///    steps 1–3. A geometry of the window with a cell has each of its
 ///    molecules moved to the periodic image nearest the same molecule of
-///    the smoothed sample first, as [`MoleculeImager::image_onto`] does, so
-///    that a molecule crossing the cell between samples is averaged whole.
+///    the smoothed geometry first, as [`MoleculeImager::image_onto`] does, so
+///    that a molecule crossing the cell between geometries is averaged whole.
 ///    Smoothing therefore expects whole molecules: make them whole or wrap
-///    them. Everything but the positions is the sample's own.
-/// 5. Subset ([`Self::with_subset`]): the sample projected onto the atoms of
+///    them. Everything but the positions is the geometry's own.
+/// 5. Subset ([`Self::with_subset`]): the geometry projected onto the atoms of
 ///    a topology subset, which becomes the reader's topology.
 ///
-/// Analyses read samples without smoothing, which is for display: they read
+/// Analyses read geometries without smoothing, which is for display: they read
 /// a reader with [`Self::without_smoothing`].
 ///
 /// ```
@@ -67,7 +67,7 @@ use super::periodic::{MoleculeImager, PeriodicError};
 /// let all = AtomSelection::all(topology);
 /// let steps = ProcessingSteps::default()
 ///     .with_whole(true)
-///     .with_fit(all, FitReference::Sample(0))
+///     .with_fit(all, FitReference::Geometry(0))
 ///     .with_smoothing(5)?;
 /// assert_eq!(steps.smoothing(), Some(5));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -82,11 +82,11 @@ pub struct ProcessingSteps {
     subset: Option<AtomSelection>,
 }
 
-/// What [`ProcessingSteps::with_fit`] superposes the samples onto.
+/// What [`ProcessingSteps::with_fit`] superposes the geometries onto.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FitReference {
-    /// Sample `n` of the same reader, after the steps before fitting.
-    Sample(usize),
+    /// Geometry `n` of the same reader, after the steps before fitting.
+    Geometry(usize),
     /// These positions, one per atom of the reader's topology.
     Positions(Positions),
 }
@@ -133,21 +133,21 @@ impl ProcessingSteps {
         self
     }
 
-    /// Centers every sample on the centroid of `atoms`.
+    /// Centers every geometry on the centroid of `atoms`.
     #[must_use]
     pub fn with_center(mut self, atoms: AtomSelection) -> Self {
         self.center = Some(atoms);
         self
     }
 
-    /// Superposes every sample onto `reference` through `atoms`.
+    /// Superposes every geometry onto `reference` through `atoms`.
     #[must_use]
     pub fn with_fit(mut self, atoms: AtomSelection, reference: FitReference) -> Self {
         self.fit = Some((atoms, reference));
         self
     }
 
-    /// Averages positions over `window` samples centered on each one.
+    /// Averages positions over `window` geometries centered on each one.
     ///
     /// # Errors
     ///
@@ -160,7 +160,7 @@ impl ProcessingSteps {
         Ok(self)
     }
 
-    /// Projects every sample onto the atoms of `atoms`, after the other
+    /// Projects every geometry onto the atoms of `atoms`, after the other
     /// steps.
     #[must_use]
     pub fn with_subset(mut self, atoms: AtomSelection) -> Self {
@@ -174,19 +174,19 @@ impl ProcessingSteps {
     /// ```
     /// use std::sync::Arc;
     ///
-    /// use kekule::structure::{Positions, Sample, SampleRead, SampleSet};
+    /// use kekule::structure::{Positions, Geometry, StructureSetRead, StructureSet};
     /// use kekule::traj::{Processed, ProcessingSteps};
     ///
     /// let topology = kekule::smiles::to_topology("CCO")?;
-    /// let mut set = SampleSet::new(topology.clone());
+    /// let mut set = StructureSet::new(topology.clone());
     /// for _ in 0..3 {
-    ///     set.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+    ///     set.push(Geometry::new(Positions::zeros(topology.atom_count())), None)?;
     /// }
-    /// let set: Arc<dyn SampleRead> = Arc::new(set);
+    /// let set: Arc<dyn StructureSetRead> = Arc::new(set);
     /// let steps = ProcessingSteps::default().with_whole(true).with_smoothing(3)?;
     /// let shown = Processed::new(Arc::clone(&set), steps.clone())?;
     /// // A background analysis owns its reader.
-    /// let analysed: Arc<dyn SampleRead> =
+    /// let analysed: Arc<dyn StructureSetRead> =
     ///     Arc::new(Processed::new(set, steps.without_smoothing())?);
     /// assert_eq!(analysed.len(), shown.len());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -229,7 +229,7 @@ impl ProcessingSteps {
         self.subset.as_ref()
     }
 
-    /// Whether there is no step, so samples are read as stored.
+    /// Whether there is no step, so geometries are read as stored.
     pub const fn is_empty(&self) -> bool {
         !self.whole
             && self.wrap.is_none()
@@ -244,7 +244,7 @@ impl ProcessingSteps {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ProcessingError {
-    /// A smoothing window is an odd number of samples.
+    /// A smoothing window is an odd number of geometries.
     InvalidWindow {
         /// The rejected window.
         window: usize,
@@ -259,11 +259,11 @@ pub enum ProcessingError {
         /// The step.
         step: ProcessingStep,
     },
-    /// The reference sample does not exist.
+    /// The reference geometry does not exist.
     ReferenceOutOfRange {
-        /// The reference sample index.
+        /// The reference geometry index.
         index: usize,
-        /// The number of samples.
+        /// The number of geometries.
         len: usize,
     },
     /// The reference positions do not fit the reader's topology; see the
@@ -271,9 +271,9 @@ pub enum ProcessingError {
     Reference(Box<ModelError>),
     /// The subset cannot be made; see the source.
     Subset(TopologySubsetError),
-    /// A step cannot process the first sample or the reference; see the
+    /// A step cannot process the first geometry or the reference; see the
     /// source.
-    Sample(SampleReadError),
+    Geometry(StructureSetReadError),
 }
 
 impl fmt::Display for ProcessingError {
@@ -281,7 +281,7 @@ impl fmt::Display for ProcessingError {
         match self {
             Self::InvalidWindow { window } => write!(
                 formatter,
-                "A smoothing window is an odd number of samples, not {window}."
+                "A smoothing window is an odd number of geometries, not {window}."
             ),
             Self::SelectionTopologyMismatch { step } => {
                 write!(formatter, "The atoms of {step} belong to another topology.")
@@ -291,14 +291,14 @@ impl fmt::Display for ProcessingError {
             }
             Self::ReferenceOutOfRange { index, len } => write!(
                 formatter,
-                "The reference sample {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*len, "sample", "samples")
+                "The reference geometry {index} does not exist. There are {}.",
+                crate::diagnostics::counted(*len, "geometry", "geometries")
             ),
             Self::Reference(_) => {
                 formatter.write_str("The reference positions do not fit the topology.")
             }
             Self::Subset(error) => fmt::Display::fmt(error, formatter),
-            Self::Sample(error) => fmt::Display::fmt(error, formatter),
+            Self::Geometry(error) => fmt::Display::fmt(error, formatter),
         }
     }
 }
@@ -308,79 +308,79 @@ impl std::error::Error for ProcessingError {
         match self {
             Self::Reference(error) => Some(error.as_ref()),
             Self::Subset(error) => std::error::Error::source(error),
-            Self::Sample(error) => std::error::Error::source(error),
+            Self::Geometry(error) => std::error::Error::source(error),
             _ => None,
         }
     }
 }
 
-impl From<SampleReadError> for ProcessingError {
-    fn from(error: SampleReadError) -> Self {
-        Self::Sample(error)
+impl From<StructureSetReadError> for ProcessingError {
+    fn from(error: StructureSetReadError) -> Self {
+        Self::Geometry(error)
     }
 }
 
-/// The samples of another reader with [`ProcessingSteps`] run on each as it
+/// The geometries of another reader with [`ProcessingSteps`] run on each as it
 /// is read.
 ///
-/// Reading sample `i` reads sample `i` of the reader below, and with
-/// smoothing the samples of its window, and runs the steps on them in the
-/// order [`ProcessingSteps`] gives. A host caches samples in front of this
+/// Reading geometry `i` reads geometry `i` of the reader below, and with
+/// smoothing the geometries of its window, and runs the steps on them in the
+/// order [`ProcessingSteps`] gives. A host caches geometries in front of this
 /// reader when it reads them again. The order and the distribution are
 /// those of the reader below.
 ///
-/// Only sample 0 is kept: [`Self::new`] processes it, [`SampleRead::peek`]
-/// lends it, and [`SampleRead::read`] returns it, so a host's cache in front
+/// Only geometry 0 is kept: [`Self::new`] processes it, [`StructureSetRead::peek`]
+/// lends it, and [`StructureSetRead::read`] returns it, so a host's cache in front
 /// of this reader takes it without processing it again. It stays as it was
 /// processed then:
 ///
-/// - Over a file later cut short, sample 0 still reads while the samples
+/// - Over a file later cut short, geometry 0 still reads while the geometries
 ///   after it fail.
-/// - With smoothing over a reader whose length grows, sample 0 keeps the
+/// - With smoothing over a reader whose length grows, geometry 0 keeps the
 ///   window the reader's length allowed then.
 /// - It is returned shared, so a `Processed` reader on top of this one
 ///   copies it once more when its steps change it.
-/// - Each reader keeps one whole sample, with its velocities and forces:
+/// - Each reader keeps one whole geometry, with its velocities and forces:
 ///   about 72 MB at a million atoms, and as much again for a second reader
 ///   with [`ProcessingSteps::without_smoothing`].
 ///
-/// The steps change the sample they read in place. A sample the reader
+/// The steps change the geometry they read in place. A geometry the reader
 /// below owns alone, as a set in a file returns it, is not copied by
 /// making whole, wrapping, centering, or fitting; one it shares, as a set
-/// in memory, a host's cache, or sample 0 of another `Processed` reader
-/// returns it, is copied once, by the first of them that runs. Smoothing adds the samples of its window into one sum
+/// in memory, a host's cache, or geometry 0 of another `Processed` reader
+/// returns it, is copied once, by the first of them that runs. Smoothing adds the geometries of its window into one sum
 /// without copying them, and the subset copies the atoms it keeps.
 ///
-/// Analyses read the samples without smoothing, which is for display,
+/// Analyses read the geometries without smoothing, which is for display,
 /// through a second reader with [`ProcessingSteps::without_smoothing`]. To
-/// cache the samples that smoothing averages, a host puts its cache in
+/// cache the geometries that smoothing averages, a host puts its cache in
 /// front of a reader without smoothing and smooths through another
 /// `Processed` reader, with smoothing alone, in front of the cache.
 ///
 /// The reader below can be owned, borrowed (`&R`), or shared (`Arc<R>`),
-/// such as an `Arc<dyn SampleRead>`. A host following a growing file takes
+/// such as an `Arc<dyn StructureSetRead>`. A host following a growing file takes
 /// the reader below out with [`Self::into_parts`], refreshes it, and makes
 /// the reader again with [`Self::new`].
 ///
 /// ```
 /// use kekule::math::Point3;
-/// use kekule::structure::{Positions, Sample, SampleRead, SampleSet};
+/// use kekule::structure::{Positions, Geometry, StructureSetRead, StructureSet};
 /// use kekule::topology::AtomSelection;
 /// use kekule::traj::{FitReference, Processed, ProcessingSteps};
 /// use kekule::units::{Quantity, NANOMETER};
 ///
 /// let topology = kekule::smiles::to_topology("CCO")?;
-/// let mut set = SampleSet::new(topology.clone());
+/// let mut set = StructureSet::new(topology.clone());
 /// for x in [0.0, 1.0] {
 ///     let points = [Point3::new(x, 0.0, 0.0), Point3::new(x + 0.1, 0.0, 0.0), Point3::new(x, 0.1, 0.0)];
 ///     let positions = Positions::new(Quantity::new(points, NANOMETER))?;
-///     set.push(Sample::new(positions), None)?;
+///     set.push(Geometry::new(positions), None)?;
 /// }
 /// let all = AtomSelection::all(topology);
-/// let steps = ProcessingSteps::default().with_fit(all, FitReference::Sample(0));
+/// let steps = ProcessingSteps::default().with_fit(all, FitReference::Geometry(0));
 /// let fitted = Processed::new(&set, steps)?;
-/// let sample = fitted.read(1)?;
-/// let x = sample.positions().values().value()[0].x;
+/// let geometry = fitted.read(1)?;
+/// let x = geometry.positions().values().value()[0].x;
 /// assert!(x.abs() < 1.0e-12);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -388,36 +388,36 @@ impl From<SampleReadError> for ProcessingError {
 pub struct Processed<R> {
     inner: R,
     steps: ProcessingSteps,
-    /// The topology of the processed samples: the subset's, or the inner
+    /// The topology of the processed geometries: the subset's, or the inner
     /// reader's.
     topology: Arc<Topology>,
     /// Plans molecules for making whole, wrapping, and smoothing.
     imager: Option<MoleculeImager>,
     /// The molecules wrapping images around.
     anchors: Option<Vec<bool>>,
-    /// Where centering puts the centered atoms in samples without a cell:
-    /// their centroid in sample 0 of the reader below.
+    /// Where centering puts the centered atoms in geometries without a cell:
+    /// their centroid in geometry 0 of the reader below.
     rest: OnceLock<Vector3>,
     /// The structure fitting superposes onto.
     reference: Option<Model>,
     /// The dense atom and bond rows the subset keeps.
     subset: Option<(Vec<usize>, Vec<usize>)>,
-    /// Processed sample 0, when there is one.
-    first: Option<Sample>,
+    /// Processed geometry 0, when there is one.
+    first: Option<Geometry>,
 }
 
-impl<R: SampleRead> Processed<R> {
-    /// The samples of `inner` processed by `steps`. The steps are checked
-    /// against the reader's topology, the reference made, and sample 0
-    /// processed, so steps that cannot process the samples fail here.
-    /// Sample 0 is kept and lent.
+impl<R: StructureSetRead> Processed<R> {
+    /// The geometries of `inner` processed by `steps`. The steps are checked
+    /// against the reader's topology, the reference made, and geometry 0
+    /// processed, so steps that cannot process the geometries fail here.
+    /// Geometry 0 is kept and lent.
     ///
     /// # Errors
     ///
     /// [`ProcessingError`] for atoms of another topology or no atoms, a
-    /// reference sample past the last or reference positions of another
+    /// reference geometry past the last or reference positions of another
     /// atom count, a subset that cannot be made, and a failure to read or
-    /// process the reference or sample 0.
+    /// process the reference or geometry 0.
     pub fn new(inner: R, steps: ProcessingSteps) -> Result<Self, ProcessingError> {
         let source = Arc::clone(inner.topology());
         for (step, atoms) in [
@@ -488,38 +488,38 @@ impl<R: SampleRead> Processed<R> {
         (self.inner, self.steps)
     }
 
-    /// Whether this reader passed `sample`, one it read, through making
-    /// whole and wrapping unchanged because the sample has no cell: the
-    /// steps make whole or wrap, and the sample has no cell. Every step
-    /// keeps a sample's cell or its lack of one, so the sample read tells.
-    /// The other steps ran on it as on any sample.
+    /// Whether this reader passed `geometry`, one it read, through making
+    /// whole and wrapping unchanged because the geometry has no cell: the
+    /// steps make whole or wrap, and the geometry has no cell. Every step
+    /// keeps a geometry's cell or its lack of one, so the geometry read tells.
+    /// The other steps ran on it as on any geometry.
     ///
     /// ```
-    /// use kekule::structure::{Positions, Sample, SampleRead, SampleSet};
+    /// use kekule::structure::{Positions, Geometry, StructureSetRead, StructureSet};
     /// use kekule::traj::{Processed, ProcessingSteps};
     ///
     /// let topology = kekule::smiles::to_topology("O")?;
-    /// let mut set = SampleSet::new(topology.clone());
-    /// set.push(Sample::new(Positions::zeros(topology.atom_count())), None)?;
+    /// let mut set = StructureSet::new(topology.clone());
+    /// set.push(Geometry::new(Positions::zeros(topology.atom_count())), None)?;
     /// let whole = Processed::new(&set, ProcessingSteps::default().with_whole(true))?;
     /// assert!(whole.skipped_periodic_steps(&whole.read(0)?));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn skipped_periodic_steps(&self, sample: &Sample) -> bool {
-        (self.steps.whole || self.steps.wrap.is_some()) && sample.cell().is_none()
+    pub fn skipped_periodic_steps(&self, geometry: &Geometry) -> bool {
+        (self.steps.whole || self.steps.wrap.is_some()) && geometry.cell().is_none()
     }
 
     /// The model fitting superposes onto.
     fn reference_model(&self, reference: &FitReference) -> Result<Model, ProcessingError> {
         match reference {
-            FitReference::Sample(index) => {
+            FitReference::Geometry(index) => {
                 let len = self.inner.len();
                 if *index >= len {
                     return Err(ProcessingError::ReferenceOutOfRange { index: *index, len });
                 }
-                let mut sample = self.read_inner(*index)?;
-                self.prepare(*index, &mut sample)?;
-                Ok(self.view(*index, &sample).as_model_view().to_model())
+                let mut geometry = self.read_inner(*index)?;
+                self.prepare(*index, &mut geometry)?;
+                Ok(self.view(*index, &geometry).as_model_view().to_model())
             }
             FitReference::Positions(positions) => {
                 Model::new(Arc::clone(self.inner.topology()), positions.clone())
@@ -528,47 +528,53 @@ impl<R: SampleRead> Processed<R> {
         }
     }
 
-    /// Sample `index` of the reader below, checked to be bound to its
+    /// Geometry `index` of the reader below, checked to be bound to its
     /// topology, as every step expects.
-    fn read_inner(&self, index: usize) -> Result<Sample, SampleReadError> {
-        let sample = self.inner.read(index)?;
-        SampleView::new(&self.inner, index, &sample)?;
-        Ok(sample)
+    fn read_inner(&self, index: usize) -> Result<Geometry, StructureSetReadError> {
+        let geometry = self.inner.read(index)?;
+        GeometryView::new(&self.inner, index, &geometry)?;
+        Ok(geometry)
     }
 
-    /// A view of `sample`, sample `index` of the reader below.
-    fn view<'a>(&'a self, index: usize, sample: &'a Sample) -> SampleView<'a, dyn SampleRead> {
-        SampleView::of_reader(&self.inner, index, sample)
+    /// A view of `geometry`, geometry `index` of the reader below.
+    fn view<'a>(
+        &'a self,
+        index: usize,
+        geometry: &'a Geometry,
+    ) -> GeometryView<'a, dyn StructureSetRead> {
+        GeometryView::of_reader(&self.inner, index, geometry)
     }
 
-    /// Wraps or makes whole, then centers, sample `index` of the reader
+    /// Wraps or makes whole, then centers, geometry `index` of the reader
     /// below, in place.
-    fn prepare(&self, index: usize, sample: &mut Sample) -> Result<(), SampleReadError> {
-        if let (Some(imager), Some(cell)) = (&self.imager, sample.cell().copied()) {
+    fn prepare(&self, index: usize, geometry: &mut Geometry) -> Result<(), StructureSetReadError> {
+        if let (Some(imager), Some(cell)) = (&self.imager, geometry.cell().copied()) {
             if self.steps.whole || self.anchors.is_some() {
                 imager
                     .whole_in_place(
                         index,
                         cell,
-                        sample.positions_in_place(),
+                        geometry.positions_in_place(),
                         self.anchors.as_deref(),
                     )
                     .map_err(periodic(index))?;
             }
         }
         if let Some(center) = &self.steps.center {
-            let target = match sample.cell() {
+            let target = match geometry.cell() {
                 Some(cell) => cell_center(cell),
                 None => self.rest(center)?,
             };
-            let shift = target - centroid(sample.positions().values().value(), center);
-            sample.translate_in_place(shift).map_err(structure(index))?;
+            let shift = target - centroid(geometry.positions().values().value(), center);
+            geometry
+                .translate_in_place(shift)
+                .map_err(structure(index))?;
         }
         Ok(())
     }
 
-    /// The centroid of the centered atoms in sample 0 of the reader below.
-    fn rest(&self, center: &AtomSelection) -> Result<Vector3, SampleReadError> {
+    /// The centroid of the centered atoms in geometry 0 of the reader below.
+    fn rest(&self, center: &AtomSelection) -> Result<Vector3, StructureSetReadError> {
         if let Some(rest) = self.rest.get() {
             return Ok(*rest);
         }
@@ -577,32 +583,32 @@ impl<R: SampleRead> Processed<R> {
         Ok(*self.rest.get_or_init(|| rest))
     }
 
-    /// Sample `index` of the reader below after steps 1–3, before the
+    /// Geometry `index` of the reader below after steps 1–3, before the
     /// subset.
-    fn stepped(&self, index: usize) -> Result<Sample, SampleReadError> {
-        let mut sample = self.read_inner(index)?;
-        self.prepare(index, &mut sample)?;
+    fn stepped(&self, index: usize) -> Result<Geometry, StructureSetReadError> {
+        let mut geometry = self.read_inner(index)?;
+        self.prepare(index, &mut geometry)?;
         if let (Some((atoms, _)), Some(reference)) = (&self.steps.fit, &self.reference) {
             let fitted = alignment::fit(
-                self.view(index, &sample).as_model_view(),
+                self.view(index, &geometry).as_model_view(),
                 reference.as_model_view(),
                 atoms,
                 AlignmentOptions::default(),
             )
-            .map_err(|source| SampleReadError::Alignment {
-                sample: index,
+            .map_err(|source| StructureSetReadError::Alignment {
+                geometry: index,
                 source: Box::new(source),
             })?;
-            sample
+            geometry
                 .transform_in_place(&fitted.transform())
                 .map_err(structure(index))?;
         }
-        Ok(sample)
+        Ok(geometry)
     }
 
-    /// Sample `index` after steps 1–3, averaged over the window of `half`
-    /// samples on each side.
-    fn smoothed(&self, index: usize, half: usize) -> Result<Sample, SampleReadError> {
+    /// Geometry `index` after steps 1–3, averaged over the window of `half`
+    /// geometries on each side.
+    fn smoothed(&self, index: usize, half: usize) -> Result<Geometry, StructureSetReadError> {
         let mut center = self.stepped(index)?;
         let last = self.inner.len().saturating_sub(1);
         let window = index.saturating_sub(half)..=(index + half).min(last);
@@ -622,9 +628,9 @@ impl<R: SampleRead> Processed<R> {
             if other == index {
                 continue;
             }
-            let sample = self.stepped(other)?;
-            let points = sample.positions().values().into_value();
-            match sample.cell() {
+            let geometry = self.stepped(other)?;
+            let points = geometry.positions().values().into_value();
+            match geometry.cell() {
                 Some(cell) => imager
                     .add_imaged_onto(
                         other,
@@ -649,32 +655,32 @@ impl<R: SampleRead> Processed<R> {
         Ok(center)
     }
 
-    /// Sample `index` read from the reader below and processed.
-    fn processed(&self, index: usize) -> Result<Sample, SampleReadError> {
-        let sample = match self.steps.smoothing {
+    /// Geometry `index` read from the reader below and processed.
+    fn processed(&self, index: usize) -> Result<Geometry, StructureSetReadError> {
+        let geometry = match self.steps.smoothing {
             Some(window) => self.smoothed(index, window / 2)?,
             None => self.stepped(index)?,
         };
-        self.finish(index, sample)
+        self.finish(index, geometry)
     }
 
-    /// Projects sample `index` onto the subset.
-    fn finish(&self, index: usize, sample: Sample) -> Result<Sample, SampleReadError> {
+    /// Projects geometry `index` onto the subset.
+    fn finish(&self, index: usize, geometry: Geometry) -> Result<Geometry, StructureSetReadError> {
         match &self.subset {
             Some((atoms, bonds)) => {
-                sample
+                geometry
                     .projected(atoms, bonds)
-                    .map_err(|source| SampleReadError::Geometry {
-                        sample: index,
+                    .map_err(|source| StructureSetReadError::Geometry {
+                        geometry: index,
                         source: Box::new(source),
                     })
             }
-            None => Ok(sample),
+            None => Ok(geometry),
         }
     }
 }
 
-impl<R: SampleRead> SampleRead for Processed<R> {
+impl<R: StructureSetRead> StructureSetRead for Processed<R> {
     fn topology(&self) -> &Arc<Topology> {
         &self.topology
     }
@@ -695,17 +701,17 @@ impl<R: SampleRead> SampleRead for Processed<R> {
         self.inner.properties()
     }
 
-    /// Sample 0, which the reader keeps; `None` for every other sample.
-    fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
+    /// Geometry 0, which the reader keeps; `None` for every other geometry.
+    fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
         match (index, &self.first) {
-            (0, Some(first)) => Some(SampleView::of_reader(self, 0, first)),
+            (0, Some(first)) => Some(GeometryView::of_reader(self, 0, first)),
             _ => None,
         }
     }
 
-    /// Sample `index`, processed. Sample 0 is a clone of the kept sample,
+    /// Geometry `index`, processed. Geometry 0 is a clone of the kept geometry,
     /// which shares its storage.
-    fn read(&self, index: usize) -> Result<Sample, SampleReadError> {
+    fn read(&self, index: usize) -> Result<Geometry, StructureSetReadError> {
         match (index, &self.first) {
             (0, Some(first)) => Ok(first.clone()),
             _ => self.processed(index),
@@ -713,18 +719,18 @@ impl<R: SampleRead> SampleRead for Processed<R> {
     }
 }
 
-/// Reports a periodic step's failure on sample `sample`.
-fn periodic(sample: usize) -> impl FnOnce(PeriodicError) -> SampleReadError {
-    move |source| SampleReadError::Periodic {
-        sample,
+/// Reports a periodic step's failure on geometry `geometry`.
+fn periodic(geometry: usize) -> impl FnOnce(PeriodicError) -> StructureSetReadError {
+    move |source| StructureSetReadError::Periodic {
+        geometry,
         source: Box::new(source),
     }
 }
 
-/// Reports a step's failure to store its result in sample `sample`.
-fn structure(sample: usize) -> impl FnOnce(GeometryError) -> SampleReadError {
-    move |source| SampleReadError::Geometry {
-        sample,
+/// Reports a step's failure to store its result in geometry `geometry`.
+fn structure(geometry: usize) -> impl FnOnce(GeometryError) -> StructureSetReadError {
+    move |source| StructureSetReadError::Geometry {
+        geometry,
         source: Box::new(source),
     }
 }

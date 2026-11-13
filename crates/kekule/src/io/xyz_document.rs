@@ -17,10 +17,10 @@ use crate::diagnostics::{
 use crate::math::Point3;
 use crate::molecule::Element;
 
-use super::xyz_interpret::{interpret_xyz, interpret_xyz_sample_set};
+use super::xyz_interpret::{interpret_xyz, interpret_xyz_structure_set};
 use super::{
-    XyzInterpretOptions, XyzInterpretation, XyzSampleSetInterpretOptions,
-    XyzSampleSetInterpretation,
+    XyzInterpretOptions, XyzInterpretation, XyzStructureSetInterpretOptions,
+    XyzStructureSetInterpretation,
 };
 
 /// Syntax and resource limits for parsing an XYZ file.
@@ -192,7 +192,7 @@ pub struct XyzDocument {
 impl XyzDocument {
     /// A document of `frames` in order, as a host that holds atoms rather
     /// than XYZ text builds it, to interpret with [`Self::interpret`] or
-    /// [`Self::interpret_sample_set`] as a parsed file.
+    /// [`Self::interpret_structure_set`] as a parsed file.
     ///
     /// Each frame from [`XyzFrame::new`] takes its 1-based position in
     /// `frames` as its location; a parsed frame keeps its line. A document
@@ -251,8 +251,8 @@ impl XyzDocument {
     }
 
     /// Interprets several frames over the same atoms as an unordered
-    /// [`SampleSet`](crate::structure::SampleSet) without a distribution,
-    /// one sample per selected frame with one report each: an XYZ file
+    /// [`StructureSet`](crate::structure::StructureSet) without a distribution,
+    /// one geometry per selected frame with one report each: an XYZ file
     /// states no weights, states, or order. Each frame infers its own
     /// connectivity, and every frame must infer the same bonds as the first.
     ///
@@ -264,11 +264,11 @@ impl XyzDocument {
     /// and one whose distances infer different bonds fails with
     /// [`FormatErrorDetail::InconsistentTopology`](crate::diagnostics::FormatErrorDetail::InconsistentTopology);
     /// both name the frame by its zero-based index as the model ID.
-    pub fn interpret_sample_set(
+    pub fn interpret_structure_set(
         &self,
-        options: XyzSampleSetInterpretOptions,
-    ) -> Result<XyzSampleSetInterpretation, FormatError> {
-        interpret_xyz_sample_set(self, &options)
+        options: XyzStructureSetInterpretOptions,
+    ) -> Result<XyzStructureSetInterpretation, FormatError> {
+        interpret_xyz_structure_set(self, &options)
     }
 }
 

@@ -8,7 +8,7 @@ use super::state::atom_row;
 use super::GeometryError;
 
 /// One optional per-atom scalar column in dense atom order, such as the
-/// occupancies or B-factors of a model or sample.
+/// occupancies or B-factors of a model or geometry.
 ///
 /// The column is allocated on its first recorded value; a column whose values
 /// are all missing equals one that was never recorded. Atom indices are checked

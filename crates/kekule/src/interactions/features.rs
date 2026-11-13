@@ -89,7 +89,7 @@ pub(super) struct HalogenRecord {
 /// and the atoms that can coordinate them, and hydrophobic atoms.
 ///
 /// Features depend only on the topology, so a host perceives them once and
-/// reuses them for every structure sharing its layout: a model, each sample
+/// reuses them for every structure sharing its layout: a model, each geometry
 /// of an ensemble, and each frame of a trajectory. Each reusable definition
 /// is classified once and mapped onto its instances.
 ///

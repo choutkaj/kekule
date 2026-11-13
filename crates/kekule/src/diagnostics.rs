@@ -757,7 +757,7 @@ pub enum FormatStage {
     /// Reading text into a typed document, without assigning chemical meaning.
     Parse,
     /// Assigning canonical meaning to a parsed document: molecules,
-    /// topologies, models and sample sets.
+    /// topologies, models and structure sets.
     Interpret,
     /// Encoding canonical values as text, including writing to the sink.
     Write,
@@ -849,7 +849,7 @@ pub enum FormatErrorDetail {
     MmcifWrite(crate::io::MmcifWriteIssue),
     /// A failure specific to the PDB writer.
     PdbWrite(crate::io::PdbWriteIssue),
-    /// The written structure, a model, a sample, or a trajectory frame, has
+    /// The written structure, a model, a geometry, or a trajectory frame, has
     /// this state, which the format cannot carry, and the writer's policy
     /// for it is [`UnrepresentablePolicy::Fail`].
     UnrepresentableState(StructureField),
@@ -883,59 +883,59 @@ pub enum FormatErrorDetail {
         /// The kind the input holds.
         found: crate::io::NativeKind,
     },
-    /// A native sample set record stores its samples elsewhere, so it has
+    /// A native structure set record stores its geometries elsewhere, so it has
     /// none to give; the kind is [`DiagnosticKind::Inconsistent`].
-    NativeExternalSamples {
-        /// The number of samples the record describes.
-        samples: usize,
+    NativeExternalGeometries {
+        /// The number of geometries the record describes.
+        geometries: usize,
     },
 }
 
-/// Structure, sample, or trajectory frame state named by
+/// Structure, geometry, or trajectory frame state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StructureField {
-    /// A sample's relative weight in its set's distribution.
+    /// A geometry's relative weight in its set's distribution.
     Weight,
-    /// The energy of a sample's state.
+    /// The energy of a geometry's state.
     Energy,
-    /// The state a sample belongs to: the grouping of samples into states.
+    /// The state a geometry belongs to: the grouping of geometries into states.
     State,
     /// The temperature a distribution's populations describe.
     Temperature,
-    /// The properties of a sample set's state.
+    /// The properties of a structure set's state.
     StateProperties,
-    /// A sample set's state representative that is not the state's first
+    /// A structure set's state representative that is not the state's first
     /// member.
     Representative,
-    /// A sample set's time order without times or steps.
+    /// A structure set's time order without times or steps.
     Order,
-    /// A sample's or frame's time in a time order.
+    /// A geometry's or frame's time in a time order.
     Time,
-    /// A sample's or frame's MD step in a time order.
+    /// A geometry's or frame's MD step in a time order.
     Step,
-    /// A sample's or frame's velocities.
+    /// A geometry's or frame's velocities.
     Velocities,
-    /// A sample's or frame's forces.
+    /// A geometry's or frame's forces.
     Forces,
-    /// A sample's or frame's per-atom properties.
+    /// A geometry's or frame's per-atom properties.
     AtomProperties,
-    /// A sample's or frame's per-bond properties.
+    /// A geometry's or frame's per-bond properties.
     BondProperties,
-    /// A sample's or frame's own properties.
+    /// A geometry's or frame's own properties.
     Properties,
-    /// A sample set's own properties.
+    /// A structure set's own properties.
     SetProperties,
     /// A structure's crystallographic occupancies.
     Occupancies,
     /// A structure's crystallographic B factors.
     BFactors,
-    /// A sample's step in a step order.
+    /// A geometry's step in a step order.
     OrderStep,
-    /// A sample's coordinate in a coordinate order.
+    /// A geometry's coordinate in a coordinate order.
     OrderCoordinate,
-    /// A sample set's sample that is outside its distribution, which a file
+    /// A structure set's geometry that is outside its distribution, which a file
     /// whose every structure is a member cannot tell apart.
     Membership,
 }
@@ -949,7 +949,7 @@ impl fmt::Display for StructureField {
             Self::Temperature => "temperature",
             Self::StateProperties => "state properties",
             Self::Representative => "state representative",
-            Self::Order => "sample order",
+            Self::Order => "geometry order",
             Self::Time => "time",
             Self::Step => "MD step",
             Self::Velocities => "velocities",
@@ -957,7 +957,7 @@ impl fmt::Display for StructureField {
             Self::AtomProperties => "per-atom structure properties",
             Self::BondProperties => "per-bond structure properties",
             Self::Properties => "structure properties",
-            Self::SetProperties => "sample set properties",
+            Self::SetProperties => "structure set properties",
             Self::Occupancies => "occupancies",
             Self::BFactors => "B factors",
             Self::OrderStep => "order step",

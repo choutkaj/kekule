@@ -1,4 +1,4 @@
-//! Superposition and RMSD over sample sets, against samples of the set or
+//! Superposition and RMSD over structure sets, against geometries of the set or
 //! independent references.
 
 use std::sync::Arc;
@@ -12,8 +12,8 @@ use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Members, Model, Order, Partition, Place, Positions, Sample, SampleSet,
-    TimeAxis, Velocities,
+    Distribution, Forces, Geometry, Members, Model, Order, Partition, Place, Positions,
+    StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::units::{
@@ -44,8 +44,8 @@ fn selection(topology: &Arc<Topology>, indices: &[usize]) -> AtomSelection {
     .unwrap()
 }
 
-fn frame(points: &[Point3]) -> Sample {
-    Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
+fn frame(points: &[Point3]) -> Geometry {
+    Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap())
 }
 
 fn quarter_turn() -> RigidTransform {
@@ -85,7 +85,7 @@ fn collinear() -> [Point3; 4] {
     ]
 }
 
-fn payloads(trajectory: &SampleSet) -> Vec<Sample> {
+fn payloads(trajectory: &StructureSet) -> Vec<Geometry> {
     trajectory
         .iter()
         .map(|frame| frame.payload().clone())
@@ -120,7 +120,7 @@ fn direct_rmsd_does_not_fit_and_explicit_weights_follow_pair_order() {
     let reference = [Point3::origin(), Point3::origin()];
     let moving = [Point3::new(1.0, 0.0, 0.0), Point3::new(3.0, 0.0, 0.0)];
     let trajectory =
-        SampleSet::from_samples(Arc::clone(&topology), [frame(&reference), frame(&moving)])
+        StructureSet::from_geometries(Arc::clone(&topology), [frame(&reference), frame(&moving)])
             .unwrap();
     let all = AtomSelection::all(Arc::clone(&topology));
 
@@ -154,7 +154,7 @@ fn split_and_fused_fit_measure_workflows_agree_for_distinct_selections() {
     let mut reference = transformed(&moving, quarter_turn());
     reference[3].x += 2.0;
     let trajectory =
-        SampleSet::from_samples(Arc::clone(&topology), [frame(&reference), frame(&moving)])
+        StructureSet::from_geometries(Arc::clone(&topology), [frame(&reference), frame(&moving)])
             .unwrap();
     let fit = selection(&topology, &[0, 1, 2]);
     let measured = selection(&topology, &[3]);
@@ -255,7 +255,8 @@ fn superposition_rotates_complete_geometric_state_and_preserves_metadata() {
         .insert(label.clone(), PropertyValue::String("moving".into()))
         .unwrap();
     let mut trajectory =
-        SampleSet::from_samples(Arc::clone(&topology), [reference_frame, moving_frame]).unwrap();
+        StructureSet::from_geometries(Arc::clone(&topology), [reference_frame, moving_frame])
+            .unwrap();
     let axis = TimeAxis::new(
         Some(Quantity::new(vec![0.0, 2.5], PICOSECOND)),
         Some(vec![0, 25]),
@@ -317,7 +318,7 @@ fn superposition_failure_leaves_the_complete_collection_unchanged() {
     let topology = chain(4);
     let reference = spread();
     let moving = transformed(&reference, quarter_turn());
-    let mut trajectory = SampleSet::from_samples(
+    let mut trajectory = StructureSet::from_geometries(
         Arc::clone(&topology),
         [frame(&reference), frame(&moving), frame(&collinear())],
     )
@@ -360,7 +361,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
     ];
     let mut periodic = frame(&points);
     periodic.set_cell(Some(periodic_cell(1.0)));
-    let trajectory = SampleSet::from_samples(Arc::clone(&topology), [periodic]).unwrap();
+    let trajectory = StructureSet::from_geometries(Arc::clone(&topology), [periodic]).unwrap();
     let all = AtomSelection::all(Arc::clone(&topology));
 
     assert_eq!(
@@ -428,7 +429,7 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
 #[test]
 fn aligned_rmsd_reports_the_failing_item_without_mutating_input() {
     let topology = chain(4);
-    let trajectory = SampleSet::from_samples(
+    let trajectory = StructureSet::from_geometries(
         Arc::clone(&topology),
         [frame(&spread()), frame(&collinear())],
     )
@@ -464,7 +465,8 @@ fn split_and_fused_workflows_keep_collection_and_item_properties() {
         .insert(key.clone(), PropertyValue::Int(7))
         .unwrap();
     let mut trajectory =
-        SampleSet::from_samples(Arc::clone(&topology), [frame(&reference), annotated]).unwrap();
+        StructureSet::from_geometries(Arc::clone(&topology), [frame(&reference), annotated])
+            .unwrap();
     trajectory
         .properties_mut()
         .insert(key, PropertyValue::String("run_1".into()))
@@ -510,7 +512,8 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
     let mut moving = frame(&points.map(|p| Point3::new(p.x + 0.3, p.y - 0.2, p.z + 0.1)));
     reference.set_cell(Some(periodic_cell(1.0)));
     moving.set_cell(Some(periodic_cell(1.0)));
-    let original = SampleSet::from_samples(Arc::clone(&topology), [reference, moving]).unwrap();
+    let original =
+        StructureSet::from_geometries(Arc::clone(&topology), [reference, moving]).unwrap();
     let all = AtomSelection::all(Arc::clone(&topology));
     assert!(original.rmsd(0, &all, Default::default()).unwrap().value()[1] > 0.3);
 
@@ -562,14 +565,14 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
 fn weighted_sets_share_the_collection_contract_and_keep_weights() {
     let topology = chain(4);
     let reference = spread();
-    let member = Sample::new(
+    let member = Geometry::new(
         Positions::new(Quantity::new(
             transformed(&reference, quarter_turn()),
             NANOMETER,
         ))
         .unwrap(),
     );
-    let mut ensemble = SampleSet::from_samples(Arc::clone(&topology), [member]).unwrap();
+    let mut ensemble = StructureSet::from_geometries(Arc::clone(&topology), [member]).unwrap();
     let distribution = Distribution::new(Members::All, Partition::one_state(1))
         .unwrap()
         .with_weights(vec![0.25])
@@ -630,7 +633,7 @@ fn chain_model(points: &[Point3]) -> Model {
 
 /// A moving trajectory, an independent reference whose atoms are permuted and
 /// rigidly moved, a fit correspondence, and a measured correspondence.
-fn correspondence_fixture() -> (SampleSet, Model, AtomCorrespondence, AtomCorrespondence) {
+fn correspondence_fixture() -> (StructureSet, Model, AtomCorrespondence, AtomCorrespondence) {
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
@@ -701,7 +704,7 @@ fn correspondence_fixture() -> (SampleSet, Model, AtomCorrespondence, AtomCorres
             .unwrap();
         frame
     });
-    let mut trajectory = SampleSet::from_samples(topology, frames).unwrap();
+    let mut trajectory = StructureSet::from_geometries(topology, frames).unwrap();
     let axis = TimeAxis::new(
         Some(Quantity::new(vec![2.0, 3.0], PICOSECOND)),
         Some(vec![20, 21]),
@@ -843,7 +846,7 @@ fn correspondence_failures_preserve_whole_collections() {
         step: Some(22),
     };
     trajectory
-        .push(Sample::new(Positions::zeros(atoms)), Some(place))
+        .push(Geometry::new(Positions::zeros(atoms)), Some(place))
         .unwrap();
     let before = payloads(&trajectory);
     assert!(matches!(
@@ -865,7 +868,7 @@ fn correspondence_failures_preserve_whole_collections() {
             }
         ))
     );
-    let mut empty = SampleSet::new(wrong.shared_topology());
+    let mut empty = StructureSet::new(wrong.shared_topology());
     assert_eq!(
         empty.superpose(&reference, &fit, Default::default()),
         Err(AlignmentError::Correspondence(
@@ -1005,8 +1008,8 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     let reference = acetate_points(false);
     let moved_swapped = transformed(&acetate_points(true), quarter_turn());
     let members = [reference.to_vec(), moved_swapped.clone()]
-        .map(|points| Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap()));
-    let mut ensemble = SampleSet::from_samples(Arc::clone(&topology), members).unwrap();
+        .map(|points| Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap()));
+    let mut ensemble = StructureSet::from_geometries(Arc::clone(&topology), members).unwrap();
     let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))
         .unwrap()
         .with_weights(vec![1.0, 1.0])
@@ -1042,7 +1045,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     assert_close(direct.value()[1], 0.0, 1.0e-12);
 
     // Sets without a distribution share the kernels.
-    let mut trajectory = SampleSet::from_samples(
+    let mut trajectory = StructureSet::from_geometries(
         Arc::clone(&topology),
         [frame(&reference), frame(&moved_swapped)],
     )
@@ -1061,7 +1064,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     let foreign = SymmetricSelection::new(&AtomSelection::all(Arc::clone(&foreign))).unwrap();
     let model = acetate_model(&topology, &reference);
     assert_eq!(
-        SampleSet::new(Arc::clone(&topology)).rmsd(&model, &foreign, Default::default()),
+        StructureSet::new(Arc::clone(&topology)).rmsd(&model, &foreign, Default::default()),
         Err(AlignmentError::SelectionTopologyMismatch)
     );
 }

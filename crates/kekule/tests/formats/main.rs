@@ -14,9 +14,9 @@ mod mmcif;
 mod native;
 mod pdb;
 mod pdb_write;
-mod sample_sets;
 mod sequences;
 mod smiles_stereo;
+mod structure_sets;
 mod writers;
 mod xyz;
 

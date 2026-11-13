@@ -6,11 +6,11 @@ use std::{
 };
 
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Forces, Positions, SampleSet, SampleView, Velocities};
+use kekule::structure::{Forces, GeometryView, Positions, StructureSet, Velocities};
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule::traj::io::{
-    create_trajectory_writer, read_sample_set, write_sample_set, OverwritePolicy,
+    create_trajectory_writer, read_structure_set, write_structure_set, OverwritePolicy,
     TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
@@ -64,21 +64,21 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Sample `index` of `set` as the frame a writer takes.
-fn frame(set: &SampleSet, index: usize) -> FrameView<'_> {
-    FrameView::from_sample(set.get(index).unwrap()).unwrap()
+/// Geometry `index` of `set` as the frame a writer takes.
+fn frame(set: &StructureSet, index: usize) -> FrameView<'_> {
+    FrameView::from_geometry(set.get(index).unwrap()).unwrap()
 }
 
-/// The MD steps of a set's samples.
-fn steps(set: &SampleSet) -> Vec<Option<u64>> {
+/// The MD steps of a set's geometries.
+fn steps(set: &StructureSet) -> Vec<Option<u64>> {
     frames_of(set).iter().map(Frame::step).collect()
 }
 
-fn same_frame(actual: SampleView<'_>, expected: SampleView<'_>, tolerance: f64) {
+fn same_frame(actual: GeometryView<'_>, expected: GeometryView<'_>, tolerance: f64) {
     // Codec precision and unit conversions permit numerical rounding. Field
     // presence, dimensions, units, steps, and every property remain exact.
-    let actual = FrameView::from_sample(actual).unwrap();
-    let expected = FrameView::from_sample(expected).unwrap();
+    let actual = FrameView::from_geometry(actual).unwrap();
+    let expected = FrameView::from_geometry(expected).unwrap();
     let close =
         |a: f64, b: f64| assert!((a - b).abs() <= tolerance * b.abs().max(1.0), "{a} != {b}");
     assert_eq!(actual.positions().len(), expected.positions().len());
@@ -171,13 +171,13 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
         ),
     ] {
         let trajectory =
-            read_sample_set(fixture(source), topology.clone(), Default::default()).unwrap();
+            read_structure_set(fixture(source), topology.clone(), Default::default()).unwrap();
         let path = directory.file(&format!("output.{extension}"));
         match options {
-            Some(options) => write_sample_set(&path, &trajectory, options).unwrap(),
-            None => write_sample_set(&path, &trajectory, Default::default()).unwrap(),
+            Some(options) => write_structure_set(&path, &trajectory, options).unwrap(),
+            None => write_structure_set(&path, &trajectory, Default::default()).unwrap(),
         };
-        let read = read_sample_set(&path, topology, Default::default()).unwrap();
+        let read = read_structure_set(&path, topology, Default::default()).unwrap();
         assert_eq!(read.len(), trajectory.len());
         for (actual, expected) in read.iter().zip(trajectory.iter()) {
             same_frame(actual, expected, 1.0e-6);
@@ -193,7 +193,7 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
 fn explicit_format_overrides_extension_and_precision_is_preserved() {
     let directory = Directory::new();
     let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
-    let trajectory = read_sample_set(
+    let trajectory = read_structure_set(
         fixture("mdanalysis-2.9.0-three-atoms.trr"),
         topology.clone(),
         Default::default(),
@@ -210,7 +210,7 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
         "The destination's extension names no supported format. Choose the format explicitly.",
     );
     assert_eq!(
-        write_sample_set(&path, &trajectory, Default::default()),
+        write_structure_set(&path, &trajectory, Default::default()),
         Err(unknown.clone())
     );
     // Default options take the path writer's format from the extension too.
@@ -220,7 +220,7 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
         unknown
     );
     let saved = directory.file("saved.trr");
-    write_sample_set(&saved, &trajectory, Default::default()).unwrap();
+    write_structure_set(&saved, &trajectory, Default::default()).unwrap();
     let streamed = directory.file("streamed.trr");
     let mut writer = create_trajectory_writer(
         &streamed,
@@ -228,17 +228,17 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
         TrajectoryWriteOptions::default(),
     )
     .unwrap();
-    for sample in &trajectory {
+    for geometry in &trajectory {
         writer
-            .write_frame(FrameView::from_sample(sample).unwrap())
+            .write_frame(FrameView::from_geometry(geometry).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
     assert_eq!(fs::read(&streamed).unwrap(), fs::read(&saved).unwrap());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
-    write_sample_set(&path, &trajectory, options).unwrap();
-    let read = read_sample_set(
+    write_structure_set(&path, &trajectory, options).unwrap();
+    let read = read_structure_set(
         path,
         topology,
         TrajectoryOpenOptions::default()
@@ -285,7 +285,7 @@ fn every_empty_path_writer_rejects_publication_and_removes_temporary_files() {
 fn rejected_saves_leave_no_destination_or_temporary_file() {
     let directory = Directory::new();
     let path = directory.file("out.xyz");
-    let empty = SampleSet::new(linear_carbon_topology(3));
+    let empty = StructureSet::new(linear_carbon_topology(3));
     let mut moving = Frame::new(Positions::zeros(3));
     moving.set_velocities(Some(Velocities::zeros(3))).unwrap(); // XYZ cannot carry them.
     let moving = time_ordered(
@@ -327,7 +327,7 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
         ),
     ] {
         assert_eq!(
-            write_sample_set(&path, trajectory, Default::default()),
+            write_structure_set(&path, trajectory, Default::default()),
             Err(expected)
         );
         assert_eq!(directory.names(), Vec::<String>::new());
@@ -352,7 +352,7 @@ fn single_frame(shift: f64) -> Frame {
 }
 
 /// A set of [`single_frame`].
-fn single(shift: f64) -> SampleSet {
+fn single(shift: f64) -> StructureSet {
     time_ordered(linear_carbon_topology(3), [single_frame(shift)])
 }
 
@@ -406,12 +406,12 @@ fn forbid_policy_never_replaces_an_existing_destination() {
 
     let directory = Directory::new();
     let path = directory.file("out.xyz");
-    write_sample_set(&path, &single(0.0), Default::default()).unwrap();
+    write_structure_set(&path, &single(0.0), Default::default()).unwrap();
     let original = fs::read(&path).unwrap();
 
     // An existing destination is refused before any frame is written.
     assert_eq!(
-        write_sample_set(&path, &single(5.0), Default::default()),
+        write_structure_set(&path, &single(5.0), Default::default()),
         Err(TrajectoryIoError::io(
             TrajectoryIoOperation::Open,
             io::Error::new(
@@ -464,16 +464,17 @@ fn forbid_policy_never_replaces_an_existing_destination() {
 fn replace_policy_atomically_replaces_an_existing_destination() {
     let directory = Directory::new();
     let path = directory.file("out.xyz");
-    write_sample_set(&path, &single(0.0), Default::default()).unwrap();
+    write_structure_set(&path, &single(0.0), Default::default()).unwrap();
     let replacement = single(5.0);
-    write_sample_set(
+    write_structure_set(
         &path,
         &replacement,
         TrajectoryWriteOptions::new(TrajectoryFormat::Xyz)
             .with_overwrite_policy(OverwritePolicy::Replace),
     )
     .unwrap();
-    let read = read_sample_set(&path, replacement.shared_topology(), Default::default()).unwrap();
+    let read =
+        read_structure_set(&path, replacement.shared_topology(), Default::default()).unwrap();
     assert_eq!(read.len(), 1);
     // XYZ keeps six decimals of these exactly representable coordinates.
     same_frame(read.get(0).unwrap(), replacement.get(0).unwrap(), 0.0);
@@ -497,7 +498,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     ]);
     let directory = Directory::new();
     let topology = topology(&["O", "H", "H"], &[(0, 1), (0, 2)]);
-    let mut source = read_sample_set(
+    let mut source = read_structure_set(
         fixture("ase-3.26.0-water.xyz"),
         topology.clone(),
         Default::default(),
@@ -522,10 +523,10 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         )))
         .unwrap();
     for index in 0..count {
-        let mut sample = source.get_mut(index).unwrap();
-        sample.set_cell(Some(cell));
-        sample.set_velocities(Some(Velocities::zeros(3))).unwrap();
-        sample.set_forces(Some(Forces::zeros(3))).unwrap();
+        let mut geometry = source.get_mut(index).unwrap();
+        geometry.set_cell(Some(cell));
+        geometry.set_velocities(Some(Velocities::zeros(3))).unwrap();
+        geometry.set_forces(Some(Forces::zeros(3))).unwrap();
     }
     // Atom slicing produces a new topology, while frame selection retains it.
     let sliced = source
@@ -556,8 +557,8 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     let input = directory.file("prepared.trr");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr)
         .with_trr_options(TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float64));
-    write_sample_set(&input, &selected, options.clone()).unwrap();
-    let loaded = read_sample_set(&input, topology.clone(), Default::default()).unwrap();
+    write_structure_set(&input, &selected, options.clone()).unwrap();
+    let loaded = read_structure_set(&input, topology.clone(), Default::default()).unwrap();
     let atoms = AtomSelection::all(topology.clone());
     let mut expected = loaded;
     periodic::make_molecules_whole(&mut expected).unwrap();
@@ -565,7 +566,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     expected.superpose(0, &atoms, Default::default()).unwrap();
     recorded.check(&dynamics(&expected));
     let loaded_output = directory.file("loaded.trr");
-    write_sample_set(&loaded_output, &expected, options.clone()).unwrap();
+    write_structure_set(&loaded_output, &expected, options.clone()).unwrap();
 
     let mut reader = open_trajectory(&input, topology.clone(), Default::default()).unwrap();
     let mut frame = reader.frame_buffer();
@@ -592,7 +593,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     writer.finish().unwrap();
     assert_eq!(index, selected.len());
     for path in [loaded_output, streamed_output] {
-        let reread = read_sample_set(path, topology.clone(), Default::default()).unwrap();
+        let reread = read_structure_set(path, topology.clone(), Default::default()).unwrap();
         assert_eq!(reread.len(), expected.len());
         for (actual, expected) in reread.iter().zip(expected.iter()) {
             same_frame(actual, expected, 1.0e-12);
@@ -623,8 +624,8 @@ fn converting_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
         })
 }
 
-fn dcd_fixture() -> SampleSet {
-    read_sample_set(
+fn dcd_fixture() -> StructureSet {
+    read_structure_set(
         fixture("mdanalysis-2.9.0-three-atoms.dcd"),
         topology(&["C", "H", "O"], &[(0, 1), (0, 2)]),
         Default::default(),
@@ -650,8 +651,8 @@ fn frames_without_times_save_as_every_format_by_omitting_or_numbering_state() {
         TrajectoryFormat::Xtc,
     ] {
         let path = directory.file(&format!("converted.{}", format.name()));
-        let report = write_sample_set(&path, &source, converting_options(format)).unwrap();
-        let read = read_sample_set(&path, source.shared_topology(), Default::default()).unwrap();
+        let report = write_structure_set(&path, &source, converting_options(format)).unwrap();
+        let read = read_structure_set(&path, source.shared_topology(), Default::default()).unwrap();
         assert_eq!(read.len(), frames, "{format}");
         let times = frames_of(&read)
             .iter()
@@ -687,7 +688,7 @@ fn frames_without_times_save_as_every_format_by_omitting_or_numbering_state() {
 
 #[test]
 fn stream_writers_write_from_the_stream_position_what_path_writers_publish() {
-    use kekule::traj::io::write_sample_set_to;
+    use kekule::traj::io::write_structure_set_to;
 
     let directory = Directory::new();
     let source = dcd_fixture();
@@ -698,12 +699,12 @@ fn stream_writers_write_from_the_stream_position_what_path_writers_publish() {
         TrajectoryFormat::Xtc,
     ] {
         let path = directory.file(&format!("published.{}", format.name()));
-        let published = write_sample_set(&path, &source, converting_options(format)).unwrap();
+        let published = write_structure_set(&path, &source, converting_options(format)).unwrap();
         let prefix = b"host header";
         let mut stream = io::Cursor::new(prefix.to_vec());
         stream.set_position(prefix.len() as u64);
         let streamed =
-            write_sample_set_to(&mut stream, &source, converting_options(format)).unwrap();
+            write_structure_set_to(&mut stream, &source, converting_options(format)).unwrap();
         assert_eq!(streamed, published, "{format}");
         assert_eq!(stream.position(), stream.get_ref().len() as u64, "{format}");
         let bytes = stream.into_inner();
@@ -714,17 +715,17 @@ fn stream_writers_write_from_the_stream_position_what_path_writers_publish() {
 
 /// A set saves the bytes the trajectory it replaces saved and reads back
 /// as the set that trajectory read back as, both recorded before
-/// trajectories became sample sets; a time order and no distribution.
+/// trajectories became structure sets; a time order and no distribution.
 #[test]
-fn sample_sets_save_and_load_as_the_trajectories_they_replace_did() {
+fn structure_sets_save_and_load_as_the_trajectories_they_replace_did() {
     use kekule::structure::{Distribution, Members, Order, Partition};
 
     let mut recorded = Recorded::new(&[
-        0x4e13_6f92_f94d_802b, // the DCD fixture
-        0x500b_371c_a6a3_af9d, // read back from XYZ
-        0x7de1_6355_3e95_213b, // read back from DCD
-        0xd938_d1ba_a79e_f5e2, // read back from TRR
-        0x8b88_e741_c94c_7f76, // read back from XTC
+        0x17e5_86d5_8a15_b0fb, // the DCD fixture
+        0x5fd6_90cb_0a2e_2225, // read back from XYZ
+        0x7554_ff13_816b_e76f, // read back from DCD
+        0x7f23_34ee_2782_e1f6, // read back from TRR
+        0x4132_133a_1248_0a1a, // read back from XTC
     ]);
     let directory = Directory::new();
     let set = dcd_fixture();
@@ -735,14 +736,14 @@ fn sample_sets_save_and_load_as_the_trajectories_they_replace_did() {
         (TrajectoryFormat::Trr, 0x6486_cf10_9168_e9eb),
         (TrajectoryFormat::Xtc, 0xd547_6671_a026_a2eb),
     ] {
-        let path = directory.file(&format!("samples.{}", format.name()));
-        write_sample_set(&path, &set, converting_options(format)).unwrap();
+        let path = directory.file(&format!("geometries.{}", format.name()));
+        write_structure_set(&path, &set, converting_options(format)).unwrap();
         assert_eq!(
             fingerprint_bytes(&fs::read(&path).unwrap()),
             bytes,
             "{format}"
         );
-        let read = read_sample_set(&path, set.shared_topology(), Default::default()).unwrap();
+        let read = read_structure_set(&path, set.shared_topology(), Default::default()).unwrap();
         recorded.check(&contents(&read));
         assert!(matches!(read.order(), Some(Order::Time(_))), "{format}");
         assert_eq!(read.distribution(), None);
@@ -773,7 +774,7 @@ fn sample_sets_save_and_load_as_the_trajectories_they_replace_did() {
         (scanned, TrajectoryField::OrderCoordinate),
     ] {
         let path = directory.file("refused.dcd");
-        let error = write_sample_set(&path, &refused, Default::default()).unwrap_err();
+        let error = write_structure_set(&path, &refused, Default::default()).unwrap_err();
         assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
         assert_eq!(error.field(), Some(field));
         assert!(!path.exists());
@@ -839,7 +840,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
 #[test]
 fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
-    use kekule::structure::{GeometryError, Sample};
+    use kekule::structure::{Geometry, GeometryError};
     use kekule::topology::TopologyBuilder;
     use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -867,18 +868,18 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
         [true; 3],
     )
     .unwrap();
-    let mut sample = Sample::new(positions.clone()).with_cell(cell);
+    let mut geometry = Geometry::new(positions.clone()).with_cell(cell);
     assert_eq!(
-        FrameView::new(&topology, &sample, None, Some(5)).unwrap_err(),
+        FrameView::new(&topology, &geometry, None, Some(5)).unwrap_err(),
         GeometryError::BondCountMismatch {
             expected: 2 * waters,
             actual: 0,
         }
     );
-    let stored = sample.positions().values().value().as_ptr();
-    sample.bind(&topology).unwrap();
-    // Binding gives the sample bond rows without copying its positions.
-    assert_eq!(sample.positions().values().value().as_ptr(), stored);
+    let stored = geometry.positions().values().value().as_ptr();
+    geometry.bind(&topology).unwrap();
+    // Binding gives the geometry bond rows without copying its positions.
+    assert_eq!(geometry.positions().values().value().as_ptr(), stored);
 
     let time = Quantity::new(10.0, PICOSECOND);
     let directory = Directory::new();
@@ -890,10 +891,10 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
     )
     .unwrap();
     writer
-        .write_frame(FrameView::new(&topology, &sample, Some(time), Some(5)).unwrap())
+        .write_frame(FrameView::new(&topology, &geometry, Some(time), Some(5)).unwrap())
         .unwrap();
     writer.finish().unwrap();
-    let read = read_sample_set(
+    let read = read_structure_set(
         &path,
         Arc::clone(&topology),
         TrajectoryOpenOptions::default(),
@@ -915,7 +916,7 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
 
 #[test]
 fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
-    use kekule::structure::{GeometryError, Sample};
+    use kekule::structure::{Geometry, GeometryError};
     use kekule::units::{Quantity, NANOMETER};
 
     let ethanol = kekule::smiles::to_topology("CCO").unwrap();
@@ -923,38 +924,38 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
     let points = (0..ethanol.atom_count())
         .map(|atom| kekule::math::Point3::new(atom as f64, 0.5, -0.25))
         .collect::<Vec<_>>();
-    let mut sample = Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
-    let before = sample.clone();
-    let stored = sample.positions().values().value().as_ptr();
+    let mut geometry = Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
+    let before = geometry.clone();
+    let stored = geometry.positions().values().value().as_ptr();
 
-    // Another atom count fails and leaves the sample as it was.
+    // Another atom count fails and leaves the geometry as it was.
     assert!(matches!(
-        sample.bind(&water).unwrap_err(),
+        geometry.bind(&water).unwrap_err(),
         GeometryError::Array(_)
     ));
-    assert_eq!(sample, before);
-    assert!(sample.shares_structure_with(&before));
-    assert_eq!(sample.positions().values().value().as_ptr(), stored);
+    assert_eq!(geometry, before);
+    assert!(geometry.shares_structure_with(&before));
+    assert_eq!(geometry.positions().values().value().as_ptr(), stored);
 
-    // Bound, the sample refuses the bond rows of another topology with as
+    // Bound, the geometry refuses the bond rows of another topology with as
     // many atoms and keeps its own.
-    sample.bind(&ethanol).unwrap();
-    let bound = sample.clone();
+    geometry.bind(&ethanol).unwrap();
+    let bound = geometry.clone();
     let dimethyl_ether = kekule::smiles::to_topology("COC").unwrap();
     let ring = kekule::smiles::to_topology("C1CO1").unwrap();
     assert_eq!(ring.atom_count(), ethanol.atom_count());
     assert!(matches!(
-        sample.bind(&ring).unwrap_err(),
+        geometry.bind(&ring).unwrap_err(),
         GeometryError::BondCountMismatch { .. }
     ));
-    assert_eq!(sample, bound);
-    assert!(sample.shares_structure_with(&bound));
-    // A topology with the same bond count binds as the sample already is.
-    sample.bind(&dimethyl_ether).unwrap();
-    assert!(sample.shares_structure_with(&bound));
+    assert_eq!(geometry, bound);
+    assert!(geometry.shares_structure_with(&bound));
+    // A topology with the same bond count binds as the geometry already is.
+    geometry.bind(&dimethyl_ether).unwrap();
+    assert!(geometry.shares_structure_with(&bound));
 
-    // Binding a sample that shares its storage copies it once and leaves the
-    // other sample unbound and unchanged.
+    // Binding a geometry that shares its storage copies it once and leaves the
+    // other geometry unbound and unchanged.
     let mut copy = before.clone();
     assert!(copy.shares_structure_with(&before));
     copy.bind(&ethanol).unwrap();

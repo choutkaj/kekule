@@ -1,5 +1,5 @@
-//! Borrowed samples and states of a [`SampleSet`] or another
-//! [`SampleRead`].
+//! Borrowed geometries and states of a [`StructureSet`] or another
+//! [`StructureSetRead`].
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -10,146 +10,152 @@ use crate::structure::state::{is_bound, validate_binding};
 use crate::structure::{AsModelView, GeometryError, Model, ModelView, State, StructureKind};
 use crate::topology::Topology;
 
-use super::{Place, Sample, SampleContext, SampleRead, SampleReadError, SampleSet};
+use super::{Geometry, Place, SetContext, StructureSet, StructureSetRead, StructureSetReadError};
 
-/// One topology-bound [`Sample`] borrowed from a [`SampleSet`] or another
-/// [`SampleRead`], with its place in the reader's order and its membership
+/// One topology-bound [`Geometry`] borrowed from a [`StructureSet`] or another
+/// [`StructureSetRead`], with its place in the reader's order and its membership
 /// in the reader's distribution.
 ///
-/// Reads sample state through `Deref` and converts to a [`ModelView`]
+/// Reads geometry state through `Deref` and converts to a [`ModelView`]
 /// through [`AsModelView`] without copying; the view's
-/// [`StructureKind::Sample`] carries the sample's [`SampleContext`].
+/// [`StructureKind::InSet`] carries the geometry's [`SetContext`].
 ///
-/// The type parameter says where the view comes from. `SampleView<'_>` is a
-/// sample of a set in memory ([`SampleSet::get`]), whose state lends its
-/// representative sample ([`StateView::representative_sample`]).
-/// `SampleView<'_, dyn SampleRead>` is a sample of any reader, as
-/// [`SampleRead::peek`] lends it; [`Self::as_dyn`] turns the first into the
+/// The type parameter says where the view comes from. `GeometryView<'_>` is a
+/// geometry of a set in memory ([`StructureSet::get`]), whose state lends its
+/// representative geometry ([`StateView::representative_sample`]).
+/// `GeometryView<'_, dyn StructureSetRead>` is a geometry of any reader, as
+/// [`StructureSetRead::peek`] lends it; [`Self::as_dyn`] turns the first into the
 /// second.
-pub struct SampleView<'a, R: ?Sized = SampleSet> {
-    pub(super) reader: &'a dyn SampleRead,
-    pub(super) sample: &'a Sample,
+pub struct GeometryView<'a, R: ?Sized = StructureSet> {
+    pub(super) reader: &'a dyn StructureSetRead,
+    pub(super) geometry: &'a Geometry,
     pub(super) index: usize,
     origin: PhantomData<&'a R>,
 }
 
-impl<R: ?Sized> Clone for SampleView<'_, R> {
+impl<R: ?Sized> Clone for GeometryView<'_, R> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<R: ?Sized> Copy for SampleView<'_, R> {}
+impl<R: ?Sized> Copy for GeometryView<'_, R> {}
 
-impl<R: ?Sized> fmt::Debug for SampleView<'_, R> {
+impl<R: ?Sized> fmt::Debug for GeometryView<'_, R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("SampleView")
+            .debug_struct("GeometryView")
             .field("index", &self.index)
-            .field("sample", self.sample)
+            .field("geometry", self.geometry)
             .finish_non_exhaustive()
     }
 }
 
-impl<R: ?Sized> std::ops::Deref for SampleView<'_, R> {
-    type Target = Sample;
+impl<R: ?Sized> std::ops::Deref for GeometryView<'_, R> {
+    type Target = Geometry;
 
     fn deref(&self) -> &Self::Target {
-        self.sample
+        self.geometry
     }
 }
 
-impl<'a> SampleView<'a, dyn SampleRead> {
-    /// A view of `sample` as sample `index` of `reader`, for a
-    /// [`SampleRead::peek`] that lends a sample the reader holds, such as a
-    /// host's cache of samples read from another reader.
+impl<'a> GeometryView<'a, dyn StructureSetRead> {
+    /// A view of `geometry` as geometry `index` of `reader`, for a
+    /// [`StructureSetRead::peek`] that lends a geometry the reader holds, such as a
+    /// host's cache of geometries read from another reader.
     ///
     /// # Errors
     ///
-    /// [`SampleReadError::IndexOutOfRange`] past the reader's last sample,
-    /// and [`SampleReadError::Geometry`] for a sample not bound to the
+    /// [`StructureSetReadError::IndexOutOfRange`] past the reader's last geometry,
+    /// and [`StructureSetReadError::Geometry`] for a geometry not bound to the
     /// reader's topology: one without a position per atom and a property
     /// row per atom and bond.
     pub fn new(
-        reader: &'a dyn SampleRead,
+        reader: &'a dyn StructureSetRead,
         index: usize,
-        sample: &'a Sample,
-    ) -> Result<Self, SampleReadError> {
+        geometry: &'a Geometry,
+    ) -> Result<Self, StructureSetReadError> {
         let len = reader.len();
         if index >= len {
-            return Err(SampleReadError::IndexOutOfRange { index, len });
+            return Err(StructureSetReadError::IndexOutOfRange { index, len });
         }
-        check_bound(reader.topology(), sample).map_err(|source| SampleReadError::Geometry {
-            sample: index,
-            source: Box::new(source),
+        check_bound(reader.topology(), geometry).map_err(|source| {
+            StructureSetReadError::Geometry {
+                geometry: index,
+                source: Box::new(source),
+            }
         })?;
-        Ok(Self::of_reader(reader, index, sample))
+        Ok(Self::of_reader(reader, index, geometry))
     }
 
-    /// A view of `sample`, sample `index` of `reader` and bound to its
+    /// A view of `geometry`, geometry `index` of `reader` and bound to its
     /// topology.
-    pub(crate) fn of_reader(reader: &'a dyn SampleRead, index: usize, sample: &'a Sample) -> Self {
+    pub(crate) fn of_reader(
+        reader: &'a dyn StructureSetRead,
+        index: usize,
+        geometry: &'a Geometry,
+    ) -> Self {
         Self {
             reader,
-            sample,
+            geometry,
             index,
             origin: PhantomData,
         }
     }
 }
 
-impl<'a> SampleView<'a> {
-    /// A view of sample `index` of an in-memory `set`, which holds `sample`.
-    pub(crate) fn of_set(set: &'a SampleSet, index: usize, sample: &'a Sample) -> Self {
+impl<'a> GeometryView<'a> {
+    /// A view of geometry `index` of an in-memory `set`, which holds `geometry`.
+    pub(crate) fn of_set(set: &'a StructureSet, index: usize, geometry: &'a Geometry) -> Self {
         Self {
             reader: set,
-            sample,
+            geometry,
             index,
             origin: PhantomData,
         }
     }
 }
 
-impl<'a, R: ?Sized> SampleView<'a, R> {
-    /// The same view as one of any reader, as [`SampleRead::peek`] returns
+impl<'a, R: ?Sized> GeometryView<'a, R> {
+    /// The same view as one of any reader, as [`StructureSetRead::peek`] returns
     /// it.
-    pub fn as_dyn(self) -> SampleView<'a, dyn SampleRead> {
-        SampleView::of_reader(self.reader, self.index, self.sample)
+    pub fn as_dyn(self) -> GeometryView<'a, dyn StructureSetRead> {
+        GeometryView::of_reader(self.reader, self.index, self.geometry)
     }
 
-    /// The sample's index in its set.
+    /// The geometry's index in its set.
     pub const fn index(self) -> usize {
         self.index
     }
 
-    /// The sample's place in the set's order, or `None` in an unordered set.
+    /// The geometry's place in the set's order, or `None` in an unordered set.
     pub fn place(self) -> Option<Place> {
         self.reader.order().map(|order| order.place(self.index))
     }
 
-    /// The sample's relative weight in the set's distribution (`1.0` when
+    /// The geometry's relative weight in the set's distribution (`1.0` when
     /// every member weighs the same), or `None` when the set has no
-    /// distribution or the sample is not a member. Weighted statistics walk
-    /// [`SampleSet::weighted_samples`] instead, which counts every sample of
+    /// distribution or the geometry is not a member. Weighted statistics walk
+    /// [`StructureSet::weighted_samples`] instead, which counts every geometry of
     /// a set without a distribution.
     pub fn weight(self) -> Option<f64> {
         self.reader.distribution()?.weight(self.index)
     }
 
-    /// The state the sample belongs to, or `None` when it is not a member
+    /// The state the geometry belongs to, or `None` when it is not a member
     /// of the set's distribution.
     pub fn state(self) -> Option<StateView<'a, R>> {
         let state = self.reader.distribution()?.state_of(self.index)?;
         Some(StateView::new(self.reader, state))
     }
 
-    /// Whether the sample represents its state.
+    /// Whether the geometry represents its state.
     pub fn is_representative(self) -> bool {
         self.state()
             .is_some_and(|state| state.representative() == self.index)
     }
 
-    /// The topology the sample is bound to, with the view's full lifetime.
+    /// The topology the geometry is bound to, with the view's full lifetime.
     pub fn topology(self) -> &'a Topology {
         self.reader.topology()
     }
@@ -164,30 +170,30 @@ impl<'a, R: ?Sized> SampleView<'a, R> {
         self.reader.topology()
     }
 
-    /// The borrowed sample with the view's full lifetime.
-    pub fn payload(self) -> &'a Sample {
-        self.sample
+    /// The borrowed geometry with the view's full lifetime.
+    pub fn payload(self) -> &'a Geometry {
+        self.geometry
     }
 
-    /// Borrows the sample as the common kernel input, with the view's full
+    /// Borrows the geometry as the common kernel input, with the view's full
     /// lifetime.
     pub fn as_model_view(self) -> ModelView<'a> {
-        self.sample.structure().model_view(
+        self.geometry.structure().model_view(
             self.reader.topology(),
-            StructureKind::Sample(SampleContext::of_view(self.as_dyn())),
+            StructureKind::InSet(SetContext::of_view(self.as_dyn())),
         )
     }
 
-    /// Materializes the sample as an owned model, dropping its place,
+    /// Materializes the geometry as an owned model, dropping its place,
     /// membership, velocities, and forces.
     pub fn to_model(self) -> Model {
         self.as_model_view().to_model()
     }
 }
 
-/// Fails unless `sample` is bound to `topology`.
-pub(crate) fn check_bound(topology: &Topology, sample: &Sample) -> Result<(), GeometryError> {
-    let structure = sample.structure();
+/// Fails unless `geometry` is bound to `topology`.
+pub(crate) fn check_bound(topology: &Topology, geometry: &Geometry) -> Result<(), GeometryError> {
+    let structure = geometry.structure();
     let atoms = structure.positions.len();
     validate_binding(atoms, &structure.properties, topology)?;
     if !is_bound(atoms, &structure.properties, topology) {
@@ -199,25 +205,25 @@ pub(crate) fn check_bound(topology: &Topology, sample: &Sample) -> Result<(), Ge
     Ok(())
 }
 
-impl<R: ?Sized> Sealed for SampleView<'_, R> {}
+impl<R: ?Sized> Sealed for GeometryView<'_, R> {}
 
-impl<R: ?Sized> AsModelView for SampleView<'_, R> {
+impl<R: ?Sized> AsModelView for GeometryView<'_, R> {
     fn as_model_view(&self) -> ModelView<'_> {
-        SampleView::as_model_view(*self)
+        GeometryView::as_model_view(*self)
     }
 }
 
-/// One state of the distribution of a [`SampleSet`] or another
-/// [`SampleRead`], with its members, representative, and population.
+/// One state of the distribution of a [`StructureSet`] or another
+/// [`StructureSetRead`], with its members, representative, and population.
 ///
 /// Reads the state's energy and properties through `Deref`. The type
-/// parameter says where the state comes from, as for [`SampleView`]: a
+/// parameter says where the state comes from, as for [`GeometryView`]: a
 /// state of a set in memory, `StateView<'_>`, lends its representative
-/// sample ([`Self::representative_sample`]); the state of a set in a file,
+/// geometry ([`Self::representative_sample`]); the state of a set in a file,
 /// or of another reader, gives its index ([`Self::representative`]), which
 /// the host reads.
-pub struct StateView<'a, R: ?Sized = SampleSet> {
-    reader: &'a dyn SampleRead,
+pub struct StateView<'a, R: ?Sized = StructureSet> {
+    reader: &'a dyn StructureSetRead,
     index: usize,
     origin: PhantomData<&'a R>,
 }
@@ -250,7 +256,7 @@ impl<R: ?Sized> std::ops::Deref for StateView<'_, R> {
 
 impl<'a, R: ?Sized> StateView<'a, R> {
     /// State `index` of `reader`'s distribution, which `R` describes.
-    pub(crate) fn new(reader: &'a dyn SampleRead, index: usize) -> Self {
+    pub(crate) fn new(reader: &'a dyn StructureSetRead, index: usize) -> Self {
         Self {
             reader,
             index,
@@ -269,14 +275,14 @@ impl<'a, R: ?Sized> StateView<'a, R> {
         self.index
     }
 
-    /// The sample index of the state's representative.
+    /// The geometry index of the state's representative.
     pub fn representative(self) -> usize {
         let distribution = self.distribution();
         distribution.member(distribution.partition().representatives()[self.index])
     }
 
-    /// The sample indices of the state's members, in sample order.
-    pub fn samples(self) -> impl Iterator<Item = usize> + 'a {
+    /// The geometry indices of the state's members, in geometry order.
+    pub fn geometries(self) -> impl Iterator<Item = usize> + 'a {
         let distribution = self.distribution();
         distribution
             .partition()
@@ -300,32 +306,32 @@ impl<'a, R: ?Sized> StateView<'a, R> {
 }
 
 impl<'a> StateView<'a> {
-    /// The state's representative sample.
-    pub fn representative_sample(self) -> SampleView<'a> {
+    /// The state's representative geometry.
+    pub fn representative_sample(self) -> GeometryView<'a> {
         let index = self.representative();
         let view = self
             .reader
             .peek(index)
-            .expect("a set in memory lends every sample");
-        SampleView {
+            .expect("a set in memory lends every geometry");
+        GeometryView {
             reader: view.reader,
-            sample: view.sample,
+            geometry: view.geometry,
             index,
             origin: PhantomData,
         }
     }
 }
 
-/// Iterator over the topology-bound samples of a [`SampleSet`], in set
+/// Iterator over the topology-bound geometries of a [`StructureSet`], in set
 /// order.
 #[derive(Debug, Clone)]
-pub struct SampleIter<'a> {
-    set: &'a SampleSet,
+pub struct GeometryIter<'a> {
+    set: &'a StructureSet,
     indices: std::ops::Range<usize>,
 }
 
-impl<'a> SampleIter<'a> {
-    pub(crate) fn new(set: &'a SampleSet) -> Self {
+impl<'a> GeometryIter<'a> {
+    pub(crate) fn new(set: &'a StructureSet) -> Self {
         Self {
             set,
             indices: 0..set.len(),
@@ -333,8 +339,8 @@ impl<'a> SampleIter<'a> {
     }
 }
 
-impl<'a> Iterator for SampleIter<'a> {
-    type Item = SampleView<'a>;
+impl<'a> Iterator for GeometryIter<'a> {
+    type Item = GeometryView<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let set = self.set;
@@ -346,13 +352,13 @@ impl<'a> Iterator for SampleIter<'a> {
     }
 }
 
-impl ExactSizeIterator for SampleIter<'_> {}
+impl ExactSizeIterator for GeometryIter<'_> {}
 
 /// Iterator over the states of a set's distribution, in state order; empty
 /// without a distribution. Its type parameter is the set's, as for
 /// [`StateView`].
-pub struct StateIter<'a, R: ?Sized = SampleSet> {
-    reader: &'a dyn SampleRead,
+pub struct StateIter<'a, R: ?Sized = StructureSet> {
+    reader: &'a dyn StructureSetRead,
     indices: std::ops::Range<usize>,
     origin: PhantomData<&'a R>,
 }
@@ -378,7 +384,7 @@ impl<R: ?Sized> fmt::Debug for StateIter<'_, R> {
 
 impl<'a, R: ?Sized> StateIter<'a, R> {
     /// The states of `reader`'s distribution, which `R` describes.
-    pub(crate) fn new(reader: &'a dyn SampleRead) -> Self {
+    pub(crate) fn new(reader: &'a dyn StructureSetRead) -> Self {
         let states = reader
             .distribution()
             .map_or(0, super::Distribution::state_count);

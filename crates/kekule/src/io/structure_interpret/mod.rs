@@ -9,8 +9,8 @@ mod connections;
 pub(crate) use connections::is_metal;
 mod mmcif;
 mod pdb;
-mod sample_set;
 mod sequences;
+mod structure_set;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -37,11 +37,12 @@ pub use altloc::{
 pub use assemblies::{Assembly, AssemblyError, AssemblyGenerator, AssemblyOperation};
 pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
-    interpret_mmcif_conformations, interpret_mmcif_conformations_block, interpret_mmcif_sample_set,
-    interpret_mmcif_sample_set_block,
+    interpret_mmcif_conformations, interpret_mmcif_conformations_block,
+    interpret_mmcif_structure_set, interpret_mmcif_structure_set_block,
 };
 pub(crate) use pdb::{
-    interpret_pdb, interpret_pdb_conformations, interpret_pdb_sample_set, pdb_alternate_locations,
+    interpret_pdb, interpret_pdb_conformations, interpret_pdb_structure_set,
+    pdb_alternate_locations,
 };
 pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
@@ -53,7 +54,7 @@ pub use types::{
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
-    StructureSampleSetInterpretOptions, StructureSampleSetInterpretation,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 
 /// Everything interpretation reads from one source, an mmCIF data block or a

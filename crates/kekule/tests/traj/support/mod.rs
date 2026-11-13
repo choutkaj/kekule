@@ -10,8 +10,8 @@ use std::sync::Arc;
 use kekule::math::PeriodicCell;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::{
-    Forces, GeometryError, Order, Place, Positions, Sample, SampleRead, SampleReadError, SampleSet,
-    SampleView, TimeAxis, Velocities,
+    Forces, Geometry, GeometryError, GeometryView, Order, Place, Positions, StructureSet,
+    StructureSetRead, StructureSetReadError, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::DcdEndian;
@@ -21,11 +21,11 @@ use kekule::traj::{
 };
 use kekule::units::{Quantity, CANONICAL_TIME_UNIT};
 
-/// A frame a test expects or a reader decodes: a sample with its time and
+/// A frame a test expects or a reader decodes: a geometry with its time and
 /// MD step, compared as a whole.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Frame {
-    pub(crate) sample: Sample,
+    pub(crate) geometry: Geometry,
     pub(crate) time: Option<Quantity<f64>>,
     pub(crate) step: Option<u64>,
 }
@@ -33,13 +33,13 @@ pub(crate) struct Frame {
 impl Frame {
     /// A frame of `positions` without a cell, time, or step.
     pub(crate) fn new(positions: Positions) -> Self {
-        Self::of_sample(Sample::new(positions))
+        Self::of_sample(Geometry::new(positions))
     }
 
-    /// A frame of `sample` without a time or step.
-    pub(crate) fn of_sample(sample: Sample) -> Self {
+    /// A frame of `geometry` without a time or step.
+    pub(crate) fn of_sample(geometry: Geometry) -> Self {
         Self {
-            sample,
+            geometry,
             time: None,
             step: None,
         }
@@ -53,20 +53,20 @@ impl Frame {
     /// The frame a frame view shows.
     pub(crate) fn of_view(frame: FrameView<'_>) -> Self {
         Self {
-            sample: frame.payload().clone(),
+            geometry: frame.payload().clone(),
             time: frame.time(),
             step: frame.step(),
         }
     }
 
-    /// A sample of a set as a frame: the time and step of a time order.
-    pub(crate) fn of_set_sample(view: SampleView<'_>) -> Self {
+    /// A geometry of a set as a frame: the time and step of a time order.
+    pub(crate) fn of_set_sample(view: GeometryView<'_>) -> Self {
         let (time, step) = match view.place() {
             Some(Place::Time { time, step }) => (time, step),
             _ => (None, None),
         };
         Self {
-            sample: view.payload().clone(),
+            geometry: view.payload().clone(),
             time,
             step,
         }
@@ -74,7 +74,7 @@ impl Frame {
 
     #[must_use]
     pub(crate) fn with_cell(mut self, cell: kekule::math::PeriodicCell) -> Self {
-        self.sample = self.sample.with_cell(cell);
+        self.geometry = self.geometry.with_cell(cell);
         self
     }
 
@@ -107,31 +107,31 @@ impl Frame {
     }
 
     /// The frame with the annotation rows of `topology`, as a set or a
-    /// buffer binds a sample.
+    /// buffer binds a geometry.
     #[must_use]
     pub(crate) fn bound(self, topology: &Arc<Topology>) -> Self {
-        let mut sample = self.sample;
-        sample.bind(topology).unwrap();
-        Self { sample, ..self }
+        let mut geometry = self.geometry;
+        geometry.bind(topology).unwrap();
+        Self { geometry, ..self }
     }
 
     /// The bound frame as a writer takes it.
     pub(crate) fn view<'a>(&'a self, topology: &'a Arc<Topology>) -> FrameView<'a> {
-        FrameView::new(topology, &self.sample, self.time, self.step).unwrap()
+        FrameView::new(topology, &self.geometry, self.time, self.step).unwrap()
     }
 }
 
 impl std::ops::Deref for Frame {
-    type Target = Sample;
+    type Target = Geometry;
 
-    fn deref(&self) -> &Sample {
-        &self.sample
+    fn deref(&self) -> &Geometry {
+        &self.geometry
     }
 }
 
 impl std::ops::DerefMut for Frame {
-    fn deref_mut(&mut self) -> &mut Sample {
-        &mut self.sample
+    fn deref_mut(&mut self) -> &mut Geometry {
+        &mut self.geometry
     }
 }
 
@@ -140,8 +140,8 @@ impl std::ops::DerefMut for Frame {
 pub(crate) fn time_ordered(
     topology: impl Into<Arc<Topology>>,
     frames: impl IntoIterator<Item = Frame>,
-) -> SampleSet {
-    let mut set = SampleSet::new(topology);
+) -> StructureSet {
+    let mut set = StructureSet::new(topology);
     for (index, frame) in frames.into_iter().enumerate() {
         if index == 0 {
             let axis = TimeAxis::new(
@@ -157,13 +157,13 @@ pub(crate) fn time_ordered(
             time: frame.time,
             step: frame.step,
         };
-        set.push(frame.sample, Some(place)).unwrap();
+        set.push(frame.geometry, Some(place)).unwrap();
     }
     set
 }
 
 /// The frames of a set, in set order.
-pub(crate) fn frames_of(set: &SampleSet) -> Vec<Frame> {
+pub(crate) fn frames_of(set: &StructureSet) -> Vec<Frame> {
     set.iter().map(Frame::of_set_sample).collect()
 }
 
@@ -212,19 +212,19 @@ impl Drop for Recorded {
 }
 
 /// What a set holds apart from its topology: its properties, order,
-/// distribution, and samples.
-pub(crate) fn contents(set: &SampleSet) -> impl Debug + '_ {
+/// distribution, and geometries.
+pub(crate) fn contents(set: &StructureSet) -> impl Debug + '_ {
     (
         set.properties(),
         set.order(),
         set.distribution(),
         set.iter()
-            .map(|sample| sample.payload())
+            .map(|geometry| geometry.payload())
             .collect::<Vec<_>>(),
     )
 }
 
-/// The positions, cell, velocities, and forces of a sample.
+/// The positions, cell, velocities, and forces of a geometry.
 pub(crate) type Dynamics = (
     Positions,
     Option<PeriodicCell>,
@@ -232,23 +232,25 @@ pub(crate) type Dynamics = (
     Option<Forces>,
 );
 
-/// The dynamics of every sample: the state periodic operations and fits
+/// The dynamics of every geometry: the state periodic operations and fits
 /// change.
-pub(crate) fn dynamics(set: &SampleSet) -> Vec<Dynamics> {
+pub(crate) fn dynamics(set: &StructureSet) -> Vec<Dynamics> {
     set.iter()
-        .map(|sample| {
+        .map(|geometry| {
             (
-                sample.positions().clone(),
-                sample.cell().copied(),
-                sample.velocities().cloned(),
-                sample.forces().cloned(),
+                geometry.positions().clone(),
+                geometry.cell().copied(),
+                geometry.velocities().cloned(),
+                geometry.forces().cloned(),
             )
         })
         .collect()
 }
 
-/// Every sample `reader` reads, in order.
-pub(crate) fn reads(reader: &(impl SampleRead + ?Sized)) -> Vec<Result<Sample, SampleReadError>> {
+/// Every geometry `reader` reads, in order.
+pub(crate) fn reads(
+    reader: &(impl StructureSetRead + ?Sized),
+) -> Vec<Result<Geometry, StructureSetReadError>> {
     (0..reader.len()).map(|index| reader.read(index)).collect()
 }
 

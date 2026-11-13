@@ -1,4 +1,4 @@
-//! Sample sets read from indexed trajectory files: every read is the indexed
+//! Structure sets read from indexed trajectory files: every read is the indexed
 //! reader's frame, reads run from many threads at once, a refresh takes the
 //! frames a writer appended, and loading gives the set in memory.
 
@@ -11,18 +11,18 @@ use std::thread;
 
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
-use kekule::native::SampleSetDescription;
+use kekule::native::StructureSetDescription;
 use kekule::structure::{
-    Distribution, Members, Order, Partition, Positions, Sample, SampleRead, SampleReadError,
-    SampleSet,
+    Distribution, Geometry, Members, Order, Partition, Positions, StructureSet, StructureSetRead,
+    StructureSetReadError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdEndian, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
-    append_trajectory, open_indexed_sample_set, open_indexed_sample_set_from_index,
-    open_indexed_trajectory, read_sample_set, write_sample_set, IndexedFile, KeepFrames,
+    append_trajectory, open_indexed_structure_set, open_indexed_structure_set_from_index,
+    open_indexed_trajectory, read_structure_set, write_structure_set, IndexedFile, KeepFrames,
     TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
@@ -69,7 +69,7 @@ impl Directory {
     fn new() -> Self {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "kekule-sample-storage-{}-{}",
+            "kekule-geometry-storage-{}-{}",
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
@@ -86,7 +86,7 @@ impl Drop for Directory {
 
 /// `count` frames of a moving 12-carbon chain in a cell, with times and
 /// steps.
-fn chain(topology: &Arc<Topology>, count: u64) -> SampleSet {
+fn chain(topology: &Arc<Topology>, count: u64) -> StructureSet {
     let frames = (0..count).map(|step| {
         let shift = step as f64;
         let points = (0..12)
@@ -128,24 +128,32 @@ fn indexed_frames(path: &Path, topology: &Arc<Topology>) -> Vec<Frame> {
         .collect()
 }
 
-/// Checks that `sample`, sample `index` of `set`, is `frame` with its time
+/// Checks that `geometry`, geometry `index` of `set`, is `frame` with its time
 /// and step in the set's order.
-fn assert_frame(set: &impl SampleRead, index: usize, sample: &Sample, frame: &Frame) {
-    assert_eq!(sample.positions(), frame.positions(), "sample {index}");
-    assert_eq!(sample.cell(), frame.cell(), "sample {index}");
-    assert_eq!(sample.velocities(), frame.velocities(), "sample {index}");
-    assert_eq!(sample.forces(), frame.forces(), "sample {index}");
-    assert_eq!(sample.properties(), frame.properties(), "sample {index}");
+fn assert_frame(set: &impl StructureSetRead, index: usize, geometry: &Geometry, frame: &Frame) {
+    assert_eq!(geometry.positions(), frame.positions(), "geometry {index}");
+    assert_eq!(geometry.cell(), frame.cell(), "geometry {index}");
+    assert_eq!(
+        geometry.velocities(),
+        frame.velocities(),
+        "geometry {index}"
+    );
+    assert_eq!(geometry.forces(), frame.forces(), "geometry {index}");
+    assert_eq!(
+        geometry.properties(),
+        frame.properties(),
+        "geometry {index}"
+    );
     let Some(Order::Time(axis)) = set.order() else {
-        panic!("a file's samples are in time order");
+        panic!("a file's geometries are in time order");
     };
     assert_eq!(
         axis.time(index)
             .map(|time| time.value_in(PICOSECOND).unwrap()),
         frame.time().map(|time| time.value_in(PICOSECOND).unwrap()),
-        "sample {index}"
+        "geometry {index}"
     );
-    assert_eq!(axis.step(index), frame.step(), "sample {index}");
+    assert_eq!(axis.step(index), frame.step(), "geometry {index}");
 }
 
 #[test]
@@ -153,7 +161,7 @@ fn every_read_is_the_indexed_frame_of_every_format() {
     for (path, topology) in fixtures() {
         let frames = indexed_frames(&path, &topology);
         let set =
-            open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+            open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
         assert_eq!(set.len(), frames.len(), "{path:?}");
         assert!(set.len() >= 2, "{path:?}");
         assert!(Arc::ptr_eq(&set.shared_topology(), &topology));
@@ -167,20 +175,20 @@ fn every_read_is_the_indexed_frame_of_every_format() {
         // Out of order, and twice.
         for index in (0..set.len()).rev().chain(0..set.len()) {
             assert!(set.peek(index).is_none());
-            let sample = set.read(index).unwrap();
-            assert_frame(&set, index, &sample, &frames[index]);
+            let geometry = set.read(index).unwrap();
+            assert_frame(&set, index, &geometry, &frames[index]);
         }
         assert_eq!(
             set.read(set.len()),
-            Err(SampleReadError::IndexOutOfRange {
+            Err(StructureSetReadError::IndexOutOfRange {
                 index: set.len(),
                 len: set.len()
             })
         );
 
-        // Opened again from the kept index, the set reads the same samples.
+        // Opened again from the kept index, the set reads the same geometries.
         let index = set.storage().frame_index();
-        let reopened = open_indexed_sample_set_from_index(
+        let reopened = open_indexed_structure_set_from_index(
             &path,
             Arc::clone(&topology),
             index,
@@ -198,32 +206,32 @@ fn every_read_is_the_indexed_frame_of_every_format() {
 fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
     for (path, topology) in fixtures() {
         let set =
-            open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+            open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
         let loaded = set.load(0..set.len()).unwrap();
-        let read = read_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+        let read = read_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
         assert_eq!(loaded.len(), read.len(), "{path:?}");
         assert_eq!(loaded.order(), read.order(), "{path:?}");
         for index in 0..read.len() {
             assert_eq!(
                 loaded.get(index).unwrap().payload(),
                 read.get(index).unwrap().payload(),
-                "{path:?} sample {index}"
+                "{path:?} geometry {index}"
             );
         }
-        let described = SampleSetDescription::of(&set);
-        assert_eq!(described.sample_count(), set.len());
+        let described = StructureSetDescription::of(&set);
+        assert_eq!(described.geometry_count(), set.len());
         assert_eq!(described.order(), set.order());
     }
 
-    // Listed samples keep their order values and the distribution's
+    // Listed geometries keep their order values and the distribution's
     // members among them, as selecting them in memory does.
     let topology = linear_carbon_topology(12);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_sample_set(&path, &chain(&topology, 8), options).unwrap();
+    write_structure_set(&path, &chain(&topology, 8), options).unwrap();
     let mut set =
-        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+        open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let kept = (0..set.len())
         .filter(|index| index % 3 != 1)
         .collect::<Vec<_>>();
@@ -250,7 +258,7 @@ fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
     }
     assert!(matches!(
         set.load([0, set.len()]),
-        Err(SampleReadError::IndexOutOfRange { .. })
+        Err(StructureSetReadError::IndexOutOfRange { .. })
     ));
     // The set in memory is the set's own: editing it leaves the file alone.
     memory.set_distribution(None).unwrap();
@@ -260,11 +268,11 @@ fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
 #[test]
 fn reads_from_many_threads_at_once_equal_sequential_reads() {
     for (path, topology) in fixtures() {
-        let set = open_indexed_sample_set(&path, topology, Default::default()).unwrap();
+        let set = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
         let sequential = (0..set.len())
             .map(|index| set.read(index).unwrap())
             .collect::<Vec<_>>();
-        let reader: &dyn SampleRead = &set;
+        let reader: &dyn StructureSetRead = &set;
         thread::scope(|scope| {
             let threads = (0..6)
                 .map(|offset| {
@@ -293,10 +301,10 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     let path = directory.0.join("run.xtc");
     let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
 
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     assert_eq!(set.len(), 3);
     assert_eq!(set.refresh().unwrap(), 0);
     let distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
@@ -311,7 +319,7 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     assert_eq!(report.kept_frames(), 3);
     for frame in all.iter().skip(3).take(2) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.flush().unwrap();
@@ -319,7 +327,7 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     assert_eq!(set.len(), 5);
     for frame in all.iter().skip(5) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
@@ -330,15 +338,15 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     for (index, frame) in written.iter().enumerate() {
         assert_frame(&set, index, &set.read(index).unwrap(), frame);
     }
-    for (index, sample) in before.iter().enumerate() {
-        assert_eq!(&set.read(index).unwrap(), sample);
+    for (index, geometry) in before.iter().enumerate() {
+        assert_eq!(&set.read(index).unwrap(), geometry);
     }
-    // The distribution over every sample covers the samples it covered.
+    // The distribution over every geometry covers the geometries it covered.
     let distribution = set.distribution().unwrap();
     assert_eq!(distribution.members(), &Members::Subset(vec![0, 1, 2]));
     assert_eq!(set.storage().frame_index().frame_count(), frames.len());
     assert_eq!(
-        open_indexed_sample_set(&path, topology, Default::default())
+        open_indexed_structure_set(&path, topology, Default::default())
             .unwrap()
             .order(),
         set.order()
@@ -355,14 +363,14 @@ fn refresh_counts_from_the_set_after_concurrent_reads() {
     let path = directory.0.join("run.xtc");
     let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(2));
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(2), options).unwrap();
     for (count, frame) in all.iter().enumerate().skip(2) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         writer.flush().unwrap();
         let barrier = std::sync::Barrier::new(8);
@@ -399,7 +407,7 @@ fn refresh_counts_from_the_set_after_concurrent_reads() {
 /// A TRR file of [`chain`] in `directory`.
 fn chain_trr(directory: &Directory, topology: &Arc<Topology>, count: u64) -> PathBuf {
     let path = directory.0.join("run.trr");
-    write_sample_set(&path, &chain(topology, count), trr_options()).unwrap();
+    write_structure_set(&path, &chain(topology, count), trr_options()).unwrap();
     path
 }
 
@@ -409,12 +417,12 @@ fn trr_options() -> TrajectoryWriteOptions {
     )
 }
 
-/// Reads every sample of `set` on `threads` threads at once, each in its
+/// Reads every geometry of `set` on `threads` threads at once, each in its
 /// own order, so that some readers are opened for the reads.
 fn read_at_once(
-    set: &SampleSet<IndexedFile>,
+    set: &StructureSet<IndexedFile>,
     threads: usize,
-) -> Vec<Vec<Result<Sample, SampleReadError>>> {
+) -> Vec<Vec<Result<Geometry, StructureSetReadError>>> {
     let barrier = std::sync::Barrier::new(threads);
     thread::scope(|scope| {
         let runs = (0..threads)
@@ -443,7 +451,7 @@ fn a_failed_read_leaves_the_reader_reading() {
     let directory = Directory::new();
     let path = chain_trr(&directory, &topology, 6);
     let frames = indexed_frames(&path, &topology);
-    let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let set = open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     // The last coordinates of frame 3 become NaN.
     let end = set.storage().frame_index().frame_offsets()[4];
     let mut file = OpenOptions::new().write(true).open(&path).unwrap();
@@ -453,10 +461,13 @@ fn a_failed_read_leaves_the_reader_reading() {
 
     let failed = set.read(3).unwrap_err();
     assert!(
-        matches!(failed, SampleReadError::Trajectory { sample: 3, .. }),
+        matches!(
+            failed,
+            StructureSetReadError::Trajectory { geometry: 3, .. }
+        ),
         "{failed:?}"
     );
-    assert_eq!(failed.to_string(), "Cannot read sample 3.");
+    assert_eq!(failed.to_string(), "Cannot read geometry 3.");
     // The same reader, back in the pool, reads the other frames.
     for index in [2, 4, 0, 5, 1] {
         assert_frame(&set, index, &set.read(index).unwrap(), &frames[index]);
@@ -472,7 +483,7 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
     let directory = Directory::new();
     let path = chain_trr(&directory, &topology, 8);
     let mut set =
-        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+        open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let starts = set.storage().frame_index().frame_offsets().to_vec();
     let expected = (0..set.len())
         .map(|index| set.read(index).unwrap())
@@ -491,14 +502,14 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
             .map(|index| set.read(index).unwrap_err())
             .collect::<Vec<_>>();
         for (index, error) in (first_lost..).zip(&lost) {
-            let SampleReadError::Trajectory {
-                sample,
+            let StructureSetReadError::Trajectory {
+                geometry,
                 source: error,
             } = error
             else {
                 panic!("frame {index}: {error:?}");
             };
-            assert_eq!(*sample, index);
+            assert_eq!(*geometry, index);
             assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
             assert_eq!(error.frame(), Some(index));
             let detail = error.detail().unwrap();
@@ -508,9 +519,9 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
         for reads in read_at_once(&set, 12) {
             for (index, read) in reads.into_iter().enumerate() {
                 match read {
-                    Ok(sample) => {
+                    Ok(geometry) => {
                         assert!(index < first_lost, "frame {index}");
-                        assert_eq!(sample, expected[index]);
+                        assert_eq!(geometry, expected[index]);
                     }
                     Err(error) => assert_eq!(error, lost[index - first_lost], "frame {index}"),
                 }
@@ -531,7 +542,7 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
     let directory = Directory::new();
     let path = chain_trr(&directory, &topology, 6);
     let mut set =
-        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+        open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let expected = (0..set.len())
         .map(|index| set.read(index).unwrap())
         .collect::<Vec<_>>();
@@ -539,7 +550,7 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
     let mut reversed = frames_of(&chain(&topology, 9));
     reversed.reverse();
     let reversed = time_ordered(Arc::clone(&topology), reversed);
-    write_sample_set(&other, &reversed, trr_options()).unwrap();
+    write_structure_set(&other, &reversed, trr_options()).unwrap();
     fs::rename(&other, &path).unwrap();
 
     for reads in read_at_once(&set, 12) {
@@ -552,7 +563,7 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
     assert!(refused.detail().unwrap().ends_with("Open the file again."));
     assert_eq!(set.len(), expected.len());
     // Opened again, the set reads the new file.
-    let reopened = open_indexed_sample_set(&path, topology, Default::default()).unwrap();
+    let reopened = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
     assert_eq!(reopened.len(), 9);
 }
 
@@ -567,9 +578,9 @@ fn refresh_keeps_a_distribution_over_some_samples_or_none() {
         let directory = Directory::new();
         let path = directory.0.join("run.xtc");
         let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
-        write_sample_set(&path, &head, options.clone()).unwrap();
+        write_structure_set(&path, &head, options.clone()).unwrap();
         let mut set =
-            open_indexed_sample_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
+            open_indexed_structure_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
         let partition = Partition::one_state(members.len());
         let distribution = Distribution::new(Members::Subset(members.clone()), partition).unwrap();
         set.set_distribution(Some(distribution.clone())).unwrap();
@@ -582,7 +593,7 @@ fn refresh_keeps_a_distribution_over_some_samples_or_none() {
         .unwrap();
         for frame in all.iter().skip(3) {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
         }
         writer.finish().unwrap();
@@ -603,9 +614,9 @@ fn a_processed_growing_file_reads_the_appended_samples() {
     let path = directory.0.join("run.xtc");
     let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(3));
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     let ids = topology.atom_ids();
     let middle =
         AtomSelection::from_atoms(Arc::clone(&topology), ids[4..8].iter().copied()).unwrap();
@@ -621,7 +632,7 @@ fn a_processed_growing_file_reads_the_appended_samples() {
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
@@ -630,34 +641,34 @@ fn a_processed_growing_file_reads_the_appended_samples() {
     processed = Processed::new(set, steps.clone()).unwrap();
     assert_eq!(processed.len(), 7);
 
-    let reopened = open_indexed_sample_set(&path, topology, Default::default()).unwrap();
+    let reopened = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
     let expected = Processed::new(reopened, steps).unwrap();
     for index in 0..7 {
-        let sample = processed.read(index).unwrap();
-        assert_eq!(sample, expected.read(index).unwrap(), "sample {index}");
+        let geometry = processed.read(index).unwrap();
+        assert_eq!(geometry, expected.read(index).unwrap(), "geometry {index}");
         if let Some(read) = before.get(index) {
-            assert_eq!(&sample, read, "sample {index}");
+            assert_eq!(&geometry, read, "geometry {index}");
         }
     }
 }
 
-/// Wrapping and making whole leave samples without a cell as they are.
+/// Wrapping and making whole leave geometries without a cell as they are.
 #[test]
 fn wrapping_a_file_without_cells_reads_the_samples_as_stored() {
     let (path, topology) = fixtures()[0].clone();
-    let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let set = open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let steps = ProcessingSteps::default()
         .with_whole(true)
         .with_wrap(AtomSelection::all(Arc::clone(&topology)));
     let processed = Processed::new(&set, steps).unwrap();
     for index in 0..set.len() {
         let stored = set.read(index).unwrap();
-        assert!(stored.cell().is_none(), "sample {index}");
+        assert!(stored.cell().is_none(), "geometry {index}");
         let read = processed.read(index).unwrap();
-        assert!(processed.skipped_periodic_steps(&read), "sample {index}");
-        assert_eq!(read, stored, "sample {index}");
+        assert!(processed.skipped_periodic_steps(&read), "geometry {index}");
+        assert_eq!(read, stored, "geometry {index}");
     }
-    // Samples with a cell are made whole.
+    // Geometries with a cell are made whole.
     let chain_topology = linear_carbon_topology(12);
     let boxed = chain(&chain_topology, 2);
     let whole = Processed::new(&boxed, ProcessingSteps::default().with_whole(true)).unwrap();
@@ -678,7 +689,7 @@ fn a_failed_refresh_changes_nothing() {
     let path = directory.0.join("run.xtc");
     fs::copy(&fixture, &path).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     let len = set.len();
     let order = set.order().cloned();
     // Another trajectory replaces the indexed bytes.
@@ -694,13 +705,13 @@ fn a_failed_refresh_changes_nothing() {
     assert_eq!(set.order(), order.as_ref());
 }
 
-/// A set in memory and the same samples in a file read alike as readers.
+/// A set in memory and the same geometries in a file read alike as readers.
 #[test]
 fn a_set_in_memory_lends_what_a_file_reads() {
     let (path, topology) = fixtures()[3].clone();
-    let file = open_indexed_sample_set(&path, topology, Default::default()).unwrap();
-    let memory: SampleSet = file.load(0..file.len()).unwrap();
-    let readers: [&dyn SampleRead; 2] = [&file, &memory];
+    let file = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
+    let memory: StructureSet = file.load(0..file.len()).unwrap();
+    let readers: [&dyn StructureSetRead; 2] = [&file, &memory];
     for index in 0..file.len() {
         let [file_sample, memory_sample] = readers.map(|reader| reader.read(index).unwrap());
         assert_eq!(file_sample, memory_sample);
@@ -714,7 +725,7 @@ fn a_set_in_memory_lends_what_a_file_reads() {
 }
 
 /// `set` with every atom moved by `dx` nanometres along x.
-fn shifted(set: &SampleSet, dx: f64) -> SampleSet {
+fn shifted(set: &StructureSet, dx: f64) -> StructureSet {
     let mut shifted = set.clone();
     let transform = RigidTransform::new(
         Matrix3::identity(),
@@ -740,10 +751,10 @@ fn a_frame_rewritten_in_place_reads_as_it_now_is() {
     let directory = Directory::new();
     let path = chain_trr(&directory, &topology, 6);
     let other = directory.0.join("other.trr");
-    write_sample_set(&other, &shifted(&chain(&topology, 6), 0.05), trr_options()).unwrap();
+    write_structure_set(&other, &shifted(&chain(&topology, 6), 0.05), trr_options()).unwrap();
     let rewritten = indexed_frames(&other, &topology);
     let mut set =
-        open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+        open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let before = (0..set.len())
         .map(|index| set.read(index).unwrap())
         .collect::<Vec<_>>();
@@ -760,12 +771,12 @@ fn a_frame_rewritten_in_place_reads_as_it_now_is() {
 
     for reads in read_at_once(&set, 8) {
         for (index, read) in reads.into_iter().enumerate() {
-            let sample = read.unwrap();
+            let geometry = read.unwrap();
             if index == 2 {
-                assert_frame(&set, index, &sample, &rewritten[index]);
-                assert_ne!(sample, before[index]);
+                assert_frame(&set, index, &geometry, &rewritten[index]);
+                assert_ne!(geometry, before[index]);
             } else {
-                assert_eq!(sample, before[index], "frame {index}");
+                assert_eq!(geometry, before[index], "frame {index}");
             }
         }
     }
@@ -785,13 +796,13 @@ fn refresh_takes_a_replacement_that_begins_with_the_indexed_frames() {
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     read_at_once(&set, 4);
 
     let other = directory.0.join("other.xtc");
-    write_sample_set(&other, &all, options).unwrap();
+    write_structure_set(&other, &all, options).unwrap();
     assert!(fs::read(&other)
         .unwrap()
         .starts_with(&fs::read(&path).unwrap()));
@@ -835,9 +846,9 @@ fn xyz_and_dcd_sets_take_appended_frames_on_refresh() {
         let path = directory.0.join(name);
         let options = growing_options(format);
         let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
-        write_sample_set(&path, &head, options.clone()).unwrap();
+        write_structure_set(&path, &head, options.clone()).unwrap();
         let growing = TrajectoryOpenOptions::default().with_growing(true);
-        let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+        let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
         assert_eq!(set.len(), 3, "{format}");
         let before = read_at_once(&set, 4).remove(0);
 
@@ -845,14 +856,14 @@ fn xyz_and_dcd_sets_take_appended_frames_on_refresh() {
             append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
         for frame in all.iter().skip(3).take(2) {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
         }
         writer.flush().unwrap();
         assert_eq!(set.refresh().unwrap(), 2, "{format}");
         for frame in all.iter().skip(5) {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
         }
         writer.finish().unwrap();
@@ -880,7 +891,7 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
     let path = directory.0.join("fixed.dcd");
     fs::write(&path, fixed_atom_fixture(DcdEndian::Little)).unwrap();
     let frames = indexed_frames(&path, &topology);
-    let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let set = open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     assert_eq!(set.len(), 2);
     // Frame 1 first, so the fixed atoms do not come from a read of frame 0.
     for index in [1, 0, 1] {
@@ -909,13 +920,13 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
         assert_eq!(
             from_file.read(index).unwrap(),
             from_memory.read(index).unwrap(),
-            "sample {index}"
+            "geometry {index}"
         );
     }
 }
 
 /// A set made from a reader already open reads as one opened from the path,
-/// and a clone keeps its samples and its file while the set follows the
+/// and a clone keeps its geometries and its file while the set follows the
 /// file.
 #[test]
 fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
@@ -925,12 +936,12 @@ fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
     let path = directory.0.join("run.xtc");
     let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(3));
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
 
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let reader = open_indexed_trajectory(&path, Arc::clone(&topology), growing.clone()).unwrap();
-    let mut set = reader.into_sample_set();
-    let opened = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut set = reader.into_structure_set();
+    let opened = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     assert_eq!(set.len(), 3);
     assert_eq!(set.order(), opened.order());
     for index in 0..3 {
@@ -949,7 +960,7 @@ fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
@@ -961,15 +972,15 @@ fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
 
     // Another file at the path: the clone reads the file it shares.
     let other = directory.0.join("other.xtc");
-    write_sample_set(
+    write_structure_set(
         &other,
         &shifted(&head, 0.5),
         TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
     )
     .unwrap();
     fs::rename(&other, &path).unwrap();
-    for (index, sample) in expected.iter().enumerate() {
-        assert_eq!(&copy.read(index).unwrap(), sample, "sample {index}");
+    for (index, geometry) in expected.iter().enumerate() {
+        assert_eq!(&copy.read(index).unwrap(), geometry, "geometry {index}");
     }
     // Refreshed, the clone follows the path on its own.
     let refused = copy.refresh().unwrap_err();
@@ -978,7 +989,7 @@ fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
 }
 
 /// A clone and its set each take the frames appended to the file on
-/// their own refresh, and the other keeps the samples it had.
+/// their own refresh, and the other keeps the geometries it had.
 #[test]
 fn a_clone_and_its_set_grow_apart() {
     let topology = linear_carbon_topology(12);
@@ -992,7 +1003,7 @@ fn a_clone_and_its_set_grow_apart() {
             frames_of(&all).into_iter().take(count),
         )
     };
-    write_sample_set(&path, &first(2), options.clone()).unwrap();
+    write_structure_set(&path, &first(2), options.clone()).unwrap();
     let append = |from: usize, to: usize| {
         let (mut writer, _) = append_trajectory(
             &path,
@@ -1003,13 +1014,13 @@ fn a_clone_and_its_set_grow_apart() {
         .unwrap();
         for frame in all.iter().take(to).skip(from) {
             writer
-                .write_frame(FrameView::from_sample(frame).unwrap())
+                .write_frame(FrameView::from_geometry(frame).unwrap())
                 .unwrap();
         }
         writer.finish().unwrap();
     };
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     let mut copy = set.clone();
 
     append(2, 4);
@@ -1037,7 +1048,7 @@ fn a_clone_and_its_set_grow_apart() {
 /// Two frames of a chain in a cell: frame 0 on a regular line, frame 1
 /// scattered far from it, so that frame 1 needs more scratch to read in
 /// every format but DCD, whose frames all have one size.
-fn uneven(topology: &Arc<Topology>) -> SampleSet {
+fn uneven(topology: &Arc<Topology>) -> StructureSet {
     let atoms = topology.atom_count();
     let frames = (0..2_u32).map(|step| {
         let points = (0..atoms)
@@ -1070,14 +1081,14 @@ fn uneven(topology: &Arc<Topology>) -> SampleSet {
     time_ordered(Arc::clone(topology), frames)
 }
 
-/// Which reader reads sample 1 in [`reads_under`].
+/// Which reader reads geometry 1 in [`reads_under`].
 #[derive(Debug, Clone, Copy)]
 enum History {
     /// A fresh set.
     Fresh,
-    /// The reader that read sample 0 just before.
+    /// The reader that read geometry 0 just before.
     ReadBefore,
-    /// A pooled reader that read sample 0 on another thread.
+    /// A pooled reader that read geometry 0 on another thread.
     Pooled,
 }
 
@@ -1089,7 +1100,7 @@ struct Rewritten<'a> {
     read: Vec<u8>,
 }
 
-/// Whether sample 1 of `file` opens and reads under a scratch limit of
+/// Whether geometry 1 of `file` opens and reads under a scratch limit of
 /// `bytes`, by the reader `history` names.
 fn reads_under(
     file: &Rewritten<'_>,
@@ -1100,7 +1111,7 @@ fn reads_under(
     fs::write(file.path, &file.opened).unwrap();
     let limits = TrajectoryIoLimits::default().with_max_scratch_bytes(bytes);
     let options = TrajectoryOpenOptions::default().with_limits(limits);
-    let Ok(set) = open_indexed_sample_set(file.path, Arc::clone(topology), options) else {
+    let Ok(set) = open_indexed_structure_set(file.path, Arc::clone(topology), options) else {
         return false;
     };
     let mut rewrite = OpenOptions::new().write(true).open(file.path).unwrap();
@@ -1116,7 +1127,7 @@ fn reads_under(
     set.read(1).is_ok()
 }
 
-/// The least scratch limit under which [`reads_under`] reads sample 1.
+/// The least scratch limit under which [`reads_under`] reads geometry 1.
 fn least_limit(file: &Rewritten<'_>, topology: &Arc<Topology>, history: History) -> usize {
     let (mut fails, mut reads) = (0, 1 << 20);
     assert!(reads_under(file, topology, reads, history), "{history:?}");
@@ -1178,7 +1189,7 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
         let options = growing_options(format).with_trr_options(
             TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
         );
-        write_sample_set(&path, &trajectory, options).unwrap();
+        write_structure_set(&path, &trajectory, options).unwrap();
         let opened = fs::read(&path).unwrap();
         let read = if rewrite {
             one_long_line(&opened)
@@ -1201,11 +1212,11 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
         }
         // Just under it, the read fails for the limit.
         if reads_under(&file, &topology, fresh - 1, History::Fresh) {
-            panic!("{format}: sample 1 reads under {} bytes", fresh - 1);
+            panic!("{format}: geometry 1 reads under {} bytes", fresh - 1);
         }
         fs::write(&path, &file.opened).unwrap();
         let limits = TrajectoryIoLimits::default().with_max_scratch_bytes(fresh - 1);
-        if let Ok(set) = open_indexed_sample_set(
+        if let Ok(set) = open_indexed_structure_set(
             &path,
             Arc::clone(&topology),
             TrajectoryOpenOptions::default().with_limits(limits),
@@ -1214,10 +1225,10 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
             rewrite.write_all(&file.read).unwrap();
             drop(rewrite);
             let error = set.read(1).unwrap_err();
-            let SampleReadError::Trajectory { sample, source } = error else {
+            let StructureSetReadError::Trajectory { geometry, source } = error else {
                 panic!("{format}: {error:?}");
             };
-            assert_eq!(sample, 1);
+            assert_eq!(geometry, 1);
             assert_eq!(
                 source.kind(),
                 TrajectoryIoErrorKind::LimitExceeded,
@@ -1227,7 +1238,7 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
     }
 }
 
-/// The distribution of three samples a host saved, with weights, states
+/// The distribution of three geometries a host saved, with weights, states
 /// with energies and properties, and a temperature.
 fn saved_distribution() -> Distribution {
     use kekule::properties::{PropertyKey, PropertyValue};
@@ -1260,7 +1271,7 @@ fn saved_distribution() -> Distribution {
     .unwrap()
 }
 
-/// A saved distribution of three samples binds to the file grown to five as
+/// A saved distribution of three geometries binds to the file grown to five as
 /// a distribution of its first three, and a refresh gives the same.
 #[test]
 fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
@@ -1271,17 +1282,17 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
 
-    // The host saves the description of the three samples and keeps
+    // The host saves the description of the three geometries and keeps
     // following the file with the set.
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let mut followed =
-        open_indexed_sample_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
+        open_indexed_structure_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
     followed
         .set_distribution(Some(saved_distribution()))
         .unwrap();
-    let saved = SampleSetDescription::of(&followed);
+    let saved = StructureSetDescription::of(&followed);
     let states = saved.distribution().unwrap().states();
     assert_eq!(states.len(), 2);
     assert_eq!(
@@ -1294,15 +1305,15 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
     assert_eq!(followed.refresh().unwrap(), 2);
 
-    // Opened again, the file has five samples; the saved distribution of
+    // Opened again, the file has five geometries; the saved distribution of
     // three does not cover them, and extended it does.
-    let mut reopened = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut reopened = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     assert_eq!(reopened.len(), 5);
     let distribution = saved.distribution().unwrap().clone();
     assert!(reopened
@@ -1332,7 +1343,7 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
         .clone()
         .extended_to(5, reopened.order().cloned())
         .unwrap();
-    assert_eq!(grown.sample_count(), 5);
+    assert_eq!(grown.geometry_count(), 5);
     assert_eq!(grown.distribution(), Some(&extended));
     assert_eq!(grown.properties(), saved.properties());
     assert_eq!(grown.order(), reopened.order());
@@ -1362,7 +1373,7 @@ fn the_fingerprint_of_the_first_frames_ignores_what_follows_them() {
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
-    write_sample_set(&path, &head, options.clone()).unwrap();
+    write_structure_set(&path, &head, options.clone()).unwrap();
     let three = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
         .unwrap()
         .to_frame_index();
@@ -1379,7 +1390,7 @@ fn the_fingerprint_of_the_first_frames_ignores_what_follows_them() {
     .unwrap();
     for frame in all.iter().skip(3) {
         writer
-            .write_frame(FrameView::from_sample(frame).unwrap())
+            .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
@@ -1411,7 +1422,7 @@ fn the_fingerprint_of_the_first_frames_ignores_what_follows_them() {
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(4), options).unwrap();
     writer
-        .write_frame(FrameView::from_sample(shifted(&all, 0.25).get(4).unwrap()).unwrap())
+        .write_frame(FrameView::from_geometry(shifted(&all, 0.25).get(4).unwrap()).unwrap())
         .unwrap();
     writer.finish().unwrap();
     let rewritten = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())

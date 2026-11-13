@@ -1,10 +1,10 @@
-//! PDB writing of models and sample sets.
+//! PDB writing of models and structure sets.
 //!
 //! A written entry holds these records, in this order:
 //! - `LINK` for the metal coordination of interpretation reports, when the
 //!   source has them ([`PdbSource::with_reports`]);
 //! - `CRYST1` for a representable cell;
-//! - `MODEL` and `ENDMDL` around each sample of a sample set, none
+//! - `MODEL` and `ENDMDL` around each geometry of a structure set, none
 //!   for a single structure;
 //! - `ATOM` and `HETATM` in dense atom order, with a `TER` after each
 //!   chain's polymer;
@@ -27,11 +27,10 @@ use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::mmcif_write::bond_order_name;
 use crate::io::structure_interpret::{
-    is_metal, StructureInterpretation, StructureInterpretationReport,
-    StructureSampleSetInterpretation,
+    is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_sample_set, record_sample_set_properties,
+    check_structure_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{
@@ -39,7 +38,7 @@ use crate::io::{
 };
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
-use crate::structure::{AsModelView, Model, ModelView, SampleSet, SampleView};
+use crate::structure::{AsModelView, GeometryView, Model, ModelView, StructureSet};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
     Topology, TopologyAtomIndex,
@@ -80,7 +79,7 @@ pub enum PdbChainIdPolicy {
 /// [`PdbChainIdPolicy::SegmentId`] writes as segment identifiers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PdbWriteOptions {
-    sample_metadata: UnrepresentablePolicy,
+    set_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
@@ -89,31 +88,31 @@ pub struct PdbWriteOptions {
 }
 
 impl PdbWriteOptions {
-    /// The state of samples that PDB cannot carry, whether of a sample set
+    /// The state of geometries that PDB cannot carry, whether of a structure set
     /// or a trajectory frame. A PDB reader gives one state of equally
-    /// weighted samples without an order, represented by the first sample,
-    /// so by default a set fails to write when a sample is outside its
+    /// weighted geometries without an order, represented by the first geometry,
+    /// so by default a set fails to write when a geometry is outside its
     /// distribution, weights are unequal, it has more than one state, a
     /// state energy, state properties, another representative, a
     /// temperature, or an order, a time order without times or steps
-    /// included, or a sample has velocities or forces; so does a single
-    /// sample with a membership, a place (a frame's time and MD step among
+    /// included, or a geometry has velocities or forces; so does a single
+    /// geometry with a membership, a place (a frame's time and MD step among
     /// them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes the
     /// models without them and reports a [`WriteOmission::StructureState`]
     /// for each field.
-    pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
-        self.sample_metadata
+    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
+        self.set_metadata
     }
 
-    /// Sets [`Self::sample_metadata`].
+    /// Sets [`Self::set_metadata`].
     #[must_use]
-    pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
-        self.sample_metadata = sample_metadata;
+    pub const fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
+        self.set_metadata = set_metadata;
         self
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a sample set or of a sample's set, which PDB cannot
+    /// properties of a structure set or of a geometry's set, which PDB cannot
     /// carry: by default a structure or set with any fails to write, and
     /// under [`UnrepresentablePolicy::Omit`] the report names each
     /// ([`WriteOmission::StructureState`]).
@@ -130,12 +129,12 @@ impl PdbWriteOptions {
 
     /// The policies for the state of one structure.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.sample_metadata, self.properties)
+        StatePolicies::with_sites(self.set_metadata, self.properties)
     }
 
     /// A periodic cell `CRYST1` cannot carry as the model's cell: one not
     /// periodic along all three axes, not in the standard crystallographic
-    /// orientation, differing between samples, or written as PDB's
+    /// orientation, differing between geometries, or written as PDB's
     /// 1 Å placeholder cube. By default such a cell fails to write;
     /// representable cells are written as `CRYST1` in space group P 1.
     pub const fn cell(&self) -> UnrepresentablePolicy {
@@ -244,8 +243,8 @@ impl fmt::Display for PdbAtomField {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PdbCellReason {
-    /// The samples have different cells; an entry has one `CRYST1`.
-    SampleCellsDiffer,
+    /// The geometries have different cells; an entry has one `CRYST1`.
+    GeometryCellsDiffer,
     /// The cell is not periodic along all three axes.
     PartiallyPeriodic,
     /// The cell does not have `a` along x and `b` in the xy plane, as PDB
@@ -263,7 +262,7 @@ pub enum PdbCellReason {
 impl fmt::Display for PdbCellReason {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::SampleCellsDiffer => "The samples have different cells.",
+            Self::GeometryCellsDiffer => "The geometries have different cells.",
             Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
             Self::NonstandardOrientation => {
                 "Cell vector a is not along x, or b is not in the xy plane."
@@ -406,19 +405,19 @@ pub enum PdbWriteIssue {
         /// The structure's bond order between them, if they are bonded.
         order: Option<BondOrder>,
     },
-    /// The 1-based sample `sample` of a sample set has state PDB cannot
-    /// carry, with [`PdbWriteOptions::sample_metadata`] set to fail. A
-    /// temperature is reported for the first sample.
-    UnrepresentableSample {
-        /// The 1-based sample number.
-        sample: usize,
-        /// The state; see [`PdbWriteOptions::sample_metadata`].
+    /// The 1-based geometry `geometry` of a structure set has state PDB cannot
+    /// carry, with [`PdbWriteOptions::set_metadata`] set to fail. A
+    /// temperature is reported for the first geometry.
+    UnrepresentableGeometry {
+        /// The 1-based geometry number.
+        geometry: usize,
+        /// The state; see [`PdbWriteOptions::set_metadata`].
         field: StructureField,
     },
-    /// The sample set has no samples.
-    EmptySampleSet,
+    /// The structure set has no geometries.
+    EmptyStructureSet,
     /// The number of interpretation reports does not match the number of
-    /// structures: one for a structure, one per sample or item.
+    /// structures: one for a structure, one per geometry or item.
     ReportCountMismatch {
         /// The number of structures.
         expected: usize,
@@ -429,12 +428,14 @@ pub enum PdbWriteIssue {
 
 impl PdbWriteIssue {
     /// The diagnostic kind of a write error with this detail:
-    /// [`DiagnosticKind::Inconsistent`] for an empty sample set and for
+    /// [`DiagnosticKind::Inconsistent`] for an empty structure set and for
     /// reports that do not match the structures, and
     /// [`DiagnosticKind::Unsupported`] otherwise.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::EmptySampleSet | Self::ReportCountMismatch { .. } => DiagnosticKind::Inconsistent,
+            Self::EmptyStructureSet | Self::ReportCountMismatch { .. } => {
+                DiagnosticKind::Inconsistent
+            }
             _ => DiagnosticKind::Unsupported,
         }
     }
@@ -529,10 +530,10 @@ impl fmt::Display for PdbWriteIssue {
                     atoms[1]
                 ),
             },
-            Self::UnrepresentableSample { sample, field } => {
-                f.write_str(&unrepresentable_state("PDB", *field, Some(*sample)))
+            Self::UnrepresentableGeometry { geometry, field } => {
+                f.write_str(&unrepresentable_state("PDB", *field, Some(*geometry)))
             }
-            Self::EmptySampleSet => f.write_str("The sample set has no samples."),
+            Self::EmptyStructureSet => f.write_str("The structure set has no geometries."),
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
                 "The entry has {} and {}.",
@@ -548,13 +549,13 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
         .with_detail(FormatErrorDetail::PdbWrite(issue))
 }
 
-/// One PDB entry to write: a structure or a sample set, and the
+/// One PDB entry to write: a structure or a structure set, and the
 /// interpretation reports whose metal coordination it states.
 ///
-/// Convert from `&Model`, `&SampleSet`, [`SampleView`],
-/// `&StructureInterpretation`, or `&StructureSampleSetInterpretation`;
+/// Convert from `&Model`, `&StructureSet`, [`GeometryView`],
+/// `&StructureInterpretation`, or `&StructureSetInterpretation`;
 /// interpretations keep their source reports. [`Self::structure`] accepts
-/// any borrowed model view, such as a sample of a sample set or a
+/// any borrowed model view, such as a geometry of a structure set or a
 /// trajectory frame, whose own state fails to write unless the write
 /// options omit it.
 #[derive(Debug, Clone, Copy)]
@@ -566,7 +567,7 @@ pub struct PdbSource<'a> {
 #[derive(Debug, Clone, Copy)]
 enum Content<'a> {
     Structure(ModelView<'a>),
-    SampleSet(&'a SampleSet),
+    StructureSet(&'a StructureSet),
 }
 
 impl<'a> PdbSource<'a> {
@@ -578,32 +579,32 @@ impl<'a> PdbSource<'a> {
         }
     }
 
-    /// A sample set, one `MODEL` per sample in sample order. The state PDB
-    /// cannot carry follows [`PdbWriteOptions::sample_metadata`], and the
-    /// set's and samples' properties [`PdbWriteOptions::properties`].
-    pub fn sample_set(set: &'a SampleSet) -> Self {
+    /// A structure set, one `MODEL` per geometry in geometry order. The state PDB
+    /// cannot carry follows [`PdbWriteOptions::set_metadata`], and the
+    /// set's and geometries' properties [`PdbWriteOptions::properties`].
+    pub fn structure_set(set: &'a StructureSet) -> Self {
         Self {
-            content: Content::SampleSet(set),
+            content: Content::StructureSet(set),
             reports: None,
         }
     }
 
     /// States the metal coordination of interpretation reports as `LINK`
-    /// records: one report for a structure, one per sample for a sample
+    /// records: one report for a structure, one per geometry for a geometry
     /// set. Coordination between residues is no bond of the
     /// model, so without reports the entry has no `LINK` records.
     ///
     /// Each record names both partners as their atom records do, with blank
     /// alternate locations, the identity symmetry operator `1555`, and the
     /// partners' distance in the first structure. `LINK` records belong to
-    /// the entry rather than to a model, so a sample set states the
+    /// the entry rather than to a model, so a structure set states the
     /// coordination every report states. Each pair of atoms is stated once.
     /// A record is left out and counted as [`WriteOmission::Coordination`]
     /// when:
     /// - the structure no longer matches the report: a partner is missing,
     ///   or its atom site has other names or another component than the
     ///   report recorded;
-    /// - another report of the sample set does not state it;
+    /// - another report of the structure set does not state it;
     /// - a partner's chain is written as a segment identifier, which the
     ///   `LINK` chain column cannot hold;
     /// - the partners are not one metal and one non-metal, such as two metal
@@ -625,24 +626,24 @@ impl<'a> From<&'a Model> for PdbSource<'a> {
     }
 }
 
-impl<'a> From<&'a SampleSet> for PdbSource<'a> {
-    fn from(set: &'a SampleSet) -> Self {
-        Self::sample_set(set)
+impl<'a> From<&'a StructureSet> for PdbSource<'a> {
+    fn from(set: &'a StructureSet) -> Self {
+        Self::structure_set(set)
     }
 }
 
-impl<'a, R: ?Sized> From<SampleView<'a, R>> for PdbSource<'a> {
-    fn from(sample: SampleView<'a, R>) -> Self {
+impl<'a, R: ?Sized> From<GeometryView<'a, R>> for PdbSource<'a> {
+    fn from(geometry: GeometryView<'a, R>) -> Self {
         Self {
-            content: Content::Structure(sample.as_model_view()),
+            content: Content::Structure(geometry.as_model_view()),
             reports: None,
         }
     }
 }
 
-impl<'a> From<&'a StructureSampleSetInterpretation> for PdbSource<'a> {
-    fn from(interpretation: &'a StructureSampleSetInterpretation) -> Self {
-        Self::sample_set(interpretation.sample_set()).with_reports(interpretation.reports())
+impl<'a> From<&'a StructureSetInterpretation> for PdbSource<'a> {
+    fn from(interpretation: &'a StructureSetInterpretation) -> Self {
+        Self::structure_set(interpretation.structure_set()).with_reports(interpretation.reports())
     }
 }
 
@@ -680,17 +681,21 @@ pub(crate) fn write_pdb_to<'a>(
             omissions.record_structure_state(view, options.state_policies());
             (vec![view], false)
         }
-        Content::SampleSet(set) => {
+        Content::StructureSet(set) => {
             if set.is_empty() {
-                return Err(fail(PdbWriteIssue::EmptySampleSet));
+                return Err(fail(PdbWriteIssue::EmptyStructureSet));
             }
-            let unrepresentable =
-                |(sample, field)| fail(PdbWriteIssue::UnrepresentableSample { sample, field });
-            record_multi_model_sample_set(set, options.sample_metadata, &mut omissions)
+            let unrepresentable = |(geometry, field)| {
+                fail(PdbWriteIssue::UnrepresentableGeometry { geometry, field })
+            };
+            record_multi_model_structure_set(set, options.set_metadata, &mut omissions)
                 .map_err(unrepresentable)?;
-            record_sample_set_properties(set, options.properties, &mut omissions)
+            record_structure_set_properties(set, options.properties, &mut omissions)
                 .map_err(unrepresentable)?;
-            let views = set.iter().map(|sample| sample.as_model_view()).collect();
+            let views = set
+                .iter()
+                .map(|geometry| geometry.as_model_view())
+                .collect();
             (views, true)
         }
     };
@@ -751,7 +756,7 @@ fn entry_cell<'a>(
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err(PdbCellReason::SampleCellsDiffer)
+        Err(PdbCellReason::GeometryCellsDiffer)
     } else {
         match first.map(cell_parameters).transpose() {
             Ok(Some(parameters)) if is_written_placeholder(parameters) => {

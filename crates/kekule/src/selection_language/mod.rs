@@ -77,7 +77,7 @@ impl SelectionExpr {
         eval::Evaluator::new(self, &topology, None, &options).run()
     }
 
-    /// Evaluates the expression against one structure: a model, a sample of
+    /// Evaluates the expression against one structure: a model, a geometry of
     /// a set, a trajectory frame, or any other [`AsModelView`]. The result
     /// binds to the structure's topology.
     ///

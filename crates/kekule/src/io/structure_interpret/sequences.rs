@@ -157,7 +157,7 @@ impl EntityMonomer {
     }
 
     /// Further components the block lists at the same position, where the
-    /// sample holds either (microheterogeneity).
+    /// geometry holds either (microheterogeneity).
     pub fn alternatives(&self) -> &[String] {
         &self.alternatives
     }

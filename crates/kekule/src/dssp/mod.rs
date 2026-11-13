@@ -15,7 +15,7 @@
 //! and every identifier.
 //!
 //! A [`DsspPlan`] prepares what assignment reads from a topology once, so the
-//! frames of a trajectory, or the samples of an ensemble, are each assigned
+//! frames of a trajectory, or the geometries of an ensemble, are each assigned
 //! from their backbone coordinates alone, with the same results.
 //!
 //! Assignment does not parse structures, choose coordinate models or alternate
@@ -85,7 +85,7 @@ mod kernel;
 /// otherwise its topology hierarchy order. Insertion codes break numbered ties.
 ///
 /// `model` is any model view: a [`Model`](crate::structure::Model), an
-/// sample, a trajectory frame, or a borrowed
+/// geometry, a trajectory frame, or a borrowed
 /// [`ModelView`](crate::structure::ModelView).
 ///
 /// # Errors
@@ -173,7 +173,7 @@ pub fn assign_with(
 /// [`assign`] returns for the same structure and options, errors included.
 ///
 /// The plan binds its topology's layout: it assigns any model, ensemble
-/// sample, or trajectory frame whose topology
+/// geometry, or trajectory frame whose topology
 /// [shares that layout](Topology::shares_layout).
 ///
 /// ```

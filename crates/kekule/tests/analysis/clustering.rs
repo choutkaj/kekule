@@ -1,4 +1,4 @@
-//! Partitioning sample sets into clusters, hierarchical clustering on
+//! Partitioning structure sets into clusters, hierarchical clustering on
 //! distance matrices, and regrouping and collapsing distributions by the
 //! partitions.
 
@@ -13,8 +13,8 @@ use kekule::clustering::{
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Members, Partition, PartitionError, Positions, Requirement, Sample, SampleSet,
-    SampleSetError,
+    Distribution, Geometry, Members, Partition, PartitionError, Positions, Requirement,
+    StructureSet, StructureSetError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, UnitError, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
@@ -52,31 +52,31 @@ fn shape(mirror: bool, moved: bool) -> Vec<Point3> {
         .collect()
 }
 
-/// A sample at `points` and its weight.
-fn member(points: Vec<Point3>, weight: f64) -> (Sample, f64) {
-    let sample = Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
-    (sample, weight)
+/// A geometry at `points` and its weight.
+fn member(points: Vec<Point3>, weight: f64) -> (Geometry, f64) {
+    let geometry = Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
+    (geometry, weight)
 }
 
-/// Distinct weighted samples, each its own state.
+/// Distinct weighted geometries, each its own state.
 fn conformers(
     topology: impl Into<Arc<Topology>>,
-    members: impl IntoIterator<Item = (Sample, f64)>,
-) -> SampleSet {
-    let (samples, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
-    let partition = Partition::state_per_sample(samples.len());
+    members: impl IntoIterator<Item = (Geometry, f64)>,
+) -> StructureSet {
+    let (geometries, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
+    let partition = Partition::state_per_sample(geometries.len());
     let distribution = Distribution::new(Members::All, partition)
         .unwrap()
         .with_weights(weights)
         .unwrap();
-    let mut set = SampleSet::from_samples(topology, samples).unwrap();
+    let mut set = StructureSet::from_geometries(topology, geometries).unwrap();
     set.set_distribution(Some(distribution)).unwrap();
     set
 }
 
-/// Applies `partition` and checks that regrouping kept every sample and
+/// Applies `partition` and checks that regrouping kept every geometry and
 /// weight.
-fn regrouped(ensemble: &SampleSet, partition: &Partition) -> SampleSet {
+fn regrouped(ensemble: &StructureSet, partition: &Partition) -> StructureSet {
     let mut regrouped = ensemble.clone();
     regrouped
         .distribution_mut()
@@ -93,7 +93,7 @@ fn regrouped(ensemble: &SampleSet, partition: &Partition) -> SampleSet {
 }
 
 /// The energy of state `state` of `set`.
-fn set_energy(set: &mut SampleSet, state: usize, energy: Option<f64>) {
+fn set_energy(set: &mut StructureSet, state: usize, energy: Option<f64>) {
     set.distribution_mut()
         .unwrap()
         .state_mut(state)
@@ -103,7 +103,7 @@ fn set_energy(set: &mut SampleSet, state: usize, energy: Option<f64>) {
 }
 
 /// Shape A, A moved, its mirror B, and B moved, weighted 1, 3, 2, 1.
-fn two_shapes() -> (Arc<Topology>, SampleSet) {
+fn two_shapes() -> (Arc<Topology>, StructureSet) {
     let topology = kekule::smiles::to_topology("CCCC").unwrap();
     let members = [
         member(shape(false, false), 1.0),
@@ -116,7 +116,7 @@ fn two_shapes() -> (Arc<Topology>, SampleSet) {
 }
 
 /// The fitted RMSD between the two shapes.
-fn shape_distance(ensemble: &SampleSet, atoms: &AtomSelection) -> f64 {
+fn shape_distance(ensemble: &StructureSet, atoms: &AtomSelection) -> f64 {
     alignment::fit(
         ensemble.get(0).unwrap().as_model_view(),
         ensemble.get(2).unwrap().as_model_view(),
@@ -146,8 +146,8 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
         .unwrap();
     assert_eq!(clusters, partition(&[0, 0, 1, 1], &[1, 2]));
     assert_eq!(clusters.samples(1).collect::<Vec<_>>(), [2, 3]);
-    // Applied, the clusters are states whose populations follow the samples,
-    // relative to the heaviest sample.
+    // Applied, the clusters are states whose populations follow the geometries,
+    // relative to the heaviest geometry.
     let states = regrouped(&ensemble, &clusters);
     assert_eq!(states.state(0).unwrap().population(), 1.0 / 3.0 + 1.0);
     assert_eq!(states.state(1).unwrap().population(), 2.0 / 3.0 + 1.0 / 3.0);
@@ -159,7 +159,7 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
         partition(&[0, 0, 0, 0], &[1])
     );
 
-    // By ascending state energy a sample of the lowest state of each shape
+    // By ascending state energy a geometry of the lowest state of each shape
     // leads.
     for (index, energy) in [0.0, 5.0, 1.0, 3.0].into_iter().enumerate() {
         set_energy(&mut ensemble, index, Some(energy));
@@ -174,12 +174,12 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
     set_energy(&mut ensemble, 3, None);
     assert_eq!(
         ensemble.cluster_by_radius(radius(0.5), &atoms, by_energy),
-        Err(ClusteringError::SampleSet(Box::new(
-            SampleSetError::Missing(Requirement::StateEnergies)
+        Err(ClusteringError::StructureSet(Box::new(
+            StructureSetError::Missing(Requirement::StateEnergies)
         )))
     );
 
-    let empty = SampleSet::new(Arc::clone(&topology));
+    let empty = StructureSet::new(Arc::clone(&topology));
     assert_eq!(
         empty
             .cluster_by_radius(radius(0.5), &atoms, Default::default())
@@ -291,17 +291,17 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
     set_energy(&mut ensemble, 2, Some(7.0));
 
     // Each cluster merges whole conformer states, so it keeps the energy of
-    // its representative's state: none for sample 1, 7 kJ/mol for sample 2.
+    // its representative's state: none for geometry 1, 7 kJ/mol for geometry 2.
     let clustered = regrouped(&ensemble, &partition(&[0, 0, 1, 1], &[1, 2]));
     let collapsed = clustered.collapse().unwrap();
     assert_eq!(collapsed.len(), 2);
     assert!(collapsed.topology().shares_layout(ensemble.topology()));
     // Each weight is its state's population, relative to the heaviest
-    // sample.
+    // geometry.
     assert_eq!(
         collapsed
             .iter()
-            .map(|sample| sample.weight().unwrap())
+            .map(|geometry| geometry.weight().unwrap())
             .collect::<Vec<_>>(),
         [1.0 / 3.0 + 1.0, 2.0 / 3.0 + 1.0 / 3.0]
     );
@@ -332,7 +332,7 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             .unwrap()
             .regroup(partition(&[0, 0, 0], &[0]))
             .unwrap_err(),
-        SampleSetError::PartitionMismatch {
+        StructureSetError::PartitionMismatch {
             expected: 4,
             actual: 3,
         }
@@ -345,7 +345,7 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             member(shape(false, true), f64::MAX),
         ],
     );
-    // Populations relative to the heaviest sample do not overflow.
+    // Populations relative to the heaviest geometry do not overflow.
     huge.distribution_mut()
         .unwrap()
         .regroup(partition(&[0, 0], &[0]))
@@ -604,7 +604,7 @@ fn pairwise_rmsd_fits_every_unordered_pair_once() {
         }
     }
 
-    let empty = SampleSet::new(Arc::clone(&topology))
+    let empty = StructureSet::new(Arc::clone(&topology))
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
     assert!(empty.is_empty());
@@ -747,13 +747,14 @@ fn member_distances_do_not_depend_on_member_order() {
     );
     // The pairing is rejected before members are examined.
     assert_eq!(
-        SampleSet::new(Arc::clone(&topology)).pairwise_fitted_rmsd(&exchanged, Default::default()),
+        StructureSet::new(Arc::clone(&topology))
+            .pairwise_fitted_rmsd(&exchanged, Default::default()),
         Err(ClusteringError::DirectedCorrespondence)
     );
 }
 
 /// Five members of one shape with the given weights.
-fn weighted_members(weights: [f64; 5]) -> SampleSet {
+fn weighted_members(weights: [f64; 5]) -> StructureSet {
     conformers(
         kekule::smiles::to_topology("CCCC").unwrap(),
         weights.map(|weight| member(shape(false, false), weight)),
@@ -840,7 +841,7 @@ fn k_medoids_rejects_invalid_cluster_counts_and_matrices() {
         })
     );
     let topology = kekule::smiles::to_topology("CCCC").unwrap();
-    let empty = SampleSet::new(topology);
+    let empty = StructureSet::new(topology);
     let none = DistanceMatrix::from_condensed(0, Quantity::new(Vec::new(), NANOMETER)).unwrap();
     assert_eq!(
         empty.cluster_k_medoids(&none, 0).unwrap(),

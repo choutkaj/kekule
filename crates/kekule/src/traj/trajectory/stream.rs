@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::structure::{Order, SampleSet, SampleSetError, TimeAxis};
+use crate::structure::{Order, StructureSet, StructureSetError, TimeAxis};
 use crate::topology::Topology;
 
 use super::buffer::FrameBuffer;
@@ -174,18 +174,18 @@ pub trait TrajectoryWriter {
 }
 
 /// In-memory writer collecting frames into a time-ordered
-/// [`SampleSet`], keeping every frame field.
+/// [`StructureSet`], keeping every frame field.
 ///
 /// Useful as a [`TrajectoryWriter`] destination for streaming pipelines. To
-/// load a complete file directly, use [`crate::traj::io::read_sample_set`].
-/// Each frame's sample is shared with the frame, not copied; a
-/// [`FrameBuffer`] it came from copies its sample once on its next edit.
+/// load a complete file directly, use [`crate::traj::io::read_structure_set`].
+/// Each frame's geometry is shared with the frame, not copied; a
+/// [`FrameBuffer`] it came from copies its geometry once on its next edit.
 ///
 /// The first frame decides the columns of the set's [`TimeAxis`]: times
 /// when it has a time, and steps when it has a step. Every later frame must
 /// have the same.
 pub struct MemoryTrajectoryWriter {
-    set: SampleSet,
+    set: StructureSet,
 }
 
 impl fmt::Debug for MemoryTrajectoryWriter {
@@ -201,19 +201,19 @@ impl MemoryTrajectoryWriter {
     /// An empty writer collecting frames of `topology`.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         Self {
-            set: SampleSet::new(topology),
+            set: StructureSet::new(topology),
         }
     }
 
     /// The frames written so far, in write order: a set with a time order
     /// and without a distribution, or an empty, unordered set when no frame
     /// was written.
-    pub fn into_sample_set(self) -> SampleSet {
+    pub fn into_structure_set(self) -> StructureSet {
         self.set
     }
 
     /// Appends a frame of a topology sharing the set's layout.
-    pub(crate) fn collect(&mut self, frame: FrameView<'_>) -> Result<(), SampleSetError> {
+    pub(crate) fn collect(&mut self, frame: FrameView<'_>) -> Result<(), StructureSetError> {
         if self.set.order().is_none() {
             let axis = TimeAxis::from_columns(
                 frame.time().map(|_| Vec::new()),
@@ -242,7 +242,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
     /// [`TrajectoryIoErrorKind::InconsistentMetadata`] for a frame without a
     /// time or step that the first frame has, or with one the first frame
     /// lacks, with [`TrajectoryIoError::frame`] its index; the
-    /// [`SampleSetError`] is the source.
+    /// [`StructureSetError`] is the source.
     fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if !self.set.topology().shares_layout(frame.topology()) {
             return Err(TrajectoryIoError::new(
@@ -251,7 +251,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
         }
         let index = self.set.len();
         self.collect(frame).map_err(|error| match error {
-            SampleSetError::Geometry(error) => error.into(),
+            StructureSetError::Geometry(error) => error.into(),
             error => TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,

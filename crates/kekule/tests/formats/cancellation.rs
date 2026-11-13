@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use kekule::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use kekule::macromolecular::{
-    StructureInterpretOptions, StructureInterpretation, StructureSampleSetInterpretOptions,
-    StructureSampleSetInterpretation,
+    StructureInterpretOptions, StructureInterpretation, StructureSetInterpretOptions,
+    StructureSetInterpretation,
 };
 use kekule::structure::Model;
 use kekule::{mmcif, pdb};
@@ -39,13 +39,13 @@ fn same_interpretation(left: &StructureInterpretation, right: &StructureInterpre
     left.report() == right.report() && same_model(left.model(), right.model())
 }
 
-fn same_sample_set(
-    left: &StructureSampleSetInterpretation,
-    right: &StructureSampleSetInterpretation,
+fn same_structure_set(
+    left: &StructureSetInterpretation,
+    right: &StructureSetInterpretation,
 ) -> bool {
     left.reports() == right.reports()
         && left.topology().same_layout(right.topology())
-        && left.sample_set().len() == right.sample_set().len()
+        && left.structure_set().len() == right.structure_set().len()
 }
 
 /// Runs `interpret` with a check that never turns true, which must not change
@@ -97,12 +97,12 @@ fn mmcif_interpretation_stops_once_cancellation_is_requested() {
 }
 
 #[test]
-fn mmcif_sample_set_interpretation_stops_once_cancellation_is_requested() {
+fn mmcif_structure_set_interpretation_stops_once_cancellation_is_requested() {
     let document = mmcif::parse_str(ADENYLATE_KINASE_CIF, Default::default()).unwrap();
     // The native encodings pin the sets themselves, document and block alike.
     for interpretation in [
-        document.interpret_sample_set(Default::default()),
-        document.blocks()[0].interpret_sample_set(Default::default()),
+        document.interpret_structure_set(Default::default()),
+        document.blocks()[0].interpret_structure_set(Default::default()),
     ] {
         assert_eq!(
             crate::native_fingerprint(&interpretation.unwrap()),
@@ -111,19 +111,19 @@ fn mmcif_sample_set_interpretation_stops_once_cancellation_is_requested() {
     }
     assert_cancellable(
         |cancellation| {
-            document.interpret_sample_set(
-                StructureSampleSetInterpretOptions::default().with_cancellation(cancellation),
+            document.interpret_structure_set(
+                StructureSetInterpretOptions::default().with_cancellation(cancellation),
             )
         },
-        same_sample_set,
+        same_structure_set,
     );
     assert_cancellable(
         |cancellation| {
-            document.blocks()[0].interpret_sample_set(
-                StructureSampleSetInterpretOptions::default().with_cancellation(cancellation),
+            document.blocks()[0].interpret_structure_set(
+                StructureSetInterpretOptions::default().with_cancellation(cancellation),
             )
         },
-        same_sample_set,
+        same_structure_set,
     );
 }
 
@@ -138,14 +138,18 @@ fn pdb_interpretation_stops_once_cancellation_is_requested() {
     );
     assert_cancellable(
         |cancellation| {
-            document.interpret_sample_set(
-                StructureSampleSetInterpretOptions::default().with_cancellation(cancellation),
+            document.interpret_structure_set(
+                StructureSetInterpretOptions::default().with_cancellation(cancellation),
             )
         },
-        same_sample_set,
+        same_structure_set,
     );
     assert_eq!(
-        crate::native_fingerprint(&document.interpret_sample_set(Default::default()).unwrap()),
+        crate::native_fingerprint(
+            &document
+                .interpret_structure_set(Default::default())
+                .unwrap()
+        ),
         0x76e1_7f90_6b57_1a28
     );
     let (cancellation, _) = requested_after(1);
@@ -208,7 +212,7 @@ fn options_with_a_cancellation_keep_their_auto_traits() {
     }
     assert_auto_traits::<Cancellation>();
     assert_auto_traits::<StructureInterpretOptions>();
-    assert_auto_traits::<StructureSampleSetInterpretOptions>();
+    assert_auto_traits::<StructureSetInterpretOptions>();
 }
 
 #[test]
@@ -227,8 +231,5 @@ fn cancellation_is_an_identity_option() {
         StructureInterpretOptions::default().with_cancellation(Some(other))
     );
     assert_eq!(StructureInterpretOptions::default().cancellation(), None);
-    assert_eq!(
-        StructureSampleSetInterpretOptions::default().cancellation(),
-        None
-    );
+    assert_eq!(StructureSetInterpretOptions::default().cancellation(), None);
 }

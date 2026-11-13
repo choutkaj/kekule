@@ -4,7 +4,7 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, GeometryPropertiesMut, OwnerProperties};
 use crate::structure::scalars::AtomScalars;
 use crate::structure::{
-    DenseArrayError, Forces, GeometryError, ModelView, Place, Positions, Sample, SampleMut,
+    DenseArrayError, Forces, Geometry, GeometryError, GeometryMut, ModelView, Place, Positions,
     Velocities,
 };
 use crate::topology::Topology;
@@ -55,17 +55,17 @@ impl<'a> FrameData<'a> {
     /// Borrows every field, including occupancies, B-factors, and all
     /// structure properties, from a topology-bound frame.
     pub fn from_frame_view(frame: FrameView<'a>) -> Self {
-        let sample = frame.payload();
-        let structure = sample.structure();
+        let geometry = frame.payload();
+        let structure = geometry.structure();
         Self {
-            positions: sample.positions().values(),
-            cell: sample.cell().copied(),
-            velocities: sample.velocities().map(Velocities::values),
-            forces: sample.forces().map(Forces::values),
+            positions: geometry.positions().values(),
+            cell: geometry.cell().copied(),
+            velocities: geometry.velocities().map(Velocities::values),
+            forces: geometry.forces().map(Forces::values),
             time: frame.time(),
             step: frame.step(),
             owner: None,
-            annotations: Some(sample.properties()),
+            annotations: Some(geometry.properties()),
             sites: Some((&structure.occupancies, &structure.b_factors)),
         }
     }
@@ -111,29 +111,29 @@ impl<'a> FrameData<'a> {
 }
 
 /// Reusable caller-owned frame storage bound to one topology snapshot: one
-/// [`Sample`] with its time and MD step.
+/// [`Geometry`] with its time and MD step.
 ///
 /// It accepts frames and readers of any snapshot sharing that layout. Frame
 /// state reads through `Deref` (`buffer.positions()`, `buffer.velocities()`,
 /// ...) and [`Self::time`] and [`Self::step`]; edit it through
-/// [`Self::sample_mut`], [`Self::set_time`], and [`Self::set_step`], or
+/// [`Self::geometry_mut`], [`Self::set_time`], and [`Self::set_step`], or
 /// publish a complete frame with [`Self::replace_from_data`]. Velocity and
 /// force allocations are reused across frames. [`Self::frame_view`] lends
 /// the frame to a [`TrajectoryWriter`](super::TrajectoryWriter).
 ///
-/// To keep a decoded frame, for example in a sample set or a frame cache,
-/// take it out with [`Self::into_sample`] rather than copying it: the sample
+/// To keep a decoded frame, for example in a structure set or a frame cache,
+/// take it out with [`Self::into_sample`] rather than copying it: the geometry
 /// is bound to the buffer's topology, and its place goes with it into a
-/// time-ordered set ([`SampleSet::push`](crate::structure::SampleSet::push)).
-/// A sample that is no longer needed becomes a buffer again with
-/// [`Self::from_sample`], so the next frame decodes into it without
-/// allocating. A buffer whose sample is shared, such as one cloned out of
-/// it, copies the sample once on the next edit.
+/// time-ordered set ([`StructureSet::push`](crate::structure::StructureSet::push)).
+/// A geometry that is no longer needed becomes a buffer again with
+/// [`Self::from_geometry`], so the next frame decodes into it without
+/// allocating. A buffer whose geometry is shared, such as one cloned out of
+/// it, copies the geometry once on the next edit.
 #[derive(Debug, Clone)]
 pub struct FrameBuffer {
     topology: Arc<Topology>,
     /// Bound to `topology`.
-    sample: Sample,
+    geometry: Geometry,
     /// In the canonical time unit.
     time: Option<Quantity<f64>>,
     step: Option<u64>,
@@ -142,10 +142,10 @@ pub struct FrameBuffer {
 }
 
 impl std::ops::Deref for FrameBuffer {
-    type Target = Sample;
+    type Target = Geometry;
 
     fn deref(&self) -> &Self::Target {
-        &self.sample
+        &self.geometry
     }
 }
 
@@ -154,31 +154,32 @@ impl FrameBuffer {
     /// the origin and no optional state.
     pub fn new(topology: impl Into<Arc<Topology>>) -> Self {
         let topology = topology.into();
-        let sample = Sample::new(Positions::zeros(topology.atom_count()));
-        Self::from_sample(topology, sample).expect("zero positions match the topology atom count")
+        let geometry = Geometry::new(Positions::zeros(topology.atom_count()));
+        Self::from_geometry(topology, geometry)
+            .expect("zero positions match the topology atom count")
     }
 
-    /// A buffer holding `sample` without copying it, bound to `topology`,
+    /// A buffer holding `geometry` without copying it, bound to `topology`,
     /// without a time or step.
     ///
-    /// The sample is validated and its bond property rows bound once, as
-    /// [`SampleSet::push`](crate::structure::SampleSet::push) does; it is
+    /// The geometry is validated and its bond property rows bound once, as
+    /// [`StructureSet::push`](crate::structure::StructureSet::push) does; it is
     /// the buffered frame until the next read replaces it, reusing its
     /// allocations.
     ///
     /// # Errors
     ///
-    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the sample's
+    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the geometry's
     /// atom count or property rows do not match `topology`.
-    pub fn from_sample(
+    pub fn from_geometry(
         topology: impl Into<Arc<Topology>>,
-        mut sample: Sample,
+        mut geometry: Geometry,
     ) -> Result<Self, TrajectoryIoError> {
         let topology = topology.into();
-        sample.bind(&topology)?;
+        geometry.bind(&topology)?;
         Ok(Self {
             topology,
-            sample,
+            geometry,
             time: None,
             step: None,
             spare_velocities: None,
@@ -186,18 +187,18 @@ impl FrameBuffer {
         })
     }
 
-    /// The buffered frame, without copying it: its sample, bound to the
+    /// The buffered frame, without copying it: its geometry, bound to the
     /// buffer's topology, and its place on a time order.
     ///
-    /// The sample keeps every field of the buffered frame. Spare velocity
+    /// The geometry keeps every field of the buffered frame. Spare velocity
     /// and force allocations are dropped; clear velocities or forces first
     /// to drop those of the frame as well.
-    pub fn into_sample(self) -> (Sample, Place) {
+    pub fn into_sample(self) -> (Geometry, Place) {
         let place = Place::Time {
             time: self.time,
             step: self.step,
         };
-        (self.sample, place)
+        (self.geometry, place)
     }
 
     /// The topology snapshot the buffer is bound to.
@@ -212,7 +213,7 @@ impl FrameBuffer {
 
     /// The buffered frame bound to its topology.
     pub fn frame_view(&self) -> FrameView<'_> {
-        FrameView::bound(&self.topology, &self.sample, self.time, self.step)
+        FrameView::bound(&self.topology, &self.geometry, self.time, self.step)
     }
 
     /// The buffered frame as a [`ModelView`], so model analyses apply to it.
@@ -230,9 +231,9 @@ impl FrameBuffer {
         self.step
     }
 
-    /// Dimension-preserving editor for the buffered sample.
-    pub fn sample_mut(&mut self) -> SampleMut<'_> {
-        SampleMut::new(&mut self.sample)
+    /// Dimension-preserving editor for the buffered geometry.
+    pub fn geometry_mut(&mut self) -> GeometryMut<'_> {
+        GeometryMut::new(&mut self.geometry)
     }
 
     /// Sets or clears a finite time, converted to the canonical time unit.
@@ -306,7 +307,7 @@ impl FrameBuffer {
         self.publish_forces(None);
         self.step = None;
         self.time = None;
-        let structure = self.sample.structure_in_place();
+        let structure = self.geometry.structure_in_place();
         structure.cell = None;
         structure.occupancies = AtomScalars::default();
         structure.b_factors = AtomScalars::default();
@@ -365,7 +366,7 @@ impl FrameBuffer {
         self.publish_forces(forces);
         self.step = data.step;
         self.time = time;
-        let structure = self.sample.structure_in_place();
+        let structure = self.geometry.structure_in_place();
         structure
             .positions
             .set_all(data.positions)
@@ -449,21 +450,23 @@ impl FrameBuffer {
 
     /// Swaps staged storage in; the previous allocation becomes the spare.
     fn publish_velocities(&mut self, velocities: Option<Velocities>) {
-        if velocities.is_none() && self.sample.velocities().is_none() {
+        if velocities.is_none() && self.geometry.velocities().is_none() {
             return;
         }
-        let previous =
-            std::mem::replace(&mut self.sample.structure_in_place().velocities, velocities);
+        let previous = std::mem::replace(
+            &mut self.geometry.structure_in_place().velocities,
+            velocities,
+        );
         if previous.is_some() {
             self.spare_velocities = previous;
         }
     }
 
     fn publish_forces(&mut self, forces: Option<Forces>) {
-        if forces.is_none() && self.sample.forces().is_none() {
+        if forces.is_none() && self.geometry.forces().is_none() {
             return;
         }
-        let previous = std::mem::replace(&mut self.sample.structure_in_place().forces, forces);
+        let previous = std::mem::replace(&mut self.geometry.structure_in_place().forces, forces);
         if previous.is_some() {
             self.spare_forces = previous;
         }

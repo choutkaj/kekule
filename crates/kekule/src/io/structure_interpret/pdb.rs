@@ -24,11 +24,11 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
 };
-use super::sample_set::{interpret_conformations, interpret_models};
+use super::structure_set::{interpret_conformations, interpret_models};
 use super::types::{
     ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureSampleSetInterpretOptions,
-    StructureSampleSetInterpretation,
+    StructureInterpretOptions, StructureInterpretation, StructureSetInterpretOptions,
+    StructureSetInterpretation,
 };
 use super::{interpret_source, AltLocResidue, StructureSource};
 
@@ -46,11 +46,11 @@ pub(crate) fn interpret_pdb(
 }
 
 /// Interprets explicitly selected or all coordinate models as one
-/// shared-topology unordered sample set.
-pub(crate) fn interpret_pdb_sample_set(
+/// shared-topology unordered structure set.
+pub(crate) fn interpret_pdb_structure_set(
     document: &PdbDocument,
-    options: StructureSampleSetInterpretOptions,
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+    options: StructureSetInterpretOptions,
+) -> Result<StructureSetInterpretation, FormatError> {
     let mut seen = BTreeSet::new();
     let available = document
         .atoms()
@@ -74,7 +74,7 @@ pub(crate) fn interpret_pdb_sample_set(
 pub(crate) fn interpret_pdb_conformations(
     document: &PdbDocument,
     selections: &[StructureInterpretOptions],
-) -> Result<StructureSampleSetInterpretation, FormatError> {
+) -> Result<StructureSetInterpretation, FormatError> {
     interpret_conformations(selections, |options| {
         interpret_pdb(document, options.clone())
     })
