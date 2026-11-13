@@ -2,7 +2,8 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::structure::{
-    Distribution, Members, Model, ModelEditError, ModelEditor, Partition, Positions, StructureSet,
+    Distribution, Members, Partition, Positions, Structure, StructureEditError, StructureEditor,
+    StructureSet,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId,
@@ -14,30 +15,34 @@ use std::sync::Arc;
 fn key(name: &str) -> PropertyKey {
     PropertyKey::new(name).unwrap()
 }
-fn index(model: &Model, atom: InstanceAtomId) -> TopologyAtomIndex {
-    model.topology().atom_index(atom).unwrap()
+fn index(structure: &Structure, atom: InstanceAtomId) -> TopologyAtomIndex {
+    structure.topology().atom_index(atom).unwrap()
 }
-fn occupancy(model: &Model, atom: InstanceAtomId) -> Option<f64> {
-    model.occupancy(index(model, atom))
+fn occupancy(structure: &Structure, atom: InstanceAtomId) -> Option<f64> {
+    structure.occupancy(index(structure, atom))
 }
-fn b_factor(model: &Model, atom: InstanceAtomId) -> Option<Quantity<f64>> {
-    model.b_factor(index(model, atom))
+fn b_factor(structure: &Structure, atom: InstanceAtomId) -> Option<Quantity<f64>> {
+    structure.b_factor(index(structure, atom))
 }
-fn atom_value(model: &Model, atom: InstanceAtomId, name: &PropertyKey) -> Option<PropertyValue> {
-    model
+fn atom_value(
+    structure: &Structure,
+    atom: InstanceAtomId,
+    name: &PropertyKey,
+) -> Option<PropertyValue> {
+    structure
         .properties()
         .atoms()
-        .value(name, index(model, atom))
+        .value(name, index(structure, atom))
         .unwrap()
 }
 fn set_atom_value(
-    model: &mut Model,
+    structure: &mut Structure,
     atom: InstanceAtomId,
     name: PropertyKey,
     value: PropertyValue,
 ) {
-    let row = index(model, atom);
-    model
+    let row = index(structure, atom);
+    structure
         .properties_mut()
         .atoms_mut()
         .set_value(name, row, Some(value))
@@ -55,9 +60,9 @@ fn positions(count: usize) -> Positions {
     ))
     .unwrap()
 }
-fn model(smiles: &str) -> Model {
+fn structure(smiles: &str) -> Structure {
     let molecule = kekule::smiles::to_molecules(smiles).unwrap().pop().unwrap();
-    Model::from_molecule(molecule.clone(), &positions(molecule.atom_count())).unwrap()
+    Structure::from_molecule(molecule.clone(), &positions(molecule.atom_count())).unwrap()
 }
 fn column(len: usize, offset: i64, conflict: bool) -> PropertyColumn {
     let values = (0..len)
@@ -77,7 +82,7 @@ fn column(len: usize, offset: i64, conflict: bool) -> PropertyColumn {
 
 // Focused synthetic regression: repeated stereochemical definitions and hierarchy
 // that crosses molecular boundaries, with annotations in every supported domain.
-fn annotated(conflict: Option<&str>) -> Model {
+fn annotated(conflict: Option<&str>) -> Structure {
     let mut molecule = kekule::smiles::to_molecules("N[C@@H](C)C(=O)O")
         .unwrap()
         .pop()
@@ -208,36 +213,36 @@ fn annotated(conflict: Option<&str>) -> Model {
             PropertyValue::String("original system".into()),
         )
         .unwrap();
-    let mut model = Model::new(builder.build().unwrap(), positions(atom_count)).unwrap();
-    model
+    let mut structure = Structure::new(builder.build().unwrap(), positions(atom_count)).unwrap();
+    structure
         .properties_mut()
         .atoms_mut()
         .insert(
             key("tag"),
-            column(atom_count, 900, conflict == Some("model atom")),
+            column(atom_count, 900, conflict == Some("geometry atom")),
         )
         .unwrap();
-    model
+    structure
         .properties_mut()
         .bonds_mut()
         .insert(
             key("tag"),
-            column(bond_count, 1000, conflict == Some("model bond")),
+            column(bond_count, 1000, conflict == Some("geometry bond")),
         )
         .unwrap();
     for i in (0..atom_count).step_by(2) {
         let row = TopologyAtomIndex::new(i as u32);
-        model.set_occupancy(row, Some(0.75)).unwrap();
-        model
+        structure.set_occupancy(row, Some(0.75)).unwrap();
+        structure
             .set_b_factor(row, Some(Quantity::new(15.0 + i as f64, SQUARE_ANGSTROM)))
             .unwrap();
     }
-    model
+    structure
         .properties_mut()
         .owner_mut()
         .insert(key("energy"), PropertyValue::Int(-12))
         .unwrap();
-    model
+    structure
 }
 
 fn table_cell<R>(
@@ -273,7 +278,7 @@ fn assert_same_rows<R>(source: &PropertyTable<R>, target: &PropertyTable<R>) {
 // Append-only fixture checks: occurrences retain their local chemistry IDs and
 // appear after the destination occurrences. This is an expected layout, not an
 // editor-supplied correspondence; every row, endpoint and hierarchy link is checked.
-fn assert_import(source: &Model, target: &Model, first_instance: usize) {
+fn assert_import(source: &Structure, target: &Structure, first_instance: usize) {
     let instance =
         |id: MoleculeInstanceId| MoleculeInstanceId::new((first_instance + id.index()) as u32);
     let atom = |id: InstanceAtomId| InstanceAtomId::new(instance(id.instance()), id.atom());
@@ -404,13 +409,13 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
     let source = annotated(None);
     let before = format!("{source:?}");
     let mut editor = source.to_editor();
-    let first = editor.append_model(&source).unwrap();
+    let first = editor.append_structure(&source).unwrap();
     assert_eq!(
         first.report().cleared_topology_properties(),
         vec![key("system_note")]
     );
     assert_eq!(
-        first.report().cleared_model_properties(),
+        first.report().cleared_structure_properties(),
         vec![key("energy")]
     );
     assert_eq!(
@@ -418,11 +423,13 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
         vec![key("system_note")]
     );
     assert_eq!(
-        first.report().omitted_model_properties(),
+        first.report().omitted_structure_properties(),
         vec![key("energy")]
     );
-    let second = editor.append_model(&source.as_model_view()).unwrap();
-    assert!(second.report().cleared_model_properties().is_empty());
+    let second = editor
+        .append_structure(&source.as_structure_view())
+        .unwrap();
+    assert!(second.report().cleared_structure_properties().is_empty());
     assert!(second.report().cleared_topology_properties().is_empty());
     let result = editor.finish().unwrap();
     let target = &result;
@@ -484,8 +491,8 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
 
 #[test]
 fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_splits_and_merges() {
-    let receptor = model("CC");
-    let ligand = model("CO");
+    let receptor = structure("CC");
+    let ligand = structure("CO");
     let receptor_atom = receptor.topology().atom_ids()[0];
     let ligand_atoms = ligand.topology().atom_ids();
     let source_bond = ligand.topology().bond_ids()[0];
@@ -499,7 +506,7 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
                 .unwrap(),
         )
         .unwrap();
-    let imported = editor.append_model(&ligand).unwrap();
+    let imported = editor.append_structure(&ligand).unwrap();
     let left = imported.atom(ligand_atoms[0]).unwrap();
     let right = imported.atom(ligand_atoms[1]).unwrap();
     let hydrogen = editor
@@ -593,11 +600,11 @@ fn append_composes_with_generic_atom_bond_edits_and_preserves_geometry_through_s
 
 #[test]
 fn import_handles_reject_foreign_drafts_and_remain_invalid_after_clear_and_recovery() {
-    let source = model("CO");
+    let source = structure("CO");
     let mut editor = source.to_editor();
-    let imported = editor.append_model(&source).unwrap();
+    let imported = editor.append_structure(&source).unwrap();
     let mut foreign = source.to_editor();
-    foreign.append_model(&source).unwrap();
+    foreign.append_structure(&source).unwrap();
     let imported_atom = imported.atom(source.topology().atom_ids()[0]).unwrap();
     assert!(foreign.position(imported_atom).is_none());
     assert!(foreign.delete_atom(imported_atom).is_err());
@@ -653,21 +660,21 @@ fn all_property_domain_conflicts_roll_back_and_can_be_retried() {
         "chain",
         "residue",
         "atom site",
-        "model atom",
-        "model bond",
+        "geometry atom",
+        "geometry bond",
     ] {
         let destination = annotated(None);
         let incompatible = annotated(Some(domain));
         let mut editor = destination.to_editor();
-        editor.append_model(&destination).unwrap();
+        editor.append_structure(&destination).unwrap();
         let before = format!("{editor:?}");
-        let error = editor.append_model(&incompatible).unwrap_err();
+        let error = editor.append_structure(&incompatible).unwrap_err();
         // The domain is the message; the conflicting key is in the source.
         let chain = error_chain(&error);
         assert!(chain.contains(domain), "{chain}");
         assert!(chain.contains("tag"), "{chain}");
         assert_eq!(format!("{editor:?}"), before, "rollback for {domain}");
-        editor.append_model(&destination).unwrap();
+        editor.append_structure(&destination).unwrap();
         let result = editor.finish().unwrap();
         assert_import(&destination, &result, 3);
         assert_import(&destination, &result, 6);
@@ -676,8 +683,8 @@ fn all_property_domain_conflicts_roll_back_and_can_be_retried() {
 
 #[test]
 fn coordinates_and_property_units_are_preserved_with_missing_rows() {
-    let mut destination = model("CC");
-    let mut source = model("CO");
+    let mut destination = structure("CC");
+    let mut source = structure("CO");
     let destination_atom = destination.topology().atom_ids()[0];
     let source_atom = source.topology().atom_ids()[0];
     set_atom_value(
@@ -711,7 +718,7 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
         ))
         .unwrap();
     let mut editor = destination.to_editor();
-    editor.append_model(&source).unwrap();
+    editor.append_structure(&source).unwrap();
     let result = editor.finish().unwrap();
     let target = &result;
     let new_atom = target.topology().atom_ids()[2];
@@ -758,9 +765,9 @@ fn coordinates_and_property_units_are_preserved_with_missing_rows() {
     let mut editor = destination.to_editor();
     let before = format!("{editor:?}");
     assert!(matches!(
-        editor.append_model(&source),
-        Err(ModelEditError::AppendProperty {
-            domain: kekule::properties::PropertyDomain::ModelAtoms,
+        editor.append_structure(&source),
+        Err(StructureEditError::AppendProperty {
+            domain: kekule::properties::PropertyDomain::GeometryAtoms,
             ..
         })
     ));
@@ -777,17 +784,17 @@ fn cell(size: f64, axes: [bool; 3]) -> PeriodicCell {
 
 #[test]
 fn periodic_cell_rules_are_explicit_and_transactional() {
-    let mut source = model("CO");
+    let mut source = structure("CO");
     source.set_cell(Some(cell(4.0, [true; 3])));
-    let mut empty = ModelEditor::new();
-    empty.append_model(&source).unwrap();
+    let mut empty = StructureEditor::new();
+    empty.append_structure(&source).unwrap();
     assert_eq!(empty.finish().unwrap().cell(), source.cell());
-    let destination = model("C");
+    let destination = structure("C");
     let mut editor = destination.to_editor();
     let before = format!("{editor:?}");
     assert!(matches!(
-        editor.append_model(&source),
-        Err(ModelEditError::IncompatibleAppendCell)
+        editor.append_structure(&source),
+        Err(StructureEditError::IncompatibleAppendCell)
     ));
     assert_eq!(format!("{editor:?}"), before);
     editor.set_cell(Some(
@@ -797,7 +804,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
         )
         .unwrap(),
     ));
-    editor.append_model(&source).unwrap();
+    editor.append_structure(&source).unwrap();
     for wrong in [
         cell(5.0, [true; 3]),
         cell(4.0 + 1e-10, [true; 3]),
@@ -806,13 +813,13 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
         source.set_cell(Some(wrong));
         let before = format!("{editor:?}");
         assert!(matches!(
-            editor.append_model(&source),
-            Err(ModelEditError::IncompatibleAppendCell)
+            editor.append_structure(&source),
+            Err(StructureEditError::IncompatibleAppendCell)
         ));
         assert_eq!(format!("{editor:?}"), before);
     }
     source.set_cell(None);
-    editor.append_model(&source).unwrap();
+    editor.append_structure(&source).unwrap();
     let expected = *editor.cell().unwrap();
     assert_eq!(editor.finish().unwrap().cell(), Some(&expected));
 }
@@ -820,14 +827,14 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
 #[test]
 fn borrowed_member_sample_and_plain_finish_need_no_intermediate_model() {
     let source = annotated(None);
-    let mut set = StructureSet::from_models([source.clone()]).unwrap();
+    let mut set = StructureSet::from_structures([source.clone()]).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
     ))
     .unwrap();
     let member = set.iter().next().unwrap();
-    let mut editor = ModelEditor::new();
-    let imported = editor.append_model(&member).unwrap();
+    let mut editor = StructureEditor::new();
+    let imported = editor.append_structure(&member).unwrap();
     for &id in source.topology().atom_ids() {
         assert_eq!(
             editor.position(imported.atom(id).unwrap()).unwrap(),
@@ -846,8 +853,8 @@ fn borrowed_member_sample_and_plain_finish_need_no_intermediate_model() {
 #[test]
 fn editing_one_imported_occurrence_preserves_others_and_their_instance_annotations() {
     let source = annotated(None);
-    let mut editor = ModelEditor::new();
-    let imported = editor.append_model(&source).unwrap();
+    let mut editor = StructureEditor::new();
+    let imported = editor.append_structure(&source).unwrap();
     let source_atom = source.topology().atom_ids()[0];
     let replacement = source
         .topology()
@@ -925,7 +932,7 @@ fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
         .bonds_mut()
         .insert(key("tag"), column(2, 300, false))
         .unwrap();
-    let mut source = Model::new(builder.build().unwrap(), positions(5)).unwrap();
+    let mut source = Structure::new(builder.build().unwrap(), positions(5)).unwrap();
     let mut properties = source.properties_mut();
     properties
         .atoms_mut()
@@ -935,22 +942,22 @@ fn edited_source_ids_and_reordered_definition_occurrences_keep_dense_state_assoc
         .bonds_mut()
         .insert(key("tag"), column(2, 500, false))
         .unwrap();
-    let mut destination = model("CCC").into_editor();
+    let mut destination = structure("CCC").into_editor();
     let deleted = destination.topology().atom_ids().next().unwrap();
     destination.delete_atom(deleted).unwrap();
-    destination.append_model(&source).unwrap();
+    destination.append_structure(&source).unwrap();
     let result = destination.finish().unwrap();
     assert_import(&source, &result, 1);
     assert_eq!(result.topology().definition_count(), 3);
 }
 
-fn kras() -> Model {
+fn kras() -> Structure {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmcif/9UOH.cif");
     kekule::mmcif::parse_str(&std::fs::read_to_string(path).unwrap(), Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model()
+        .into_structure()
 }
 
 #[test]
@@ -960,14 +967,14 @@ fn appended_copies_share_identical_definitions() {
     let source = first.topology();
     assert_eq!(source.definition_count(), 6);
     let instances = source.instance_count();
-    let mut editor = ModelEditor::new();
-    editor.append_model(&first).unwrap();
-    editor.append_model(&second).unwrap();
+    let mut editor = StructureEditor::new();
+    editor.append_structure(&first).unwrap();
+    editor.append_structure(&second).unwrap();
     let merged = editor.finish().unwrap();
     assert_eq!(merged.topology().definition_count(), 6);
     assert_eq!(merged.topology().instance_count(), 2 * instances);
-    let definition = |model: &Model, index: usize| {
-        model
+    let definition = |structure: &Structure, index: usize| {
+        structure
             .topology()
             .instance(MoleculeInstanceId::new(index as u32))
             .unwrap()
@@ -980,9 +987,9 @@ fn appended_copies_share_identical_definitions() {
         );
     }
 
-    // Appending to a draft of the merged model shares its source definitions.
+    // Appending to a draft of the merged structure shares its source definitions.
     let mut editor = merged.to_editor();
-    editor.append_model(&kras()).unwrap();
+    editor.append_structure(&kras()).unwrap();
     let tripled = editor.finish().unwrap();
     assert_eq!(tripled.topology().definition_count(), 6);
     assert_eq!(tripled.topology().instance_count(), 3 * instances);
@@ -1051,16 +1058,16 @@ fn a_class_edit_stays_with_its_occurrence_around_appends() {
         .hierarchy_mut()
         .set_residue_class(residue, ResidueClass::Water)
         .unwrap();
-    let source = Model::new(builder.build().unwrap(), positions(1)).unwrap();
-    let classes = |model: &Model| {
-        model
+    let source = Structure::new(builder.build().unwrap(), positions(1)).unwrap();
+    let classes = |structure: &Structure| {
+        structure
             .topology()
             .instances()
             .map(|instance| instance.class())
             .collect::<Vec<_>>()
     };
     assert_eq!(classes(&source), [MoleculeClass::Water]);
-    let to_ion = |editor: &mut ModelEditor| {
+    let to_ion = |editor: &mut StructureEditor| {
         let handle = editor.topology().residue_handle(residue).unwrap();
         editor
             .topology_mut()
@@ -1075,7 +1082,7 @@ fn a_class_edit_stays_with_its_occurrence_around_appends() {
         classes(&editor.clone().finish().unwrap()),
         [MoleculeClass::Ion]
     );
-    editor.append_model(&source).unwrap();
+    editor.append_structure(&source).unwrap();
     let merged = editor.finish().unwrap();
     assert_eq!(merged.topology().definition_count(), 2);
     assert_eq!(classes(&merged), [MoleculeClass::Ion, MoleculeClass::Water]);
@@ -1083,7 +1090,7 @@ fn a_class_edit_stays_with_its_occurrence_around_appends() {
     // Append, then edit: the occurrences share a definition until the edit
     // gives the edited one its own.
     let mut editor = source.to_editor();
-    editor.append_model(&source).unwrap();
+    editor.append_structure(&source).unwrap();
     assert_eq!(
         editor
             .clone()
@@ -1101,21 +1108,21 @@ fn a_class_edit_stays_with_its_occurrence_around_appends() {
 
 #[test]
 fn a_class_edit_of_one_water_leaves_the_others() {
-    let model = kras();
-    let water = model
+    let structure = kras();
+    let water = structure
         .topology()
         .definitions()
         .find(|definition| definition.class() == MoleculeClass::Water)
         .unwrap()
         .id();
-    let waters = model
+    let waters = structure
         .topology()
         .instances()
         .filter(|instance| instance.definition_id() == water)
         .collect::<Vec<_>>();
     assert_eq!(waters.len(), 93);
     let residue = waters[0].residues().next().unwrap().id();
-    let mut editor = model.to_editor();
+    let mut editor = structure.to_editor();
     let handle = editor.topology().residue_handle(residue).unwrap();
     editor
         .topology_mut()

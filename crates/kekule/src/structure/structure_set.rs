@@ -6,7 +6,7 @@ use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::state::subset_rows;
-use super::{DenseArrayError, GeometryError, Model, Positions};
+use super::{DenseArrayError, GeometryError, Positions, Structure};
 
 mod context;
 mod decoded;
@@ -71,7 +71,7 @@ pub use views::{GeometryIter, GeometryView, StateIter, StateView};
 /// [`Self::collapse`] share the selected structures in the same way.
 ///
 /// Geometries are validated against the shared topology on insertion, so they
-/// can be read as [`super::ModelView`]s without further checks. Geometries are
+/// can be read as [`super::StructureView`]s without further checks. Geometries are
 /// stored in a stable order: regrouping, reweighting, and editing states
 /// never reorder them, so geometry indices held elsewhere stay valid.
 ///
@@ -475,30 +475,34 @@ impl StructureSet {
         Ok(set)
     }
 
-    /// Collects models of one topology layout as the geometries of an
-    /// unordered set without a distribution, on the first model's topology
-    /// snapshot. Each model's positions, cell, occupancies, B-factors, and
+    /// Collects structures of one topology layout as the geometries of an
+    /// unordered set without a distribution, on the first structure's topology
+    /// snapshot. Each structure's positions, cell, occupancies, B-factors, and
     /// structure properties become its geometry, moving without copying.
     ///
-    /// Every model's topology must have the first one's layout
-    /// ([`Topology::same_layout`]), so models read from separate files are
-    /// accepted as well as models sharing one published layout. Only the
+    /// Every structure's topology must have the first one's layout
+    /// ([`Topology::same_layout`]), so structures read from separate files are
+    /// accepted as well as structures sharing one published layout. Only the
     /// first topology is kept.
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::EmptySource`] without models and
-    /// [`StructureSetError::TopologyMismatch`] for a model of another layout.
-    pub fn from_models(models: impl IntoIterator<Item = Model>) -> Result<Self, StructureSetError> {
-        let mut models = models.into_iter();
-        let first = models.next().ok_or(StructureSetError::EmptySource)?;
+    /// [`StructureSetError::EmptySource`] without structures and
+    /// [`StructureSetError::TopologyMismatch`] for a structure of another layout.
+    pub fn from_structures(
+        structures: impl IntoIterator<Item = Structure>,
+    ) -> Result<Self, StructureSetError> {
+        let mut structures = structures.into_iter();
+        let first = structures.next().ok_or(StructureSetError::EmptySource)?;
         let mut set = Self::new(first.shared_topology());
-        set.storage.geometries.push(Geometry::from_model(first));
-        for model in models {
-            if !model.topology().same_layout(&set.topology) {
+        set.storage.geometries.push(Geometry::from_structure(first));
+        for structure in structures {
+            if !structure.topology().same_layout(&set.topology) {
                 return Err(StructureSetError::TopologyMismatch);
             }
-            set.storage.geometries.push(Geometry::from_model(model));
+            set.storage
+                .geometries
+                .push(Geometry::from_structure(structure));
         }
         Ok(set)
     }
@@ -813,7 +817,7 @@ impl StructureSet {
             .geometries
             .iter()
             .map(|geometry| {
-                Ok(Geometry::from_structure(Arc::new(
+                Ok(Geometry::from_state(Arc::new(
                     geometry.structure().project(&atoms, &bonds)?,
                 )))
             })
@@ -858,7 +862,7 @@ impl StructureSet {
             .iter()
             .zip(transforms)
             .map(|(geometry, transform)| {
-                Ok(Geometry::from_structure(Arc::new(
+                Ok(Geometry::from_state(Arc::new(
                     geometry.structure().transformed(*transform)?,
                 )))
             })

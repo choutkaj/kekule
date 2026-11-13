@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let start = Instant::now();
         let interpretation = document.interpret(Default::default())?;
         phases[1].push(start.elapsed());
-        let mut model = interpretation.into_model();
+        let mut model = interpretation.into_structure();
         let start = Instant::now();
         let perceived = model.perceive().map(|_| ());
         phases[2].push(start.elapsed());

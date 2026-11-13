@@ -162,7 +162,7 @@ fn a_free_nucleotide_has_no_code() {
     // The same entry as PDB records, which number no residue in a sequence
     // and name residues with three characters.
     let short = interpret(&KRAS.replace("A1L9E", "L9E"));
-    let (written, _) = pdb::write(short.model(), Default::default()).expect("writes");
+    let (written, _) = pdb::write(short.structure(), Default::default()).expect("writes");
     let reread = pdb::parse_str(&written, Default::default())
         .expect("parses")
         .interpret(Default::default())

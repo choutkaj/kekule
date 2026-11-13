@@ -23,7 +23,7 @@ use crate::stereo::StereoValidationIssue;
 /// Coordinates, periodic cells, velocities, and biological hierarchy do not
 /// belong to a molecule. Put explicit molecule occurrences and hierarchy in a
 /// [`crate::topology::Topology`], then attach geometry with
-/// [`crate::structure::Model`].
+/// [`crate::structure::Structure`].
 ///
 /// Construction and structural editing publish through
 /// [`MoleculeEditor::finish`]. Temporary disconnectedness is allowed inside the

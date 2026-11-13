@@ -2,12 +2,12 @@
 use std::io::Write;
 
 use crate::structure::{
-    AsModelView, GeometryView, Membership, Model, ModelView, Place, StructureKind,
+    AsStructureView, GeometryView, Membership, Place, Structure, StructureKind, StructureView,
 };
 use crate::traj::FrameView;
 use crate::units::{named_unit, KELVIN, KILOJOULE_PER_MOLE};
 
-use super::molfile_write::{check_cell, render_model};
+use super::molfile_write::{check_cell, render_structure};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
 use super::write_error::{check_structure_state, Omissions, StatePolicies};
 use super::{MolfileWriteVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
@@ -140,7 +140,7 @@ const PLACE_FIELDS: [&str; 3] = [
 
 /// One SDF record: a model view with an optional title and data fields.
 ///
-/// Convert from `&Model`, a borrowed geometry of a structure set, a trajectory
+/// Convert from `&Structure`, a borrowed geometry of a structure set, a trajectory
 /// frame, or `&SdfRecordInterpretation` (which keeps its title and data
 /// fields); `sdf::write(&set, options)` writes a record per geometry. A
 /// geometry's membership in a distribution follows its data fields: its
@@ -165,18 +165,18 @@ const PLACE_FIELDS: [&str; 3] = [
 /// fields.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
-    model: ModelView<'a>,
+    model: StructureView<'a>,
     title: &'a str,
     data_fields: &'a [SdfDataField],
 }
 
 impl<'a> SdfRecordSource<'a> {
     /// A record of any model view, with an empty title and no data fields.
-    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
-        Self::view(model.as_model_view())
+    pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
+        Self::view(structure.as_structure_view())
     }
 
-    const fn view(model: ModelView<'a>) -> Self {
+    const fn view(model: StructureView<'a>) -> Self {
         Self {
             model,
             title: "",
@@ -204,27 +204,27 @@ impl<'a> SdfRecordSource<'a> {
     }
 }
 
-impl<'a> From<&'a Model> for SdfRecordSource<'a> {
-    fn from(model: &'a Model) -> Self {
-        Self::model(model)
+impl<'a> From<&'a Structure> for SdfRecordSource<'a> {
+    fn from(model: &'a Structure) -> Self {
+        Self::structure(model)
     }
 }
 
 impl<'a> From<FrameView<'a>> for SdfRecordSource<'a> {
     fn from(frame: FrameView<'a>) -> Self {
-        Self::view(frame.as_model_view())
+        Self::view(frame.as_structure_view())
     }
 }
 
 impl<'a, R: ?Sized> From<GeometryView<'a, R>> for SdfRecordSource<'a> {
     fn from(geometry: GeometryView<'a, R>) -> Self {
-        Self::view(geometry.as_model_view())
+        Self::view(geometry.as_structure_view())
     }
 }
 
 impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
     fn from(record: &'a SdfRecordInterpretation) -> Self {
-        Self::model(record.model())
+        Self::structure(record.structure())
             .with_title(record.title())
             .with_data_fields(record.data_fields())
     }
@@ -285,7 +285,7 @@ fn write_record(
                 .place()
                 .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
         ),
-        StructureKind::Model => (None, false, false, None),
+        StructureKind::Standalone => (None, false, false, None),
     };
     // Whether a geometry's own data uses the name.
     let reserved = |name: &str| {
@@ -346,7 +346,7 @@ fn write_record(
     }
     let molfile = |error: FormatError| error.in_format(Format::Sdf);
     check_cell(record.model, options.cell).map_err(molfile)?;
-    let ctab = render_model(record.model, record.title, options.version).map_err(molfile)?;
+    let ctab = render_structure(record.model, record.title, options.version).map_err(molfile)?;
     if record.model.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }

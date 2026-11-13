@@ -11,13 +11,13 @@ use kekule::{
     },
     structure::{
         measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck, MeasurementError},
-        Geometry, Model, Positions, StructureSet,
+        Geometry, Positions, Structure, StructureSet,
     },
     topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId},
     units::{Quantity, DEGREE, NANOMETER},
 };
 
-fn make_model(smiles: &str, perceive: bool) -> Model {
+fn make_structure(smiles: &str, perceive: bool) -> Structure {
     let mut molecule = smiles::to_molecules(smiles).unwrap().remove(0);
     if perceive {
         molecule.perceive().unwrap();
@@ -30,16 +30,16 @@ fn make_model(smiles: &str, perceive: bool) -> Model {
             Point3::new(t, t * t, t * t * t)
         })
         .collect::<Vec<_>>();
-    Model::from_molecule(
+    Structure::from_molecule(
         molecule.clone(),
         &Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
     .unwrap()
 }
 
-fn bond(model: &Model, b: usize, c: usize) -> InstanceBondId {
-    let ids = model.topology().atom_ids();
-    let instance = model.topology().instance(ids[b].instance()).unwrap();
+fn bond(structure: &Structure, b: usize, c: usize) -> InstanceBondId {
+    let ids = structure.topology().atom_ids();
+    let instance = structure.topology().instance(ids[b].instance()).unwrap();
     instance.qualify_bond(
         instance
             .molecule()
@@ -48,10 +48,10 @@ fn bond(model: &Model, b: usize, c: usize) -> InstanceBondId {
     )
 }
 
-fn definition(model: &Model, b: usize, c: usize) -> BondDihedral {
+fn definition(structure: &Structure, b: usize, c: usize) -> BondDihedral {
     BondDihedral::new(
-        model.shared_topology(),
-        bond(model, b, c),
+        structure.shared_topology(),
+        bond(structure, b, c),
         Default::default(),
     )
     .unwrap()
@@ -68,26 +68,26 @@ fn references_follow_cip_elements_isotopes_deep_ligands_and_rings() {
         ("CC(c1ccccc1)CC", 1, 8, 2, 9),
         ("[H]C([2H])CC", 1, 3, 2, 4),
     ] {
-        let model = make_model(smiles, true);
-        let topology = model.shared_topology();
+        let structure = make_structure(smiles, true);
+        let topology = structure.shared_topology();
         let before = topology
-            .instance(model.topology().atom_ids()[b].instance())
+            .instance(structure.topology().atom_ids()[b].instance())
             .unwrap()
             .molecule()
             .perception()
             .clone();
-        let selected = definition(&model, b, c);
-        let ids = model.topology().atom_ids();
+        let selected = definition(&structure, b, c);
+        let ids = structure.topology().atom_ids();
         assert_eq!(
             selected.atoms(),
             Some([ids[a], ids[b], ids[c], ids[d]]),
             "{smiles}"
         );
         assert_eq!(
-            selected.measure(model.as_model_view()).unwrap(),
+            selected.measure(structure.as_structure_view()).unwrap(),
             Some(
                 measure::dihedral(
-                    model.as_model_view(),
+                    structure.as_structure_view(),
                     ids[a],
                     ids[b],
                     ids[c],
@@ -105,15 +105,15 @@ fn references_follow_cip_elements_isotopes_deep_ligands_and_rings() {
                 .perception(),
             &before
         );
-        assert!(Arc::ptr_eq(&topology, &model.shared_topology()));
+        assert!(Arc::ptr_eq(&topology, &structure.shared_topology()));
     }
 }
 
 #[test]
 fn tied_references_are_smallest_ids_and_do_not_follow_coordinates() {
-    let mut model = make_model("CC(C)C(C)C", true);
-    let selected = definition(&model, 1, 3);
-    let ids = model.topology().atom_ids().to_vec();
+    let mut structure = make_structure("CC(C)C(C)C", true);
+    let selected = definition(&structure, 1, 3);
+    let ids = structure.topology().atom_ids().to_vec();
     assert_eq!(selected.atoms(), Some([ids[0], ids[1], ids[3], ids[4]]));
     // The alternative methyl reference stays off axis, while the chosen one
     // becomes collinear. It must not be substituted just to obtain an angle.
@@ -123,12 +123,12 @@ fn tied_references_are_smallest_ids_and_do_not_follow_coordinates() {
         (ids[3], Point3::new(0.0, 1.0, 0.0)),
         (ids[4], Point3::new(0.0, 1.0, 1.0)),
     ] {
-        model
+        structure
             .set_position(id, Quantity::new(point, NANOMETER))
             .unwrap();
     }
     assert!(measure::dihedral(
-        model.as_model_view(),
+        structure.as_structure_view(),
         ids[2],
         ids[1],
         ids[3],
@@ -136,17 +136,20 @@ fn tied_references_are_smallest_ids_and_do_not_follow_coordinates() {
         ConnectivityCheck::Unrestricted
     )
     .is_ok());
-    assert_eq!(selected.measure(model.as_model_view()).unwrap(), None);
-    assert_eq!(definition(&model, 1, 3).atoms(), selected.atoms());
     assert_eq!(
-        measure::bond_dihedral(model.as_model_view(), selected.bond()).unwrap(),
+        selected.measure(structure.as_structure_view()).unwrap(),
         None
     );
-    model
+    assert_eq!(definition(&structure, 1, 3).atoms(), selected.atoms());
+    assert_eq!(
+        measure::bond_dihedral(structure.as_structure_view(), selected.bond()).unwrap(),
+        None
+    );
+    structure
         .set_position(ids[0], Quantity::new(Point3::new(1.0, 0.0, 0.0), NANOMETER))
         .unwrap();
     let angle = selected
-        .measure(model.as_model_view())
+        .measure(structure.as_structure_view())
         .unwrap()
         .unwrap()
         .value_in(DEGREE)
@@ -172,10 +175,10 @@ fn id_ties_ignore_bond_insertion_order_and_endpoint_orientation() {
     }
     let mut molecule = editor.finish().unwrap();
     molecule.perceive().unwrap();
-    let model = Model::from_molecule(molecule.clone(), &Positions::zeros(6)).unwrap();
-    let ids = model.topology().atom_ids();
+    let structure = Structure::from_molecule(molecule.clone(), &Positions::zeros(6)).unwrap();
+    let ids = structure.topology().atom_ids();
     assert_eq!(
-        definition(&model, 1, 3).atoms(),
+        definition(&structure, 1, 3).atoms(),
         Some([ids[0], ids[1], ids[3], ids[4]])
     );
 }
@@ -188,13 +191,13 @@ fn iterator_retains_all_bonds_and_none_is_not_a_rotatability_filter() {
         ("CC", vec![false]),
         ("C1CC1", vec![false; 3]),
     ] {
-        let model = make_model(smiles, true);
-        let iter = measure::bond_dihedrals(model.as_model_view());
-        assert_eq!(iter.len(), model.topology().bond_count());
+        let structure = make_structure(smiles, true);
+        let iter = measure::bond_dihedrals(structure.as_structure_view());
+        assert_eq!(iter.len(), structure.topology().bond_count());
         let values = iter.collect::<Vec<_>>();
         assert_eq!(
             values.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            model.topology().bond_ids()
+            structure.topology().bond_ids()
         );
         assert_eq!(
             values
@@ -205,48 +208,54 @@ fn iterator_retains_all_bonds_and_none_is_not_a_rotatability_filter() {
             "{smiles}"
         );
     }
-    let model = make_model("[He]", true);
-    assert_eq!(measure::bond_dihedrals(model.as_model_view()).len(), 0);
+    let structure = make_structure("[He]", true);
+    assert_eq!(
+        measure::bond_dihedrals(structure.as_structure_view()).len(),
+        0
+    );
 }
 
 #[test]
 fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
-    let mut model = make_model("CCCC", true);
-    let selected = definition(&model, 1, 2);
-    let ids = model.topology().atom_ids().to_vec();
-    model
+    let mut structure = make_structure("CCCC", true);
+    let selected = definition(&structure, 1, 2);
+    let ids = structure.topology().atom_ids().to_vec();
+    structure
         .set_position(
             ids[0],
             Quantity::new(Point3::new(f64::MAX, 0.0, 0.0), NANOMETER),
         )
         .unwrap();
-    model
+    structure
         .set_position(
             ids[1],
             Quantity::new(Point3::new(-f64::MAX, 0.0, 0.0), NANOMETER),
         )
         .unwrap();
     assert_eq!(
-        selected.measure(model.as_model_view()),
+        selected.measure(structure.as_structure_view()),
         Err(BondDihedralError::Measurement(
             MeasurementError::NumericalFailure
         ))
     );
     for &id in &ids {
-        model
+        structure
             .set_position(id, Quantity::new(Point3::origin(), NANOMETER))
             .unwrap();
     }
-    assert_eq!(selected.measure(model.as_model_view()).unwrap(), None);
-    let foreign = make_model("CCCC", true);
     assert_eq!(
-        selected.measure(foreign.as_model_view()),
+        selected.measure(structure.as_structure_view()).unwrap(),
+        None
+    );
+    let foreign = make_structure("CCCC", true);
+    assert_eq!(
+        selected.measure(foreign.as_structure_view()),
         Err(BondDihedralError::TopologyMismatch)
     );
-    let absent = definition(&model, 0, 1);
+    let absent = definition(&structure, 0, 1);
     assert_eq!(absent.atoms(), None);
     assert_eq!(
-        absent.measure(foreign.as_model_view()),
+        absent.measure(foreign.as_structure_view()),
         Err(BondDihedralError::TopologyMismatch)
     );
     for invalid in [
@@ -254,7 +263,7 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
         InstanceBondId::new(MoleculeInstanceId::new(99), BondId::new(0)),
     ] {
         assert!(
-            matches!(BondDihedral::new(model.shared_topology(), invalid, Default::default()), Err(BondDihedralError::InvalidBondId(id)) if id == invalid)
+            matches!(BondDihedral::new(structure.shared_topology(), invalid, Default::default()), Err(BondDihedralError::InvalidBondId(id)) if id == invalid)
         );
     }
 }
@@ -268,23 +277,24 @@ fn losing_reference_ties_do_not_exhaust_ranking_bounds() {
         ("CC(CC)(C)CO", 1, 2),
         ("CCC(C)(C)CO", 2, 1),
     ] {
-        let model = make_model(smiles, true);
-        let ids = model.topology().atom_ids();
+        let structure = make_structure(smiles, true);
+        let ids = structure.topology().atom_ids();
         for options in [
             CipAssignmentOptions::default().with_max_depth(1),
             CipAssignmentOptions::default().with_max_nodes(4),
         ] {
             let selected =
-                BondDihedral::new(model.shared_topology(), bond(&model, b, 5), options).unwrap();
+                BondDihedral::new(structure.shared_topology(), bond(&structure, b, 5), options)
+                    .unwrap();
             assert_eq!(selected.atoms(), Some([ids[a], ids[b], ids[5], ids[6]]));
         }
     }
     // Losing branches may also extend beyond the default depth limit.
     let chain = "C".repeat(70);
-    let model = make_model(&format!("C({chain})({chain})(C(F)F)CO"), true);
-    let ids = model.topology().atom_ids();
+    let structure = make_structure(&format!("C({chain})({chain})(C(F)F)CO"), true);
+    let ids = structure.topology().atom_ids();
     assert_eq!(
-        definition(&model, 0, 144).atoms(),
+        definition(&structure, 0, 144).atoms(),
         Some([ids[141], ids[0], ids[144], ids[145]])
     );
 }
@@ -294,11 +304,11 @@ fn only_possible_maxima_consume_further_ranking_budget() {
     // The tert-butyl reference loses to both fluorinated references at shell 1.
     // Its next shell would exceed seven nodes, while the tied maxima complete
     // within that budget and must use the smaller atom ID.
-    let model = make_model("C(C(C)(C)C)(C(F)C)(C(F)C)CO", true);
-    let axis = bond(&model, 0, 11);
-    let ids = model.topology().atom_ids();
+    let structure = make_structure("C(C(C)(C)C)(C(F)C)(C(F)C)CO", true);
+    let axis = bond(&structure, 0, 11);
+    let ids = structure.topology().atom_ids();
     let selected = BondDihedral::new(
-        model.shared_topology(),
+        structure.shared_topology(),
         axis,
         CipAssignmentOptions::default()
             .with_max_depth(2)
@@ -323,7 +333,7 @@ fn only_possible_maxima_consume_further_ranking_budget() {
         ),
     ] {
         assert!(matches!(
-            BondDihedral::new(model.shared_topology(), axis, options),
+            BondDihedral::new(structure.shared_topology(), axis, options),
             Err(BondDihedralError::Ranking { error, .. }) if error == expected
         ));
     }
@@ -331,8 +341,8 @@ fn only_possible_maxima_consume_further_ranking_budget() {
 
 #[test]
 fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
-    let model = make_model("CC(CO)CC", true);
-    let axis = bond(&model, 1, 4);
+    let structure = make_structure("CC(CO)CC", true);
+    let axis = bond(&structure, 1, 4);
     for (options, expected) in [
         (
             CipAssignmentOptions::default()
@@ -348,10 +358,10 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
         ),
     ] {
         assert!(
-            matches!(BondDihedral::new(model.shared_topology(), axis, options), Err(BondDihedralError::Ranking { bond, error }) if bond == axis && error == expected)
+            matches!(BondDihedral::new(structure.shared_topology(), axis, options), Err(BondDihedralError::Ranking { bond, error }) if bond == axis && error == expected)
         );
     }
-    let unperceived = make_model("CC(CO)CC", false);
+    let unperceived = make_structure("CC(CO)CC", false);
     assert!(matches!(
         BondDihedral::new(
             unperceived.shared_topology(),
@@ -364,22 +374,22 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
         })
     ));
     // A proved element ordering needs no complete digraph or deep exploration.
-    let model = make_model("FC(Cl)C(Br)I", true);
+    let structure = make_structure("FC(Cl)C(Br)I", true);
     let tiny = BondDihedral::new(
-        model.shared_topology(),
-        bond(&model, 1, 3),
+        structure.shared_topology(),
+        bond(&structure, 1, 3),
         CipAssignmentOptions::default()
             .with_max_depth(0)
             .with_max_nodes(1),
     )
     .unwrap();
-    assert_eq!(tiny.atoms(), definition(&model, 1, 3).atoms());
-    let unperceived_elements = make_model("FC(Cl)C(Br)I", false);
+    assert_eq!(tiny.atoms(), definition(&structure, 1, 3).atoms());
+    let unperceived_elements = make_structure("FC(Cl)C(Br)I", false);
     assert_eq!(
         definition(&unperceived_elements, 1, 3).atoms(),
         tiny.atoms()
     );
-    let tied = make_model("CC(C)C(C)C", true);
+    let tied = make_structure("CC(C)C(C)C", true);
     assert!(matches!(
             BondDihedral::new(
                 tied.shared_topology(),
@@ -393,15 +403,15 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
                 ..
             }) if limit.resource() == Resource::DigraphDepth
         ));
-    assert!(measure::bond_dihedrals(unperceived.as_model_view())
+    assert!(measure::bond_dihedrals(unperceived.as_structure_view())
         .any(|(_, result)| matches!(result, Err(BondDihedralError::Ranking { .. }))));
 }
 
 #[test]
 fn references_preserve_instance_identity_and_work_on_ensemble_views() {
-    let source = make_model("CCCC", true);
+    let source = make_structure("CCCC", true);
     let molecule = source.topology().instances().next().unwrap().molecule();
-    let mut builder = Model::builder();
+    let mut builder = Structure::builder();
     let definition_id = builder.add_molecule_definition(molecule.clone()).unwrap();
     let first = builder
         .add_instance(definition_id, source.positions())
@@ -409,26 +419,27 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
     let second = builder
         .add_instance(definition_id, source.positions())
         .unwrap();
-    let model = builder.build().unwrap();
+    let structure = builder.build().unwrap();
     let axis = InstanceBondId::new(second, BondId::new(1));
-    let selected = BondDihedral::new(model.shared_topology(), axis, Default::default()).unwrap();
+    let selected =
+        BondDihedral::new(structure.shared_topology(), axis, Default::default()).unwrap();
     assert_eq!(
         selected.atoms().unwrap(),
         [0, 1, 2, 3].map(|i| InstanceAtomId::new(second, AtomId::new(i)))
     );
     assert_ne!(first, second);
-    let expected = selected.measure(model.as_model_view()).unwrap();
-    let member = Geometry::new(model.positions().clone()).with_cell(
+    let expected = selected.measure(structure.as_structure_view()).unwrap();
+    let member = Geometry::new(structure.positions().clone()).with_cell(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(1.0, 1.0, 1.0), NANOMETER),
             [true; 3],
         )
         .unwrap(),
     );
-    let ensemble = StructureSet::from_geometries(model.shared_topology(), [member]).unwrap();
+    let ensemble = StructureSet::from_geometries(structure.shared_topology(), [member]).unwrap();
     assert_eq!(
         selected
-            .measure(ensemble.get(0).unwrap().as_model_view())
+            .measure(ensemble.get(0).unwrap().as_structure_view())
             .unwrap(),
         expected
     );
@@ -449,8 +460,8 @@ fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
             7,
         ),
     ] {
-        let left = make_model(left_smiles, true);
-        let right = make_model(right_smiles, true);
+        let left = make_structure(left_smiles, true);
+        let right = make_structure(right_smiles, true);
         let left_atoms = definition(&left, 3, c).atoms().unwrap();
         let right_atoms = definition(&right, 3, c).atoms().unwrap();
         assert!([1, other_reference].contains(&left_atoms[0].atom().raw()));
@@ -458,9 +469,9 @@ fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
         assert_ne!(left_atoms[0].atom(), right_atoms[0].atom());
         // For this simple enantiomorphic pair Rule 5 prefers R to S. Check the
         // direction as well as sensitivity to stereo, without installing labels
-        // on either source model.
-        for (model, atoms) in [(&left, left_atoms), (&right, right_atoms)] {
-            let mut labelled = model
+        // on either source structure.
+        for (structure, atoms) in [(&left, left_atoms), (&right, right_atoms)] {
+            let mut labelled = structure
                 .topology()
                 .instances()
                 .next()
@@ -483,11 +494,11 @@ fn represented_remote_stereo_distinguishes_constitutionally_tied_ligands() {
 #[test]
 fn embedded_alkene_stereo_uses_sequence_priority_before_atom_ids() {
     for (smiles, expected_reference) in [(r"C/C=C/C(CC)/C=C\C", 6), (r"C/C=C\C(CC)/C=C/C", 2)] {
-        let model = make_model(smiles, true);
-        let atoms = definition(&model, 3, 4).atoms().unwrap();
+        let structure = make_structure(smiles, true);
+        let atoms = definition(&structure, 3, 4).atoms().unwrap();
         assert_eq!(
             atoms[0],
-            model.topology().atom_ids()[expected_reference],
+            structure.topology().atom_ids()[expected_reference],
             "{smiles}"
         );
     }

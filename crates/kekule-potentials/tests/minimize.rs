@@ -5,7 +5,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use kekule::math::{Point3, Vector3};
-use kekule::structure::{Model, ModelView, Positions};
+use kekule::structure::{Positions, Structure, StructureView};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{
     Quantity, ANGSTROM, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT,
@@ -30,9 +30,9 @@ struct Bowl {
 }
 
 impl Bowl {
-    fn new(model: &Model, centers: Vec<Point3>) -> Self {
+    fn new(structure: &Structure, centers: Vec<Point3>) -> Self {
         Self {
-            topology: model.shared_topology(),
+            topology: structure.shared_topology(),
             centers,
             stiffness: [1.0, 100.0, 10_000.0],
             scale: 1.0,
@@ -47,18 +47,18 @@ impl Potential for Bowl {
         &self.topology
     }
 
-    fn evaluate(&self, model: ModelView<'_>) -> Result<Evaluation, EvaluationError> {
-        if !self.topology.shares_layout(model.topology()) {
+    fn evaluate(&self, structure: StructureView<'_>) -> Result<Evaluation, EvaluationError> {
+        if !self.topology.shares_layout(structure.topology()) {
             return Err(EvaluationError::IncompatibleTopology);
         }
-        let x = model.positions().values().into_value();
+        let x = structure.positions().values().into_value();
         let mut energy = 0.0;
         let mut gradient = Vec::with_capacity(x.len());
         for (index, (p, c)) in x.iter().zip(&self.centers).enumerate() {
             if p.x > self.wall {
                 return Err(EvaluationError::InvalidGeometry {
                     interaction: InteractionKind::Restraint,
-                    atoms: vec![model.topology().atom_ids()[index]],
+                    atoms: vec![structure.topology().atom_ids()[index]],
                     kind: SingularGeometry::CoincidentAtoms,
                 });
             }
@@ -75,23 +75,23 @@ impl Potential for Bowl {
             energy = 1.0;
         }
         Evaluation::new(
-            model,
+            structure,
             Energy::new(Quantity::new(energy, CANONICAL_ENERGY_UNIT))?,
             Quantity::new(gradient, CANONICAL_GRADIENT_UNIT),
         )
     }
 }
 
-fn model(points: &[Point3]) -> Model {
-    Model::new(
+fn structure(points: &[Point3]) -> Structure {
+    Structure::new(
         kekule::smiles::to_topology("CCO").unwrap(),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
     .unwrap()
 }
 
-fn start() -> Model {
-    model(&[
+fn start() -> Structure {
+    structure(&[
         Point3::new(0.3, -0.2, 0.1),
         Point3::new(-0.1, 0.4, 0.05),
         Point3::new(0.2, 0.2, -0.3),
@@ -114,9 +114,9 @@ fn tight(tolerance: f64) -> MinimizeOptions {
 
 #[test]
 fn lbfgs_converges_on_an_ill_conditioned_bowl() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
-    let result = minimize(&bowl, model.as_model_view(), &tight(1e-6)).unwrap();
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
+    let result = minimize(&bowl, structure.as_structure_view(), &tight(1e-6)).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     // Steepest descent needs on the order of the condition number (1e4) steps.
     assert!(
@@ -139,20 +139,21 @@ fn lbfgs_converges_on_an_ill_conditioned_bowl() {
 
 #[test]
 fn every_accepted_step_is_observed_and_observers_can_stop() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
     let mut energies = Vec::new();
-    let result = minimize_with_observer(&bowl, model.as_model_view(), &tight(1e-6), |step| {
-        energies.push(step.energy().total().into_value());
-        assert_eq!(step.iteration(), energies.len());
-        assert_eq!(step.positions().len(), 3);
-        if step.iteration() == 3 {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    })
-    .unwrap();
+    let result =
+        minimize_with_observer(&bowl, structure.as_structure_view(), &tight(1e-6), |step| {
+            energies.push(step.energy().total().into_value());
+            assert_eq!(step.iteration(), energies.len());
+            assert_eq!(step.positions().len(), 3);
+            if step.iteration() == 3 {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .unwrap();
     assert_eq!(result.status(), MinimizationStatus::Stopped);
     assert_eq!(result.iterations(), 3);
     assert!(energies.windows(2).all(|w| w[1] < w[0]));
@@ -164,36 +165,36 @@ fn every_accepted_step_is_observed_and_observers_can_stop() {
 
 #[test]
 fn iteration_limit_is_reported() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
     let options = tight(1e-9).with_max_iterations(2);
-    let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
+    let result = minimize(&bowl, structure.as_structure_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::MaxIterations);
     assert_eq!(result.iterations(), 2);
     let converged = minimize(
         &bowl,
-        model.as_model_view(),
+        structure.as_structure_view(),
         &tight(1e9).with_max_iterations(0),
     )
     .unwrap();
     assert_eq!(converged.status(), MinimizationStatus::Converged);
-    assert_eq!(converged.positions(), model.positions());
+    assert_eq!(converged.positions(), structure.positions());
 }
 
 #[test]
 fn singular_trials_are_backtracked_but_other_failures_abort() {
-    let model = start();
-    let mut bowl = Bowl::new(&model, centers());
+    let structure = start();
+    let mut bowl = Bowl::new(&structure, centers());
     // The minimum at x = 0.4 lies just inside a wall the long trial steps cross.
     bowl.wall = 0.401;
     let options = tight(1e-6)
         .with_max_step(Quantity::new(1.0, NANOMETER))
         .unwrap();
-    let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
+    let result = minimize(&bowl, structure.as_structure_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
 
     bowl.wall = 0.2;
-    let error = minimize(&bowl, model.as_model_view(), &options).unwrap_err();
+    let error = minimize(&bowl, structure.as_structure_view(), &options).unwrap_err();
     assert!(matches!(
         error,
         MinimizationError::Evaluation(EvaluationError::InvalidGeometry { .. })
@@ -202,7 +203,7 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
     let unrelated = start();
     let error = minimize(
         &Bowl::new(&unrelated, centers()),
-        model.as_model_view(),
+        structure.as_structure_view(),
         &options,
     )
     .unwrap_err();
@@ -214,37 +215,42 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
 
 #[test]
 fn gradients_inconsistent_with_the_energy_stop_the_line_search() {
-    let model = start();
-    let mut bowl = Bowl::new(&model, centers());
+    let structure = start();
+    let mut bowl = Bowl::new(&structure, centers());
     bowl.flat_energy = true;
-    let result = minimize(&bowl, model.as_model_view(), &MinimizeOptions::default()).unwrap();
+    let result = minimize(
+        &bowl,
+        structure.as_structure_view(),
+        &MinimizeOptions::default(),
+    )
+    .unwrap();
     assert_eq!(result.status(), MinimizationStatus::LineSearchFailed);
     assert_eq!(result.iterations(), 0);
-    assert_eq!(result.positions(), model.positions());
+    assert_eq!(result.positions(), structure.positions());
 }
 
 #[test]
 fn displacements_that_round_away_stop_the_line_search() {
     let far = Point3::new(1e15, 1e15, 1e15);
-    let model = model(&[far; 3]);
-    let mut bowl = Bowl::new(&model, vec![Point3::new(1e15 + 1.0, 1e15, 1e15); 3]);
+    let structure = structure(&[far; 3]);
+    let mut bowl = Bowl::new(&structure, vec![Point3::new(1e15 + 1.0, 1e15, 1e15); 3]);
     bowl.stiffness = [1.0; 3];
     let options = MinimizeOptions::default()
         .with_max_step(Quantity::new(1e-6, NANOMETER))
         .unwrap();
-    let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
+    let result = minimize(&bowl, structure.as_structure_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::LineSearchFailed);
-    assert_eq!(result.positions(), model.positions());
+    assert_eq!(result.positions(), structure.positions());
 }
 
 #[test]
 fn progress_is_independent_of_the_gradient_scale() {
-    let model = start();
+    let structure = start();
     let ratio = |scale: f64| {
-        let mut bowl = Bowl::new(&model, centers());
+        let mut bowl = Bowl::new(&structure, centers());
         bowl.scale = scale;
         let options = tight(1e-300).with_max_iterations(3);
-        let result = minimize(&bowl, model.as_model_view(), &options).unwrap();
+        let result = minimize(&bowl, structure.as_structure_view(), &options).unwrap();
         assert_eq!(result.iterations(), 3, "scale {scale}");
         let initial = result.initial_energy().total().into_value();
         result.final_evaluation().energy().total().into_value() / initial
@@ -307,11 +313,11 @@ impl Potential for Chain {
         &self.topology
     }
 
-    fn evaluate(&self, model: ModelView<'_>) -> Result<Evaluation, EvaluationError> {
-        if !self.topology.shares_layout(model.topology()) {
+    fn evaluate(&self, structure: StructureView<'_>) -> Result<Evaluation, EvaluationError> {
+        if !self.topology.shares_layout(structure.topology()) {
             return Err(EvaluationError::IncompatibleTopology);
         }
-        let x = model.positions().values().into_value();
+        let x = structure.positions().values().into_value();
         let mut energy = 0.0;
         let mut gradient = vec![Vector3::zero(); x.len()];
         for i in 1..x.len() {
@@ -321,34 +327,37 @@ impl Potential for Chain {
             gradient[i - 1] -= 2.0 * d;
         }
         Evaluation::new(
-            model,
+            structure,
             Energy::new(Quantity::new(energy, CANONICAL_ENERGY_UNIT))?,
             Quantity::new(gradient, CANONICAL_GRADIENT_UNIT),
         )
     }
 }
 
-fn moving(model: &Model, indices: &[usize]) -> MinimizationScope {
-    let atoms = indices.iter().map(|&i| model.topology().atom_ids()[i]);
-    MinimizationScope::moving(AtomSelection::from_atoms(model.shared_topology(), atoms).unwrap())
+fn moving(structure: &Structure, indices: &[usize]) -> MinimizationScope {
+    let atoms = indices.iter().map(|&i| structure.topology().atom_ids()[i]);
+    MinimizationScope::moving(
+        AtomSelection::from_atoms(structure.shared_topology(), atoms).unwrap(),
+    )
 }
 
 #[test]
 fn fixed_atoms_keep_their_bits_and_pull_on_the_moving_atoms() {
     // Signed zeros and subnormals expose any arithmetic on fixed coordinates.
-    let model = model(&[
+    let structure = structure(&[
         Point3::new(-0.0, 5e-324, 0.1),
         Point3::new(0.7, -0.4, 0.3),
         Point3::new(0.2, -0.0, -0.3),
     ]);
     let chain = Chain {
-        topology: model.shared_topology(),
+        topology: structure.shared_topology(),
         offset: Vector3::new(0.1, 0.0, 0.0),
     };
-    let scope = moving(&model, &[1]);
-    let result = minimize_scoped(&chain, model.as_model_view(), &scope, &tight(1e-8)).unwrap();
+    let scope = moving(&structure, &[1]);
+    let result =
+        minimize_scoped(&chain, structure.as_structure_view(), &scope, &tight(1e-8)).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
-    let input = model.positions().values().into_value();
+    let input = structure.positions().values().into_value();
     let output = result.positions().values().into_value();
     for i in [0, 2] {
         let bits = |p: &Point3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
@@ -362,11 +371,11 @@ fn fixed_atoms_keep_their_bits_and_pull_on_the_moving_atoms() {
     assert!(result.final_evaluation().max_gradient_norm().into_value() > 1e-3);
     assert_eq!(result.restraint_energy().into_value(), 0.0);
     // Moving every atom reaches the unconstrained minimum instead.
-    let free = minimize(&chain, model.as_model_view(), &tight(1e-8)).unwrap();
+    let free = minimize(&chain, structure.as_structure_view(), &tight(1e-8)).unwrap();
     let all = minimize_scoped(
         &chain,
-        model.as_model_view(),
-        &MinimizationScope::all(model.shared_topology()),
+        structure.as_structure_view(),
+        &MinimizationScope::all(structure.shared_topology()),
         &tight(1e-8),
     )
     .unwrap();
@@ -380,13 +389,14 @@ fn fixed_atoms_keep_their_bits_and_pull_on_the_moving_atoms() {
 
 #[test]
 fn moving_atoms_converge_in_an_ill_conditioned_bowl_with_others_fixed() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
-    let scope = moving(&model, &[0, 2]);
-    let result = minimize_scoped(&bowl, model.as_model_view(), &scope, &tight(1e-6)).unwrap();
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
+    let scope = moving(&structure, &[0, 2]);
+    let result =
+        minimize_scoped(&bowl, structure.as_structure_view(), &scope, &tight(1e-6)).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     let output = result.positions().values().into_value();
-    assert_eq!(output[1], model.positions().values().into_value()[1]);
+    assert_eq!(output[1], structure.positions().values().into_value()[1]);
     for i in [0, 2] {
         assert!((output[i] - centers()[i]).norm() < 1e-6);
     }
@@ -394,22 +404,23 @@ fn moving_atoms_converge_in_an_ill_conditioned_bowl_with_others_fixed() {
 
 #[test]
 fn a_restraint_holds_an_atom_near_its_reference() {
-    let model = start();
-    let mut bowl = Bowl::new(&model, centers());
+    let structure = start();
+    let mut bowl = Bowl::new(&structure, centers());
     bowl.stiffness = [1.0, 1.0, 1.0];
-    let atom = model.topology().atom_ids()[2];
+    let atom = structure.topology().atom_ids()[2];
     let reference = Point3::new(0.0, 0.0, 0.0);
     // `k/2 |r - r_ref|^2` against the bowl's `|r - c|^2` balances at
     // `(2c + k r_ref) / (2 + k)`.
     for k in [10.0, 1.0e6] {
-        let scope = MinimizationScope::all(model.shared_topology())
+        let scope = MinimizationScope::all(structure.shared_topology())
             .with_position_restraint(
                 atom,
                 Quantity::new(reference, NANOMETER),
                 Quantity::new(k, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER),
             )
             .unwrap();
-        let result = minimize_scoped(&bowl, model.as_model_view(), &scope, &tight(1e-6)).unwrap();
+        let result =
+            minimize_scoped(&bowl, structure.as_structure_view(), &scope, &tight(1e-6)).unwrap();
         assert_eq!(result.status(), MinimizationStatus::Converged);
         let o = Point3::origin();
         let expected = o + (2.0 * (centers()[2] - o) + k * (reference - o)) / (2.0 + k);
@@ -418,34 +429,36 @@ fn a_restraint_holds_an_atom_near_its_reference() {
         let restraint = 0.5 * k * (position - reference).norm_squared();
         assert!((result.restraint_energy().into_value() - restraint).abs() < 1e-12);
         // The potential's own evaluation excludes the restraint.
-        let minimized = result.to_model(model.as_model_view()).unwrap();
+        let minimized = result.to_structure(structure.as_structure_view()).unwrap();
         assert_eq!(
-            &bowl.evaluate(minimized.as_model_view()).unwrap(),
+            &bowl.evaluate(minimized.as_structure_view()).unwrap(),
             result.final_evaluation()
         );
     }
     // A stiff restraint holds the atom within 1e-5 nm.
-    let stiff = MinimizationScope::all(model.shared_topology())
+    let stiff = MinimizationScope::all(structure.shared_topology())
         .with_position_restraint(
             atom,
             Quantity::new(Point3::new(1.0, 1.0, 1.0), ANGSTROM),
             Quantity::new(1.0e7, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER),
         )
         .unwrap();
-    let result = minimize_scoped(&bowl, model.as_model_view(), &stiff, &tight(1e-4)).unwrap();
+    let result =
+        minimize_scoped(&bowl, structure.as_structure_view(), &stiff, &tight(1e-4)).unwrap();
     let position = result.positions().values().into_value()[2];
     assert!((position - Point3::new(0.1, 0.1, 0.1)).norm() < 1e-5);
     // A restraint on a fixed atom adds a constant energy and no force.
-    let fixed = moving(&model, &[0, 1])
+    let fixed = moving(&structure, &[0, 1])
         .with_position_restraint(
             atom,
             Quantity::new(reference, NANOMETER),
             Quantity::new(2.0, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER),
         )
         .unwrap();
-    let result = minimize_scoped(&bowl, model.as_model_view(), &fixed, &tight(1e-6)).unwrap();
+    let result =
+        minimize_scoped(&bowl, structure.as_structure_view(), &fixed, &tight(1e-6)).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
-    let start = model.positions().values().into_value()[2];
+    let start = structure.positions().values().into_value()[2];
     assert_eq!(result.positions().values().into_value()[2], start);
     let constant = (start - reference).norm_squared();
     assert!((result.restraint_energy().into_value() - constant).abs() < 1e-15);
@@ -453,10 +466,10 @@ fn a_restraint_holds_an_atom_near_its_reference() {
 
 #[test]
 fn scoped_observers_see_restraint_energies_and_can_stop() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
-    let atom = model.topology().atom_ids()[0];
-    let scope = moving(&model, &[0, 1])
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
+    let atom = structure.topology().atom_ids()[0];
+    let scope = moving(&structure, &[0, 1])
         .with_position_restraint(
             atom,
             Quantity::new(Point3::new(0.3, -0.2, 0.1), NANOMETER),
@@ -464,20 +477,25 @@ fn scoped_observers_see_restraint_energies_and_can_stop() {
         )
         .unwrap();
     let mut seen = Vec::new();
-    let result =
-        minimize_scoped_with_observer(&bowl, model.as_model_view(), &scope, &tight(1e-6), |step| {
+    let result = minimize_scoped_with_observer(
+        &bowl,
+        structure.as_structure_view(),
+        &scope,
+        &tight(1e-6),
+        |step| {
             seen.push((step.restraint_energy().into_value(), step.max_gradient()));
             assert_eq!(
                 step.positions().values().into_value()[2],
-                model.positions().values().into_value()[2]
+                structure.positions().values().into_value()[2]
             );
             if step.iteration() == 2 {
                 ControlFlow::Break(())
             } else {
                 ControlFlow::Continue(())
             }
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert_eq!(result.status(), MinimizationStatus::Stopped);
     assert_eq!(result.iterations(), 2);
     let (restraint, max_gradient) = seen[1];
@@ -488,30 +506,31 @@ fn scoped_observers_see_restraint_energies_and_can_stop() {
 
 #[test]
 fn an_empty_scope_converges_without_moving() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
-    let scope = MinimizationScope::moving(AtomSelection::empty(model.shared_topology()));
-    let result = minimize_scoped(&bowl, model.as_model_view(), &scope, &tight(1e-6)).unwrap();
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
+    let scope = MinimizationScope::moving(AtomSelection::empty(structure.shared_topology()));
+    let result =
+        minimize_scoped(&bowl, structure.as_structure_view(), &scope, &tight(1e-6)).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     assert_eq!(result.iterations(), 0);
     assert_eq!(result.evaluations(), 1);
-    assert_eq!(result.positions(), model.positions());
+    assert_eq!(result.positions(), structure.positions());
     assert_eq!(result.max_gradient().into_value(), 0.0);
 }
 
 #[test]
 fn invalid_scopes_and_restraints_are_rejected() {
-    let model = start();
-    let bowl = Bowl::new(&model, centers());
-    let other = self::model(&centers());
+    let structure = start();
+    let bowl = Bowl::new(&structure, centers());
+    let other = self::structure(&centers());
     let foreign = MinimizationScope::all(other.shared_topology());
     assert_eq!(
-        minimize_scoped(&bowl, model.as_model_view(), &foreign, &tight(1e-6)).unwrap_err(),
+        minimize_scoped(&bowl, structure.as_structure_view(), &foreign, &tight(1e-6)).unwrap_err(),
         MinimizationError::IncompatibleTopology
     );
 
-    let atom = model.topology().atom_ids()[0];
-    let scope = || MinimizationScope::all(model.shared_topology());
+    let atom = structure.topology().atom_ids()[0];
+    let scope = || MinimizationScope::all(structure.shared_topology());
     let origin = Quantity::new(Point3::origin(), NANOMETER);
     let k = |value: f64| Quantity::new(value, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER);
     let water = kekule::smiles::to_topology("O.O").unwrap();
@@ -567,7 +586,7 @@ fn invalid_scopes_and_restraints_are_rejected() {
     assert_eq!(zero.position_restraints()[0].force_constant(), k(0.0));
     assert_eq!(zero.position_restraints()[0].atom(), atom);
     assert_eq!(
-        minimize_scoped(&bowl, model.as_model_view(), &zero, &tight(1e-6)).unwrap(),
-        minimize(&bowl, model.as_model_view(), &tight(1e-6)).unwrap()
+        minimize_scoped(&bowl, structure.as_structure_view(), &zero, &tight(1e-6)).unwrap(),
+        minimize(&bowl, structure.as_structure_view(), &tight(1e-6)).unwrap()
     );
 }

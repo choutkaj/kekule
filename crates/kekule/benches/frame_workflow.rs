@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("supply an external mmCIF model")?;
     let model = mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
         .interpret(Default::default())?
-        .into_model();
+        .into_structure();
     let mut frame = Geometry::new(model.positions().clone());
     frame.set_cell(model.cell().copied());
     let mut trajectory =

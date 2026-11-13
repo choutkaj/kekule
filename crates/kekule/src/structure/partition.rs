@@ -14,7 +14,7 @@ use std::fmt;
 /// states. Clustering returns a new one without changing the set, and
 /// [`one_state`](Self::one_state) and [`state_per_sample`](Self::state_per_sample)
 /// say what a source's samples are: draws of one distribution, such as the
-/// models of an NMR bundle or the frames of a trajectory, or distinct
+/// structures of an NMR bundle or the frames of a trajectory, or distinct
 /// conformers.
 ///
 /// ```
@@ -82,7 +82,7 @@ impl Partition {
     }
 
     /// One state holding all `samples` samples, represented by the first:
-    /// samples drawn from one distribution, such as the models of an NMR
+    /// samples drawn from one distribution, such as the structures of an NMR
     /// bundle or the frames of a trajectory. No samples give no states.
     pub fn one_state(samples: usize) -> Self {
         Self {

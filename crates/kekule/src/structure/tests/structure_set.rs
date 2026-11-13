@@ -279,18 +279,21 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
     );
     let view = set.get(0).unwrap();
     assert_eq!(view.occupancy(ATOM0), Some(0.5));
-    let StructureKind::InSet(context) = view.as_model_view().kind() else {
+    let StructureKind::InSet(context) = view.as_structure_view().kind() else {
         panic!("a geometry's view is a geometry");
     };
     assert_eq!(context.place(), Some(Place::Step(0)));
     assert_eq!(context.membership(), None);
     assert_eq!(context.velocities(), Some(&velocities(1.0)));
     assert_eq!(context.forces(), None);
-    assert_eq!(view.as_model_view().occupancy(ATOM0), Some(0.5));
-    // A model keeps the structure and drops the geometry's context.
-    let model = view.to_model();
-    assert_eq!(model.as_model_view().kind(), StructureKind::Model);
-    assert_eq!(model.occupancy(ATOM0), Some(0.5));
+    assert_eq!(view.as_structure_view().occupancy(ATOM0), Some(0.5));
+    // A structure keeps the structure and drops the geometry's context.
+    let structure = view.to_structure();
+    assert_eq!(
+        structure.as_structure_view().kind(),
+        StructureKind::Standalone
+    );
+    assert_eq!(structure.occupancy(ATOM0), Some(0.5));
     // A rigid motion rotates the velocities with the positions.
     use crate::math::{Matrix3, RigidTransform};
     let turn = Matrix3::from_columns(
@@ -366,11 +369,11 @@ fn a_distribution_covers_all_samples_or_a_sorted_subset() {
     assert_eq!(set.states().len(), 2);
     assert!(set.state(2).is_none());
     // The view's context reports membership only for members.
-    let StructureKind::InSet(context) = set.get(0).unwrap().as_model_view().kind() else {
+    let StructureKind::InSet(context) = set.get(0).unwrap().as_structure_view().kind() else {
         panic!("a geometry's view is a geometry");
     };
     assert_eq!(context.membership(), None);
-    let StructureKind::InSet(context) = set.get(2).unwrap().as_model_view().kind() else {
+    let StructureKind::InSet(context) = set.get(2).unwrap().as_structure_view().kind() else {
         panic!("a geometry's view is a geometry");
     };
     assert_eq!(
@@ -759,7 +762,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
     let options = crate::sdf::SdfWriteOptions::default();
     let views = set.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
-        views.iter().map(crate::sdf::SdfRecordSource::model),
+        views.iter().map(crate::sdf::SdfRecordSource::structure),
         options,
     )
     .unwrap()
@@ -775,7 +778,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
     assert_eq!(fingerprint(&scan), 0xfcff_0753_c475_c131);
     let views = scan.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
-        views.iter().map(crate::sdf::SdfRecordSource::model),
+        views.iter().map(crate::sdf::SdfRecordSource::structure),
         options,
     )
     .unwrap()
@@ -785,8 +788,8 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
 
 #[test]
 fn subsets_keep_the_order_and_the_distribution() {
-    let (model, atom, _) = model_fixture();
-    let mut set = StructureSet::from_models([model.clone(), model]).unwrap();
+    let (structure, atom, _) = structure_fixture();
+    let mut set = StructureSet::from_structures([structure.clone(), structure]).unwrap();
     set.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
     let state = State::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
@@ -829,7 +832,7 @@ fn subsets_keep_the_order_and_the_distribution() {
     assert!(perceived.topology().shares_layout(set.topology()));
     assert!(shares_every_geometry(&perceived, &set));
     assert_eq!(
-        StructureSet::from_models(std::iter::empty()).unwrap_err(),
+        StructureSet::from_structures(std::iter::empty()).unwrap_err(),
         StructureSetError::EmptySource
     );
 }
@@ -1182,10 +1185,10 @@ fn constructors_refuse_mismatched_samples_and_layouts() {
             }
         )))
     ));
-    let (model, _, _) = model_fixture();
-    let other = Model::new(Arc::new(single_atom_topology()), single_position(0.0)).unwrap();
+    let (structure, _, _) = structure_fixture();
+    let other = Structure::new(Arc::new(single_atom_topology()), single_position(0.0)).unwrap();
     assert_eq!(
-        StructureSet::from_models([model, other]).unwrap_err(),
+        StructureSet::from_structures([structure, other]).unwrap_err(),
         StructureSetError::TopologyMismatch
     );
 }
@@ -1218,7 +1221,7 @@ fn every_error_reads_as_a_sentence() {
         .value_in(PICOSECOND)
         .unwrap_err();
     let errors = [
-        (E::EmptySource, "There are no models to collect."),
+        (E::EmptySource, "There are no structures to collect."),
         (E::EmptyDistribution, "The distribution has no members."),
         (
             E::IndexOutOfRange { index: 3, len: 1 },
@@ -1237,7 +1240,7 @@ fn every_error_reads_as_a_sentence() {
         ),
         (
             E::TopologyMismatch,
-            "The model has a different topology layout from the structure set.",
+            "The structure has a different topology layout from the structure set.",
         ),
         (
             E::GeometryCountMismatch {

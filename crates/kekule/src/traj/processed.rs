@@ -8,8 +8,8 @@ use crate::alignment::{self, AlignmentOptions};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::OwnerProperties;
 use crate::structure::{
-    subset_rows, DenseArrayError, Distribution, Geometry, GeometryError, GeometryView, Model,
-    ModelError, Order, Positions, StructureSetRead, StructureSetReadError,
+    subset_rows, DenseArrayError, Distribution, Geometry, GeometryError, GeometryView, Order,
+    Positions, Structure, StructureError, StructureSetRead, StructureSetReadError,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
 
@@ -268,7 +268,7 @@ pub enum ProcessingError {
     },
     /// The reference positions do not fit the reader's topology; see the
     /// source.
-    Reference(Box<ModelError>),
+    Reference(Box<StructureError>),
     /// The subset cannot be made; see the source.
     Subset(TopologySubsetError),
     /// A step cannot process the first geometry or the reference; see the
@@ -399,7 +399,7 @@ pub struct Processed<R> {
     /// their centroid in geometry 0 of the reader below.
     rest: OnceLock<Vector3>,
     /// The structure fitting superposes onto.
-    reference: Option<Model>,
+    reference: Option<Structure>,
     /// The dense atom and bond rows the subset keeps.
     subset: Option<(Vec<usize>, Vec<usize>)>,
     /// Processed geometry 0, when there is one.
@@ -465,7 +465,7 @@ impl<R: StructureSetRead> Processed<R> {
         };
 
         if let Some((_, reference)) = &processed.steps.fit {
-            processed.reference = Some(processed.reference_model(reference)?);
+            processed.reference = Some(processed.reference_structure(reference)?);
         }
         if !processed.inner.is_empty() {
             processed.first = Some(processed.processed(0)?);
@@ -509,8 +509,8 @@ impl<R: StructureSetRead> Processed<R> {
         (self.steps.whole || self.steps.wrap.is_some()) && geometry.cell().is_none()
     }
 
-    /// The model fitting superposes onto.
-    fn reference_model(&self, reference: &FitReference) -> Result<Model, ProcessingError> {
+    /// The structure fitting superposes onto.
+    fn reference_structure(&self, reference: &FitReference) -> Result<Structure, ProcessingError> {
         match reference {
             FitReference::Geometry(index) => {
                 let len = self.inner.len();
@@ -519,10 +519,13 @@ impl<R: StructureSetRead> Processed<R> {
                 }
                 let mut geometry = self.read_inner(*index)?;
                 self.prepare(*index, &mut geometry)?;
-                Ok(self.view(*index, &geometry).as_model_view().to_model())
+                Ok(self
+                    .view(*index, &geometry)
+                    .as_structure_view()
+                    .to_structure())
             }
             FitReference::Positions(positions) => {
-                Model::new(Arc::clone(self.inner.topology()), positions.clone())
+                Structure::new(Arc::clone(self.inner.topology()), positions.clone())
                     .map_err(|error| ProcessingError::Reference(Box::new(error)))
             }
         }
@@ -590,8 +593,8 @@ impl<R: StructureSetRead> Processed<R> {
         self.prepare(index, &mut geometry)?;
         if let (Some((atoms, _)), Some(reference)) = (&self.steps.fit, &self.reference) {
             let fitted = alignment::fit(
-                self.view(index, &geometry).as_model_view(),
-                reference.as_model_view(),
+                self.view(index, &geometry).as_structure_view(),
+                reference.as_structure_view(),
                 atoms,
                 AlignmentOptions::default(),
             )

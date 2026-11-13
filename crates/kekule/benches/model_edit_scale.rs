@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use kekule::math::Point3;
 use kekule::mmcif;
 use kekule::molecule::{Atom, BondOrder, Element};
-use kekule::structure::ModelEditor;
+use kekule::structure::StructureEditor;
 use kekule::topology::{InstanceAtomId, TopologyAtomIndex};
 use kekule::units::{Quantity, ANGSTROM};
 
@@ -51,13 +51,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let text = std::fs::read_to_string(&path)?;
     let mut copy = mmcif::parse_str(&text, Default::default())?
         .interpret(Default::default())?
-        .into_model();
+        .into_structure();
     // As a host merges structures: perceived copies appended, the result not
     // perceived again.
     copy.perceive()?;
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     for _ in 0..COPIES {
-        editor.append_model(&copy)?;
+        editor.append_structure(&copy)?;
     }
     let model = editor.finish()?;
     let topology = model.topology();
@@ -162,9 +162,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-type Edit = fn(&mut ModelEditor, InstanceAtomId) -> Result<(), Box<dyn Error>>;
+type Edit = fn(&mut StructureEditor, InstanceAtomId) -> Result<(), Box<dyn Error>>;
 
-fn delete_atom(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+fn delete_atom(editor: &mut StructureEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
     let handle = editor
         .topology()
         .atom_handle(atom)
@@ -174,7 +174,7 @@ fn delete_atom(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box
 }
 
 /// Adds a carbon 1.5 Å from `atom`, bonded to it.
-fn add_atom(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+fn add_atom(editor: &mut StructureEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
     let handle = editor
         .topology()
         .atom_handle(atom)
@@ -192,7 +192,7 @@ fn add_atom(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dy
 }
 
 /// Changes `atom`'s element: carbon to nitrogen, anything else to carbon.
-fn set_element(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+fn set_element(editor: &mut StructureEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
     let handle = editor
         .topology()
         .atom_handle(atom)
@@ -209,7 +209,7 @@ fn set_element(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box
 }
 
 /// Raises `atom`'s formal charge by one.
-fn set_charge(editor: &mut ModelEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
+fn set_charge(editor: &mut StructureEditor, atom: InstanceAtomId) -> Result<(), Box<dyn Error>> {
     let handle = editor
         .topology()
         .atom_handle(atom)

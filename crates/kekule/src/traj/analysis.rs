@@ -7,7 +7,7 @@
 //!
 //! Weighted RMSF and contact occupancy live in [`crate::statistics`]. Their
 //! accumulators observe a streamed frame through its buffer's
-//! `as_model_view()` with an explicit weight: one for equally weighted
+//! `as_structure_view()` with an explicit weight: one for equally weighted
 //! equilibrium frames, or a reweighting factor. Frames read and fitted in
 //! parallel can be observed in parallel too: observe each range of frames
 //! into its own accumulator and merge the accumulators in range order.
@@ -25,7 +25,7 @@
 //! let mut index = 0;
 //! while reader.read_next(&mut buffer)? {
 //!     // Apply any intended periodic preprocessing and fitting here.
-//!     rmsf.observe(index, &buffer.as_model_view(), 1.0)?;
+//!     rmsf.observe(index, &buffer.as_structure_view(), 1.0)?;
 //!     index += 1;
 //! }
 //! Ok(rmsf.finish()?)
@@ -33,7 +33,7 @@
 //! ```
 
 use crate::alignment::{self, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment};
-use crate::structure::{AsModelView, ModelView};
+use crate::structure::{AsStructureView, StructureView};
 
 use crate::traj::FrameBuffer;
 
@@ -42,7 +42,7 @@ use crate::traj::FrameBuffer;
 /// Uses the same kernel as in-memory structure set superposition. Each call fits
 /// one buffered frame and transforms its positions, cell, velocities, and
 /// forces together. To keep a reference while reusing its input buffer,
-/// retain it first, for example with `buffer.frame_view().to_model()`.
+/// retain it first, for example with `buffer.frame_view().to_structure()`.
 ///
 /// ```no_run
 /// use kekule::topology::AtomSelection;
@@ -50,7 +50,7 @@ use crate::traj::FrameBuffer;
 /// # fn fit(reader: &mut impl TrajectoryReader) -> Result<(), Box<dyn std::error::Error>> {
 /// let mut buffer = reader.frame_buffer();
 /// reader.read_next(&mut buffer)?;
-/// let reference = buffer.frame_view().to_model();
+/// let reference = buffer.frame_view().to_structure();
 /// let atoms = AtomSelection::all(reference.shared_topology());
 /// let superposer = FrameSuperposer::new(&reference, &atoms, Default::default());
 /// let mut index = 1;
@@ -64,7 +64,7 @@ use crate::traj::FrameBuffer;
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct FrameSuperposer<'a> {
-    reference: ModelView<'a>,
+    reference: StructureView<'a>,
     atoms: FitAtoms<'a>,
     options: AlignmentOptions<'a>,
 }
@@ -74,12 +74,12 @@ impl<'a> FrameSuperposer<'a> {
     /// [`crate::alignment::AtomCorrespondence`] (independent reference), with
     /// the fit weights and periodic policy of `options`.
     pub fn new(
-        reference: &'a (impl AsModelView + ?Sized),
+        reference: &'a (impl AsStructureView + ?Sized),
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'a>,
     ) -> Self {
         Self {
-            reference: reference.as_model_view(),
+            reference: reference.as_structure_view(),
             atoms: atoms.into(),
             options,
         }
@@ -111,7 +111,7 @@ impl<'a> FrameSuperposer<'a> {
 
     fn fit(&self, buffer: &mut FrameBuffer) -> Result<RigidAlignment, AlignmentError> {
         let alignment = alignment::fit(
-            buffer.as_model_view(),
+            buffer.as_structure_view(),
             self.reference,
             self.atoms,
             self.options,

@@ -7,18 +7,18 @@ use kekule::{
         self, BoxShape, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, PositiveIon,
         SolvationChargeBasis, SolvationError, SolvationRadii, SolventOptions,
     },
-    structure::{Model, Positions},
+    structure::{Positions, Structure},
     topology::{AtomSiteMetadata, MoleculeClass, ResidueClass},
     units::{Quantity, ANGSTROM, METER, MOLAR, MOLE, NANOMETER},
 };
 use std::sync::Arc;
 
-fn model(smiles: &str) -> Model {
+fn structure(smiles: &str) -> Structure {
     let m = kekule::smiles::to_molecules(smiles).unwrap().remove(0);
-    Model::from_molecule(m.clone(), &Positions::zeros(m.atom_count())).unwrap()
+    Structure::from_molecule(m.clone(), &Positions::zeros(m.atom_count())).unwrap()
 }
-fn boxed(smiles: &str) -> Model {
-    let mut m = model(smiles);
+fn boxed(smiles: &str) -> Structure {
+    let mut m = structure(smiles);
     solvation::add_periodic_box(
         &mut m,
         &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(3.0, 3.0, 3.0), NANOMETER)),
@@ -29,7 +29,7 @@ fn boxed(smiles: &str) -> Model {
 fn options() -> SolventOptions {
     SolventOptions::default().with_neutralize(false)
 }
-fn points(m: &Model) -> Vec<Point3> {
+fn points(m: &Structure) -> Vec<Point3> {
     m.positions().values().value().to_vec()
 }
 fn key(name: &str) -> PropertyKey {
@@ -38,7 +38,7 @@ fn key(name: &str) -> PropertyKey {
 
 #[test]
 fn box_shapes_units_padding_and_snapshot_identity() {
-    let mut m = model("CC");
+    let mut m = structure("CC");
     let atoms = m.topology().atom_ids().to_vec();
     m.set_atom_positions([
         (
@@ -72,7 +72,7 @@ fn box_shapes_units_padding_and_snapshot_identity() {
         let geometry = Lattice::new(*m.cell().unwrap()).unwrap();
         assert!((geometry.shortest_translation().unwrap().into_value().norm() - 3.0).abs() < 1e-12);
     }
-    let mut single = model("[Na+]");
+    let mut single = structure("[Na+]");
     solvation::add_periodic_box(
         &mut single,
         &PeriodicBoxOptions::Padding {
@@ -153,7 +153,7 @@ fn waters_are_whole_shared_classified_and_periodically_nonclashing() {
         .unwrap();
     let water_radius = 0.315_075_240_657_512_4 * 0.5612310241546865;
     for shape in [BoxShape::Cube, BoxShape::Dodecahedron, BoxShape::Octahedron] {
-        let mut m = model("C");
+        let mut m = structure("C");
         solvation::add_periodic_box(
             &mut m,
             &PeriodicBoxOptions::Padding {
@@ -336,7 +336,7 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
 
 #[test]
 fn errors_leave_every_part_of_model_unchanged() {
-    let mut no_cell = model("C");
+    let mut no_cell = structure("C");
     let before = no_cell.clone();
     assert!(matches!(
         solvation::solvate(&mut no_cell, &options()),
@@ -391,7 +391,7 @@ fn errors_leave_every_part_of_model_unchanged() {
 
 #[test]
 fn original_entities_properties_and_existing_water_survive() {
-    let mut builder = model("[H]O[H]").into_builder();
+    let mut builder = structure("[H]O[H]").into_builder();
     let ids = builder.topology_builder().atom_ids().to_vec();
     let chain = builder.hierarchy_mut().add_chain("SOL1", None).unwrap();
     let residue = builder
@@ -449,7 +449,10 @@ fn original_entities_properties_and_existing_water_survive() {
         report.cleared_topology_properties(),
         vec![key("topology_note")]
     );
-    assert_eq!(report.cleared_model_properties(), vec![key("model_note")]);
+    assert_eq!(
+        report.cleared_structure_properties(),
+        vec![key("model_note")]
+    );
     assert_eq!(
         chain_record(m.topology().chain(chain).unwrap()),
         chain_record(before.topology().chain(chain).unwrap())
@@ -473,7 +476,7 @@ fn externally_supplied_solute_and_increasing_boxes() {
     let solute = doc.records()[0]
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     let mut previous = 0;
     for size in [3.0, 4.0, 6.0] {
         let mut m = solute.clone();
@@ -508,7 +511,7 @@ fn rotated_skewed_and_left_handed_cells_fill_without_moving_solute() {
             Vector3::new(0.3, 0.4, 2.0),
         ],
     ] {
-        let mut m = model("C");
+        let mut m = structure("C");
         let atom = m.topology().atom_ids()[0];
         let position = Point3::new(25.0, -11.0, 8.0);
         m.set_atom_positions([(atom, Quantity::new(position, NANOMETER))])

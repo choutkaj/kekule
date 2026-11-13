@@ -76,7 +76,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     let interpretation = (mmcif::parse_str(LINKED_ROWS, Default::default()).unwrap())
         .interpret(Default::default())
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     assert_eq!(topology.instance_count(), 2);
     let instances = topology
         .atom_ids()
@@ -93,7 +93,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
         ROW_ELEMENTS
     );
     assert_eq!(
-        row_x(interpretation.model().positions().values().value()),
+        row_x(interpretation.structure().positions().values().value()),
         ROW_X
     );
 
@@ -114,7 +114,7 @@ fn mmcif_topology_reads_external_coordinates_in_atom_site_order() {
     .unwrap();
 
     let loaded = read_structure_set(&path.0, Arc::clone(&topology), Default::default()).unwrap();
-    let frame = loaded.get(0).unwrap().as_model_view();
+    let frame = loaded.get(0).unwrap().as_structure_view();
     assert_eq!(row_x(frame.positions().values().value()), ROW_X);
     for (atom, element) in topology.atom_ids().iter().zip(ROW_ELEMENTS) {
         assert_eq!(

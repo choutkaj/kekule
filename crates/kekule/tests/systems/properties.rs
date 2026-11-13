@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kekule::molecule::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
-use kekule::structure::{Geometry, GeometryError, Model, Positions, StructureSet};
+use kekule::structure::{Geometry, GeometryError, Positions, Structure, StructureSet};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, Topology,
     TopologyBuildError, TopologyBuilder,
@@ -131,15 +131,15 @@ fn topology_only_domains_are_typed_and_stay_out_of_structures() {
         Some(PropertyValue::Int(4))
     );
     // Structure annotations have no hierarchy domains at all.
-    let model = Model::new(Arc::clone(&topology), Positions::zeros(1)).unwrap();
-    assert!(model.properties().is_empty());
+    let structure = Structure::new(Arc::clone(&topology), Positions::zeros(1)).unwrap();
+    assert!(structure.properties().is_empty());
 }
 
 #[test]
 fn structures_reject_mismatched_property_rows_transactionally() {
     let methane = Arc::new(builder().build().unwrap());
     let ethane = Arc::new(Topology::from_molecule(molecule("C=C")).unwrap());
-    let mut source = Model::new(Arc::clone(&ethane), Positions::zeros(2)).unwrap();
+    let mut source = Structure::new(Arc::clone(&ethane), Positions::zeros(2)).unwrap();
     source
         .properties_mut()
         .atoms_mut()
@@ -152,10 +152,10 @@ fn structures_reject_mismatched_property_rows_transactionally() {
         .unwrap();
     let bound = source.properties().clone();
 
-    let mut model = Model::new(Arc::clone(&methane), Positions::zeros(1)).unwrap();
-    let original = model.properties().clone();
+    let mut structure = Structure::new(Arc::clone(&methane), Positions::zeros(1)).unwrap();
+    let original = structure.properties().clone();
     assert_eq!(
-        model.set_properties(bound.clone()),
+        structure.set_properties(bound.clone()),
         Err(GeometryError::Array(
             kekule::structure::DenseArrayError::CountMismatch {
                 expected: 1,
@@ -163,7 +163,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
             }
         ))
     );
-    assert_eq!(model.properties(), &original);
+    assert_eq!(structure.properties(), &original);
 
     // A detached geometry has no bond rows yet.
     let mut member = Geometry::new(Positions::zeros(2));
@@ -193,33 +193,33 @@ fn owner_topology_property_edits_keep_layout_without_touching_other_holders() {
     let topology = kekule::smiles::to_topology("CCO").unwrap();
     let selection = AtomSelection::all(Arc::clone(&topology));
 
-    let mut model = Model::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
-    model
+    let mut structure = Structure::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
+    structure
         .topology_properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(1))
         .unwrap();
     // A shared topology is replaced by an edited snapshot of the same layout.
-    assert!(!Arc::ptr_eq(&topology, &model.shared_topology()));
-    assert!(model.topology().shares_layout(&topology));
+    assert!(!Arc::ptr_eq(&topology, &structure.shared_topology()));
+    assert!(structure.topology().shares_layout(&topology));
     assert_eq!(
-        model.topology().properties().owner().get(&key()),
+        structure.topology().properties().owner().get(&key()),
         Some(&PropertyValue::Int(1))
     );
     assert_eq!(topology.properties().owner().get(&key()), None);
     selection
-        .ensure_compatible(&model.shared_topology())
+        .ensure_compatible(&structure.shared_topology())
         .unwrap();
     // A uniquely owned snapshot is edited in place.
-    let unique = Arc::as_ptr(&model.shared_topology());
-    model
+    let unique = Arc::as_ptr(&structure.shared_topology());
+    structure
         .topology_properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(2))
         .unwrap();
-    assert_eq!(Arc::as_ptr(&model.shared_topology()), unique);
+    assert_eq!(Arc::as_ptr(&structure.shared_topology()), unique);
     assert_eq!(
-        model.topology().properties().owner().get(&key()),
+        structure.topology().properties().owner().get(&key()),
         Some(&PropertyValue::Int(2))
     );
 

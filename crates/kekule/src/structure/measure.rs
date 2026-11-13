@@ -1,4 +1,4 @@
-//! Checked measurements of stored Cartesian coordinates through [`ModelView`].
+//! Checked measurements of stored Cartesian coordinates through [`StructureView`].
 //!
 //! Cells are ignored: these operations never wrap, image, unwrap, or align
 //! coordinates. Apply the desired preprocessing before measuring. Angles use
@@ -16,15 +16,15 @@
 //!
 //! ```
 //! use kekule::{math::Point3, smiles, units::{Quantity, NANOMETER}};
-//! use kekule::structure::{measure::{self, ConnectivityCheck}, Model, Positions};
+//! use kekule::structure::{measure::{self, ConnectivityCheck}, Structure, Positions};
 //!
 //! let positions = Positions::new(Quantity::new(
 //!     [Point3::origin(), Point3::new(0.125, 0.0, 0.0)], NANOMETER,
 //! ))?;
-//! let model = Model::new(smiles::to_topology("CO")?, positions)?;
-//! let [c, o] = model.topology().atom_ids().try_into().unwrap();
+//! let structure = Structure::new(smiles::to_topology("CO")?, positions)?;
+//! let [c, o] = structure.topology().atom_ids().try_into().unwrap();
 //! let length = measure::distance(
-//!     model.as_model_view(), c, o, ConnectivityCheck::ConsecutiveBonds,
+//!     structure.as_structure_view(), c, o, ConnectivityCheck::ConsecutiveBonds,
 //! )?;
 //! assert_eq!(length.into_unit(NANOMETER)?.into_value(), 0.125);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
@@ -34,12 +34,12 @@
 //! ```
 //! use kekule::{
 //!     molecule::Element,
-//!     structure::{measure, Model},
+//!     structure::{measure, Structure},
 //!     topology::AtomSelection,
 //!     units::{Quantity, ANGSTROM},
 //! };
-//! # fn pocket(model: &Model) -> Result<Model, Box<dyn std::error::Error>> {
-//! let topology = model.shared_topology();
+//! # fn pocket(structure: &Structure) -> Result<Structure, Box<dyn std::error::Error>> {
+//! let topology = structure.shared_topology();
 //! let ligand = topology.residue_by_author("A", "215", None)?;
 //! let reference = AtomSelection::for_residues(topology.clone(), [ligand.id()])?;
 //! let hydrogen = AtomSelection::for_elements(
@@ -47,9 +47,9 @@
 //! )?;
 //! let candidates = AtomSelection::all(topology.clone()).difference(&hydrogen)?;
 //! let atoms = measure::within(
-//!     model.as_model_view(), &candidates, &reference, Quantity::new(5.0, ANGSTROM),
+//!     structure.as_structure_view(), &candidates, &reference, Quantity::new(5.0, ANGSTROM),
 //! )?.expand_to_residues();
-//! let pocket = model.subset(&atoms)?;
+//! let pocket = structure.subset(&atoms)?;
 //! # Ok(pocket)
 //! # }
 //! ```
@@ -61,7 +61,7 @@ use crate::math::{Point3, Vector3};
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError};
 use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 
-use super::ModelView;
+use super::StructureView;
 
 mod bond_dihedrals;
 pub use bond_dihedrals::{bond_dihedral, bond_dihedrals, BondDihedral, BondDihedralError};
@@ -137,7 +137,7 @@ impl std::error::Error for MeasurementError {
     }
 }
 
-fn point(view: ModelView<'_>, atom: InstanceAtomId) -> Result<Point3, MeasurementError> {
+fn point(view: StructureView<'_>, atom: InstanceAtomId) -> Result<Point3, MeasurementError> {
     let index = view
         .topology()
         .atom_index(atom)
@@ -146,7 +146,7 @@ fn point(view: ModelView<'_>, atom: InstanceAtomId) -> Result<Point3, Measuremen
 }
 
 fn check_connectivity(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     atoms: &[InstanceAtomId],
     connectivity: ConnectivityCheck,
 ) -> Result<(), MeasurementError> {
@@ -200,7 +200,7 @@ pub(super) fn normalized(vector: Vector3) -> Result<Vector3, MeasurementError> {
 /// `connectivity` selects whether a bond A-B is required. Connectivity
 /// validation precedes geometric calculation; cells are ignored.
 pub fn distance(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     a: InstanceAtomId,
     b: InstanceAtomId,
     connectivity: ConnectivityCheck,
@@ -218,7 +218,7 @@ pub fn distance(
 /// `connectivity` selects whether bonds A-B and B-C are required.
 /// Connectivity validation precedes geometric calculation; cells are ignored.
 pub fn angle(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     a: InstanceAtomId,
     b: InstanceAtomId,
     c: InstanceAtomId,
@@ -245,7 +245,7 @@ pub(super) fn angle_points(a: Point3, b: Point3, c: Point3) -> Result<f64, Measu
 /// `connectivity` selects whether bonds A-B, B-C, and C-D are required.
 /// Connectivity validation precedes geometric calculation; cells are ignored.
 pub fn dihedral(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     a: InstanceAtomId,
     b: InstanceAtomId,
     c: InstanceAtomId,
@@ -289,7 +289,7 @@ pub(super) fn dihedral_points(
 /// Whole-residue expansion is separate: call [`AtomSelection::expand_to_residues`]
 /// on the result. Candidate restrictions apply before expansion.
 pub fn within(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     candidates: &AtomSelection,
     reference: &AtomSelection,
     cutoff: Quantity<f64>,

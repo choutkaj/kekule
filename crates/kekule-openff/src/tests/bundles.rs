@@ -107,14 +107,14 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
         *changed.pointer_mut(pointer).unwrap() = value;
         scratch.write(&changed, &weights);
         let error = NaglModel::load(&scratch.0).unwrap_err();
-        assert_eq!(error.kind(), ErrorKind::Model, "{pointer}: {error}");
+        assert_eq!(error.kind(), ErrorKind::Structure, "{pointer}: {error}");
         assert_eq!(error.path(), Some(scratch.0.as_path()), "{pointer}");
     }
 
     // Truncated weights fail on their checksum, before any tensor is read.
     scratch.write(&manifest, &weights[..weights.len() - 4]);
     let error = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Model);
+    assert_eq!(error.kind(), ErrorKind::Structure);
     assert!(error.to_string().contains("checksum"), "{error}");
 
     // A lookup entry whose charges do not match its atoms fails on a hit.
@@ -142,7 +142,7 @@ fn exported_ash_layout_loads_like_the_bundled_model_and_rejects_corruption() {
     molecule.perceive().unwrap();
     molecule.add_hydrogens(Default::default()).unwrap();
     let error = broken.assign_charges(&molecule).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Model);
+    assert_eq!(error.kind(), ErrorKind::Structure);
 
     // Lookup entries have no identifier size limit; selection computes none.
     let mut changed = manifest.clone();

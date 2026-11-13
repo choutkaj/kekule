@@ -7,7 +7,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 fn error(detail: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::Model, detail)
+    Error::new(ErrorKind::Structure, detail)
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,7 +107,7 @@ impl Network {
                     )
                     .map_err(|e| {
                         Error::caused(
-                            ErrorKind::Model,
+                            ErrorKind::Structure,
                             format!("Cannot shape the weight tensor \"{prefix}.weight\"."),
                             e,
                         )

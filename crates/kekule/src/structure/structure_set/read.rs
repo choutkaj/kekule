@@ -11,7 +11,7 @@ use crate::traj::periodic::PeriodicError;
 use crate::traj::TrajectoryIoError;
 
 use super::{Distribution, Geometry, GeometryView, Order};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 
 /// Reads the geometries of a set, one at a time and from any thread: a
 /// [`StructureSet`](super::StructureSet) in memory, one over an indexed trajectory
@@ -138,10 +138,10 @@ pub(crate) fn visit_geometry<T, E>(
     reader: &dyn StructureSetRead,
     index: usize,
     read_error: impl FnOnce(StructureSetReadError) -> E,
-    visit: impl FnOnce(ModelView<'_>) -> Result<T, E>,
+    visit: impl FnOnce(StructureView<'_>) -> Result<T, E>,
 ) -> Result<T, E> {
     if let Some(view) = reader.peek(index) {
-        return visit(view.as_model_view());
+        return visit(view.as_structure_view());
     }
     let geometry = reader
         .read(index)
@@ -150,7 +150,7 @@ pub(crate) fn visit_geometry<T, E>(
             Ok(geometry)
         })
         .map_err(read_error)?;
-    visit(GeometryView::of_reader(reader, index, &geometry).as_model_view())
+    visit(GeometryView::of_reader(reader, index, &geometry).as_structure_view())
 }
 
 /// Failure to read a geometry from a [`StructureSetRead`].

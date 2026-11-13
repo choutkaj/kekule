@@ -8,7 +8,7 @@ use kekule::macromolecular::{
     StructureInterpretOptions, StructureInterpretation, StructureSetInterpretOptions,
     StructureSetInterpretation,
 };
-use kekule::structure::Model;
+use kekule::structure::Structure;
 use kekule::{mmcif, pdb};
 
 const ADENYLATE_KINASE_CIF: &str = include_str!("../fixtures/mmcif/1AKE.cif");
@@ -26,8 +26,8 @@ fn requested_after(after: usize) -> (Cancellation, Arc<AtomicUsize>) {
 /// Whether two independently interpreted models are equal: every model is
 /// published with its own layout identity, so the layouts are compared by
 /// content.
-fn same_model(left: &Model, right: &Model) -> bool {
-    let (left_view, right_view) = (left.as_model_view(), right.as_model_view());
+fn same_model(left: &Structure, right: &Structure) -> bool {
+    let (left_view, right_view) = (left.as_structure_view(), right.as_structure_view());
     left.topology().same_layout(right.topology())
         && left_view.positions() == right_view.positions()
         && left_view.cell() == right_view.cell()
@@ -36,7 +36,7 @@ fn same_model(left: &Model, right: &Model) -> bool {
 }
 
 fn same_interpretation(left: &StructureInterpretation, right: &StructureInterpretation) -> bool {
-    left.report() == right.report() && same_model(left.model(), right.model())
+    left.report() == right.report() && same_model(left.structure(), right.structure())
 }
 
 fn same_structure_set(

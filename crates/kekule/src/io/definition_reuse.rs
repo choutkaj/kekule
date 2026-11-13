@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use crate::molecule::Molecule;
-use crate::structure::{ModelBuildError, ModelBuilder};
+use crate::structure::{StructureBuildError, StructureBuilder};
 use crate::topology::MoleculeDefinitionId;
 
 /// Stages one definition per distinct molecule of a model under construction.
@@ -40,10 +40,10 @@ impl<L: Hash + Eq> DefinitionReuse<L> {
     /// a staged definition identical to it, or a new one.
     pub(crate) fn definition(
         &mut self,
-        builder: &mut ModelBuilder,
+        builder: &mut StructureBuilder,
         molecule: Molecule,
         labels: Vec<L>,
-    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
+    ) -> Result<MoleculeDefinitionId, StructureBuildError> {
         debug_assert_eq!(labels.len(), molecule.atom_count());
         let key = self.fingerprint(&molecule, &labels);
         let candidates = self.staged.entry(key).or_default();
@@ -79,7 +79,7 @@ impl<L: Hash + Eq> DefinitionReuse<L> {
 mod tests {
     use super::DefinitionReuse;
     use crate::molecule::Molecule;
-    use crate::structure::ModelBuilder;
+    use crate::structure::StructureBuilder;
 
     fn molecule(smiles: &str) -> Molecule {
         crate::smiles::to_molecules(smiles).unwrap().remove(0)
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn only_identical_molecules_with_equal_labels_share_a_definition() {
-        let mut builder = ModelBuilder::new();
+        let mut builder = StructureBuilder::new();
         let mut reuse = DefinitionReuse::new();
         let mut definition = |smiles: &str, label: &str| {
             let molecule = molecule(smiles);

@@ -35,7 +35,7 @@
 //! use kekule::interactions::{
 //!     find_interactions_within, InteractionCriteria, InteractionFeatures, InteractionKind,
 //! };
-//! use kekule::structure::{Model, Positions};
+//! use kekule::structure::{Structure, Positions};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM};
 //!
@@ -44,14 +44,14 @@
 //! let topology = kekule::smiles::to_topology("O.O")?;
 //! let points = [Point3::new(0.0, 0.0, 0.0), Point3::new(2.9, 0.0, 0.0)];
 //! let positions = Positions::new(Quantity::new(points, ANGSTROM))?;
-//! let model = Model::new(topology.clone(), positions)?;
+//! let structure = Structure::new(topology.clone(), positions)?;
 //!
 //! let features = InteractionFeatures::new(topology.clone());
 //! let first = AtomSelection::from_atoms(topology.clone(), [topology.atom_ids()[0]])?;
 //! let second = AtomSelection::from_atoms(topology.clone(), [topology.atom_ids()[1]])?;
 //! let found = find_interactions_within(
 //!     &features,
-//!     &model,
+//!     &structure,
 //!     &first,
 //!     &second,
 //!     &InteractionCriteria::default(),

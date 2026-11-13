@@ -4,7 +4,7 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, GeometryPropertiesMut, OwnerProperties};
 use crate::structure::scalars::AtomScalars;
 use crate::structure::{
-    DenseArrayError, Forces, Geometry, GeometryError, GeometryMut, ModelView, Place, Positions,
+    DenseArrayError, Forces, Geometry, GeometryError, GeometryMut, Place, Positions, StructureView,
     Velocities,
 };
 use crate::topology::Topology;
@@ -216,9 +216,9 @@ impl FrameBuffer {
         FrameView::bound(&self.topology, &self.geometry, self.time, self.step)
     }
 
-    /// The buffered frame as a [`ModelView`], so model analyses apply to it.
-    pub fn as_model_view(&self) -> ModelView<'_> {
-        self.frame_view().as_model_view()
+    /// The buffered frame as a [`StructureView`], so structure analyses apply to it.
+    pub fn as_structure_view(&self) -> StructureView<'_> {
+        self.frame_view().as_structure_view()
     }
 
     /// The simulation time in the canonical time unit, when known.

@@ -10,7 +10,7 @@
 //!   geometry-independent properties.
 //! - [`topology::Topology`] is one coordinate-free system containing one or
 //!   more explicit molecule instances plus an optional biological hierarchy.
-//! - [`structure::Model`] is one structure of a topology: positions, an
+//! - [`structure::Structure`] is one structure of a topology: positions, an
 //!   optional periodic cell, and structure-scoped properties.
 //! - [`structure::StructureSet`] stores [`structure::Geometry`]s of one shared
 //!   topology, each with positions and optional cell, velocities, and forces.
@@ -50,7 +50,7 @@
 //! use kekule::{
 //!     math::Point3,
 //!     smiles,
-//!     structure::{Model, Positions},
+//!     structure::{Structure, Positions},
 //!     units::{Quantity, ANGSTROM},
 //! };
 //!
@@ -66,7 +66,7 @@
 //!     ],
 //!     ANGSTROM,
 //! ))?;
-//! let model = Model::from_molecule(ethanol, &positions)?;
+//! let model = Structure::from_molecule(ethanol, &positions)?;
 //!
 //! assert_eq!(model.topology().instance_count(), 1);
 //! assert_eq!(model.atom_count(), 3);
@@ -85,10 +85,10 @@
 //! | --- | --- | --- |
 //! | Construct or edit one connected molecule | [`molecule::MoleculeEditor`] | `finish()` |
 //! | Assemble complete molecules and reusable instances | [`topology::TopologyBuilder`] | `build()` |
-//! | Assemble a system with explicit geometry | [`structure::ModelBuilder`] | `build()` |
+//! | Assemble a system with explicit geometry | [`structure::StructureBuilder`] | `build()` |
 //! | Edit system atoms, bonds, components, and hierarchy | [`topology::edit::TopologyEditor`] | `finish()` |
-//! | Edit a system together with its coordinates | [`structure::ModelEditor`] | `finish()` |
-//! | Change geometry or structure annotations | [`structure::Model`] setters | Immediate checked update |
+//! | Edit a system together with its coordinates | [`structure::StructureEditor`] | `finish()` |
+//! | Change geometry or structure annotations | [`structure::Structure`] setters | Immediate checked update |
 //!
 //! Builders and editors offer non-consuming `validate()` and recoverable
 //! `try_build()` / `try_finish()`. Use `to_editor()` for a detached draft or
@@ -97,7 +97,7 @@
 //! `finish()`. A bond deletion can split a system molecule;
 //! a bond addition can join two occurrences. New model atoms require coordinates.
 //!
-//! Coordinate-dependent algorithms consume [`structure::ModelView`]. A model,
+//! Coordinate-dependent algorithms consume [`structure::StructureView`]. A model,
 //! a geometry of a structure set, or a streamed trajectory frame can therefore
 //! share kernels without copying coordinates. APIs that address atoms
 //! by index accept any topology snapshot sharing their layout
@@ -683,7 +683,7 @@ pub mod smarts {
 ///
 /// A parsed [`molfile::MolfileDocument`] is format state. Its interpretation can
 /// project to connected molecules or to a geometry-bearing
-/// [`crate::structure::Model`]. Writers reject chemistry that the selected
+/// [`crate::structure::Structure`]. Writers reject chemistry that the selected
 /// Molfile version cannot represent.
 ///
 /// ```
@@ -693,7 +693,7 @@ pub mod smarts {
 /// let (text, _) = molfile::write(&ethanol, Default::default())?;
 /// let document = molfile::parse_str(&text, Default::default())?;
 /// let interpretation = document.interpret(Default::default())?;
-/// assert_eq!(interpretation.model().atom_count(), 3);
+/// assert_eq!(interpretation.structure().atom_count(), 3);
 /// assert_eq!(interpretation.into_molecules().len(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -796,20 +796,20 @@ pub mod molfile {
 ///
 /// ```
 /// use kekule::math::Point3;
-/// use kekule::structure::{Model, Positions};
+/// use kekule::structure::{Structure, Positions};
 /// use kekule::units::{Quantity, ANGSTROM};
 /// use kekule::{sdf, smiles};
 ///
 /// let water = smiles::to_molecules("O")?.remove(0);
 /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
-/// let model = Model::from_molecule(water, &positions)?;
+/// let model = Structure::from_molecule(water, &positions)?;
 ///
 /// let (text, report) = sdf::write([&model, &model], Default::default())?;
 /// assert!(report.is_empty());
 /// let document = sdf::parse_str(&text, Default::default())?;
 /// assert_eq!(document.records().len(), 2);
 /// let first = document.records()[0].interpret(Default::default())?;
-/// assert_eq!(first.model().atom_count(), 1);
+/// assert_eq!(first.structure().atom_count(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod sdf {
@@ -860,12 +860,12 @@ pub mod sdf {
     /// ```
     /// use kekule::math::Point3;
     /// use kekule::sdf;
-    /// use kekule::structure::{Model, Order, Positions};
+    /// use kekule::structure::{Structure, Order, Positions};
     /// use kekule::units::{Quantity, ANGSTROM};
     ///
     /// let water = kekule::smiles::to_molecules("O")?.remove(0);
     /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
-    /// let model = Model::from_molecule(water, &positions)?;
+    /// let model = Structure::from_molecule(water, &positions)?;
     /// let (text, _) = sdf::write([&model, &model], Default::default())?;
     /// let records = sdf::parse_str(&text, Default::default())?
     ///     .records()
@@ -1036,7 +1036,7 @@ pub mod macromolecular {
 /// Structural mmCIF parsing, interpretation, and writing.
 ///
 /// Data blocks are independent interpretation scopes. One selected coordinate
-/// model naturally produces a [`crate::structure::Model`], while compatible
+/// model naturally produces a [`crate::structure::Structure`], while compatible
 /// coordinate models from one block may produce a
 /// [`crate::structure::StructureSet`]. Ordinary writing derives mmCIF entity kinds
 /// from canonical topology classification; source reports and explicit
@@ -1073,12 +1073,12 @@ pub mod macromolecular {
 /// ";
 /// let document = mmcif::parse_str(text, Default::default())?;
 /// let interpretation = document.interpret(Default::default())?;
-/// assert_eq!(interpretation.model().atom_count(), 3);
+/// assert_eq!(interpretation.structure().atom_count(), 3);
 ///
-/// let (written, report) = mmcif::write([interpretation.model()], Default::default())?;
+/// let (written, report) = mmcif::write([interpretation.structure()], Default::default())?;
 /// assert!(report.omissions().is_empty());
 /// let reread = mmcif::parse_str(&written, Default::default())?.interpret(Default::default())?;
-/// assert_eq!(reread.model().atom_count(), 3);
+/// assert_eq!(reread.structure().atom_count(), 3);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod mmcif {
@@ -1166,7 +1166,7 @@ pub mod mmcif {
     ///
     /// ```no_run
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
-    /// # fn example(model: &kekule::structure::Model, other: &kekule::structure::Model,
+    /// # fn example(model: &kekule::structure::Structure, other: &kekule::structure::Structure,
     /// #     interpretation: &kekule::macromolecular::StructureInterpretation)
     /// #     -> Result<(), kekule::diagnostics::FormatError> {
     /// let (one, _) = mmcif::write([model], MmcifWriteOptions::default())?;
@@ -1242,7 +1242,7 @@ pub mod mmcif {
 /// ";
 /// let document = pdb::parse_str(text, Default::default())?;
 /// let interpretation = document.interpret(Default::default())?;
-/// assert_eq!(interpretation.model().atom_count(), 3);
+/// assert_eq!(interpretation.structure().atom_count(), 3);
 /// assert_eq!(interpretation.topology().instance_count(), 1);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -1354,7 +1354,7 @@ pub mod pdb {
     /// ";
     /// let model = pdb::parse_str(text, Default::default())?
     ///     .interpret(Default::default())?
-    ///     .into_model();
+    ///     .into_structure();
     /// let (written, report) = pdb::write(&model, Default::default())?;
     /// assert_eq!(written, text);
     /// assert!(report.omissions().is_empty());
@@ -1428,7 +1428,7 @@ pub mod pdb {
 /// [`XyzInterpretOptions::with_extra_columns`](xyz::XyzInterpretOptions::with_extra_columns)
 /// reports them as omitted.
 ///
-/// One frame becomes a [`Model`](crate::structure::Model); several frames of
+/// One frame becomes a [`Structure`](crate::structure::Structure); several frames of
 /// the same atoms become a [`StructureSet`](crate::structure::StructureSet) without
 /// an order or distribution, and every frame must infer the same bonds. Interpretation keeps atom lines in source order as dense atom
 /// order, so a trajectory reader such as [`crate::traj::io::xyz::XyzReader`] can
@@ -1502,7 +1502,7 @@ pub mod xyz {
 ///
 /// Scientific formats exchange chemistry with other tools; they are not exact
 /// persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
-/// [`Topology`](crate::topology::Topology), [`Model`](crate::structure::Model),
+/// [`Topology`](crate::topology::Topology), [`Structure`](crate::structure::Structure),
 /// or [`StructureSet`](crate::structure::StructureSet) losslessly: represented
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
@@ -1837,7 +1837,7 @@ pub mod hydrogens {
 ///     vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.43, 0.0, 0.0)],
 ///     ANGSTROM,
 /// ))?;
-/// let model = Model::from_molecule(molecule, &positions)?;
+/// let model = Structure::from_molecule(molecule, &positions)?;
 /// assert_eq!(model.atom_count(), topology.atom_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -1845,7 +1845,7 @@ pub mod prelude {
     pub use crate::molecule::{
         Atom, Bond, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeEditor,
     };
-    pub use crate::structure::{Model, Positions};
+    pub use crate::structure::{Positions, Structure};
     pub use crate::topology::Topology;
     pub use crate::units::Quantity;
 }

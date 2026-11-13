@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/mmcif/9UOH.cif");
     let kras = kekule::mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
         .interpret(Default::default())?
-        .into_model();
+        .into_structure();
     let mut editor = kras.to_editor();
     for copy in 1..COPIES {
         let offset = Vector3::new(
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Matrix3::identity(),
             Quantity::new(offset, ANGSTROM),
         )?)?;
-        editor.append_model(&shifted)?;
+        editor.append_structure(&shifted)?;
     }
     let model = editor.finish()?;
     let topology = model.shared_topology();

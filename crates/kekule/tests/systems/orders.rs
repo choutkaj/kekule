@@ -8,7 +8,7 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    AsModelView, Geometry, GeometryError, Model, Order, Place, Positions, StructureKind,
+    AsStructureView, Geometry, GeometryError, Order, Place, Positions, Structure, StructureKind,
     StructureSet, StructureSetError,
 };
 use kekule::topology::{AtomSelection, Topology};
@@ -212,63 +212,69 @@ fn sample_views_borrow_as_models_with_their_place() {
     let place = Place::Coordinate(Quantity::new(1.25, ANGSTROM));
     scan.push(geometry, Some(place)).unwrap();
     let geometry = scan.get(0).unwrap();
-    let view = geometry.as_model_view();
+    let view = geometry.as_structure_view();
     assert!(matches!(
         view.kind(),
         StructureKind::InSet(context)
             if context.place() == Some(place) && context.membership().is_none()
     ));
-    assert_eq!(AsModelView::as_model_view(&geometry).atom_count(), 3);
+    assert_eq!(
+        AsStructureView::as_structure_view(&geometry).atom_count(),
+        3
+    );
     assert_eq!(view.cell(), Some(&cell));
     assert!(view.occupancies().is_none() && view.b_factors().is_none());
     assert!(Arc::ptr_eq(
         &view.shared_topology(),
         &scan.shared_topology()
     ));
-    // A geometry materialized as a model keeps its structure, not its place.
-    let model = geometry.to_model();
-    assert_eq!(model.as_model_view().kind(), StructureKind::Model);
-    assert_eq!(model.positions(), geometry.positions());
-    assert_eq!(model.cell(), Some(&cell));
-    assert_eq!(model.properties(), geometry.properties());
+    // A geometry materialized as a structure keeps its structure, not its place.
+    let structure = geometry.to_structure();
+    assert_eq!(
+        structure.as_structure_view().kind(),
+        StructureKind::Standalone
+    );
+    assert_eq!(structure.positions(), geometry.positions());
+    assert_eq!(structure.cell(), Some(&cell));
+    assert_eq!(structure.properties(), geometry.properties());
 }
 
 #[test]
 fn sets_from_models_take_a_step_order_and_require_one_layout() {
     let topology = chain(3);
-    let models = (0..3)
+    let structures = (0..3)
         .map(|index| {
-            let mut model =
-                Model::new(Arc::clone(&topology), positions(0.01 * index as f64)).unwrap();
-            model.set_occupancies(Some(vec![Some(1.0); 3])).unwrap();
-            model
+            let mut structure =
+                Structure::new(Arc::clone(&topology), positions(0.01 * index as f64)).unwrap();
+            structure.set_occupancies(Some(vec![Some(1.0); 3])).unwrap();
+            structure
                 .set_b_factors(Some(Quantity::new(vec![Some(0.1); 3], SQUARE_NANOMETER)))
                 .unwrap();
-            model
+            structure
         })
         .collect::<Vec<_>>();
-    let mut set = StructureSet::from_models(models.clone()).unwrap();
+    let mut set = StructureSet::from_structures(structures.clone()).unwrap();
     assert_eq!(set.order(), None);
     set.set_order(Some(Order::Step(vec![0, 1, 2]))).unwrap();
     assert!(Arc::ptr_eq(&set.shared_topology(), &topology));
     for (index, geometry) in set.iter().enumerate() {
         assert_eq!(geometry.place(), Some(Place::Step(index as u64)));
-        assert_eq!(geometry.positions(), models[index].positions());
-        // Geometries keep the models' crystallographic site values.
-        assert_eq!(geometry.occupancies(), models[index].occupancies());
-        assert_eq!(geometry.b_factors(), models[index].b_factors());
+        assert_eq!(geometry.positions(), structures[index].positions());
+        // Geometries keep the structures' crystallographic site values.
+        assert_eq!(geometry.occupancies(), structures[index].occupancies());
+        assert_eq!(geometry.b_factors(), structures[index].b_factors());
     }
-    // Models read apart have equal layouts and form a set too.
-    let apart = Model::new(chain(3), positions(0.5)).unwrap();
-    let set = StructureSet::from_models([models[0].clone(), apart]).unwrap();
+    // Structures read apart have equal layouts and form a set too.
+    let apart = Structure::new(chain(3), positions(0.5)).unwrap();
+    let set = StructureSet::from_structures([structures[0].clone(), apart]).unwrap();
     assert_eq!(set.len(), 2);
-    let other = Model::new(chain(4), Positions::zeros(4)).unwrap();
+    let other = Structure::new(chain(4), Positions::zeros(4)).unwrap();
     assert_eq!(
-        StructureSet::from_models([models[0].clone(), other]).unwrap_err(),
+        StructureSet::from_structures([structures[0].clone(), other]).unwrap_err(),
         StructureSetError::TopologyMismatch
     );
     assert_eq!(
-        StructureSet::from_models(Vec::new()).unwrap_err(),
+        StructureSet::from_structures(Vec::new()).unwrap_err(),
         StructureSetError::EmptySource
     );
 }

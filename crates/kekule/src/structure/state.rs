@@ -1,8 +1,8 @@
-//! Validation and accessors shared by the flat structure owners: models,
-//! geometries, trajectory frames, and model drafts.
+//! Validation and accessors shared by the flat structure owners: structures,
+//! geometries, trajectory frames, and structure drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
-//! models and geometries also `occupancies` and `b_factors`. The macros
+//! structures and geometries also `occupancies` and `b_factors`. The macros
 //! below generate the
 //! common public accessors from those fields; an owner provides
 //! `storage_ref(&self)` and `storage(&mut self)` returning the value that holds
@@ -147,7 +147,7 @@ macro_rules! structure_readers {
 }
 pub(crate) use structure_readers;
 
-/// Occupancy and B-factor readers of models and geometries.
+/// Occupancy and B-factor readers of structures and geometries.
 macro_rules! site_readers {
     () => {
         /// Occupancy of one atom; `None` when it was never recorded or `atom`
@@ -232,7 +232,7 @@ macro_rules! structure_mutators {
 }
 pub(crate) use structure_mutators;
 
-/// Occupancy and B-factor mutators of models and geometries.
+/// Occupancy and B-factor mutators of structures and geometries.
 macro_rules! site_mutators {
     () => {
         /// Sets or clears one occupancy. Values must be finite.

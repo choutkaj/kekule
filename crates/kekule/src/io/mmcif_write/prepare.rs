@@ -3,12 +3,12 @@ use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
-use super::{fail, invalid_model, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
+use super::{fail, invalid_structure, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::UnrepresentablePolicy;
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{
     Hierarchy, InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, ResidueId,
 };
@@ -77,7 +77,7 @@ pub(super) struct PreparedModel {
 }
 
 pub(super) fn prepare_model(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     plan: EntityPlan,
     implicit_hydrogens: UnrepresentablePolicy,
     coordinate_precision: usize,
@@ -153,7 +153,7 @@ pub(super) fn prepare_model(
                 .topology()
                 .atom(row.atom)
                 .map(|atom| atom.atom().element)
-                .ok_or_else(|| invalid_model(format!("The topology has no {}.", row.atom)))
+                .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
     mark_implied(
@@ -258,7 +258,7 @@ fn validate_graph_chemistry(
 }
 
 fn collect_macro_rows(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     hierarchy: &Hierarchy,
@@ -360,7 +360,7 @@ fn collect_macro_rows(
 }
 
 fn collect_small_rows(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
@@ -476,7 +476,7 @@ impl<'a> ConnectionSelectors<'a> {
     ) -> Result<(), FormatError> {
         let row = &rows[*indexes
             .get(&atom)
-            .ok_or_else(|| invalid_model(format!("{} has no atom row.", Capitalized(atom))))?];
+            .ok_or_else(|| invalid_structure(format!("{} has no atom row.", Capitalized(atom))))?];
         let stated = |field: &Option<String>, candidate: &Option<String>| {
             field.is_none() || field == candidate
         };
@@ -582,19 +582,19 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {
 }
 
 fn invalid_hierarchy(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("The residue or chain of {atom} is invalid."))
+    invalid_structure(format!("The residue or chain of {atom} is invalid."))
 }
 
 fn missing_position(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("{} has no position.", Capitalized(atom)))
+    invalid_structure(format!("{} has no position.", Capitalized(atom)))
 }
 
 fn invalid_position(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("The position of {atom} is invalid."))
+    invalid_structure(format!("The position of {atom} is invalid."))
 }
 
 fn invalid_b_factor(atom: InstanceAtomId) -> FormatError {
-    invalid_model(format!("The B factor of {atom} is invalid."))
+    invalid_structure(format!("The B factor of {atom} is invalid."))
 }
 
 pub(super) fn validate_sample(
@@ -662,13 +662,13 @@ fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
 }
 
 fn dense_index(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     atom: InstanceAtomId,
 ) -> Result<crate::topology::TopologyAtomIndex, FormatError> {
     model
         .topology()
         .atom_index(atom)
-        .ok_or_else(|| invalid_model(format!("The topology has no {atom}.")))
+        .ok_or_else(|| invalid_structure(format!("The topology has no {atom}.")))
 }
 
 #[cfg(test)]

@@ -28,7 +28,7 @@ pub enum PerceptionError {
     Aromaticity(AromaticityError),
     /// The caller's [`Cancellation`] stopped perception, as cancellable
     /// perception such as
-    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable)
+    /// [`Structure::perceive_cancellable`](crate::structure::Structure::perceive_cancellable)
     /// reports.
     Cancelled(Cancelled),
 }

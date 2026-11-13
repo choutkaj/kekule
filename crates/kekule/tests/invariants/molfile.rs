@@ -4,7 +4,7 @@ use kekule::math::Point3;
 use kekule::molecule::Molecule;
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf;
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::units::{Quantity, ANGSTROM};
 
 use crate::corpus::{assert_invariant, molecules};
@@ -49,12 +49,12 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
     let mut checked = 0;
     for geometry in molecules() {
         let mut fail = |message: String| failures.push((geometry.label.clone(), message));
-        let model = match &geometry.model {
-            Some(model) => model.clone(),
+        let structure = match &geometry.structure {
+            Some(structure) => structure.clone(),
             None if geometry.molecule.stereo_elements().next().is_none() => {
                 let zeros = vec![Point3::origin(); geometry.molecule.atom_count()];
                 let positions = Positions::new(Quantity::new(zeros, ANGSTROM)).unwrap();
-                Model::from_molecule(geometry.molecule.clone(), &positions).unwrap()
+                Structure::from_molecule(geometry.molecule.clone(), &positions).unwrap()
             }
             None => continue,
         };
@@ -63,7 +63,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                 .is_some_and(|r| r.spin_multiplicity().is_none())
         });
         // Molfiles store angstroms in `%10.4f` columns.
-        let angstroms = model
+        let angstroms = structure
             .positions()
             .values()
             .map(|points| points.to_vec())
@@ -79,7 +79,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             (
                 "V2000",
                 molfile::write(
-                    &model,
+                    &structure,
                     MolfileWriteOptions::default().with_version(MolfileWriteVersion::V2000),
                 )
                 .map_err(|error| error.to_string()),
@@ -87,14 +87,14 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             (
                 "V3000",
                 molfile::write(
-                    &model,
+                    &structure,
                     MolfileWriteOptions::default().with_version(MolfileWriteVersion::V3000),
                 )
                 .map_err(|error| error.to_string()),
             ),
             (
                 "SDF",
-                sdf::write([&model], Default::default()).map_err(|error| error.to_string()),
+                sdf::write([&structure], Default::default()).map_err(|error| error.to_string()),
             ),
         ] {
             let must_reject = unspecified_spin || (format == "V2000" && !v2000_fits);
@@ -119,7 +119,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                     .and_then(|document| {
                         document.records()[0]
                             .interpret(Default::default())
-                            .map(|interpretation| interpretation.into_model())
+                            .map(|interpretation| interpretation.into_structure())
                             .map_err(|e| e.to_string())
                     })
             } else {
@@ -128,12 +128,12 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
                     .and_then(|document| {
                         document
                             .interpret(Default::default())
-                            .map(|interpretation| interpretation.into_model())
+                            .map(|interpretation| interpretation.into_structure())
                             .map_err(|e| e.to_string())
                     })
             };
             let reread = match reread {
-                Ok(model) => model,
+                Ok(structure) => structure,
                 Err(error) => {
                     fail(format!("{format}: re-read failed: {error}"));
                     continue;

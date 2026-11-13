@@ -202,7 +202,7 @@ fn hydrogen_normalization_error(error: HydrogenTransformError) -> FormatError {
         }
         HydrogenTransformError::InconsistentStereoHydrogen { .. }
         | HydrogenTransformError::Molecule(_)
-        | HydrogenTransformError::Publication(_) => SMILES_WRITE.invalid_model(message),
+        | HydrogenTransformError::Publication(_) => SMILES_WRITE.invalid_structure(message),
     };
     classified.with_source(error)
 }

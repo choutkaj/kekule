@@ -1,5 +1,5 @@
-//! Builder placement on a model draft; see [`crate::structure::placement`].
-use super::{atom_row, checked_point, ModelEditor};
+//! Builder placement on a structure draft; see [`crate::structure::placement`].
+use super::{atom_row, checked_point, StructureEditor};
 use crate::algorithms::{
     AddHydrogensOptions, AddHydrogensScope, AddedHydrogenOrigin, RetainedHydrogenReason,
 };
@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The residue a new molecule's atoms join.
 const NEW_RESIDUE: &str = "UNL";
 
-impl ModelEditor {
+impl StructureEditor {
     /// The ideal geometry of `atom` in the draft, from its element, formal
     /// charge, radical electrons, bond orders, neighbors, and implicit
     /// hydrogens; see [`placement`](crate::structure::placement).
@@ -86,7 +86,7 @@ impl ModelEditor {
     /// Makes the implicit hydrogens of each distinct atom in `atoms` explicit,
     /// bonded at the ideal length along its free directions, as
     /// [`Molecule::add_hydrogens`](crate::molecule::Molecule::add_hydrogens)
-    /// does for a molecule. Inferred counts come from the valence model on
+    /// does for a molecule. Inferred counts come from the valence structure on
     /// the draft's current graph, so a bond order or charge changed earlier in
     /// the same draft counts; no perception is needed. A fixed count becomes
     /// zero. Represented stereo naming an implicit hydrogen names the new atom.
@@ -149,7 +149,7 @@ impl ModelEditor {
         }
         self.slots
             .try_reserve_atoms(total)
-            .map_err(super::ModelEditError::from)?;
+            .map_err(super::StructureEditError::from)?;
         let mut names = NameAllocator::default();
         let mut report = Vec::with_capacity(plans.len());
         for (atom, origin, points) in plans {
@@ -269,7 +269,7 @@ impl ModelEditor {
         let (direction, replaced) = self.attachment_direction(parent, site)?;
         self.slots
             .try_reserve_atoms(1)
-            .map_err(super::ModelEditError::from)?;
+            .map_err(super::StructureEditError::from)?;
         let attached = self.attach_first(parent, parent_atom, atom, order, replaced, revision)?;
         self.place_row(attached.atom, center + direction * length);
         self.join_residue_of(parent, attached.atom, &mut NameAllocator::default())?;
@@ -461,7 +461,7 @@ impl ModelEditor {
 
         self.slots
             .try_reserve_atoms(kept.len())
-            .map_err(super::ModelEditError::from)?;
+            .map_err(super::StructureEditError::from)?;
         let first = self.attach_first(
             parent,
             parent_atom,
@@ -531,7 +531,7 @@ impl ModelEditor {
                 .collect::<Vec<_>>(),
             CANONICAL_LENGTH_UNIT,
         ))
-        .map_err(super::ModelEditError::from)?;
+        .map_err(super::StructureEditError::from)?;
         let added = self.add_molecule(fragment.molecule().clone(), &positions)?;
         let residue = self.new_residue()?;
         let names = fragment_names(fragment);

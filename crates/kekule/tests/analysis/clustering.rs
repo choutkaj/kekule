@@ -118,8 +118,8 @@ fn two_shapes() -> (Arc<Topology>, StructureSet) {
 /// The fitted RMSD between the two shapes.
 fn shape_distance(ensemble: &StructureSet, atoms: &AtomSelection) -> f64 {
     alignment::fit(
-        ensemble.get(0).unwrap().as_model_view(),
-        ensemble.get(2).unwrap().as_model_view(),
+        ensemble.get(0).unwrap().as_structure_view(),
+        ensemble.get(2).unwrap().as_structure_view(),
         atoms,
         Default::default(),
     )
@@ -593,8 +593,8 @@ fn pairwise_rmsd_fits_every_unordered_pair_once() {
     for first in 0..4 {
         for second in first + 1..4 {
             let fit = alignment::fit(
-                ensemble.get(first).unwrap().as_model_view(),
-                ensemble.get(second).unwrap().as_model_view(),
+                ensemble.get(first).unwrap().as_structure_view(),
+                ensemble.get(second).unwrap().as_structure_view(),
                 &atoms,
                 Default::default(),
             )

@@ -1,7 +1,7 @@
 //! DSSP 4-compatible protein secondary-structure assignment.
 //!
 //! [`assign`] is a read-only analysis of one
-//! [`Model`](crate::structure::Model) coordinate snapshot that returns a
+//! [`Structure`](crate::structure::Structure) coordinate snapshot that returns a
 //! [`DsspResult`]: per-residue [`DsspResidue`] values (summary
 //! [`DsspSecondaryStructure`], backbone torsions, hydrogen-bond and beta
 //! partners, helix flags), aggregate [`DsspStatistics`], and a [`DsspReport`]
@@ -18,10 +18,10 @@
 //! frames of a trajectory, or the geometries of an ensemble, are each assigned
 //! from their backbone coordinates alone, with the same results.
 //!
-//! Assignment does not parse structures, choose coordinate models or alternate
-//! locations, repair hierarchy data, or install derived state in the model.
+//! Assignment does not parse structures, choose coordinate structures or alternate
+//! locations, repair hierarchy data, or install derived state in the structure.
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
-//! model coordinates are unchanged and result values are exposed as `f64`.
+//! structure coordinates are unchanged and result values are exposed as `f64`.
 //!
 //! # Example
 //!
@@ -41,11 +41,11 @@
 //!     "ATOM      8  O   GLY A   2       6.100   1.680   0.000  1.00  0.00           O\n",
 //!     "END\n",
 //! );
-//! let model = pdb::parse_str(entry, Default::default())?
+//! let structure = pdb::parse_str(entry, Default::default())?
 //!     .interpret(Default::default())?
-//!     .into_model();
+//!     .into_structure();
 //!
-//! let result = dssp::assign(&model, DsspOptions::default())?;
+//! let result = dssp::assign(&structure, DsspOptions::default())?;
 //! let residues = result.residues().collect::<Vec<_>>();
 //! assert_eq!(residues.len(), 2);
 //! assert_eq!(residues[0].chain_break(), DsspChainBreak::NewChain);
@@ -69,24 +69,24 @@ use std::num::NonZeroUsize;
 use crate::parallel::{Executor, ScopedThreads};
 use std::sync::Arc;
 
-use crate::structure::AsModelView;
+use crate::structure::AsStructureView;
 use crate::topology::{MoleculeInstanceId, ResidueId, Topology};
 use crate::units::{Quantity, DEGREE, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE};
 
 mod kernel;
 
-/// Assign DSSP secondary structure to the protein residues in `model`.
+/// Assign DSSP secondary structure to the protein residues in `structure`.
 ///
-/// The returned value is a snapshot. Updating the model coordinates does not
+/// The returned value is a snapshot. Updating the structure coordinates does not
 /// update an existing result; callers must run assignment again explicitly.
 /// Amino-acid residues and otherwise unclassified residues with a complete
 /// backbone are eligible without source sequence labels. Each chain uses label
 /// numbering when complete, otherwise numeric author numbering when complete,
 /// otherwise its topology hierarchy order. Insertion codes break numbered ties.
 ///
-/// `model` is any model view: a [`Model`](crate::structure::Model), an
+/// `structure` is any structure view: a [`Structure`](crate::structure::Structure), an
 /// geometry, a trajectory frame, or a borrowed
-/// [`ModelView`](crate::structure::ModelView).
+/// [`StructureView`](crate::structure::StructureView).
 ///
 /// # Errors
 ///
@@ -100,10 +100,10 @@ mod kernel;
 /// - [`DsspError::LimitExceeded`] when the work exceeds a bound of
 ///   [`DsspOptions::limits`].
 pub fn assign(
-    model: &(impl AsModelView + ?Sized),
+    structure: &(impl AsStructureView + ?Sized),
     options: DsspOptions,
 ) -> Result<DsspResult, DsspError> {
-    assign_with(model, options, &ScopedThreads::new(options.threads()))
+    assign_with(structure, options, &ScopedThreads::new(options.threads()))
 }
 
 /// [`assign`], with its work items run by `executor` instead of
@@ -134,13 +134,13 @@ pub fn assign(
 ///     env!("CARGO_MANIFEST_DIR"),
 ///     "/tests/fixtures/mmcif/1AKE.cif"
 /// ))?;
-/// let model = kekule::mmcif::parse_str(&text, Default::default())?
+/// let structure = kekule::mmcif::parse_str(&text, Default::default())?
 ///     .interpret(Default::default())?
-///     .into_model();
+///     .into_structure();
 /// let options = DsspOptions::default();
 /// assert_eq!(
-///     dssp::assign_with(&model, options, &Reversed),
-///     dssp::assign(&model, options)
+///     dssp::assign_with(&structure, options, &Reversed),
+///     dssp::assign(&structure, options)
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -154,13 +154,13 @@ pub fn assign(
 /// When a work item panics, which [`Executor::run`] passes on, or when
 /// `executor` skips or repeats a work item.
 pub fn assign_with(
-    model: &(impl AsModelView + ?Sized),
+    structure: &(impl AsStructureView + ?Sized),
     options: DsspOptions,
     executor: &dyn Executor,
 ) -> Result<DsspResult, DsspError> {
-    let model = model.as_model_view();
-    let prepared = kernel::Prepared::new(model.topology(), executor);
-    kernel::assign(&prepared, model, options, executor)
+    let structure = structure.as_structure_view();
+    let prepared = kernel::Prepared::new(structure.topology(), executor);
+    kernel::assign(&prepared, structure, options, executor)
 }
 
 /// DSSP assignment prepared once for every structure of one topology
@@ -172,7 +172,7 @@ pub fn assign_with(
 /// [`Self::assign`] then reads only backbone coordinates, and returns what
 /// [`assign`] returns for the same structure and options, errors included.
 ///
-/// The plan binds its topology's layout: it assigns any model, ensemble
+/// The plan binds its topology's layout: it assigns any structure, ensemble
 /// geometry, or trajectory frame whose topology
 /// [shares that layout](Topology::shares_layout).
 ///
@@ -183,11 +183,11 @@ pub fn assign_with(
 ///     env!("CARGO_MANIFEST_DIR"),
 ///     "/tests/fixtures/mmcif/1AKE.cif"
 /// ))?;
-/// let model = kekule::mmcif::parse_str(&text, Default::default())?
+/// let structure = kekule::mmcif::parse_str(&text, Default::default())?
 ///     .interpret(Default::default())?
-///     .into_model();
-/// let plan = DsspPlan::new(model.shared_topology(), DsspOptions::default());
-/// assert_eq!(plan.assign(&model), dssp::assign(&model, DsspOptions::default()));
+///     .into_structure();
+/// let plan = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
+/// assert_eq!(plan.assign(&structure), dssp::assign(&structure, DsspOptions::default()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
@@ -251,7 +251,10 @@ impl DsspPlan {
     ///
     /// [`DsspError::TopologyMismatch`] when `structure`'s topology does not
     /// share the plan's layout, otherwise the errors of [`assign`].
-    pub fn assign(&self, structure: &(impl AsModelView + ?Sized)) -> Result<DsspResult, DsspError> {
+    pub fn assign(
+        &self,
+        structure: &(impl AsStructureView + ?Sized),
+    ) -> Result<DsspResult, DsspError> {
         self.assign_with(structure, &ScopedThreads::new(self.options.threads()))
     }
 
@@ -267,10 +270,10 @@ impl DsspPlan {
     /// As [`assign_with`].
     pub fn assign_with(
         &self,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         executor: &dyn Executor,
     ) -> Result<DsspResult, DsspError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         if !structure.topology().shares_layout(&self.topology) {
             return Err(DsspError::TopologyMismatch);
         }
@@ -538,7 +541,7 @@ pub struct DsspResidue {
 }
 
 impl DsspResidue {
-    /// The analyzed hierarchy residue of the input model.
+    /// The analyzed hierarchy residue of the input structure.
     pub const fn key(&self) -> ResidueId {
         self.key
     }
@@ -758,7 +761,7 @@ pub struct DsspSkippedResidue {
 }
 
 impl DsspSkippedResidue {
-    /// The skipped hierarchy residue of the input model.
+    /// The skipped hierarchy residue of the input structure.
     pub const fn key(&self) -> ResidueId {
         self.key
     }
@@ -1018,7 +1021,7 @@ pub enum DsspError {
     },
     /// No residue has a complete N/CA/C/O backbone.
     NoAnalyzableProteinResidues,
-    /// The model exceeds a bound of [`DsspLimits`].
+    /// The structure exceeds a bound of [`DsspLimits`].
     LimitExceeded(LimitExceeded),
     /// The structure does not share the layout of the topology a
     /// [`DsspPlan`] was prepared for.
@@ -1082,7 +1085,7 @@ impl DsspResult {
     }
 
     /// The values of one analyzed residue; `None` when `key` was not analyzed
-    /// (non-peptide, skipped, or not in the model).
+    /// (non-peptide, skipped, or not in the structure).
     pub fn get(&self, key: ResidueId) -> Option<&DsspResidue> {
         self.lookup
             .binary_search_by_key(&key, |&(key, _)| key)

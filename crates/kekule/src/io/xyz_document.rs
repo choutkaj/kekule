@@ -230,7 +230,7 @@ impl XyzDocument {
         &self.frames
     }
 
-    /// Interprets one frame as a [`Model`](crate::structure::Model) with
+    /// Interprets one frame as a [`Structure`](crate::structure::Structure) with
     /// connectivity inferred from interatomic distances.
     ///
     /// # Errors

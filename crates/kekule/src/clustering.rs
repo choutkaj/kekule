@@ -112,8 +112,8 @@ use crate::alignment::{
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
 use crate::structure::{
-    Distribution, GeometryError, Members, ModelView, Partition, Requirement, StructureSet,
-    StructureSetError, StructureSetReadError,
+    Distribution, GeometryError, Members, Partition, Requirement, StructureSet, StructureSetError,
+    StructureSetReadError, StructureView,
 };
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use run::{FirstFailure, Stop, Tracker};
@@ -168,7 +168,7 @@ impl<'a> ClusteringOptions<'a> {
 /// The structures a clustering groups, in member order: the members of a
 /// structure set's distribution, or every sample of a set without one.
 struct Clustered<'a> {
-    views: Vec<ModelView<'a>>,
+    views: Vec<StructureView<'a>>,
     /// The sample index of each member, which errors name.
     samples: &'a Members,
     /// Each member's relative weight.
@@ -185,12 +185,15 @@ impl<'a> Clustered<'a> {
     fn of_set(set: &'a StructureSet) -> Self {
         let mut clustered = Self::of_members(set.len(), set.distribution());
         clustered.views = match set.distribution() {
-            None => set.iter().map(|sample| sample.as_model_view()).collect(),
+            None => set
+                .iter()
+                .map(|sample| sample.as_structure_view())
+                .collect(),
             Some(distribution) => distribution
                 .weighted_members()
                 .map(|(sample, _)| {
                     let view = set.get(sample).expect("members are samples of the set");
-                    view.as_model_view()
+                    view.as_structure_view()
                 })
                 .collect(),
         };

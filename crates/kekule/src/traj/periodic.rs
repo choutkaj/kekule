@@ -100,7 +100,7 @@ use std::fmt;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::{
-    AsModelView, DenseArrayError, Place, Positions, StructureSet, StructureSetError,
+    AsStructureView, DenseArrayError, Place, Positions, StructureSet, StructureSetError,
 };
 use crate::topology::{AtomSelection, InstanceBondId, Topology, TopologyAtomIndex};
 use crate::traj::FrameView;
@@ -316,7 +316,7 @@ pub fn image_molecules(
 /// deterministically. This is a per-frame operation, independent of frame
 /// order and unlike [`unwrap_trajectory`] free of temporal state. To image onto
 /// a frame of the same set, retain a copy of it first, for example with
-/// `trajectory.get(0).unwrap().to_model()`.
+/// `trajectory.get(0).unwrap().to_structure()`.
 ///
 /// # Errors
 ///
@@ -329,14 +329,14 @@ pub fn image_molecules(
 /// the set is unchanged.
 pub fn image_onto(
     trajectory: &mut StructureSet,
-    reference: &(impl AsModelView + ?Sized),
+    reference: &(impl AsStructureView + ?Sized),
 ) -> Result<(), PeriodicError> {
     let imager = MoleculeImager::new(trajectory.shared_topology());
-    let reference = reference.as_model_view();
+    let reference = reference.as_structure_view();
     let positions = trajectory
         .iter()
         .enumerate()
-        .map(|(index, item)| imager.reference_positions(index, item.as_model_view(), reference))
+        .map(|(index, item)| imager.reference_positions(index, item.as_structure_view(), reference))
         .collect::<Result<Vec<_>, _>>()?;
     publish(trajectory, positions)
 }
@@ -399,7 +399,7 @@ fn whole_positions(
         .iter()
         .enumerate()
         .map(|(index, item)| {
-            imager.frame_positions(index, item.as_model_view(), anchors.as_deref())
+            imager.frame_positions(index, item.as_structure_view(), anchors.as_deref())
         })
         .collect()
 }

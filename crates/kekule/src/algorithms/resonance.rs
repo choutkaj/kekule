@@ -141,7 +141,7 @@ pub enum ResonancePerceptionError {
     LimitExceeded(LimitExceeded),
     /// The caller's [`Cancellation`] stopped the path search. Only
     /// cancellable perception, such as
-    /// [`Model::perceive_cancellable`](crate::structure::Model::perceive_cancellable),
+    /// [`Structure::perceive_cancellable`](crate::structure::Structure::perceive_cancellable),
     /// reports it, as [`PerceptionError::Cancelled`](crate::perception::PerceptionError::Cancelled);
     /// [`perceive_resonance`] never does.
     Cancelled(Cancelled),

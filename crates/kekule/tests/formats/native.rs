@@ -16,7 +16,7 @@ use kekule::native::{
 use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Geometry, Members, Model, Order, Partition, Place, Positions, State,
+    Distribution, Forces, Geometry, Members, Order, Partition, Place, Positions, State, Structure,
     StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{
@@ -44,7 +44,7 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         NativeObject::Topology(value) => native::write(value, NativeWriteOptions::default()),
-        NativeObject::Model(value) => native::write(value, NativeWriteOptions::default()),
+        NativeObject::Structure(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::StructureSet(value) => native::write(value, NativeWriteOptions::default()),
         NativeObject::StructureSetDescription(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
@@ -115,7 +115,7 @@ fn scalar_bits(values: Option<&[Option<f64>]>) -> Option<Vec<Option<u64>>> {
     values.map(|values| values.iter().map(|value| value.map(f64::to_bits)).collect())
 }
 
-fn assert_same_model(decoded: &Model, source: &Model) {
+fn assert_same_structure(decoded: &Structure, source: &Structure) {
     assert_same_topology(decoded.topology(), source.topology());
     assert_eq!(
         bits(decoded.positions().values().value()),
@@ -351,15 +351,15 @@ fn macromolecular_models_round_trip_bitwise() {
             .unwrap()
             .interpret(Default::default())
             .unwrap()
-            .into_model();
+            .into_structure();
         model.perceive().unwrap();
         model
             .properties_mut()
             .owner_mut()
             .insert(key("source"), PropertyValue::String(name.into()))
             .unwrap();
-        let decoded = round_trip(&model).into_model().unwrap();
-        assert_same_model(&decoded, &model);
+        let decoded = round_trip(&model).into_structure().unwrap();
+        assert_same_structure(&decoded, &model);
     }
 }
 
@@ -387,7 +387,7 @@ fn interpreted_models_keep_their_reports() {
 
         let decoded = round_trip(&interpretation).into_interpretation().unwrap();
         assert_eq!(decoded.report(), report, "{name}");
-        assert_same_model(decoded.model(), interpretation.model());
+        assert_same_structure(decoded.structure(), interpretation.structure());
         // The mmCIF and PDB writers state the same records, metal
         // coordination and entities included, from the decoded report.
         let written = |source| {
@@ -418,9 +418,9 @@ fn interpreted_models_keep_their_reports() {
         // A reader that wants the model alone drops the report.
         let model = native::read(apart.as_slice(), NativeReadOptions::default())
             .unwrap()
-            .into_model()
+            .into_structure()
             .unwrap();
-        assert_same_model(&model, interpretation.model());
+        assert_same_structure(&model, interpretation.structure());
     }
     // The canonical sequences show residues the models lack.
     assert!(unobserved > 0);
@@ -481,7 +481,7 @@ fn reports_are_stored_only_when_given() {
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    let plain = native::write(interpretation.model(), NativeWriteOptions::default()).unwrap();
+    let plain = native::write(interpretation.structure(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
     // Both are format version 5: a model with its report is kind 7.
     assert_eq!(NATIVE_FORMAT_VERSION, 5);
@@ -499,7 +499,7 @@ fn reports_are_stored_only_when_given() {
         error.detail(),
         Some(&FormatErrorDetail::NativeKind {
             expected: NativeKind::StructureInterpretation,
-            found: NativeKind::Model,
+            found: NativeKind::Structure,
         })
     );
     assert_eq!(
@@ -1125,7 +1125,7 @@ fn models_keep_cells_occupancies_b_factors_and_structure_properties() {
     let points = (0..7)
         .map(|index| Point3::new(f64::from(index), -f64::from(index), 0.125))
         .collect::<Vec<_>>();
-    let mut model = Model::new(
+    let mut model = Structure::new(
         topology,
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
@@ -1157,8 +1157,8 @@ fn models_keep_cells_occupancies_b_factors_and_structure_properties() {
             Some(PropertyValue::Int(1)),
         )
         .unwrap();
-    let decoded = round_trip(&model).into_model().unwrap();
-    assert_same_model(&decoded, &model);
+    let decoded = round_trip(&model).into_structure().unwrap();
+    assert_same_structure(&decoded, &model);
 }
 
 #[test]
@@ -1204,11 +1204,11 @@ fn objects_follow_each_other_in_one_stream() {
     let second = native::read(&mut reader, NativeReadOptions::default()).unwrap();
     assert!(reader.is_empty());
     assert_eq!(first.kind(), NativeKind::Molecule);
-    let error = second.into_model().unwrap_err();
+    let error = second.into_structure().unwrap_err();
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::NativeKind {
-            expected: NativeKind::Model,
+            expected: NativeKind::Structure,
             found: NativeKind::Topology,
         })
     );
@@ -1351,7 +1351,7 @@ fn stored_ids_resolve_against_the_decoded_owner() {
 
 /// A solvated system of about one million atoms: one protein-sized molecule
 /// and water, every atom placed in the hierarchy.
-fn million_atom_model() -> Model {
+fn million_atom_model() -> Structure {
     let water = smiles::to_molecules("[H]O[H]").unwrap().remove(0);
     let chain_smiles = "NCC(=O)".repeat(2000) + "O";
     let peptide = smiles::to_molecules(&chain_smiles).unwrap().remove(0);
@@ -1397,7 +1397,7 @@ fn million_atom_model() -> Model {
             Point3::new(index * 0.001, (index * 0.37).sin(), (index * 0.11).cos())
         })
         .collect::<Vec<_>>();
-    Model::new(
+    Structure::new(
         topology,
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
@@ -1414,7 +1414,7 @@ fn million_atom_model_round_trips_within_a_second() {
     let encoded = start.elapsed();
     let decoded = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
-        .into_model()
+        .into_structure()
         .unwrap();
     let total = start.elapsed();
     eprintln!(
@@ -1425,7 +1425,7 @@ fn million_atom_model_round_trips_within_a_second() {
         total - encoded,
         total
     );
-    assert_same_model(&decoded, &model);
+    assert_same_structure(&decoded, &model);
     if !cfg!(debug_assertions) {
         assert!(
             total < std::time::Duration::from_secs(1),

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled, FormatError};
 use crate::math::{Matrix3, Vector3};
-use crate::structure::{Model, ModelEditError, ModelEditor, ModelError};
+use crate::structure::{Structure, StructureEditError, StructureEditor, StructureError};
 use crate::topology::{AtomSelection, ChainId, SelectionError, Topology};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
@@ -67,7 +67,7 @@ fn orthonormalized(mut rotation: Matrix3) -> Matrix3 {
 /// placed by an operation, such as a virus capsid from 60 point-symmetry
 /// operators or a dimer from a crystal's two-fold axis.
 ///
-/// [`Self::to_model`] builds it from the interpreted model.
+/// [`Self::to_structure`] builds it from the interpreted model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembly {
     pub(crate) id: String,
@@ -108,7 +108,7 @@ impl Assembly {
         &self.generators
     }
 
-    /// The number of atoms [`Self::to_model`] places from `topology`: the
+    /// The number of atoms [`Self::to_structure`] places from `topology`: the
     /// atoms of each generator's chains, once per operation.
     pub fn atom_count(&self, topology: &Topology) -> usize {
         let mut per_chain = BTreeMap::<&str, usize>::new();
@@ -159,17 +159,17 @@ impl Assembly {
     /// the same identifiers, [`AssemblyError::Cancelled`] when `cancellation`
     /// stops it, and the model errors of taking the chains and publishing the
     /// copies.
-    pub fn to_model(
+    pub fn to_structure(
         &self,
-        model: &Model,
+        model: &Structure,
         cancellation: Option<&Cancellation>,
-    ) -> Result<Model, AssemblyError> {
+    ) -> Result<Structure, AssemblyError> {
         let cancelled = |source| AssemblyError::Cancelled {
             assembly: self.id.clone(),
             source,
         };
         let topology = model.shared_topology();
-        let mut editor = ModelEditor::new();
+        let mut editor = StructureEditor::new();
         let mut copies = HashSet::<(ChainId, String)>::new();
         let mut copied = false;
         for generator in &self.generators {
@@ -201,7 +201,7 @@ impl Assembly {
             } else {
                 model
                     .subset(&selection)
-                    .map_err(|source| AssemblyError::Model {
+                    .map_err(|source| AssemblyError::Structure {
                         assembly: self.id.clone(),
                         source: Box::new(source),
                     })?
@@ -392,18 +392,18 @@ pub enum AssemblyError {
         source: Box<SelectionError>,
     },
     /// The model's chains could not be taken apart from the rest.
-    Model {
+    Structure {
         /// The assembly.
         assembly: String,
         /// The subset failure.
-        source: Box<ModelError>,
+        source: Box<StructureError>,
     },
     /// The copies could not be appended or published.
     Edit {
         /// The assembly.
         assembly: String,
         /// The edit failure.
-        source: Box<ModelEditError>,
+        source: Box<StructureEditError>,
     },
 }
 
@@ -420,7 +420,7 @@ impl fmt::Display for AssemblyError {
             ),
             Self::Cancelled { assembly, .. }
             | Self::Selection { assembly, .. }
-            | Self::Model { assembly, .. }
+            | Self::Structure { assembly, .. }
             | Self::Edit { assembly, .. } => {
                 write!(formatter, "Cannot build assembly {assembly:?}.")
             }
@@ -434,7 +434,7 @@ impl std::error::Error for AssemblyError {
             Self::NoAtoms { .. } | Self::RepeatedCopy { .. } => None,
             Self::Cancelled { source, .. } => Some(source),
             Self::Selection { source, .. } => Some(source.as_ref()),
-            Self::Model { source, .. } => Some(source.as_ref()),
+            Self::Structure { source, .. } => Some(source.as_ref()),
             Self::Edit { source, .. } => Some(source.as_ref()),
         }
     }

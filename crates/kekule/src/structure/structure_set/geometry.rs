@@ -7,14 +7,14 @@ use crate::properties::{GeometryProperties, GeometryPropertiesMut};
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::Quantity;
 
-use crate::structure::model::ModelView;
+use crate::structure::owner::StructureView;
 use crate::structure::scalars::{canonical_b_factor, canonical_b_factors, AtomScalars};
 use crate::structure::state::{
     check_property_rows, is_bound, site_readers, structure_readers, transform_cell,
     transform_positions, validate_binding,
 };
 use crate::structure::{
-    DenseArrayError, Forces, GeometryError, Model, Positions, StructureKind, Velocities,
+    DenseArrayError, Forces, GeometryError, Positions, Structure, StructureKind, Velocities,
 };
 
 /// The structure state of a geometry, shared between clones and copied on
@@ -54,14 +54,14 @@ impl GeometryState {
         }
     }
 
-    /// A model's structure state; the model's topology is dropped.
-    pub(crate) fn from_model(model: Model) -> Self {
+    /// A structure's structure state; the structure's topology is dropped.
+    pub(crate) fn from_structure(structure: Structure) -> Self {
         Self {
-            positions: model.positions,
-            cell: model.cell,
-            occupancies: model.occupancies,
-            b_factors: model.b_factors,
-            properties: model.properties,
+            positions: structure.positions,
+            cell: structure.cell,
+            occupancies: structure.occupancies,
+            b_factors: structure.b_factors,
+            properties: structure.properties,
             velocities: None,
             forces: None,
         }
@@ -151,12 +151,12 @@ impl GeometryState {
     }
 
     /// Borrows the structure bound to `topology`.
-    pub(crate) fn model_view<'a>(
+    pub(crate) fn structure_view<'a>(
         &'a self,
         topology: &'a Arc<Topology>,
         kind: StructureKind<'a>,
-    ) -> ModelView<'a> {
-        ModelView::bound(
+    ) -> StructureView<'a> {
+        StructureView::bound(
             topology,
             &self.positions,
             self.cell.as_ref(),
@@ -209,17 +209,17 @@ impl Geometry {
     /// set, such as in a [`FrameView`](crate::traj::FrameView) of a topology
     /// with bonds.
     pub fn new(positions: Positions) -> Self {
-        Self::from_structure(Arc::new(GeometryState::new(positions)))
+        Self::from_state(Arc::new(GeometryState::new(positions)))
     }
 
-    /// A geometry holding a model's positions, cell, occupancies, B-factors,
-    /// and structure properties, moving them without copying; the model's
+    /// A geometry holding a structure's positions, cell, occupancies, B-factors,
+    /// and structure properties, moving them without copying; the structure's
     /// topology is dropped.
-    pub fn from_model(model: Model) -> Self {
-        Self::from_structure(Arc::new(GeometryState::from_model(model)))
+    pub fn from_structure(structure: Structure) -> Self {
+        Self::from_state(Arc::new(GeometryState::from_structure(structure)))
     }
 
-    pub(crate) const fn from_structure(structure: Arc<GeometryState>) -> Self {
+    pub(crate) const fn from_state(structure: Arc<GeometryState>) -> Self {
         Self { structure }
     }
 
@@ -272,7 +272,7 @@ impl Geometry {
         atoms: &[usize],
         bonds: &[usize],
     ) -> Result<Self, GeometryError> {
-        Ok(Self::from_structure(Arc::new(
+        Ok(Self::from_state(Arc::new(
             self.structure.project(atoms, bonds)?,
         )))
     }

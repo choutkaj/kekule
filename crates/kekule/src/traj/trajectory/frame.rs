@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::structure::{
-    check_bound, AsModelView, Geometry, GeometryError, GeometryView, Model, ModelView,
-    ModelViewSealed, Place, SetContext, StructureKind,
+    check_bound, AsStructureView, Geometry, GeometryError, GeometryView, Place, SetContext,
+    Structure, StructureKind, StructureView, StructureViewSealed,
 };
 use crate::topology::Topology;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
@@ -19,7 +19,7 @@ use super::{TrajectoryField, TrajectoryIoError};
 /// with [`Self::from_geometry`], and any bound geometry with [`Self::new`]
 /// ([`Geometry::bind`] binds one made outside a set).
 /// Frame state reads through `Deref` (`frame.positions()`,
-/// `frame.velocities()`, ...), and [`AsModelView`] lends it to kernels as a
+/// `frame.velocities()`, ...), and [`AsStructureView`] lends it to kernels as a
 /// geometry at a time place.
 ///
 /// ```
@@ -171,16 +171,16 @@ impl<'a> FrameView<'a> {
 
     /// Borrows the frame as the common kernel input, with the view's full
     /// lifetime: a geometry at its time place, without a membership.
-    pub fn as_model_view(self) -> ModelView<'a> {
-        self.geometry.structure().model_view(
+    pub fn as_structure_view(self) -> StructureView<'a> {
+        self.geometry.structure().structure_view(
             self.topology,
             StructureKind::InSet(SetContext::of_frame(self.geometry, self.place())),
         )
     }
 
-    /// Copies the frame out as an owned model on the shared topology.
-    pub fn to_model(self) -> Model {
-        self.as_model_view().to_model()
+    /// Copies the frame out as an owned structure on the shared topology.
+    pub fn to_structure(self) -> Structure {
+        self.as_structure_view().to_structure()
     }
 }
 
@@ -198,10 +198,10 @@ pub(super) fn canonical_time(
     .transpose()
 }
 
-impl ModelViewSealed for FrameView<'_> {}
+impl StructureViewSealed for FrameView<'_> {}
 
-impl AsModelView for FrameView<'_> {
-    fn as_model_view(&self) -> ModelView<'_> {
-        FrameView::as_model_view(*self)
+impl AsStructureView for FrameView<'_> {
+    fn as_structure_view(&self) -> StructureView<'_> {
+        FrameView::as_structure_view(*self)
     }
 }

@@ -22,7 +22,7 @@ use kekule::statistics::{
     ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Geometry, Members, Model, Order, Partition, Positions, Requirement, State,
+    Distribution, Geometry, Members, Order, Partition, Positions, Requirement, State, Structure,
     StructureSet, StructureSetError, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
@@ -300,7 +300,11 @@ type AlignmentResults = (
 
 /// Measures and then superposes a set with one set of atoms, weights, and
 /// options, against `reference` or else its geometry `index`.
-fn alignments(set: &mut StructureSet, reference: Option<&Model>, index: usize) -> AlignmentResults {
+fn alignments(
+    set: &mut StructureSet,
+    reference: Option<&Structure>,
+    index: usize,
+) -> AlignmentResults {
     let topology = set.shared_topology();
     let fit = selection(&topology, &[0, 1, 2, 3]);
     let measured = selection(&topology, &[2, 3, 4, 5]);
@@ -313,10 +317,10 @@ fn alignments(set: &mut StructureSet, reference: Option<&Model>, index: usize) -
         result.map(|values| bits(values.value()))
     };
     match reference {
-        Some(model) => (
-            values(set.rmsd(model, &fit, options)),
-            values(set.aligned_rmsd(model, &fit, &measured, aligned)),
-            set.superpose(model, &fit, options),
+        Some(structure) => (
+            values(set.rmsd(structure, &fit, options)),
+            values(set.aligned_rmsd(structure, &fit, &measured, aligned)),
+            set.superpose(structure, &fit, options),
         ),
         None => (
             values(set.rmsd(index, &fit, options)),
@@ -349,9 +353,9 @@ fn structure_set_alignments_keep_the_retired_values() {
         0x4f8e715505afaaa7,
         0x8d130dc2f8772296,
     ]);
-    let model = Model::new(topology(), positions(points(11))).unwrap();
+    let structure = Structure::new(topology(), positions(points(11))).unwrap();
     // A geometry of the set, an independent view, and a reference out of range.
-    for (reference, index) in [(None, 3), (Some(&model), 0), (None, 9)] {
+    for (reference, index) in [(None, 3), (Some(&structure), 0), (None, 9)] {
         // Velocities rotate with the frames, and the order is kept.
         for fixture in [ensemble(true), trajectory(), series()] {
             let mut set = fixture.clone();
@@ -633,8 +637,8 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
     assert_eq!(matrix.member_count(), 5);
     // Entry (0, 1) is between the first two members, geometries 2 and 3.
     let fit = kekule::alignment::fit(
-        set.get(2).unwrap().as_model_view(),
-        set.get(3).unwrap().as_model_view(),
+        set.get(2).unwrap().as_structure_view(),
+        set.get(3).unwrap().as_structure_view(),
         &atoms,
         Default::default(),
     )

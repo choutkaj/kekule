@@ -151,7 +151,7 @@ fn naive_leaders(
     radius: Quantity<f64>,
 ) -> Partition {
     let radius = radius.value_in(CANONICAL_LENGTH_UNIT).unwrap();
-    let view = |member: usize| ensemble.get(member).unwrap().as_model_view();
+    let view = |member: usize| ensemble.get(member).unwrap().as_structure_view();
     let mut assignments = vec![0; ensemble.len()];
     let mut representatives: Vec<usize> = Vec::new();
     for member in ensemble.distribution().unwrap().ranked_by_weight() {
@@ -496,24 +496,24 @@ fn an_executor_that_skips_work_items_panics() {
 /// 1,000 geometries of the first 352 alpha carbons of RCSB 1AKE, each atom
 /// displaced by up to a geometry's own amplitude of 0.2 to 1.5 angstroms.
 fn adenylate_kinase_samples() -> (StructureSet, AtomSelection) {
-    let model = kekule::mmcif::parse_str(
+    let structure = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
     )
     .unwrap()
     .interpret(Default::default())
     .unwrap()
-    .into_model();
+    .into_structure();
     let alpha_carbons =
-        AtomSelection::for_label_atom_names(model.shared_topology(), ["CA"]).unwrap();
+        AtomSelection::for_label_atom_names(structure.shared_topology(), ["CA"]).unwrap();
     let first = alpha_carbons.atom_ids().take(352).collect::<Vec<_>>();
-    let selected = AtomSelection::from_atoms(model.shared_topology(), first).unwrap();
-    let model = model.subset(&selected).unwrap();
-    let topology = model.shared_topology();
+    let selected = AtomSelection::from_atoms(structure.shared_topology(), first).unwrap();
+    let structure = structure.subset(&selected).unwrap();
+    let topology = structure.shared_topology();
     let atoms = AtomSelection::all(Arc::clone(&topology));
     assert_eq!(atoms.len(), 352);
-    let points = model.positions().values().value().to_vec();
-    let unit = model.positions().values().unit();
+    let points = structure.positions().values().value().to_vec();
+    let unit = structure.positions().values().unit();
     let angstrom = Quantity::new(1.0, ANGSTROM).value_in(unit).unwrap();
     let mut random = Lcg(11);
     let mut geometries = Vec::new();

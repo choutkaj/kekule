@@ -2,7 +2,7 @@ use std::{fmt, sync::Arc};
 
 use crate::algorithms::{bond_reference_atoms, CipAssignmentOptions, CipRankingError};
 use crate::diagnostics::Capitalized;
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::Quantity;
 
@@ -74,17 +74,17 @@ impl std::error::Error for BondDihedralError {
 /// the selected outer atoms coincide (a three-atom closed walk). Coordinate
 /// degeneracy is determined separately by [`Self::measure`].
 ///
-/// Prepare once, then measure models, geometries, or trajectory frames
+/// Prepare once, then measure structures, geometries, or trajectory frames
 /// sharing this topology:
 /// ```
-/// use kekule::structure::{measure::BondDihedral, Model};
-/// # fn example(model: &Model) -> Result<(), Box<dyn std::error::Error>> {
-/// let topology = model.shared_topology();
+/// use kekule::structure::{measure::BondDihedral, Structure};
+/// # fn example(structure: &Structure) -> Result<(), Box<dyn std::error::Error>> {
+/// let topology = structure.shared_topology();
 /// let definitions = topology.bond_ids().iter()
 ///     .map(|&bond| BondDihedral::new(topology.clone(), bond, Default::default()))
 ///     .collect::<Result<Vec<_>, _>>()?;
 /// for definition in &definitions {
-///     let angle = definition.measure(model.as_model_view())?;
+///     let angle = definition.measure(structure.as_structure_view())?;
 ///     // `angle` is None when this bond has no defined dihedral in this frame.
 /// }
 /// # Ok(())
@@ -135,7 +135,10 @@ impl BondDihedral {
     /// differences, or collinear defining triples. Invalid topology and numerical
     /// overflow remain errors. Periodic cells are ignored; signed angles retain
     /// the ordinary -pi/pi branch cut. No angular unwrapping is applied.
-    pub fn measure(&self, view: ModelView<'_>) -> Result<Option<Quantity<f64>>, BondDihedralError> {
+    pub fn measure(
+        &self,
+        view: StructureView<'_>,
+    ) -> Result<Option<Quantity<f64>>, BondDihedralError> {
         if !self.topology.shares_layout(view.topology()) {
             return Err(BondDihedralError::TopologyMismatch);
         }
@@ -154,7 +157,7 @@ impl BondDihedral {
 /// See [`BondDihedral`] for reference selection and the meaning of `None`.
 /// Reuse a prepared definition to avoid reranking on every trajectory frame.
 pub fn bond_dihedral(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     bond: InstanceBondId,
 ) -> Result<Option<Quantity<f64>>, BondDihedralError> {
     BondDihedral::new(
@@ -168,7 +171,7 @@ pub fn bond_dihedral(
 /// Lazily measures every bond in topology dense order, retaining bond identities
 /// and individual errors. Bonds without a defined dihedral are not filtered out.
 pub fn bond_dihedrals(
-    view: ModelView<'_>,
+    view: StructureView<'_>,
 ) -> impl ExactSizeIterator<
     Item = (
         InstanceBondId,

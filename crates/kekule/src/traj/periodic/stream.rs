@@ -2,7 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::structure::{AsModelView, ModelView, Positions, StructureSetError};
+use crate::structure::{AsStructureView, Positions, StructureSetError, StructureView};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
 use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
@@ -54,7 +54,7 @@ impl MoleculeImager {
         frame_index: usize,
         frame: &mut FrameBuffer,
     ) -> Result<(), PeriodicError> {
-        let positions = self.frame_positions(frame_index, frame.as_model_view(), None)?;
+        let positions = self.frame_positions(frame_index, frame.as_structure_view(), None)?;
         publish_buffer(frame, &positions)
     }
 
@@ -73,7 +73,8 @@ impl MoleculeImager {
         anchors: &AtomSelection,
     ) -> Result<(), PeriodicError> {
         let anchors = self.anchor_groups(anchors)?;
-        let positions = self.frame_positions(frame_index, frame.as_model_view(), Some(&anchors))?;
+        let positions =
+            self.frame_positions(frame_index, frame.as_structure_view(), Some(&anchors))?;
         publish_buffer(frame, &positions)
     }
 
@@ -125,12 +126,12 @@ impl MoleculeImager {
         &self,
         frame_index: usize,
         frame: &mut FrameBuffer,
-        reference: &(impl AsModelView + ?Sized),
+        reference: &(impl AsStructureView + ?Sized),
     ) -> Result<(), PeriodicError> {
         let positions = self.reference_positions(
             frame_index,
-            frame.as_model_view(),
-            reference.as_model_view(),
+            frame.as_structure_view(),
+            reference.as_structure_view(),
         )?;
         publish_buffer(frame, &positions)
     }
@@ -138,8 +139,8 @@ impl MoleculeImager {
     pub(crate) fn reference_positions(
         &self,
         frame_index: usize,
-        source: ModelView<'_>,
-        reference: ModelView<'_>,
+        source: StructureView<'_>,
+        reference: StructureView<'_>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(reference.topology()) {
             return Err(PeriodicError::ReferenceTopologyMismatch);
@@ -176,7 +177,7 @@ impl MoleculeImager {
     pub(crate) fn frame_positions(
         &self,
         frame_index: usize,
-        source: ModelView<'_>,
+        source: StructureView<'_>,
         anchors: Option<&[bool]>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(source.topology()) {

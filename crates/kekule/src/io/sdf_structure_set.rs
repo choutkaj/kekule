@@ -200,14 +200,14 @@ pub(crate) fn sdf_structure_set<'a>(
     let topology = records
         .first()
         .ok_or_else(|| set_error(StructureSetError::EmptySource))?
-        .model()
+        .structure()
         .shared_topology();
     let mut geometries = Vec::with_capacity(records.len());
     let mut weights = Vec::with_capacity(records.len());
     let mut fields = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
         let number = index + 1;
-        if !record.model().topology().same_layout(&topology) {
+        if !record.structure().topology().same_layout(&topology) {
             return Err(set_error(StructureSetError::TopologyMismatch).in_record(number));
         }
         let read = RecordFields::read(record, number)?;
@@ -220,7 +220,7 @@ pub(crate) fn sdf_structure_set<'a>(
                 "holds an invalid weight.",
             ));
         }
-        geometries.push(Geometry::new(record.model().positions().clone()));
+        geometries.push(Geometry::new(record.structure().positions().clone()));
         weights.push(weight);
         fields.push(read);
     }

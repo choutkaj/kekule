@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::math::Point3;
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{Chain, ChainId, Hierarchy, Residue, ResidueClass, ResidueId, Topology};
 use crate::units::ANGSTROM;
 
@@ -22,7 +22,7 @@ const DSSP_COUPLING_KCAL_ANGSTROM_PER_MOL: f64 = -27.888_f32 as f64;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 // DSSP 4.6.1 evaluates points and angular geometry in float. Keep that
-// compatibility boundary local; model coordinates and public results are f64.
+// compatibility boundary local; structure coordinates and public results are f64.
 struct Vec3 {
     x: f32,
     y: f32,
@@ -194,22 +194,22 @@ struct BetaCounts {
     ladders: usize,
 }
 
-/// Assigns `model`, whose topology `prepared` was prepared from.
+/// Assigns `structure`, whose topology `prepared` was prepared from.
 pub(super) fn assign(
     prepared: &Prepared,
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     options: DsspOptions,
     executor: &dyn Executor,
 ) -> Result<DsspResult, DsspError> {
     let (mut residues, mut report, chain_segments) =
-        extract_backbones(prepared, model, options.limits, executor)?;
+        extract_backbones(prepared, structure, options.limits, executor)?;
     if residues.is_empty() {
         return Err(DsspError::NoAnalyzableProteinResidues);
     }
 
     let candidates = analyze_backbone(&mut residues, options.limits.max_candidate_pairs, executor)?;
     report.candidate_hydrogen_bond_pairs = candidates.len();
-    let hierarchy = model.topology().hierarchy();
+    let hierarchy = structure.topology().hierarchy();
     let sheets = calculate_beta_sheets(
         hierarchy,
         &residues,
@@ -532,14 +532,14 @@ fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedRes
     let hierarchy = entry.hierarchy;
     let residue = hierarchy
         .residue(entry.residue)
-        .expect("chain residues come from the model hierarchy");
+        .expect("chain residues come from the structure hierarchy");
     let mut backbone = [None; 4];
     let mut any_backbone_atom = false;
     let mut repeated = None;
     for &site_id in residue.atom_sites() {
         let site = hierarchy
             .atom_site(site_id)
-            .expect("residue atom sites come from the model hierarchy");
+            .expect("residue atom sites come from the structure hierarchy");
         let atom_name = site
             .metadata()
             .label_atom_id
@@ -583,15 +583,18 @@ struct ResidueBackbone<'p> {
 }
 
 /// Reads a prepared residue's backbone coordinates.
-fn read_backbone<'p>(model: ModelView<'_>, prepared: &'p PreparedResidue) -> ResidueBackbone<'p> {
-    let positions = model.positions();
+fn read_backbone<'p>(
+    structure: StructureView<'_>,
+    prepared: &'p PreparedResidue,
+) -> ResidueBackbone<'p> {
+    let positions = structure.positions();
     let atoms = prepared.atoms.map(|atoms| {
         atoms.map(|atom| {
             atom.map(|atom| {
                 Vec3::from(
                     positions
                         .get(atom)
-                        .expect("hierarchy atoms have model positions")
+                        .expect("hierarchy atoms have structure positions")
                         .value_in(ANGSTROM)
                         .expect("positions are lengths"),
                 )
@@ -610,14 +613,14 @@ fn read_backbone<'p>(model: ModelView<'_>, prepared: &'p PreparedResidue) -> Res
     }
 }
 
-/// Builds DSSP's residue table of `model` from its prepared topology.
+/// Builds DSSP's residue table of `structure` from its prepared topology.
 fn extract_backbones(
     prepared: &Prepared,
-    model: ModelView<'_>,
+    structure: StructureView<'_>,
     limits: DsspLimits,
     executor: &dyn Executor,
 ) -> Result<(Vec<BackboneResidue>, DsspReport, usize), DsspError> {
-    let hierarchy = model.topology().hierarchy();
+    let hierarchy = structure.topology().hierarchy();
     let mut report = DsspReport {
         ignored_instances: prepared.ignored_instances.clone(),
         non_peptide_residues: 0,
@@ -634,7 +637,7 @@ fn extract_backbones(
     let backbones = map_ranges(executor, prepared.residues.len(), MIN_CHUNK, |range| {
         prepared.residues[range]
             .iter()
-            .map(|residue| read_backbone(model, residue))
+            .map(|residue| read_backbone(structure, residue))
             .collect::<Vec<_>>()
     })
     .into_iter()
@@ -795,10 +798,10 @@ fn source(hierarchy: &Hierarchy, chain: ChainId, key: ResidueId) -> DsspResidueS
     residue_source(
         hierarchy
             .chain(chain)
-            .expect("analyzed residues come from the model hierarchy"),
+            .expect("analyzed residues come from the structure hierarchy"),
         hierarchy
             .residue(key)
-            .expect("analyzed residues come from the model hierarchy"),
+            .expect("analyzed residues come from the structure hierarchy"),
     )
 }
 
@@ -1439,7 +1442,7 @@ fn calculate_beta_sheets(
     let chain_label = |residue: &BackboneResidue| {
         hierarchy
             .chain(residue.source_chain)
-            .expect("analyzed residues come from the model hierarchy")
+            .expect("analyzed residues come from the structure hierarchy")
             .label_id()
     };
     bridges.sort_by(|left, right| {

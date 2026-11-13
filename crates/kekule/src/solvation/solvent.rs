@@ -4,7 +4,7 @@ mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions};
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::{DenseArrayError, Model, ModelBuildError};
+use crate::structure::{DenseArrayError, Structure, StructureBuildError};
 use crate::{
     math::{LatticeError, Point3},
     properties::PropertyKey,
@@ -13,7 +13,7 @@ use crate::{
 };
 use std::{fmt, sync::Arc};
 
-/// Built-in coordinate model. This does not install force-field parameters.
+/// Built-in coordinate structure. This does not install force-field parameters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WaterModel {
@@ -314,7 +314,7 @@ pub struct SolvationReport {
     pub(crate) charge_basis: SolvationChargeBasis,
     pub(crate) seed: u64,
     pub(crate) cleared_topology_properties: Vec<PropertyKey>,
-    pub(crate) cleared_model_properties: Vec<PropertyKey>,
+    pub(crate) cleared_structure_properties: Vec<PropertyKey>,
 }
 
 impl SolvationReport {
@@ -353,19 +353,19 @@ impl SolvationReport {
         &self.cleared_topology_properties
     }
 
-    /// Destination structure owner keys cleared because the model changed.
-    pub fn cleared_model_properties(&self) -> &[PropertyKey] {
-        &self.cleared_model_properties
+    /// Destination structure owner keys cleared because the structure changed.
+    pub fn cleared_structure_properties(&self) -> &[PropertyKey] {
+        &self.cleared_structure_properties
     }
 }
 
-/// Solvation options or the model prevent filling the cell with solvent.
+/// Solvation options or the structure prevent filling the cell with solvent.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum SolvationError {
-    /// The model has no periodic cell.
+    /// The structure has no periodic cell.
     MissingCell,
-    /// The model's cell is not periodic along all three axes.
+    /// The structure's cell is not periodic along all three axes.
     NotFullyPeriodic,
     /// The supplied solute radii belong to a different topology layout.
     RadiusTopologyMismatch,
@@ -399,17 +399,17 @@ pub enum SolvationError {
     Geometry(LatticeError),
     /// Position data was rejected; see the source.
     Position(DenseArrayError),
-    /// Building the solvated model failed; see the source.
-    Build(ModelBuildError),
+    /// Building the solvated structure failed; see the source.
+    Build(StructureBuildError),
     /// Adding solvent molecules, chains or residues failed; see the source.
     Hierarchy(HierarchyError),
 }
 impl fmt::Display for SolvationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingCell => f.write_str("The model has no periodic cell."),
+            Self::MissingCell => f.write_str("The structure has no periodic cell."),
             Self::NotFullyPeriodic => {
-                f.write_str("The model's cell is not periodic along all three axes.")
+                f.write_str("The structure's cell is not periodic along all three axes.")
             }
             Self::RadiusTopologyMismatch => {
                 f.write_str("The solute radii belong to a different topology.")
@@ -444,7 +444,7 @@ impl fmt::Display for SolvationError {
             Self::Unit(error) => error.fmt(f),
             Self::Geometry(error) => error.fmt(f),
             Self::Position(error) => error.fmt(f),
-            Self::Build(_) => f.write_str("Cannot build the solvated model."),
+            Self::Build(_) => f.write_str("Cannot build the solvated structure."),
             Self::Hierarchy(_) => f.write_str("Cannot build the solvent hierarchy."),
         }
     }
@@ -473,7 +473,7 @@ macro_rules! from_error {
 from_error!(UnitError, Unit);
 from_error!(LatticeError, Geometry);
 from_error!(DenseArrayError, Position);
-from_error!(ModelBuildError, Build);
+from_error!(StructureBuildError, Build);
 from_error!(HierarchyError, Hierarchy);
 
 /// Fills the existing cell with TIP3P water and optional monovalent ions.
@@ -487,10 +487,10 @@ from_error!(HierarchyError, Hierarchy);
 /// Neutralizing counterions are counted first. Additional salt pairs are
 /// `floor((water_sites - counterions) * ionic_strength / 55.4 M + 0.5)`.
 /// Ion sites use a deterministic shuffled greedy search; infeasible placement
-/// returns an error rather than publishing a partially solvated model.
+/// returns an error rather than publishing a partially solvated structure.
 ///
 /// Publication is atomic. Existing entity IDs/order and annotations survive;
-/// topology/model owner annotations are cleared as for an ordinary append.
+/// topology/structure owner annotations are cleared as for an ordinary append.
 /// The new topology invalidates reuse of old snapshot-bound selections and
 /// parameterizations. The returned report is optional to inspect.
 ///
@@ -499,7 +499,7 @@ from_error!(HierarchyError, Hierarchy);
 ///
 /// # Errors
 ///
-/// The model is unchanged on error. The cell must exist
+/// The structure is unchanged on error. The cell must exist
 /// ([`SolvationError::MissingCell`]) and be periodic along all three axes
 /// ([`SolvationError::NotFullyPeriodic`]). Invalid options return
 /// [`SolvationError::InvalidIonicStrength`], [`SolvationError::InvalidIonSeparation`],
@@ -513,23 +513,23 @@ from_error!(HierarchyError, Hierarchy);
 ///
 /// ```
 /// use kekule::{smiles, solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions},
-///     structure::{Model, Positions}, units::{Quantity, NANOMETER, MOLAR}};
-/// let mut model = Model::from_molecule(smiles::to_molecules("[Na+]")?.remove(0),
+///     structure::{Structure, Positions}, units::{Quantity, NANOMETER, MOLAR}};
+/// let mut structure = Structure::from_molecule(smiles::to_molecules("[Na+]")?.remove(0),
 ///     &Positions::zeros(1))?;
-/// solvation::add_periodic_box(&mut model, &PeriodicBoxOptions::Padding {
+/// solvation::add_periodic_box(&mut structure, &PeriodicBoxOptions::Padding {
 ///     padding: Quantity::new(1.0, NANOMETER), shape: BoxShape::Cube,
 /// })?;
 /// solvation::solvate(
-///     &mut model,
+///     &mut structure,
 ///     &SolventOptions::default().with_ionic_strength(Quantity::new(0.15, MOLAR)),
 /// )?; // The successful report can simply be discarded.
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn solvate(
-    model: &mut Model,
+    structure: &mut Structure,
     options: &SolventOptions,
 ) -> Result<SolvationReport, SolvationError> {
-    packing::solvate(model, options)
+    packing::solvate(structure, options)
 }
 
 /// Numerically safer bounding-box midpoint than `(min + max) / 2`.

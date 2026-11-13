@@ -8,7 +8,7 @@ use crate::diagnostics::{
     read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
 };
 use crate::molecule::Molecule;
-use crate::structure::Model;
+use crate::structure::Structure;
 use crate::topology::Topology;
 
 use super::lines::read_line;
@@ -241,7 +241,7 @@ impl SdfDocument {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdfRecordInterpretation {
     title: String,
-    model: Model,
+    model: Structure,
     data_fields: Vec<SdfDataField>,
     report: SdfRecordInterpretationReport,
 }
@@ -252,7 +252,7 @@ impl SdfRecordInterpretation {
     /// Source correspondence is empty because this value did not originate
     /// from SDF parsing. Parsed records receive a populated report through the
     /// authoritative interpreter.
-    pub fn new(title: impl Into<String>, model: Model, data_fields: Vec<SdfDataField>) -> Self {
+    pub fn new(title: impl Into<String>, model: Structure, data_fields: Vec<SdfDataField>) -> Self {
         Self {
             title: title.into(),
             model,
@@ -286,7 +286,7 @@ impl SdfRecordInterpretation {
     }
 
     /// The authoritative model: topology and coordinates in angstroms.
-    pub fn model(&self) -> &Model {
+    pub fn structure(&self) -> &Structure {
         &self.model
     }
 
@@ -296,7 +296,7 @@ impl SdfRecordInterpretation {
     }
 
     /// Consumes the format wrapper into its model.
-    pub fn into_model(self) -> Model {
+    pub fn into_structure(self) -> Structure {
         self.model
     }
 
@@ -322,7 +322,7 @@ impl SdfRecordInterpretation {
         self,
     ) -> (
         String,
-        Model,
+        Structure,
         Vec<SdfDataField>,
         SdfRecordInterpretationReport,
     ) {

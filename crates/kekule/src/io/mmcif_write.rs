@@ -13,7 +13,7 @@ use crate::io::write_error::{
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::math::PeriodicCell;
 use crate::molecule::BondOrder;
-use crate::structure::{AsModelView, GeometryView, Model, ModelView, StructureSet};
+use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -705,7 +705,7 @@ pub(super) fn fail(issue: MmcifWriteIssue) -> FormatError {
 }
 
 /// The source model is internally inconsistent or incomplete.
-pub(super) fn invalid_model(message: impl Into<String>) -> FormatError {
+pub(super) fn invalid_structure(message: impl Into<String>) -> FormatError {
     FormatError::write(Format::Mmcif, DiagnosticKind::Inconsistent, message)
 }
 
@@ -777,9 +777,9 @@ impl MmcifEntityClassifications {
 /// One mmCIF data block to write: a model or a structure set, plus the entity
 /// semantics used for its `_entity` and asymmetry assignments.
 ///
-/// Convert from `&Model`, `&StructureSet`, [`GeometryView`],
+/// Convert from `&Structure`, `&StructureSet`, [`GeometryView`],
 /// `&StructureInterpretation`, or `&StructureSetInterpretation`;
-/// interpretations keep their source reports. [`Self::model`] accepts any
+/// interpretations keep their source reports. [`Self::structure`] accepts any
 /// borrowed model view, such as a geometry or a trajectory frame; a geometry's
 /// membership, place, velocities, and forces fail to write unless the
 /// write options omit them.
@@ -789,7 +789,7 @@ impl MmcifEntityClassifications {
 ///
 /// Every hierarchy chain is a structural instance of its own, even when
 /// chains share a label, as the copies
-/// [`ModelEditor::append_model`](crate::structure::ModelEditor::append_model)
+/// [`StructureEditor::append_structure`](crate::structure::StructureEditor::append_structure)
 /// appends do. The first chain with a label keeps it as `label_asym_id`; each
 /// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
 /// on, skipping IDs another chain or asym uses, while `auth_asym_id` keeps
@@ -806,7 +806,7 @@ pub struct MmcifBlockSource<'a> {
 
 #[derive(Debug, Clone, Copy)]
 enum BlockContent<'a> {
-    Model(ModelView<'a>),
+    Structure(StructureView<'a>),
     StructureSet(&'a StructureSet),
 }
 
@@ -820,9 +820,9 @@ enum EntitySemantics<'a> {
 impl<'a> MmcifBlockSource<'a> {
     /// One model block with entity kinds derived from canonical topology
     /// classification.
-    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+    pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self {
-            content: BlockContent::Model(model.as_model_view()),
+            content: BlockContent::Structure(structure.as_structure_view()),
             entities: EntitySemantics::Canonical,
             block_name: None,
         }
@@ -891,9 +891,9 @@ impl<'a> MmcifBlockSource<'a> {
     }
 }
 
-impl<'a> From<&'a Model> for MmcifBlockSource<'a> {
-    fn from(model: &'a Model) -> Self {
-        Self::model(model)
+impl<'a> From<&'a Structure> for MmcifBlockSource<'a> {
+    fn from(model: &'a Structure) -> Self {
+        Self::structure(model)
     }
 }
 
@@ -906,7 +906,7 @@ impl<'a> From<&'a StructureSet> for MmcifBlockSource<'a> {
 impl<'a, R: ?Sized> From<GeometryView<'a, R>> for MmcifBlockSource<'a> {
     fn from(geometry: GeometryView<'a, R>) -> Self {
         Self {
-            content: BlockContent::Model(geometry.as_model_view()),
+            content: BlockContent::Structure(geometry.as_structure_view()),
             entities: EntitySemantics::Canonical,
             block_name: None,
         }
@@ -921,7 +921,7 @@ impl<'a> From<&'a StructureSetInterpretation> for MmcifBlockSource<'a> {
 
 impl<'a> From<&'a StructureInterpretation> for MmcifBlockSource<'a> {
     fn from(interpretation: &'a StructureInterpretation) -> Self {
-        Self::model(interpretation.model())
+        Self::structure(interpretation.structure())
             .with_reports(std::slice::from_ref(interpretation.report()))
     }
 }
@@ -976,13 +976,13 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
             ..options.clone()
         };
         match block.content {
-            BlockContent::Model(view) => {
+            BlockContent::Structure(view) => {
                 write_model_block_to(writer, view, block.entities, &block_options, &mut omissions)?
             }
             BlockContent::StructureSet(set) => {
                 let views = set
                     .iter()
-                    .map(|geometry| geometry.as_model_view())
+                    .map(|geometry| geometry.as_structure_view())
                     .collect::<Vec<_>>();
                 let record_state = |state: &mut Omissions| {
                     let unrepresentable = |(geometry, field)| {
@@ -1010,7 +1010,7 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
 
 fn write_model_block_to(
     writer: &mut impl Write,
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
@@ -1099,7 +1099,7 @@ fn block_cell<'a>(
 /// state's omissions are recorded once the block has reached the sink.
 fn write_multi_model_block_to(
     writer: &mut impl Write,
-    views: &[ModelView<'_>],
+    views: &[StructureView<'_>],
     record_state: impl FnOnce(&mut Omissions) -> Result<(), FormatError>,
     empty: MmcifWriteIssue,
     entities: EntitySemantics<'_>,

@@ -636,7 +636,7 @@ impl PartialEq for Hierarchy {
 /// Staged chains, residues, and atom sites of a topology under construction.
 ///
 /// [`TopologyBuilder::hierarchy_mut`](super::TopologyBuilder::hierarchy_mut)
-/// and [`ModelBuilder::hierarchy_mut`](crate::structure::ModelBuilder::hierarchy_mut)
+/// and [`StructureBuilder::hierarchy_mut`](crate::structure::StructureBuilder::hierarchy_mut)
 /// return the one staged hierarchy. Additions validate their own references
 /// and capacity; atom-site atoms are checked against the final instance atoms
 /// when the topology is built. A published topology is read through its

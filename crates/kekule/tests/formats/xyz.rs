@@ -86,7 +86,7 @@ fn interleaved_molecules_keep_atom_line_order() {
     assert_eq!(instance_of(0), instance_of(4));
     assert_eq!(instance_of(1), instance_of(3));
     assert_ne!(instance_of(0), instance_of(1));
-    let positions = interpretation.model().positions();
+    let positions = interpretation.structure().positions();
     let x = |row: usize| positions.get(row).unwrap().value_in(ANGSTROM).unwrap().x;
     assert!((x(1) - 3.0).abs() < 1e-12 && (x(3) - 3.96).abs() < 1e-12);
     assert_eq!(topology.residues().count(), 2);
@@ -286,7 +286,7 @@ fn length_units_scale_bond_inference() {
     assert_eq!(interpretation.report().inferred_bonds().len(), 1);
     let distance = interpretation.report().inferred_bonds()[0].distance();
     assert!((distance.value_in(BOHR).unwrap() - 1.4).abs() < 1e-9);
-    let position = interpretation.model().positions().get(1).unwrap();
+    let position = interpretation.structure().positions().get(1).unwrap();
     assert!((position.value_in(BOHR).unwrap().x - 1.4).abs() < 1e-9);
     // Read as angstrom, the same numbers are too far apart to bond.
     assert!(interpret(bohr, Default::default())
@@ -402,7 +402,7 @@ fn xyz_structures_export_to_pdb_and_mmcif_when_implicit_hydrogens_are_omitted() 
     use kekule::pdb::{self, PdbWriteOptions};
 
     // XYZ lists every atom, so every count is fixed at zero.
-    let model = interpret(WATER, Default::default()).into_model();
+    let model = interpret(WATER, Default::default()).into_structure();
     let omitted = [WriteOmission::ImplicitHydrogens { atoms: 3 }];
 
     assert_eq!(
@@ -445,11 +445,11 @@ fn omitting_implicit_hydrogens_still_rejects_other_chemistry() {
     use kekule::diagnostics::UnrepresentablePolicy;
     use kekule::mmcif::{self, MmcifWriteOptions};
     use kekule::pdb::{self, PdbWriteOptions};
-    use kekule::structure::{Model, Positions};
+    use kekule::structure::{Positions, Structure};
 
     // Carbon-13 is an isotope neither format can name.
     let topology = kekule::smiles::to_topology("[13CH4]").unwrap();
-    let model = Model::new(topology, Positions::zeros(1)).unwrap();
+    let model = Structure::new(topology, Positions::zeros(1)).unwrap();
     let pdb_options =
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
     let error = pdb::write(&model, pdb_options).unwrap_err();
@@ -484,8 +484,8 @@ fn documents_built_from_atoms_interpret_as_parsed_files() {
         assert_eq!(atoms.element(), text.element());
     }
     assert_eq!(
-        from_atoms.model().positions(),
-        from_text.model().positions()
+        from_atoms.structure().positions(),
+        from_text.structure().positions()
     );
 
     let stretched = "3\nstretched\nO 0 0 0\nH 1.0 0 0\nH -0.240 0.927 0\n";
@@ -561,7 +561,7 @@ fn built_documents_fail_as_parsing_would_reject_them() {
         assert_eq!(error.location().map(|at| at.line()), Some(line));
         assert!(matches!(
             error.detail(),
-            Some(FormatErrorDetail::Model { model_id }) if model_id == "0"
+            Some(FormatErrorDetail::Structure { model_id }) if model_id == "0"
         ));
     }
 

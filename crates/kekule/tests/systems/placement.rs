@@ -1,4 +1,4 @@
-//! Builder placement on model drafts: hydrogens with coordinates, ideal
+//! Builder placement on structure drafts: hydrogens with coordinates, ideal
 //! geometry, attaching atoms, and names.
 use kekule::hydrogens::{AddHydrogensOptions, AddHydrogensScope, RetainedHydrogenReason};
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
@@ -8,7 +8,7 @@ use kekule::smiles;
 use kekule::structure::placement::{
     fragment, fragments, ideal_bond_length, AtomShape, AttachmentSite, FragmentKind, PlacementError,
 };
-use kekule::structure::{Model, ModelEditor, Positions};
+use kekule::structure::{Positions, Structure, StructureEditor};
 use kekule::topology::edit::{EditAtomId, EditResidueId};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,7 +19,7 @@ fn element(symbol: &str) -> Element {
     Element::from_symbol(symbol).unwrap()
 }
 
-fn point(editor: &ModelEditor, atom: EditAtomId) -> Point3 {
+fn point(editor: &StructureEditor, atom: EditAtomId) -> Point3 {
     editor
         .position(atom)
         .unwrap()
@@ -28,13 +28,13 @@ fn point(editor: &ModelEditor, atom: EditAtomId) -> Point3 {
         .into_value()
 }
 
-fn distance(editor: &ModelEditor, a: EditAtomId, b: EditAtomId) -> f64 {
+fn distance(editor: &StructureEditor, a: EditAtomId, b: EditAtomId) -> f64 {
     (point(editor, a) - point(editor, b)).norm()
 }
 
 /// The angle at `center`, in degrees. `atan2` keeps it exact near 0° and
 /// 180°, where `acos` of the cosine loses half its digits.
-fn angle(editor: &ModelEditor, a: EditAtomId, center: EditAtomId, b: EditAtomId) -> f64 {
+fn angle(editor: &StructureEditor, a: EditAtomId, center: EditAtomId, b: EditAtomId) -> f64 {
     let u = point(editor, a) - point(editor, center);
     let v = point(editor, b) - point(editor, center);
     u.cross(v).norm().atan2(u.dot(v)).to_degrees()
@@ -48,22 +48,22 @@ fn ideal(a: Element, b: Element, order: BondOrder) -> f64 {
         .into_value()
 }
 
-fn element_of(editor: &ModelEditor, atom: EditAtomId) -> Element {
+fn element_of(editor: &StructureEditor, atom: EditAtomId) -> Element {
     editor.topology().atom(atom).unwrap().element()
 }
 
-fn neighbors(editor: &ModelEditor, atom: EditAtomId) -> Vec<EditAtomId> {
+fn neighbors(editor: &StructureEditor, atom: EditAtomId) -> Vec<EditAtomId> {
     editor.topology().neighbors(atom).unwrap().collect()
 }
 
-fn hydrogen_count(editor: &ModelEditor, atom: EditAtomId) -> usize {
+fn hydrogen_count(editor: &StructureEditor, atom: EditAtomId) -> usize {
     neighbors(editor, atom)
         .into_iter()
         .filter(|n| element_of(editor, *n).atomic_number() == 1)
         .count()
 }
 
-fn heavy_atoms(editor: &ModelEditor) -> Vec<EditAtomId> {
+fn heavy_atoms(editor: &StructureEditor) -> Vec<EditAtomId> {
     editor
         .topology()
         .atoms()
@@ -80,10 +80,10 @@ type Signature = (
     usize,
 );
 
-fn signature(model: &Model) -> Signature {
-    let mut model = model.clone();
-    model.perceive().unwrap();
-    let topology = model.topology();
+fn signature(structure: &Structure) -> Signature {
+    let mut structure = structure.clone();
+    structure.perceive().unwrap();
+    let topology = structure.topology();
     let mut rank = BTreeMap::new();
     let mut atoms = Vec::new();
     for atom in topology.atoms() {
@@ -123,7 +123,7 @@ fn shape_angles(shape: AtomShape) -> &'static [f64] {
 }
 
 /// PDB chemical components' ideal coordinates, with their hydrogens.
-fn components() -> Vec<(String, Model)> {
+fn components() -> Vec<(String, Structure)> {
     let document = kekule::sdf::parse_str(
         include_str!("../fixtures/placement/ccd-ideal.sdf"),
         Default::default(),
@@ -134,16 +134,16 @@ fn components() -> Vec<(String, Model)> {
         .iter()
         .map(|record| {
             let interpreted = record.interpret(Default::default()).unwrap();
-            (record.title().to_owned(), interpreted.into_model())
+            (record.title().to_owned(), interpreted.into_structure())
         })
         .collect()
 }
 
 #[test]
 fn completed_hydrogens_agree_with_valence_and_collapse_back() {
-    for (name, model) in components() {
-        let original = signature(&model);
-        let mut editor = model.to_editor();
+    for (name, structure) in components() {
+        let original = signature(&structure);
+        let mut editor = structure.to_editor();
         let heavy = heavy_atoms(&editor);
         let expected = heavy
             .iter()
@@ -217,8 +217,8 @@ fn completed_hydrogens_agree_with_valence_and_collapse_back() {
 }
 
 /// An isolated atom of `symbol` at the origin, completed with hydrogens.
-fn completed(symbol: &str, charge: i8) -> (ModelEditor, EditAtomId, Vec<EditAtomId>) {
-    let mut editor = ModelEditor::new();
+fn completed(symbol: &str, charge: i8) -> (StructureEditor, EditAtomId, Vec<EditAtomId>) {
+    let mut editor = StructureEditor::new();
     let atom = editor
         .place_atom(
             Atom::new(element(symbol)).with_formal_charge(charge),
@@ -285,9 +285,9 @@ fn hydrides_take_ideal_lengths_and_angles() {
             }
         }
         // C gives methane, in a residue of its own.
-        let model = editor.finish().unwrap();
-        assert_eq!(model.atom_count(), count + 1);
-        let residue = model.topology().residues().next().unwrap();
+        let structure = editor.finish().unwrap();
+        assert_eq!(structure.atom_count(), count + 1);
+        let residue = structure.topology().residues().next().unwrap();
         assert_eq!(residue.name(), "UNL");
     }
 }
@@ -295,7 +295,7 @@ fn hydrides_take_ideal_lengths_and_angles() {
 /// A chain grown by attaching carbons toward a direction, then completed.
 #[test]
 fn chains_grow_anti_and_multiple_bonds_set_the_shape() {
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let c1 = editor
         .place_atom(
             Atom::new(element("C")),
@@ -350,7 +350,7 @@ fn chains_grow_anti_and_multiple_bonds_set_the_shape() {
     assert_eq!(editor.topology().atom_count(), 14);
 
     // Ethylene: a double bond leaves three trigonal sites in one plane.
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let a = editor
         .place_atom(
             Atom::new(element("C")),
@@ -397,7 +397,7 @@ fn chains_grow_anti_and_multiple_bonds_set_the_shape() {
     }
 
     // Acetylene: linear.
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let a = editor
         .place_atom(
             Atom::new(element("C")),
@@ -424,13 +424,13 @@ fn chains_grow_anti_and_multiple_bonds_set_the_shape() {
 
 /// Positions of a molecule from SMILES with the center at the origin and the
 /// given neighbor directions, in atom order after the center.
-fn star(smiles_text: &str, directions: &[Vector3]) -> ModelEditor {
+fn star(smiles_text: &str, directions: &[Vector3]) -> StructureEditor {
     let topology = smiles::to_topology(smiles_text).unwrap();
     let mut points = vec![Point3::origin()];
     for direction in directions {
         points.push(Point3::origin() + *direction * 0.16);
     }
-    Model::new(
+    Structure::new(
         topology,
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
@@ -511,7 +511,7 @@ fn attaching_replaces_hydrogens_and_keeps_stereo() {
         Point3::new(-0.05, -0.08, 0.12),
     ];
     assert_eq!(atoms, ideal_positions.len());
-    let mut editor = Model::new(
+    let mut editor = Structure::new(
         topology,
         Positions::new(Quantity::new(ideal_positions.to_vec(), NANOMETER)).unwrap(),
     )
@@ -537,19 +537,19 @@ fn attaching_replaces_hydrogens_and_keeps_stereo() {
     assert!(editor.topology().atom(alpha_hydrogen).is_none());
     let direction = point(&editor, attached.atom()) - point(&editor, center);
     assert!((direction.norm() - ideal(element("C"), element("F"), BondOrder::Single)).abs() < 1e-9);
-    let model = editor.finish().unwrap();
-    let count = |model: &Model| {
-        model
+    let structure = editor.finish().unwrap();
+    let count = |structure: &Structure| {
+        structure
             .topology()
             .definitions()
             .map(|definition| definition.molecule().stereo_elements().count())
             .sum::<usize>()
     };
     assert_eq!(count(&stereo_before), 1);
-    assert_eq!(count(&model), 1);
+    assert_eq!(count(&structure), 1);
 
     // A heavy atom is not a replaceable hydrogen.
-    let mut editor = model.into_editor();
+    let mut editor = structure.into_editor();
     let ids = editor.topology().atom_ids().collect::<Vec<_>>();
     assert!(matches!(
         editor.attach_atom(
@@ -584,7 +584,7 @@ fn attaching_replaces_hydrogens_and_keeps_stereo() {
 #[test]
 fn fixed_counts_are_materialized_and_restored() {
     let topology = smiles::to_topology("[CH3][NH2]").unwrap();
-    let mut editor = Model::new(
+    let mut editor = Structure::new(
         topology,
         Positions::new(Quantity::new(
             vec![Point3::origin(), Point3::new(0.147, 0.0, 0.0)],
@@ -634,8 +634,8 @@ fn fixed_counts_are_materialized_and_restored() {
 }
 
 /// Every atom name is unique within its residue.
-fn assert_unique_names(model: &Model) {
-    for residue in model.topology().residues() {
+fn assert_unique_names(structure: &Structure) {
+    for residue in structure.topology().residues() {
         let mut seen = BTreeSet::new();
         for site in residue.atom_sites() {
             let name = site.metadata().label_atom_id().unwrap().to_owned();
@@ -648,7 +648,7 @@ fn assert_unique_names(model: &Model) {
     }
 }
 
-fn adenylate_kinase() -> Model {
+fn adenylate_kinase() -> Structure {
     kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
@@ -656,12 +656,12 @@ fn adenylate_kinase() -> Model {
     .unwrap()
     .interpret(Default::default())
     .unwrap()
-    .into_model()
+    .into_structure()
 }
 
 /// Copies of `single` side by side, 10 nm apart, until 100,000 atoms.
-fn large_model(single: &Model) -> Model {
-    let mut large = ModelEditor::new();
+fn large_model(single: &Structure) -> Structure {
+    let mut large = StructureEditor::new();
     let mut offset = 0.0;
     while large.topology().atom_count() < 100_000 {
         let mut copy = single.clone();
@@ -671,14 +671,14 @@ fn large_model(single: &Model) -> Model {
         )
         .unwrap();
         copy.apply_rigid_transform(&shift).unwrap();
-        large.append_model(&copy).unwrap();
+        large.append_structure(&copy).unwrap();
         offset += 10.0;
     }
     large.finish().unwrap()
 }
 
 /// The atoms of the first residue named `name`.
-fn residue_atoms(editor: &ModelEditor, name: &str) -> (EditResidueId, Vec<EditAtomId>) {
+fn residue_atoms(editor: &StructureEditor, name: &str) -> (EditResidueId, Vec<EditAtomId>) {
     let topology = editor.topology();
     let residue = topology
         .residues()
@@ -761,8 +761,8 @@ fn new_atoms_are_named_uniquely_in_their_residues() {
     editor
         .add_hydrogens(protein, AddHydrogensOptions::default())
         .unwrap();
-    let model = editor.finish().unwrap();
-    assert_unique_names(&model);
+    let structure = editor.finish().unwrap();
+    assert_unique_names(&structure);
 }
 
 #[test]
@@ -770,8 +770,8 @@ fn placing_on_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
     let large = large_model(&single);
     assert!(large.atom_count() >= 100_000);
-    let time = |model: &Model| {
-        let mut editor = model.to_editor();
+    let time = |structure: &Structure| {
+        let mut editor = structure.to_editor();
         let (_, ligand) = residue_atoms(&editor, "AP5");
         let start = std::time::Instant::now();
         let report = editor
@@ -780,9 +780,9 @@ fn placing_on_a_ligand_scales_with_the_ligand() {
         editor.remove_hydrogens(ligand).unwrap();
         (start.elapsed(), report.added_count())
     };
-    // Work on the ligand does not grow with the model it sits in.
+    // Work on the ligand does not grow with the structure it sits in.
     // The best of several runs, so load from other processes does not count.
-    let best = |model: &Model| (0..5).map(|_| time(model)).min().unwrap();
+    let best = |structure: &Structure| (0..5).map(|_| time(structure)).min().unwrap();
     let (small, added_small) = best(&single);
     let (big, added_big) = best(&large);
     assert_eq!(added_small, added_big);
@@ -794,7 +794,7 @@ fn placing_on_a_ligand_scales_with_the_ligand() {
 
 /// Graph distances, in bonds, from `start` within a draft, up to `limit`.
 fn bond_distances(
-    editor: &ModelEditor,
+    editor: &StructureEditor,
     start: EditAtomId,
     limit: usize,
 ) -> BTreeMap<EditAtomId, usize> {
@@ -820,7 +820,7 @@ fn bond_distances(
 fn every_fragment_places_alone_with_its_ideal_geometry() {
     assert_eq!(fragments().len(), 48);
     for fragment in fragments() {
-        let mut editor = ModelEditor::new();
+        let mut editor = StructureEditor::new();
         let target = Point3::new(1.0, 2.0, 3.0);
         let placed = editor
             .place_fragment(fragment, Quantity::new(target, NANOMETER))
@@ -850,11 +850,14 @@ fn every_fragment_places_alone_with_its_ideal_geometry() {
             })
             / placed.atoms().len() as f64;
         assert!((centroid - Vector3::new(10.0, 20.0, 30.0)).norm() < 1e-9);
-        let model = editor.finish().unwrap();
-        let mut perceived = model.clone();
+        let structure = editor.finish().unwrap();
+        let mut perceived = structure.clone();
         perceived.perceive().unwrap();
-        assert_unique_names(&model);
-        assert_eq!(model.topology().residues().next().unwrap().name(), "UNL");
+        assert_unique_names(&structure);
+        assert_eq!(
+            structure.topology().residues().next().unwrap().name(),
+            "UNL"
+        );
     }
     // Cyclohexane is a chair: ring torsions alternate near 55 degrees.
     let ring = fragment("cyclohexane").unwrap();
@@ -896,7 +899,7 @@ fn every_fragment_places_alone_with_its_ideal_geometry() {
 fn every_fragment_attaches_to_every_other_without_clashes() {
     for host in fragments() {
         for guest in fragments() {
-            let mut editor = ModelEditor::new();
+            let mut editor = StructureEditor::new();
             let placed = editor
                 .place_fragment(host, Quantity::new(Point3::origin(), NANOMETER))
                 .unwrap();
@@ -943,20 +946,20 @@ fn every_fragment_attaches_to_every_other_without_clashes() {
                     assert!(found > 1.5, "{label}: {found:.2} A");
                 }
             }
-            let model = editor.finish().unwrap();
-            assert_eq!(model.topology().instance_count(), 1, "{label}");
-            let mut perceived = model.clone();
+            let structure = editor.finish().unwrap();
+            assert_eq!(structure.topology().instance_count(), 1, "{label}");
+            let mut perceived = structure.clone();
             perceived
                 .perceive()
                 .unwrap_or_else(|e| panic!("{label}: {e:?}"));
-            assert_unique_names(&model);
+            assert_unique_names(&structure);
         }
     }
 }
 
 #[test]
 fn fragments_attach_toward_directions_and_through_other_atoms() {
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let carbon = editor
         .place_atom(
             Atom::new(element("C")),
@@ -979,9 +982,9 @@ fn fragments_attach_toward_directions_and_through_other_atoms() {
     editor
         .add_hydrogens([carbon], AddHydrogensOptions::default())
         .unwrap();
-    let mut model = editor.finish().unwrap();
-    model.perceive().unwrap();
-    assert_eq!(model.atom_count(), 15);
+    let mut structure = editor.finish().unwrap();
+    structure.perceive().unwrap();
+    assert_eq!(structure.atom_count(), 15);
 
     // Pyridine through a carbon next to the nitrogen.
     let pyridine = fragment("pyridine").unwrap();
@@ -1014,8 +1017,8 @@ fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
     let large = large_model(&single);
     let phenyl = fragment("phenyl").unwrap();
-    let time = |model: &Model| {
-        let mut editor = model.to_editor();
+    let time = |structure: &Structure| {
+        let mut editor = structure.to_editor();
         let (_, ligand) = residue_atoms(&editor, "AP5");
         editor
             .add_hydrogens(ligand.clone(), AddHydrogensOptions::default())
@@ -1058,7 +1061,7 @@ fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
         start.elapsed()
     };
     // The best of several runs, so load from other processes does not count.
-    let best = |model: &Model| (0..5).map(|_| time(model)).min().unwrap();
+    let best = |structure: &Structure| (0..5).map(|_| time(structure)).min().unwrap();
     let (small, big) = (best(&single), best(&large));
     assert!(
         big < small * 10 + std::time::Duration::from_millis(20),
@@ -1070,7 +1073,7 @@ fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
 fn fragments_on_linear_parents_turn_clear_of_their_surroundings() {
     // Phenyl on an acetylene carbon, with an atom an angstrom beside where
     // the ring's first torsion would put one of its carbons.
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let placed = editor
         .place_fragment(
             fragment("ethynyl").unwrap(),
@@ -1235,7 +1238,7 @@ fn ring_fragments_follow_their_numbering() {
     }
 
     // Placed benzene is named around its ring: C1 and C4 are para.
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let placed = editor
         .place_fragment(
             fragment("benzene").unwrap(),
@@ -1268,7 +1271,10 @@ fn ring_fragments_follow_their_numbering() {
 }
 
 /// The label atom names of `residue`'s atoms in `editor`, in handle order.
-fn residue_names(editor: &ModelEditor, atoms: impl IntoIterator<Item = EditAtomId>) -> Vec<String> {
+fn residue_names(
+    editor: &StructureEditor,
+    atoms: impl IntoIterator<Item = EditAtomId>,
+) -> Vec<String> {
     atoms
         .into_iter()
         .map(|atom| {
@@ -1293,7 +1299,7 @@ fn fragments_placed_alone_are_named_by_locant() {
         .iter()
         .filter(|f| f.kind() == FragmentKind::Ring)
     {
-        let mut editor = ModelEditor::new();
+        let mut editor = StructureEditor::new();
         let placed = editor
             .place_fragment(fragment, Quantity::new(Point3::origin(), NANOMETER))
             .unwrap();
@@ -1321,7 +1327,7 @@ fn fragments_placed_alone_are_named_by_locant() {
         let distinct = names.iter().collect::<BTreeSet<_>>();
         assert_eq!(distinct.len(), names.len(), "{}", fragment.name());
     }
-    let mut editor = ModelEditor::new();
+    let mut editor = StructureEditor::new();
     let placed = editor
         .place_fragment(
             fragment("pyridine").unwrap(),
@@ -1339,7 +1345,7 @@ fn fragments_attached_into_a_residue_take_free_names() {
     // A fragment attached into a residue keeps the residue's next free
     // numbers, since its own locants could collide with names already there.
     for host in ["pyridine", "naphthalene", "indole", "piperidine"] {
-        let mut editor = ModelEditor::new();
+        let mut editor = StructureEditor::new();
         let placed = editor
             .place_fragment(
                 fragment(host).unwrap(),

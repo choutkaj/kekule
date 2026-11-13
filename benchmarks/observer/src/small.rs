@@ -360,15 +360,24 @@ fn aromaticity_facts(
     options: &Value,
     facts: &mut Facts,
 ) -> Result<(), Failure> {
-    let model = match options["model"].as_str() {
+    let structure = match options["structure"].as_str() {
         Some("rdkit") | None => AromaticityModel::RdkitLike,
         Some("mdl") => AromaticityModel::Mdl,
-        Some(other) => return Err(Failure::new("request", format!("unknown model {other:?}"))),
+        Some(other) => {
+            return Err(Failure::new(
+                "request",
+                format!("unknown structure {other:?}"),
+            ))
+        }
     };
     for component in components.iter_mut() {
-        if model != AromaticityModel::RdkitLike {
-            aromaticity::perceive_aromaticity(&mut component.molecule, model, Default::default())
-                .map_err(|e| Failure::new("aromaticity", e))?;
+        if structure != AromaticityModel::RdkitLike {
+            aromaticity::perceive_aromaticity(
+                &mut component.molecule,
+                structure,
+                Default::default(),
+            )
+            .map_err(|e| Failure::new("aromaticity", e))?;
         }
         let molecule = &component.molecule;
         for id in molecule.atom_ids() {
@@ -694,12 +703,12 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
             .map_err(|e| Failure::new("write", e))?
         }
         "molfile-v2000" | "molfile-v3000" | "sdf" => {
-            let model = match format {
+            let structure = match format {
                 "mol" => molfile::parse_str(text, Default::default())
                     .map_err(|e| Failure::new("parse", e))?
                     .interpret(Default::default())
                     .map_err(|e| Failure::new("parse", e))?
-                    .into_model(),
+                    .into_structure(),
                 "sdf" => {
                     let document = sdf::parse_str(text, Default::default())
                         .map_err(|e| Failure::new("parse", e))?;
@@ -709,7 +718,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                     record
                         .interpret(Default::default())
                         .map_err(|e| Failure::new("parse", e))?
-                        .into_model()
+                        .into_structure()
                 }
                 other => {
                     return Err(Failure::new(
@@ -719,7 +728,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 }
             };
             if target == "sdf" {
-                let record = sdf::SdfRecordInterpretation::new("", model, vec![]);
+                let record = sdf::SdfRecordInterpretation::new("", structure, vec![]);
                 sdf::write(
                     &[record],
                     sdf::SdfWriteOptions::default()
@@ -734,7 +743,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                     molfile::MolfileWriteVersion::V2000
                 };
                 molfile::write(
-                    &model,
+                    &structure,
                     molfile::MolfileWriteOptions::default().with_version(version),
                 )
                 .map_err(|e| Failure::new("write", e))?

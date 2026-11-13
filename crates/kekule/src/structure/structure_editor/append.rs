@@ -1,15 +1,15 @@
 use super::*;
 use crate::math::{Matrix3, Point3, Vector3};
 use crate::properties::PropertyKey;
-use crate::structure::{AsModelView, Model, ModelView};
+use crate::structure::{AsStructureView, Structure, StructureView};
 use crate::topology::{AppendMapping, ChainIds, Topology};
 use crate::topology::{AtomSiteId, ChainId, InstanceAtomId, InstanceBondId, ResidueId};
 
-impl ModelEditor {
-    /// Appends a complete borrowed model, including its existing coordinates.
+impl StructureEditor {
+    /// Appends a complete borrowed structure, including its existing coordinates.
     ///
-    /// Accepts any [`AsModelView`] source, such as a model, a geometry,
-    /// or a trajectory frame, without first creating an owned model. Positions are used as supplied:
+    /// Accepts any [`AsStructureView`] source, such as a structure, a geometry,
+    /// or a trajectory frame, without first creating an owned structure. Positions are used as supplied:
     /// the caller is responsible for their placement in the destination coordinate
     /// system. No fitting, imaging, bond inference or geometry generation is done.
     ///
@@ -22,13 +22,13 @@ impl ModelEditor {
     /// Editing one instance later copies its definition and leaves the others.
     /// Instances, atoms, bonds and hierarchy receive distinct editing identities. Chains are
     /// kept separate even when their labels coincide; labels and author identifiers
-    /// are preserved. All entity property columns at definition, topology and model
+    /// are preserved. All entity property columns at definition, topology and structure
     /// scope are transferred, including occupancy, B factors and missing values.
     /// Incompatible property types or units reject the entire append.
     ///
-    /// Changed destination topology/model owner properties are cleared, and source
-    /// topology/model owner properties are not imported: they do not automatically
-    /// describe the combined system. [`ModelAppend::report`] lists these keys.
+    /// Changed destination topology/structure owner properties are cleared, and source
+    /// topology/structure owner properties are not imported: they do not automatically
+    /// describe the combined system. [`StructureAppend::report`] lists these keys.
     /// Other owners and all source data remain unchanged. Transferring an arbitrary
     /// annotation does not guarantee its scientific validity after later edits.
     ///
@@ -39,32 +39,32 @@ impl ModelEditor {
     /// the intended cell before retrying. Failure leaves the entire editor unchanged.
     ///
     /// ```
-    /// use kekule::{smiles, structure::{Model, Positions}, math::Point3,
+    /// use kekule::{smiles, structure::{Structure, Positions}, math::Point3,
     ///     units::{Quantity, ANGSTROM}};
     /// let molecule = smiles::to_molecules("CO")?.pop().unwrap();
-    /// let ligand = Model::from_molecule(molecule, &Positions::new(Quantity::new(
+    /// let ligand = Structure::from_molecule(molecule, &Positions::new(Quantity::new(
     ///     vec![Point3::origin(), Point3::new(1.4, 0.0, 0.0)], ANGSTROM))?)?;
     /// let mut editor = ligand.to_editor();
-    /// let appended = editor.append_model(&ligand)?;
+    /// let appended = editor.append_structure(&ligand)?;
     /// let source_atom = ligand.topology().atom_ids()[0];
     /// let draft_atom = appended.atom(source_atom).expect("appended atom");
     /// assert_eq!(editor.position(draft_atom), ligand.position(source_atom));
-    /// let model = editor.finish()?;
-    /// assert_eq!(model.atom_count(), 4);
+    /// let structure = editor.finish()?;
+    /// assert_eq!(structure.atom_count(), 4);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn append_model(
+    pub fn append_structure(
         &mut self,
-        source: &(impl AsModelView + ?Sized),
-    ) -> Result<ModelAppend, ModelEditError> {
-        let source = source.as_model_view();
+        source: &(impl AsStructureView + ?Sized),
+    ) -> Result<StructureAppend, StructureEditError> {
+        let source = source.as_structure_view();
         let cell = match (self.cell().copied(), source.cell().copied()) {
             (None, cell) if self.topology.is_empty() => cell,
             (cell, None) => cell,
             (Some(left), Some(right)) if compatible_cells(left, right) => Some(left),
-            _ => return Err(ModelEditError::IncompatibleAppendCell),
+            _ => return Err(StructureEditError::IncompatibleAppendCell),
         };
-        let report = ModelAppendReport {
+        let report = StructureAppendReport {
             cleared_topology_properties: self
                 .topology
                 .properties()
@@ -72,7 +72,7 @@ impl ModelEditor {
                 .keys()
                 .cloned()
                 .collect(),
-            cleared_model_properties: self.slots.properties.owner().keys().cloned().collect(),
+            cleared_structure_properties: self.slots.properties.owner().keys().cloned().collect(),
             omitted_topology_properties: source
                 .topology()
                 .properties()
@@ -80,7 +80,7 @@ impl ModelEditor {
                 .keys()
                 .cloned()
                 .collect(),
-            omitted_model_properties: source.properties().owner().keys().cloned().collect(),
+            omitted_structure_properties: source.properties().owner().keys().cloned().collect(),
         };
         let mut staged = self.clone();
         let (mapping, _) = staged.append_unstaged(source, &|label, author| {
@@ -88,23 +88,23 @@ impl ModelEditor {
         })?;
         staged.slots.cell = cell;
         *self = staged;
-        Ok(ModelAppend { mapping, report })
+        Ok(StructureAppend { mapping, report })
     }
 
     /// Appends a copy of `source` whose positions are moved by `rotation`,
     /// then `translation` in the canonical length unit, and whose chains take
-    /// the identifiers `chain_ids` gives them, as [`Self::append_model`]
+    /// the identifiers `chain_ids` gives them, as [`Self::append_structure`]
     /// appends but without its cell or staging. A failure leaves the draft
     /// part-way, so only an owner that discards a failed draft calls it; it
     /// costs the copy, not the draft.
     pub(crate) fn append_moved_copy(
         &mut self,
-        source: &Model,
+        source: &Structure,
         rotation: Matrix3,
         translation: Vector3,
         chain_ids: &ChainIds<'_>,
-    ) -> Result<(), ModelEditError> {
-        let (_, atom_rows) = self.append_unstaged(source.as_model_view(), chain_ids)?;
+    ) -> Result<(), StructureEditError> {
+        let (_, atom_rows) = self.append_unstaged(source.as_structure_view(), chain_ids)?;
         let moved = atom_rows
             .iter()
             .copied()
@@ -130,9 +130,9 @@ impl ModelEditor {
     /// draft.
     fn append_unstaged(
         &mut self,
-        source: ModelView<'_>,
+        source: StructureView<'_>,
         chain_ids: &ChainIds<'_>,
-    ) -> Result<(AppendMapping, Vec<usize>), ModelEditError> {
+    ) -> Result<(AppendMapping, Vec<usize>), StructureEditError> {
         self.slots.try_reserve_atoms(source.atom_count())?;
         let mapping = self
             .topology
@@ -158,15 +158,15 @@ impl ModelEditor {
         properties
             .atoms_raw_mut()
             .copy_rows_from(source.properties().atoms().raw(), &atom_rows)
-            .map_err(|error| ModelEditError::AppendProperty {
-                domain: crate::properties::PropertyDomain::ModelAtoms,
+            .map_err(|error| StructureEditError::AppendProperty {
+                domain: crate::properties::PropertyDomain::GeometryAtoms,
                 error: Box::new(error),
             })?;
         properties
             .bonds_raw_mut()
             .copy_rows_from(source.properties().bonds().raw(), &bond_rows)
-            .map_err(|error| ModelEditError::AppendProperty {
-                domain: crate::properties::PropertyDomain::ModelBonds,
+            .map_err(|error| StructureEditError::AppendProperty {
+                domain: crate::properties::PropertyDomain::GeometryBonds,
                 error: Box::new(error),
             })?;
         properties.owner_mut().clear();
@@ -194,24 +194,24 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
 }
 
 /// Owner annotations excluded by one successful append, in property-key order.
-/// Entity properties are transferred under [`ModelEditor::append_model`]'s contract.
+/// Entity properties are transferred under [`StructureEditor::append_structure`]'s contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelAppendReport {
+pub struct StructureAppendReport {
     pub(crate) cleared_topology_properties: Vec<PropertyKey>,
-    pub(crate) cleared_model_properties: Vec<PropertyKey>,
+    pub(crate) cleared_structure_properties: Vec<PropertyKey>,
     pub(crate) omitted_topology_properties: Vec<PropertyKey>,
-    pub(crate) omitted_model_properties: Vec<PropertyKey>,
+    pub(crate) omitted_structure_properties: Vec<PropertyKey>,
 }
 
-impl ModelAppendReport {
+impl StructureAppendReport {
     /// Destination topology owner keys cleared because the system changed.
     pub fn cleared_topology_properties(&self) -> &[PropertyKey] {
         &self.cleared_topology_properties
     }
 
-    /// Destination structure owner keys cleared because the model changed.
-    pub fn cleared_model_properties(&self) -> &[PropertyKey] {
-        &self.cleared_model_properties
+    /// Destination structure owner keys cleared because the structure changed.
+    pub fn cleared_structure_properties(&self) -> &[PropertyKey] {
+        &self.cleared_structure_properties
     }
 
     /// Source topology owner keys that do not describe the combined system.
@@ -219,9 +219,9 @@ impl ModelAppendReport {
         &self.omitted_topology_properties
     }
 
-    /// Source structure owner keys that do not describe the combined model.
-    pub fn omitted_model_properties(&self) -> &[PropertyKey] {
-        &self.omitted_model_properties
+    /// Source structure owner keys that do not describe the combined structure.
+    pub fn omitted_structure_properties(&self) -> &[PropertyKey] {
+        &self.omitted_structure_properties
     }
 }
 
@@ -231,20 +231,20 @@ impl ModelAppendReport {
 /// repeatedly. The source topology is retained; IDs supplied to this mapping are
 /// interpreted only in that source. Handles remain stable through later edits;
 /// a deleted handle will be rejected by the editor. These handles are only for
-/// use within the draft, before [`ModelEditor::finish`].
+/// use within the draft, before [`StructureEditor::finish`].
 #[derive(Debug, Clone)]
-pub struct ModelAppend {
+pub struct StructureAppend {
     mapping: AppendMapping,
-    report: ModelAppendReport,
+    report: StructureAppendReport,
 }
 
-impl ModelAppend {
+impl StructureAppend {
     /// The source topology in which the IDs passed to this mapping are interpreted.
     pub fn source_topology(&self) -> &Topology {
         &self.mapping.source
     }
     /// Owner property keys cleared or omitted by this append.
-    pub fn report(&self) -> &ModelAppendReport {
+    pub fn report(&self) -> &StructureAppendReport {
         &self.report
     }
     /// The draft handle of an appended source atom, or `None` when the source

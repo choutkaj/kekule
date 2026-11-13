@@ -23,7 +23,7 @@ use crate::properties::{
     GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
 };
 use crate::structure::{
-    Distribution, Members, Model, ModelView, Order, StructureKind, StructureSet,
+    Distribution, Members, Order, Structure, StructureKind, StructureSet, StructureView,
 };
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
@@ -73,8 +73,8 @@ pub(crate) fn write_native_to<'a>(
     match source.content {
         NativeContent::Molecule(molecule) => encoder.molecule(molecule)?,
         NativeContent::Topology(topology) => encoder.topology(topology)?,
-        NativeContent::Model(model) => encoder.model(model)?,
-        NativeContent::InterpretedModel(model, report) => {
+        NativeContent::Structure(model) => encoder.model(model)?,
+        NativeContent::InterpretedStructure(model, report) => {
             encoder.model(model)?;
             encoder.report(report)?;
         }
@@ -693,7 +693,7 @@ impl<W: Write> Encoder<'_, W> {
         self.table(properties.bonds())
     }
 
-    fn model(&mut self, model: &Model) -> Result {
+    fn model(&mut self, model: &Structure) -> Result {
         self.topology(model.topology())?;
         self.points(model.positions().values().value())?;
         self.cell(model.cell())?;
@@ -712,7 +712,7 @@ impl<W: Write> Encoder<'_, W> {
             order: set.order(),
             distribution: set.distribution(),
         })?;
-        self.geometries(set.iter().map(|geometry| geometry.as_model_view()))
+        self.geometries(set.iter().map(|geometry| geometry.as_structure_view()))
     }
 
     fn reports(&mut self, reports: &[StructureInterpretationReport]) -> Result {
@@ -800,7 +800,7 @@ impl<W: Write> Encoder<'_, W> {
 
     /// The inline geometries section: each geometry's positions, cell, site
     /// values, properties, velocities, and forces.
-    fn geometries<'v>(&mut self, geometries: impl Iterator<Item = ModelView<'v>>) -> Result {
+    fn geometries<'v>(&mut self, geometries: impl Iterator<Item = StructureView<'v>>) -> Result {
         self.u8(SAMPLES_INLINE)?;
         for view in geometries {
             let (velocities, forces) = match view.kind() {

@@ -18,7 +18,7 @@ use crate::stereo::{
     StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
     TetrahedralOrientation, TetrahedralStereo,
 };
-use crate::structure::{Model, ModelBuildError, ModelBuilder, Positions};
+use crate::structure::{Positions, Structure, StructureBuildError, StructureBuilder};
 use crate::topology::Topology;
 use crate::units::{Quantity, ANGSTROM};
 
@@ -420,18 +420,18 @@ pub enum MolfileInterpretationWarning {
 /// atom-block order, so components may interleave in the dense order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
-    model: Model,
+    model: Structure,
     reports: Vec<MolfileInterpretationReport>,
     omitted: Vec<MolfileUnsupported>,
 }
 
 impl MolfileInterpretation {
     /// The interpreted model, with one molecule instance per connected component.
-    pub fn model(&self) -> &Model {
+    pub fn structure(&self) -> &Structure {
         &self.model
     }
 
-    /// The topology of [`Self::model`].
+    /// The topology of [`Self::structure`].
     pub fn topology(&self) -> &Topology {
         self.model.topology()
     }
@@ -468,7 +468,7 @@ impl MolfileInterpretation {
     }
 
     /// The interpreted model, discarding the reports.
-    pub fn into_model(self) -> Model {
+    pub fn into_structure(self) -> Structure {
         self.model
     }
 
@@ -476,7 +476,7 @@ impl MolfileInterpretation {
     pub fn into_parts(
         self,
     ) -> (
-        Model,
+        Structure,
         Vec<MolfileInterpretationReport>,
         Vec<MolfileUnsupported>,
     ) {
@@ -487,15 +487,16 @@ impl MolfileInterpretation {
 fn publish_molfile_components(
     components: Vec<(Molecule, Positions, MolfileInterpretationReport)>,
     omitted: Vec<MolfileUnsupported>,
-) -> Result<MolfileInterpretation, ModelBuildError> {
-    let mut builder = ModelBuilder::new();
+) -> Result<MolfileInterpretation, StructureBuildError> {
+    let mut builder = StructureBuilder::new();
     let mut reports = Vec::with_capacity(components.len());
     let mut lines = Vec::new();
     let chain = builder.hierarchy_mut().add_chain("A", None)?;
     for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
         let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
         let instance = builder.add_molecule(molecule, &positions)?;
-        let sequence = i32::try_from(index + 1).map_err(|_| ModelBuildError::CapacityOverflow)?;
+        let sequence =
+            i32::try_from(index + 1).map_err(|_| StructureBuildError::CapacityOverflow)?;
         let hierarchy = builder.hierarchy_mut();
         let residue = hierarchy.add_residue(
             chain,

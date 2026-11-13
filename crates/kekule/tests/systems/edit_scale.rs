@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use kekule::math::Point3;
 use kekule::molecule::{Atom, BondOrder, Element};
-use kekule::structure::{Model, ModelEditor, Positions};
+use kekule::structure::{Positions, Structure, StructureEditor};
 use kekule::topology::edit::{EditAtomId, EditBondId, EditCorrespondence, TopologyEditor};
 use kekule::topology::{
     AtomSiteMetadata, ChainId, ResidueId, Topology, TopologyAtomIndex, TopologyBondIndex,
@@ -286,8 +286,8 @@ fn model_edits_remap_columns_through_the_dense_maps() {
         ANGSTROM,
     ))
     .unwrap();
-    let model = Model::new(Arc::clone(&source), positions).unwrap();
-    let mut editor: ModelEditor = model.to_editor();
+    let structure = Structure::new(Arc::clone(&source), positions).unwrap();
+    let mut editor: StructureEditor = structure.to_editor();
     let ring = editor.topology().atom_handle(source.atom_ids()[3]).unwrap();
     editor.delete_atom(ring).unwrap();
     let ethanol = editor.topology().atom_handle(source.atom_ids()[0]).unwrap();
@@ -305,7 +305,7 @@ fn model_edits_remap_columns_through_the_dense_maps() {
             .position(published.topology().atom_ids()[index])
             .unwrap();
         let expected = match source_index {
-            Some(source_index) => model.position(source.atom_ids()[source_index.index()]),
+            Some(source_index) => structure.position(source.atom_ids()[source_index.index()]),
             None => Some(Quantity::new(Point3::new(-1.0, 0.0, 0.0), ANGSTROM)),
         }
         .unwrap();
@@ -402,8 +402,8 @@ fn untouched_residues_keep_their_source_atoms_in_a_draft() {
             .unwrap();
     }
     let topology = Arc::new(builder.build().unwrap());
-    let model = Model::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
-    let editor = model.into_editor();
+    let structure = Structure::new(Arc::clone(&topology), Positions::zeros(3)).unwrap();
+    let editor = structure.into_editor();
     let handle = editor.topology().residue_handle(residue).unwrap();
     let carbon = Element::from_symbol("C").unwrap();
     assert_eq!(editor.next_atom_name(handle, carbon).unwrap(), "C3");
@@ -411,12 +411,12 @@ fn untouched_residues_keep_their_source_atoms_in_a_draft() {
     assert_eq!(editor.next_atom_name(handle, oxygen).unwrap(), "O4");
 }
 
-/// A deep description of a model read through its public views, so that a
+/// A deep description of a structure read through its public views, so that a
 /// change anywhere in its shared state shows.
-fn describe(model: &Model) -> String {
+fn describe(structure: &Structure) -> String {
     use std::fmt::Write;
-    let topology = model.topology();
-    let view = model.as_model_view();
+    let topology = structure.topology();
+    let view = structure.as_structure_view();
     let mut text = String::new();
     for atom in topology.atoms() {
         writeln!(
@@ -424,7 +424,7 @@ fn describe(model: &Model) -> String {
             "atom {} {:?} {:?} occupancy {:?} b {:?}",
             atom.id(),
             atom.atom(),
-            model
+            structure
                 .position(atom.id())
                 .map(|p| p.value_in(ANGSTROM).unwrap()),
             view.occupancy(atom.index()),
@@ -473,7 +473,7 @@ fn edits_through_shared_state_leave_the_source_model_unchanged() {
         ANGSTROM,
     ))
     .unwrap();
-    let mut seeded = Model::new(Arc::clone(&source), positions)
+    let mut seeded = Structure::new(Arc::clone(&source), positions)
         .unwrap()
         .to_editor();
     for atom in source.atom_ids() {
@@ -483,15 +483,15 @@ fn edits_through_shared_state_leave_the_source_model_unchanged() {
             .set_b_factor(handle, Some(Quantity::new(20.0, SQUARE_ANGSTROM)))
             .unwrap();
     }
-    let model = seeded.finish().unwrap();
-    let before = describe(&model);
-    let atom = |editor: &ModelEditor, index: usize| {
+    let structure = seeded.finish().unwrap();
+    let before = describe(&structure);
+    let atom = |editor: &StructureEditor, index: usize| {
         editor
             .topology()
-            .atom_handle(model.topology().atom_ids()[index])
+            .atom_handle(structure.topology().atom_ids()[index])
             .unwrap()
     };
-    type Edit = fn(&mut ModelEditor, &dyn Fn(&ModelEditor, usize) -> EditAtomId);
+    type Edit = fn(&mut StructureEditor, &dyn Fn(&StructureEditor, usize) -> EditAtomId);
     let edits: [(&str, Edit); 12] = [
         ("delete an atom", |editor, atom| {
             editor.delete_atom(atom(editor, 2)).unwrap();
@@ -588,10 +588,10 @@ fn edits_through_shared_state_leave_the_source_model_unchanged() {
         }),
     ];
     for (name, edit) in edits {
-        let mut editor = model.to_editor();
+        let mut editor = structure.to_editor();
         edit(&mut editor, &atom);
         assert_eq!(
-            describe(&model),
+            describe(&structure),
             before,
             "{name}: the draft changed its source"
         );
@@ -602,7 +602,7 @@ fn edits_through_shared_state_leave_the_source_model_unchanged() {
             "{name}: the edit changed nothing"
         );
         assert_eq!(
-            describe(&model),
+            describe(&structure),
             before,
             "{name}: publication changed its source"
         );
@@ -615,7 +615,7 @@ fn chained_edits_keep_every_snapshot_and_their_labels() {
     // Each edit starts from the previous publication, as an undo history
     // does; every snapshot keeps its own site names and residue labels.
     let sites = system().atom_count();
-    let mut history = vec![Model::new(system(), Positions::zeros(sites)).unwrap()];
+    let mut history = vec![Structure::new(system(), Positions::zeros(sites)).unwrap()];
     for round in 0..40 {
         let mut editor = history.last().unwrap().to_editor();
         let site = editor
@@ -633,8 +633,8 @@ fn chained_edits_keep_every_snapshot_and_their_labels() {
             .unwrap();
         history.push(editor.finish().unwrap());
     }
-    let site_name = |model: &Model, site: usize| {
-        model
+    let site_name = |structure: &Structure, site: usize| {
+        structure
             .topology()
             .atom_site(AtomSiteId::new(site as u32))
             .unwrap()
@@ -662,17 +662,17 @@ fn chained_edits_keep_every_snapshot_and_their_labels() {
 
 #[test]
 fn appended_perceived_copies_keep_their_perception_profile() {
-    // A host builds a large model by appending perceived copies and never
+    // A host builds a large structure by appending perceived copies and never
     // perceives the result: perceiving it, or an edit of it, perceives only
     // what changed.
-    let copy = Model::new(
+    let copy = Structure::new(
         Arc::new(system().perceived().unwrap()),
         Positions::zeros(12),
     )
     .unwrap();
-    let mut merged = ModelEditor::new();
+    let mut merged = StructureEditor::new();
     for _ in 0..3 {
-        merged.append_model(&copy).unwrap();
+        merged.append_structure(&copy).unwrap();
     }
     // An added molecule has no known perception and is perceived.
     merged

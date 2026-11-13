@@ -836,7 +836,7 @@ impl<'a> InstanceView<'a> {
 /// definitions, topology-global dense atom and bond order, one system
 /// hierarchy of chains, residues, and atom sites, and topology-scoped
 /// properties. It does not own coordinates.
-/// Attach positions through [`crate::structure::Model`] or another structure
+/// Attach positions through [`crate::structure::Structure`] or another structure
 /// type.
 ///
 /// Local [`crate::molecule::AtomId`] and [`crate::molecule::BondId`] values identify

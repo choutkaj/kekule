@@ -71,11 +71,14 @@ fn mmcif_scalar_categories_support_document_block_and_structure_set_paths() {
         scalar.blocks()[0].interpret(Default::default()).unwrap(),
     ] {
         assert!(expected.topology().same_layout(actual.topology()));
-        assert_eq!(expected.model().positions(), actual.model().positions());
-        assert_eq!(actual.model().atom_count(), 1);
+        assert_eq!(
+            expected.structure().positions(),
+            actual.structure().positions()
+        );
+        assert_eq!(actual.structure().atom_count(), 1);
         assert_eq!(actual.report().entity_definitions(), 1);
         assert_eq!(actual.report().solvent_molecules(), 1);
-        assert_eq!(actual.model().topology().residues().count(), 1);
+        assert_eq!(actual.structure().topology().residues().count(), 1);
     }
     let interpreted = scalar.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(
@@ -89,9 +92,9 @@ fn mmcif_scalar_categories_support_document_block_and_structure_set_paths() {
             .structure_set()
             .get(0)
             .unwrap()
-            .as_model_view()
+            .as_structure_view()
             .positions(),
-        expected.model().positions()
+        expected.structure().positions()
     );
     let options = MmcifParseOptions::default().with_max_atom_site_rows(0);
     for input in [
@@ -254,20 +257,20 @@ fn mmcif_1ake_preserves_declared_sequence_and_polymer_connectivity() {
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    assert_eq!(a.model().atom_count(), 3804);
+    assert_eq!(a.structure().atom_count(), 3804);
     assert_eq!(a.topology().bond_count(), 3484);
     assert_eq!(a.topology().instance_count(), 382);
     assert!(a.topology().same_layout(b.topology()));
-    assert_eq!(a.model().positions(), b.model().positions());
-    assert_eq!(a.model().properties(), b.model().properties());
+    assert_eq!(a.structure().positions(), b.structure().positions());
+    assert_eq!(a.structure().properties(), b.structure().properties());
     let protein = crate::topology::AtomSelection::for_molecule_classes(
-        a.model().shared_topology(),
+        a.structure().shared_topology(),
         [crate::topology::MoleculeClass::Protein],
     )
     .unwrap();
     assert_eq!(protein.indices().len(), 3312);
-    assert_eq!(a.model().occupancies(), b.model().occupancies());
-    assert_eq!(a.model().b_factors(), b.model().b_factors());
+    assert_eq!(a.structure().occupancies(), b.structure().occupancies());
+    assert_eq!(a.structure().b_factors(), b.structure().b_factors());
 }
 
 #[test]

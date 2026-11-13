@@ -3,7 +3,7 @@ use kekule::molecule::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEdito
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles;
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::TopologyBuilder;
 use std::num::NonZeroU32;
 
@@ -237,7 +237,7 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let options = SdfWriteOptions::default().with_version(version);
         let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
@@ -249,7 +249,7 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
             document.records()[0]
                 .interpret(Default::default())
                 .unwrap()
-                .into_model()
+                .into_structure()
                 .topology()
                 .atom_count(),
             2
@@ -316,7 +316,7 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
     for _ in 0..1_000 {
         builder.add_instance(definition).unwrap();
     }
-    let model = Model::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
+    let model = Structure::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
     let molfile = molfile::write(&model, molfile::MolfileWriteOptions::default())
         .unwrap()
         .0;
@@ -329,11 +329,11 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     let sdf_model = sdf::parse_str(&sdf, Default::default()).unwrap().records()[0]
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     for mut restored in [molfile_model, sdf_model] {
         assert_eq!(restored.topology().instance_count(), 1_000);
         assert!(restored

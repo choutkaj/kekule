@@ -1,12 +1,12 @@
 //! OpenFF potential energies and gradients against an independent SMIRNOFF reference,
-//! layout binding, evaluation of every model view, and minimization with and
+//! layout binding, evaluation of every structure view, and minimization with and
 //! without fixed atoms.
 #![cfg(feature = "openff")]
 
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Distribution, Members, Model, ModelView, Partition, Positions};
+use kekule::structure::{Distribution, Members, Partition, Positions, Structure, StructureView};
 use kekule::structure::{Geometry, Order, StructureSet, TimeAxis};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::traj::FrameBuffer;
@@ -61,14 +61,14 @@ fn topology(instances: usize) -> Arc<Topology> {
 }
 
 /// Instances are offset along z so intermolecular pairs are evaluated at full strength.
-fn model(topology: &Arc<Topology>) -> Model {
+fn structure(topology: &Arc<Topology>) -> Structure {
     let points = (0..topology.atom_count())
         .map(|i| {
             let [x, y, z] = GEOMETRY[i % 7];
             Point3::new(x, y + 0.01 * (i / 7) as f64, z + 0.42 * (i / 7) as f64)
         })
         .collect::<Vec<_>>();
-    Model::new(
+    Structure::new(
         Arc::clone(topology),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
@@ -106,8 +106,8 @@ fn norm(a: [f64; 3]) -> f64 {
 /// textbook formulas: acos angles, the IUPAC/OpenMM signed dihedral
 /// `atan2(b2_hat . (n1 x n2), n1 . n2)`, and an explicit pair loop that looks
 /// exceptions up by atom identity.
-fn reference_energy(p: &ParameterizedTopology, model: &Model) -> [f64; 6] {
-    let x = |atom| model.position(atom).unwrap().into_value();
+fn reference_energy(p: &ParameterizedTopology, structure: &Structure) -> [f64; 6] {
+    let x = |atom| structure.position(atom).unwrap().into_value();
     let mut e = [0.0; 6];
     for b in p.bonds() {
         let r = norm(sub(x(b.atoms()[0]), x(b.atoms()[1])));
@@ -131,7 +131,7 @@ fn reference_energy(p: &ParameterizedTopology, model: &Model) -> [f64; 6] {
             }
         }
     }
-    let ids = model.topology().atom_ids();
+    let ids = structure.topology().atom_ids();
     let charges = p.charges().value();
     for i in 0..ids.len() {
         for j in i + 1..ids.len() {
@@ -157,10 +157,10 @@ fn energy_components_match_an_independent_smirnoff_reference() {
     let topology = topology(2);
     let p = parameterize(&topology);
     assert!(!p.improper_torsions().is_empty() && !p.pair_exceptions().is_empty());
-    let model = model(&topology);
+    let structure = structure(&topology);
     let potential = OpenFfPotential::new(&p).unwrap();
-    let energy = potential.energy(model.as_model_view()).unwrap();
-    let expected = reference_energy(&p, &model);
+    let energy = potential.energy(structure.as_structure_view()).unwrap();
+    let expected = reference_energy(&p, &structure);
     let kinds = [
         ComponentKind::Bonds,
         ComponentKind::Angles,
@@ -188,7 +188,7 @@ fn energy_components_match_an_independent_smirnoff_reference() {
     let sum: f64 = expected.iter().sum();
     assert!((energy.total().into_value() - sum).abs() <= 1e-10 * (1.0 + sum.abs()));
 
-    let evaluation = potential.evaluate(model.as_model_view()).unwrap();
+    let evaluation = potential.evaluate(structure.as_structure_view()).unwrap();
     assert_eq!(evaluation.energy(), &energy);
     assert!(Arc::ptr_eq(&evaluation.shared_topology(), &topology));
 }
@@ -197,17 +197,17 @@ fn energy_components_match_an_independent_smirnoff_reference() {
 fn gradient_differentiates_energy_and_components_add_up() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    let model = model(&topology);
-    let evaluation = potential.evaluate(model.as_model_view()).unwrap();
+    let structure = structure(&topology);
+    let evaluation = potential.evaluate(structure.as_structure_view()).unwrap();
     let gradient = evaluation.gradient().into_value();
-    let points = model.positions().values().into_value().to_vec();
+    let points = structure.positions().values().into_value().to_vec();
     let energy_at = |points: &[Point3]| {
-        let mut moved = model.clone();
+        let mut moved = structure.clone();
         moved
             .set_positions(Quantity::new(points, NANOMETER))
             .unwrap();
         potential
-            .energy(moved.as_model_view())
+            .energy(moved.as_structure_view())
             .unwrap()
             .total()
             .into_value()
@@ -234,7 +234,7 @@ fn gradient_differentiates_energy_and_components_add_up() {
     }
 
     let components = potential
-        .evaluate_components(model.as_model_view())
+        .evaluate_components(structure.as_structure_view())
         .unwrap();
     for (atom, total) in gradient.iter().enumerate() {
         let mut sum = Vector3::zero();
@@ -259,8 +259,8 @@ fn gradient_differentiates_energy_and_components_add_up() {
 fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    let model = model(&topology);
-    let reference = potential.evaluate(model.as_model_view()).unwrap();
+    let structure = structure(&topology);
+    let reference = potential.evaluate(structure.as_structure_view()).unwrap();
     let net = reference
         .gradient()
         .into_value()
@@ -269,25 +269,27 @@ fn energy_is_rigid_motion_invariant_and_gradient_has_no_net_force() {
     assert!(norm(net) < 1e-9, "net gradient {net:?}");
 
     let (c, s) = (0.3_f64.cos(), 0.3_f64.sin());
-    let moved = model
+    let moved = structure
         .positions()
         .values()
         .into_value()
         .iter()
         .map(|p| Point3::new(c * p.x - s * p.y + 1.7, s * p.x + c * p.y - 0.4, p.z + 2.2))
         .collect::<Vec<_>>();
-    let mut transformed = model.clone();
+    let mut transformed = structure.clone();
     transformed
         .set_positions(Quantity::new(moved, NANOMETER))
         .unwrap();
-    let total = |m: &Model| {
+    let total = |m: &Structure| {
         potential
-            .energy(m.as_model_view())
+            .energy(m.as_structure_view())
             .unwrap()
             .total()
             .into_value()
     };
-    assert!((total(&transformed) - total(&model)).abs() < 1e-10 * total(&model).abs().max(1.0));
+    assert!(
+        (total(&transformed) - total(&structure)).abs() < 1e-10 * total(&structure).abs().max(1.0)
+    );
 }
 
 #[test]
@@ -295,25 +297,28 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     assert!(Arc::ptr_eq(&potential.shared_topology(), &topology));
-    let model = model(&topology);
+    let structure = structure(&topology);
     // An independently published equal topology is a different layout.
-    let other = self::model(&self::topology(1));
+    let other = self::structure(&self::topology(1));
     assert_eq!(
-        potential.energy(other.as_model_view()),
+        potential.energy(other.as_structure_view()),
         Err(EvaluationError::IncompatibleTopology)
     );
     // Reperception publishes a new snapshot of the same layout, so the
     // prepared potential evaluates both identically.
-    let mut perceived = model.clone();
+    let mut perceived = structure.clone();
     perceived.perceive().unwrap();
-    let evaluation = potential.evaluate(perceived.as_model_view()).unwrap();
+    let evaluation = potential.evaluate(perceived.as_structure_view()).unwrap();
     assert!(Arc::ptr_eq(
         &evaluation.shared_topology(),
         &perceived.shared_topology()
     ));
     assert_eq!(
         evaluation.energy().total(),
-        potential.energy(model.as_model_view()).unwrap().total()
+        potential
+            .energy(structure.as_structure_view())
+            .unwrap()
+            .total()
     );
 
     let cell = PeriodicCell::orthorhombic(
@@ -321,15 +326,15 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
         [true; 3],
     )
     .unwrap();
-    let mut periodic = model.clone();
+    let mut periodic = structure.clone();
     periodic.set_cell(Some(cell));
     assert_eq!(
-        potential.energy(periodic.as_model_view()),
+        potential.energy(periodic.as_structure_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
-    let set = StructureSet::from_models([periodic]).unwrap();
+    let set = StructureSet::from_structures([periodic]).unwrap();
     assert_eq!(
-        potential.evaluate(set.get(0).unwrap().as_model_view()),
+        potential.evaluate(set.get(0).unwrap().as_structure_view()),
         Err(EvaluationError::UnsupportedPeriodicCell)
     );
 }
@@ -338,10 +343,10 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
 fn distribution_members_and_trajectory_frames_evaluate_like_models() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    let model = model(&topology);
-    let expected = potential.evaluate(model.as_model_view()).unwrap();
+    let structure = structure(&topology);
+    let expected = potential.evaluate(structure.as_structure_view()).unwrap();
 
-    let mut members = StructureSet::from_models([model.clone()]).unwrap();
+    let mut members = StructureSet::from_structures([structure.clone()]).unwrap();
     members
         .set_distribution(Some(
             Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
@@ -349,28 +354,28 @@ fn distribution_members_and_trajectory_frames_evaluate_like_models() {
         .unwrap();
     assert_eq!(
         potential
-            .evaluate(members.get(0).unwrap().as_model_view())
+            .evaluate(members.get(0).unwrap().as_structure_view())
             .unwrap(),
         expected
     );
-    let frame = Geometry::new(model.positions().clone());
+    let frame = Geometry::new(structure.positions().clone());
     let mut trajectory = StructureSet::from_geometries(Arc::clone(&topology), [frame]).unwrap();
     trajectory
         .set_order(Some(Order::Time(TimeAxis::default())))
         .unwrap();
     assert_eq!(
         potential
-            .evaluate(trajectory.get(0).unwrap().as_model_view())
+            .evaluate(trajectory.get(0).unwrap().as_structure_view())
             .unwrap(),
         expected
     );
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     buffer
         .geometry_mut()
-        .set_positions(model.positions().values())
+        .set_positions(structure.positions().values())
         .unwrap();
     assert_eq!(
-        potential.evaluate(buffer.as_model_view()).unwrap(),
+        potential.evaluate(buffer.as_structure_view()).unwrap(),
         expected
     );
 }
@@ -379,28 +384,31 @@ fn distribution_members_and_trajectory_frames_evaluate_like_models() {
 fn singular_coordinates_name_the_qualified_atoms() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    let mut model = model(&topology);
-    let ids = model.topology().atom_ids().to_vec();
+    let mut structure = structure(&topology);
+    let ids = structure.topology().atom_ids().to_vec();
     // Place one instance's oxygen onto the other instance's methyl carbon.
-    let carbon = model.position(ids[1]).unwrap();
-    model.set_position(ids[13], carbon).unwrap();
+    let carbon = structure.position(ids[1]).unwrap();
+    structure.set_position(ids[13], carbon).unwrap();
     let expected = EvaluationError::InvalidGeometry {
         interaction: InteractionKind::NonbondedPair,
         atoms: vec![ids[1], ids[13]],
         kind: SingularGeometry::CoincidentAtoms,
     };
     assert_eq!(
-        potential.energy(model.as_model_view()),
+        potential.energy(structure.as_structure_view()),
         Err(expected.clone())
     );
-    assert_eq!(potential.evaluate(model.as_model_view()), Err(expected));
+    assert_eq!(
+        potential.evaluate(structure.as_structure_view()),
+        Err(expected)
+    );
 }
 
 #[test]
 fn replacement_charges_change_only_electrostatics() {
     let topology = topology(1);
     let p = parameterize(&topology);
-    let model = model(&topology);
+    let structure = structure(&topology);
     let assigned = OpenFfPotential::new(&p).unwrap();
     let neutral = OpenFfPotential::new(&p)
         .unwrap()
@@ -408,8 +416,8 @@ fn replacement_charges_change_only_electrostatics() {
         .unwrap();
     assert_eq!(neutral.charges().value(), &[0.0; 7]);
     let (a, n) = (
-        assigned.energy(model.as_model_view()).unwrap(),
-        neutral.energy(model.as_model_view()).unwrap(),
+        assigned.energy(structure.as_structure_view()).unwrap(),
+        neutral.energy(structure.as_structure_view()).unwrap(),
     );
     for c in a.components() {
         let other = n.component(c.kind()).unwrap();
@@ -466,8 +474,8 @@ fn nonperiodic_vdw_cutoff_is_rejected_at_preparation() {
 fn minimization_reaches_a_stationary_point_without_changing_its_input() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    let model = model(&topology);
-    let original = model.clone();
+    let structure = structure(&topology);
+    let original = structure.clone();
     let options = MinimizeOptions::default()
         .with_gradient_tolerance(Quantity::new(
             1e-3,
@@ -475,19 +483,19 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
         ))
         .unwrap()
         .with_max_iterations(5_000);
-    let result = minimize(&potential, model.as_model_view(), &options).unwrap();
+    let result = minimize(&potential, structure.as_structure_view(), &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
-    assert_eq!(model, original);
+    assert_eq!(structure, original);
     let initial = result.initial_energy().total().into_value();
     let last = result.final_evaluation();
     assert!(last.energy().total().into_value() < initial);
     assert!(last.max_gradient_norm().into_value() <= 1e-3);
 
-    let minimized = result.to_model(model.as_model_view()).unwrap();
+    let minimized = result.to_structure(structure.as_structure_view()).unwrap();
     assert!(Arc::ptr_eq(&minimized.shared_topology(), &topology));
     assert_eq!(minimized.positions(), result.positions());
     assert_eq!(
-        &potential.evaluate(minimized.as_model_view()).unwrap(),
+        &potential.evaluate(minimized.as_structure_view()).unwrap(),
         result.final_evaluation()
     );
     // Bonds relax to their 0.11 nm equilibrium within a small strain.
@@ -498,15 +506,15 @@ fn minimization_reaches_a_stationary_point_without_changing_its_input() {
         ));
         assert!((r - 0.11).abs() < 0.01, "bond length {r}");
     }
-    let unrelated = self::model(&self::topology(2));
-    assert!(result.to_model(unrelated.as_model_view()).is_err());
+    let unrelated = self::structure(&self::topology(2));
+    assert!(result.to_structure(unrelated.as_structure_view()).is_err());
 }
 
 #[test]
 fn a_molecule_relaxes_against_a_fixed_neighbour() {
     let topology = topology(2);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
-    let model = model(&topology);
+    let structure = structure(&topology);
     // The second instance moves; the first stays fixed but still interacts.
     let moving = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
         atom.id().instance().index() == 1
@@ -519,10 +527,11 @@ fn a_molecule_relaxes_against_a_fixed_neighbour() {
         ))
         .unwrap()
         .with_max_iterations(5_000);
-    let result = minimize_scoped(&potential, model.as_model_view(), &scope, &options).unwrap();
+    let result =
+        minimize_scoped(&potential, structure.as_structure_view(), &scope, &options).unwrap();
     assert_eq!(result.status(), MinimizationStatus::Converged);
     assert!(result.max_gradient().into_value() <= 1e-3);
-    let before = model.positions().values().into_value();
+    let before = structure.positions().values().into_value();
     let after = result.positions().values().into_value();
     for (index, (a, b)) in before.iter().zip(after).enumerate() {
         if moving.contains(topology.atom_ids()[index]) {
@@ -535,11 +544,11 @@ fn a_molecule_relaxes_against_a_fixed_neighbour() {
     }
     // The moving atoms of the final evaluation are stationary; the fixed ones
     // carry the intermolecular forces.
-    let minimized = result.to_model(model.as_model_view()).unwrap();
+    let minimized = result.to_structure(structure.as_structure_view()).unwrap();
     for atom in topology.atom_ids() {
         let gradient = result
             .final_evaluation()
-            .gradient_for(minimized.as_model_view(), *atom)
+            .gradient_for(minimized.as_structure_view(), *atom)
             .unwrap()
             .into_value()
             .norm();
@@ -549,9 +558,9 @@ fn a_molecule_relaxes_against_a_fixed_neighbour() {
     }
     assert!(result.final_evaluation().max_gradient_norm().into_value() > 1e-2);
     // Without its neighbour, the same molecule relaxes elsewhere.
-    let alone = model.subset(&moving).unwrap();
+    let alone = structure.subset(&moving).unwrap();
     let single = OpenFfPotential::new(&parameterize(&alone.shared_topology())).unwrap();
-    let isolated = minimize(&single, alone.as_model_view(), &options).unwrap();
+    let isolated = minimize(&single, alone.as_structure_view(), &options).unwrap();
     let shift = after[7..]
         .iter()
         .zip(isolated.positions().values().into_value())
@@ -567,8 +576,8 @@ fn potentials_are_shareable_trait_objects() {
     let topology = topology(1);
     let potential: Box<dyn Potential> =
         Box::new(OpenFfPotential::new(&parameterize(&topology)).unwrap());
-    let model = model(&topology);
-    let view: ModelView<'_> = model.as_model_view();
+    let structure = structure(&topology);
+    let view: StructureView<'_> = structure.as_structure_view();
     let result = minimize(potential.as_ref(), view, &MinimizeOptions::default()).unwrap();
     assert!(result.iterations() > 0);
 }
@@ -588,8 +597,8 @@ fn atom_parameters_follow_an_interleaved_dense_order() {
     let mut builder = Arc::try_unwrap(topology(2)).unwrap().into_builder();
     builder.set_atom_order(interleaved_order).unwrap();
     let interleaved = Arc::new(builder.build().unwrap());
-    let reference = model(&ordered);
-    let moved = Model::new(
+    let reference = structure(&ordered);
+    let moved = Structure::new(
         Arc::clone(&interleaved),
         Positions::new(Quantity::new(
             interleaved
@@ -618,13 +627,13 @@ fn atom_parameters_follow_an_interleaved_dense_order() {
     }
     let expected = OpenFfPotential::new(&source)
         .unwrap()
-        .energy(reference.as_model_view())
+        .energy(reference.as_structure_view())
         .unwrap()
         .total()
         .into_value();
     let actual = OpenFfPotential::new(&target)
         .unwrap()
-        .energy(moved.as_model_view())
+        .energy(moved.as_structure_view())
         .unwrap()
         .total()
         .into_value();

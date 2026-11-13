@@ -1,9 +1,9 @@
 //! Entity classification and source-provenance planning before row preparation.
 use super::one_based_serial;
-use super::{fail, invalid_model, MmcifAtomField, MmcifEntityClassifications, MmcifWriteIssue};
+use super::{fail, invalid_structure, MmcifAtomField, MmcifEntityClassifications, MmcifWriteIssue};
 use crate::diagnostics::FormatError;
 use crate::io::structure_interpret::{EntityKind, StructureInterpretationReport};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{
     AtomSite, Chain, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeInstance,
     MoleculeInstanceId, Residue, ResidueClass, Topology,
@@ -86,7 +86,7 @@ pub(super) struct EntityPlan {
 }
 
 pub(super) fn multi_model_entity_plan(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     classifications: Option<&MmcifEntityClassifications>,
     report: Option<&StructureInterpretationReport>,
 ) -> Result<EntityPlan, FormatError> {
@@ -104,7 +104,7 @@ pub(super) fn multi_model_entity_plan(
 }
 
 pub(super) fn entity_plan_from_report(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
     if report
@@ -126,7 +126,7 @@ pub(super) fn entity_plan_from_report(
 }
 
 /// The label asym IDs of a model's hierarchy chains. Chains may share a label,
-/// as copies [`append_model`](crate::structure::ModelEditor::append_model)
+/// as copies [`append_structure`](crate::structure::StructureEditor::append_structure)
 /// appends do, while mmCIF requires every structural instance to have an ID
 /// of its own. The first chain with a label keeps it; each later one is the
 /// label with a copy serial, `A-2`, `A-3`, and so on, that no chain label or
@@ -137,11 +137,11 @@ struct AsymIds {
 }
 
 impl AsymIds {
-    fn new(model: ModelView<'_>) -> Result<Self, FormatError> {
+    fn new(model: StructureView<'_>) -> Result<Self, FormatError> {
         let mut reserved = BTreeSet::new();
         for (chain_id, chain) in model.topology().hierarchy().chains() {
             if chain.label_id().is_empty() {
-                return Err(invalid_model(format!(
+                return Err(invalid_structure(format!(
                     "{} has an empty label ID.",
                     crate::diagnostics::Capitalized(chain_id)
                 )));
@@ -171,7 +171,7 @@ impl AsymIds {
 }
 
 pub(super) fn generic_entity_plan(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<EntityPlan, FormatError> {
     let hierarchy = model.topology().hierarchy();
@@ -292,7 +292,7 @@ pub(super) fn generic_entity_plan(
 }
 
 fn report_entity_plan(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
     let mut asym_ids = AsymIds::new(model)?;
@@ -634,7 +634,7 @@ fn entity_kind_from_source(
 }
 
 pub(super) fn normalize_entity_classifications(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     entries: impl IntoIterator<Item = (MoleculeInstanceId, Vec<EntityKind>)>,
 ) -> Result<BTreeMap<MoleculeInstanceId, MoleculeEntityKind>, FormatError> {
     let mut explicit = BTreeMap::new();
@@ -731,7 +731,7 @@ fn carbohydrate_entity_kind(
 }
 
 fn invalid_molecule(molecule: MoleculeInstanceId) -> FormatError {
-    invalid_model(format!("The model has no {molecule}."))
+    invalid_structure(format!("The model has no {molecule}."))
 }
 
 #[cfg(test)]

@@ -222,7 +222,7 @@ fn duplicate_residue_addresses_and_label_chains_are_not_silently_resolved() {
 
 #[test]
 fn original_1ake_pocket_uses_checked_composition_and_retains_source_associations() {
-    let model = mmcif::parse_str(
+    let structure = mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
     )
@@ -231,7 +231,7 @@ fn original_1ake_pocket_uses_checked_composition_and_retains_source_associations
     .unwrap()
     .into_parts()
     .0;
-    let top = model.shared_topology();
+    let top = structure.shared_topology();
     let residue = top.residue_by_author("A", "215", None).unwrap();
     assert_eq!(residue.name(), "AP5");
     let ligand = AtomSelection::for_residues(Arc::clone(&top), [residue.id()]).unwrap();
@@ -243,23 +243,23 @@ fn original_1ake_pocket_uses_checked_composition_and_retains_source_associations
         .difference(&hydrogen)
         .unwrap();
     let nearby = measure::within(
-        model.as_model_view(),
+        structure.as_structure_view(),
         &candidates,
         &ligand,
         Quantity::new(5.0, ANGSTROM),
     )
     .unwrap();
     let selected = nearby.expand_to_residues();
-    let pocket = model.subset(&selected).unwrap();
+    let pocket = structure.subset(&selected).unwrap();
     assert_eq!(pocket.atom_count(), 428);
     assert_eq!(pocket.topology().residues().count(), 69);
     for (source, target) in selected.atom_ids().zip(pocket.topology().atom_ids()) {
         assert_eq!(
-            model.position(source).unwrap(),
+            structure.position(source).unwrap(),
             pocket.position(*target).unwrap()
         );
         assert_eq!(
-            model
+            structure
                 .topology()
                 .atom(source)
                 .unwrap()

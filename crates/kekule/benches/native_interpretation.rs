@@ -42,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
          {} polymer entities; minimum and median of {ROUNDS} rounds",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        interpretation.model().atom_count(),
+        interpretation.structure().atom_count(),
         interpretation.topology().instance_count(),
         report.instances().len(),
         report.coordination().len(),
@@ -62,7 +62,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let bytes = if with_report {
                 native::write(&interpretation, options)?
             } else {
-                native::write(interpretation.model(), options)?
+                native::write(interpretation.structure(), options)?
             };
             writes.push(start.elapsed());
             size = bytes.len();

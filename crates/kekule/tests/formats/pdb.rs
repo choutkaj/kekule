@@ -520,7 +520,7 @@ fn cryst1_is_the_model_cell_only_for_a_whole_unit_cell() {
                 .collect::<Vec<_>>(),
         );
         let interpreted = interpret(&text);
-        let cell = interpreted.model().cell().map(|cell| {
+        let cell = interpreted.structure().cell().map(|cell| {
             assert!(cell.is_orthorhombic());
             assert_eq!(cell.periodic_axes(), [true; 3]);
             let [a, b, c] = cell
@@ -916,7 +916,7 @@ fn dative_bonds_between_residues_write_as_coordination() {
             .unwrap()
             .atom()
     };
-    let mut editor = interpreted.model().to_editor();
+    let mut editor = interpreted.structure().to_editor();
     let [sulfur, ion] =
         [atom("SG"), atom("ZN")].map(|atom| editor.topology().atom_handle(atom).unwrap());
     editor.add_bond(sulfur, ion, BondOrder::Dative).unwrap();
@@ -1447,7 +1447,7 @@ fn author_chains_holding_ligands_and_water_write_as_separate_mmcif_asyms() {
         ),
         (
             kekule::mmcif::write(
-                [interpreted.model()],
+                [interpreted.structure()],
                 kekule::mmcif::MmcifWriteOptions::default(),
             )
             .map(|(text, _)| text),
@@ -2024,7 +2024,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
         let options = kekule::mmcif::MmcifWriteOptions::default;
         for written in [
             kekule::mmcif::write([&interpreted], options()).map(|(text, _)| text),
-            kekule::mmcif::write([interpreted.model()], options()).map(|(text, _)| text),
+            kekule::mmcif::write([interpreted.structure()], options()).map(|(text, _)| text),
         ] {
             let reread = kekule::mmcif::parse_str(&written.unwrap(), Default::default())
                 .unwrap()
@@ -2054,8 +2054,8 @@ fn bonds_with_evidence(result: &StructureInterpretation, evidence: &BondEvidence
         .count()
 }
 
-fn read_model(text: &str) -> kekule::structure::Model {
-    interpret(text).into_model()
+fn read_model(text: &str) -> kekule::structure::Structure {
+    interpret(text).into_structure()
 }
 
 #[test]
@@ -2112,7 +2112,7 @@ fn separately_read_models_become_samples_with_their_own_state() {
         set
     };
     let set = one_state(
-        StructureSet::from_models([first, second]).unwrap(),
+        StructureSet::from_structures([first, second]).unwrap(),
         Partition::one_state(2),
     );
     assert!(std::sync::Arc::ptr_eq(&set.shared_topology(), &topology));
@@ -2134,20 +2134,21 @@ fn separately_read_models_become_samples_with_their_own_state() {
         Some(PropertyValue::Int(3))
     );
     // Its rows read through the first reading's topology.
-    let projected = second.to_model();
+    let projected = second.to_structure();
     assert!(projected.topology().shares_layout(&topology));
     assert_eq!(projected.atom_at(atom).unwrap().occupancy(), Some(0.25));
 
     // The partition the caller passes is kept.
     let conformers = one_state(
-        StructureSet::from_models([read_model(CRAMBIN), read_model(CRAMBIN)]).unwrap(),
+        StructureSet::from_structures([read_model(CRAMBIN), read_model(CRAMBIN)]).unwrap(),
         Partition::state_per_sample(2),
     );
     assert_eq!(conformers.distribution().unwrap().state_count(), 2);
 
     // A different topology is refused.
     assert_eq!(
-        StructureSet::from_models([read_model(CRAMBIN), read_model(ADENYLATE_KINASE)]).unwrap_err(),
+        StructureSet::from_structures([read_model(CRAMBIN), read_model(ADENYLATE_KINASE)])
+            .unwrap_err(),
         StructureSetError::TopologyMismatch
     );
 }

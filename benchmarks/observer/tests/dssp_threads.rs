@@ -38,21 +38,21 @@ fn check(path: &Path, text: &str) -> bool {
     ) else {
         return false;
     };
-    let model = interpretation.into_model();
-    let serial = dssp::assign(&model, DsspOptions::default());
-    let plan = DsspPlan::new(model.shared_topology(), DsspOptions::default());
-    assert_eq!(plan.assign(&model), serial, "{}: plan", path.display());
+    let structure = interpretation.into_structure();
+    let serial = dssp::assign(&structure, DsspOptions::default());
+    let plan = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
+    assert_eq!(plan.assign(&structure), serial, "{}: plan", path.display());
     for threads in THREADS {
         let options =
             DsspOptions::default().with_threads(NonZeroUsize::new(threads).expect("nonzero"));
         assert_eq!(
-            dssp::assign(&model, options),
+            dssp::assign(&structure, options),
             serial,
             "{}: {threads} threads",
             path.display()
         );
         assert_eq!(
-            DsspPlan::new(model.shared_topology(), options).assign(&model),
+            DsspPlan::new(structure.shared_topology(), options).assign(&structure),
             serial,
             "{}: plan on {threads} threads",
             path.display()

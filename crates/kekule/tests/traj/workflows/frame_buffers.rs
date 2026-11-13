@@ -55,7 +55,7 @@ fn decoded_frames_leave_and_return_to_a_buffer_without_copying() {
     assert_eq!(geometry.positions().values().value().as_ptr(), decoded);
     assert_eq!(geometry.properties().bonds().len(), topology.bond_count());
     let frame = FrameView::new(&topology, &geometry, None, None).unwrap();
-    let view = frame.as_model_view();
+    let view = frame.as_structure_view();
     assert!(matches!(
         view.kind(),
         StructureKind::InSet(context)

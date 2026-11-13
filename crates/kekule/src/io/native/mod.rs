@@ -17,7 +17,7 @@ use crate::io::{
     StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Model, StructureSet};
+use crate::structure::{Structure, StructureSet};
 use crate::topology::Topology;
 
 pub(crate) use decode::read_native;
@@ -56,9 +56,9 @@ pub enum NativeKind {
     Molecule,
     /// A [`Topology`].
     Topology,
-    /// A [`Model`].
-    Model,
-    /// A [`Model`] with the report of its interpretation, a
+    /// A [`Structure`].
+    Structure,
+    /// A [`Structure`] with the report of its interpretation, a
     /// [`StructureInterpretation`].
     StructureInterpretation,
     /// A [`StructureSet`], with its geometries or with only their number
@@ -74,7 +74,7 @@ impl NativeKind {
         match self {
             Self::Molecule => 1,
             Self::Topology => 2,
-            Self::Model => 3,
+            Self::Structure => 3,
             Self::StructureInterpretation => 7,
             Self::StructureSet => 9,
             Self::SampleSetInterpretation => 10,
@@ -85,7 +85,7 @@ impl NativeKind {
         Some(match code {
             1 => Self::Molecule,
             2 => Self::Topology,
-            3 => Self::Model,
+            3 => Self::Structure,
             7 => Self::StructureInterpretation,
             9 => Self::StructureSet,
             10 => Self::SampleSetInterpretation,
@@ -108,7 +108,7 @@ impl fmt::Display for NativeKind {
         formatter.write_str(match self {
             Self::Molecule => "molecule",
             Self::Topology => "topology",
-            Self::Model => "model",
+            Self::Structure => "model",
             Self::StructureInterpretation => "interpreted model",
             Self::StructureSet => "structure set",
             Self::SampleSetInterpretation => "interpreted structure set",
@@ -118,7 +118,7 @@ impl fmt::Display for NativeKind {
 
 /// The object a native writer encodes, borrowed from its owner.
 ///
-/// Converts from a borrowed [`Molecule`], [`Topology`], [`Model`],
+/// Converts from a borrowed [`Molecule`], [`Topology`], [`Structure`],
 /// [`StructureSet`], [`StructureSetDescription`], [`StructureInterpretation`], or
 /// [`StructureSetInterpretation`]. [`Self::interpreted_model`] and
 /// [`Self::interpreted_structure_set`] pair a model or structure set with reports
@@ -132,8 +132,8 @@ pub struct NativeSource<'a> {
 pub(super) enum NativeContent<'a> {
     Molecule(&'a Molecule),
     Topology(&'a Topology),
-    Model(&'a Model),
-    InterpretedModel(&'a Model, &'a StructureInterpretationReport),
+    Structure(&'a Structure),
+    InterpretedStructure(&'a Structure, &'a StructureInterpretationReport),
     StructureSet(&'a StructureSet),
     InterpretedSampleSet(&'a StructureSet, &'a [StructureInterpretationReport]),
     StructureSetDescription(&'a StructureSetDescription),
@@ -145,11 +145,11 @@ impl<'a> NativeSource<'a> {
     /// The report is stored as it is. Its IDs name atoms, chains, and
     /// residues of the model it was interpreted with.
     pub const fn interpreted_model(
-        model: &'a Model,
+        model: &'a Structure,
         report: &'a StructureInterpretationReport,
     ) -> Self {
         Self {
-            content: NativeContent::InterpretedModel(model, report),
+            content: NativeContent::InterpretedStructure(model, report),
         }
     }
 
@@ -172,8 +172,8 @@ impl<'a> NativeSource<'a> {
         match self.content {
             NativeContent::Molecule(_) => NativeKind::Molecule,
             NativeContent::Topology(_) => NativeKind::Topology,
-            NativeContent::Model(_) => NativeKind::Model,
-            NativeContent::InterpretedModel(..) => NativeKind::StructureInterpretation,
+            NativeContent::Structure(_) => NativeKind::Structure,
+            NativeContent::InterpretedStructure(..) => NativeKind::StructureInterpretation,
             NativeContent::StructureSet(_) | NativeContent::StructureSetDescription(_) => {
                 NativeKind::StructureSet
             }
@@ -197,14 +197,14 @@ macro_rules! native_source_from {
 native_source_from!(
     Molecule,
     Topology,
-    Model,
+    Structure,
     StructureSet,
     StructureSetDescription
 );
 
 impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
     fn from(value: &'a StructureInterpretation) -> Self {
-        Self::interpreted_model(value.model(), value.report())
+        Self::interpreted_model(value.structure(), value.report())
     }
 }
 
@@ -226,7 +226,7 @@ pub enum NativeObject {
     /// A topology.
     Topology(Topology),
     /// A model with its topology.
-    Model(Model),
+    Structure(Structure),
     /// A model with its topology and the report of its interpretation.
     StructureInterpretation(Box<StructureInterpretation>),
     /// A structure set with its topology and geometries.
@@ -245,7 +245,7 @@ impl NativeObject {
         match self {
             Self::Molecule(_) => NativeKind::Molecule,
             Self::Topology(_) => NativeKind::Topology,
-            Self::Model(_) => NativeKind::Model,
+            Self::Structure(_) => NativeKind::Structure,
             Self::StructureInterpretation(_) => NativeKind::StructureInterpretation,
             Self::StructureSet(_) | Self::StructureSetDescription(_) => NativeKind::StructureSet,
             Self::SampleSetInterpretation(_) => NativeKind::SampleSetInterpretation,
@@ -299,11 +299,11 @@ impl NativeObject {
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
     /// [`FormatErrorDetail::NativeKind`] when the object is of another kind.
-    pub fn into_model(self) -> Result<Model, FormatError> {
+    pub fn into_structure(self) -> Result<Structure, FormatError> {
         match self {
-            Self::Model(value) => Ok(value),
-            Self::StructureInterpretation(value) => Ok(value.into_model()),
-            other => Err(other.kind_error(NativeKind::Model)),
+            Self::Structure(value) => Ok(value),
+            Self::StructureInterpretation(value) => Ok(value.into_structure()),
+            other => Err(other.kind_error(NativeKind::Structure)),
         }
     }
 

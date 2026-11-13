@@ -16,7 +16,7 @@ use kekule::statistics::{
     SampleObservations, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Geometry, Members, Model, Order, Partition, Positions, StructureSet,
+    Distribution, Geometry, Members, Order, Partition, Positions, Structure, StructureSet,
     StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
@@ -308,7 +308,7 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
     let aligned = AlignedRmsdOptions::default()
         .with_fit(options)
         .with_measurement_weighting(Weighting::Explicit(&pair_weights));
-    let model = Model::new(
+    let structure = Structure::new(
         Arc::clone(&topology),
         Positions::new(Quantity::new(points(11), NANOMETER)).unwrap(),
     )
@@ -319,7 +319,7 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
 
     let held = memory.rmsd(3, &fit, options).unwrap();
     let held_aligned = memory.aligned_rmsd(3, &fit, &measured, aligned).unwrap();
-    let held_model = memory.rmsd(&model, &fit, options).unwrap();
+    let held_model = memory.rmsd(&structure, &fit, options).unwrap();
     let listed = [9, 0, 3, 3, 6];
     for reader in [&file as &dyn StructureSetRead, &memory] {
         let read = alignment::geometry_rmsd(reader, 0..10, 3, &fit, options).unwrap();
@@ -327,7 +327,7 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
         let read =
             alignment::geometry_aligned_rmsd(reader, 0..10, 3, &fit, &measured, aligned).unwrap();
         assert_eq!(bits(read.value()), bits(held_aligned.value()));
-        let read = alignment::geometry_rmsd(reader, listed, &model, &fit, options).unwrap();
+        let read = alignment::geometry_rmsd(reader, listed, &structure, &fit, options).unwrap();
         assert_eq!(
             bits(read.value()),
             listed.map(|index| held_model.value()[index].to_bits())

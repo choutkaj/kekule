@@ -5,7 +5,7 @@ use crate::{
     molecule::{
         Atom, AtomId, BondOrder, Element, Molecule, MoleculeEditor, VanDerWaalsRadiusSource,
     },
-    structure::{ModelBuilder, Positions},
+    structure::{Positions, StructureBuilder},
     topology::{AtomSiteMetadata, ChainId, MoleculeClass, MoleculeDefinitionId, ResidueClass},
 };
 
@@ -34,10 +34,10 @@ struct Water {
 }
 
 pub(super) fn solvate(
-    model: &mut Model,
+    structure: &mut Structure,
     options: &SolventOptions,
 ) -> Result<SolvationReport, SolvationError> {
-    let cell = *model.cell().ok_or(SolvationError::MissingCell)?;
+    let cell = *structure.cell().ok_or(SolvationError::MissingCell)?;
     if cell.periodic_axes() != [true; 3] {
         return Err(SolvationError::NotFullyPeriodic);
     }
@@ -59,12 +59,12 @@ pub(super) fn solvate(
     }
     let radii = match &options.solute_radii {
         Some(radii) => {
-            if !radii.topology.shares_layout(model.topology()) {
+            if !radii.topology.shares_layout(structure.topology()) {
                 return Err(SolvationError::RadiusTopologyMismatch);
             }
             radii.radii.clone()
         }
-        None => model
+        None => structure
             .topology()
             .atoms()
             .map(|atom| {
@@ -76,14 +76,14 @@ pub(super) fn solvate(
             .collect::<Result<Vec<_>, _>>()?,
     };
     let charge = options.net_charge.unwrap_or_else(|| {
-        model
+        structure
             .topology()
             .atoms()
             .map(|atom| i64::from(atom.formal_charge))
             .sum()
     });
-    let origin = center(model.positions().values().value())?;
-    let solute: Vec<_> = model
+    let origin = center(structure.positions().values().value())?;
+    let solute: Vec<_> = structure
         .positions()
         .values()
         .value()
@@ -145,7 +145,7 @@ pub(super) fn solvate(
     }
     let mut ion_sites = Neighbors::new(&geometry, ion_separation)?;
     // Existing monatomic ions participate in separation checks, but are never replaced.
-    for (i, atom) in model.topology().atoms().enumerate() {
+    for (i, atom) in structure.topology().atoms().enumerate() {
         let m = atom.instance();
         if m.molecule().atom_count() == 1
             && (atom.formal_charge != 0 || m.class() == MoleculeClass::Ion)
@@ -190,16 +190,16 @@ pub(super) fn solvate(
             SolvationChargeBasis::FormalCharges
         },
         seed: options.seed,
-        cleared_topology_properties: model
+        cleared_topology_properties: structure
             .topology()
             .properties()
             .owner()
             .iter()
             .map(|(k, _)| k.clone())
             .collect(),
-        cleared_model_properties: model.properties().owner().keys().cloned().collect(),
+        cleared_structure_properties: structure.properties().owner().keys().cloned().collect(),
     };
-    let mut builder = model.to_builder();
+    let mut builder = structure.to_builder();
     if report.waters_added > 0 {
         let water = definition("O", 0, true);
         let atom_ids: Vec<_> = water.atom_ids().collect();
@@ -264,7 +264,7 @@ pub(super) fn solvate(
             )?;
         }
     }
-    *model = builder.build()?;
+    *structure = builder.build()?;
     Ok(report)
 }
 
@@ -349,7 +349,7 @@ fn pack(
 /// A water with its hydrogens, or a monatomic ion, perceived. Valence gives
 /// none of its atoms an implicit hydrogen, as PDB and mmCIF readers infer
 /// the counts, so the counts are inferred rather than fixed and a solvated
-/// model writes to those formats as they read it back.
+/// structure writes to those formats as they read it back.
 fn definition(symbol: &str, charge: i8, water: bool) -> Molecule {
     let mut editor = MoleculeEditor::new();
     let mut atom = Atom::new(Element::from_symbol(symbol).expect("built-in element"));
@@ -368,7 +368,7 @@ fn definition(symbol: &str, charge: i8, water: bool) -> Molecule {
     molecule.perceive().expect("built-in species perceive");
     molecule
 }
-fn new_chain(builder: &mut ModelBuilder, prefix: &str) -> Result<ChainId, SolvationError> {
+fn new_chain(builder: &mut StructureBuilder, prefix: &str) -> Result<ChainId, SolvationError> {
     let mut suffix = 1_u64;
     loop {
         let label = format!("{prefix}{suffix}");
@@ -385,7 +385,7 @@ fn new_chain(builder: &mut ModelBuilder, prefix: &str) -> Result<ChainId, Solvat
 }
 #[allow(clippy::too_many_arguments)]
 fn append(
-    builder: &mut ModelBuilder,
+    builder: &mut StructureBuilder,
     definition: MoleculeDefinitionId,
     atoms: &[AtomId],
     points: &[Point3],

@@ -56,7 +56,7 @@ pub enum StructureSetError {
     /// The operation needs something the set lacks, such as a time order or
     /// a distribution.
     Missing(Requirement),
-    /// A constructor received no models.
+    /// A constructor received no structures.
     EmptySource,
     /// Probabilities were asked of a distribution without members.
     EmptyDistribution,
@@ -79,7 +79,7 @@ pub enum StructureSetError {
         /// The geometry's index.
         geometry: usize,
     },
-    /// A model's topology layout differs from the others'
+    /// A structure's topology layout differs from the others'
     /// ([`Topology::same_layout`](crate::topology::Topology::same_layout)).
     TopologyMismatch,
     /// A set-wide replacement has the wrong number of geometries.
@@ -211,7 +211,7 @@ impl fmt::Display for StructureSetError {
         use crate::diagnostics::counted;
         match self {
             Self::Missing(requirement) => write!(formatter, "The structure set {requirement}."),
-            Self::EmptySource => formatter.write_str("There are no models to collect."),
+            Self::EmptySource => formatter.write_str("There are no structures to collect."),
             Self::EmptyDistribution => formatter.write_str("The distribution has no members."),
             Self::IndexOutOfRange { index, len } => write!(
                 formatter,
@@ -227,7 +227,7 @@ impl fmt::Display for StructureSetError {
                 write!(formatter, "Geometry {geometry} is outside the distribution.")
             }
             Self::TopologyMismatch => formatter
-                .write_str("The model has a different topology layout from the structure set."),
+                .write_str("The structure has a different topology layout from the structure set."),
             Self::GeometryCountMismatch { expected, actual } => write!(
                 formatter,
                 "The structure set has {}, but {} given.",

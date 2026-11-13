@@ -14,7 +14,7 @@ use crate::math::{Matrix3, Vector3};
 use crate::molecule::AtomId;
 use crate::native::{self, NativeReadOptions, NativeSource, NativeWriteOptions};
 use crate::sequence::{CodeOrigin, ResidueCode};
-use crate::structure::{Model, StructureSet};
+use crate::structure::{Structure, StructureSet};
 use crate::topology::{ChainId, InstanceAtomId, MoleculeInstanceId, ResidueId};
 
 const MODELS: &str = "data_demo
@@ -522,7 +522,7 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
 
 /// The first coordinate model of [`MODELS`] and the set of both models,
 /// whose two geometries carry stored equal weights.
-pub(super) fn parts() -> (Model, StructureSet) {
+pub(super) fn parts() -> (Structure, StructureSet) {
     let document = crate::mmcif::parse_str(MODELS, Default::default()).unwrap();
     let model = document
         .interpret(
@@ -530,7 +530,7 @@ pub(super) fn parts() -> (Model, StructureSet) {
                 .with_model_selection(crate::macromolecular::ModelSelection::First),
         )
         .unwrap()
-        .into_model();
+        .into_structure();
     let mut set = document
         .interpret_structure_set(Default::default())
         .unwrap()
@@ -560,7 +560,7 @@ fn every_report_field_round_trips() {
     .unwrap();
     let decoded = read(&bytes).unwrap().into_interpretation().unwrap();
     assert_eq!(decoded.report(), &report);
-    assert_eq!(decoded.model().positions(), model.positions());
+    assert_eq!(decoded.structure().positions(), model.positions());
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();
     assert!(
         again == bytes,

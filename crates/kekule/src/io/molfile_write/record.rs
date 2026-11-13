@@ -8,7 +8,7 @@ use crate::chemistry::{
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Molecule};
 use crate::stereo::{StereoElementKind, StereoGroupKind};
-use crate::structure::ModelView;
+use crate::structure::StructureView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::ANGSTROM;
 
@@ -119,7 +119,7 @@ impl<'a> MolfileRecord<'a> {
     }
 
     pub(super) fn model(
-        model: ModelView<'a>,
+        model: StructureView<'a>,
         version: MolfileVersion,
     ) -> Result<Self, FormatError> {
         let topology = model.topology();
@@ -134,12 +134,12 @@ impl<'a> MolfileRecord<'a> {
                 .position(qualified)
                 .ok_or_else(|| {
                     MOLFILE_WRITE
-                        .invalid_model(format!("{} has no position.", Capitalized(qualified)))
+                        .invalid_structure(format!("{} has no position.", Capitalized(qualified)))
                 })?
                 .value_in(ANGSTROM)
                 .map_err(|error| {
                     MOLFILE_WRITE
-                        .invalid_model(format!("Cannot read the position of {qualified}."))
+                        .invalid_structure(format!("Cannot read the position of {qualified}."))
                         .with_source(error)
                 })?;
             // V2000 has four-place fixed-width fields. V3000 emits round-trip
@@ -171,7 +171,7 @@ impl<'a> MolfileRecord<'a> {
 
         let mut projections = BTreeMap::new();
         for occurrence in topology.instances() {
-            let geometry = ModelStereoPositions {
+            let geometry = StructureStereoPositions {
                 positions: &positions,
                 instance: occurrence.id(),
             };
@@ -285,7 +285,7 @@ fn stereo_projections(
         let inferred =
             molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings).map_err(|error| {
                 MOLFILE_WRITE
-                    .invalid_model("Cannot perceive stereo from the 3D coordinates.")
+                    .invalid_structure("Cannot perceive stereo from the 3D coordinates.")
                     .with_source(error)
             })?;
         if !warnings.is_empty() {
@@ -314,7 +314,7 @@ fn stereo_projections(
                 }
                 staged.add_stereo_element(element).map_err(|error| {
                     MOLFILE_WRITE
-                        .invalid_model("Cannot add the stereo of the 3D coordinates.")
+                        .invalid_structure("Cannot add the stereo of the 3D coordinates.")
                         .with_source(error)
                 })?;
             }
@@ -330,7 +330,7 @@ fn stereo_projections(
         .transpose()
         .map_err(|error| {
             MOLFILE_WRITE
-                .invalid_model("Cannot perceive double-bond stereo from the 3D coordinates.")
+                .invalid_structure("Cannot perceive double-bond stereo from the 3D coordinates.")
                 .with_source(error)
         })?
         .flatten();
@@ -392,12 +392,12 @@ fn project_stereo_groups(
         .collect()
 }
 
-struct ModelStereoPositions<'a> {
+struct StructureStereoPositions<'a> {
     positions: &'a BTreeMap<InstanceAtomId, Point3>,
     instance: MoleculeInstanceId,
 }
 
-impl AtomPositionSource for ModelStereoPositions<'_> {
+impl AtomPositionSource for StructureStereoPositions<'_> {
     fn position_value(&self, atom: AtomId) -> Option<Point3> {
         self.positions
             .get(&InstanceAtomId::new(self.instance, atom))

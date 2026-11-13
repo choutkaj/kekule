@@ -807,7 +807,7 @@ pub enum FormatErrorDetail {
     },
     /// Interpreting this coordinate model failed; the error's kind, location
     /// and message describe the failure within it.
-    Model {
+    Structure {
         /// The model ID.
         model_id: String,
     },

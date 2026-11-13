@@ -8,7 +8,7 @@ use crate::perception::{
 };
 use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecordInterpretation};
 use crate::smiles::*;
-use crate::structure::{Model, Positions};
+use crate::structure::{Positions, Structure};
 use crate::{
     descriptors, molfile, perception as perception_api, sdf, smiles as smiles_api,
     stereo as stereo_api,
@@ -315,9 +315,9 @@ impl SdfRecordTestExt for SdfRecordInterpretation {
     }
 }
 
-pub(super) fn test_model(molecule: &Molecule) -> Model {
+pub(super) fn test_structure(molecule: &Molecule) -> Structure {
     let positions = test_positions(vec![Point3::default(); molecule.atom_count()]);
-    Model::from_molecule(molecule.clone(), &positions).expect("test model builds")
+    Structure::from_molecule(molecule.clone(), &positions).expect("test model builds")
 }
 
 pub(super) fn element_atom(symbol: &str) -> Atom {

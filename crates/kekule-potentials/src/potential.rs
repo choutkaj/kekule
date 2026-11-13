@@ -1,10 +1,10 @@
 //! The evaluation contract shared by every potential and optimizer.
 //!
 //! [`Potential`] makes no assumption about how an energy is built, so pairwise
-//! force fields, machine-learned models, and quantum-chemical backends can all
+//! force fields, machine-learned structures, and quantum-chemical backends can all
 //! implement it. A prepared potential binds one topology layout and evaluates
-//! any [`ModelView`] sharing it, including perceived snapshots: a
-//! [`kekule::structure::Model`], a geometry, or a trajectory frame.
+//! any [`StructureView`] sharing it, including perceived snapshots: a
+//! [`kekule::structure::Structure`], a geometry, or a trajectory frame.
 //! Results are validated at this boundary and stored in Kekule's canonical
 //! units (kJ/mol and kJ/mol/nm).
 
@@ -12,7 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use kekule::math::Vector3;
-use kekule::structure::ModelView;
+use kekule::structure::StructureView;
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIENT_UNIT};
 
@@ -23,7 +23,7 @@ use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIE
 /// parallel. Coordinate-dependent caches belong to the caller driving the
 /// evaluations, not to the potential.
 ///
-/// Accepting a [`ModelView`] does not imply support for every structure
+/// Accepting a [`StructureView`] does not imply support for every structure
 /// field. Implementations document capabilities such as periodic-cell support
 /// and return a structured [`EvaluationError`] for unsupported state.
 ///
@@ -49,7 +49,7 @@ pub trait Potential: Send + Sync {
     fn topology(&self) -> &Topology;
 
     /// Evaluates the energy and its Cartesian gradient.
-    fn evaluate(&self, model: ModelView<'_>) -> Result<Evaluation, EvaluationError>;
+    fn evaluate(&self, structure: StructureView<'_>) -> Result<Evaluation, EvaluationError>;
 
     /// Evaluates only the energy.
     ///
@@ -57,8 +57,8 @@ pub trait Potential: Send + Sync {
     /// cheaper. The default evaluates and discards the gradient. Some
     /// coordinates, such as an exactly linear strained angle, have a defined
     /// energy but no defined gradient; an energy-only override may accept them.
-    fn energy(&self, model: ModelView<'_>) -> Result<Energy, EvaluationError> {
-        self.evaluate(model).map(Evaluation::into_energy)
+    fn energy(&self, structure: StructureView<'_>) -> Result<Energy, EvaluationError> {
+        self.evaluate(structure).map(Evaluation::into_energy)
     }
 }
 
@@ -224,7 +224,7 @@ impl PartialEq for Evaluation {
 }
 
 impl Evaluation {
-    /// Validates a backend's result for `model`, which it binds by snapshot.
+    /// Validates a backend's result for `structure`, which it binds by snapshot.
     ///
     /// `gradient` holds one vector per topology atom in dense order.
     ///
@@ -232,28 +232,28 @@ impl Evaluation {
     ///
     /// - [`EvaluationError::Unit`] if `gradient` is not an energy per length.
     /// - [`EvaluationError::GradientLengthMismatch`] if it does not have one
-    ///   vector per atom of `model`.
+    ///   vector per atom of `structure`.
     /// - [`EvaluationError::NonFiniteGradient`] naming the first atom whose
     ///   gradient is not finite.
     pub fn new(
-        model: ModelView<'_>,
+        structure: StructureView<'_>,
         energy: Energy,
         gradient: Quantity<Vec<Vector3>>,
     ) -> Result<Self, EvaluationError> {
         let gradient = gradient.into_unit(CANONICAL_GRADIENT_UNIT)?.into_value();
-        if gradient.len() != model.atom_count() {
+        if gradient.len() != structure.atom_count() {
             return Err(EvaluationError::GradientLengthMismatch {
-                expected: model.atom_count(),
+                expected: structure.atom_count(),
                 actual: gradient.len(),
             });
         }
         if let Some(index) = gradient.iter().position(|g| !g.is_finite()) {
             return Err(EvaluationError::NonFiniteGradient {
-                atom: model.topology().atom_ids()[index],
+                atom: structure.topology().atom_ids()[index],
             });
         }
         Ok(Self {
-            topology: model.shared_topology(),
+            topology: structure.shared_topology(),
             energy,
             gradient,
         })
@@ -286,17 +286,17 @@ impl Evaluation {
         Quantity::new(self.gradient.as_slice(), CANONICAL_GRADIENT_UNIT)
     }
 
-    /// The gradient of one atom in kJ/(mol nm), or `None` if `model` does not
+    /// The gradient of one atom in kJ/(mol nm), or `None` if `structure` does not
     /// share this evaluation's topology layout or has no atom `atom`.
     pub fn gradient_for(
         &self,
-        model: ModelView<'_>,
+        structure: StructureView<'_>,
         atom: InstanceAtomId,
     ) -> Option<Quantity<Vector3>> {
-        if !self.topology.shares_layout(model.topology()) {
+        if !self.topology.shares_layout(structure.topology()) {
             return None;
         }
-        let index = model.topology().atom_index(atom)?;
+        let index = structure.topology().atom_index(atom)?;
         self.gradient
             .get(index.index())
             .map(|g| Quantity::new(*g, CANONICAL_GRADIENT_UNIT))
@@ -391,7 +391,7 @@ pub enum EvaluationError {
     DuplicateComponent(ComponentKind),
     /// The potential produced a gradient array of the wrong length.
     GradientLengthMismatch {
-        /// The model's atom count.
+        /// The structure's atom count.
         expected: usize,
         /// The number of gradients produced.
         actual: usize,
@@ -462,9 +462,9 @@ impl EvaluationError {
 impl fmt::Display for EvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IncompatibleTopology => {
-                f.write_str("The model view has a different topology layout from the potential.")
-            }
+            Self::IncompatibleTopology => f.write_str(
+                "The structure view has a different topology layout from the potential.",
+            ),
             Self::UnsupportedPeriodicCell => {
                 f.write_str("The potential does not support periodic cells.")
             }
@@ -490,7 +490,7 @@ impl fmt::Display for EvaluationError {
             }
             Self::GradientLengthMismatch { expected, actual } => write!(
                 f,
-                "The potential produced {actual} gradients for a model with {expected} atoms."
+                "The potential produced {actual} gradients for a structure with {expected} atoms."
             ),
             Self::NonFiniteGradient { atom } => {
                 write!(f, "The gradient on {atom} is not finite.")
@@ -523,15 +523,15 @@ mod tests {
 
     #[test]
     fn backend_failures_keep_their_cause_as_the_source() {
-        let cause = std::io::Error::other("model server unavailable");
+        let cause = std::io::Error::other("structure server unavailable");
         let error = EvaluationError::backend(cause);
         assert_eq!(error.to_string(), "The potential backend failed.");
         let source = std::error::Error::source(&error).unwrap();
-        assert_eq!(source.to_string(), "model server unavailable");
+        assert_eq!(source.to_string(), "structure server unavailable");
         assert!(source.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(
             error,
-            EvaluationError::backend(std::io::Error::other("model server unavailable"))
+            EvaluationError::backend(std::io::Error::other("structure server unavailable"))
         );
         assert_ne!(
             error,

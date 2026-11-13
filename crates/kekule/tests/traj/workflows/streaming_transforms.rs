@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kekule::alignment::{AlignmentError, AlignmentOptions, AtomCorrespondence, Weighting};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Forces, Model, Place, Positions, StructureSet, Velocities};
+use kekule::structure::{Forces, Place, Positions, Structure, StructureSet, Velocities};
 use kekule::topology::AtomSelection;
 use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::periodic::{self, MoleculeImager, PeriodicError, TrajectoryUnwrapper};
@@ -272,7 +272,7 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
     let first = set.get(0).unwrap().positions().values().value().to_vec();
     let turn = |p: Point3| Point3::new(-p.y + 2.0, p.x - 3.0, p.z + 1.0);
     // An independent reference with permuted atoms and an unpaired extra atom.
-    let reference = Model::new(
+    let reference = Structure::new(
         support::linear_carbon_topology(4),
         Positions::new(Quantity::new(
             [

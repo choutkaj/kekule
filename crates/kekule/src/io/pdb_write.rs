@@ -38,7 +38,7 @@ use crate::io::{
 };
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
-use crate::structure::{AsModelView, GeometryView, Model, ModelView, StructureSet};
+use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
     InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
     Topology, TopologyAtomIndex,
@@ -552,7 +552,7 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
 /// One PDB entry to write: a structure or a structure set, and the
 /// interpretation reports whose metal coordination it states.
 ///
-/// Convert from `&Model`, `&StructureSet`, [`GeometryView`],
+/// Convert from `&Structure`, `&StructureSet`, [`GeometryView`],
 /// `&StructureInterpretation`, or `&StructureSetInterpretation`;
 /// interpretations keep their source reports. [`Self::structure`] accepts
 /// any borrowed model view, such as a geometry of a structure set or a
@@ -566,15 +566,15 @@ pub struct PdbSource<'a> {
 
 #[derive(Debug, Clone, Copy)]
 enum Content<'a> {
-    Structure(ModelView<'a>),
+    Structure(StructureView<'a>),
     StructureSet(&'a StructureSet),
 }
 
 impl<'a> PdbSource<'a> {
     /// One structure, written without `MODEL` records.
-    pub fn structure(structure: &'a (impl AsModelView + ?Sized)) -> Self {
+    pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self {
-            content: Content::Structure(structure.as_model_view()),
+            content: Content::Structure(structure.as_structure_view()),
             reports: None,
         }
     }
@@ -620,8 +620,8 @@ impl<'a> PdbSource<'a> {
     }
 }
 
-impl<'a> From<&'a Model> for PdbSource<'a> {
-    fn from(model: &'a Model) -> Self {
+impl<'a> From<&'a Structure> for PdbSource<'a> {
+    fn from(model: &'a Structure) -> Self {
         Self::structure(model)
     }
 }
@@ -635,7 +635,7 @@ impl<'a> From<&'a StructureSet> for PdbSource<'a> {
 impl<'a, R: ?Sized> From<GeometryView<'a, R>> for PdbSource<'a> {
     fn from(geometry: GeometryView<'a, R>) -> Self {
         Self {
-            content: Content::Structure(geometry.as_model_view()),
+            content: Content::Structure(geometry.as_structure_view()),
             reports: None,
         }
     }
@@ -649,7 +649,7 @@ impl<'a> From<&'a StructureSetInterpretation> for PdbSource<'a> {
 
 impl<'a> From<&'a StructureInterpretation> for PdbSource<'a> {
     fn from(interpretation: &'a StructureInterpretation) -> Self {
-        Self::structure(interpretation.model())
+        Self::structure(interpretation.structure())
             .with_reports(std::slice::from_ref(interpretation.report()))
     }
 }
@@ -694,7 +694,7 @@ pub(crate) fn write_pdb_to<'a>(
                 .map_err(unrepresentable)?;
             let views = set
                 .iter()
-                .map(|geometry| geometry.as_model_view())
+                .map(|geometry| geometry.as_structure_view())
                 .collect();
             (views, true)
         }
@@ -1348,7 +1348,7 @@ impl Plan {
     /// [`PdbSource::with_reports`] for what is left out.
     fn links(
         &self,
-        views: &[ModelView<'_>],
+        views: &[StructureView<'_>],
         reports: &[StructureInterpretationReport],
         omissions: &mut Omissions,
     ) -> Vec<[usize; 2]> {
@@ -1652,7 +1652,7 @@ fn adjacent(
 
 /// One structure's coordinates, occupancies, and B factors in dense order,
 /// each checked against its columns after rounding.
-fn structure_values(view: ModelView<'_>, plan: &Plan) -> Result<Vec<SiteValues>, FormatError> {
+fn structure_values(view: StructureView<'_>, plan: &Plan) -> Result<Vec<SiteValues>, FormatError> {
     let invalid = |what: &'static str, atom: InstanceAtomId| {
         move |error: crate::units::UnitError| {
             FormatError::write(

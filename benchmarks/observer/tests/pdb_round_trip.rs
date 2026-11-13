@@ -2,10 +2,10 @@
 //! interprets and PDB can represent round-trips through the PDB writer.
 //!
 //! Each mmCIF entry is interpreted, written as PDB, and read back. The
-//! reread model must keep every atom's element, charge, identity columns,
+//! reread structure must keep every atom's element, charge, identity columns,
 //! coordinates, occupancy, and B factor at PDB's printed precision, and
 //! every bond with its order; writing it again must give the same text, so
-//! PDB -> model -> PDB is a fixed point. NMR ensembles round-trip as `MODEL`
+//! PDB -> structure -> PDB is a fixed point. NMR ensembles round-trip as `MODEL`
 //! records. Entries PDB cannot represent must fail with a typed PDB write
 //! issue, never write a file that reads back differently.
 
@@ -17,7 +17,7 @@ use kekule::diagnostics::{DiagnosticKind, FormatErrorDetail};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
 use kekule::pdb::{self, PdbWriteIssue};
-use kekule::structure::{Model, ModelView, StructureSet};
+use kekule::structure::{Structure, StructureSet, StructureView};
 use kekule::topology::{Topology, TopologyAtomIndex};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -101,7 +101,7 @@ fn close(left: f64, right: f64, tolerance: f64) -> bool {
 }
 
 /// The reread structure keeps everything PDB carries at its precision.
-fn assert_same_structure(reread: ModelView<'_>, source: ModelView<'_>, label: &str) {
+fn assert_same_structure(reread: StructureView<'_>, source: StructureView<'_>, label: &str) {
     let (left, right) = (reread.topology(), source.topology());
     assert_eq!(left.atom_count(), right.atom_count(), "{label}: atom count");
     for index in 0..left.atom_count() {
@@ -142,7 +142,7 @@ fn assert_same_structure(reread: ModelView<'_>, source: ModelView<'_>, label: &s
             (Some(p), Some(q)) => assert!(close(p, q, 5.1e-3), "{label}: occupancy {index}"),
             (p, q) => assert_eq!(p.is_some(), q.is_some(), "{label}: occupancy {index}"),
         }
-        let b_factor = |view: ModelView<'_>| {
+        let b_factor = |view: StructureView<'_>| {
             view.b_factor(dense)
                 .map(|value| value.value_in(SQUARE_ANGSTROM).unwrap())
         };
@@ -181,10 +181,10 @@ fn is_representability_limit(issue: &PdbWriteIssue) -> bool {
     )
 }
 
-/// Writes, rereads, and rewrites one model; `None` when PDB cannot represent
+/// Writes, rereads, and rewrites one structure; `None` when PDB cannot represent
 /// it.
-fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
-    let written = match pdb::write(model, Default::default()).map(|(text, _)| text) {
+fn round_trip_model(structure: &Structure, label: &str) -> Result<Structure, String> {
+    let written = match pdb::write(structure, Default::default()).map(|(text, _)| text) {
         Ok(written) => written,
         Err(error) => {
             let Some(FormatErrorDetail::PdbWrite(issue)) = error.detail() else {
@@ -202,38 +202,45 @@ fn round_trip_model(model: &Model, label: &str) -> Result<Model, String> {
     let reread = pdb::parse_str(&written, Default::default())
         .and_then(|document| document.interpret(Default::default()))
         .unwrap_or_else(|error| panic!("{label}: written PDB does not read back: {error}"))
-        .into_model();
-    assert_same_structure(reread.as_model_view(), model.as_model_view(), label);
+        .into_structure();
+    assert_same_structure(
+        reread.as_structure_view(),
+        structure.as_structure_view(),
+        label,
+    );
     let again = pdb::write(&reread, Default::default())
         .map(|(text, _)| text)
-        .unwrap_or_else(|error| panic!("{label}: reread model does not write: {error}"));
+        .unwrap_or_else(|error| panic!("{label}: reread structure does not write: {error}"));
     assert!(
         again == written,
-        "{label}: PDB -> model -> PDB changed the text"
+        "{label}: PDB -> structure -> PDB changed the text"
     );
     Ok(reread)
 }
 
-fn round_trip_models(models: &StructureSet, label: &str) {
-    let written = pdb::write(models, Default::default())
+fn round_trip_models(structures: &StructureSet, label: &str) {
+    let written = pdb::write(structures, Default::default())
         .map(|(text, _)| text)
-        .unwrap_or_else(|error| panic!("{label}: models do not write: {error}"));
+        .unwrap_or_else(|error| panic!("{label}: structures do not write: {error}"));
     let reread = pdb::parse_str(&written, Default::default())
         .and_then(|document| document.interpret_structure_set(Default::default()))
-        .unwrap_or_else(|error| panic!("{label}: written models do not read back: {error}"))
+        .unwrap_or_else(|error| panic!("{label}: written structures do not read back: {error}"))
         .into_structure_set();
-    assert_eq!(reread.len(), models.len(), "{label}: models");
-    for (index, (left, right)) in reread.iter().zip(models.iter()).enumerate() {
+    assert_eq!(reread.len(), structures.len(), "{label}: structures");
+    for (index, (left, right)) in reread.iter().zip(structures.iter()).enumerate() {
         assert_same_structure(
-            left.as_model_view(),
-            right.as_model_view(),
-            &format!("{label} model {index}"),
+            left.as_structure_view(),
+            right.as_structure_view(),
+            &format!("{label} structure {index}"),
         );
     }
     let again = pdb::write(&reread, Default::default())
         .map(|(text, _)| text)
-        .unwrap_or_else(|error| panic!("{label}: reread models do not write: {error}"));
-    assert!(again == written, "{label}: models text changed on rewrite");
+        .unwrap_or_else(|error| panic!("{label}: reread structures do not write: {error}"));
+    assert!(
+        again == written,
+        "{label}: structures text changed on rewrite"
+    );
 }
 
 #[test]
@@ -251,7 +258,7 @@ fn curated_biomolecules_round_trip_through_pdb() {
         let Ok(interpretation) = document.interpret(first) else {
             continue;
         };
-        match round_trip_model(interpretation.model(), &label) {
+        match round_trip_model(interpretation.structure(), &label) {
             Ok(_) => written += 1,
             Err(reason) => {
                 unrepresentable.push(format!("{label}: {reason}"));
@@ -266,7 +273,7 @@ fn curated_biomolecules_round_trip_through_pdb() {
         }
     }
     eprintln!(
-        "{written} entries round-tripped, {multi_model} with every model; unrepresentable: {unrepresentable:#?}"
+        "{written} entries round-tripped, {multi_model} with every structure; unrepresentable: {unrepresentable:#?}"
     );
     assert!(written >= 15, "only {written} entries round-tripped");
     // mmCIF and PDB readings agree on metal coordination, so every curated

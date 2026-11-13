@@ -4,16 +4,16 @@ use crate::topology::TopologyAtomIndex;
 use crate::units::Quantity;
 
 use super::scalars::{b_factor_quantity, canonical_b_factor, AtomScalars};
-use super::{GeometryError, ModelView, Positions};
+use super::{GeometryError, Positions, StructureView};
 
-/// Structure state staged by [`super::ModelBuilder`] and
-/// [`super::ModelEditor`] before it becomes a [`super::Model`].
+/// Structure state staged by [`super::StructureBuilder`] and
+/// [`super::StructureEditor`] before it becomes a [`super::Structure`].
 ///
 /// Rows follow the draft's staged dense order or private editor slot order and
 /// may include rows of deleted editor slots. Publication projects and moves
-/// these fields into the model's own.
+/// these fields into the structure's own.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ModelState {
+pub(crate) struct StructureState {
     pub(crate) positions: Positions,
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) occupancies: AtomScalars,
@@ -21,7 +21,7 @@ pub(crate) struct ModelState {
     pub(crate) properties: GeometryProperties,
 }
 
-impl Default for ModelState {
+impl Default for StructureState {
     fn default() -> Self {
         Self {
             positions: Positions::default(),
@@ -33,7 +33,7 @@ impl Default for ModelState {
     }
 }
 
-impl ModelState {
+impl StructureState {
     pub(crate) fn set_position(
         &mut self,
         atom: TopologyAtomIndex,
@@ -115,7 +115,7 @@ impl ModelState {
 
     /// Copies positions, occupancies, and B-factors of every source atom into
     /// the given destination rows. Property rows are copied by the caller.
-    pub(crate) fn copy_atom_state_from(&mut self, source: ModelView<'_>, rows: &[usize]) {
+    pub(crate) fn copy_atom_state_from(&mut self, source: StructureView<'_>, rows: &[usize]) {
         debug_assert_eq!(rows.len(), source.atom_count());
         let staged = rows
             .iter()

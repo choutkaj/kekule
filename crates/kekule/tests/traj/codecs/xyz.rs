@@ -819,7 +819,7 @@ fn interpreted_xyz_topology_streams_every_frame_of_its_file() {
                 .with_frame(kekule::xyz::XyzFrameSelection::First),
         )
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     assert_eq!(topology.bond_count(), 2);
     let mut reader = XyzReader::new(
         Cursor::new(text.as_bytes()),
@@ -929,7 +929,7 @@ fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     let (_, report) = write_one_frame(Arc::clone(&topology));
     // Heavy atoms only: every implicit count is inferred and unperceived.
     assert_eq!(
@@ -965,7 +965,7 @@ H -0.24 0.927 0
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    let topology = interpretation.model().shared_topology();
+    let topology = interpretation.structure().shared_topology();
     // Interpretation fixes every count at zero and gives unnamed sites.
     let bonds = [WriteOmission::Bonds { bonds: 2 }];
     let (_, report) = write_one_frame(Arc::clone(&topology));
@@ -983,7 +983,7 @@ H -0.24 0.927 0
     let set = support::time_ordered(
         Arc::clone(&topology),
         [support::Frame::new(
-            interpretation.model().positions().clone(),
+            interpretation.structure().positions().clone(),
         )],
     );
     let path = temporary_path(Some("xyz"));

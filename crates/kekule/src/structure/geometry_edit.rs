@@ -1,4 +1,4 @@
-//! Atomic Cartesian editing on [`Model`].
+//! Atomic Cartesian editing on [`Structure`].
 //!
 //! Setters choose a connected moving fragment; prepared edits resolve that
 //! fragment once for repeated absolute targets. Preparation stores no geometry.
@@ -22,7 +22,7 @@ use crate::units::{Quantity, Unit, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LE
 
 use super::{
     measure::{self, MeasurementError},
-    Model, ModelView,
+    Structure, StructureView,
 };
 
 /// An edit failed before any coordinates were published.
@@ -202,14 +202,14 @@ impl<const N: usize> Prepared<N> {
         })
     }
 
-    fn ensure_compatible(&self, model: ModelView<'_>) -> Result<(), GeometryEditError> {
+    fn ensure_compatible(&self, structure: StructureView<'_>) -> Result<(), GeometryEditError> {
         self.moving
-            .ensure_compatible(&model.shared_topology())
+            .ensure_compatible(&structure.shared_topology())
             .map_err(|_| GeometryEditError::TopologyMismatch)
     }
 
-    fn points(&self, model: ModelView<'_>) -> [Point3; N] {
-        let values = model.positions().values();
+    fn points(&self, structure: StructureView<'_>) -> [Point3; N] {
+        let values = structure.positions().values();
         self.indices.map(|i| values.value()[i])
     }
 
@@ -230,16 +230,20 @@ impl<const N: usize> Prepared<N> {
         }
     }
 
-    fn measure(&self, model: ModelView<'_>) -> Result<Quantity<f64>, GeometryEditError> {
-        self.ensure_compatible(model)?;
+    fn measure(&self, structure: StructureView<'_>) -> Result<Quantity<f64>, GeometryEditError> {
+        self.ensure_compatible(structure)?;
         Ok(Quantity::new(
-            Self::value(self.points(model))?,
+            Self::value(self.points(structure))?,
             Self::unit(),
         ))
     }
 
-    fn apply(&self, model: &mut Model, target: Quantity<f64>) -> Result<(), GeometryEditError> {
-        self.ensure_compatible(model.as_model_view())?;
+    fn apply(
+        &self,
+        structure: &mut Structure,
+        target: Quantity<f64>,
+    ) -> Result<(), GeometryEditError> {
+        self.ensure_compatible(structure.as_structure_view())?;
         let mut target = target.into_unit(Self::unit())?.into_value();
         if !target.is_finite()
             || (N == 2 && target <= 0.0)
@@ -250,7 +254,7 @@ impl<const N: usize> Prepared<N> {
         if N == 4 {
             target = signed_angle(target);
         }
-        let points = self.points(model.as_model_view());
+        let points = self.points(structure.as_structure_view());
         let current = Self::value(points)?;
         let delta = if N == 4 {
             signed_angle(target - current)
@@ -276,7 +280,7 @@ impl<const N: usize> Prepared<N> {
         };
         // Pivots are kept bit-for-bit, even if included in the moving selection.
         let pivots = &self.indices[1..N - 1];
-        let staged = stage(model, &self.moving, pivots, |p| motion.apply(p))?;
+        let staged = stage(structure, &self.moving, pivots, |p| motion.apply(p))?;
         let mut result = points;
         for (point, &index) in result.iter_mut().zip(&self.indices) {
             if let Ok(i) = staged.binary_search_by_key(&index, |&(index, _)| index) {
@@ -295,7 +299,7 @@ impl<const N: usize> Prepared<N> {
         if residual > tolerance {
             return Err(GeometryEditError::NumericalFailure);
         }
-        publish(model, &staged)
+        publish(structure, &staged)
     }
 }
 
@@ -345,21 +349,21 @@ macro_rules! prepared_edit {
             /// Measures the current geometry in canonical units.
             pub fn measure(
                 &self,
-                model: ModelView<'_>,
+                structure: StructureView<'_>,
             ) -> Result<Quantity<f64>, GeometryEditError> {
-                self.0.measure(model)
+                self.0.measure(structure)
             }
 
             /// Sets an absolute target atomically. Accepts compatible units.
             /// Finite staged coordinates must achieve the target within 1e-10
             /// relative error for distances or 1e-10 radians for angles.
-            /// Otherwise returns `NumericalFailure` without changing the model.
+            /// Otherwise returns `NumericalFailure` without changing the structure.
             pub fn apply(
                 &self,
-                model: &mut Model,
+                structure: &mut Structure,
                 target: Quantity<f64>,
             ) -> Result<(), GeometryEditError> {
-                self.0.apply(model, target)
+                self.0.apply(structure, target)
             }
         }
     };
@@ -446,15 +450,15 @@ impl Motion {
 }
 
 fn stage(
-    model: &Model,
+    structure: &Structure,
     selection: &AtomSelection,
     pivots: &[usize],
     transform: impl Fn(Point3) -> Point3,
 ) -> Result<Vec<(usize, Point3)>, GeometryEditError> {
     selection
-        .ensure_compatible(&model.shared_topology())
+        .ensure_compatible(&structure.shared_topology())
         .map_err(|_| GeometryEditError::TopologyMismatch)?;
-    let values = model.positions().values();
+    let values = structure.positions().values();
     selection
         .indices()
         .iter()
@@ -470,14 +474,14 @@ fn stage(
         .collect()
 }
 
-fn publish(model: &mut Model, staged: &[(usize, Point3)]) -> Result<(), GeometryEditError> {
-    model
+fn publish(structure: &mut Structure, staged: &[(usize, Point3)]) -> Result<(), GeometryEditError> {
+    structure
         .positions
         .set_canonical_batch(staged)
         .map_err(|_| GeometryEditError::NumericalFailure)
 }
 
-impl Model {
+impl Structure {
     /// Sets A–B by translating B's connected fragment. See [`DistanceEdit`].
     pub fn set_distance(
         &mut self,
@@ -559,7 +563,7 @@ impl Model {
     /// Applies a validated rigid transform atomically to a selection's atoms.
     /// Translation is in canonical length units, as in [`RigidTransform`]. The
     /// cell, topology, and properties are preserved, including for an all-atom
-    /// selection; [`Model::apply_rigid_transform`] moves the whole model with
+    /// selection; [`Structure::apply_rigid_transform`] moves the whole structure with
     /// its cell.
     pub fn transform_atoms(
         &mut self,

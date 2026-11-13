@@ -13,7 +13,7 @@ fn v2000_touching_coordinates_preserve_precision_and_atom_fields() {
         let document = molfile::parse_str(&source, Default::default()).unwrap();
         let interpreted = document.interpret(Default::default()).unwrap();
         let point = interpreted
-            .model()
+            .structure()
             .positions()
             .get(0)
             .unwrap()
@@ -526,7 +526,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
     let molecule = read_smiles("C").expect("methane parses");
     let record = SdfRecordInterpretation::new(
         "safe title",
-        test_model(&molecule),
+        test_structure(&molecule),
         vec![SdfDataField::new("NOTES", "> leading marker\nsecond line")],
     );
     let written = sdf::write(
@@ -559,7 +559,7 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
             "\"$$$$\" line",
         ),
     ] {
-        let record = SdfRecordInterpretation::new(title, test_model(&molecule), vec![field]);
+        let record = SdfRecordInterpretation::new(title, test_structure(&molecule), vec![field]);
         let error = sdf::write(
             &[record],
             sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
@@ -674,7 +674,7 @@ fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
                 .expect("source declaration interprets");
             assert_eq!(interpreted.report().created_stereo_elements().len(), 1);
             let written = molfile::write(
-                interpreted.model(),
+                interpreted.structure(),
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V2000),
             )
@@ -961,8 +961,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
 
     let fields = vec![SdfDataField::new("NOTES", "line one\nline two")];
     let records = vec![
-        SdfRecordInterpretation::new("metadata title", test_model(&molecule), fields.clone()),
-        SdfRecordInterpretation::new("metadata title", test_model(&molecule), fields),
+        SdfRecordInterpretation::new("metadata title", test_structure(&molecule), fields.clone()),
+        SdfRecordInterpretation::new("metadata title", test_structure(&molecule), fields),
     ];
     let sdf_text = sdf::write(
         &records,

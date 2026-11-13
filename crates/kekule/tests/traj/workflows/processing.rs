@@ -12,7 +12,7 @@ use kekule::math::{Lattice, Matrix3, PeriodicCell, Point3, RigidTransform, Vecto
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Geometry, GeometryView, Model, Order, Positions, StructureSet,
+    Distribution, Forces, Geometry, GeometryView, Order, Positions, Structure, StructureSet,
     StructureSetRead, StructureSetReadError, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
@@ -248,13 +248,13 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     )
     .unwrap();
     let mut expected = set.clone();
-    let model = Model::new(
+    let structure = Structure::new(
         Arc::clone(&topology),
         set.get(3).unwrap().positions().clone(),
     )
     .unwrap();
     expected
-        .superpose(&model, &first, Default::default())
+        .superpose(&structure, &first, Default::default())
         .unwrap();
     assert_reads(&processed, &expected, "fit onto positions", &mut recorded);
 
@@ -825,9 +825,9 @@ impl StructureSetRead for Unique {
         let stored = self.set.read(index)?;
         let points = stored.positions().values().value().to_vec();
         let positions = Positions::from_vec(Quantity::new(points, NANOMETER)).unwrap();
-        let model =
-            Model::new(Arc::clone(StructureSetRead::topology(&self.set)), positions).unwrap();
-        let geometry = Geometry::from_model(model).with_cell(*stored.cell().unwrap());
+        let structure =
+            Structure::new(Arc::clone(StructureSetRead::topology(&self.set)), positions).unwrap();
+        let geometry = Geometry::from_structure(structure).with_cell(*stored.cell().unwrap());
         self.addresses
             .lock()
             .unwrap()

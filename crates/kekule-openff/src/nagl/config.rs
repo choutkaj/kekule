@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 fn error(detail: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::Model, detail)
+    Error::new(ErrorKind::Structure, detail)
 }
 
 #[derive(Debug, Deserialize)]

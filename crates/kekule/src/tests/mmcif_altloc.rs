@@ -80,7 +80,7 @@ fn mmcif_altloc_default_keeps_residue_coherent_and_shared_atoms() {
             .collect::<Vec<_>>(),
         [Some("A"), Some("A"), None]
     );
-    let values = result.model().positions().values();
+    let values = result.structure().positions().values();
     let points = values.value();
     assert!((points[1].x - 0.12).abs() < 1e-12);
     let report = &result.report().alternate_locations()[0];
@@ -121,7 +121,7 @@ fn mmcif_altloc_ties_and_unknown_occupancies_are_reported() {
     assert!(result.report().issues().iter().any(|issue| matches!(issue, StructureInterpretIssue::AlternateLocationOccupancyMissing { source_lines, .. } if source_lines.len() == 2)));
     assert_eq!(
         result
-            .model()
+            .structure()
             .occupancy(crate::topology::TopologyAtomIndex::new(0)),
         None
     );
@@ -132,7 +132,7 @@ fn mmcif_altloc_incomplete_alternatives_are_never_patched() {
     let source = document("1 C C1 LIG X 1 1 . A 0.9 0 0 0 1\n2 C C1 LIG X 1 1 . B 0.1 5 0 0 1\n3 O O1 LIG X 1 1 . B 0.1 6.2 0 0 1");
     let result = source.interpret(Default::default()).unwrap();
     assert_eq!(choices(&result), [vec!["B"]]);
-    assert_eq!(result.model().atom_count(), 2);
+    assert_eq!(result.structure().atom_count(), 2);
     assert!(result.report().issues().iter().any(|issue| matches!(issue, StructureInterpretIssue::AlternateLocationIncomplete { alternative, missing_atoms, .. } if alternative == "A" && missing_atoms == &["O1"])));
     assert!(selected(&source, AltLocPolicy::SelectLabel("A".into())).is_err());
     let disjoint = document("1 C C1 LIG X 1 1 . A 0.9 0 0 0 1\n2 O O1 LIG X 1 1 . B 0.1 5 0 0 1");
@@ -242,7 +242,7 @@ fn mmcif_altloc_microheterogeneity_selects_one_component() {
     let source = document("1 C CA GLY X 1 1 . A 0.4 0 0 0 1\n2 C CA ALA X 1 1 . B 0.6 5 0 0 1\n3 C CB ALA X 1 1 . B 0.6 6.5 0 0 1");
     let result = source.interpret(Default::default()).unwrap();
     assert_eq!(choices(&result), [vec!["B"]]);
-    assert_eq!(result.model().atom_count(), 2);
+    assert_eq!(result.structure().atom_count(), 2);
     assert!(result
         .report()
         .instances()
@@ -250,7 +250,7 @@ fn mmcif_altloc_microheterogeneity_selects_one_component() {
         .flat_map(|instance| instance.atoms())
         .all(|atom| atom.component_id() == "ALA"));
     let gly = selected(&source, AltLocPolicy::SelectLabel("A".into())).unwrap();
-    assert_eq!(gly.model().atom_count(), 1);
+    assert_eq!(gly.structure().atom_count(), 1);
 }
 
 #[test]
@@ -323,7 +323,7 @@ fn mmcif_altloc_source_combinations_can_cover_disjoint_parts_of_a_residue() {
     let source = with_conformations("1 C C1 LIG X 1 1 . A 0.7 0 0 0 1\n2 C C1 LIG X 1 1 . B 0.3 5 0 0 1\n3 O O1 LIG X 1 1 . C 0.7 1.2 0 0 1\n4 O O1 LIG X 1 1 . D 0.3 6.2 0 0 1", "first A\nfirst C\nsecond B\nsecond D\n");
     let result = source.interpret(Default::default()).unwrap();
     assert_eq!(choices(&result), [vec!["A", "C"]]);
-    assert_eq!(result.model().atom_count(), 2);
+    assert_eq!(result.structure().atom_count(), 2);
 }
 
 #[test]

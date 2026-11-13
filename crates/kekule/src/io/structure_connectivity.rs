@@ -1755,7 +1755,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
             assert_eq!(b.topology().bond_count(), bonds);
             assert_eq!(b.topology().instance_count(), 1);
             assert!(a.topology().same_layout(b.topology()));
-            assert_eq!(a.model().positions(), b.model().positions());
+            assert_eq!(a.structure().positions(), b.structure().positions());
         }
     }
 
@@ -2315,7 +2315,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         // a record naming an atom the model lacks is left out and reported.
         let written = |report: &crate::macromolecular::StructureInterpretationReport| {
             crate::mmcif::write(
-                [crate::mmcif::MmcifBlockSource::model(zinc.model())
+                [crate::mmcif::MmcifBlockSource::structure(zinc.structure())
                     .with_reports(std::slice::from_ref(report))],
                 Default::default(),
             )
@@ -2340,7 +2340,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
 
         // A model's own dative bond between residues is written as
         // coordination, which reads back as a record, and is reported so.
-        let mut editor = zinc.model().to_editor();
+        let mut editor = zinc.structure().to_editor();
         let [sulfur, ion] = zinc.report().coordination()[0]
             .atoms()
             .map(|atom| editor.topology().atom_handle(atom).unwrap());

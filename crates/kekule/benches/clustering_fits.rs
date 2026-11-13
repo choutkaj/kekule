@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let model = mmcif::parse_str(&std::fs::read_to_string(model_path)?, Default::default())?
         .interpret(Default::default())?
-        .into_model();
+        .into_structure();
     let topology = model.shared_topology();
     let atoms = AtomSelection::for_label_atom_names(topology.clone(), ["CA"])?;
     let points = model

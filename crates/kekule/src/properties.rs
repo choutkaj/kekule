@@ -4,7 +4,7 @@
 //! type: definition-invariant annotations are [`MoleculeProperties`] of a
 //! [`crate::molecule::Molecule`], system annotations are [`TopologyProperties`] of a
 //! [`crate::topology::Topology`], and coordinate-dependent annotations are
-//! [`GeometryProperties`] of a [`crate::structure::Model`], geometry,
+//! [`GeometryProperties`] of a [`crate::structure::Structure`], geometry,
 //! or trajectory frame. Each scope holds [`OwnerProperties`] plus one
 //! [`PropertyTable`] per entity domain, addressed by that domain's identifier
 //! ([`PropertyRow`]).
@@ -1696,10 +1696,10 @@ pub enum PropertyDomain {
     Residues,
     /// Hierarchy atom sites.
     AtomSites,
-    /// Atoms of a model's structure.
-    ModelAtoms,
-    /// Bonds of a model's structure.
-    ModelBonds,
+    /// Atoms of a geometry.
+    GeometryAtoms,
+    /// Bonds of a geometry.
+    GeometryBonds,
 }
 
 impl fmt::Display for PropertyDomain {
@@ -1711,8 +1711,8 @@ impl fmt::Display for PropertyDomain {
             Self::Chains => "chain",
             Self::Residues => "residue",
             Self::AtomSites => "atom site",
-            Self::ModelAtoms => "model atom",
-            Self::ModelBonds => "model bond",
+            Self::GeometryAtoms => "geometry atom",
+            Self::GeometryBonds => "geometry bond",
         })
     }
 }

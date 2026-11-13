@@ -68,8 +68,8 @@ pub(crate) fn lookup_molecule(input: &Molecule) -> Result<Molecule> {
     )
 }
 
-fn model_error(detail: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::Model, detail)
+fn structure_error(detail: impl std::fmt::Display) -> Error {
+    Error::new(ErrorKind::Structure, detail)
 }
 
 /// Provenance of one molecule's assigned charges.
@@ -138,7 +138,7 @@ impl NaglModel {
     /// # Errors
     ///
     /// [`ErrorKind::Io`] if a bundle file cannot be read, and
-    /// [`ErrorKind::Model`] if the bundle is malformed, corrupt or unsupported.
+    /// [`ErrorKind::Structure`] if the bundle is malformed, corrupt or unsupported.
     pub fn load(directory: impl AsRef<Path>) -> Result<Self> {
         Self::from_bundle(bundle::load(directory.as_ref())?)
     }
@@ -153,7 +153,7 @@ impl NaglModel {
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::Model`] if the bundled data fail validation, which
+    /// [`ErrorKind::Structure`] if the bundled data fail validation, which
     /// indicates a corrupted build.
     ///
     /// ```
@@ -172,13 +172,13 @@ impl NaglModel {
             .read_to_end(&mut planes)
             .map_err(|e| {
                 Error::caused(
-                    ErrorKind::Model,
+                    ErrorKind::Structure,
                     "Cannot decompress the bundled Ash weights.",
                     e,
                 )
             })?;
         if planes.len() % 4 != 0 {
-            return Err(model_error(format!(
+            return Err(structure_error(format!(
                 "The bundled Ash weights have {} bytes, not a multiple of 4.",
                 planes.len()
             )));
@@ -194,7 +194,7 @@ impl NaglModel {
         if model.identity().model_file() != kekule_openff_ash::MODEL_FILE
             || model.identity().checkpoint_sha256() != kekule_openff_ash::CHECKPOINT_SHA256
         {
-            return Err(model_error(format!(
+            return Err(structure_error(format!(
                 "The bundled Ash manifest declares model \"{}\" with SHA-256 {}, not \"{}\" with SHA-256 {}.",
                 model.identity().model_file(),
                 model.identity().checkpoint_sha256(),
@@ -213,7 +213,7 @@ impl NaglModel {
             .map(|p| {
                 smarts::parse_str(p, Default::default()).map_err(|e| {
                     Error::caused(
-                        ErrorKind::Model,
+                        ErrorKind::Structure,
                         format!("Cannot parse the forbidden domain pattern {p:?}."),
                         e,
                     )
@@ -306,7 +306,7 @@ impl NaglModel {
     ///   hydrogens or radicals, or is outside the model's element or pattern
     ///   domain.
     /// - [`ErrorKind::Chemistry`] if perceiving the private copy fails.
-    /// - [`ErrorKind::Identity`] or [`ErrorKind::Model`] if a lookup hit
+    /// - [`ErrorKind::Identity`] or [`ErrorKind::Structure`] if a lookup hit
     ///   cannot be mapped onto its entry.
     /// - [`ErrorKind::ResourceLimit`] if a bounded search exceeds its limit.
     /// - [`ErrorKind::Charges`] if charge equilibration is singular or yields
@@ -322,7 +322,7 @@ impl NaglModel {
             let mut components =
                 kekule::smiles::to_molecules(&entry.mapped_smiles).map_err(|e| {
                     Error::caused(
-                        ErrorKind::Model,
+                        ErrorKind::Structure,
                         format!(
                             "Cannot read the SMILES {:?} of a lookup entry.",
                             entry.mapped_smiles
@@ -331,7 +331,7 @@ impl NaglModel {
                     )
                 })?;
             if components.len() != 1 {
-                return Err(model_error(format!(
+                return Err(structure_error(format!(
                     "The lookup entry {:?} is not one connected molecule.",
                     entry.mapped_smiles
                 )));
@@ -344,7 +344,7 @@ impl NaglModel {
             if reference.atom_count() != entry.charges.len()
                 || tags != (1..=entry.charges.len() as u32).collect()
             {
-                return Err(model_error(format!(
+                return Err(structure_error(format!(
                     "The atoms of lookup entry {:?} are not mapped 1 to {} once each.",
                     entry.mapped_smiles,
                     entry.charges.len()
@@ -358,13 +358,13 @@ impl NaglModel {
                     .expect("atom IDs come from this molecule")
                     .atom_map()
                     .ok_or_else(|| {
-                        model_error(format!(
+                        structure_error(format!(
                             "An atom of lookup entry {:?} has no atom map.",
                             entry.mapped_smiles
                         ))
                     })?;
                 let q = entry.charges.get(map.get() as usize - 1).ok_or_else(|| {
-                    model_error(format!(
+                    structure_error(format!(
                         "Lookup entry {:?} has no charge for atom map {map}.",
                         entry.mapped_smiles
                     ))

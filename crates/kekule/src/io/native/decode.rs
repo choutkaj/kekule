@@ -39,7 +39,7 @@ use crate::properties::{
     PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
-    Distribution, Forces, Geometry, Members, Model, Order, Partition, Positions, State,
+    Distribution, Forces, Geometry, Members, Order, Partition, Positions, State, Structure,
     StructureSet, TimeAxis, Velocities,
 };
 use crate::topology::{
@@ -76,7 +76,7 @@ pub(crate) fn read_native(
     let object = match kind {
         NativeKind::Molecule => NativeObject::Molecule(Box::new(decoder.molecule()?)),
         NativeKind::Topology => NativeObject::Topology(decoder.topology()?),
-        NativeKind::Model => NativeObject::Model(decoder.model()?),
+        NativeKind::Structure => NativeObject::Structure(decoder.model()?),
         NativeKind::StructureInterpretation => {
             let model = decoder.model()?;
             let report = decoder.report()?;
@@ -1231,7 +1231,7 @@ impl<R: Read> Decoder<'_, R> {
         .with_source(error)
     }
 
-    fn model(&mut self) -> Result<Model> {
+    fn model(&mut self) -> Result<Structure> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let positions = self.positions(atoms)?;
@@ -1240,7 +1240,7 @@ impl<R: Read> Decoder<'_, R> {
         let b_factors = self.scalars(atoms)?;
         let properties = self.geometry_properties(atoms, bonds)?;
         let mut model =
-            Model::new(topology, positions).map_err(|error| self.geometry_error(error))?;
+            Structure::new(topology, positions).map_err(|error| self.geometry_error(error))?;
         model.set_cell(cell);
         model
             .set_occupancies(occupancies)

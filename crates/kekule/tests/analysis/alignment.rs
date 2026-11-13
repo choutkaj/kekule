@@ -12,7 +12,7 @@ use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Geometry, Members, Model, Order, Partition, Place, Positions,
+    Distribution, Forces, Geometry, Members, Order, Partition, Place, Positions, Structure,
     StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
@@ -168,8 +168,8 @@ fn split_and_fused_fit_measure_workflows_agree_for_distinct_selections() {
     let first = trajectory.get(0).unwrap();
     for (frame, fused) in trajectory.iter().zip(fused.value()) {
         let single = alignment::aligned_rmsd(
-            frame.as_model_view(),
-            first.as_model_view(),
+            frame.as_structure_view(),
+            first.as_structure_view(),
             &fit,
             &measured,
             AlignedRmsdOptions::default(),
@@ -578,7 +578,7 @@ fn weighted_sets_share_the_collection_contract_and_keep_weights() {
         .with_weights(vec![0.25])
         .unwrap();
     ensemble.set_distribution(Some(distribution)).unwrap();
-    let model = Model::new(
+    let structure = Structure::new(
         Arc::clone(&topology),
         Positions::new(Quantity::new(reference, NANOMETER)).unwrap(),
     )
@@ -586,18 +586,18 @@ fn weighted_sets_share_the_collection_contract_and_keep_weights() {
     let all = AtomSelection::all(Arc::clone(&topology));
     assert!(
         ensemble
-            .rmsd(&model, &all, Default::default())
+            .rmsd(&structure, &all, Default::default())
             .unwrap()
             .value()[0]
             > 1.0
     );
     let report = ensemble
-        .superpose(&model, &all, Default::default())
+        .superpose(&structure, &all, Default::default())
         .unwrap();
     assert_eq!(report.reference_index(), None);
     assert!(
         ensemble
-            .rmsd(&model, &all, Default::default())
+            .rmsd(&structure, &all, Default::default())
             .unwrap()
             .value()[0]
             < 1.0e-12
@@ -607,14 +607,14 @@ fn weighted_sets_share_the_collection_contract_and_keep_weights() {
     // The free kernel and collection items share one view contract.
     let item = ensemble.get(0).unwrap();
     let fit = alignment::fit(
-        item.as_model_view(),
-        model.as_model_view(),
+        item.as_structure_view(),
+        structure.as_structure_view(),
         &all,
         Default::default(),
     )
     .unwrap();
     assert!(fit.rmsd().into_value() < 1.0e-12);
-    let reference: Reference<'_> = (&model).into();
+    let reference: Reference<'_> = (&structure).into();
     assert!(matches!(reference, Reference::View(_)));
     assert!(matches!(Reference::from(0), Reference::Index(0)));
 }
@@ -623,8 +623,8 @@ fn moved(point: Point3) -> Point3 {
     Point3::new(-point.y + 2.0, point.x - 3.0, point.z + 1.0)
 }
 
-fn chain_model(points: &[Point3]) -> Model {
-    Model::new(
+fn chain_model(points: &[Point3]) -> Structure {
+    Structure::new(
         chain(points.len()),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
@@ -633,7 +633,12 @@ fn chain_model(points: &[Point3]) -> Model {
 
 /// A moving trajectory, an independent reference whose atoms are permuted and
 /// rigidly moved, a fit correspondence, and a measured correspondence.
-fn correspondence_fixture() -> (StructureSet, Model, AtomCorrespondence, AtomCorrespondence) {
+fn correspondence_fixture() -> (
+    StructureSet,
+    Structure,
+    AtomCorrespondence,
+    AtomCorrespondence,
+) {
     let points = [
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(2.0, 0.0, 0.0),
@@ -810,8 +815,8 @@ fn correspondence_fit_and_measurement_are_independent_and_weighted_in_pair_order
         .unwrap();
     assert!((weighted.value()[1] - 0.75_f64.sqrt()).abs() < 1.0e-12);
     let single = alignment::aligned_rmsd(
-        trajectory.get(1).unwrap().as_model_view(),
-        reference.as_model_view(),
+        trajectory.get(1).unwrap().as_structure_view(),
+        reference.as_structure_view(),
         &fit,
         &measured,
         AlignedRmsdOptions::default().with_measurement_weighting(Weighting::Explicit(&[3.0, 1.0])),
@@ -935,8 +940,8 @@ fn acetate_points(swapped: bool) -> [Point3; 4] {
     ]
 }
 
-fn acetate_model(topology: &Arc<Topology>, points: &[Point3]) -> Model {
-    Model::new(
+fn acetate_model(topology: &Arc<Topology>, points: &[Point3]) -> Structure {
+    Structure::new(
         Arc::clone(topology),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
     )
@@ -961,16 +966,16 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     // Each oxygen is 0.25 nm from its label, so the plain RMSD over four
     // atoms is sqrt(2 * 0.25^2 / 4); exchanging the oxygens removes it.
     let plain = rmsd(
-        swapped.as_model_view(),
-        reference.as_model_view(),
+        swapped.as_structure_view(),
+        reference.as_structure_view(),
         &all,
         Default::default(),
     )
     .unwrap();
     assert_eq!(plain, Quantity::new(0.03125_f64.sqrt(), NANOMETER));
     let corrected = rmsd(
-        swapped.as_model_view(),
-        reference.as_model_view(),
+        swapped.as_structure_view(),
+        reference.as_structure_view(),
         &symmetric,
         Default::default(),
     )
@@ -978,8 +983,8 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     assert_eq!(corrected, Quantity::new(0.0, NANOMETER));
 
     let fit = alignment::fit(
-        swapped.as_model_view(),
-        reference.as_model_view(),
+        swapped.as_structure_view(),
+        reference.as_structure_view(),
         &symmetric,
         Default::default(),
     )
@@ -993,8 +998,8 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     .unwrap();
     assert_eq!(
         rmsd(
-            swapped.as_model_view(),
-            reference.as_model_view(),
+            swapped.as_structure_view(),
+            reference.as_structure_view(),
             &foreign,
             Default::default()
         ),
@@ -1062,9 +1067,9 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     // An empty collection still validates the selection binding.
     let foreign = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
     let foreign = SymmetricSelection::new(&AtomSelection::all(Arc::clone(&foreign))).unwrap();
-    let model = acetate_model(&topology, &reference);
+    let structure = acetate_model(&topology, &reference);
     assert_eq!(
-        StructureSet::new(Arc::clone(&topology)).rmsd(&model, &foreign, Default::default()),
+        StructureSet::new(Arc::clone(&topology)).rmsd(&structure, &foreign, Default::default()),
         Err(AlignmentError::SelectionTopologyMismatch)
     );
 }

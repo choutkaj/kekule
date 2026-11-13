@@ -5,7 +5,7 @@
 //! Weights are relative: scaling every weight by one factor changes no
 //! statistic. [`RmsfAccumulator`], [`ContactOccupancyAccumulator`], and
 //! [`GroupContactOccupancyAccumulator`] observe any borrowed structure
-//! ([`AsModelView`]: a model, a sample, or a codec frame such as a streamed
+//! ([`AsStructureView`]: a structure, a sample, or a codec frame such as a streamed
 //! frame buffer's `frame_view()`) one at a time, with memory bounded by the
 //! selected atoms, pairs, or groups, not the observation count.
 //!
@@ -75,8 +75,8 @@ use std::sync::Arc;
 use crate::diagnostics::{Cancellation, Cancelled};
 use crate::math::{Point3, PointGrid, Vector3};
 use crate::structure::{
-    visit_geometry, AsModelView, GeometryStorage, ModelView, StructureSet, StructureSetRead,
-    StructureSetReadError,
+    visit_geometry, AsStructureView, GeometryStorage, StructureSet, StructureSetRead,
+    StructureSetReadError, StructureView,
 };
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -390,7 +390,7 @@ fn observe_samples_of(
     observations: &SampleObservations,
     positions: Range<usize>,
     cancellation: Option<&Cancellation>,
-    mut observe: impl FnMut(usize, ModelView<'_>, f64) -> Result<(), StatisticsError>,
+    mut observe: impl FnMut(usize, StructureView<'_>, f64) -> Result<(), StatisticsError>,
 ) -> Result<(), StatisticsError> {
     let (Some(samples), Some(weights)) = (
         observations.samples.get(positions.clone()),
@@ -701,7 +701,7 @@ fn combine_into(
 /// ```
 ///
 /// A streamed [`crate::traj::FrameBuffer`] is observed through
-/// `buffer.as_model_view()`.
+/// `buffer.as_structure_view()`.
 #[derive(Debug, Clone)]
 pub struct RmsfAccumulator {
     selection: AtomSelection,
@@ -754,10 +754,10 @@ impl RmsfAccumulator {
     pub fn observe(
         &mut self,
         index: usize,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         weight: f64,
     ) -> Result<(), StatisticsError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         self.selection
             .ensure_compatible(&structure.shared_topology())
@@ -1041,10 +1041,10 @@ impl ContactOccupancyAccumulator {
     pub fn observe(
         &mut self,
         index: usize,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         weight: f64,
     ) -> Result<(), StatisticsError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         if !self.topology.shares_layout(structure.topology()) {
             return Err(StatisticsError::TopologyMismatch { index });
@@ -1485,10 +1485,10 @@ impl GroupContactOccupancyAccumulator {
     pub fn observe(
         &mut self,
         index: usize,
-        structure: &(impl AsModelView + ?Sized),
+        structure: &(impl AsStructureView + ?Sized),
         weight: f64,
     ) -> Result<(), StatisticsError> {
-        let structure = structure.as_model_view();
+        let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         if !self.topology.shares_layout(structure.topology()) {
             return Err(StatisticsError::TopologyMismatch { index });

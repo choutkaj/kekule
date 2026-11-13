@@ -756,8 +756,8 @@ pub fn read_structure_set(
 /// let mut reader = open_trajectory("ethane.xyz", topology, Default::default())?;
 /// let mut frame = reader.frame_buffer();
 /// while reader.read_next(&mut frame)? {
-///     let model = frame.as_model_view();
-///     assert_eq!(model.atom_count(), 2);
+///     let structure = frame.as_structure_view();
+///     assert_eq!(structure.atom_count(), 2);
 /// }
 /// println!("{:?}", reader.open_report().selected_format());
 /// # Ok::<(), Box<dyn std::error::Error>>(())

@@ -129,7 +129,7 @@ fn a_molecule_crossing_the_boundary_is_imaged_onto_references_before_and_after_i
     }
 
     // The in-memory form matches the streaming form frame by frame.
-    let reference = set.get(0).unwrap().to_model();
+    let reference = set.get(0).unwrap().to_structure();
     let mut loaded = set.clone();
     periodic::image_onto(&mut loaded, &reference).unwrap();
     recorded.check(&dynamics(&loaded));
@@ -223,7 +223,7 @@ fn imaging_onto_a_reference_requires_the_frame_cell_and_is_transactional() {
     );
     assert_eq!(format!("{buffer:?}"), snapshot);
     let mut loaded = set.clone();
-    let reference = set.get(0).unwrap().to_model();
+    let reference = set.get(0).unwrap().to_structure();
     assert_eq!(
         periodic::image_onto(&mut loaded, &reference),
         Err(PeriodicError::MissingCell { frame: 1 })

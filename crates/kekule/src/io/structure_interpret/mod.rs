@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::math::PeriodicCell;
-use crate::structure::ModelBuilder;
+use crate::structure::StructureBuilder;
 use crate::topology::HierarchyBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
@@ -90,8 +90,8 @@ fn interpret_source(
         options.cancellation().cloned(),
     )?;
     let model_id = match &options.model_selection() {
-        ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
-            prepared.model_sizes[0].0.clone()
+        ModelSelection::RequireSingle if prepared.structure_sizes.len() == 1 => {
+            prepared.structure_sizes[0].0.clone()
         }
         ModelSelection::RequireSingle => {
             return Err(geometry_error(
@@ -99,11 +99,11 @@ fn interpret_source(
                 None,
                 format!(
                     "The input has {} coordinate models. Select one.",
-                    prepared.model_sizes.len(),
+                    prepared.structure_sizes.len(),
                 ),
             ))
         }
-        ModelSelection::First => prepared.model_sizes[0].0.clone(),
+        ModelSelection::First => prepared.structure_sizes[0].0.clone(),
         ModelSelection::Select(id) => id.clone(),
     };
     prepared.interpret_model(&model_id)
@@ -120,7 +120,7 @@ struct ModelRows {
 /// Shared interpretation of one source; each model's rows are consumed once.
 struct PreparedSource {
     models: BTreeMap<String, ModelRows>,
-    model_sizes: Vec<(String, usize)>,
+    structure_sizes: Vec<(String, usize)>,
     report: StructureInterpretationReport,
     polymer_order: BTreeMap<String, usize>,
     connections: Vec<ConnectionRecord>,
@@ -168,7 +168,7 @@ impl PreparedSource {
         // Models in source order, each source row's model, and each model's
         // row count.
         let mut model_ids = Vec::<String>::new();
-        let mut model_sizes = Vec::<usize>::new();
+        let mut structure_sizes = Vec::<usize>::new();
         let mut indices = BTreeMap::<&str, usize>::new();
         let mut row_models = Vec::with_capacity(rows.len());
         for (step, row) in rows.iter().enumerate() {
@@ -177,15 +177,15 @@ impl PreparedSource {
                 Some(&index) if model_ids[index] == row.model_id => index,
                 _ => *indices.entry(&row.model_id).or_insert_with(|| {
                     model_ids.push(row.model_id.clone());
-                    model_sizes.push(0);
+                    structure_sizes.push(0);
                     model_ids.len() - 1
                 }),
             };
-            model_sizes[index] += 1;
+            structure_sizes[index] += 1;
             row_models.push(index);
         }
         drop(indices);
-        let mut model_rows = model_sizes
+        let mut model_rows = structure_sizes
             .iter()
             .map(|&size| ModelRows {
                 all: Vec::with_capacity(size),
@@ -206,19 +206,19 @@ impl PreparedSource {
                 .selected
                 .push((positions[row], order));
         }
-        let model_sizes = model_ids
+        let structure_sizes = model_ids
             .iter()
             .cloned()
-            .zip(model_sizes)
+            .zip(structure_sizes)
             .collect::<Vec<_>>();
         let models = model_ids
             .into_iter()
             .zip(model_rows)
             .collect::<BTreeMap<_, _>>();
-        report.coordinate_models = model_sizes.len();
+        report.coordinate_models = structure_sizes.len();
         Ok(Self {
             models,
-            model_sizes,
+            structure_sizes,
             report,
             polymer_order,
             connections,
@@ -270,7 +270,7 @@ impl PreparedSource {
             }
             _ => true,
         });
-        for (ignored, count) in &self.model_sizes {
+        for (ignored, count) in &self.structure_sizes {
             if ignored != model_id {
                 report.ignored_coordinate_models.push(ignored.clone());
                 report
@@ -356,7 +356,7 @@ fn publish_model(
             .or_default()
             .push(connection);
     }
-    let mut builder = ModelBuilder::new();
+    let mut builder = StructureBuilder::new();
     let mut definitions = DefinitionReuse::new();
     let mut qualified_atom_data = Vec::new();
     for group in groups {

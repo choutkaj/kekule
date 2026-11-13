@@ -4,7 +4,8 @@
 use crate::diagnostics::Cancellation;
 use crate::math::RigidTransform;
 use crate::structure::{
-    visit_geometry, AsModelView, Geometry, GeometryView, ModelView, StructureSet, StructureSetRead,
+    visit_geometry, AsStructureView, Geometry, GeometryView, StructureSet, StructureSetRead,
+    StructureView,
 };
 use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -18,7 +19,7 @@ use super::{
 /// The reference of a collection-wide fit or RMSD.
 ///
 /// Convert from a `usize` item index of the collection itself, or from any
-/// borrowed model view (`&model`, `&frame_view`, ...) for an independent
+/// borrowed structure view (`&structure`, `&frame_view`, ...) for an independent
 /// reference. Pair atoms of an independent topology with an
 /// [`super::AtomCorrespondence`].
 #[derive(Debug, Clone, Copy)]
@@ -27,7 +28,7 @@ pub enum Reference<'a> {
     /// An item of the collection being measured.
     Index(usize),
     /// An external view.
-    View(ModelView<'a>),
+    View(StructureView<'a>),
 }
 
 impl From<usize> for Reference<'_> {
@@ -36,9 +37,9 @@ impl From<usize> for Reference<'_> {
     }
 }
 
-impl<'a, T: AsModelView + ?Sized> From<&'a T> for Reference<'a> {
+impl<'a, T: AsStructureView + ?Sized> From<&'a T> for Reference<'a> {
     fn from(view: &'a T) -> Self {
-        Self::View(view.as_model_view())
+        Self::View(view.as_structure_view())
     }
 }
 
@@ -119,7 +120,7 @@ impl SuperpositionReport {
 /// collection order. The caller applies the returned alignments.
 fn fit_items<'a>(
     topology: &Topology,
-    items: &[ModelView<'a>],
+    items: &[StructureView<'a>],
     reference: Reference<'a>,
     atoms: FitAtoms<'a>,
     options: AlignmentOptions<'_>,
@@ -157,13 +158,13 @@ enum Measured<'a, 'w> {
 /// An RMSD to one reference, validated once and measured for many items.
 enum Measurement<'r, 'w> {
     Direct {
-        reference: ModelView<'r>,
+        reference: StructureView<'r>,
         sets: Vec<Pairs>,
         weights: NormalizedWeights<'w>,
         policy: PeriodicPolicy,
     },
     Aligned {
-        reference: ModelView<'r>,
+        reference: StructureView<'r>,
         fit_sets: Vec<Pairs>,
         fit_weights: NormalizedWeights<'w>,
         measurement_sets: Vec<Pairs>,
@@ -177,8 +178,8 @@ impl<'r, 'w> Measurement<'r, 'w> {
     /// topology without items, and the weights.
     fn new(
         topology: &Topology,
-        first: Option<ModelView<'_>>,
-        reference: ModelView<'r>,
+        first: Option<StructureView<'_>>,
+        reference: StructureView<'r>,
         measured: Measured<'_, 'w>,
     ) -> Result<Self, AlignmentError> {
         match measured {
@@ -213,7 +214,7 @@ impl<'r, 'w> Measurement<'r, 'w> {
     }
 
     /// The RMSD of `moving` to the reference.
-    fn measure(&self, moving: ModelView<'_>) -> Result<f64, AlignmentError> {
+    fn measure(&self, moving: StructureView<'_>) -> Result<f64, AlignmentError> {
         match self {
             Self::Direct {
                 reference,
@@ -248,7 +249,7 @@ impl<'r, 'w> Measurement<'r, 'w> {
 /// The RMSD of every item to the reference.
 fn item_values<'a>(
     topology: &Topology,
-    items: &[ModelView<'a>],
+    items: &[StructureView<'a>],
     reference: Reference<'a>,
     measured: Measured<'_, '_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
@@ -269,7 +270,7 @@ fn item_values<'a>(
 /// Direct RMSD from every item to the reference.
 fn item_rmsd<'a>(
     topology: &Topology,
-    items: &[ModelView<'a>],
+    items: &[StructureView<'a>],
     reference: Reference<'a>,
     atoms: FitAtoms<'a>,
     options: AlignmentOptions<'_>,
@@ -280,7 +281,7 @@ fn item_rmsd<'a>(
 /// RMSD over `measurement` pairs of every item after fitting it on `fit`.
 fn item_aligned_rmsd<'a>(
     topology: &Topology,
-    items: &[ModelView<'a>],
+    items: &[StructureView<'a>],
     reference: Reference<'a>,
     fit: FitAtoms<'a>,
     measurement: FitAtoms<'a>,
@@ -313,12 +314,12 @@ fn geometry_values(
                 return Err(AlignmentError::ReferenceOutOfRange { index, len });
             }
             match reader.peek(index) {
-                Some(view) => view.as_model_view(),
+                Some(view) => view.as_structure_view(),
                 None => {
                     held = reader.read(index).map_err(read_error)?;
                     GeometryView::new(reader, index, &held)
                         .map_err(read_error)?
-                        .as_model_view()
+                        .as_structure_view()
                 }
             }
         }
@@ -472,9 +473,9 @@ pub fn sample_aligned_rmsd_cancellable<'a>(
 }
 
 fn reference_view<'a>(
-    items: &[ModelView<'a>],
+    items: &[StructureView<'a>],
     reference: Reference<'a>,
-) -> Result<ModelView<'a>, AlignmentError> {
+) -> Result<StructureView<'a>, AlignmentError> {
     match reference {
         Reference::Index(index) => {
             items
@@ -493,8 +494,8 @@ fn reference_view<'a>(
 /// against the collection topology.
 fn item_pair_sets(
     topology: &Topology,
-    first: Option<ModelView<'_>>,
-    reference: ModelView<'_>,
+    first: Option<StructureView<'_>>,
+    reference: StructureView<'_>,
     atoms: FitAtoms<'_>,
 ) -> Result<Vec<Pairs>, AlignmentError> {
     match first {
@@ -526,7 +527,7 @@ fn item_pair_sets(
 fn check_empty_selection(
     topology: &Topology,
     selection: &AtomSelection,
-    reference: ModelView<'_>,
+    reference: StructureView<'_>,
 ) -> Result<(), AlignmentError> {
     if !topology.shares_layout(reference.topology()) {
         return Err(AlignmentError::TopologyMismatch);
@@ -557,7 +558,7 @@ impl StructureSet {
     ///
     /// Every geometry is fitted, members of the distribution or not.
     /// `reference` is a geometry index of this set or any borrowed view
-    /// (`&model`, `&other.get(0).unwrap()`, ...); `atoms` is an
+    /// (`&structure`, `&other.get(0).unwrap()`, ...); `atoms` is an
     /// [`AtomSelection`](crate::topology::AtomSelection) or
     /// [`SymmetricSelection`](super::SymmetricSelection) of this layout, or an
     /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
@@ -583,7 +584,10 @@ impl StructureSet {
         options: AlignmentOptions<'_>,
     ) -> Result<SuperpositionReport, AlignmentError> {
         let report = {
-            let items = self.iter().map(|s| s.as_model_view()).collect::<Vec<_>>();
+            let items = self
+                .iter()
+                .map(|s| s.as_structure_view())
+                .collect::<Vec<_>>();
             fit_items(
                 self.topology(),
                 &items,
@@ -617,7 +621,10 @@ impl StructureSet {
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        let items = self.iter().map(|s| s.as_model_view()).collect::<Vec<_>>();
+        let items = self
+            .iter()
+            .map(|s| s.as_structure_view())
+            .collect::<Vec<_>>();
         item_rmsd(
             self.topology(),
             &items,
@@ -648,7 +655,10 @@ impl StructureSet {
         measurement: impl Into<FitAtoms<'a>>,
         options: AlignedRmsdOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        let items = self.iter().map(|s| s.as_model_view()).collect::<Vec<_>>();
+        let items = self
+            .iter()
+            .map(|s| s.as_structure_view())
+            .collect::<Vec<_>>();
         item_aligned_rmsd(
             self.topology(),
             &items,

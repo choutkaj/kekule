@@ -5,9 +5,11 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::structure::model::sealed::Sealed;
+use crate::structure::owner::sealed::Sealed;
 use crate::structure::state::{is_bound, validate_binding};
-use crate::structure::{AsModelView, GeometryError, Model, ModelView, State, StructureKind};
+use crate::structure::{
+    AsStructureView, GeometryError, State, Structure, StructureKind, StructureView,
+};
 use crate::topology::Topology;
 
 use super::{Geometry, Place, SetContext, StructureSet, StructureSetRead, StructureSetReadError};
@@ -16,8 +18,8 @@ use super::{Geometry, Place, SetContext, StructureSet, StructureSetRead, Structu
 /// [`StructureSetRead`], with its place in the reader's order and its membership
 /// in the reader's distribution.
 ///
-/// Reads geometry state through `Deref` and converts to a [`ModelView`]
-/// through [`AsModelView`] without copying; the view's
+/// Reads geometry state through `Deref` and converts to a [`StructureView`]
+/// through [`AsStructureView`] without copying; the view's
 /// [`StructureKind::InSet`] carries the geometry's [`SetContext`].
 ///
 /// The type parameter says where the view comes from. `GeometryView<'_>` is a
@@ -177,17 +179,17 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
 
     /// Borrows the geometry as the common kernel input, with the view's full
     /// lifetime.
-    pub fn as_model_view(self) -> ModelView<'a> {
-        self.geometry.structure().model_view(
+    pub fn as_structure_view(self) -> StructureView<'a> {
+        self.geometry.structure().structure_view(
             self.reader.topology(),
             StructureKind::InSet(SetContext::of_view(self.as_dyn())),
         )
     }
 
-    /// Materializes the geometry as an owned model, dropping its place,
+    /// Materializes the geometry as an owned structure, dropping its place,
     /// membership, velocities, and forces.
-    pub fn to_model(self) -> Model {
-        self.as_model_view().to_model()
+    pub fn to_structure(self) -> Structure {
+        self.as_structure_view().to_structure()
     }
 }
 
@@ -207,9 +209,9 @@ pub(crate) fn check_bound(topology: &Topology, geometry: &Geometry) -> Result<()
 
 impl<R: ?Sized> Sealed for GeometryView<'_, R> {}
 
-impl<R: ?Sized> AsModelView for GeometryView<'_, R> {
-    fn as_model_view(&self) -> ModelView<'_> {
-        GeometryView::as_model_view(*self)
+impl<R: ?Sized> AsStructureView for GeometryView<'_, R> {
+    fn as_structure_view(&self) -> StructureView<'_> {
+        GeometryView::as_structure_view(*self)
     }
 }
 

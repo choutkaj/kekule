@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use kekule::structure::Model;
+use kekule::structure::Structure;
 use kekule::{molecule::Molecule, stereo::StereoElementKind};
 use kekule::{molfile, sdf, smiles};
 
@@ -16,9 +16,9 @@ use crate::support::{aromaticity_cases, corpus, fixture};
 pub(crate) struct Geometry {
     pub label: String,
     pub molecule: Molecule,
-    /// The source model when the molecule came from a single-component
+    /// The source structure when the molecule came from a single-component
     /// Molfile or SDF record, retaining its drawing or 3D coordinates.
-    pub model: Option<Model>,
+    pub structure: Option<Structure>,
 }
 
 impl Geometry {
@@ -107,7 +107,7 @@ pub(crate) fn assert_invariant(invariant: &str, failures: Vec<(String, String)>)
 
 pub(crate) fn molecules() -> Vec<Geometry> {
     let mut geometries = Vec::new();
-    // SDF regression records are read below with their source models.
+    // SDF regression records are read below with their source structures.
     for case in aromaticity_cases()
         .into_iter()
         .filter(|case| !case.input.starts_with("sdf:"))
@@ -115,7 +115,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
         geometries.push(Geometry {
             label: format!("aromaticity:{}", case.label),
             molecule: case.molecule(),
-            model: None,
+            structure: None,
         });
     }
     for (label, components) in regression_mixtures() {
@@ -123,7 +123,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
             geometries.push(Geometry {
                 label: format!("regression:{label}#{index}"),
                 molecule,
-                model: None,
+                structure: None,
             });
         }
     }
@@ -137,7 +137,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
             geometries.push(Geometry {
                 label: format!("smoke:{}#{index}", name(&path)),
                 molecule,
-                model: None,
+                structure: None,
             });
         }
     }
@@ -157,9 +157,9 @@ pub(crate) fn molecules() -> Vec<Geometry> {
             {
                 continue;
             }
-            let model =
+            let structure =
                 read_model(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-            let molecules = model
+            let molecules = structure
                 .topology()
                 .instances()
                 .map(|instance| instance.molecule().clone())
@@ -169,7 +169,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
                 geometries.push(Geometry {
                     label: format!("molfile:{}#{index}", name(&path)),
                     molecule,
-                    model: single.then(|| model.clone()),
+                    structure: single.then(|| structure.clone()),
                 });
             }
         }
@@ -193,21 +193,21 @@ pub(crate) fn regression_mixtures() -> Vec<(String, Vec<Molecule>)> {
         .collect()
 }
 
-/// Reads a single-record Molfile or the first SDF record as a model.
-pub(crate) fn read_model(path: &Path) -> Result<Model, String> {
+/// Reads a single-record Molfile or the first SDF record as a structure.
+pub(crate) fn read_model(path: &Path) -> Result<Structure, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if path.extension().is_some_and(|extension| extension == "sdf") {
         let document =
             sdf::parse_str(&text, Default::default()).map_err(|error| error.to_string())?;
         document.records()[0]
             .interpret(Default::default())
-            .map(|interpretation| interpretation.into_model())
+            .map(|interpretation| interpretation.into_structure())
             .map_err(|error| error.to_string())
     } else {
         molfile::parse_str(&text, Default::default())
             .map_err(|error| error.to_string())?
             .interpret(Default::default())
-            .map(|interpretation| interpretation.into_model())
+            .map(|interpretation| interpretation.into_structure())
             .map_err(|error| error.to_string())
     }
 }
@@ -239,7 +239,7 @@ fn corpus_reads_every_source_and_keeps_rejections_explicit() {
     assert!(
         geometries
             .iter()
-            .filter(|geometry| geometry.model.is_some())
+            .filter(|geometry| geometry.structure.is_some())
             .count()
             >= 60
     );

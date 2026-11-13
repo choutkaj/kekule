@@ -9,7 +9,7 @@ use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Distribution, Geometry, Members, Model, Order, Partition, Place, Positions, StructureSet,
+    Distribution, Geometry, Members, Order, Partition, Place, Positions, Structure, StructureSet,
     TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
@@ -100,7 +100,7 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
 fn weighted_methanes() -> StructureSet {
     let topology = kekule::smiles::to_topology("C").unwrap();
     let models = [0.0, 1.0].map(|x| {
-        Model::new(
+        Structure::new(
             topology.clone(),
             Positions::new(Quantity::new(
                 [kekule::math::Point3::new(x, 0.0, 0.0)],
@@ -110,7 +110,7 @@ fn weighted_methanes() -> StructureSet {
         )
         .unwrap()
     });
-    let mut set = StructureSet::from_models(models).unwrap();
+    let mut set = StructureSet::from_structures(models).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::All, Partition::state_per_sample(2))
             .unwrap()
@@ -210,8 +210,8 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
     // A record without the step its neighbours have.
     let stepless = interpret_records(
         &sdf::write(
-            [sdf::SdfRecordSource::model(
-                &series.get(0).unwrap().to_model(),
+            [sdf::SdfRecordSource::structure(
+                &series.get(0).unwrap().to_structure(),
             )],
             SdfWriteOptions::default(),
         )
@@ -240,7 +240,7 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
 
 #[test]
 fn sdf_records_of_different_topologies_do_not_form_a_structure_set() {
-    let water = Model::new(
+    let water = Structure::new(
         kekule::smiles::to_topology("O").unwrap(),
         Positions::new(Quantity::new([Point3::new(0.0, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
@@ -261,7 +261,7 @@ fn sdf_records_of_different_topologies_do_not_form_a_structure_set() {
 /// One methane record at `x` with `fields`.
 fn methane_record(x: f64, fields: &[(&str, &str)]) -> SdfRecordInterpretation {
     let topology = kekule::smiles::to_topology("C").unwrap();
-    let model = Model::new(
+    let model = Structure::new(
         topology,
         Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
@@ -522,7 +522,7 @@ fn water_frames() -> StructureSet {
     .unwrap()
     .interpret(Default::default())
     .unwrap()
-    .into_model();
+    .into_structure();
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(20.0, 21.0, 22.0), ANGSTROM),
         [true; 3],

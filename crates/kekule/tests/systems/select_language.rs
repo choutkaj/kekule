@@ -16,7 +16,7 @@ use kekule::select::{
     SelectEvaluateError, SelectEvaluateOptions, SelectParseOptions, SelectionExpr,
     SelectionResolver,
 };
-use kekule::structure::{Model, Positions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::{AtomSelection, AtomView, MoleculeClass, ResidueClass, Topology};
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, ELEMENTARY_CHARGE, NANOMETER};
 use kekule::{mmcif, smiles};
@@ -146,21 +146,21 @@ fn parse_errors_are_typed_and_located() {
         .is_err());
 }
 
-fn model(name: &str) -> Model {
+fn structure(name: &str) -> Structure {
     let text = std::fs::read_to_string(fixture(name)).unwrap();
-    let mut model = mmcif::parse_str(&text, Default::default())
+    let mut structure = mmcif::parse_str(&text, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
-    model.perceive().unwrap();
-    model
+        .into_structure();
+    structure.perceive().unwrap();
+    structure
 }
 
 /// What a reference predicate may read about one atom.
 struct Atom<'a> {
     view: AtomView<'a>,
-    model: &'a Model,
+    structure: &'a Structure,
 }
 
 impl Atom<'_> {
@@ -206,13 +206,13 @@ impl Atom<'_> {
     }
 
     fn b_factor(&self) -> Option<f64> {
-        self.model
+        self.structure
             .b_factor(self.view.index())
             .and_then(|value| value.value_in(kekule::units::SQUARE_ANGSTROM).ok())
     }
 
     fn position(&self) -> Point3 {
-        self.model.positions().values().value()[self.view.index().index()]
+        self.structure.positions().values().value()[self.view.index().index()]
     }
 
     fn is_protein_backbone(&self) -> bool {
@@ -405,9 +405,9 @@ fn ranges(indices: &[usize]) -> String {
 
 #[test]
 fn conformance_suite_matches_reference_predicates_and_the_committed_file() {
-    let models = [
-        ("1AKE", model("mmcif/1AKE.cif")),
-        ("1CRN", model("mmcif/1CRN.cif")),
+    let structures = [
+        ("1AKE", structure("mmcif/1AKE.cif")),
+        ("1CRN", structure("mmcif/1CRN.cif")),
     ]
     .into_iter()
     .collect::<BTreeMap<_, _>>();
@@ -417,12 +417,12 @@ fn conformance_suite_matches_reference_predicates_and_the_committed_file() {
          # perceived first models of tests/fixtures/mmcif/<structure>.cif. Expected\n\
          # sets come from per-atom reference predicates, not from the evaluator.\n",
     );
-    for (structure, expression, predicate) in cases() {
-        let model = &models[structure];
-        let atoms = model
+    for (name, expression, predicate) in cases() {
+        let structure = &structures[name];
+        let atoms = structure
             .topology()
             .atoms()
-            .map(|view| Atom { view, model })
+            .map(|view| Atom { view, structure })
             .collect::<Vec<_>>();
         let expected = predicate(&atoms)
             .into_iter()
@@ -430,15 +430,15 @@ fn conformance_suite_matches_reference_predicates_and_the_committed_file() {
             .filter_map(|(index, member)| member.then_some(index))
             .collect::<Vec<_>>();
         let selected = parse(expression)
-            .evaluate_structure(model, SelectEvaluateOptions::default())
+            .evaluate_structure(structure, SelectEvaluateOptions::default())
             .unwrap_or_else(|error| panic!("{expression}: {error}"));
         let actual = selected
             .indices()
             .iter()
             .map(|index| index.index())
             .collect::<Vec<_>>();
-        assert_eq!(actual, expected, "{structure}: {expression}");
-        writeln!(file, "{structure}\t{expression}\t{}", ranges(&expected)).unwrap();
+        assert_eq!(actual, expected, "{name}: {expression}");
+        writeln!(file, "{name}\t{expression}\t{}", ranges(&expected)).unwrap();
     }
     let path = fixture("select/conformance.txt");
     if std::env::var_os("KEKULE_BLESS").is_some() {
@@ -455,8 +455,8 @@ fn conformance_suite_matches_reference_predicates_and_the_committed_file() {
 
 #[test]
 fn topology_evaluation_reports_terms_that_need_more() {
-    let model = model("mmcif/1CRN.cif");
-    let topology = model.shared_topology();
+    let structure = structure("mmcif/1CRN.cif");
+    let topology = structure.shared_topology();
     let error = parse("protein and within 5 of name SG")
         .evaluate(topology.clone(), SelectEvaluateOptions::default())
         .unwrap_err();
@@ -681,7 +681,7 @@ fn host_terms_resolve_atoms_and_points_across_objects() {
         Point3::new(10.0, 0.0, 0.0),
         Point3::new(20.0, 0.0, 0.0),
     ];
-    let model = Model::new(
+    let structure = Structure::new(
         topology,
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
@@ -695,7 +695,7 @@ fn host_terms_resolve_atoms_and_points_across_objects() {
     let indices = |text: &str| {
         select::parse(text, host_options())
             .unwrap()
-            .evaluate_structure(&model, options)
+            .evaluate_structure(&structure, options)
             .unwrap_or_else(|error| panic!("{text}: {error}"))
             .indices()
             .iter()
@@ -711,7 +711,7 @@ fn host_terms_resolve_atoms_and_points_across_objects() {
     let error = |text: &str, options| {
         select::parse(text, host_options())
             .unwrap()
-            .evaluate_structure(&model, options)
+            .evaluate_structure(&structure, options)
             .unwrap_err()
     };
     assert!(matches!(
@@ -735,15 +735,15 @@ fn host_terms_resolve_atoms_and_points_across_objects() {
 /// ligand: a `within` reference evaluated on one also measures against the
 /// atoms it selects in the others.
 struct Scene<'a> {
-    models: &'a [Model],
-    /// The evaluated model.
+    structures: &'a [Structure],
+    /// The evaluated structure.
     current: usize,
 }
 
 impl Scene<'_> {
     fn select(&self, text: &str) -> Result<Vec<usize>, SelectEvaluateError> {
         let options = SelectEvaluateOptions::default().with_resolver(self);
-        let selection = parse(text).evaluate_structure(&self.models[self.current], options)?;
+        let selection = parse(text).evaluate_structure(&self.structures[self.current], options)?;
         Ok(selection
             .indices()
             .iter()
@@ -762,29 +762,29 @@ impl SelectionResolver for Scene<'_> {
         reference: &SelectionExpr,
         request: HostRequest<'_>,
     ) -> Result<ReferencePoints, HostTermError> {
-        let evaluated = &self.models[self.current];
+        let evaluated = &self.structures[self.current];
         assert_eq!(request.role(), HostRole::Reference);
         assert!(request.topology().shares_layout(evaluated.topology()));
         assert!(request
             .structure()
             .is_some_and(|view| std::ptr::eq(view.positions(), evaluated.positions())));
         let mut points = Vec::new();
-        for (index, model) in self.models.iter().enumerate() {
+        for (index, structure) in self.structures.iter().enumerate() {
             if index == self.current {
                 continue;
             }
             let scene = Scene {
-                models: self.models,
+                structures: self.structures,
                 current: index,
             };
             let options = SelectEvaluateOptions::default().with_resolver(&scene);
             let atoms = reference
-                .evaluate_structure(model, options)
+                .evaluate_structure(structure, options)
                 .map_err(|error| {
-                    HostTermError::new(format!("evaluating on model {index} failed"))
+                    HostTermError::new(format!("evaluating on structure {index} failed"))
                         .with_source(error)
                 })?;
-            let positions: &[Point3] = model.positions().values().value();
+            let positions: &[Point3] = structure.positions().values().value();
             points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
         }
         Positions::from_vec(Quantity::new(points, CANONICAL_LENGTH_UNIT))
@@ -813,8 +813,8 @@ fn within_points(points: &[Point3], references: &[Point3], cutoff: f64) -> Vec<u
 #[test]
 fn within_measures_against_structures_the_resolver_holds() {
     // 1AKE split as a docking project keeps it: receptor, ligand, and water
-    // as separate models.
-    let complex = model("mmcif/1AKE.cif");
+    // as separate structures.
+    let complex = structure("mmcif/1AKE.cif");
     let part = |text: &str| {
         let atoms = parse(text)
             .evaluate_structure(&complex, SelectEvaluateOptions::default())
@@ -822,10 +822,10 @@ fn within_measures_against_structures_the_resolver_holds() {
         (complex.subset(&atoms).unwrap(), atoms)
     };
     let (receptor, protein) = part("protein");
-    let models = [receptor, part("ligand").0, part("water").0];
-    let points = |index: usize| models[index].positions().values().value().to_vec();
+    let structures = [receptor, part("ligand").0, part("water").0];
+    let points = |index: usize| structures[index].positions().values().value().to_vec();
     let on_receptor = Scene {
-        models: &models,
+        structures: &structures,
         current: 0,
     };
     // The subset keeps the protein atoms in dense order.
@@ -846,7 +846,7 @@ fn within_measures_against_structures_the_resolver_holds() {
     assert_eq!(pocket, in_complex("within 5 of ligand and protein"));
 
     // Water-mediated contacts: the nested reference reaches the resolver
-    // again from the water model, which measures against the ligand model.
+    // again from the water structure, which measures against the ligand structure.
     let bridged = on_receptor
         .select("within 3.5 of (water and within 3.5 of ligand)")
         .unwrap();
@@ -865,7 +865,7 @@ fn within_measures_against_structures_the_resolver_holds() {
     // Without reference points, the receptor alone holds no ligand.
     let evaluate = |options| {
         parse("within 5 of ligand")
-            .evaluate_structure(&models[0], options)
+            .evaluate_structure(&structures[0], options)
             .unwrap()
     };
     assert!(evaluate(SelectEvaluateOptions::default()).is_empty());
@@ -879,7 +879,7 @@ fn within_measures_against_structures_the_resolver_holds() {
 /// all of them does: each reference's points over every structure, the
 /// evaluated one included, built once and shared by every evaluation.
 struct SharedScene<'a> {
-    models: &'a [Model],
+    structures: &'a [Structure],
     current: usize,
     /// Reference points by canonical text, and how often they were built.
     built: &'a RefCell<BTreeMap<String, (ReferencePoints, usize)>>,
@@ -889,7 +889,7 @@ impl SharedScene<'_> {
     fn select(&self, text: &str) -> Vec<usize> {
         let options = SelectEvaluateOptions::default().with_resolver(self);
         parse(text)
-            .evaluate_structure(&self.models[self.current], options)
+            .evaluate_structure(&self.structures[self.current], options)
             .unwrap_or_else(|error| panic!("{text}: {error}"))
             .indices()
             .iter()
@@ -914,14 +914,14 @@ impl SelectionResolver for SharedScene<'_> {
             return Ok(points.clone());
         }
         let mut points = Vec::new();
-        for (index, model) in self.models.iter().enumerate() {
+        for (index, structure) in self.structures.iter().enumerate() {
             let scene = SharedScene {
                 current: index,
                 ..*self
             };
             let options = SelectEvaluateOptions::default().with_resolver(&scene);
-            let atoms = reference.evaluate_structure(model, options).unwrap();
-            let positions: &[Point3] = model.positions().values().value();
+            let atoms = reference.evaluate_structure(structure, options).unwrap();
+            let positions: &[Point3] = structure.positions().values().value();
             points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
         }
         let points = ReferencePoints::new(
@@ -936,14 +936,14 @@ impl SelectionResolver for SharedScene<'_> {
 fn shared_reference_points_select_what_per_structure_points_select() {
     // 1AKE as many structures in one frame: each protein chain cut in two,
     // the ligands, and the water.
-    let complex = model("mmcif/1AKE.cif");
+    let complex = structure("mmcif/1AKE.cif");
     let part = |text: &str| {
         let atoms = parse(text)
             .evaluate_structure(&complex, SelectEvaluateOptions::default())
             .unwrap();
         complex.subset(&atoms).unwrap()
     };
-    let models = [
+    let structures = [
         part("protein and chain A and resid 1-100"),
         part("protein and chain A and resid 101-300"),
         part("protein and chain B and resid 1-100"),
@@ -962,15 +962,15 @@ fn shared_reference_points_select_what_per_structure_points_select() {
     let built = RefCell::new(BTreeMap::new());
     let mut selected = 0;
     for expression in expressions {
-        for current in 0..models.len() {
+        for current in 0..structures.len() {
             let apart = Scene {
-                models: &models,
+                structures: &structures,
                 current,
             }
             .select(expression)
             .unwrap();
             let shared = SharedScene {
-                models: &models,
+                structures: &structures,
                 current,
                 built: &built,
             }
@@ -982,7 +982,7 @@ fn shared_reference_points_select_what_per_structure_points_select() {
     assert!(selected > 0);
     // Each reference was built once and reused by every other structure.
     for (reference, (_, count)) in built.borrow().iter() {
-        assert!(*count >= models.len(), "{reference}: {count}");
+        assert!(*count >= structures.len(), "{reference}: {count}");
     }
     assert_eq!(
         built
@@ -1005,7 +1005,7 @@ fn shared_host_points_measure_each_cutoff_exactly() {
     let points = (0..4)
         .map(|index| Point3::new(f64::from(index), 0.5 * f64::from(index), 0.0))
         .collect::<Vec<_>>();
-    let model = Model::new(
+    let structure = Structure::new(
         topology,
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
@@ -1023,7 +1023,7 @@ fn shared_host_points_measure_each_cutoff_exactly() {
         let shared = select::parse(&text, host_options())
             .unwrap()
             .evaluate_structure(
-                &model,
+                &structure,
                 SelectEvaluateOptions::default().with_resolver(&resolver),
             )
             .unwrap()
@@ -1032,7 +1032,7 @@ fn shared_host_points_measure_each_cutoff_exactly() {
             .map(|index| index.index())
             .collect::<Vec<_>>();
         let expected = within_points(
-            model.positions().values().value(),
+            structure.positions().values().value(),
             resolver.other.positions().values().value(),
             cutoff,
         );
@@ -1043,17 +1043,17 @@ fn shared_host_points_measure_each_cutoff_exactly() {
 
 #[test]
 fn resolvers_without_reference_points_keep_todays_results() {
-    let model = model("mmcif/1AKE.cif");
+    let structure = structure("mmcif/1AKE.cif");
     let terms_only = Resolver {
         other: ReferencePoints::default(),
     };
-    for (structure, expression, _) in cases() {
-        if structure != "1AKE" {
+    for (name, expression, _) in cases() {
+        if name != "1AKE" {
             continue;
         }
         let evaluate = |options| {
             parse(expression)
-                .evaluate_structure(&model, options)
+                .evaluate_structure(&structure, options)
                 .unwrap()
         };
         assert_eq!(
@@ -1102,7 +1102,7 @@ fn host_term_references_still_resolve_through_resolve() {
     let points = (0..3)
         .map(|index| Point3::new(10.0 * f64::from(index), 0.0, 0.0))
         .collect::<Vec<_>>();
-    let model = Model::new(
+    let structure = Structure::new(
         topology,
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
@@ -1110,7 +1110,7 @@ fn host_term_references_still_resolve_through_resolve() {
     let recorder = Recorder::default();
     let selected = parse("within 2 of #2 or within 3 of (#2) or within 4 of (not $site)")
         .evaluate_structure(
-            &model,
+            &structure,
             SelectEvaluateOptions::default().with_resolver(&recorder),
         )
         .unwrap();
@@ -1128,7 +1128,7 @@ fn host_term_references_still_resolve_through_resolve() {
 
 #[test]
 fn reference_point_failures_name_the_reference_and_its_span() {
-    // The same molecule twice, perceived only in the evaluated model.
+    // The same molecule twice, perceived only in the evaluated structure.
     let aniline = |perceived: bool| {
         let mut topology = smiles::to_topology("c1ccccc1N").unwrap();
         if perceived {
@@ -1137,19 +1137,19 @@ fn reference_point_failures_name_the_reference_and_its_span() {
         let points = (0..7)
             .map(|index| Point3::new(1.4 * f64::from(index), 0.0, 0.0))
             .collect::<Vec<_>>();
-        Model::new(
+        Structure::new(
             topology,
             Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
         )
         .unwrap()
     };
-    let models = [aniline(true), aniline(false)];
+    let structures = [aniline(true), aniline(false)];
     let scene = Scene {
-        models: &models,
+        structures: &structures,
         current: 0,
     };
 
-    // The reference evaluates on the evaluated model and fails where the
+    // The reference evaluates on the evaluated structure and fails where the
     // resolver evaluates it, on the unperceived one.
     let text = "element O or within 5 of (element N and aromatic)";
     let error = scene.select(text).unwrap_err();
@@ -1158,7 +1158,7 @@ fn reference_point_failures_name_the_reference_and_its_span() {
     };
     assert_eq!(term, "element N and aromatic");
     assert_eq!(&text[span.clone()], "(element N and aromatic)");
-    assert_eq!(source.message(), "evaluating on model 1 failed");
+    assert_eq!(source.message(), "evaluating on structure 1 failed");
     // The host's evaluation error locates its term in the same text.
     let cause = std::error::Error::source(source)
         .and_then(|cause| cause.downcast_ref::<SelectEvaluateError>())
@@ -1169,7 +1169,7 @@ fn reference_point_failures_name_the_reference_and_its_span() {
     ));
     assert_eq!(&text[cause.span()], "aromatic");
 
-    // A nested reference fails first, in the evaluated model's own pass,
+    // A nested reference fails first, in the evaluated structure's own pass,
     // and names itself.
     let text = "within 5 of (element C and within 3 of aromatic)";
     let error = scene.select(text).unwrap_err();
@@ -1236,7 +1236,7 @@ fn within_on_a_million_atoms_takes_under_fifty_milliseconds() {
             Point3::new(x as f64 * 3.1 + offset, y as f64 * 3.1, z as f64 * 3.1)
         })
         .collect::<Vec<_>>();
-    let model = Model::new(
+    let structure = Structure::new(
         topology,
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
@@ -1247,12 +1247,15 @@ fn within_on_a_million_atoms_takes_under_fifty_milliseconds() {
     for _ in 0..5 {
         let start = std::time::Instant::now();
         count = expression
-            .evaluate_structure(&model, SelectEvaluateOptions::default())
+            .evaluate_structure(&structure, SelectEvaluateOptions::default())
             .unwrap()
             .len();
         best = best.min(start.elapsed());
     }
-    eprintln!("{} atoms: {count} selected in {best:?}", model.atom_count());
+    eprintln!(
+        "{} atoms: {count} selected in {best:?}",
+        structure.atom_count()
+    );
     assert!(count >= 9);
     if !cfg!(debug_assertions) {
         assert!(best < std::time::Duration::from_millis(50), "took {best:?}");
@@ -1264,7 +1267,7 @@ fn within_on_a_million_atoms_takes_under_fifty_milliseconds() {
 fn within_over_many_structures_grows_with_atoms_plus_points() {
     // 27 copies of 1AKE without water, about 92k atoms, as a host holds them:
     // apart on a grid, and stacked in one place as an ensemble's members are.
-    let complex = model("mmcif/1AKE.cif");
+    let complex = structure("mmcif/1AKE.cif");
     let dry = complex
         .subset(
             &parse("not water")
@@ -1286,7 +1289,7 @@ fn within_over_many_structures_grows_with_atoms_plus_points() {
                     .iter()
                     .map(|p| Point3::new(p.x + shift.x, p.y + shift.y, p.z + shift.z))
                     .collect();
-                Model::new(
+                Structure::new(
                     dry.shared_topology(),
                     Positions::from_vec(Quantity::new(moved, CANONICAL_LENGTH_UNIT)).unwrap(),
                 )
@@ -1306,18 +1309,18 @@ fn within_over_many_structures_grows_with_atoms_plus_points() {
     };
     // 1AKE spans under 7 nm.
     for (layout, spacing) in [("apart", 10.0), ("stacked", 0.0)] {
-        let models = copies(spacing);
-        let atoms = models.len() * points.len();
+        let structures = copies(spacing);
+        let atoms = structures.len() * points.len();
         for expression in [
             "within 5 of protein",
             "byres (within 5 of ligand) and protein",
         ] {
             let shared = time(&|| {
                 let built = RefCell::new(BTreeMap::new());
-                (0..models.len())
+                (0..structures.len())
                     .map(|current| {
                         SharedScene {
-                            models: &models,
+                            structures: &structures,
                             current,
                             built: &built,
                         }
@@ -1328,10 +1331,10 @@ fn within_over_many_structures_grows_with_atoms_plus_points() {
             });
             // Points gathered and gridded anew for each structure.
             let apart = time(&|| {
-                (0..models.len())
+                (0..structures.len())
                     .map(|current| {
                         Scene {
-                            models: &models,
+                            structures: &structures,
                             current,
                         }
                         .select(expression)
@@ -1362,10 +1365,10 @@ fn within_over_many_structures_grows_with_atoms_plus_points() {
     }
 }
 
-/// Copies of `model` appended into one model: apart on a cubic grid, or
+/// Copies of `structure` appended into one structure: apart on a cubic grid, or
 /// stacked in one place as a host merges duplicated objects.
-fn copies_in_one_model(model: &Model, copies: usize, apart: bool) -> Model {
-    let points: &[Point3] = model.positions().values().value();
+fn copies_in_one_model(structure: &Structure, copies: usize, apart: bool) -> Structure {
+    let points: &[Point3] = structure.positions().values().value();
     let (low, high) = points.iter().fold(
         (
             Point3::new(f64::MAX, f64::MAX, f64::MAX),
@@ -1384,20 +1387,20 @@ fn copies_in_one_model(model: &Model, copies: usize, apart: bool) -> Model {
         0.0
     };
     let side = (copies as f64).cbrt().ceil() as usize;
-    let mut editor = kekule::structure::ModelEditor::new();
+    let mut editor = kekule::structure::StructureEditor::new();
     for copy in 0..copies {
         let [x, y, z] =
             [copy % side, copy / side % side, copy / side / side].map(|step| step as f64 * spacing);
-        let mut moved = model.clone();
+        let mut moved = structure.clone();
         moved
-            .set_positions(model.positions().values().map(|points| {
+            .set_positions(structure.positions().values().map(|points| {
                 points
                     .iter()
                     .map(|p| Point3::new(p.x + x, p.y + y, p.z + z))
                     .collect::<Vec<_>>()
             }))
             .unwrap();
-        editor.append_model(&moved).unwrap();
+        editor.append_structure(&moved).unwrap();
     }
     editor.finish().unwrap()
 }
@@ -1440,9 +1443,9 @@ fn threads(count: usize) -> kekule::parallel::ScopedThreads {
 #[test]
 fn within_selects_the_same_atoms_on_any_executor() {
     // About 100k atoms, so `within` splits them into several work items.
-    let base = model("mmcif/1AKE.cif");
-    let model = copies_in_one_model(&base, 100_000 / base.atom_count() + 1, true);
-    let positions: &[Point3] = model.positions().values().value();
+    let base = structure("mmcif/1AKE.cif");
+    let structure = copies_in_one_model(&base, 100_000 / base.atom_count() + 1, true);
+    let positions: &[Point3] = structure.positions().values().value();
     // Host points near the first and the last copies.
     let points = [positions[17], positions[positions.len() - 40]]
         .map(|point| Point3::new(point.x + 0.2, point.y, point.z));
@@ -1462,11 +1465,11 @@ fn within_selects_the_same_atoms_on_any_executor() {
     ] {
         let expression = select::parse(text, host_options()).unwrap();
         let options = SelectEvaluateOptions::default().with_resolver(&resolver);
-        let serial = expression.evaluate_structure(&model, options).unwrap();
+        let serial = expression.evaluate_structure(&structure, options).unwrap();
         assert!(!serial.is_empty(), "{text}");
         for executor in executors {
             let parallel = expression
-                .evaluate_structure(&model, options.with_executor(executor))
+                .evaluate_structure(&structure, options.with_executor(executor))
                 .unwrap();
             assert_eq!(parallel, serial, "{text}");
         }
@@ -1477,7 +1480,7 @@ fn within_selects_the_same_atoms_on_any_executor() {
 /// a host evaluating one selection over all of them does: `#2` names the
 /// second copy's points, and other references read every copy, built once.
 struct StackedCopies<'a> {
-    models: &'a [Model],
+    structures: &'a [Structure],
     built: RefCell<BTreeMap<String, ReferencePoints>>,
 }
 
@@ -1499,7 +1502,7 @@ impl SelectionResolver for StackedCopies<'_> {
     fn resolve(&self, term: &HostTerm<'_>, _: HostRequest<'_>) -> Result<HostValue, HostTermError> {
         match term.text() {
             "2" => Ok(HostValue::Points(self.points("#2".into(), || {
-                self.models[1].positions().values().value().to_vec()
+                self.structures[1].positions().values().value().to_vec()
             }))),
             _ => Err(HostTermError::new(format!("unknown {}", term.text()))),
         }
@@ -1512,11 +1515,11 @@ impl SelectionResolver for StackedCopies<'_> {
     ) -> Result<ReferencePoints, HostTermError> {
         Ok(self.points(reference.to_string(), || {
             let mut points = Vec::new();
-            for model in self.models {
+            for structure in self.structures {
                 let atoms = reference
-                    .evaluate_structure(model, SelectEvaluateOptions::default())
+                    .evaluate_structure(structure, SelectEvaluateOptions::default())
                     .unwrap();
-                let positions: &[Point3] = model.positions().values().value();
+                let positions: &[Point3] = structure.positions().values().value();
                 points.extend(atoms.indices().iter().map(|atom| positions[atom.index()]));
             }
             points
@@ -1529,23 +1532,28 @@ impl SelectionResolver for StackedCopies<'_> {
 fn shared_references_over_stacked_copies_run_within_a_frame() {
     // 66 copies of KRas G12C in one place, each its own structure, as a host
     // holds duplicated objects; the reference points are built for each pass.
-    let base = model("mmcif/6OIM.cif");
-    let models = vec![base; 66];
-    let atoms = models.iter().map(Model::atom_count).sum::<usize>();
+    let base = structure("mmcif/6OIM.cif");
+    let structures = vec![base; 66];
+    let atoms = structures.iter().map(Structure::atom_count).sum::<usize>();
     let mut report = format!("66 stacked copies ({atoms} atoms), best and median of 15:");
     for text in ["within 5 of protein", "within 5 of #2"] {
         let expression = select::parse(text, host_options()).unwrap();
         let mut times = (0..15)
             .map(|_| {
                 let host = StackedCopies {
-                    models: &models,
+                    structures: &structures,
                     built: RefCell::default(),
                 };
                 let options = SelectEvaluateOptions::default().with_resolver(&host);
                 let start = std::time::Instant::now();
-                let selected = models
+                let selected = structures
                     .iter()
-                    .map(|model| expression.evaluate_structure(model, options).unwrap().len())
+                    .map(|structure| {
+                        expression
+                            .evaluate_structure(structure, options)
+                            .unwrap()
+                            .len()
+                    })
                     .sum::<usize>();
                 (start.elapsed(), selected)
             })
@@ -1565,7 +1573,7 @@ fn shared_references_over_stacked_copies_run_within_a_frame() {
 fn selection_terms_on_a_million_atoms_run_within_a_frame() {
     // A million atoms of 1AKE copies, apart as a tiled system and stacked in
     // one place as a host merges duplicated objects.
-    let base = model("mmcif/1AKE.cif");
+    let base = structure("mmcif/1AKE.cif");
     let copies = 1_000_000usize.div_ceil(base.atom_count());
     let parse_options = SelectParseOptions::default()
         .with_host_keywords(["everything"])
@@ -1573,12 +1581,12 @@ fn selection_terms_on_a_million_atoms_run_within_a_frame() {
     let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let pool = threads(available);
     for apart in [true, false] {
-        let model = copies_in_one_model(&base, copies, apart);
+        let structure = copies_in_one_model(&base, copies, apart);
         let serial = SelectEvaluateOptions::default().with_resolver(&Everything);
         let mut report = format!(
             "{} ({} atoms), best and median of 7, one thread and {available}:",
             if apart { "apart" } else { "stacked" },
-            model.atom_count()
+            structure.atom_count()
         );
         for text in [
             "name CA",
@@ -1595,7 +1603,7 @@ fn selection_terms_on_a_million_atoms_run_within_a_frame() {
                 let mut times = (0..7)
                     .map(|_| {
                         let start = std::time::Instant::now();
-                        let selected = expression.evaluate_structure(&model, options).unwrap();
+                        let selected = expression.evaluate_structure(&structure, options).unwrap();
                         (start.elapsed(), selected.len())
                     })
                     .collect::<Vec<_>>();

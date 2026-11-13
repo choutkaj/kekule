@@ -32,7 +32,7 @@ fn angstroms(point: Quantity<Point3>) -> Point3 {
     point.into_unit(ANGSTROM).unwrap().into_value()
 }
 
-fn chain_labels(model: &kekule::structure::Model) -> Vec<(String, Option<String>)> {
+fn chain_labels(model: &kekule::structure::Structure) -> Vec<(String, Option<String>)> {
     model
         .topology()
         .chains()
@@ -61,8 +61,8 @@ fn assert_copies_are_placed(
     assembly: &Assembly,
     tolerance: f64,
 ) {
-    let model = interpretation.model();
-    let built = assembly.to_model(model, None).unwrap();
+    let model = interpretation.structure();
+    let built = assembly.to_structure(model, None).unwrap();
     let generator = &assembly.generators()[0];
     let operations = generator.operations();
     assert_eq!(built.atom_count(), model.atom_count() * operations.len());
@@ -138,9 +138,9 @@ fn mmcif_assemblies_list_chains_and_crystal_operators() {
 #[test]
 fn copies_keep_identity_chains_and_name_the_others_by_operation() {
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
-    let model = interpretation.model();
+    let model = interpretation.structure();
     let built = interpretation.report().assemblies()[0]
-        .to_model(model, None)
+        .to_structure(model, None)
         .unwrap();
     let source = chain_labels(model);
     let labels = chain_labels(&built);
@@ -163,7 +163,7 @@ fn copies_keep_identity_chains_and_name_the_others_by_operation() {
 }
 
 /// The chains of a model, sorted.
-fn sorted_chains(model: &kekule::structure::Model) -> Vec<(String, Option<String>)> {
+fn sorted_chains(model: &kekule::structure::Structure) -> Vec<(String, Option<String>)> {
     let mut chains = chain_labels(model);
     chains.sort();
     chains
@@ -175,38 +175,38 @@ fn written_assemblies_name_every_copy() {
     // author, so it reads back as built.
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
     let built = interpretation.report().assemblies()[0]
-        .to_model(interpretation.model(), None)
+        .to_structure(interpretation.structure(), None)
         .unwrap();
     let (text, _) = mmcif::write(
-        [mmcif::MmcifBlockSource::model(&built)],
+        [mmcif::MmcifBlockSource::structure(&built)],
         mmcif::MmcifWriteOptions::default(),
     )
     .unwrap();
     let read = from_mmcif(&text);
-    assert_eq!(sorted_chains(read.model()), sorted_chains(&built));
+    assert_eq!(sorted_chains(read.structure()), sorted_chains(&built));
 
     // PDB: the copies' chains, `A-2` and `A-3`, as segment identifiers,
     // which read back as chains.
     let interpretation = from_pdb(INSULIN_RECEPTOR_KINASE_PDB);
     let built = interpretation.report().assemblies()[0]
-        .to_model(interpretation.model(), None)
+        .to_structure(interpretation.structure(), None)
         .unwrap();
     let options = pdb::PdbWriteOptions::default().with_chain_ids(pdb::PdbChainIdPolicy::SegmentId);
     let (text, _) = pdb::write(&built, options).unwrap();
     let read = from_pdb(&text);
-    let mut labels = chain_labels(read.model())
+    let mut labels = chain_labels(read.structure())
         .into_iter()
         .map(|(label, _)| label)
         .collect::<Vec<_>>();
     labels.dedup();
     assert_eq!(labels, ["A", "A-2", "A-3"]);
-    assert_eq!(read.model().atom_count(), built.atom_count());
+    assert_eq!(read.structure().atom_count(), built.atom_count());
 }
 
 #[test]
 fn assemblies_pick_their_chains() {
     let interpretation = from_mmcif(ADENYLATE_KINASE);
-    let model = interpretation.model();
+    let model = interpretation.structure();
     let assemblies = interpretation.report().assemblies();
     assert_eq!(
         assemblies.iter().map(Assembly::id).collect::<Vec<_>>(),
@@ -214,7 +214,7 @@ fn assemblies_pick_their_chains() {
     );
     let built = assemblies
         .iter()
-        .map(|assembly| assembly.to_model(model, None).unwrap())
+        .map(|assembly| assembly.to_structure(model, None).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         built[0].atom_count() + built[1].atom_count(),
@@ -284,7 +284,9 @@ END
         .map(|generator| generator.chains().to_vec())
         .collect::<Vec<_>>();
     assert_eq!(chains, [["A"], ["B"]]);
-    let built = assembly.to_model(interpretation.model(), None).unwrap();
+    let built = assembly
+        .to_structure(interpretation.structure(), None)
+        .unwrap();
     let labels = chain_labels(&built)
         .into_iter()
         .map(|(label, _)| label)
@@ -370,7 +372,9 @@ fn products_place_one_copy_per_combination() {
         .map(|operation| operation.name())
         .collect::<Vec<_>>();
     assert_eq!(names, ["1-1", "1-T", "R-1", "R-T"]);
-    let built = assembly.to_model(interpretation.model(), None).unwrap();
+    let built = assembly
+        .to_structure(interpretation.structure(), None)
+        .unwrap();
     let labels = chain_labels(&built);
     assert_eq!(
         labels,
@@ -461,7 +465,9 @@ fn a_chain_copied_twice_under_one_name_is_refused() {
     let interpretation = from_mmcif(&block("1 1 A\n1 1,T A,B", ""));
     let assembly = &interpretation.report().assemblies()[0];
     assert_eq!(assembly.generators().len(), 2);
-    let error = assembly.to_model(interpretation.model(), None).unwrap_err();
+    let error = assembly
+        .to_structure(interpretation.structure(), None)
+        .unwrap_err();
     assert!(
         matches!(&error, AssemblyError::RepeatedCopy { chain, .. } if chain == "A"),
         "{error:?}"
@@ -476,7 +482,7 @@ fn a_chain_copied_twice_under_one_name_is_refused() {
 fn a_model_without_the_chains_builds_nothing() {
     let interpretation = from_mmcif(&block("1 1 Z", ""));
     let error = interpretation.report().assemblies()[0]
-        .to_model(interpretation.model(), None)
+        .to_structure(interpretation.structure(), None)
         .unwrap_err();
     assert!(matches!(error, AssemblyError::NoAtoms { .. }), "{error:?}");
 }
@@ -486,7 +492,7 @@ fn building_stops_when_cancelled() {
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
     let cancellation = Cancellation::new(|| true);
     let error = interpretation.report().assemblies()[0]
-        .to_model(interpretation.model(), Some(&cancellation))
+        .to_structure(interpretation.structure(), Some(&cancellation))
         .unwrap_err();
     assert!(
         matches!(error, AssemblyError::Cancelled { .. }),

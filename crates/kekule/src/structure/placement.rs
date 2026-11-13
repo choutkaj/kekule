@@ -1,23 +1,23 @@
 //! Builder geometry: coordinates for the atoms an editor adds.
 //!
 //! Kekule never invents geometry implicitly; placement is an operation a host
-//! asks for, on a [`ModelEditor`] draft, as part of the edit it publishes:
+//! asks for, on a [`StructureEditor`] draft, as part of the edit it publishes:
 //!
-//! - [`ModelEditor::add_hydrogens`] makes the implicit hydrogens of chosen
-//!   atoms explicit at ideal positions, and [`ModelEditor::remove_hydrogens`]
+//! - [`StructureEditor::add_hydrogens`] makes the implicit hydrogens of chosen
+//!   atoms explicit at ideal positions, and [`StructureEditor::remove_hydrogens`]
 //!   collapses their explicit hydrogens back into implicit counts, each
 //!   reporting per atom what changed ([`PlacedHydrogensReport`],
 //!   [`RemovedHydrogensReport`]).
-//! - [`ModelEditor::atom_domains`] perceives an atom's [`AtomDomains`] and
-//!   [`ModelEditor::free_directions`] gives where its next substituents go.
-//! - [`ModelEditor::attach_atom`] bonds a new atom to an existing one, in place
+//! - [`StructureEditor::atom_domains`] perceives an atom's [`AtomDomains`] and
+//!   [`StructureEditor::free_directions`] gives where its next substituents go.
+//! - [`StructureEditor::attach_atom`] bonds a new atom to an existing one, in place
 //!   of an explicit hydrogen or at the free position nearest a direction
-//!   ([`AttachmentSite`]); [`ModelEditor::place_atom`] starts a new molecule
+//!   ([`AttachmentSite`]); [`StructureEditor::place_atom`] starts a new molecule
 //!   at a point.
-//! - [`ModelEditor::attach_fragment`] attaches a named [`Fragment`] of the
+//! - [`StructureEditor::attach_fragment`] attaches a named [`Fragment`] of the
 //!   library ([`fragments`], [`fragment`]) the same ways, turned to the
 //!   clearest of a few staggered torsions about the new bond, and
-//!   [`ModelEditor::place_fragment`] places one as a new capped molecule at a
+//!   [`StructureEditor::place_fragment`] places one as a new capped molecule at a
 //!   point.
 //! - [`ideal_bond_length`] gives the length placement uses for an element pair
 //!   and bond order.
@@ -52,12 +52,12 @@
 //! chain and a residue `UNL` of its own; a fragment placed alone names its
 //! ring atoms by locant (pyridine `N1`, `C2`, …; naphthalene `C4A`) and its
 //! hydrogens after the atoms carrying them (`H2`; `H21`, `H22`), as
-//! [`Fragment`] describes. [`ModelEditor::next_atom_name`] and
-//! [`ModelEditor::rename_atom`] apply the same rule to existing atoms. Names
+//! [`Fragment`] describes. [`StructureEditor::next_atom_name`] and
+//! [`StructureEditor::rename_atom`] apply the same rule to existing atoms. Names
 //! are label and author atom names alike, and the host may rename.
 //!
 //! ```
-//! use kekule::{smiles, structure::{Model, Positions}};
+//! use kekule::{smiles, structure::{Structure, Positions}};
 //! use kekule::hydrogens::AddHydrogensOptions;
 //! use kekule::units::{Quantity, NANOMETER};
 //! use kekule::math::Point3;
@@ -68,7 +68,7 @@
 //!     [Point3::origin(), Point3::new(0.153, 0.0, 0.0), Point3::new(0.2, 0.135, 0.0)],
 //!     NANOMETER,
 //! ))?;
-//! let mut editor = Model::new(topology, positions)?.into_editor();
+//! let mut editor = Structure::new(topology, positions)?.into_editor();
 //! let atoms = editor.topology().atom_ids().collect::<Vec<_>>();
 //! let report = editor.add_hydrogens(atoms, AddHydrogensOptions::default())?;
 //! assert_eq!(report.added_count(), 6);
@@ -85,7 +85,7 @@ pub use fragments::{fragment, fragments, Fragment, FragmentKind};
 pub(crate) use names::{fragment_names, name_prefix, next_free_number, NameAllocator};
 pub(crate) use sites::{free_sites, unit, Rotation, SiteQuery};
 
-use super::ModelEditError;
+use super::StructureEditError;
 use crate::algorithms::{AddedHydrogenOrigin, RetainedHydrogenReason};
 use crate::diagnostics::LimitExceeded;
 use crate::molecule::{BondOrder, Element, ImplicitHydrogens};
@@ -94,7 +94,7 @@ use crate::units::{Quantity, ANGSTROM};
 use std::fmt;
 
 #[cfg(doc)]
-use super::ModelEditor;
+use super::StructureEditor;
 
 /// The ideal length of a bond of `order` between atoms of elements `a` and
 /// `b`: a typical length for common pairs (C–H 1.09 Å, C=O 1.22 Å, …), and
@@ -199,7 +199,7 @@ impl AtomDomains {
     }
 }
 
-/// Where [`ModelEditor::attach_atom`] puts the new atom.
+/// Where [`StructureEditor::attach_atom`] puts the new atom.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum AttachmentSite {
@@ -211,7 +211,7 @@ pub enum AttachmentSite {
     Toward(crate::math::Vector3),
 }
 
-/// The atom [`ModelEditor::attach_atom`] added.
+/// The atom [`StructureEditor::attach_atom`] added.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AttachedAtom {
     pub(crate) atom: EditAtomId,
@@ -235,7 +235,7 @@ impl AttachedAtom {
     }
 }
 
-/// The atoms [`ModelEditor::attach_fragment`] added.
+/// The atoms [`StructureEditor::attach_fragment`] added.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachedFragment {
     pub(crate) atoms: Vec<(crate::molecule::AtomId, EditAtomId)>,
@@ -265,7 +265,7 @@ impl AttachedFragment {
     }
 }
 
-/// The atoms [`ModelEditor::place_fragment`] added.
+/// The atoms [`StructureEditor::place_fragment`] added.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacedFragment {
     pub(crate) atoms: Vec<(crate::molecule::AtomId, EditAtomId)>,
@@ -279,7 +279,7 @@ impl PlacedFragment {
     }
 }
 
-/// The hydrogens [`ModelEditor::add_hydrogens`] placed on one atom.
+/// The hydrogens [`StructureEditor::add_hydrogens`] placed on one atom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacedHydrogens {
     pub(crate) atom: EditAtomId,
@@ -302,7 +302,7 @@ impl PlacedHydrogens {
     }
 }
 
-/// What [`ModelEditor::add_hydrogens`] placed: one entry per distinct atom
+/// What [`StructureEditor::add_hydrogens`] placed: one entry per distinct atom
 /// asked for, in request order, including atoms that needed none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacedHydrogensReport {
@@ -320,7 +320,7 @@ impl PlacedHydrogensReport {
     }
 }
 
-/// The explicit hydrogens [`ModelEditor::remove_hydrogens`] collapsed on one
+/// The explicit hydrogens [`StructureEditor::remove_hydrogens`] collapsed on one
 /// atom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovedHydrogens {
@@ -355,7 +355,7 @@ impl RemovedHydrogens {
     }
 }
 
-/// What [`ModelEditor::remove_hydrogens`] collapsed: one entry per distinct
+/// What [`StructureEditor::remove_hydrogens`] collapsed: one entry per distinct
 /// atom asked for, in request order, except hydrogens asked for that were
 /// collapsed into another atom asked for, which its entry lists as removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -380,7 +380,7 @@ impl RemovedHydrogensReport {
 pub enum PlacementError {
     /// Editing the draft failed, for example on a deleted handle; see the
     /// source.
-    Edit(Box<ModelEditError>),
+    Edit(Box<StructureEditError>),
     /// The atom's represented valence exceeds what its element allows, so its
     /// hydrogens cannot be completed.
     InvalidValence {
@@ -515,8 +515,8 @@ impl std::error::Error for PlacementError {
     }
 }
 
-impl From<ModelEditError> for PlacementError {
-    fn from(error: ModelEditError) -> Self {
+impl From<StructureEditError> for PlacementError {
+    fn from(error: StructureEditError) -> Self {
         Self::Edit(Box::new(error))
     }
 }

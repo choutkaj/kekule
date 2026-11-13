@@ -356,7 +356,7 @@ names its component's parents, so a modified residue is told from a standard
 one. A chain's sequence joins the codes of the monomers it holds. The
 sequence a file states for a polymer entity, with monomers the model does not
 observe, is format metadata: the mmCIF interpretation report owns it and
-places it on the interpreted model's chains and residues. See
+places it on the interpreted structure's chains and residues. See
 [sequences](crates/kekule/src/sequence.rs) and
 [entity sequences](crates/kekule/src/io/structure_interpret/sequences.rs).
 
@@ -376,9 +376,9 @@ mutation guard's destructor being called.
 | --- | --- | --- |
 | `MoleculeEditor` | One molecular graph, possibly disconnected while editing | Exactly one nonempty connected molecule |
 | `TopologyBuilder` | Complete definitions, instances, hierarchy, classification, properties | Immutable topology |
-| `ModelBuilder` | Complete composition with explicit coordinates | Valid model |
+| `StructureBuilder` | Complete composition with explicit coordinates | Valid structure |
 | `TopologyEditor` | Occurrence-local atom, bond, component, and hierarchy changes | Repartitioned topology |
-| `ModelEditor` | Structural edits coordinated with one structure | Topology and coordinates together |
+| `StructureEditor` | Structural edits coordinated with one structure | Topology and coordinates together |
 
 `MoleculeEditor` is a draft, not a molecule view. Mutable chemistry access
 invalidates perception immediately; validated no-op replacements retain state.
@@ -387,15 +387,15 @@ occurrences; publication shares every untouched definition, with its
 perception, with the source snapshot, whether or not that snapshot is still
 shared, so an edit copies what it changes. A draft started from a snapshot
 stores nothing per source atom, bond, or hierarchy node: it reads the source
-until an edit changes, moves, or deletes one, and a model draft shares the
+until an edit changes, moves, or deletes one, and a structure draft shares the
 source's positions, occupancies, and B factors until one is written. The
 source snapshot is never written, so undo histories keep every snapshot
 intact. Publication carries untouched occurrences, residues, and sites over
 from the source by index, classifies only what the edit cleared, and costs
 the edit plus a few passes over plain per-atom arrays. Stable draft handles reject deleted or foreign entities. Joining or
-splitting components follows asserted connectivity. Surviving model coordinates
+splitting components follows asserted connectivity. Surviving structure coordinates
 are preserved; new atoms require supplied coordinates, never invented geometry,
-unless the host asks a placement operation on a `ModelEditor` draft
+unless the host asks a placement operation on a `StructureEditor` draft
 (`structure::placement`) to derive them from ideal local geometry. Placement
 is part of the host's edit and its one publication, never moves an existing
 atom, works inside the edited occurrences so its cost follows the edited
@@ -414,13 +414,13 @@ the published ones and back, so hosts remap their columns in one pass. Generic
 owner annotations are conservatively cleared when their owner changes, including
 ambiguous instance splits or merges. No-op edits preserve them.
 
-Complete model append accepts borrowed structures. It imports definitions,
+Complete structure append accepts borrowed structures. It imports definitions,
 reuse, perception, classification, hierarchy, coordinates, and entity properties
 without interning independent sources or merging equal hierarchy labels.
 Coordinates remain in the supplied coordinate system. Incompatible cells,
 property types, or units reject the entire append. Owner-property omissions are
 reported. Import mappings are scoped to that append and its draft identities.
-See the [append contract](crates/kekule/src/structure/model_editor/append.rs) for
+See the [append contract](crates/kekule/src/structure/structure_editor/append.rs) for
 cell comparison tolerances, property transfer, and examples.
 
 Selections bind to one topology layout, including empty selections and set
@@ -436,7 +436,7 @@ topology remapping or provenance framework.
 
 See [molecular editing](crates/kekule/src/molecule/molecule_edit.rs),
 [system editing](crates/kekule/src/topology/editor.rs),
-[model editing](crates/kekule/src/structure/model_editor.rs),
+[structure editing](crates/kekule/src/structure/structure_editor.rs),
 [selections](crates/kekule/src/topology/selection.rs), and
 [subsets](crates/kekule/src/topology/transform.rs).
 
@@ -480,7 +480,7 @@ transactional batches with ordered update semantics. A draft editor addresses
 allocated slots, and writing a value to a deleted slot fails with `RemovedRow`.
 System editors expose the same guard keyed by editing handle
 (`TopologyEditor::properties_mut`), and a deleted handle fails with the
-editor's typed invalid-handle error. `ModelEditor` does not dereference to its
+editor's typed invalid-handle error. `StructureEditor` does not dereference to its
 topology draft: `topology()` reads it, `topology_mut()` reaches the edits that
 need no coordination with geometry, and its own `properties_mut()` holds
 structure-scoped values, so the two scopes never shadow each other.
@@ -496,7 +496,7 @@ perception does; only builders, editors, and transformations publish a new
 layout. Transformations transfer entity values explicitly and do not infer annotation
 validity or recompute arbitrary properties. Arbitrary source fields stay in
 format sidecars unless canonical semantics, scope, and domain justify promotion.
-Occupancy and B factors are typed site fields of models and samples,
+Occupancy and B factors are typed site fields of structures and geometries,
 with checked semantics independent of any generic property with the same name. Positions, cells,
 weights, energies, time, steps, velocities, and forces retain their dedicated APIs.
 
@@ -511,36 +511,36 @@ values. Exact units, tolerances, and conversion policies belong with
 
 ## Geometry and structure ownership
 
-A model or structure set owns its shared topology once. Samples store flat
-payloads, not nested models; a detached sample has atom rows only and
+A structure or structure set owns its shared topology once. Geometries store flat
+payloads, not nested structures; a detached geometry has atom rows only and
 acquires bond rows when a set or a frame buffer binds it. The structure of a
 sample is shared storage, copied on write per sample, so copies of a set that
 differ only in order, weights, or grouping share every coordinate. Borrowed
-`ModelView` access, obtained through the sealed `AsModelView` (or a frame
+`StructureView` access, obtained through the sealed `AsStructureView` (or a frame
 buffer's `as_model_view`), lets coordinate algorithms and writers share
-kernels across models, geometries, frames, and buffers. A view's `kind()`
-is `StructureKind::Model` or `StructureKind::InSet` with a `SetContext`: the
+kernels across structures, geometries, frames, and buffers. A view's `kind()`
+is `StructureKind::Standalone` or `StructureKind::InSet` with a `SetContext`: the
 geometry's place in its order, its membership (weight, state, whether it
 represents the state, the state's energy, and the temperature), and its
 velocities and forces. A frame of a codec or buffer reports its time and
 step as its place, so writers and reductions never lose that state silently.
-Structure writers hold a sample to one policy, `sample_metadata`, for all of
+Structure writers hold a geometry to one policy, `set_metadata`, for all of
 that state, whether it belongs to a set or a frame. Per-atom, per-bond, and
 own properties of a structure, and the properties of its structure set, follow a
 second policy, `properties`. Molfile and SDF, which store no occupancies or B
-factors, put them under `sample_metadata`. Each of these fails by default. Owned
-projections (`to_model`) explicitly materialize a model while sharing the
-topology. Collections built from models (`from_models`) consume them and require
-equal layouts (`same_layout`), keeping the first model's topology, and a
+factors, put them under `set_metadata`. Each of these fails by default. Owned
+projections (`to_structure`) explicitly materialize a structure while sharing the
+topology. Collections built from structures (`from_structures`) consume them and require
+equal layouts (`same_layout`), keeping the first structure's topology, and a
 partition saying what they are; there is no special
-single-sample ownership model.
+single-geometry ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
-`Model::atom` joins an `AtomView` with that atom's structure state. Mutation
-goes through explicit, dimension-preserving setters on models, detached
+`Structure::atom` joins an `AtomView` with that atom's structure state. Mutation
+goes through explicit, dimension-preserving setters on structures, detached
 payloads, and the collection item guards returned by `get_mut()`, and through
-`properties_mut()` on topologies (`topology_properties_mut()` on models and
+`properties_mut()` on topologies (`topology_properties_mut()` on structures and
 collections, which replaces a shared topology with a snapshot of it). Guards
 have no `DerefMut`; whole payloads are replaced through the owner.
 
@@ -560,14 +560,14 @@ priority and atom-ID ties choose the references without coordinates; undefined
 geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
 [positions](crates/kekule/src/structure/positions.rs),
-[models](crates/kekule/src/structure/model.rs),
+[structures](crates/kekule/src/structure/owner.rs),
 [structure sets](crates/kekule/src/structure/sample_set.rs),
 [measurements](crates/kekule/src/structure/measure.rs), and
 [alignment](crates/kekule/src/alignment.rs).
 
 Cartesian geometry edits mutate `Model` coordinates atomically while retaining
 the exact topology, cell, and properties. A rigid motion of a whole structure
-(`apply_rigid_transform` on a model, sample, or frame) rotates its cell with
+(`apply_rigid_transform` on a structure, sample, or frame) rotates its cell with
 its coordinates; selection edits such as `transform_atoms` keep the cell. Prepared distance, angle, and dihedral
 edits bind references and moving selections to that layout, never to cached
 coordinates. Automatic fragments must separate from fixed references; explicit
@@ -722,11 +722,11 @@ weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
 `StructureSet` methods observe each member of the distribution with its
-probability, its weight over the members' total, and leave the other samples
+probability, its weight over the members' total, and leave the other geometries
 out; a set without a distribution observes every sample with weight one,
-taking them as equally weighted equilibrium samples, and other weights are
+taking them as equally weighted equilibrium geometries, and other weights are
 passed to the accumulators explicitly. Streamed frames reach the same accumulators through their buffer's
-`ModelView`; `kekule::traj` adds no statistics of its own. Accumulators consume
+`StructureView`; `kekule::traj` adds no statistics of its own. Accumulators consume
 structures sharing the source topology's layout with memory bounded by
 selected atoms, pairs, or groups, not observation count. Failed observations leave
 accumulators unchanged. Accumulators of the same selection, or of the same
@@ -904,13 +904,13 @@ outside the distribution, unequal weights, several states, energies, state
 properties, a representative that is not its state's first member, a
 temperature, a place in the order, a time order without times or steps,
 velocities, and forces fail or are omitted with a report under
-`sample_metadata`. XYZ interprets frames as a structure set without a
+`set_metadata`. XYZ interprets frames as a structure set without a
 distribution, since the file states none.
 
 | Format scope | Interpretation and projection |
 | --- | --- |
 | SMILES record | All connected components, with topology projection |
-| Molfile | One model with topology and molecule projections |
+| Molfile | One structure with topology and molecule projections |
 | SDF record | Model, title, fields, and reports; each record independent |
 | CIF data block | One model, or compatible coordinate models as a structure set of one unweighted state |
 | PDB entry | One model, or compatible coordinate models as a structure set of one unweighted state |
@@ -1104,7 +1104,7 @@ export.
   chains by label and the rigid operations that place their copies, products
   of operators already composed; one that cannot be read is reported as
   omitted. Interpretation keeps the deposited coordinates, and
-  `Assembly::to_model` builds the copies on request: identity copies keep
+  `Assembly::to_structure` builds the copies on request: identity copies keep
   their chain identifiers, others take the operation's name after a dash, as
   wwPDB assembly files name them, and copies share their molecules'
   definitions. See [assemblies](crates/kekule/src/io/structure_interpret/assemblies.rs).
@@ -1451,7 +1451,7 @@ and every atom it concerns.
 
 `kekule-potentials` owns energy evaluation and geometry optimization; the
 foundational crate owns no potential. A prepared `Potential` binds one topology
-layout, does not change during evaluation, and accepts any `ModelView` sharing
+layout, does not change during evaluation, and accepts any `StructureView` sharing
 that layout, including perceived snapshots; an independently equal topology is
 incompatible. Energies and
 gradients are separate result objects in canonical units, not model properties.

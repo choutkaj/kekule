@@ -14,33 +14,33 @@ use crate::topology::{
 };
 use crate::units::Quantity;
 
-use super::model_state::ModelState;
 use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
 use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
+use super::structure_state::StructureState;
 use super::{DenseArrayError, GeometryError, Positions, SetContext};
 
 /// One concrete structure of one topology.
 ///
-/// A model owns a shared [`Topology`] and one structure of it, in the
+/// A structure owns a shared [`Topology`] and one structure of it, in the
 /// topology's dense atom order: a position for every atom, an optional
 /// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
 /// structure properties. The topology stays coordinate-free and may be
-/// shared with other models, geometries, trajectory frames, selections,
+/// shared with other structures, geometries, trajectory frames, selections,
 /// and prepared potentials.
 ///
-/// Read and change structure state through the model's own
-/// dimension-preserving methods (`model.positions()`, `model.set_cell(..)`,
-/// `model.properties_mut()`, ...). Static annotations live on
+/// Read and change structure state through the structure's own
+/// dimension-preserving methods (`structure.positions()`, `structure.set_cell(..)`,
+/// `structure.properties_mut()`, ...). Static annotations live on
 /// [`Self::topology`].
 ///
 /// Use [`Self::from_molecule`] for a single connected molecule,
 /// [`Self::builder`] to assemble several molecules and their positions, or
 /// [`Self::new`] when a topology and correctly ordered positions exist.
 #[derive(Debug, Clone)]
-pub struct Model {
+pub struct Structure {
     pub(super) topology: Arc<Topology>,
     pub(super) positions: Positions,
     pub(super) cell: Option<PeriodicCell>,
@@ -49,7 +49,7 @@ pub struct Model {
     pub(super) properties: GeometryProperties,
 }
 
-impl PartialEq for Model {
+impl PartialEq for Structure {
     fn eq(&self, other: &Self) -> bool {
         self.topology.shares_layout(&other.topology)
             && self.positions == other.positions
@@ -60,7 +60,7 @@ impl PartialEq for Model {
     }
 }
 
-impl Model {
+impl Structure {
     /// Binds dense positions to a topology, without a cell, occupancies,
     /// B-factors, or properties.
     ///
@@ -68,11 +68,11 @@ impl Model {
     pub fn new(
         topology: impl Into<Arc<Topology>>,
         positions: Positions,
-    ) -> Result<Self, ModelError> {
+    ) -> Result<Self, StructureError> {
         let properties = GeometryProperties::new(positions.len());
         Self::from_state(
             topology.into(),
-            ModelState {
+            StructureState {
                 positions,
                 cell: None,
                 occupancies: AtomScalars::default(),
@@ -85,10 +85,10 @@ impl Model {
     /// Validates staged state against `topology` and binds its bond rows.
     pub(super) fn from_state(
         topology: Arc<Topology>,
-        state: ModelState,
-    ) -> Result<Self, ModelError> {
+        state: StructureState,
+    ) -> Result<Self, StructureError> {
         validate_binding(state.positions.len(), &state.properties, &topology)?;
-        let ModelState {
+        let StructureState {
             positions,
             cell,
             occupancies,
@@ -107,10 +107,10 @@ impl Model {
     }
 
     /// Moves the structure state out as draft state, keeping the topology.
-    pub(super) fn into_state(self) -> (Arc<Topology>, ModelState) {
+    pub(super) fn into_state(self) -> (Arc<Topology>, StructureState) {
         (
             self.topology,
-            ModelState {
+            StructureState {
                 positions: self.positions,
                 cell: self.cell,
                 occupancies: self.occupancies,
@@ -120,45 +120,45 @@ impl Model {
         )
     }
 
-    /// Returns this model with a periodic cell.
+    /// Returns this structure with a periodic cell.
     #[must_use]
     pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
         self.cell = Some(cell);
         self
     }
 
-    /// An empty [`ModelBuilder`]; equivalent to [`ModelBuilder::new`].
-    pub fn builder() -> ModelBuilder {
-        ModelBuilder::new()
+    /// An empty [`StructureBuilder`]; equivalent to [`StructureBuilder::new`].
+    pub fn builder() -> StructureBuilder {
+        StructureBuilder::new()
     }
 
-    /// Moves a model into coordinated append-oriented construction state.
-    pub fn into_builder(self) -> ModelBuilder {
+    /// Moves a structure into coordinated append-oriented construction state.
+    pub fn into_builder(self) -> StructureBuilder {
         let (topology, state) = self.into_state();
-        ModelBuilder {
+        StructureBuilder {
             topology: TopologyBuilder::from_shared(topology),
             state,
             extending_model: true,
         }
     }
 
-    /// Copies this model into append-oriented construction state; see
+    /// Copies this structure into append-oriented construction state; see
     /// [`Self::into_builder`].
-    pub fn to_builder(&self) -> ModelBuilder {
+    pub fn to_builder(&self) -> StructureBuilder {
         self.clone().into_builder()
     }
 
-    /// Builds a single-molecule model from dense positions in molecule atom order.
+    /// Builds a single-molecule structure from dense positions in molecule atom order.
     pub fn from_molecule(
         molecule: Molecule,
         positions: &Positions,
-    ) -> Result<Self, ModelBuildError> {
-        let mut builder = ModelBuilder::new();
+    ) -> Result<Self, StructureBuildError> {
+        let mut builder = StructureBuilder::new();
         builder.add_molecule(molecule, positions)?;
         builder.build()
     }
 
-    /// The coordinate-free topology this model is a structure of.
+    /// The coordinate-free topology this structure is a structure of.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
@@ -174,24 +174,24 @@ impl Model {
         self.positions.len()
     }
 
-    /// Applies a rigid transform to the whole model transactionally:
+    /// Applies a rigid transform to the whole structure transactionally:
     /// positions move and the cell rotates, as for geometries and
     /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
     /// while keeping the cell.
     ///
     /// ```
     /// use kekule::{smiles, math::{Matrix3, PeriodicCell, RigidTransform, Vector3},
-    ///     structure::{Model, Positions}, units::{Quantity, NANOMETER}};
-    /// let mut model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+    ///     structure::{Structure, Positions}, units::{Quantity, NANOMETER}};
+    /// let mut structure = Structure::new(smiles::to_topology("O")?, Positions::zeros(1))?;
     /// let cell = PeriodicCell::orthorhombic(
     ///     Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER), [true; 3])?;
-    /// model.set_cell(Some(cell));
+    /// structure.set_cell(Some(cell));
     /// // A quarter turn about z.
     /// let turn = Matrix3::from_columns(
     ///     Vector3::new(0.0, 1.0, 0.0), Vector3::new(-1.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
     /// let still = Quantity::new(Vector3::zero(), NANOMETER);
-    /// model.apply_rigid_transform(&RigidTransform::new(turn, still)?)?;
-    /// let [a, b, _] = model.cell().unwrap().vectors().into_value();
+    /// structure.apply_rigid_transform(&RigidTransform::new(turn, still)?)?;
+    /// let [a, b, _] = structure.cell().unwrap().vectors().into_value();
     /// assert_eq!((a, b), (Vector3::new(0.0, 1.0, 0.0), Vector3::new(-2.0, 0.0, 0.0)));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -206,33 +206,33 @@ impl Model {
         Ok(())
     }
 
-    /// Borrows this model as the common kernel input without copying.
-    pub fn as_model_view(&self) -> ModelView<'_> {
-        ModelView::bound(
+    /// Borrows this structure as the common kernel input without copying.
+    pub fn as_structure_view(&self) -> StructureView<'_> {
+        StructureView::bound(
             &self.topology,
             &self.positions,
             self.cell.as_ref(),
             &self.occupancies,
             &self.b_factors,
             &self.properties,
-            StructureKind::Model,
+            StructureKind::Standalone,
         )
     }
 
     /// Installs default perception through a new topology snapshot.
     ///
     /// Delegates to [`Topology::perceived`], perceiving each definition once.
-    /// Structure state is kept without copying. Failure leaves the model
+    /// Structure state is kept without copying. Failure leaves the structure
     /// unchanged. The new snapshot shares the original layout, so selections,
     /// buffers, and prepared potentials bound before perception remain usable.
     ///
     /// ```
-    /// use kekule::{smiles, structure::{Model, Positions}};
+    /// use kekule::{smiles, structure::{Structure, Positions}};
     ///
     /// let topology = smiles::to_topology("c1ccccc1")?;
-    /// let mut model = Model::new(topology, Positions::zeros(6))?;
-    /// model.perceive()?;
-    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
+    /// let mut structure = Structure::new(topology, Positions::zeros(6))?;
+    /// structure.perceive()?;
+    /// assert!(structure.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceive(&mut self) -> Result<(), TopologyPerceptionError> {
@@ -243,20 +243,20 @@ impl Model {
     /// [`Self::perceive`], stopping partway once `cancellation` is requested.
     ///
     /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
-    /// leaves the model unchanged; a completed one installs exactly what
+    /// leaves the structure unchanged; a completed one installs exactly what
     /// [`Self::perceive`] would.
     ///
     /// ```
     /// use kekule::{diagnostics::Cancellation, perception::PerceptionError};
-    /// use kekule::{smiles, structure::{Model, Positions}};
+    /// use kekule::{smiles, structure::{Structure, Positions}};
     ///
     /// let topology = smiles::to_topology("c1ccccc1")?;
-    /// let mut model = Model::new(topology, Positions::zeros(6))?;
-    /// let error = model.perceive_cancellable(&Cancellation::new(|| true)).unwrap_err();
+    /// let mut structure = Structure::new(topology, Positions::zeros(6))?;
+    /// let error = structure.perceive_cancellable(&Cancellation::new(|| true)).unwrap_err();
     /// assert!(matches!(error.source, PerceptionError::Cancelled(_)));
-    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_none()));
-    /// model.perceive_cancellable(&Cancellation::new(|| false))?;
-    /// assert!(model.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
+    /// assert!(structure.topology().instances().all(|m| m.molecule().perception().rings().is_none()));
+    /// structure.perceive_cancellable(&Cancellation::new(|| false))?;
+    /// assert!(structure.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -283,10 +283,10 @@ impl Model {
 
     /// Publishes an induced topology subset and projects structure state
     /// onto it. Structure owner properties are dropped.
-    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, ModelError> {
+    pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureError> {
         let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
-        let state = ModelState {
+        let state = StructureState {
             positions: self.positions.select_indices(&atoms)?,
             cell: self.cell,
             occupancies: self.occupancies.select(&atoms),
@@ -301,39 +301,39 @@ impl Model {
 
     /// The position of one atom, or `None` when `atom` is not in the topology.
     pub fn position(&self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
-        self.as_model_view().position(atom)
+        self.as_structure_view().position(atom)
     }
 
     /// One atom with its topology identity and structure state; see
-    /// [`ModelAtomView`].
-    pub fn atom(&self, atom: InstanceAtomId) -> Option<ModelAtomView<'_>> {
-        self.as_model_view().atom(atom)
+    /// [`StructureAtomView`].
+    pub fn atom(&self, atom: InstanceAtomId) -> Option<StructureAtomView<'_>> {
+        self.as_structure_view().atom(atom)
     }
 
     /// One atom by dense index, or `None` when `index` is out of range.
-    pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<ModelAtomView<'_>> {
-        self.as_model_view().atom_at(index)
+    pub fn atom_at(&self, index: TopologyAtomIndex) -> Option<StructureAtomView<'_>> {
+        self.as_structure_view().atom_at(index)
     }
 
     /// Atoms with their structure state, in dense order.
-    pub fn atoms(&self) -> impl ExactSizeIterator<Item = ModelAtomView<'_>> + '_ {
-        self.as_model_view().atoms()
+    pub fn atoms(&self) -> impl ExactSizeIterator<Item = StructureAtomView<'_>> + '_ {
+        self.as_structure_view().atoms()
     }
 
     /// Replaces the position of one atom, accepting any length unit.
     ///
-    /// The model is unchanged when an error is returned.
+    /// The structure is unchanged when an error is returned.
     ///
     /// # Errors
     ///
-    /// Returns [`ModelError::InvalidAtomId`] when `atom` is not in the topology
-    /// and [`ModelError::Geometry`] when the unit is not a length or the
+    /// Returns [`StructureError::InvalidAtomId`] when `atom` is not in the topology
+    /// and [`StructureError::Geometry`] when the unit is not a length or the
     /// converted position is not finite.
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
         position: Quantity<Point3>,
-    ) -> Result<(), ModelError> {
+    ) -> Result<(), StructureError> {
         let index = atom_index(&self.topology, atom)?;
         Ok(self.set_position_at(index, position)?)
     }
@@ -343,7 +343,7 @@ impl Model {
     pub fn set_atom_positions(
         &mut self,
         values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
-    ) -> Result<(), ModelError> {
+    ) -> Result<(), StructureError> {
         let staged = values
             .into_iter()
             .map(|(atom, position)| {
@@ -357,7 +357,7 @@ impl Model {
                 }
                 Ok((index, point))
             })
-            .collect::<Result<Vec<_>, ModelError>>()?;
+            .collect::<Result<Vec<_>, StructureError>>()?;
         Ok(self.positions.set_canonical_batch(&staged)?)
     }
 
@@ -378,51 +378,51 @@ impl Model {
 pub(super) fn atom_index(
     topology: &Topology,
     atom: InstanceAtomId,
-) -> Result<TopologyAtomIndex, ModelError> {
+) -> Result<TopologyAtomIndex, StructureError> {
     topology
         .atom_index(atom)
-        .ok_or(ModelError::InvalidAtomId(atom))
+        .ok_or(StructureError::InvalidAtomId(atom))
 }
 
 pub(crate) mod sealed {
-    /// Restricts [`super::AsModelView`] to Kekule's structure owners and views.
+    /// Restricts [`super::AsStructureView`] to Kekule's structure owners and views.
     pub trait Sealed {}
 }
 
-/// Anything that can be borrowed as a [`ModelView`] without copying: models,
+/// Anything that can be borrowed as a [`StructureView`] without copying: structures,
 /// views, geometries, and trajectory frames.
 ///
-/// Each implementor also has an inherent `as_model_view` method, so the trait
+/// Each implementor also has an inherent `as_structure_view` method, so the trait
 /// only needs importing for generic code. This trait is sealed; other
 /// structure-like types, such as a [`crate::traj::FrameBuffer`], are passed
-/// through their own `as_model_view()`.
-pub trait AsModelView: sealed::Sealed {
-    /// Borrows the structure as a [`ModelView`] without copying.
-    fn as_model_view(&self) -> ModelView<'_>;
+/// through their own `as_structure_view()`.
+pub trait AsStructureView: sealed::Sealed {
+    /// Borrows the structure as a [`StructureView`] without copying.
+    fn as_structure_view(&self) -> StructureView<'_>;
 }
 
-impl sealed::Sealed for Model {}
-impl sealed::Sealed for ModelView<'_> {}
+impl sealed::Sealed for Structure {}
+impl sealed::Sealed for StructureView<'_> {}
 
-impl AsModelView for Model {
-    fn as_model_view(&self) -> ModelView<'_> {
-        Model::as_model_view(self)
+impl AsStructureView for Structure {
+    fn as_structure_view(&self) -> StructureView<'_> {
+        Structure::as_structure_view(self)
     }
 }
 
-impl AsModelView for ModelView<'_> {
-    fn as_model_view(&self) -> ModelView<'_> {
+impl AsStructureView for StructureView<'_> {
+    fn as_structure_view(&self) -> StructureView<'_> {
         *self
     }
 }
 
-impl<'a> From<&'a Model> for ModelView<'a> {
-    fn from(model: &'a Model) -> Self {
-        model.as_model_view()
+impl<'a> From<&'a Structure> for StructureView<'a> {
+    fn from(structure: &'a Structure) -> Self {
+        structure.as_structure_view()
     }
 }
 
-/// What a [`ModelView`] borrows: a model, or one geometry of a collection of
+/// What a [`StructureView`] borrows: a structure, or one geometry of a collection of
 /// structures with what its collection records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
@@ -431,9 +431,9 @@ impl<'a> From<&'a Model> for ModelView<'a> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum StructureKind<'a> {
-    /// A [`Model`], or a view materialized as one: a structure held on its
+    /// A [`Structure`], or a view materialized as one: a structure held on its
     /// own, with no set around it.
-    Model,
+    Standalone,
     /// A geometry of a [`StructureSet`](super::StructureSet), a trajectory frame,
     /// or a frame buffer, with its [`SetContext`].
     InSet(SetContext<'a>),
@@ -442,13 +442,13 @@ pub enum StructureKind<'a> {
 /// A borrowed topology plus the structure state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
-/// Models, geometries, trajectory frames, and frame buffers all borrow as a
-/// view, and [`Self::kind`] says whether it is a model or a geometry.
+/// Structures, geometries, trajectory frames, and frame buffers all borrow as a
+/// view, and [`Self::kind`] says whether it is a structure or a geometry.
 /// Accessors return borrows with the view's full lifetime. A view of a
 /// trajectory frame has no occupancies or B-factors. Views preserve exact
 /// topology identity.
 #[derive(Debug, Clone, Copy)]
-pub struct ModelView<'a> {
+pub struct StructureView<'a> {
     topology: &'a Arc<Topology>,
     positions: &'a Positions,
     cell: Option<&'a PeriodicCell>,
@@ -458,7 +458,7 @@ pub struct ModelView<'a> {
     kind: StructureKind<'a>,
 }
 
-impl<'a> ModelView<'a> {
+impl<'a> StructureView<'a> {
     /// Only owners that already enforce binding may use this.
     pub(crate) fn bound(
         topology: &'a Arc<Topology>,
@@ -481,13 +481,13 @@ impl<'a> ModelView<'a> {
         }
     }
 
-    /// Whether this view borrows a model or a geometry, with the geometry's
+    /// Whether this view borrows a structure or a geometry, with the geometry's
     /// place, membership, velocities, and forces.
     ///
     /// ```
-    /// use kekule::{smiles, structure::{Model, Positions, StructureKind}};
-    /// let model = Model::new(smiles::to_topology("O")?, Positions::zeros(1))?;
-    /// assert_eq!(model.as_model_view().kind(), StructureKind::Model);
+    /// use kekule::{smiles, structure::{Structure, Positions, StructureKind}};
+    /// let structure = Structure::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+    /// assert_eq!(structure.as_structure_view().kind(), StructureKind::Standalone);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub const fn kind(self) -> StructureKind<'a> {
@@ -566,29 +566,36 @@ impl<'a> ModelView<'a> {
     }
 
     /// One atom with its topology identity and structure state.
-    pub fn atom(self, atom: InstanceAtomId) -> Option<ModelAtomView<'a>> {
+    pub fn atom(self, atom: InstanceAtomId) -> Option<StructureAtomView<'a>> {
         let atom = self.topology.atom(atom)?;
-        Some(ModelAtomView { atom, model: self })
+        Some(StructureAtomView {
+            atom,
+            structure: self,
+        })
     }
 
     /// One atom by dense index.
-    pub fn atom_at(self, index: TopologyAtomIndex) -> Option<ModelAtomView<'a>> {
+    pub fn atom_at(self, index: TopologyAtomIndex) -> Option<StructureAtomView<'a>> {
         let atom = self.topology.atom_at(index)?;
-        Some(ModelAtomView { atom, model: self })
+        Some(StructureAtomView {
+            atom,
+            structure: self,
+        })
     }
 
     /// Atoms with their structure state, in dense order.
-    pub fn atoms(self) -> impl ExactSizeIterator<Item = ModelAtomView<'a>> + 'a {
-        self.topology
-            .atoms()
-            .map(move |atom| ModelAtomView { atom, model: self })
+    pub fn atoms(self) -> impl ExactSizeIterator<Item = StructureAtomView<'a>> + 'a {
+        self.topology.atoms().map(move |atom| StructureAtomView {
+            atom,
+            structure: self,
+        })
     }
 
-    /// Materializes this borrowed structure as an owned model, dropping any
+    /// Materializes this borrowed structure as an owned structure, dropping any
     /// geometry state reported by [`Self::kind`]. A view of a
-    /// trajectory frame yields a model without occupancies or B-factors.
-    pub fn to_model(self) -> Model {
-        Model {
+    /// trajectory frame yields a structure without occupancies or B-factors.
+    pub fn to_structure(self) -> Structure {
+        Structure {
             topology: Arc::clone(self.topology),
             positions: self.positions.clone(),
             cell: self.cell.copied(),
@@ -603,20 +610,20 @@ impl<'a> ModelView<'a> {
 /// coordinate-dependent state stored for it.
 ///
 /// ```
-/// use kekule::{smiles, structure::{Model, Positions}};
-/// let model = Model::new(smiles::to_topology("CO")?, Positions::zeros(2))?;
-/// let oxygen = model.atoms().find(|atom| atom.element().symbol() == "O").unwrap();
+/// use kekule::{smiles, structure::{Structure, Positions}};
+/// let structure = Structure::new(smiles::to_topology("CO")?, Positions::zeros(2))?;
+/// let oxygen = structure.atoms().find(|atom| atom.element().symbol() == "O").unwrap();
 /// assert_eq!(oxygen.occupancy(), None);
 /// assert_eq!(oxygen.position().into_value(), kekule::math::Point3::origin());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct ModelAtomView<'a> {
+pub struct StructureAtomView<'a> {
     atom: crate::topology::AtomView<'a>,
-    model: ModelView<'a>,
+    structure: StructureView<'a>,
 }
 
-impl<'a> std::ops::Deref for ModelAtomView<'a> {
+impl<'a> std::ops::Deref for StructureAtomView<'a> {
     type Target = crate::topology::AtomView<'a>;
 
     fn deref(&self) -> &Self::Target {
@@ -624,15 +631,15 @@ impl<'a> std::ops::Deref for ModelAtomView<'a> {
     }
 }
 
-impl<'a> ModelAtomView<'a> {
-    /// The topology view with the model's full lifetime.
+impl<'a> StructureAtomView<'a> {
+    /// The topology view with the structure's full lifetime.
     pub const fn topology_atom(self) -> crate::topology::AtomView<'a> {
         self.atom
     }
 
     /// The atom's stored position in the canonical length unit (nm).
     pub fn position(self) -> Quantity<Point3> {
-        self.model
+        self.structure
             .positions()
             .get(self.atom.index().index())
             .expect("bound structures cover every atom")
@@ -640,13 +647,13 @@ impl<'a> ModelAtomView<'a> {
 
     /// The atom's occupancy, or `None` when it was never recorded.
     pub fn occupancy(self) -> Option<f64> {
-        self.model.occupancy(self.atom.index())
+        self.structure.occupancy(self.atom.index())
     }
 
     /// The atom's isotropic B-factor in nm², or `None` when it was never
     /// recorded.
     pub fn b_factor(self) -> Option<Quantity<f64>> {
-        self.model.b_factor(self.atom.index())
+        self.structure.b_factor(self.atom.index())
     }
 
     /// One structure annotation of this atom. Static annotations are
@@ -655,7 +662,7 @@ impl<'a> ModelAtomView<'a> {
         self,
         key: &crate::properties::PropertyKey,
     ) -> Option<crate::properties::PropertyValue> {
-        self.model
+        self.structure
             .properties()
             .atoms()
             .value(key, self.atom.index())
@@ -663,11 +670,11 @@ impl<'a> ModelAtomView<'a> {
     }
 }
 
-/// Why a model operation was rejected.
+/// Why a structure operation was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum ModelError {
-    /// The atom is not part of the model's topology.
+pub enum StructureError {
+    /// The atom is not part of the structure's topology.
     InvalidAtomId(InstanceAtomId),
     /// Structure state is invalid; see the source.
     Geometry(GeometryError),
@@ -675,21 +682,21 @@ pub enum ModelError {
     Subset(TopologySubsetError),
 }
 
-impl fmt::Display for ModelError {
+impl fmt::Display for StructureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidAtomId(atom) => write!(
                 formatter,
-                "{} is not in the model's topology.",
+                "{} is not in the structure's topology.",
                 crate::diagnostics::Capitalized(atom)
             ),
             Self::Geometry(error) => error.fmt(formatter),
-            Self::Subset(_) => formatter.write_str("Cannot subset the model's topology."),
+            Self::Subset(_) => formatter.write_str("Cannot subset the structure's topology."),
         }
     }
 }
 
-impl std::error::Error for ModelError {
+impl std::error::Error for StructureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Geometry(error) => error.source(),
@@ -699,38 +706,38 @@ impl std::error::Error for ModelError {
     }
 }
 
-impl From<GeometryError> for ModelError {
+impl From<GeometryError> for StructureError {
     fn from(error: GeometryError) -> Self {
         Self::Geometry(error)
     }
 }
 
-impl From<DenseArrayError> for ModelError {
+impl From<DenseArrayError> for StructureError {
     fn from(error: DenseArrayError) -> Self {
         Self::Geometry(error.into())
     }
 }
 
-impl From<TopologySubsetError> for ModelError {
+impl From<TopologySubsetError> for StructureError {
     fn from(error: TopologySubsetError) -> Self {
         Self::Subset(error)
     }
 }
 
-/// Convenience builder that assembles topology and one complete model.
+/// Convenience builder that assembles topology and one complete structure.
 ///
 /// Each call to [`Self::add_molecule`] adds one molecule occurrence and its
 /// dense positions. [`Self::build`] publishes the coordinate-free topology and
-/// the matching model transactionally. Staged structure state follows staged
+/// the matching structure transactionally. Staged structure state follows staged
 /// dense atom order; use [`Self::atom_index`] to address it by atom ID.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct ModelBuilder {
+pub struct StructureBuilder {
     topology: TopologyBuilder,
-    state: ModelState,
+    state: StructureState,
     extending_model: bool,
 }
 
-impl ModelBuilder {
+impl StructureBuilder {
     /// An empty builder with no molecules or positions.
     pub fn new() -> Self {
         Self::default()
@@ -745,17 +752,17 @@ impl ModelBuilder {
     /// instances independently of their coordinates.
     ///
     /// ```compile_fail
-    /// use kekule::{structure::ModelBuilder, topology::TopologyBuilder};
-    /// let mut builder = ModelBuilder::new();
+    /// use kekule::{structure::StructureBuilder, topology::TopologyBuilder};
+    /// let mut builder = StructureBuilder::new();
     /// *builder.topology_builder_mut() = TopologyBuilder::new();
     /// ```
     /// ```compile_fail
-    /// use kekule::{structure::ModelBuilder, topology::MoleculeDefinitionId};
-    /// let mut builder = ModelBuilder::new();
+    /// use kekule::{structure::StructureBuilder, topology::MoleculeDefinitionId};
+    /// let mut builder = StructureBuilder::new();
     /// builder.topology_builder_mut().add_instance(MoleculeDefinitionId::new(0));
     /// ```
-    pub fn topology_builder_mut(&mut self) -> ModelTopologyMut<'_> {
-        ModelTopologyMut {
+    pub fn topology_builder_mut(&mut self) -> StructureTopologyMut<'_> {
+        StructureTopologyMut {
             topology: &mut self.topology,
         }
     }
@@ -810,18 +817,18 @@ impl ModelBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ModelBuildError::Model`] wrapping [`ModelError::InvalidAtomId`]
-    /// when `atom` is not staged, or [`ModelError::Geometry`] when the unit is
+    /// Returns [`StructureBuildError::Structure`] wrapping [`StructureError::InvalidAtomId`]
+    /// when `atom` is not staged, or [`StructureError::Geometry`] when the unit is
     /// not a length or the converted position is not finite.
     pub fn set_position(
         &mut self,
         atom: InstanceAtomId,
         position: Quantity<Point3>,
-    ) -> Result<(), ModelBuildError> {
+    ) -> Result<(), StructureBuildError> {
         let index = self.checked_atom_index(atom)?;
         Ok(self
             .set_position_at(index, position)
-            .map_err(ModelError::from)?)
+            .map_err(StructureError::from)?)
     }
 
     /// Applies a sparse coordinate batch atomically; repeated atoms use the
@@ -829,7 +836,7 @@ impl ModelBuilder {
     pub fn set_atom_positions(
         &mut self,
         values: impl IntoIterator<Item = (InstanceAtomId, Quantity<Point3>)>,
-    ) -> Result<(), ModelBuildError> {
+    ) -> Result<(), StructureBuildError> {
         let staged = values
             .into_iter()
             .map(|(atom, position)| {
@@ -843,7 +850,7 @@ impl ModelBuilder {
                 }
                 Ok((index, point))
             })
-            .collect::<Result<Vec<_>, ModelBuildError>>()?;
+            .collect::<Result<Vec<_>, StructureBuildError>>()?;
         Ok(self.state.positions.set_canonical_batch(&staged)?)
     }
 
@@ -852,12 +859,12 @@ impl ModelBuilder {
     /// # Errors
     ///
     /// Returns the error [`Self::build`] would return.
-    pub fn validate(&self) -> Result<(), ModelBuildError> {
+    pub fn validate(&self) -> Result<(), StructureBuildError> {
         self.clone().build().map(|_| ())
     }
 
-    /// Builds the model, or returns this builder for repair with the error.
-    pub fn try_build(self) -> Result<Model, DraftError<Self, ModelBuildError>> {
+    /// Builds the structure, or returns this builder for repair with the error.
+    pub fn try_build(self) -> Result<Structure, DraftError<Self, StructureBuildError>> {
         self.clone()
             .build()
             .map_err(|error| DraftError::new(error, self))
@@ -871,7 +878,7 @@ impl ModelBuilder {
     pub fn set_atom_order(
         &mut self,
         order: impl IntoIterator<Item = InstanceAtomId>,
-    ) -> Result<(), ModelBuildError> {
+    ) -> Result<(), StructureBuildError> {
         let previous = self.topology.reorder_atoms(order)?;
         self.state.reorder_atoms(&previous);
         Ok(())
@@ -881,7 +888,7 @@ impl ModelBuilder {
     pub fn add_molecule_definition(
         &mut self,
         molecule: Molecule,
-    ) -> Result<MoleculeDefinitionId, ModelBuildError> {
+    ) -> Result<MoleculeDefinitionId, StructureBuildError> {
         Ok(self.topology.add_molecule_definition(molecule)?)
     }
 
@@ -890,7 +897,7 @@ impl ModelBuilder {
         &mut self,
         definition: MoleculeDefinitionId,
         class: MoleculeClass,
-    ) -> Result<(), ModelBuildError> {
+    ) -> Result<(), StructureBuildError> {
         Ok(self.topology.set_molecule_class(definition, class)?)
     }
 
@@ -899,7 +906,7 @@ impl ModelBuilder {
     pub fn clear_molecule_class(
         &mut self,
         definition: MoleculeDefinitionId,
-    ) -> Result<(), ModelBuildError> {
+    ) -> Result<(), StructureBuildError> {
         Ok(self.topology.clear_molecule_class(definition)?)
     }
 
@@ -908,7 +915,7 @@ impl ModelBuilder {
         &mut self,
         definition: MoleculeDefinitionId,
         positions: &Positions,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+    ) -> Result<MoleculeInstanceId, StructureBuildError> {
         let molecule = self.topology.require_definition(definition)?.molecule();
         let added_bonds = molecule.bond_count();
         validate_position_count(molecule.atom_count(), positions.len())?;
@@ -923,7 +930,7 @@ impl ModelBuilder {
         &mut self,
         molecule: Molecule,
         positions: &Positions,
-    ) -> Result<MoleculeInstanceId, ModelBuildError> {
+    ) -> Result<MoleculeInstanceId, StructureBuildError> {
         validate_position_count(molecule.atom_count(), positions.len())?;
         self.reserve(positions.len())?;
         let bonds = molecule.bond_count();
@@ -932,24 +939,24 @@ impl ModelBuilder {
         Ok(instance)
     }
 
-    /// Validates and publishes the staged topology and model.
-    pub fn build(self) -> Result<Model, ModelBuildError> {
+    /// Validates and publishes the staged topology and structure.
+    pub fn build(self) -> Result<Structure, StructureBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        Ok(Model::from_state(topology, self.state)?)
+        Ok(Structure::from_state(topology, self.state)?)
     }
 
     fn checked_atom_index(
         &self,
         atom: InstanceAtomId,
-    ) -> Result<TopologyAtomIndex, ModelBuildError> {
+    ) -> Result<TopologyAtomIndex, StructureBuildError> {
         self.atom_index(atom)
-            .ok_or_else(|| ModelError::InvalidAtomId(atom).into())
+            .ok_or_else(|| StructureError::InvalidAtomId(atom).into())
     }
 
-    fn reserve(&mut self, additional: usize) -> Result<(), ModelBuildError> {
+    fn reserve(&mut self, additional: usize) -> Result<(), StructureBuildError> {
         self.state
             .try_reserve_atoms(additional)
-            .map_err(|_| ModelBuildError::CapacityOverflow)
+            .map_err(|_| StructureBuildError::CapacityOverflow)
     }
 
     fn extend(&mut self, positions: &Positions, added_bonds: usize) {
@@ -959,11 +966,11 @@ impl ModelBuilder {
         }
     }
 
-    fn storage_ref(&self) -> &ModelState {
+    fn storage_ref(&self) -> &StructureState {
         &self.state
     }
 
-    fn storage(&mut self) -> &mut ModelState {
+    fn storage(&mut self) -> &mut StructureState {
         &mut self.state
     }
 
@@ -973,17 +980,17 @@ impl ModelBuilder {
     site_mutators!();
 }
 
-fn validate_position_count(expected: usize, actual: usize) -> Result<(), ModelBuildError> {
+fn validate_position_count(expected: usize, actual: usize) -> Result<(), StructureBuildError> {
     if actual != expected {
-        return Err(ModelBuildError::InstancePositionCountMismatch { expected, actual });
+        return Err(StructureBuildError::InstancePositionCountMismatch { expected, actual });
     }
     Ok(())
 }
 
-/// A model builder edit or the final build was rejected.
+/// A structure builder edit or the final build was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum ModelBuildError {
+pub enum StructureBuildError {
     /// An added instance's positions do not match its molecule's atom count.
     InstancePositionCountMismatch {
         /// The molecule's atom count.
@@ -997,11 +1004,11 @@ pub enum ModelBuildError {
     Topology(TopologyBuildError),
     /// A chain, residue or atom-site edit failed; see the source.
     Hierarchy(crate::topology::HierarchyError),
-    /// Final model validation failed after topology publication.
-    Model(Box<ModelError>),
+    /// Final structure validation failed after topology publication.
+    Structure(Box<StructureError>),
 }
 
-impl fmt::Display for ModelBuildError {
+impl fmt::Display for StructureBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InstancePositionCountMismatch { expected, actual } => write!(
@@ -1011,65 +1018,65 @@ impl fmt::Display for ModelBuildError {
                 crate::diagnostics::counted(*actual, "position was", "positions were")
             ),
             Self::CapacityOverflow => {
-                formatter.write_str("The model exceeds the addressable number of atoms.")
+                formatter.write_str("The structure exceeds the addressable number of atoms.")
             }
             Self::Topology(_) => formatter.write_str("Cannot build the topology."),
             Self::Hierarchy(_) => formatter.write_str("Cannot build the hierarchy."),
-            Self::Model(error) => error.fmt(formatter),
+            Self::Structure(error) => error.fmt(formatter),
         }
     }
 }
 
-impl std::error::Error for ModelBuildError {
+impl std::error::Error for StructureBuildError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Topology(e) => Some(e),
             Self::Hierarchy(e) => Some(e),
-            Self::Model(e) => e.source(),
+            Self::Structure(e) => e.source(),
             _ => None,
         }
     }
 }
 
-impl From<DenseArrayError> for ModelBuildError {
+impl From<DenseArrayError> for StructureBuildError {
     fn from(error: DenseArrayError) -> Self {
-        ModelError::from(error).into()
+        StructureError::from(error).into()
     }
 }
 
-impl From<GeometryError> for ModelBuildError {
+impl From<GeometryError> for StructureBuildError {
     fn from(error: GeometryError) -> Self {
-        ModelError::from(error).into()
+        StructureError::from(error).into()
     }
 }
 
-/// Restricted mutable access to static model-builder annotations. Each method
+/// Restricted mutable access to static structure-builder annotations. Each method
 /// consumes the view, so references remain bound to the original builder borrow.
 #[derive(Debug)]
-pub struct ModelTopologyMut<'a> {
+pub struct StructureTopologyMut<'a> {
     topology: &'a mut TopologyBuilder,
 }
 
-impl<'a> ModelTopologyMut<'a> {
+impl<'a> StructureTopologyMut<'a> {
     /// Length-preserving mutable access to staged static topology annotations.
     pub fn properties_mut(self) -> crate::properties::TopologyPropertiesMut<'a> {
         self.topology.properties_mut()
     }
 }
 
-impl From<ModelError> for ModelBuildError {
-    fn from(error: ModelError) -> Self {
-        Self::Model(Box::new(error))
+impl From<StructureError> for StructureBuildError {
+    fn from(error: StructureError) -> Self {
+        Self::Structure(Box::new(error))
     }
 }
 
-impl From<TopologyBuildError> for ModelBuildError {
+impl From<TopologyBuildError> for StructureBuildError {
     fn from(error: TopologyBuildError) -> Self {
         Self::Topology(error)
     }
 }
 
-impl From<crate::topology::HierarchyError> for ModelBuildError {
+impl From<crate::topology::HierarchyError> for StructureBuildError {
     fn from(error: crate::topology::HierarchyError) -> Self {
         Self::Hierarchy(error)
     }

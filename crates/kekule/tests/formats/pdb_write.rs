@@ -15,7 +15,7 @@ use kekule::pdb::{
 };
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
-    Distribution, Geometry, Members, Model, ModelBuilder, Order, Partition, Positions,
+    Distribution, Geometry, Members, Order, Partition, Positions, Structure, StructureBuilder,
     StructureSet, Velocities,
 };
 use kekule::topology::{InstanceAtomId, Topology};
@@ -27,12 +27,12 @@ const ADENYLATE_KINASE: &str = include_str!("../fixtures/pdb/1AKE.pdb");
 const RUBREDOXIN: &str = include_str!("../fixtures/pdb/1IRO.pdb");
 const KRAS: &str = include_str!("../fixtures/mmcif/9UOH.cif");
 
-fn interpret(text: &str) -> Model {
+fn interpret(text: &str) -> Structure {
     pdb::parse_str(text, Default::default())
         .unwrap()
         .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
-        .into_model()
+        .into_structure()
 }
 
 fn bonds(topology: &Topology) -> BTreeSet<(usize, usize, String)> {
@@ -167,8 +167,8 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
 }
 
 /// Methane solvated in a 1.5 nm padded cube of water at 0.15 M salt.
-fn solvated() -> Model {
-    let mut model = Model::from_molecule(
+fn solvated() -> Structure {
+    let mut model = Structure::from_molecule(
         smiles::to_molecules("C").unwrap().remove(0),
         &Positions::zeros(1),
     )
@@ -240,13 +240,16 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
     assert_eq!(pdb::write(&reread, options).unwrap().0, text);
 
     // mmCIF names the chains as they are.
-    let (cif, _) =
-        mmcif::write([mmcif::MmcifBlockSource::model(&model)], Default::default()).unwrap();
+    let (cif, _) = mmcif::write(
+        [mmcif::MmcifBlockSource::structure(&model)],
+        Default::default(),
+    )
+    .unwrap();
     let reread = mmcif::parse_str(&cif, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     assert_eq!(
         reread.topology().atom_count(),
         model.topology().atom_count()
@@ -286,7 +289,7 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
     let points = (0..5)
         .map(|index| Point3::new(f64::from(index) * 1.4, 0.0, 0.0))
         .collect::<Vec<_>>();
-    let model = Model::new(
+    let model = Structure::new(
         topology,
         Positions::from_vec(Quantity::new(points, ANGSTROM)).unwrap(),
     )
@@ -367,7 +370,7 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
             .unwrap()
             .interpret(Default::default())
             .unwrap()
-            .into_model()
+            .into_structure()
     };
     let error = pdb::write(&model(&cif("AB", "HOH")), Default::default())
         .map(|(text, _)| text)
@@ -395,7 +398,7 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
 fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     // A bracket atom fixes its implicit hydrogen count.
     let topology = smiles::to_topology("[CH4]").unwrap();
-    let model = Model::new(topology, Positions::zeros(1)).unwrap();
+    let model = Structure::new(topology, Positions::zeros(1)).unwrap();
     let error = pdb::write(&model, Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
@@ -417,7 +420,7 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     );
 
     let topology = smiles::to_topology("C$C").unwrap();
-    let model = Model::new(topology, Positions::zeros(2)).unwrap();
+    let model = Structure::new(topology, Positions::zeros(2)).unwrap();
     let error = pdb::write(&model, Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
@@ -438,7 +441,7 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
 #[test]
 fn residues_must_be_consecutive_in_dense_order() {
     let water = smiles::to_molecules("[H]O[H]").unwrap().remove(0);
-    let mut builder = ModelBuilder::new();
+    let mut builder = StructureBuilder::new();
     let positions = Positions::zeros(3);
     let first = builder.add_molecule(water.clone(), &positions).unwrap();
     let second = builder.add_molecule(water, &positions).unwrap();
@@ -732,7 +735,7 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
         PeriodicCell::orthorhombic(Quantity::new(lengths, ANGSTROM), periodic).unwrap()
     };
     let model = |cell| {
-        Model::new(Arc::clone(&topology), Positions::zeros(1))
+        Structure::new(Arc::clone(&topology), Positions::zeros(1))
             .unwrap()
             .with_cell(cell)
     };
@@ -875,7 +878,7 @@ fn metal_coordination_round_trips_as_link_records() {
     assert_eq!(pdb::write(&reread, Default::default()).unwrap().0, written);
 
     // Without reports the entry states no coordination, as before.
-    let (bare, report) = pdb::write(source.model(), Default::default()).unwrap();
+    let (bare, report) = pdb::write(source.structure(), Default::default()).unwrap();
     assert!(report.omissions().is_empty());
     assert!(records(&bare, "LINK").is_empty());
     assert!(coordination(interpretation(&bare).report()).is_empty());
@@ -907,7 +910,7 @@ fn mmcif_metal_coordination_round_trips_through_pdb() {
         .find(|atom| atom.component_id() == "A1L9E")
         .unwrap()
         .atom();
-    let mut editor = source.model().to_editor();
+    let mut editor = source.structure().to_editor();
     let handle = editor.topology().atom_handle(inhibitor).unwrap();
     let site = editor
         .topology()
@@ -954,7 +957,7 @@ fn coordination_the_entry_cannot_state_is_reported() {
         .atom();
 
     // A partner the structure no longer has.
-    let mut editor = source.model().to_editor();
+    let mut editor = source.structure().to_editor();
     let handle = editor.topology().atom_handle(iron).unwrap();
     editor.delete_atom(handle).unwrap();
     let without_iron = editor.finish().unwrap();
@@ -970,7 +973,7 @@ fn coordination_the_entry_cannot_state_is_reported() {
     );
 
     // A partner whose atom site the report does not name so.
-    let mut editor = source.model().to_editor();
+    let mut editor = source.structure().to_editor();
     let site = editor
         .topology()
         .atom_site_for_atom(editor.topology().atom_handle(cysteine_6).unwrap())
@@ -998,7 +1001,7 @@ fn coordination_the_entry_cannot_state_is_reported() {
     );
 
     // A chain written as a segment identifier, which LINK cannot name.
-    let mut editor = source.model().to_editor();
+    let mut editor = source.structure().to_editor();
     let sites = editor
         .topology()
         .atom_sites()
@@ -1072,7 +1075,7 @@ metalc1 metalc A ZN ZN B ZN ZN
 
     // One report per structure.
     let error = pdb::write(
-        PdbSource::structure(source.model()).with_reports(&[]),
+        PdbSource::structure(source.structure()).with_reports(&[]),
         Default::default(),
     )
     .unwrap_err();
@@ -1152,11 +1155,15 @@ fn structure_sets_state_the_coordination_every_sample_states() {
             .collect::<String>(),
     );
     assert_eq!(coordination(partial.report()).len(), 3);
-    assert_eq!(partial.model().atom_count(), full.model().atom_count());
+    assert_eq!(
+        partial.structure().atom_count(),
+        full.structure().atom_count()
+    );
 
     let set = one_state(
-        full.model().shared_topology(),
-        [full.model(), partial.model()].map(|model| model.as_model_view().positions().clone()),
+        full.structure().shared_topology(),
+        [full.structure(), partial.structure()]
+            .map(|model| model.as_structure_view().positions().clone()),
     );
     let options = PdbWriteOptions::default();
 

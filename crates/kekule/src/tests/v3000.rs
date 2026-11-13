@@ -7,7 +7,7 @@ fn v3000_fixed_hydrogens_use_molecular_valence_not_query_constraints() {
     for source in ["[CH4]", "[NH4+]", "[nH]1cccc1", "F[C@H](Cl)Br"] {
         let original = read_smiles(source).unwrap();
         let written = if source == "F[C@H](Cl)Br" {
-            let model = Model::from_molecule(
+            let model = Structure::from_molecule(
                 original.clone(),
                 &test_positions(vec![
                     Point3::new(1.0, 0.0, 0.0),
@@ -51,13 +51,13 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
     let source = "precision\nkekule\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 1 0 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0.709510123456789 -0.242001234567891 0.000000123456789 1000\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n";
     let document = molfile::parse_str(source, Default::default()).unwrap();
     let interpreted = document.interpret(Default::default()).unwrap();
-    let model = interpreted.model();
+    let model = interpreted.structure();
     let expected = model
         .position(model.topology().atom_ids()[0])
         .unwrap()
         .value_in(crate::units::ANGSTROM)
         .unwrap();
-    let check = |actual: &crate::structure::Model| {
+    let check = |actual: &crate::structure::Structure| {
         let point = actual
             .position(actual.topology().atom_ids()[0])
             .unwrap()
@@ -87,7 +87,7 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
     .unwrap()
     .0;
     let parsed = molfile::parse_str(&direct, Default::default()).unwrap();
-    check(parsed.interpret(Default::default()).unwrap().model());
+    check(parsed.interpret(Default::default()).unwrap().structure());
     for version in [
         molfile::MolfileWriteVersion::V3000,
         molfile::MolfileWriteVersion::Auto,
@@ -99,7 +99,7 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
         molfile::write_to(&mut sink, model, options).unwrap();
         assert_eq!(sink, text.as_bytes());
         let parsed = molfile::parse_str(&text, Default::default()).unwrap();
-        check(parsed.interpret(Default::default()).unwrap().model());
+        check(parsed.interpret(Default::default()).unwrap().structure());
         let text = sdf::write(
             [model],
             sdf::SdfWriteOptions::default().with_version(version),
@@ -111,7 +111,7 @@ fn v3000_model_writers_preserve_free_format_coordinate_precision() {
             parsed.records()[0]
                 .interpret(Default::default())
                 .unwrap()
-                .model(),
+                .structure(),
         );
     }
 }
@@ -128,7 +128,7 @@ fn v3000_stereo_projection_uses_unrounded_coordinates() {
     );
     // Four-place rounding collapses the drawing and cannot preserve its E/Z.
     assert!(molfile::write(
-        interpreted.model(),
+        interpreted.structure(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000)
     )
     .is_err());
@@ -137,7 +137,7 @@ fn v3000_stereo_projection_uses_unrounded_coordinates() {
         molfile::MolfileWriteVersion::Auto,
     ] {
         let text = molfile::write(
-            interpreted.model(),
+            interpreted.structure(),
             molfile::MolfileWriteOptions::default().with_version(version),
         )
         .unwrap()
@@ -208,14 +208,14 @@ fn v3000_atom_cfg_preserves_parity_unknown_and_atom_block_order() {
             let interpreted = document.interpret(Default::default()).unwrap();
             for output in [
                 molfile::write(
-                    interpreted.model(),
+                    interpreted.structure(),
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V2000),
                 )
                 .unwrap()
                 .0,
                 molfile::write(
-                    interpreted.model(),
+                    interpreted.structure(),
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V3000),
                 )
@@ -285,7 +285,7 @@ fn v3000_atom_cfg_checks_redundant_wedges_and_unknown_precedence() {
     let document = molfile::parse_str(&source, Default::default()).unwrap();
     let interpreted = document.interpret(Default::default()).unwrap();
     let wedged = molfile::write(
-        interpreted.model(),
+        interpreted.structure(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap()
@@ -378,7 +378,7 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
             Point3::new(2.0, last_y, 0.0),
         ];
         let model =
-            Model::from_molecule(molecule.clone(), &test_positions(points.clone())).unwrap();
+            Structure::from_molecule(molecule.clone(), &test_positions(points.clone())).unwrap();
         let original = model.clone();
         for output in [
             molfile::write(
@@ -429,8 +429,8 @@ fn molfile_model_preserves_drawn_e_z_and_rejects_inconsistent_or_degenerate_outp
         for invalid_y in [-last_y, 0.0, 0.00000001 * last_y] {
             let mut invalid_points = points.clone();
             invalid_points[3].y = invalid_y;
-            let model =
-                Model::from_molecule(molecule.clone(), &test_positions(invalid_points)).unwrap();
+            let model = Structure::from_molecule(molecule.clone(), &test_positions(invalid_points))
+                .unwrap();
             for output in [
                 molfile::write(
                     &model,
@@ -461,7 +461,7 @@ fn molfile_model_preserves_drawn_stereo_on_large_ring_imines() {
             Point3::new(angle.cos(), angle.sin(), 0.0)
         })
         .collect();
-    let model = Model::from_molecule(molecule.clone(), &test_positions(points)).unwrap();
+    let model = Structure::from_molecule(molecule.clone(), &test_positions(points)).unwrap();
     for output in [
         molfile::write(
             &model,
@@ -515,7 +515,7 @@ fn molfile_drawn_double_bond_unknown_annotations_override_coordinates() {
     }
 
     let molecule = read_smiles("F/C=C/Cl").unwrap();
-    let model = Model::from_molecule(
+    let model = Structure::from_molecule(
         molecule.clone(),
         &test_positions(vec![
             Point3::new(-1.0, 1.0, 0.0),
@@ -557,7 +557,7 @@ fn molfile_drawn_double_bond_unknown_annotations_override_coordinates() {
 fn molfile_model_does_not_promote_unasserted_alkene_geometry_to_specified_stereo() {
     let molecule = read_smiles("FC=CCl").unwrap();
     assert_eq!(molecule.stereo_elements().count(), 0);
-    let model = Model::from_molecule(
+    let model = Structure::from_molecule(
         molecule.clone(),
         &test_positions(vec![
             Point3::new(-1.0, 1.0, 0.0),
@@ -675,7 +675,7 @@ fn molfile_writes_no_e_z_at_ineligible_double_bonds() {
             molfile::MolfileWriteVersion::V3000,
         ] {
             let written = molfile::write(
-                interpretation.model(),
+                interpretation.structure(),
                 molfile::MolfileWriteOptions::default().with_version(version),
             )
             .unwrap()
@@ -705,7 +705,8 @@ fn molfile_writes_no_e_z_at_ineligible_double_bonds() {
             )))
             .unwrap();
         asserted = editor.finish().unwrap();
-        let model = Model::from_molecule(asserted, interpretation.model().positions()).unwrap();
+        let model =
+            Structure::from_molecule(asserted, interpretation.structure().positions()).unwrap();
         let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
         assert_eq!(
             error.kind(),
@@ -734,7 +735,7 @@ fn molfile_drawings_of_double_bonds_without_e_z_round_trip_unmarked() {
         .stereo_elements()
         .next()
         .is_none());
-    let written = molfile::write(interpretation.model(), Default::default())
+    let written = molfile::write(interpretation.structure(), Default::default())
         .unwrap()
         .0;
     let document = molfile::parse_str(&written, Default::default()).unwrap();
@@ -800,7 +801,7 @@ fn sdf_conformations_of_smiles_with_e_z_marks_at_bonds_without_e_z_round_trip() 
             "{source}"
         );
         let model =
-            Model::from_molecule(molecule.clone(), &lifted_conformation(&molecule)).unwrap();
+            Structure::from_molecule(molecule.clone(), &lifted_conformation(&molecule)).unwrap();
         let (text, report) = sdf::write([&model], Default::default()).unwrap();
         assert!(report.is_empty(), "{source}");
         let document = sdf::parse_str(&text, Default::default()).unwrap();
@@ -817,7 +818,7 @@ fn sdf_conformations_of_smiles_with_e_z_marks_at_bonds_without_e_z_round_trip() 
                 })
                 .collect::<Vec<_>>()
         };
-        for (read, written) in angstroms(record.model().positions())
+        for (read, written) in angstroms(record.structure().positions())
             .into_iter()
             .zip(angstroms(model.positions()))
         {
@@ -862,7 +863,7 @@ fn molfile_model_e_z_preserves_explicit_carrier_pairs_and_explicit_hydrogen() {
         let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
             .unwrap()
             .assigned;
-        let model = Model::from_molecule(
+        let model = Structure::from_molecule(
             molecule.clone(),
             &test_positions(vec![
                 Point3::new(-1.0, 1.0, 0.0),
@@ -980,13 +981,13 @@ $$$$
         .expect("V3000 SDF interprets");
     assert_eq!(interpretation.molecules().count(), 1);
     assert_eq!(interpretation.report().molfile_components().len(), 1);
-    let point = interpretation.model().positions().values().value()[0];
+    let point = interpretation.structure().positions().values().value()[0];
     assert!((point.x - 0.125).abs() < 1.0e-15);
     assert!((point.y + 0.25).abs() < 1.0e-15);
     assert!((point.z - 0.375).abs() < 1.0e-15);
     assert!(interpretation
         .topology()
-        .same_layout(interpretation.model().topology()));
+        .same_layout(interpretation.structure().topology()));
 }
 
 #[test]
@@ -1041,7 +1042,7 @@ M  END
         let document = molfile::parse_str(&input, Default::default()).unwrap();
         let interpreted = document.interpret(Default::default()).unwrap();
         let written = molfile::write(
-            interpreted.model(),
+            interpreted.structure(),
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000),
         )
@@ -1352,7 +1353,7 @@ fn mol_v3000_bond_block_is_optional_without_declared_bonds() {
                     .with_unsupported(UnsupportedContent::Report),
             )
             .unwrap()
-            .into_model();
+            .into_structure();
         assert_eq!(model.topology().instance_count(), charges.len());
         assert_eq!(model.topology().bond_count(), 0);
     }

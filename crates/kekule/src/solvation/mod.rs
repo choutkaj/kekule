@@ -7,7 +7,7 @@
 //! are cleared under the ordinary append contract and listed in the optional report.
 //!
 //! [`add_periodic_box`] sets a fully periodic cell on a
-//! [`Model`](crate::structure::Model), and [`solvate`] fills that cell with
+//! [`Structure`](crate::structure::Structure), and [`solvate`] fills that cell with
 //! water and ions.
 
 mod solvent;

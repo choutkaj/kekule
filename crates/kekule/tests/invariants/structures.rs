@@ -3,13 +3,13 @@
 use kekule::dssp::{self, DsspOptions};
 use kekule::macromolecular::{self, ModelSelection, StructureInterpretOptions};
 use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
-use kekule::structure::Model;
+use kekule::structure::Structure;
 
 use crate::support::fixture;
 
 /// Every bond by the dense indices of its atoms, with its order, sorted.
-fn bonds(model: &Model) -> Vec<(usize, usize, String)> {
-    let mut bonds = model
+fn bonds(structure: &Structure) -> Vec<(usize, usize, String)> {
+    let mut bonds = structure
         .topology()
         .bonds()
         .map(|bond| {
@@ -21,7 +21,7 @@ fn bonds(model: &Model) -> Vec<(usize, usize, String)> {
     bonds
 }
 
-fn interpret(text: &str) -> (Model, macromolecular::StructureInterpretationReport) {
+fn interpret(text: &str) -> (Structure, macromolecular::StructureInterpretationReport) {
     (mmcif::parse_str(text, Default::default()).unwrap())
         .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
@@ -40,16 +40,17 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
         let entry = path.file_name().unwrap().to_string_lossy().into_owned();
         let (original, report) = interpret(&std::fs::read_to_string(&path).unwrap());
         let written = mmcif::write(
-            [MmcifBlockSource::model(&original).with_reports(std::slice::from_ref(&report))],
+            [MmcifBlockSource::structure(&original).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default(),
         )
         .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{entry}: {error}"));
         let (reread, reread_report) = interpret(&written);
-        // The written block is a fixed point: the model read from it writes
+        // The written block is a fixed point: the structure read from it writes
         // the same text and reads back with the same layout.
         let rewritten = mmcif::write(
-            [MmcifBlockSource::model(&reread).with_reports(std::slice::from_ref(&reread_report))],
+            [MmcifBlockSource::structure(&reread)
+                .with_reports(std::slice::from_ref(&reread_report))],
             MmcifWriteOptions::default(),
         )
         .unwrap()
@@ -63,21 +64,21 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
             "{entry}: layout"
         );
 
-        let atoms = |model: &Model| {
-            model
+        let atoms = |structure: &Structure| {
+            structure
                 .topology()
                 .atom_ids()
                 .iter()
                 .map(|&id| {
-                    let atom = model.topology().atom(id).unwrap();
+                    let atom = structure.topology().atom(id).unwrap();
                     (atom.element().symbol(), atom.formal_charge())
                 })
                 .collect::<Vec<_>>()
         };
         assert_eq!(atoms(&reread), atoms(&original), "{entry}: atoms");
         assert_eq!(bonds(&reread), bonds(&original), "{entry}: bonds");
-        let residues = |model: &Model| {
-            model
+        let residues = |structure: &Structure| {
+            structure
                 .topology()
                 .residues()
                 .map(|residue| format!("{residue:?}"))
@@ -102,8 +103,8 @@ fn mmcif_round_trip_preserves_topology_coordinates_and_secondary_structure() {
             assert!(delta <= precision, "{entry}: {left:?} -> {right:?}");
         }
 
-        let secondary_structure = |model: &Model| {
-            dssp::assign(model, DsspOptions::default())
+        let secondary_structure = |structure: &Structure| {
+            dssp::assign(structure, DsspOptions::default())
                 .unwrap()
                 .residues()
                 .map(|residue| residue.secondary_structure().code())
@@ -178,10 +179,10 @@ fn mmcif_states_only_the_bonds_templates_and_polymer_linkage_do_not_imply() {
             vec!["MOV"],
         ),
     ] {
-        let (model, report) =
+        let (structure, report) =
             interpret(&std::fs::read_to_string(fixture(&format!("mmcif/{entry}.cif"))).unwrap());
         let written = mmcif::write(
-            [MmcifBlockSource::model(&model).with_reports(std::slice::from_ref(&report))],
+            [MmcifBlockSource::structure(&structure).with_reports(std::slice::from_ref(&report))],
             MmcifWriteOptions::default(),
         )
         .unwrap()
@@ -236,7 +237,7 @@ fn tiled_round_trip(copies: u32) {
     .unwrap()
     .interpret(Default::default())
     .unwrap()
-    .into_model();
+    .into_structure();
     let mut editor = kras.to_editor();
     for copy in 1..copies {
         let offset = Vector3::new(
@@ -250,7 +251,7 @@ fn tiled_round_trip(copies: u32) {
                 &RigidTransform::new(Matrix3::identity(), Quantity::new(offset, ANGSTROM)).unwrap(),
             )
             .unwrap();
-        let appended = editor.append_model(&shifted).unwrap();
+        let appended = editor.append_structure(&shifted).unwrap();
         // mmCIF names each chain once, so every copy's chains are renamed.
         for chain in kras.topology().chains() {
             editor
@@ -279,7 +280,7 @@ fn tiled_round_trip(copies: u32) {
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
+        .into_structure();
     assert_eq!(reread.atom_count(), tiled.atom_count());
     assert_eq!(
         reread.topology().instance_count(),
@@ -314,19 +315,19 @@ fn large_untemplated_structure_round_trips_through_mmcif() {
             ));
         }
     }
-    let model = kekule::xyz::parse_str(&text, Default::default())
+    let structure = kekule::xyz::parse_str(&text, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
-    assert_eq!(model.topology().bond_count(), 32_000);
+        .into_structure();
+    assert_eq!(structure.topology().bond_count(), 32_000);
     let options = MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let written = mmcif::write([&model], options).unwrap().0;
+    let written = mmcif::write([&structure], options).unwrap().0;
     assert_eq!(struct_conn_rows(&written).len(), 32_000);
     let reread = mmcif::parse_str(&written, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap()
-        .into_model();
-    assert_eq!(bonds(&reread), bonds(&model));
+        .into_structure();
+    assert_eq!(bonds(&reread), bonds(&structure));
 }

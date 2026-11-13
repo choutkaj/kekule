@@ -13,12 +13,12 @@ use crate::diagnostics::{
     FormatError, FormatErrorDetail, SourceLocation,
 };
 use crate::molecule::Molecule;
-use crate::structure::{Model, StructureSet};
+use crate::structure::{Structure, StructureSet};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
 ///
-/// Model IDs are mmCIF `_atom_site.pdbx_PDB_model_num` values or PDB `MODEL`
+/// Structure IDs are mmCIF `_atom_site.pdbx_PDB_model_num` values or PDB `MODEL`
 /// serial numbers as text; a source without them has the one model `"1"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -106,7 +106,7 @@ impl EntityMetadataPolicy {
 }
 
 /// Policy for interpreting one coordinate model of an mmCIF data block or a
-/// PDB entry as a [`Model`].
+/// PDB entry as a [`Structure`].
 ///
 /// The default requires a single coordinate model, keeps the
 /// highest-occupancy alternate locations, infers missing entity types, uses
@@ -1411,7 +1411,7 @@ impl StructureInterpretationReport {
     /// `_pdbx_struct_assembly`, PDB `REMARK 350` biomolecules. Assemblies
     /// that cannot be read are left out with
     /// [`StructureInterpretIssue::AssemblyOmitted`].
-    /// [`Assembly::to_model`] builds one.
+    /// [`Assembly::to_structure`] builds one.
     pub fn assemblies(&self) -> &[Assembly] {
         &self.assemblies
     }
@@ -1428,13 +1428,13 @@ impl StructureInterpretationReport {
 #[derive(Debug, Clone, PartialEq)]
 /// One final canonical model and its interpretation report.
 pub struct StructureInterpretation {
-    pub(crate) model: Model,
+    pub(crate) model: Structure,
     pub(crate) report: StructureInterpretationReport,
 }
 
 impl StructureInterpretation {
     /// The interpreted model.
-    pub fn model(&self) -> &Model {
+    pub fn structure(&self) -> &Structure {
         &self.model
     }
 
@@ -1443,7 +1443,7 @@ impl StructureInterpretation {
         &self.report
     }
 
-    /// The topology of [`Self::model`].
+    /// The topology of [`Self::structure`].
     pub fn topology(&self) -> &crate::topology::Topology {
         self.model.topology()
     }
@@ -1473,12 +1473,12 @@ impl StructureInterpretation {
     }
 
     /// The interpreted model, discarding the report.
-    pub fn into_model(self) -> Model {
+    pub fn into_structure(self) -> Structure {
         self.model
     }
 
     /// The model and its report.
-    pub fn into_parts(self) -> (Model, StructureInterpretationReport) {
+    pub fn into_parts(self) -> (Structure, StructureInterpretationReport) {
         (self.model, self.report)
     }
 }

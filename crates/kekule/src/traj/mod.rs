@@ -1,7 +1,7 @@
 //! Trajectory file codecs, streaming reader and writer contracts, reusable
 //! frame buffers, periodic preprocessing, and streaming analysis.
 //!
-//! # Data model
+//! # Data structure
 //!
 //! A loaded trajectory is a [`crate::structure::StructureSet`] with a time
 //! [`crate::structure::Order`]: its [`crate::structure::Geometry`]s share one
@@ -22,9 +22,9 @@
 //! [`FrameView::from_geometry`] lends one of a set and [`FrameView::new`] one
 //! held apart from a set, neither copying arrays.
 //! A buffer reads its geometry through `Deref`, lends a
-//! [`crate::structure::ModelView`] through [`FrameBuffer::as_model_view`],
+//! [`crate::structure::StructureView`] through [`FrameBuffer::as_structure_view`],
 //! and becomes a geometry with its place through [`FrameBuffer::into_sample`].
-//! Analyses and prepared potentials therefore operate on models, geometries,
+//! Analyses and prepared potentials therefore operate on structures, geometries,
 //! and buffered frames through one contract.
 //!
 //! # In-memory trajectory
@@ -45,7 +45,7 @@
 //! let place = Place::Time { time: Some(Quantity::new(0.0, PICOSECOND)), step: None };
 //! trajectory.push(Geometry::new(Positions::zeros(topology.atom_count())), Some(place))?;
 //! assert_eq!(trajectory.len(), 1);
-//! assert_eq!(trajectory.get(0).unwrap().as_model_view().atom_count(), 2);
+//! assert_eq!(trajectory.get(0).unwrap().as_structure_view().atom_count(), 2);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -57,7 +57,7 @@
 //!
 //! This example loads a topology from an mmCIF file, reads a trajectory, aligns
 //! all frames to the first, and saves every tenth frame. The mmCIF must contain
-//! one structural block and model and match the trajectory's atom order.
+//! one structural block and structure and match the trajectory's atom order.
 //!
 //! ```no_run
 //! use kekule::traj::{
@@ -117,7 +117,7 @@
 //!
 //! [`analysis`] adds the streaming [`analysis::FrameSuperposer`]. Weighted
 //! RMSF and contact occupancy are [`crate::statistics`]; their accumulators
-//! observe streamed frames through `buffer.as_model_view()` with explicit
+//! observe streamed frames through `buffer.as_structure_view()` with explicit
 //! weights. Molecular reconstruction, imaging around anchors or onto a
 //! reference frame, and temporal unwrapping live in [`periodic`] and are
 //! explicit preprocessing steps, independent of alignment.

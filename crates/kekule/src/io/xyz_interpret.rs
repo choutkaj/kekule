@@ -8,7 +8,7 @@ use crate::diagnostics::{
 };
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
-use crate::structure::{Geometry, Model, ModelBuilder, Positions, StructureSet};
+use crate::structure::{Geometry, Positions, Structure, StructureBuilder, StructureSet};
 use crate::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, Unit, ANGSTROM};
 
@@ -326,13 +326,13 @@ impl XyzInterpretationReport {
 /// One frame interpreted as a model, with its report.
 #[derive(Debug, Clone)]
 pub struct XyzInterpretation {
-    model: Model,
+    model: Structure,
     report: XyzInterpretationReport,
 }
 
 impl XyzInterpretation {
     /// The interpreted model.
-    pub fn model(&self) -> &Model {
+    pub fn structure(&self) -> &Structure {
         &self.model
     }
 
@@ -347,12 +347,12 @@ impl XyzInterpretation {
     }
 
     /// The interpreted model, discarding the report.
-    pub fn into_model(self) -> Model {
+    pub fn into_structure(self) -> Structure {
         self.model
     }
 
     /// The model and its report.
-    pub fn into_parts(self) -> (Model, XyzInterpretationReport) {
+    pub fn into_parts(self) -> (Structure, XyzInterpretationReport) {
         (self.model, self.report)
     }
 }
@@ -402,7 +402,7 @@ fn in_frame(error: FormatError, frame: usize) -> FormatError {
     if error.detail().is_some() {
         return error;
     }
-    error.with_detail(FormatErrorDetail::Model {
+    error.with_detail(FormatErrorDetail::Structure {
         model_id: frame.to_string(),
     })
 }
@@ -710,9 +710,9 @@ impl Frame {
     /// Publishes one molecule per connected component, a synthetic hierarchy
     /// of one `UNL` residue per molecule in chain `A`, and atom-line order as
     /// dense atom order.
-    fn build_model(&self, unit: Unit) -> Result<Model, FormatError> {
+    fn build_model(&self, unit: Unit) -> Result<Structure, FormatError> {
         let components = components(self.elements.len(), &self.report.bonds);
-        let mut builder = ModelBuilder::new();
+        let mut builder = StructureBuilder::new();
         let mut definitions = super::definition_reuse::DefinitionReuse::new();
         let chain = builder
             .hierarchy_mut()

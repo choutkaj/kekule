@@ -114,7 +114,7 @@ pub(super) fn no_coordinate_models() -> FormatError {
 
 /// Interpreting coordinate model `model_id` failed with `error`.
 fn in_model(error: FormatError, model_id: String) -> FormatError {
-    error.with_detail(FormatErrorDetail::Model { model_id })
+    error.with_detail(FormatErrorDetail::Structure { model_id })
 }
 
 fn inconsistent_atom_set(model_id: String) -> FormatError {
@@ -154,8 +154,13 @@ fn assemble(
     let (first_model, first_report) = first.into_parts();
     // Coordinate models are equally weighted draws of one distribution: one
     // state without weights.
-    set.push_state(Geometry::from_model(first_model), None, State::new(), None)
-        .map_err(assembly_error)?;
+    set.push_state(
+        Geometry::from_structure(first_model),
+        None,
+        State::new(),
+        None,
+    )
+    .map_err(assembly_error)?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
         let (model, report) = interpreted?.into_parts();
@@ -187,7 +192,7 @@ fn assemble(
         {
             return Err(inconsistent_dense_atom_order(model_id));
         }
-        set.push_member(Geometry::from_model(model), None, 0, None)
+        set.push_member(Geometry::from_structure(model), None, 0, None)
             .map_err(assembly_error)?;
         reports.push(report);
     }

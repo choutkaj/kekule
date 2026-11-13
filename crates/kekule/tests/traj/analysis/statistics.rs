@@ -32,9 +32,10 @@ fn reused_streaming_buffers_agree_with_loaded_trajectory_statistics() {
         buffer
             .copy_from(FrameView::from_geometry(frame).unwrap())
             .unwrap();
-        rmsf.observe(index, &buffer.as_model_view(), 1.0).unwrap();
+        rmsf.observe(index, &buffer.as_structure_view(), 1.0)
+            .unwrap();
         contacts
-            .observe(index, &buffer.as_model_view(), 1.0)
+            .observe(index, &buffer.as_structure_view(), 1.0)
             .unwrap();
     }
     assert_eq!(

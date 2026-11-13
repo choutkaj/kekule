@@ -3,7 +3,7 @@ use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
 use crate::structure::{
-    Distribution, ModelView, Order, Place, SetContext, StructureKind, StructureSet,
+    Distribution, Order, Place, SetContext, StructureKind, StructureSet, StructureView,
 };
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
@@ -40,7 +40,7 @@ impl WriteErrors {
 
     /// The source is internally inconsistent or incomplete, for example a
     /// model without positions for every atom.
-    pub(crate) fn invalid_model(self, message: impl Into<String>) -> FormatError {
+    pub(crate) fn invalid_structure(self, message: impl Into<String>) -> FormatError {
         FormatError::write(self.0, DiagnosticKind::Inconsistent, message)
     }
 
@@ -300,7 +300,7 @@ fn unrepresentable_structure_state(
 ) -> String {
     match kind {
         StructureKind::InSet(_) => unrepresentable_state(format, field, None),
-        StructureKind::Model => {
+        StructureKind::Standalone => {
             let verb = verb(field);
             format!("The {field} of the model {verb} no {format} representation.")
         }
@@ -386,7 +386,11 @@ impl Omissions {
     /// Records the state of the lone structure `view` that the policies
     /// omit, in the order of [`lost_structure_state`]. Call it after
     /// [`check_structure_state`] has passed.
-    pub(crate) fn record_structure_state(&mut self, view: ModelView<'_>, policies: StatePolicies) {
+    pub(crate) fn record_structure_state(
+        &mut self,
+        view: StructureView<'_>,
+        policies: StatePolicies,
+    ) {
         for field in lost_structure_state(view, policies) {
             if policies.of(field) == UnrepresentablePolicy::Omit {
                 self.record(structure_omission(field, 1));
@@ -418,11 +422,11 @@ fn structure_omission(field: StructureField, structures: usize) -> WriteOmission
 /// MD step, velocities, and forces; the structure's occupancies and B
 /// factors, unless the format writes them; and its per-atom, per-bond, and
 /// own properties and those of its set.
-fn lost_structure_state(view: ModelView<'_>, policies: StatePolicies) -> Vec<StructureField> {
+fn lost_structure_state(view: StructureView<'_>, policies: StatePolicies) -> Vec<StructureField> {
     let mut fields = Vec::new();
     let context = match view.kind() {
         StructureKind::InSet(context) => Some(context),
-        StructureKind::Model => None,
+        StructureKind::Standalone => None,
     };
     if let Some(context) = context {
         if let Some(membership) = context.membership() {
@@ -464,7 +468,7 @@ fn lost_structure_state(view: ModelView<'_>, policies: StatePolicies) -> Vec<Str
 }
 
 /// The occupancies and B factors `view` records.
-fn site_fields(view: ModelView<'_>) -> impl Iterator<Item = StructureField> {
+fn site_fields(view: StructureView<'_>) -> impl Iterator<Item = StructureField> {
     [
         (
             view.occupancies()
@@ -482,7 +486,7 @@ fn site_fields(view: ModelView<'_>) -> impl Iterator<Item = StructureField> {
 }
 
 /// The per-atom, per-bond, and own properties `view` has, in that order.
-fn property_fields(view: ModelView<'_>) -> impl Iterator<Item = StructureField> {
+fn property_fields(view: StructureView<'_>) -> impl Iterator<Item = StructureField> {
     let properties = view.properties();
     [
         (
@@ -531,7 +535,7 @@ fn frame_fields(context: SetContext<'_>) -> impl Iterator<Item = StructureField>
 /// [`lost_structure_state`].
 pub(crate) fn check_structure_state(
     format: Format,
-    view: ModelView<'_>,
+    view: StructureView<'_>,
     policies: StatePolicies,
 ) -> Result<(), FormatError> {
     let lost = lost_structure_state(view, policies);
@@ -576,7 +580,7 @@ pub(crate) fn record_structure_set_properties(
             return Err((1, StructureField::SetProperties));
         }
         for (index, geometry) in set.iter().enumerate() {
-            if let Some(field) = property_fields(geometry.as_model_view()).next() {
+            if let Some(field) = property_fields(geometry.as_structure_view()).next() {
                 return Err((index + 1, field));
             }
         }
@@ -589,7 +593,7 @@ pub(crate) fn record_structure_set_properties(
         });
     }
     for geometry in set {
-        for field in property_fields(geometry.as_model_view()) {
+        for field in property_fields(geometry.as_structure_view()) {
             omissions.record(structure_omission(field, 1));
         }
     }

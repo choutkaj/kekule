@@ -575,7 +575,7 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     assert!(reader.read_next(&mut frame).unwrap());
     imager.make_whole(0, &mut frame).unwrap();
     unwrapper.unwrap(0, &mut frame).unwrap();
-    let reference = frame.as_model_view().to_model();
+    let reference = frame.as_structure_view().to_structure();
     let fitter = FrameSuperposer::new(&reference, &atoms, Default::default());
     let streamed_output = directory.file("streamed.trr");
     let mut writer = create_trajectory_writer(&streamed_output, topology.clone(), options).unwrap();

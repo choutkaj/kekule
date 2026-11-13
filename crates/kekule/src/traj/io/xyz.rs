@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use crate::math::Point3;
 use crate::molecule::Element;
-use crate::structure::{DecodedGeometry, ModelView, Positions, StructureSet};
+use crate::structure::{DecodedGeometry, Positions, StructureSet, StructureView};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
@@ -1543,7 +1543,7 @@ impl<W: Write> XyzWriter<W> {
         let factor = self.output_factor()?;
         let mut omitted = Vec::new();
         for (index, geometry) in set.iter().enumerate() {
-            let view = geometry.as_model_view();
+            let view = geometry.as_structure_view();
             let properties = view.properties();
             if view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
                 return Err(writer_field_error(
@@ -1582,11 +1582,11 @@ impl<W: Write> XyzWriter<W> {
             },
         )?;
         for geometry in set {
-            self.write_positions(geometry.as_model_view().positions(), factor)?;
+            self.write_positions(geometry.as_structure_view().positions(), factor)?;
         }
-        let count = |present: fn(ModelView<'_>) -> bool| {
+        let count = |present: fn(StructureView<'_>) -> bool| {
             set.iter()
-                .filter(|geometry| present(geometry.as_model_view()))
+                .filter(|geometry| present(geometry.as_structure_view()))
                 .count()
         };
         omitted.extend([

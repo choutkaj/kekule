@@ -2,7 +2,7 @@
 use std::io::Write;
 
 use crate::molecule::Molecule;
-use crate::structure::{AsModelView, Model, ModelView};
+use crate::structure::{AsStructureView, Structure, StructureView};
 
 use super::write_error::{check_structure_state, Omissions, StatePolicies, MOLFILE_WRITE};
 use super::{MolfileVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
@@ -109,8 +109,8 @@ impl MolfileWriteOptions {
 /// zero coordinates, or a geometry-bearing model, with the title written on
 /// its first header line.
 ///
-/// Convert from `&Molecule` or `&Model`, or build one with [`Self::molecule`]
-/// or [`Self::model`], which accepts any borrowed model view. Specified stereo
+/// Convert from `&Molecule` or `&Structure`, or build one with [`Self::molecule`]
+/// or [`Self::structure`], which accepts any borrowed structure view. Specified stereo
 /// requires coordinates.
 ///
 /// ```
@@ -130,7 +130,7 @@ pub struct MolfileSource<'a> {
 enum MolfileContent<'a> {
     Molecule(&'a Molecule),
     /// A model snapshot, written with its coordinates in angstroms.
-    Model(ModelView<'a>),
+    Structure(StructureView<'a>),
 }
 
 impl<'a> MolfileSource<'a> {
@@ -143,9 +143,9 @@ impl<'a> MolfileSource<'a> {
     }
 
     /// A geometry-bearing model, geometry of a structure set, or trajectory frame.
-    pub fn model(model: &'a (impl AsModelView + ?Sized)) -> Self {
+    pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self {
-            content: MolfileContent::Model(model.as_model_view()),
+            content: MolfileContent::Structure(structure.as_structure_view()),
             title: "",
         }
     }
@@ -165,9 +165,9 @@ impl<'a> From<&'a Molecule> for MolfileSource<'a> {
     }
 }
 
-impl<'a> From<&'a Model> for MolfileSource<'a> {
-    fn from(model: &'a Model) -> Self {
-        Self::model(model)
+impl<'a> From<&'a Structure> for MolfileSource<'a> {
+    fn from(model: &'a Structure) -> Self {
+        Self::structure(model)
     }
 }
 
@@ -194,11 +194,11 @@ pub(crate) fn write_molfile<'a>(
             )?;
             Ok((text, WriteReport::default()))
         }
-        MolfileContent::Model(model) => {
+        MolfileContent::Structure(model) => {
             let policies = StatePolicies::positions_only(options.set_metadata, options.properties);
             check_cell(model, options.cell)?;
             check_structure_state(Format::Molfile, model, policies)?;
-            let text = render_model(model, source.title, options.version)?;
+            let text = render_structure(model, source.title, options.version)?;
             let mut omissions = Omissions::default();
             if model.cell().is_some() {
                 omissions.record(WriteOmission::Cell { structures: 1 });
@@ -239,7 +239,7 @@ fn render_molecule(
 /// Fails for a model with a periodic cell, which no CTAB can carry, unless
 /// the caller chose to omit it.
 pub(super) fn check_cell(
-    model: ModelView<'_>,
+    model: StructureView<'_>,
     policy: UnrepresentablePolicy,
 ) -> Result<(), FormatError> {
     if model.cell().is_some() && policy == UnrepresentablePolicy::Fail {
@@ -249,8 +249,8 @@ pub(super) fn check_cell(
 }
 
 /// Renders one model CTAB with an SDF or Molfile title.
-pub(super) fn render_model(
-    model: ModelView<'_>,
+pub(super) fn render_structure(
+    model: StructureView<'_>,
     title: &str,
     version: MolfileWriteVersion,
 ) -> Result<String, FormatError> {
@@ -273,14 +273,14 @@ pub(super) fn render_model(
                     .any(|occurrence| occurrence.molecule().stereo_groups().next().is_some()),
             );
             if fits.is_ok() {
-                match render_model(model, title, MolfileWriteVersion::V2000) {
+                match render_structure(model, title, MolfileWriteVersion::V2000) {
                     Err(error) if is_representational(&error) => {}
                     rendered => return rendered,
                 }
             }
             // The fallback rebuilds its stereo projection from the V3000
             // coordinates rather than reusing a rounded V2000 drawing.
-            render_model(model, title, MolfileWriteVersion::V3000)
+            render_structure(model, title, MolfileWriteVersion::V3000)
         }
     }
 }

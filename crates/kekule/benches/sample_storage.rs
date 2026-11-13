@@ -47,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("supply an external mmCIF model, and optionally its XTC trajectory")?;
     let model = mmcif::parse_str(&std::fs::read_to_string(model_path)?, Default::default())?
         .interpret(Default::default())?
-        .into_model();
+        .into_structure();
     // A model without a cell, such as a crystal structure of another space
     // group than P1, gets a box 1 nm longer than its extent on every axis.
     let cell = match model.cell() {

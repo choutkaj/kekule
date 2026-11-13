@@ -62,6 +62,6 @@ impl Geometry {
         let mut structure = GeometryState::from_frame_state(positions, frame.cell, properties);
         structure.velocities = velocities;
         structure.forces = forces;
-        Ok(Self::from_structure(Arc::new(structure)))
+        Ok(Self::from_state(Arc::new(structure)))
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! [`OpenFfPotential::new`] lowers an assignment produced by `kekule-openff`
 //! into dense harmonic, Fourier, Lennard-Jones, and Coulomb terms once. The
-//! potential then evaluates any [`ModelView`] sharing that topology layout
+//! potential then evaluates any [`StructureView`] sharing that topology layout
 //! snapshot through [`Potential`].
 //!
 //! # Hamiltonian and capabilities
@@ -25,11 +25,11 @@
 //!
 //! # Example
 //!
-//! A water model with a stretched bond. All nonbonded pairs of water are 1-2 or
+//! A water structure with a stretched bond. All nonbonded pairs of water are 1-2 or
 //! 1-3 exceptions, which SMIRNOFF scales to zero, so only the bond term remains.
 //!
 //! ```
-//! use kekule::{math::Point3, smiles, structure::{Model, Positions}};
+//! use kekule::{math::Point3, smiles, structure::{Structure, Positions}};
 //! use kekule::units::{Quantity, NANOMETER};
 //! use kekule_openff::{ChargeMethod, ForceField};
 //! use kekule_potentials::{openff::OpenFfPotential, ComponentKind, Potential};
@@ -58,11 +58,11 @@
 //! let topology = smiles::to_topology("[H]O[H]")?;
 //! let points = [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 2.0, 0.0]];
 //! let points = points.map(|[x, y, z]| Point3::new(x, y, z)).to_vec();
-//! let model = Model::new(topology, Positions::new(Quantity::new(points, NANOMETER))?)?;
+//! let structure = Structure::new(topology, Positions::new(Quantity::new(points, NANOMETER))?)?;
 //!
-//! let parameters = force_field.parameterize(model.shared_topology(), ChargeMethod::LibraryOnly)?;
+//! let parameters = force_field.parameterize(structure.shared_topology(), ChargeMethod::LibraryOnly)?;
 //! let potential = OpenFfPotential::new(&parameters)?;
-//! let energy = potential.energy(model.as_model_view())?;
+//! let energy = potential.energy(structure.as_structure_view())?;
 //!
 //! // k / 2 * (r - length)^2 with r - length = 1 nm. Unit conversion while
 //! // compiling the OFFXML may round k by an ulp, so read back the stored value.
@@ -77,7 +77,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use kekule::math::Vector3;
-use kekule::structure::ModelView;
+use kekule::structure::StructureView;
 use kekule::topology::{InstanceAtomId, Topology};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_CHARGE_UNIT, CANONICAL_ENERGY_UNIT,
@@ -317,9 +317,10 @@ impl OpenFfPotential {
     /// [`EvaluationError::InvalidGeometry`], or a nonfinite energy or gradient.
     pub fn evaluate_components(
         &self,
-        model: ModelView<'_>,
+        structure: StructureView<'_>,
     ) -> Result<Vec<ComponentEvaluation>, EvaluationError> {
-        let (energies, gradients) = self.run(model, Gradients::components(model.atom_count()))?;
+        let (energies, gradients) =
+            self.run(structure, Gradients::components(structure.atom_count()))?;
         let Gradients::Components(gradients) = gradients else {
             unreachable!("component gradients were requested");
         };
@@ -330,7 +331,7 @@ impl OpenFfPotential {
             }
             if let Some(index) = gradient.iter().position(|g| !g.is_finite()) {
                 return Err(EvaluationError::NonFiniteGradient {
-                    atom: model.topology().atom_ids()[index],
+                    atom: structure.topology().atom_ids()[index],
                 });
             }
             result.push(ComponentEvaluation {
@@ -344,16 +345,16 @@ impl OpenFfPotential {
 
     fn run(
         &self,
-        model: ModelView<'_>,
+        structure: StructureView<'_>,
         mut gradients: Gradients,
     ) -> Result<([f64; mm::COMPONENTS], Gradients), EvaluationError> {
-        if !self.topology.shares_layout(model.topology()) {
+        if !self.topology.shares_layout(structure.topology()) {
             return Err(EvaluationError::IncompatibleTopology);
         }
-        if model.cell().is_some() {
+        if structure.cell().is_some() {
             return Err(EvaluationError::UnsupportedPeriodicCell);
         }
-        let x = model.positions().values().into_value();
+        let x = structure.positions().values().into_value();
         let located = |error: Singular| EvaluationError::InvalidGeometry {
             interaction: error.interaction,
             atoms: error
@@ -413,13 +414,14 @@ impl Potential for OpenFfPotential {
         &self.topology
     }
 
-    fn evaluate(&self, model: ModelView<'_>) -> Result<Evaluation, EvaluationError> {
-        let (energies, gradients) = self.run(model, Gradients::total(model.atom_count()))?;
+    fn evaluate(&self, structure: StructureView<'_>) -> Result<Evaluation, EvaluationError> {
+        let (energies, gradients) =
+            self.run(structure, Gradients::total(structure.atom_count()))?;
         let Gradients::Total(gradient) = gradients else {
             unreachable!("a total gradient was requested");
         };
         Evaluation::new(
-            model,
+            structure,
             Self::energy_from(energies)?,
             Quantity::new(gradient, CANONICAL_GRADIENT_UNIT),
         )
@@ -427,8 +429,8 @@ impl Potential for OpenFfPotential {
 
     /// Evaluates without a gradient. Bonds of zero length and exactly linear
     /// strained angles have a defined energy and are accepted here.
-    fn energy(&self, model: ModelView<'_>) -> Result<Energy, EvaluationError> {
-        let (energies, _) = self.run(model, Gradients::None)?;
+    fn energy(&self, structure: StructureView<'_>) -> Result<Energy, EvaluationError> {
+        let (energies, _) = self.run(structure, Gradients::None)?;
         Self::energy_from(energies)
     }
 }
