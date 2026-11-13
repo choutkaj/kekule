@@ -15,10 +15,10 @@ use crate::support::{cip_labels, renumbered};
 #[test]
 fn smiles_writers_round_trip_every_corpus_molecule() {
     let mut failures = Vec::new();
-    for geometry in molecules() {
-        let molecule = geometry.perceived();
-        let mut fail = |message: String| failures.push((geometry.label.clone(), message));
-        if geometry.has_axis_stereo() {
+    for sample in molecules() {
+        let molecule = sample.perceived();
+        let mut fail = |message: String| failures.push((sample.label.clone(), message));
+        if sample.has_axis_stereo() {
             for options in [
                 SmilesWriteOptions::isomeric(),
                 SmilesWriteOptions::canonical(),
@@ -76,12 +76,12 @@ fn smiles_writers_round_trip_every_corpus_molecule() {
 fn canonical_smiles_and_cip_labels_are_invariant_under_atom_renumbering() {
     let mut failures = Vec::new();
     let (mut renumberings, mut identities) = (0, 0);
-    for geometry in molecules() {
-        let mut molecule = geometry.perceived();
+    for sample in molecules() {
+        let mut molecule = sample.perceived();
         let canonical = smiles::write(&molecule, SmilesWriteOptions::canonical()).ok();
         let labels = cip_labels(&mut molecule);
         for seed in [1, 2, 3] {
-            let (mut copy, mapping) = renumbered(&geometry.molecule, seed);
+            let (mut copy, mapping) = renumbered(&sample.molecule, seed);
             if mapping.len() > 2 {
                 renumberings += 1;
                 if mapping
@@ -93,11 +93,11 @@ fn canonical_smiles_and_cip_labels_are_invariant_under_atom_renumbering() {
                 }
             }
             copy.perceive()
-                .unwrap_or_else(|error| panic!("{} seed {seed}: {error}", geometry.label));
+                .unwrap_or_else(|error| panic!("{} seed {seed}: {error}", sample.label));
             let copy_canonical = smiles::write(&copy, SmilesWriteOptions::canonical()).ok();
             if copy_canonical != canonical {
                 failures.push((
-                    geometry.label.clone(),
+                    sample.label.clone(),
                     format!("seed {seed}: canonical {copy_canonical:?} != {canonical:?}"),
                 ));
             }
@@ -108,7 +108,7 @@ fn canonical_smiles_and_cip_labels_are_invariant_under_atom_renumbering() {
             let actual = cip_labels(&mut copy);
             if actual != expected {
                 failures.push((
-                    geometry.label.clone(),
+                    sample.label.clone(),
                     format!("seed {seed}: CIP {actual:?} != {expected:?}"),
                 ));
             }

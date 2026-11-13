@@ -1,7 +1,7 @@
 use super::{
     debug_fingerprint, deterministic_text_mutations, error_detail, mmcif_issue, test_positions,
 };
-use crate::diagnostics::{FormatErrorDetail, StructureField};
+use crate::diagnostics::{FormatErrorDetail, GeometryField};
 use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::macromolecular::{
     self, AltLocPolicy, EntityKind, InstanceProvenance, ModelSelection, StructureInterpretOptions,
@@ -534,7 +534,7 @@ fn block_interpreters_reject_a_block_without_atom_site_data() {
 }
 
 #[test]
-fn document_model_interpretation_delegates_for_exactly_one_atom_site_block() {
+fn document_structure_interpretation_delegates_for_exactly_one_atom_site_block() {
     let document = parse(MIXED);
     let from_document = document
         .interpret(Default::default())
@@ -666,18 +666,18 @@ ATOM 2 C C1 LIG Z 1 1 1.0 0.0 0.0 1
 #[test]
 fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     let interpreted = (parse(MIXED)).interpret(Default::default()).unwrap();
-    let model = interpreted.structure();
-    assert_eq!(model.topology().instance_count(), 3);
-    assert_eq!(model.atom_count(), 4);
-    assert_eq!(model.positions().len(), 4);
-    assert!(model
+    let structure = interpreted.structure();
+    assert_eq!(structure.topology().instance_count(), 3);
+    assert_eq!(structure.atom_count(), 4);
+    assert_eq!(structure.positions().len(), 4);
+    assert!(structure
         .positions()
         .values()
         .value()
         .iter()
         .all(|point| point.x.is_finite()));
-    assert!(!model.topology().hierarchy().is_empty());
-    let hierarchy = model.topology().hierarchy();
+    assert!(!structure.topology().hierarchy().is_empty());
+    let hierarchy = structure.topology().hierarchy();
     assert_eq!(
         hierarchy
             .chains()
@@ -712,7 +712,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         );
     }
     assert!(
-        model
+        structure
             .topology()
             .definitions()
             .nth(2)
@@ -741,7 +741,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     assert!(interpreted.report().instances[2]
         .entity_kinds()
         .contains(&EntityKind::Water));
-    for definition in model.topology().definitions() {
+    for definition in structure.topology().definitions() {
         assert!(definition.molecule().properties().is_empty());
         assert!(definition
             .molecule()
@@ -756,7 +756,7 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
     assert_eq!(first_provenance.entity_ids, vec!["1"]);
     assert_eq!(first_provenance.atoms[0].atom_name, "N");
     // The glycine template bonds N-CA; nothing is left as a bare candidate.
-    assert_eq!(model.topology().bonds().count(), 1);
+    assert_eq!(structure.topology().bonds().count(), 1);
     assert_eq!(
         first_provenance.bonds()[0].evidence(),
         &macromolecular::BondEvidence::Template {
@@ -1195,8 +1195,8 @@ fn structure_set_block_interpretation_matches_exactly_one_document_helper() {
     let from_block = document.blocks()[0]
         .interpret_structure_set(Default::default())
         .expect("block structure set interprets");
-    assert_eq!(debug_fingerprint(&from_document), 0x6442_4b03_442a_651f);
-    assert_eq!(debug_fingerprint(&from_block), 0x6442_4b03_442a_651f);
+    assert_eq!(debug_fingerprint(&from_document), 0xbff8_9390_671c_e377);
+    assert_eq!(debug_fingerprint(&from_block), 0xbff8_9390_671c_e377);
     let method_default = document.blocks()[0]
         .interpret_structure_set(Default::default())
         .expect("default block method interprets");
@@ -1241,7 +1241,7 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let interpreted = (parse(MULTI_MODEL))
         .interpret_structure_set(Default::default())
         .expect("consistent coordinate models form a structure set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x6442_4b03_442a_651f);
+    assert_eq!(debug_fingerprint(&interpreted), 0xbff8_9390_671c_e377);
     let set = interpreted.structure_set();
     assert_eq!(set.len(), 2);
     assert_eq!(interpreted.reports().len(), 2);
@@ -1280,8 +1280,8 @@ fn structure_set_preparation_preserves_selected_order_reports_and_shared_connect
     let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
     let document = parse(&input);
     for (model_ids, fingerprint) in [
-        (vec!["2", "1"], 0x4fc1_63e7_527b_4b81),
-        (vec!["2"], 0xea01_70e0_d913_ff9a),
+        (vec!["2", "1"], 0x16e4_3c6e_2f45_efc1),
+        (vec!["2"], 0x0c68_8d79_7976_df6a),
     ] {
         let interpreted = document
             .interpret_structure_set(
@@ -1347,7 +1347,7 @@ fn structure_set_preparation_rejects_changed_chemistry_and_invalid_omitted_rows(
         .unwrap_err();
     assert_eq!(
         error.detail(),
-        Some(&FormatErrorDetail::Structure {
+        Some(&FormatErrorDetail::Model {
             model_id: "1".to_owned()
         })
     );
@@ -1370,7 +1370,7 @@ fn structure_set_identity_distinguishes_repeated_residues_and_insertion_codes() 
     let interpreted = (parse(REPEATED_RESIDUE_MODELS))
         .interpret_structure_set(Default::default())
         .expect("stable repeated-residue identities form a structure set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x3c75_9dff_72ba_97e5);
+    assert_eq!(debug_fingerprint(&interpreted), 0x2f0c_d487_716e_43c1);
 
     assert_eq!(interpreted.structure_set().len(), 2);
     assert_eq!(interpreted.structure_set().topology().atom_count(), 3);
@@ -1395,7 +1395,7 @@ fn structure_set_identity_preserves_repeated_nonpolymer_occurrences() {
     let interpreted = (parse(REPEATED_NONPOLYMER_MODELS))
         .interpret_structure_set(Default::default())
         .expect("stable occurrence discriminators form a structure set");
-    assert_eq!(debug_fingerprint(&interpreted), 0xed1f_5ad3_467f_9ca8);
+    assert_eq!(debug_fingerprint(&interpreted), 0xbdaa_cd92_50f0_cf18);
 
     assert_eq!(interpreted.structure_set().len(), 2);
     assert_eq!(interpreted.structure_set().topology().instance_count(), 2);
@@ -1494,7 +1494,7 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
     let interpreted = (parse(input))
         .interpret_structure_set(Default::default())
         .expect("selected altloc is provenance rather than atom identity");
-    assert_eq!(debug_fingerprint(&interpreted), 0x99aa_8a26_3a53_e9c0);
+    assert_eq!(debug_fingerprint(&interpreted), 0x9736_301e_ec44_0a5c);
     let set = interpreted.structure_set();
     assert_eq!(set.len(), 2);
     assert_eq!(set.topology().atom_count(), 1);
@@ -2035,7 +2035,7 @@ covale A N 1 A CA 1 doub
 }
 
 #[test]
-fn mmcif_writer_round_trips_supported_model_content() {
+fn mmcif_writer_round_trips_supported_structure_content() {
     let connection = r#"
 loop_
 _struct_conn.conn_type_id
@@ -2082,14 +2082,14 @@ covale A N 1 A CA 1 doub
         .map(|(text, report)| {
             assert_eq!(
                 report.omissions(),
-                [WriteOmission::StructureState {
-                    field: StructureField::AtomProperties,
-                    structures: 1,
+                [WriteOmission::GeometryState {
+                    field: GeometryField::AtomProperties,
+                    geometries: 1,
                 }]
             );
             text
         })
-        .expect("supported model should write");
+        .expect("supported structure should write");
     assert!(written.starts_with("data_round_trip\n"));
     assert!(written.contains("_struct_conn.pdbx_value_order"));
     assert!(written.contains("doub"));
@@ -2249,7 +2249,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
 
 #[test]
 fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hierarchy() {
-    let zero = small_model_with_bond(BondOrder::Zero);
+    let zero = small_structure_with_bond(BondOrder::Zero);
     let classifications = classifications_for(&zero, EntityKind::NonPolymer);
     assert!(matches!(
         mmcif_issue(
@@ -2269,7 +2269,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     ));
 
     // Dative bonds are metal coordination and survive a round trip as such.
-    let dative = small_model_with_bond(BondOrder::Dative);
+    let dative = small_structure_with_bond(BondOrder::Dative);
     let classifications = classifications_for(&dative, EntityKind::NonPolymer);
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::structure(&dative).with_classifications(&classifications)],
@@ -2337,14 +2337,16 @@ fn mmcif_writer_preserves_supported_bond_orders() {
         BondOrder::Triple,
         BondOrder::Quadruple,
     ] {
-        let model = small_model_with_bond(order);
-        let classifications = classifications_for(&model, EntityKind::NonPolymer);
-        let written = mmcif::write(
-            [mmcif::MmcifBlockSource::structure(&model).with_classifications(&classifications)],
-            MmcifWriteOptions::default(),
-        )
-        .map(|(text, _)| text)
-        .unwrap();
+        let structure = small_structure_with_bond(order);
+        let classifications = classifications_for(&structure, EntityKind::NonPolymer);
+        let written =
+            mmcif::write(
+                [mmcif::MmcifBlockSource::structure(&structure)
+                    .with_classifications(&classifications)],
+                MmcifWriteOptions::default(),
+            )
+            .map(|(text, _)| text)
+            .unwrap();
         let interpreted = (parse(&written)).interpret(Default::default()).unwrap();
         let round_trip = interpreted
             .structure()
@@ -2396,12 +2398,12 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
             )
             .unwrap();
     }
-    let model = builder.build().unwrap();
-    let report = report_with_entity_kinds(&model, &[EntityKind::NonPolymer]);
+    let structure = builder.build().unwrap();
+    let report = report_with_entity_kinds(&structure, &[EntityKind::NonPolymer]);
     assert!(matches!(
         mmcif_issue(
             mmcif::write(
-                [mmcif::MmcifBlockSource::structure(&model)
+                [mmcif::MmcifBlockSource::structure(&structure)
                     .with_reports(std::slice::from_ref(&report))],
                 MmcifWriteOptions::default()
             )
@@ -2419,14 +2421,14 @@ fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
         Explicit(EntityKind),
     }
     use EntityKind::{Branched, NonPolymer, Polymer, Water};
-    let ligand = hierarchical_single_atom_model("LIG", "C1", "C");
-    let glycine = hierarchical_single_atom_model("GLY", "CA", "C");
-    let sugar_atom = hierarchical_single_atom_model("NAG", "C1", "C");
-    let carbon = small_single_atom_model("C");
-    let oxygen = small_single_atom_model("O");
-    let glucose = carbohydrate_model(&["GLC"], &[]);
-    let trisaccharide = carbohydrate_model(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
-    for (case, model, source, expected) in [
+    let ligand = hierarchical_single_atom_structure("LIG", "C1", "C");
+    let glycine = hierarchical_single_atom_structure("GLY", "CA", "C");
+    let sugar_atom = hierarchical_single_atom_structure("NAG", "C1", "C");
+    let carbon = small_single_atom_structure("C");
+    let oxygen = small_single_atom_structure("O");
+    let glucose = carbohydrate_structure(&["GLC"], &[]);
+    let trisaccharide = carbohydrate_structure(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
+    for (case, structure, source, expected) in [
         (
             "hierarchical ligand",
             &ligand,
@@ -2501,21 +2503,21 @@ fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
     ] {
         let written = match source {
             Source::Inferred => {
-                mmcif::write([model], MmcifWriteOptions::default()).map(|(text, _)| text)
+                mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)
             }
             Source::Report(kind) => {
-                let report = report_with_entity_kinds(model, &[kind]);
+                let report = report_with_entity_kinds(structure, &[kind]);
                 mmcif::write(
-                    [mmcif::MmcifBlockSource::structure(model)
+                    [mmcif::MmcifBlockSource::structure(structure)
                         .with_reports(std::slice::from_ref(&report))],
                     MmcifWriteOptions::default(),
                 )
                 .map(|(text, _)| text)
             }
             Source::Explicit(kind) => {
-                let classifications = classifications_for(model, kind);
+                let classifications = classifications_for(structure, kind);
                 mmcif::write(
-                    [mmcif::MmcifBlockSource::structure(model)
+                    [mmcif::MmcifBlockSource::structure(structure)
                         .with_classifications(&classifications)],
                     MmcifWriteOptions::default(),
                 )
@@ -2529,13 +2531,15 @@ fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
 
 #[test]
 fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
-    let linear = carbohydrate_model(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
+    let linear = carbohydrate_structure(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
     let graph_branched =
-        carbohydrate_model(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
-    for model in [&linear, &graph_branched] {
-        let molecule = model.topology().instances().next().unwrap().id();
+        carbohydrate_structure(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
+    for structure in [&linear, &graph_branched] {
+        let molecule = structure.topology().instances().next().unwrap().id();
         assert_eq!(
-            mmcif_issue(mmcif::write([model], MmcifWriteOptions::default()).map(|(text, _)| text)),
+            mmcif_issue(
+                mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)
+            ),
             Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
                 molecule,
                 classification: MoleculeClass::Carbohydrate,
@@ -2549,12 +2553,12 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
     let interpreted = (parse(BRANCHED_CARBOHYDRATE))
         .interpret(Default::default())
         .unwrap();
-    let model = interpreted.structure();
-    let molecule = model.topology().instances().next().unwrap();
+    let structure = interpreted.structure();
+    let molecule = structure.topology().instances().next().unwrap();
     assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
     assert_eq!(molecule.residues().count(), 3);
     assert!(matches!(
-        mmcif_issue(mmcif::write([model], MmcifWriteOptions::default()).map(|(text, _)| text)),
+        mmcif_issue(mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)),
         Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
             classification: MoleculeClass::Carbohydrate,
             ..
@@ -2562,7 +2566,7 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
     ));
 
     let written = mmcif::write(
-        [mmcif::MmcifBlockSource::structure(model)
+        [mmcif::MmcifBlockSource::structure(structure)
             .with_reports(std::slice::from_ref(interpreted.report()))],
         MmcifWriteOptions::default(),
     )
@@ -2573,22 +2577,22 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
 
 #[test]
 fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classifications() {
-    let model = hierarchical_single_atom_model("NAG", "C1", "C");
-    let molecule = model.topology().instance_records().next().unwrap().0;
-    let report = report_with_entity_kinds(&model, &[EntityKind::Polymer, EntityKind::Branched]);
+    let structure = hierarchical_single_atom_structure("NAG", "C1", "C");
+    let molecule = structure.topology().instance_records().next().unwrap().0;
+    let report = report_with_entity_kinds(&structure, &[EntityKind::Polymer, EntityKind::Branched]);
     assert!(matches!(
-        mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::structure(&model).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default()).map(|(text, _)| text)),
+        mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::structure(&structure).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default()).map(|(text, _)| text)),
         Some(MmcifWriteIssue::ConflictingEntityClassifications {
             molecule: conflicted,
             ..
         }) if conflicted == molecule
     ));
 
-    let report = report_with_entity_kinds(&model, &[]);
+    let report = report_with_entity_kinds(&structure, &[]);
     assert_eq!(
         mmcif_issue(
             mmcif::write(
-                [mmcif::MmcifBlockSource::structure(&model)
+                [mmcif::MmcifBlockSource::structure(&structure)
                     .with_reports(std::slice::from_ref(&report))],
                 MmcifWriteOptions::default()
             )
@@ -2597,12 +2601,14 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
         Some(MmcifWriteIssue::MissingEntityClassification(molecule))
     );
 
-    let report =
-        report_with_entity_kinds(&model, &[EntityKind::Other("unsupported-kind".to_owned())]);
+    let report = report_with_entity_kinds(
+        &structure,
+        &[EntityKind::Other("unsupported-kind".to_owned())],
+    );
     assert_eq!(
         mmcif_issue(
             mmcif::write(
-                [mmcif::MmcifBlockSource::structure(&model)
+                [mmcif::MmcifBlockSource::structure(&structure)
                     .with_reports(std::slice::from_ref(&report))],
                 MmcifWriteOptions::default()
             )
@@ -2614,12 +2620,12 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
         })
     );
 
-    let mut report = report_with_entity_kinds(&model, &[EntityKind::Branched]);
+    let mut report = report_with_entity_kinds(&structure, &[EntityKind::Branched]);
     report.instances.push(report.instances[0].clone());
     assert_eq!(
         mmcif_issue(
             mmcif::write(
-                [mmcif::MmcifBlockSource::structure(&model)
+                [mmcif::MmcifBlockSource::structure(&structure)
                     .with_reports(std::slice::from_ref(&report))],
                 MmcifWriteOptions::default()
             )
@@ -2643,10 +2649,8 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
     assert_eq!(
         mmcif_issue(
             mmcif::write(
-                [
-                    mmcif::MmcifBlockSource::structure(&model)
-                        .with_classifications(&classifications)
-                ],
+                [mmcif::MmcifBlockSource::structure(&structure)
+                    .with_classifications(&classifications)],
                 MmcifWriteOptions::default()
             )
             .map(|(text, _)| text)
@@ -2662,8 +2666,8 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
         "ATOM 2 C CA GLY A 1 3 9.0 0.0 0.0 1",
     );
     let interpreted = (parse(&input)).interpret(Default::default()).unwrap();
-    let model = interpreted.structure();
-    let mut instances = model.topology().instance_records().map(|(id, _)| id);
+    let structure = interpreted.structure();
+    let mut instances = structure.topology().instance_records().map(|(id, _)| id);
     let classified = instances.next().unwrap();
     instances.next().unwrap();
     let mut classifications = MmcifEntityClassifications::new();
@@ -2673,10 +2677,8 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
     assert!(matches!(
         mmcif_issue(
             mmcif::write(
-                [
-                    mmcif::MmcifBlockSource::structure(model)
-                        .with_classifications(&classifications)
-                ],
+                [mmcif::MmcifBlockSource::structure(structure)
+                    .with_classifications(&classifications)],
                 MmcifWriteOptions::default()
             )
             .map(|(text, _)| text)
@@ -2697,20 +2699,24 @@ fn written_entity_types(text: &str) -> Vec<String> {
     }
 }
 
-fn classifications_for(model: &Structure, kind: EntityKind) -> MmcifEntityClassifications {
+fn classifications_for(structure: &Structure, kind: EntityKind) -> MmcifEntityClassifications {
     let mut classifications = MmcifEntityClassifications::new();
-    for molecule in model.topology().instances().map(|molecule| molecule.id()) {
+    for molecule in structure
+        .topology()
+        .instances()
+        .map(|molecule| molecule.id())
+    {
         classifications.insert(molecule, kind.clone()).unwrap();
     }
     classifications
 }
 
 fn report_with_entity_kinds(
-    model: &Structure,
+    structure: &Structure,
     kinds: &[EntityKind],
 ) -> StructureInterpretationReport {
     StructureInterpretationReport {
-        instances: model
+        instances: structure
             .topology()
             .instance_records()
             .map(|(molecule, _)| InstanceProvenance {
@@ -2727,7 +2733,7 @@ fn report_with_entity_kinds(
     }
 }
 
-fn small_single_atom_model(element: &str) -> Structure {
+fn small_single_atom_structure(element: &str) -> Structure {
     let mut graph = crate::molecule::MoleculeEditor::new();
     graph
         .add_atom(Atom::new(Element::from_symbol(element).unwrap()))
@@ -2739,7 +2745,11 @@ fn small_single_atom_model(element: &str) -> Structure {
     builder.build().unwrap()
 }
 
-fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &str) -> Structure {
+fn hierarchical_single_atom_structure(
+    component: &str,
+    atom_name: &str,
+    element: &str,
+) -> Structure {
     let mut graph = crate::molecule::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol(element).unwrap()))
@@ -2764,7 +2774,7 @@ fn hierarchical_single_atom_model(component: &str, atom_name: &str, element: &st
     builder.build().unwrap()
 }
 
-fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Structure {
+fn carbohydrate_structure(components: &[&str], bonds: &[(usize, usize)]) -> Structure {
     let mut graph = crate::molecule::MoleculeEditor::new();
     let atoms = components
         .iter()
@@ -2802,7 +2812,7 @@ fn carbohydrate_model(components: &[&str], bonds: &[(usize, usize)]) -> Structur
     builder.build().unwrap()
 }
 
-fn small_model_with_bond(order: BondOrder) -> Structure {
+fn small_structure_with_bond(order: BondOrder) -> Structure {
     let mut graph = crate::molecule::MoleculeEditor::new();
     let left = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))

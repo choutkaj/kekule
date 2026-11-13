@@ -13,7 +13,7 @@ use kekule::{molfile, sdf, smiles};
 use crate::support::{aromaticity_cases, corpus, fixture};
 
 /// One connected molecule, interpreted but not perceived.
-pub(crate) struct Geometry {
+pub(crate) struct Sample {
     pub label: String,
     pub molecule: Molecule,
     /// The source structure when the molecule came from a single-component
@@ -21,7 +21,7 @@ pub(crate) struct Geometry {
     pub structure: Option<Structure>,
 }
 
-impl Geometry {
+impl Sample {
     pub(crate) fn perceived(&self) -> Molecule {
         let mut molecule = self.molecule.clone();
         molecule
@@ -61,12 +61,12 @@ pub(crate) const EXPECTED_REJECTIONS: &[(&str, &str)] = &[
     ),
 ];
 
-/// A corpus geometry that exposes a known, unfixed defect in one invariant.
+/// A corpus sample that exposes a known, unfixed defect in one invariant.
 pub(crate) struct KnownDefect {
     pub invariant: &'static str,
-    pub geometry: &'static str,
+    pub sample: &'static str,
     /// Text that identifies the expected failure message. Only matching
-    /// failures are exempt; any other failure of the geometry is still reported.
+    /// failures are exempt; any other failure of the sample is still reported.
     pub failure: &'static str,
     pub defect: &'static str,
 }
@@ -75,7 +75,7 @@ pub(crate) struct KnownDefect {
 /// pass, the invariant reports the entry so it can be deleted.
 pub(crate) const KNOWN_DEFECTS: &[KnownDefect] = &[];
 
-/// Fails on every (geometry label, message) failure that does not match a known
+/// Fails on every (sample label, message) failure that does not match a known
 /// defect of `invariant`, and on every known defect of `invariant` that no
 /// longer produces its expected failure.
 pub(crate) fn assert_invariant(invariant: &str, failures: Vec<(String, String)>) {
@@ -84,7 +84,7 @@ pub(crate) fn assert_invariant(invariant: &str, failures: Vec<(String, String)>)
         .filter(|defect| defect.invariant == invariant)
         .collect::<Vec<_>>();
     let expected = |label: &str, message: &str, defect: &KnownDefect| {
-        defect.geometry == label && message.contains(defect.failure)
+        defect.sample == label && message.contains(defect.failure)
     };
     let mut report = failures
         .iter()
@@ -98,21 +98,21 @@ pub(crate) fn assert_invariant(invariant: &str, failures: Vec<(String, String)>)
         {
             report.push(format!(
                 "{}: known defect ({}) no longer fails as expected; remove it from KNOWN_DEFECTS",
-                defect.geometry, defect.defect
+                defect.sample, defect.defect
             ));
         }
     }
     assert!(report.is_empty(), "{}", report.join("\n"));
 }
 
-pub(crate) fn molecules() -> Vec<Geometry> {
-    let mut geometries = Vec::new();
+pub(crate) fn molecules() -> Vec<Sample> {
+    let mut samples = Vec::new();
     // SDF regression records are read below with their source structures.
     for case in aromaticity_cases()
         .into_iter()
         .filter(|case| !case.input.starts_with("sdf:"))
     {
-        geometries.push(Geometry {
+        samples.push(Sample {
             label: format!("aromaticity:{}", case.label),
             molecule: case.molecule(),
             structure: None,
@@ -120,7 +120,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
     }
     for (label, components) in regression_mixtures() {
         for (index, molecule) in components.into_iter().enumerate() {
-            geometries.push(Geometry {
+            samples.push(Sample {
                 label: format!("regression:{label}#{index}"),
                 molecule,
                 structure: None,
@@ -134,7 +134,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
             .into_iter()
             .enumerate()
         {
-            geometries.push(Geometry {
+            samples.push(Sample {
                 label: format!("smoke:{}#{index}", name(&path)),
                 molecule,
                 structure: None,
@@ -158,7 +158,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
                 continue;
             }
             let structure =
-                read_model(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                read_structure(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             let molecules = structure
                 .topology()
                 .instances()
@@ -166,7 +166,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
                 .collect::<Vec<_>>();
             let single = molecules.len() == 1;
             for (index, molecule) in molecules.into_iter().enumerate() {
-                geometries.push(Geometry {
+                samples.push(Sample {
                     label: format!("molfile:{}#{index}", name(&path)),
                     molecule,
                     structure: single.then(|| structure.clone()),
@@ -174,7 +174,7 @@ pub(crate) fn molecules() -> Vec<Geometry> {
             }
         }
     }
-    geometries
+    samples
 }
 
 /// Multi-component regression records, interpreted component by component.
@@ -194,7 +194,7 @@ pub(crate) fn regression_mixtures() -> Vec<(String, Vec<Molecule>)> {
 }
 
 /// Reads a single-record Molfile or the first SDF record as a structure.
-pub(crate) fn read_model(path: &Path) -> Result<Structure, String> {
+pub(crate) fn read_structure(path: &Path) -> Result<Structure, String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     if path.extension().is_some_and(|extension| extension == "sdf") {
         let document =
@@ -228,25 +228,25 @@ fn name(path: &Path) -> String {
 
 #[test]
 fn corpus_reads_every_source_and_keeps_rejections_explicit() {
-    let geometries = molecules();
+    let samples = molecules();
     for prefix in ["aromaticity:", "regression:", "smoke:", "molfile:"] {
-        let count = geometries
+        let count = samples
             .iter()
-            .filter(|geometry| geometry.label.starts_with(prefix))
+            .filter(|sample| sample.label.starts_with(prefix))
             .count();
-        assert!(count >= 8, "only {count} geometries from {prefix}");
+        assert!(count >= 8, "only {count} samples from {prefix}");
     }
     assert!(
-        geometries
+        samples
             .iter()
-            .filter(|geometry| geometry.structure.is_some())
+            .filter(|sample| sample.structure.is_some())
             .count()
             >= 60
     );
-    assert!(geometries.iter().any(Geometry::has_axis_stereo));
+    assert!(samples.iter().any(Sample::has_axis_stereo));
     for (path, reason) in EXPECTED_REJECTIONS {
         assert!(
-            read_model(&corpus(path)).is_err(),
+            read_structure(&corpus(path)).is_err(),
             "{path} ({reason}) is now accepted; move it into the corpus"
         );
     }

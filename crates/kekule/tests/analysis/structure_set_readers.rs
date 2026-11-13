@@ -298,7 +298,7 @@ fn split_observations_merge_and_cancelled_ones_change_nothing() {
 }
 
 #[test]
-fn rmsd_of_listed_samples_equals_the_set_in_memory() {
+fn rmsd_of_listed_geometries_equals_the_set_in_memory() {
     let (_scratch, mut file, mut memory) = file_and_memory("rmsd");
     let topology = file.shared_topology();
     let fit = selection(&topology, &[0, 1, 2, 3]);
@@ -319,7 +319,7 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
 
     let held = memory.rmsd(3, &fit, options).unwrap();
     let held_aligned = memory.aligned_rmsd(3, &fit, &measured, aligned).unwrap();
-    let held_model = memory.rmsd(&structure, &fit, options).unwrap();
+    let held_structure = memory.rmsd(&structure, &fit, options).unwrap();
     let listed = [9, 0, 3, 3, 6];
     for reader in [&file as &dyn StructureSetRead, &memory] {
         let read = alignment::geometry_rmsd(reader, 0..10, 3, &fit, options).unwrap();
@@ -330,11 +330,11 @@ fn rmsd_of_listed_samples_equals_the_set_in_memory() {
         let read = alignment::geometry_rmsd(reader, listed, &structure, &fit, options).unwrap();
         assert_eq!(
             bits(read.value()),
-            listed.map(|index| held_model.value()[index].to_bits())
+            listed.map(|index| held_structure.value()[index].to_bits())
         );
         let cancelled = Cancellation::new(|| true);
         assert!(matches!(
-            alignment::sample_rmsd_cancellable(reader, listed, 3, &fit, options, &cancelled),
+            alignment::geometry_rmsd_cancellable(reader, listed, 3, &fit, options, &cancelled),
             Err(AlignmentError::Cancelled(_))
         ));
         let none = alignment::geometry_rmsd(reader, [0_usize; 0], 3, &fit, options).unwrap();
@@ -402,7 +402,7 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
 /// Several threads fit the processed geometries of one file at once, each on
 /// threads of its own, and all get the matrix of the set in memory.
 #[test]
-fn pairwise_fitted_rmsd_over_processed_samples_runs_from_several_threads() {
+fn pairwise_fitted_rmsd_over_processed_geometries_runs_from_several_threads() {
     let (_scratch, file, memory) = file_and_memory("processed-pairwise");
     let topology = file.shared_topology();
     let fit = selection(&topology, &[0, 1, 2, 3]);
@@ -437,7 +437,7 @@ fn pairwise_fitted_rmsd_over_processed_samples_runs_from_several_threads() {
 }
 
 #[test]
-fn a_reduction_over_a_cut_file_names_the_sample_it_cannot_read() {
+fn a_reduction_over_a_cut_file_names_the_geometry_it_cannot_read() {
     let (scratch, file, _memory) = file_and_memory("cut");
     let starts = file.storage().frame_index().frame_offsets().to_vec();
     std::fs::OpenOptions::new()

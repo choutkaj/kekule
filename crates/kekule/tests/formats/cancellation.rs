@@ -23,10 +23,10 @@ fn requested_after(after: usize) -> (Cancellation, Arc<AtomicUsize>) {
     (cancellation, polls)
 }
 
-/// Whether two independently interpreted models are equal: every model is
-/// published with its own layout identity, so the layouts are compared by
-/// content.
-fn same_model(left: &Structure, right: &Structure) -> bool {
+/// Whether two independently interpreted structures are equal: every
+/// structure is published with its own layout identity, so the layouts are
+/// compared by content.
+fn same_structure(left: &Structure, right: &Structure) -> bool {
     let (left_view, right_view) = (left.as_structure_view(), right.as_structure_view());
     left.topology().same_layout(right.topology())
         && left_view.positions() == right_view.positions()
@@ -36,7 +36,7 @@ fn same_model(left: &Structure, right: &Structure) -> bool {
 }
 
 fn same_interpretation(left: &StructureInterpretation, right: &StructureInterpretation) -> bool {
-    left.report() == right.report() && same_model(left.structure(), right.structure())
+    left.report() == right.report() && same_structure(left.structure(), right.structure())
 }
 
 fn same_structure_set(

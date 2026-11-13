@@ -2,7 +2,7 @@
 //! distribution and order, and the sets they build.
 
 use kekule::diagnostics::{
-    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
+    DiagnosticKind, FormatErrorDetail, GeometryField, UnrepresentablePolicy, WriteOmission,
 };
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::{self, MmcifWriteOptions};
@@ -99,7 +99,7 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
 /// -2.5 kJ/mol.
 fn weighted_methanes() -> StructureSet {
     let topology = kekule::smiles::to_topology("C").unwrap();
-    let models = [0.0, 1.0].map(|x| {
+    let structures = [0.0, 1.0].map(|x| {
         Structure::new(
             topology.clone(),
             Positions::new(Quantity::new(
@@ -110,7 +110,7 @@ fn weighted_methanes() -> StructureSet {
         )
         .unwrap()
     });
-    let mut set = StructureSet::from_structures(models).unwrap();
+    let mut set = StructureSet::from_structures(structures).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::All, Partition::state_per_sample(2))
             .unwrap()
@@ -136,7 +136,7 @@ enum Axis {
     Coordinate(Unit),
 }
 
-/// A three-structure set of one methane carbon along `axis`.
+/// A three-geometry set of one methane carbon along `axis`.
 fn methane_series(axis: Axis) -> StructureSet {
     let topology = kekule::smiles::to_topology("C").unwrap();
     let mut set =
@@ -261,7 +261,7 @@ fn sdf_records_of_different_topologies_do_not_form_a_structure_set() {
 /// One methane record at `x` with `fields`.
 fn methane_record(x: f64, fields: &[(&str, &str)]) -> SdfRecordInterpretation {
     let topology = kekule::smiles::to_topology("C").unwrap();
-    let model = Structure::new(
+    let structure = Structure::new(
         topology,
         Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap(),
     )
@@ -270,7 +270,7 @@ fn methane_record(x: f64, fields: &[(&str, &str)]) -> SdfRecordInterpretation {
         .iter()
         .map(|(name, value)| SdfDataField::new(*name, *value))
         .collect();
-    SdfRecordInterpretation::new("", model, fields)
+    SdfRecordInterpretation::new("", structure, fields)
 }
 
 /// The set an SDF text of `set` reads back as.
@@ -413,18 +413,18 @@ fn sdf_coordinate_units_are_the_unit_constants() {
         assert_eq!(
             error.detail(),
             Some(&FormatErrorDetail::UnrepresentableState(
-                StructureField::OrderCoordinate
+                GeometryField::OrderCoordinate
             ))
         );
         assert!(error.to_string().contains("coordinate unit"), "{error}");
-        let omit = SdfWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit);
+        let omit = SdfWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
         let (text, report) = sdf::write(&set, omit).unwrap();
         assert!(!text.contains(sdf::COORDINATE_FIELD), "{text}");
         assert_eq!(
             report.omissions(),
-            [WriteOmission::StructureState {
-                field: StructureField::OrderCoordinate,
-                structures: set.len(),
+            [WriteOmission::GeometryState {
+                field: GeometryField::OrderCoordinate,
+                geometries: set.len(),
             }]
         );
         assert_eq!(sdf_round_trip(&set, omit).order(), None);
@@ -515,7 +515,7 @@ fn xyz_structure_sets_have_no_distribution() {
 /// Four frames of one water, each with a cell, velocities, a time, and a
 /// step.
 fn water_frames() -> StructureSet {
-    let model = kekule::xyz::parse_str(
+    let structure = kekule::xyz::parse_str(
         "3\nwater\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 0.927 0.000\n",
         Default::default(),
     )
@@ -528,7 +528,7 @@ fn water_frames() -> StructureSet {
         [true; 3],
     )
     .unwrap();
-    let mut frames = StructureSet::new(model.shared_topology());
+    let mut frames = StructureSet::new(structure.shared_topology());
     let axis = TimeAxis::new(
         Some(Quantity::new(Vec::new(), PICOSECOND)),
         Some(Vec::new()),
@@ -537,7 +537,7 @@ fn water_frames() -> StructureSet {
     frames.set_order(Some(Order::Time(axis))).unwrap();
     for index in 0..4_u32 {
         let shift = f64::from(index) * 0.25;
-        let points = model
+        let points = structure
             .positions()
             .values()
             .value()
@@ -598,9 +598,9 @@ fn ensembles_of_trajectory_frames_write_what_trajectory_sampling_wrote() {
     .unwrap();
     let omit = UnrepresentablePolicy::Omit;
     let hydrogens = |atoms| WriteOmission::ImplicitHydrogens { atoms };
-    let weights = WriteOmission::StructureState {
-        field: StructureField::Weight,
-        structures: 3,
+    let weights = WriteOmission::GeometryState {
+        field: GeometryField::Weight,
+        geometries: 3,
     };
     let cases = [
         (
@@ -629,8 +629,8 @@ fn ensembles_of_trajectory_frames_write_what_trajectory_sampling_wrote() {
         let mut pdb_options = PdbWriteOptions::default().with_implicit_hydrogens(omit);
         let mut mmcif_options = MmcifWriteOptions::default().with_implicit_hydrogens(omit);
         if weighted {
-            pdb_options = pdb_options.with_set_metadata(omit);
-            mmcif_options = mmcif_options.with_set_metadata(omit);
+            pdb_options = pdb_options.with_geometry_metadata(omit);
+            mmcif_options = mmcif_options.with_geometry_metadata(omit);
         }
         let (text, report) = pdb::write(&ensemble, pdb_options).unwrap();
         assert_eq!(crate::fingerprint(&text), pdb_bytes, "{text}");

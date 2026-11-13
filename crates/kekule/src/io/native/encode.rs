@@ -73,9 +73,9 @@ pub(crate) fn write_native_to<'a>(
     match source.content {
         NativeContent::Molecule(molecule) => encoder.molecule(molecule)?,
         NativeContent::Topology(topology) => encoder.topology(topology)?,
-        NativeContent::Structure(model) => encoder.model(model)?,
-        NativeContent::InterpretedStructure(model, report) => {
-            encoder.model(model)?;
+        NativeContent::Structure(structure) => encoder.structure(structure)?,
+        NativeContent::InterpretedStructure(structure, report) => {
+            encoder.structure(structure)?;
             encoder.report(report)?;
         }
         NativeContent::StructureSet(set) => encoder.structure_set(set)?,
@@ -91,16 +91,16 @@ pub(crate) fn write_native_to<'a>(
                 order: description.order(),
                 distribution: description.distribution(),
             })?;
-            encoder.u8(SAMPLES_EXTERNAL)?;
+            encoder.u8(GEOMETRIES_EXTERNAL)?;
         }
     }
     encoder.finish()
 }
 
 /// The geometries section's tag for geometries stored in the record.
-pub(super) const SAMPLES_INLINE: u8 = 0;
+pub(super) const GEOMETRIES_INLINE: u8 = 0;
 /// The geometries section's tag for geometries stored elsewhere.
-pub(super) const SAMPLES_EXTERNAL: u8 = 1;
+pub(super) const GEOMETRIES_EXTERNAL: u8 = 1;
 
 /// The sections of a structure set record before its geometries.
 struct SetHead<'a> {
@@ -693,13 +693,13 @@ impl<W: Write> Encoder<'_, W> {
         self.table(properties.bonds())
     }
 
-    fn model(&mut self, model: &Structure) -> Result {
-        self.topology(model.topology())?;
-        self.points(model.positions().values().value())?;
-        self.cell(model.cell())?;
-        self.scalars(model.occupancies())?;
-        self.scalars(model.b_factors().map(|values| *values.value()))?;
-        self.geometry_properties(model.properties())
+    fn structure(&mut self, structure: &Structure) -> Result {
+        self.topology(structure.topology())?;
+        self.points(structure.positions().values().value())?;
+        self.cell(structure.cell())?;
+        self.scalars(structure.occupancies())?;
+        self.scalars(structure.b_factors().map(|values| *values.value()))?;
+        self.geometry_properties(structure.properties())
     }
 
     // Structure sets.
@@ -801,7 +801,7 @@ impl<W: Write> Encoder<'_, W> {
     /// The inline geometries section: each geometry's positions, cell, site
     /// values, properties, velocities, and forces.
     fn geometries<'v>(&mut self, geometries: impl Iterator<Item = StructureView<'v>>) -> Result {
-        self.u8(SAMPLES_INLINE)?;
+        self.u8(GEOMETRIES_INLINE)?;
         for view in geometries {
             let (velocities, forces) = match view.kind() {
                 StructureKind::InSet(context) => (context.velocities(), context.forces()),

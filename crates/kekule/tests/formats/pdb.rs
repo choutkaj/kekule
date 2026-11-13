@@ -487,7 +487,7 @@ fn cryst1(lengths: [Option<f64>; 3], space_group: &str) -> String {
 }
 
 #[test]
-fn cryst1_is_the_model_cell_only_for_a_whole_unit_cell() {
+fn cryst1_is_the_structure_cell_only_for_a_whole_unit_cell() {
     let space_group = |name: &str| CellOmissionReason::SpaceGroup {
         name: name.to_owned(),
     };
@@ -936,7 +936,7 @@ fn dative_bonds_between_residues_write_as_coordination() {
 }
 
 #[test]
-fn coordinate_models_become_samples() {
+fn coordinate_models_become_geometries() {
     let text = entry(
         &[
             vec!["MODEL        1".to_owned()],
@@ -2019,7 +2019,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
             "{name}"
         );
 
-        // The model writes as mmCIF, planned from its source provenance or
+        // The structure writes as mmCIF, planned from its source provenance or
         // from canonical classification, and reads back whole.
         let options = kekule::mmcif::MmcifWriteOptions::default;
         for written in [
@@ -2054,12 +2054,12 @@ fn bonds_with_evidence(result: &StructureInterpretation, evidence: &BondEvidence
         .count()
 }
 
-fn read_model(text: &str) -> kekule::structure::Structure {
+fn read_structure(text: &str) -> kekule::structure::Structure {
     interpret(text).into_structure()
 }
 
 #[test]
-fn separately_read_models_become_samples_with_their_own_state() {
+fn separately_read_structures_become_geometries_with_their_own_state() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::structure::{Distribution, Members, Partition, StructureSet, StructureSetError};
@@ -2067,8 +2067,8 @@ fn separately_read_models_become_samples_with_their_own_state() {
     use kekule::units::{Quantity, ANGSTROM, SQUARE_NANOMETER};
 
     // Two readings of one file: equal topologies, each published on its own.
-    let first = read_model(CRAMBIN);
-    let mut second = read_model(CRAMBIN);
+    let first = read_structure(CRAMBIN);
+    let mut second = read_structure(CRAMBIN);
     assert!(first.topology().same_layout(second.topology()));
     assert!(!first.topology().shares_layout(second.topology()));
     let topology = first.shared_topology();
@@ -2117,13 +2117,13 @@ fn separately_read_models_become_samples_with_their_own_state() {
     );
     assert!(std::sync::Arc::ptr_eq(&set.shared_topology(), &topology));
     assert_eq!(set.distribution().unwrap().state_count(), 1);
-    for (geometry, model) in set.iter().zip(&expected) {
+    for (geometry, structure) in set.iter().zip(&expected) {
         assert_eq!(geometry.weight(), Some(1.0));
-        assert_eq!(geometry.positions(), model.positions());
-        assert_eq!(geometry.cell(), model.cell());
-        assert_eq!(geometry.occupancies(), model.occupancies());
-        assert_eq!(geometry.b_factors(), model.b_factors());
-        assert_eq!(geometry.properties(), model.properties());
+        assert_eq!(geometry.positions(), structure.positions());
+        assert_eq!(geometry.cell(), structure.cell());
+        assert_eq!(geometry.occupancies(), structure.occupancies());
+        assert_eq!(geometry.b_factors(), structure.b_factors());
+        assert_eq!(geometry.properties(), structure.properties());
     }
     let second = set.get(1).unwrap();
     assert_eq!(second.cell(), Some(&cell));
@@ -2140,14 +2140,14 @@ fn separately_read_models_become_samples_with_their_own_state() {
 
     // The partition the caller passes is kept.
     let conformers = one_state(
-        StructureSet::from_structures([read_model(CRAMBIN), read_model(CRAMBIN)]).unwrap(),
+        StructureSet::from_structures([read_structure(CRAMBIN), read_structure(CRAMBIN)]).unwrap(),
         Partition::state_per_sample(2),
     );
     assert_eq!(conformers.distribution().unwrap().state_count(), 2);
 
     // A different topology is refused.
     assert_eq!(
-        StructureSet::from_structures([read_model(CRAMBIN), read_model(ADENYLATE_KINASE)])
+        StructureSet::from_structures([read_structure(CRAMBIN), read_structure(ADENYLATE_KINASE)])
             .unwrap_err(),
         StructureSetError::TopologyMismatch
     );

@@ -478,7 +478,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         ff.parameterize_molecule(methane.clone(), &broken_lookup)
             .unwrap_err()
             .kind()
-            == crate::ErrorKind::Structure
+            == crate::ErrorKind::Model
     );
     // Match the checksum so truncated float32 storage reaches the decoder.
     let truncated = [0u8; 3];
@@ -490,7 +490,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
     .unwrap();
     std::fs::write(scratch.0.join("weights.bin"), truncated).unwrap();
     let error = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(error.kind(), crate::ErrorKind::Structure);
+    assert_eq!(error.kind(), crate::ErrorKind::Model);
     assert!(error
         .to_string()
         .contains("not a whole number of float32 values"));
@@ -518,7 +518,7 @@ fn bundle_validation_and_model_binding_fail_before_parameterization() {
         .set_len(64 * 1024 * 1024 + 1)
         .unwrap();
     let error = NaglModel::load(&scratch.0).unwrap_err();
-    assert_eq!(error.kind(), crate::ErrorKind::Structure);
+    assert_eq!(error.kind(), crate::ErrorKind::Model);
     assert!(error
         .to_string()
         .contains("not a regular file of at most 64 MiB"));

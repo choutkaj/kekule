@@ -202,11 +202,11 @@ pub(super) fn read_molfile_with_report(
 ) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
 {
     let document = molfile::parse_str(input, Default::default())?;
-    let (model, mut reports, _) = document.interpret(Default::default())?.into_parts();
+    let (structure, mut reports, _) = document.interpret(Default::default())?.into_parts();
     if reports.len() != 1 {
         return Err(format!("expected one molfile component, found {}", reports.len()).into());
     }
-    let molecule = model
+    let molecule = structure
         .topology()
         .instances()
         .next()
@@ -317,7 +317,7 @@ impl SdfRecordTestExt for SdfRecordInterpretation {
 
 pub(super) fn test_structure(molecule: &Molecule) -> Structure {
     let positions = test_positions(vec![Point3::default(); molecule.atom_count()]);
-    Structure::from_molecule(molecule.clone(), &positions).expect("test model builds")
+    Structure::from_molecule(molecule.clone(), &positions).expect("test structure builds")
 }
 
 pub(super) fn element_atom(symbol: &str) -> Atom {

@@ -47,18 +47,18 @@ fn chemistry(molecule: &Molecule) -> String {
 fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
     let mut failures = Vec::new();
     let mut checked = 0;
-    for geometry in molecules() {
-        let mut fail = |message: String| failures.push((geometry.label.clone(), message));
-        let structure = match &geometry.structure {
+    for sample in molecules() {
+        let mut fail = |message: String| failures.push((sample.label.clone(), message));
+        let structure = match &sample.structure {
             Some(structure) => structure.clone(),
-            None if geometry.molecule.stereo_elements().next().is_none() => {
-                let zeros = vec![Point3::origin(); geometry.molecule.atom_count()];
+            None if sample.molecule.stereo_elements().next().is_none() => {
+                let zeros = vec![Point3::origin(); sample.molecule.atom_count()];
                 let positions = Positions::new(Quantity::new(zeros, ANGSTROM)).unwrap();
-                Structure::from_molecule(geometry.molecule.clone(), &positions).unwrap()
+                Structure::from_molecule(sample.molecule.clone(), &positions).unwrap()
             }
             None => continue,
         };
-        let unspecified_spin = geometry.molecule.atoms().any(|(_, atom)| {
+        let unspecified_spin = sample.molecule.atoms().any(|(_, atom)| {
             atom.radical()
                 .is_some_and(|r| r.spin_multiplicity().is_none())
         });
@@ -109,7 +109,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
             continue;
         }
         checked += 1;
-        let mut expected = geometry.perceived();
+        let mut expected = sample.perceived();
         let expected_chemistry = chemistry(&expected);
         let expected_labels = cip_labels(&mut expected);
         for (format, text) in outputs {

@@ -166,7 +166,7 @@ impl<'a> ClusteringOptions<'a> {
 }
 
 /// The structures a clustering groups, in member order: the members of a
-/// structure set's distribution, or every sample of a set without one.
+/// structure set's distribution, or every geometry of a set without one.
 struct Clustered<'a> {
     views: Vec<StructureView<'a>>,
     /// The sample index of each member, which errors name.
@@ -178,8 +178,8 @@ struct Clustered<'a> {
     energies: Result<Vec<f64>, ClusteringError>,
 }
 
-/// The members of a set without a distribution: every sample.
-static EVERY_SAMPLE: Members = Members::All;
+/// The members of a set without a distribution: every geometry.
+static EVERY_GEOMETRY: Members = Members::All;
 
 impl<'a> Clustered<'a> {
     fn of_set(set: &'a StructureSet) -> Self {
@@ -187,7 +187,7 @@ impl<'a> Clustered<'a> {
         clustered.views = match set.distribution() {
             None => set
                 .iter()
-                .map(|sample| sample.as_structure_view())
+                .map(|geometry| geometry.as_structure_view())
                 .collect(),
             Some(distribution) => distribution
                 .weighted_members()
@@ -200,14 +200,14 @@ impl<'a> Clustered<'a> {
         clustered
     }
 
-    /// The members of `distribution` over `len` samples, or every sample
-    /// without one, with their weights and energies but no views: what
-    /// clustering on a distance matrix needs.
+    /// The members of `distribution` over `len` geometries, or every
+    /// geometry without one, with their weights and energies but no views:
+    /// what clustering on a distance matrix needs.
     fn of_members(len: usize, distribution: Option<&'a Distribution>) -> Self {
         let Some(distribution) = distribution else {
             return Self {
                 views: Vec::new(),
-                samples: &EVERY_SAMPLE,
+                samples: &EVERY_GEOMETRY,
                 weights: vec![1.0; len],
                 energies: Err(StructureSetError::Missing(Requirement::Distribution).into()),
             };
@@ -408,7 +408,7 @@ fn sample_index(members: &Members, position: usize) -> usize {
 impl StructureSet {
     /// Leader clustering on fitted RMSD within `radius`, a finite,
     /// nonnegative length, of the members of the set's distribution, or of
-    /// every sample of a set without one.
+    /// every geometry of a set without one.
     ///
     /// The result groups exactly those samples, by member position: entry
     /// `i` of its assignments, and each representative, is the `i`th member
@@ -547,9 +547,9 @@ pub enum ClusteringError {
     },
     /// Fitting one pair of members failed.
     PairFit {
-        /// The sample index of the first member of the pair, the one fitted.
+        /// The geometry index of the first member of the pair, the one fitted.
         first: usize,
-        /// The sample index of the second member of the pair.
+        /// The geometry index of the second member of the pair.
         second: usize,
         /// The fit failure.
         source: Box<AlignmentError>,
@@ -609,7 +609,7 @@ impl fmt::Display for ClusteringError {
                 "The pairwise distances of {members} members are too many to store."
             ),
             Self::PairFit { first, second, .. } => {
-                write!(formatter, "Cannot fit samples {first} and {second}.")
+                write!(formatter, "Cannot fit geometries {first} and {second}.")
             }
             Self::InvalidHeight => {
                 formatter.write_str("The dendrogram cut height is negative or not finite.")

@@ -198,12 +198,12 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
         Positions::new(Quantity::new([Point3::origin()], DIMENSIONLESS)).unwrap_err();
     assert!(position_error.source().unwrap().is::<UnitError>());
     let error = StructureSetError::from(GeometryError::from(position_error.clone()));
-    let structure = error.source().unwrap();
-    assert!(structure.is::<GeometryError>());
-    // Structure state wraps its array error transparently: it displays the
+    let geometry = error.source().unwrap();
+    assert!(geometry.is::<GeometryError>());
+    // Geometry state wraps its array error transparently: it displays the
     // array error and continues with the array error's own source.
-    assert_eq!(structure.to_string(), position_error.to_string());
-    assert!(structure.source().unwrap().is::<UnitError>());
+    assert_eq!(geometry.to_string(), position_error.to_string());
+    assert!(geometry.source().unwrap().is::<UnitError>());
     let error = StructureError::from(position_error.clone());
     assert_eq!(error.to_string(), position_error.to_string());
     assert!(error.source().unwrap().is::<UnitError>());

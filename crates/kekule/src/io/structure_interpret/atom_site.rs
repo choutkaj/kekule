@@ -1,6 +1,6 @@
 //! Reads mmCIF `_atom_site`, `_entity`, and `_struct_asym` rows into typed
 //! atom rows, the source-neutral input of interpretation.
-use super::types::{geometry_error, poll_every};
+use super::types::{poll_every, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -120,7 +120,7 @@ impl AtomSiteFields {
 
 pub(super) fn coordinate_model_ids(block: &MmcifBlock) -> Result<Vec<String>, FormatError> {
     let table = block.category("_atom_site")?.ok_or_else(|| {
-        geometry_error(
+        structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "The data block has no _atom_site category.",
@@ -259,7 +259,7 @@ pub(super) fn read_atom_rows(
         let type_symbol = required(table, row, fields.type_symbol)?;
         let type_value = fields.type_symbol.lookup(table, row).expect("required");
         let (element, isotope) = parse_structure_element_symbol(type_symbol).ok_or_else(|| {
-            geometry_error(
+            structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(type_value.line()),
                 format!("The element symbol {type_symbol:?} is unknown."),
@@ -455,7 +455,7 @@ pub(super) fn required<'a>(
         )
     })?;
     value.optional_text().ok_or_else(|| {
-        geometry_error(
+        structure_error(
             DiagnosticKind::InvalidValue,
             Some(value.line()),
             format!("The required {tag} is missing."),
@@ -567,5 +567,5 @@ pub(super) fn row_error(
     kind: DiagnosticKind,
     message: impl Into<String>,
 ) -> FormatError {
-    geometry_error(kind, table.row_line(row), message)
+    structure_error(kind, table.row_line(row), message)
 }

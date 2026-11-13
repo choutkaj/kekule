@@ -1,7 +1,7 @@
 //! Trajectory file codecs, streaming reader and writer contracts, reusable
 //! frame buffers, periodic preprocessing, and streaming analysis.
 //!
-//! # Data structure
+//! # Data model
 //!
 //! A loaded trajectory is a [`crate::structure::StructureSet`] with a time
 //! [`crate::structure::Order`]: its [`crate::structure::Geometry`]s share one
@@ -13,7 +13,7 @@
 //! This module adds what needs files or bounded memory: pure-Rust XYZ, DCD,
 //! TRR and XTC codecs in [`io`]; the [`TrajectoryReader`],
 //! [`SeekableTrajectoryReader`] and [`TrajectoryWriter`] contracts, with
-//! [`MemoryTrajectoryWriter`] collecting frames into a time-ordered geometry
+//! [`MemoryTrajectoryWriter`] collecting frames into a time-ordered structure
 //! set; the reusable, topology-bound [`FrameBuffer`], filled
 //! transactionally from [`FrameData`]; and [`TrajectoryIoError`], the error
 //! of every I/O operation, classified by [`TrajectoryIoErrorKind`].
@@ -57,7 +57,7 @@
 //!
 //! This example loads a topology from an mmCIF file, reads a trajectory, aligns
 //! all frames to the first, and saves every tenth frame. The mmCIF must contain
-//! one structural block and structure and match the trajectory's atom order.
+//! one structural block and model and match the trajectory's atom order.
 //!
 //! ```no_run
 //! use kekule::traj::{

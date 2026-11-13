@@ -807,7 +807,7 @@ pub enum FormatErrorDetail {
     },
     /// Interpreting this coordinate model failed; the error's kind, location
     /// and message describe the failure within it.
-    Structure {
+    Model {
         /// The model ID.
         model_id: String,
     },
@@ -852,7 +852,7 @@ pub enum FormatErrorDetail {
     /// The written structure, geometry, or trajectory frame has this state,
     /// which the format cannot carry, and the writer's policy for it is
     /// [`UnrepresentablePolicy::Fail`].
-    UnrepresentableState(StructureField),
+    UnrepresentableState(GeometryField),
     /// A configured or built-in resource limit was exceeded; the kind is
     /// [`DiagnosticKind::Limit`].
     LimitExceeded(LimitExceeded),
@@ -891,16 +891,16 @@ pub enum FormatErrorDetail {
     },
 }
 
-/// Structure, geometry, or trajectory frame state named by
+/// Geometry, structure set, or trajectory frame state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StructureField {
-    /// A geometry's relative weight in its set's distribution.
+pub enum GeometryField {
+    /// A sample's relative weight in its set's distribution.
     Weight,
-    /// The energy of a geometry's state.
+    /// The energy of a sample's state.
     Energy,
-    /// The state a geometry belongs to: the grouping of geometries into states.
+    /// The state a sample belongs to: the grouping of samples into states.
     State,
     /// The temperature a distribution's populations describe.
     Temperature,
@@ -940,7 +940,7 @@ pub enum StructureField {
     Membership,
 }
 
-impl fmt::Display for StructureField {
+impl fmt::Display for GeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Weight => "weight",

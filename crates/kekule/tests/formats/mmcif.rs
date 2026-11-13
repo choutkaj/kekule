@@ -28,7 +28,7 @@ C C1 GLY A 1 1 0.0 0.0 0.0
 C C2 GLY A 1 1 1.0 0.0 0.0
 "#;
 
-/// The cell of an interpreted model as its diagonal in angstroms, when the
+/// The cell of an interpreted structure as its diagonal in angstroms, when the
 /// cell is orthorhombic, and the report's cell omissions.
 fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIssue>) {
     let interpreted = mmcif::parse_str(text, Default::default())
@@ -56,7 +56,7 @@ fn orthorhombic_cell(text: &str) -> (Option<[f64; 3]>, Vec<StructureInterpretIss
 }
 
 #[test]
-fn mmcif_cell_is_the_model_cell_only_for_a_whole_unit_cell() {
+fn mmcif_cell_is_the_structure_cell_only_for_a_whole_unit_cell() {
     let cell = |lengths: &str| {
         let [a, b, c]: [&str; 3] = lengths.split(' ').collect::<Vec<_>>().try_into().unwrap();
         format!(
@@ -194,9 +194,9 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
         .topology()
         .same_layout(interpreted.structure().topology()));
     let owned_topology = method_default.clone().into_topology();
-    let owned_model = method_default.clone().into_structure();
+    let owned_structure = method_default.clone().into_structure();
     let owned_molecules = method_default.into_molecules();
-    assert!(owned_topology.same_layout(owned_model.topology()));
+    assert!(owned_topology.same_layout(owned_structure.topology()));
     assert_eq!(
         owned_topology
             .instances()
@@ -324,9 +324,9 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     )
     .map(|(text, _)| text)?;
     assert!(written.contains("1 polymer"));
-    let model = interpreted.into_structure();
-    assert_eq!(model.topology().instance_count(), 1);
-    assert_eq!(model.positions().len(), 2);
+    let structure = interpreted.into_structure();
+    assert_eq!(structure.topology().instance_count(), 1);
+    assert_eq!(structure.positions().len(), 2);
 
     Ok(())
 }
@@ -597,8 +597,8 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
     );
 
     // The protein, GDP, the ion, and the inhibitor are separate molecules.
-    let mut model = interpreted.structure().clone();
-    model.perceive().unwrap();
+    let mut structure = interpreted.structure().clone();
+    structure.perceive().unwrap();
     let molecule_of = |component: &str| {
         let instances = report
             .instances()
@@ -614,7 +614,7 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
         let [instance] = instances[..] else {
             panic!("{component} is in {} molecules", instances.len());
         };
-        model.topology().instance(instance).unwrap()
+        structure.topology().instance(instance).unwrap()
     };
     let formula = |component: &str| {
         molecular_formula(
@@ -662,13 +662,13 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
         interpreted.topology().bond_count()
     );
 
-    // The model alone carries no coordination.
-    let (model_only, _) = mmcif::write(
+    // The structure alone carries no coordination.
+    let (structure_only, _) = mmcif::write(
         [mmcif::MmcifBlockSource::structure(interpreted.structure())],
         Default::default(),
     )
     .unwrap();
-    assert!(!model_only.contains("metalc"));
+    assert!(!structure_only.contains("metalc"));
 }
 
 #[test]
@@ -746,8 +746,8 @@ fn identical_molecules_share_one_definition_and_edit_alone() {
     // Default perception runs once per definition and serves every water.
     let mut perceived = interpreted.structure().clone();
     perceived.perceive().unwrap();
-    let hydrogens = |model: &kekule::structure::Structure, instance| {
-        model
+    let hydrogens = |structure: &kekule::structure::Structure, instance| {
+        structure
             .topology()
             .instance(instance)
             .unwrap()
@@ -784,8 +784,8 @@ fn identical_molecules_share_one_definition_and_edit_alone() {
     editor
         .replace_atom(oxygen, Atom::new(element).with_formal_charge(-1))
         .unwrap();
-    let (edited_model, correspondence) = editor.finish_with_correspondence().unwrap();
-    let topology = edited_model.topology();
+    let (edited_structure, correspondence) = editor.finish_with_correspondence().unwrap();
+    let topology = edited_structure.topology();
     assert_eq!(topology.definition_count(), 7);
     let charge = |instance| {
         topology

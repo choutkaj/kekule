@@ -192,11 +192,11 @@ fn fixtures_are_the_sets_the_retired_collections_converted_to() {
     // The sets the retired ensemble, trajectory, and series fixtures
     // converted to, and the extreme ensemble of the Boltzmann checks.
     let mut recorded = Recorded::new(&[
-        0x5fc83223b464ac24,
-        0x774245ee1d22d7ad,
-        0xd73ec02d570e765d,
-        0x686d98249eb9038b,
-        0xf74af6e81faa6f7a,
+        0xa5fa19e6526db86c,
+        0x42e4efdbbadc3cb5,
+        0xfc329782205000e5,
+        0x7383ea19ec476c83,
+        0x20f1b1720214d9ba,
     ]);
     recorded.check(&contents(&ensemble(true)));
     recorded.check(&contents(&ensemble(false)));
@@ -335,23 +335,23 @@ fn structure_set_alignments_keep_the_retired_values() {
     // Fingerprints of the values the retired paths gave.
     let mut recorded = Recorded::new(&[
         0xa708ddfed8a897b0,
-        0x09d4654d2788ed2f,
+        0x07625540f7777f0b,
         0xa708ddfed8a897b0,
-        0xde6b72c6afe8f797,
+        0xf38b9d85095e7243,
         0x7d356d80e26864d5,
-        0x1778f93bf2568fda,
+        0xa35fa4d52f0063aa,
         0xa46e16252c8a8818,
-        0x8b60a38a15003ee9,
+        0x95efc9e759738885,
         0xa46e16252c8a8818,
-        0x92e5d1e483871d4b,
+        0x6ec5046ca312731b,
         0xef9aa5844b998ecc,
-        0x8ad435bcdd7707a3,
+        0x1f818a856ac1c01b,
         0xd0250a17c77174b1,
-        0x1a2abdde993e8a8a,
+        0x2566cf08131b906a,
         0xd0250a17c77174b1,
-        0x434c38a5bc6bdb2e,
+        0xb0d1e5bf907da88e,
         0x4f8e715505afaaa7,
-        0x8d130dc2f8772296,
+        0xd11175428936afd6,
     ]);
     let structure = Structure::new(topology(), positions(points(11))).unwrap();
     // A geometry of the set, an independent view, and a reference out of range.
@@ -708,7 +708,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
             .pairwise_fitted_rmsd(&atoms, Default::default())
             .unwrap_err()
             .to_string(),
-        "Cannot fit samples 2 and 5."
+        "Cannot fit geometries 2 and 5."
     );
     // The heaviest member, geometry 5, leads; geometry 3, visited next, fails
     // to fit onto it.

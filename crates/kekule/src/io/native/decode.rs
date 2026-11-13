@@ -10,7 +10,9 @@ use std::num::{NonZeroU16, NonZeroU32};
 use std::sync::Arc;
 
 use super::crc::Crc32;
-use super::encode::{ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, SAMPLES_EXTERNAL, SAMPLES_INLINE};
+use super::encode::{
+    ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, GEOMETRIES_EXTERNAL, GEOMETRIES_INLINE,
+};
 use super::{
     NativeKind, NativeObject, NativeReadOptions, StructureSetDescription, NATIVE_FORMAT_VERSION,
     NATIVE_MAGIC,
@@ -76,12 +78,12 @@ pub(crate) fn read_native(
     let object = match kind {
         NativeKind::Molecule => NativeObject::Molecule(Box::new(decoder.molecule()?)),
         NativeKind::Topology => NativeObject::Topology(decoder.topology()?),
-        NativeKind::Structure => NativeObject::Structure(decoder.model()?),
+        NativeKind::Structure => NativeObject::Structure(decoder.structure()?),
         NativeKind::StructureInterpretation => {
-            let model = decoder.model()?;
+            let structure = decoder.structure()?;
             let report = decoder.report()?;
             NativeObject::StructureInterpretation(Box::new(StructureInterpretation {
-                model,
+                structure,
                 report,
             }))
         }
@@ -1223,7 +1225,10 @@ impl<R: Read> Decoder<'_, R> {
         Ok(properties)
     }
 
-    fn geometry_error(&self, error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+    fn structure_error(
+        &self,
+        error: impl std::error::Error + Send + Sync + 'static,
+    ) -> FormatError {
         self.rejected(
             DiagnosticKind::InvalidValue,
             "The stored structure is not valid.",
@@ -1231,7 +1236,7 @@ impl<R: Read> Decoder<'_, R> {
         .with_source(error)
     }
 
-    fn model(&mut self) -> Result<Structure> {
+    fn structure(&mut self) -> Result<Structure> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let positions = self.positions(atoms)?;
@@ -1239,19 +1244,19 @@ impl<R: Read> Decoder<'_, R> {
         let occupancies = self.scalars(atoms)?;
         let b_factors = self.scalars(atoms)?;
         let properties = self.geometry_properties(atoms, bonds)?;
-        let mut model =
-            Structure::new(topology, positions).map_err(|error| self.geometry_error(error))?;
-        model.set_cell(cell);
-        model
+        let mut structure =
+            Structure::new(topology, positions).map_err(|error| self.structure_error(error))?;
+        structure.set_cell(cell);
+        structure
             .set_occupancies(occupancies)
-            .map_err(|error| self.geometry_error(error))?;
-        model
+            .map_err(|error| self.structure_error(error))?;
+        structure
             .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
-            .map_err(|error| self.geometry_error(error))?;
-        model
+            .map_err(|error| self.structure_error(error))?;
+        structure
             .set_properties(properties)
-            .map_err(|error| self.geometry_error(error))?;
-        Ok(model)
+            .map_err(|error| self.structure_error(error))?;
+        Ok(structure)
     }
 
     /// A structure set record; an external geometries section is rejected when
@@ -1264,16 +1269,16 @@ impl<R: Read> Decoder<'_, R> {
         let order = self.order(count)?;
         let distribution = self.distribution(count)?;
         match self.u8()? {
-            SAMPLES_INLINE => {}
-            SAMPLES_EXTERNAL if !inline => {
+            GEOMETRIES_INLINE => {}
+            GEOMETRIES_EXTERNAL if !inline => {
                 let description = StructureSetDescription::new(topology, count)
                     .with_properties(owner)
                     .with_order(order)
                     .and_then(|description| description.with_distribution(distribution))
-                    .map_err(|error| self.geometry_error(error))?;
+                    .map_err(|error| self.structure_error(error))?;
                 return Ok(Decoded::External(Box::new(description)));
             }
-            SAMPLES_EXTERNAL => {
+            GEOMETRIES_EXTERNAL => {
                 return Err(self.invalid(
                     "An interpreted structure set stores its geometries elsewhere. It must store them in the record.",
                 ))
@@ -1294,7 +1299,7 @@ impl<R: Read> Decoder<'_, R> {
                 let values = self.vectors(atoms)?;
                 Some(
                     Velocities::from_vec(Quantity::new(values, CANONICAL_VELOCITY_UNIT))
-                        .map_err(|error| self.geometry_error(error))?,
+                        .map_err(|error| self.structure_error(error))?,
                 )
             } else {
                 None
@@ -1303,7 +1308,7 @@ impl<R: Read> Decoder<'_, R> {
                 let values = self.vectors(atoms)?;
                 Some(
                     Forces::from_vec(Quantity::new(values, CANONICAL_FORCE_UNIT))
-                        .map_err(|error| self.geometry_error(error))?,
+                        .map_err(|error| self.structure_error(error))?,
                 )
             } else {
                 None
@@ -1312,31 +1317,31 @@ impl<R: Read> Decoder<'_, R> {
             geometry.set_cell(cell);
             geometry
                 .set_occupancies(occupancies)
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
             geometry
                 .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
             geometry
                 .set_velocities(velocities)
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
             geometry
                 .set_forces(forces)
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
             geometries.push(geometry);
         }
         let mut set = StructureSet::from_geometries(topology, geometries)
-            .map_err(|error| self.geometry_error(error))?;
+            .map_err(|error| self.structure_error(error))?;
         *set.properties_mut() = owner;
         for (index, properties) in properties.into_iter().enumerate() {
             set.get_mut(index)
                 .expect("every decoded geometry was added")
                 .set_properties(properties)
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
         }
         set.set_order(order)
-            .map_err(|error| self.geometry_error(error))?;
+            .map_err(|error| self.structure_error(error))?;
         set.set_distribution(distribution)
-            .map_err(|error| self.geometry_error(error))?;
+            .map_err(|error| self.structure_error(error))?;
         Ok(Decoded::Inline(Box::new(set)))
     }
 
@@ -1359,7 +1364,7 @@ impl<R: Read> Decoder<'_, R> {
                     times.map(|times| Quantity::new(times, CANONICAL_TIME_UNIT)),
                     steps,
                 )
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
                 Order::Time(axis)
             }
             2 => Order::Step(self.u64_array(count)?),
@@ -1420,25 +1425,25 @@ impl<R: Read> Decoder<'_, R> {
             let mut state = State::new();
             state
                 .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
             *state.properties_mut() = self.owner()?;
             states.push(state);
         }
         let temperature = self.opt_f64()?;
         let partition = Partition::new(assignments, representatives)
-            .map_err(|error| self.geometry_error(error))?;
+            .map_err(|error| self.structure_error(error))?;
         let mut distribution = Distribution::new(members, partition)
             .and_then(|distribution| distribution.with_states(states))
-            .map_err(|error| self.geometry_error(error))?;
+            .map_err(|error| self.structure_error(error))?;
         if let Some(weights) = weights {
             distribution = distribution
                 .with_weights(weights)
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
         }
         if let Some(temperature) = temperature {
             distribution = distribution
                 .with_temperature(Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT))
-                .map_err(|error| self.geometry_error(error))?;
+                .map_err(|error| self.structure_error(error))?;
         }
         Ok(Some(distribution))
     }

@@ -344,22 +344,22 @@ fn topologies_keep_ids_order_hierarchy_classes_and_properties() {
 }
 
 #[test]
-fn macromolecular_models_round_trip_bitwise() {
+fn macromolecular_structures_round_trip_bitwise() {
     for name in ["mmcif/1AKE.cif", "mmcif/1CRN.cif"] {
         let text = std::fs::read_to_string(fixture(name)).unwrap();
-        let mut model = mmcif::parse_str(&text, Default::default())
+        let mut structure = mmcif::parse_str(&text, Default::default())
             .unwrap()
             .interpret(Default::default())
             .unwrap()
             .into_structure();
-        model.perceive().unwrap();
-        model
+        structure.perceive().unwrap();
+        structure
             .properties_mut()
             .owner_mut()
             .insert(key("source"), PropertyValue::String(name.into()))
             .unwrap();
-        let decoded = round_trip(&model).into_structure().unwrap();
-        assert_same_structure(&decoded, &model);
+        let decoded = round_trip(&structure).into_structure().unwrap();
+        assert_same_structure(&decoded, &structure);
     }
 }
 
@@ -407,27 +407,27 @@ fn interpreted_structures_keep_their_reports() {
             );
         }
 
-        // A model and its report held apart write the same bytes.
-        let (model, report) = interpretation.clone().into_parts();
+        // A structure and its report held apart write the same bytes.
+        let (structure, report) = interpretation.clone().into_parts();
         let apart = native::write(
-            NativeSource::interpreted_structure(&model, &report),
+            NativeSource::interpreted_structure(&structure, &report),
             NativeWriteOptions::default(),
         )
         .unwrap();
         assert!(apart == native::write(&interpretation, NativeWriteOptions::default()).unwrap());
-        // A reader that wants the model alone drops the report.
-        let model = native::read(apart.as_slice(), NativeReadOptions::default())
+        // A reader that wants the structure alone drops the report.
+        let structure = native::read(apart.as_slice(), NativeReadOptions::default())
             .unwrap()
             .into_structure()
             .unwrap();
-        assert_same_structure(&model, interpretation.structure());
+        assert_same_structure(&structure, interpretation.structure());
     }
-    // The canonical sequences show residues the models lack.
+    // The canonical sequences show residues the structures lack.
     assert!(unobserved > 0);
 }
 
 #[test]
-fn interpreted_conformations_keep_one_report_per_sample() {
+fn interpreted_conformations_keep_one_report_per_geometry() {
     let text = std::fs::read_to_string(fixture("mmcif/1AKE.cif")).unwrap();
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let selections = ["A", "B"].map(|label| {
@@ -483,7 +483,7 @@ fn reports_are_stored_only_when_given() {
         .unwrap();
     let plain = native::write(interpretation.structure(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    // Both are format version 5: a model with its report is kind 7.
+    // Both are format version 5: a structure with its report is kind 7.
     assert_eq!(NATIVE_FORMAT_VERSION, 5);
     for bytes in [&plain, &interpreted] {
         assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
@@ -541,7 +541,7 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
 /// Three water geometries with every per-geometry field: a cell, occupancies, B
 /// factors, properties, velocities, and forces on the first, none on the
 /// second, and velocities alone on the third.
-fn rich_samples() -> Vec<Geometry> {
+fn rich_geometries() -> Vec<Geometry> {
     let mut first = Geometry::new(positions(0.5)).with_cell(cell());
     first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
     first
@@ -578,7 +578,7 @@ fn rich_samples() -> Vec<Geometry> {
 }
 
 fn rich_set() -> StructureSet {
-    let mut set = StructureSet::from_geometries(water_topology(), rich_samples()).unwrap();
+    let mut set = StructureSet::from_geometries(water_topology(), rich_geometries()).unwrap();
     set.properties_mut()
         .insert(key("method"), PropertyValue::String("REMD".into()))
         .unwrap();
@@ -586,7 +586,7 @@ fn rich_set() -> StructureSet {
 }
 
 #[test]
-fn structure_sets_keep_every_order_kind_and_sample_field() {
+fn structure_sets_keep_every_order_kind_and_geometry_field() {
     let times = |values: Vec<f64>| Some(Quantity::new(values, PICOSECOND));
     let orders = [
         None,
@@ -689,7 +689,7 @@ fn structure_sets_keep_their_distribution() {
 }
 
 #[test]
-fn interpreted_structure_sets_keep_one_report_per_sample() {
+fn interpreted_structure_sets_keep_one_report_per_geometry() {
     let text = std::fs::read_to_string(fixture("mmcif/1AKE.cif")).unwrap();
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let selections = ["A", "B"].map(|label| {
@@ -758,7 +758,7 @@ fn interpreted_structure_sets_keep_one_report_per_sample() {
 }
 
 #[test]
-fn structure_set_descriptions_store_the_number_of_samples() {
+fn structure_set_descriptions_store_the_number_of_geometries() {
     let mut set = rich_set();
     set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
     set.set_distribution(Some(
@@ -877,7 +877,7 @@ fn cell() -> PeriodicCell {
 
 /// Four geometries of water: the first with a cell, an occupancy, and an
 /// owner property, the last with the smallest positive coordinate.
-fn water_samples() -> Vec<Geometry> {
+fn water_geometries() -> Vec<Geometry> {
     let mut first = Geometry::new(positions(0.5)).with_cell(cell());
     first.set_occupancies(Some(vec![Some(0.5), None])).unwrap();
     first
@@ -896,7 +896,7 @@ fn water_samples() -> Vec<Geometry> {
 /// The water geometries in the states of `partition`, weighted down to the
 /// smallest positive weight.
 fn water_set(partition: Partition) -> StructureSet {
-    let mut set = StructureSet::from_geometries(water_topology(), water_samples()).unwrap();
+    let mut set = StructureSet::from_geometries(water_topology(), water_geometries()).unwrap();
     set.set_distribution(Some(
         Distribution::new(Members::All, partition)
             .unwrap()
@@ -1120,18 +1120,18 @@ fn step_and_coordinate_orders_keep_places_cells_and_values() {
 }
 
 #[test]
-fn models_keep_cells_occupancies_b_factors_and_structure_properties() {
+fn structures_keep_cells_occupancies_b_factors_and_geometry_properties() {
     let topology = rich_topology();
     let points = (0..7)
         .map(|index| Point3::new(f64::from(index), -f64::from(index), 0.125))
         .collect::<Vec<_>>();
-    let mut model = Structure::new(
+    let mut structure = Structure::new(
         topology,
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
     .unwrap();
-    model.set_cell(Some(cell()));
-    model
+    structure.set_cell(Some(cell()));
+    structure
         .set_occupancies(Some(vec![
             Some(1.0),
             None,
@@ -1142,13 +1142,13 @@ fn models_keep_cells_occupancies_b_factors_and_structure_properties() {
             Some(0.0),
         ]))
         .unwrap();
-    model
+    structure
         .set_b_factors(Some(Quantity::new(
             vec![Some(20.0); 7],
             kekule::units::SQUARE_ANGSTROM,
         )))
         .unwrap();
-    model
+    structure
         .properties_mut()
         .bonds_mut()
         .set_value(
@@ -1157,8 +1157,8 @@ fn models_keep_cells_occupancies_b_factors_and_structure_properties() {
             Some(PropertyValue::Int(1)),
         )
         .unwrap();
-    let decoded = round_trip(&model).into_structure().unwrap();
-    assert_same_structure(&decoded, &model);
+    let decoded = round_trip(&structure).into_structure().unwrap();
+    assert_same_structure(&decoded, &structure);
 }
 
 #[test]
@@ -1351,7 +1351,7 @@ fn stored_ids_resolve_against_the_decoded_owner() {
 
 /// A solvated system of about one million atoms: one protein-sized molecule
 /// and water, every atom placed in the hierarchy.
-fn million_atom_model() -> Structure {
+fn million_atom_structure() -> Structure {
     let water = smiles::to_molecules("[H]O[H]").unwrap().remove(0);
     let chain_smiles = "NCC(=O)".repeat(2000) + "O";
     let peptide = smiles::to_molecules(&chain_smiles).unwrap().remove(0);
@@ -1406,11 +1406,11 @@ fn million_atom_model() -> Structure {
 
 #[test]
 #[ignore = "timing of a one-million-atom round trip; run in release with --ignored"]
-fn million_atom_model_round_trips_within_a_second() {
-    let model = million_atom_model();
-    assert!(model.atom_count() >= 999_000);
+fn million_atom_structure_round_trips_within_a_second() {
+    let structure = million_atom_structure();
+    assert!(structure.atom_count() >= 999_000);
     let start = std::time::Instant::now();
-    let bytes = native::write(&model, NativeWriteOptions::default()).unwrap();
+    let bytes = native::write(&structure, NativeWriteOptions::default()).unwrap();
     let encoded = start.elapsed();
     let decoded = native::read(bytes.as_slice(), NativeReadOptions::default())
         .unwrap()
@@ -1419,13 +1419,13 @@ fn million_atom_model_round_trips_within_a_second() {
     let total = start.elapsed();
     eprintln!(
         "{} atoms, {} bytes: encode {:?}, decode {:?}, round trip {:?}",
-        model.atom_count(),
+        structure.atom_count(),
         bytes.len(),
         encoded,
         total - encoded,
         total
     );
-    assert_same_structure(&decoded, &model);
+    assert_same_structure(&decoded, &structure);
     if !cfg!(debug_assertions) {
         assert!(
             total < std::time::Duration::from_secs(1),

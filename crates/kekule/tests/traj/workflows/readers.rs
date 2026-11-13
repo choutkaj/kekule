@@ -20,7 +20,7 @@ fn topology() -> Arc<Topology> {
 }
 
 #[test]
-fn samples_and_buffers_reject_mismatched_annotation_rows() {
+fn geometries_and_buffers_reject_mismatched_annotation_rows() {
     use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
     use kekule::structure::{Geometry, Positions};
     use kekule::traj::{FrameBuffer, FrameData, FrameView};
@@ -44,7 +44,7 @@ fn samples_and_buffers_reject_mismatched_annotation_rows() {
     assert!(buffer.geometry_mut().set_properties(foreign).is_err());
     let ethane = support::time_ordered(
         kekule::smiles::to_topology("CC").unwrap(),
-        [support::Frame::of_sample(larger)],
+        [support::Frame::of_geometry(larger)],
     );
     assert!(buffer
         .replace_from_data(FrameData::from_frame_view(

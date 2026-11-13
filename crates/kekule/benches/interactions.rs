@@ -41,8 +41,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         )?)?;
         editor.append_structure(&shifted)?;
     }
-    let model = editor.finish()?;
-    let topology = model.shared_topology();
+    let structure = editor.finish()?;
+    let topology = structure.shared_topology();
 
     let started = Instant::now();
     let features = InteractionFeatures::new(Arc::clone(&topology));
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "informational only; target={}-{}; atoms={}; median of {PASSES} passes",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        model.atom_count(),
+        structure.atom_count(),
     );
     println!(
         "features perceived once in {:.1} ms",
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut found = None;
         let time = median(|| {
             found = Some(
-                find_interactions_within(&features, &model, first, &all, criteria)
+                find_interactions_within(&features, &structure, first, &all, criteria)
                     .expect("valid search"),
             );
         });
@@ -108,11 +108,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     let pocket = ligand.expand_to_residues();
     let marked = AtomSelection::from_predicate(Arc::clone(&topology), |atom| {
-        let point = model.positions().values().value()[atom.index().index()];
-        ligand
-            .indices()
-            .iter()
-            .any(|other| (model.positions().values().value()[other.index()] - point).norm() <= 0.8)
+        let point = structure.positions().values().value()[atom.index().index()];
+        ligand.indices().iter().any(|other| {
+            (structure.positions().values().value()[other.index()] - point).norm() <= 0.8
+        })
     })
     .expand_to_residues()
     .union(&pocket)?;
@@ -139,7 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // The inhibitor as its own structure against the block.
-    let alone = model.subset(&ligand)?;
+    let alone = structure.subset(&ligand)?;
     let alone_features = InteractionFeatures::new(alone.shared_topology());
     let alone_atoms = AtomSelection::all(alone.shared_topology());
     // The block without that inhibitor, which the separate structure
@@ -150,7 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         found = Some(
             find_interactions_between(
                 &InteractionSide::new(&alone_features, &alone, &alone_atoms).expect("bound"),
-                &InteractionSide::new(&features, &model, &rest).expect("bound"),
+                &InteractionSide::new(&features, &structure, &rest).expect("bound"),
                 &criteria,
             )
             .expect("valid search"),

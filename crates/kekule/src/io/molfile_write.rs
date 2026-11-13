@@ -4,7 +4,7 @@ use std::io::Write;
 use crate::molecule::Molecule;
 use crate::structure::{AsStructureView, Structure, StructureView};
 
-use super::write_error::{check_structure_state, Omissions, StatePolicies, MOLFILE_WRITE};
+use super::write_error::{check_geometry_state, Omissions, StatePolicies, MOLFILE_WRITE};
 use super::{MolfileVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
 
@@ -36,7 +36,7 @@ pub enum MolfileWriteVersion {
 pub struct MolfileWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
-    set_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
 }
 
@@ -75,16 +75,19 @@ impl MolfileWriteOptions {
     /// and the occupancies and B factors of any structure. By default writing a
     /// structure with any of them fails, and under
     /// [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::StructureState`], [`WriteOmission::Occupancies`],
+    /// ([`WriteOmission::GeometryState`], [`WriteOmission::Occupancies`],
     /// [`WriteOmission::BFactors`]).
-    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
-        self.set_metadata
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// Sets [`Self::set_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
-        self.set_metadata = set_metadata;
+    pub const fn with_geometry_metadata(
+        mut self,
+        geometry_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
@@ -92,7 +95,7 @@ impl MolfileWriteOptions {
     /// properties of a geometry's set, which a Molfile cannot carry: by
     /// default a structure with any fails to write, and under
     /// [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::StructureState`]).
+    /// ([`WriteOmission::GeometryState`]).
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -166,8 +169,8 @@ impl<'a> From<&'a Molecule> for MolfileSource<'a> {
 }
 
 impl<'a> From<&'a Structure> for MolfileSource<'a> {
-    fn from(model: &'a Structure) -> Self {
-        Self::structure(model)
+    fn from(structure: &'a Structure) -> Self {
+        Self::structure(structure)
     }
 }
 
@@ -194,16 +197,17 @@ pub(crate) fn write_molfile<'a>(
             )?;
             Ok((text, WriteReport::default()))
         }
-        MolfileContent::Structure(model) => {
-            let policies = StatePolicies::positions_only(options.set_metadata, options.properties);
-            check_cell(model, options.cell)?;
-            check_structure_state(Format::Molfile, model, policies)?;
-            let text = render_structure(model, source.title, options.version)?;
+        MolfileContent::Structure(structure) => {
+            let policies =
+                StatePolicies::positions_only(options.geometry_metadata, options.properties);
+            check_cell(structure, options.cell)?;
+            check_geometry_state(Format::Molfile, structure, policies)?;
+            let text = render_structure(structure, source.title, options.version)?;
             let mut omissions = Omissions::default();
-            if model.cell().is_some() {
+            if structure.cell().is_some() {
                 omissions.record(WriteOmission::Cell { structures: 1 });
             }
-            omissions.record_structure_state(model, policies);
+            omissions.record_geometry_state(structure, policies);
             Ok((text, omissions.into_report()))
         }
     }
@@ -239,10 +243,10 @@ fn render_molecule(
 /// Fails for a structure with a periodic cell, which no CTAB can carry, unless
 /// the caller chose to omit it.
 pub(super) fn check_cell(
-    model: StructureView<'_>,
+    structure: StructureView<'_>,
     policy: UnrepresentablePolicy,
 ) -> Result<(), FormatError> {
-    if model.cell().is_some() && policy == UnrepresentablePolicy::Fail {
+    if structure.cell().is_some() && policy == UnrepresentablePolicy::Fail {
         return Err(MOLFILE_WRITE.unsupported("A Molfile cannot hold a periodic cell."));
     }
     Ok(())
@@ -250,21 +254,23 @@ pub(super) fn check_cell(
 
 /// Renders one structure CTAB with an SDF or Molfile title.
 pub(super) fn render_structure(
-    model: StructureView<'_>,
+    structure: StructureView<'_>,
     title: &str,
     version: MolfileWriteVersion,
 ) -> Result<String, FormatError> {
     match version {
-        MolfileWriteVersion::V2000 => {
-            v2000::render(&MolfileRecord::model(model, MolfileVersion::V2000)?, title)
-        }
-        MolfileWriteVersion::V3000 => {
-            v3000::render(&MolfileRecord::model(model, MolfileVersion::V3000)?, title)
-        }
+        MolfileWriteVersion::V2000 => v2000::render(
+            &MolfileRecord::structure(structure, MolfileVersion::V2000)?,
+            title,
+        ),
+        MolfileWriteVersion::V3000 => v3000::render(
+            &MolfileRecord::structure(structure, MolfileVersion::V3000)?,
+            title,
+        ),
         MolfileWriteVersion::Auto => {
             // Size and enhanced stereo are known before any stereo projection,
             // so content V2000 cannot hold skips the V2000 attempt entirely.
-            let topology = model.topology();
+            let topology = structure.topology();
             let fits = v2000::check_capacity(
                 topology.atom_count(),
                 topology.bond_count(),
@@ -273,14 +279,14 @@ pub(super) fn render_structure(
                     .any(|occurrence| occurrence.molecule().stereo_groups().next().is_some()),
             );
             if fits.is_ok() {
-                match render_structure(model, title, MolfileWriteVersion::V2000) {
+                match render_structure(structure, title, MolfileWriteVersion::V2000) {
                     Err(error) if is_representational(&error) => {}
                     rendered => return rendered,
                 }
             }
             // The fallback rebuilds its stereo projection from the V3000
             // coordinates rather than reusing a rounded V2000 drawing.
-            render_structure(model, title, MolfileWriteVersion::V3000)
+            render_structure(structure, title, MolfileWriteVersion::V3000)
         }
     }
 }

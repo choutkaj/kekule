@@ -408,7 +408,7 @@ pub fn geometry_rmsd<'a>(
 ///
 /// [`AlignmentError::Cancelled`] when cancelled, without partial values,
 /// and the errors of [`geometry_rmsd`].
-pub fn sample_rmsd_cancellable<'a>(
+pub fn geometry_rmsd_cancellable<'a>(
     reader: &dyn StructureSetRead,
     geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
@@ -453,7 +453,7 @@ pub fn geometry_aligned_rmsd<'a>(
 ///
 /// [`AlignmentError::Cancelled`] when cancelled, without partial values,
 /// and the errors of [`geometry_aligned_rmsd`].
-pub fn sample_aligned_rmsd_cancellable<'a>(
+pub fn geometry_aligned_rmsd_cancellable<'a>(
     reader: &dyn StructureSetRead,
     geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
@@ -596,7 +596,7 @@ impl StructureSet {
                 options,
             )?
         };
-        self.transform_samples(&transforms(&report))
+        self.transform_geometries(&transforms(&report))
             .map_err(AlignmentError::Transform)?;
         Ok(report)
     }

@@ -101,7 +101,7 @@ fn dssp_matches_biopython_mkdssp_4_6_1_for_crambin() {
 }
 
 #[test]
-fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_model() {
+fn dssp_is_a_coordinate_snapshot_and_does_not_mutate_the_structure() {
     let mut structure = crambin_structure();
     let before = structure.clone();
     let assigned = dssp::assign(&structure, DsspOptions::default()).expect("initial assignment");

@@ -1,6 +1,6 @@
 //! Non-covalent interactions of PDB complexes, checked against their
 //! geometry: each expected distance and angle below was measured
-//! independently from the entry's atom_site coordinates (structure 1, first
+//! independently from the entry's atom_site coordinates (model 1, first
 //! alternate location), and the interactions are the ones the primary
 //! publications describe.
 
@@ -392,19 +392,19 @@ fn split_structures_give_the_same_interactions() {
     let within =
         find_interactions_within(&features, &structure, &ligand, &rest, &criteria).unwrap();
 
-    let ligand_model = structure.subset(&ligand).unwrap();
-    let rest_model = structure.subset(&rest).unwrap();
+    let ligand_structure = structure.subset(&ligand).unwrap();
+    let rest_structure = structure.subset(&rest).unwrap();
     let (ligand_features, rest_features) = (
-        InteractionFeatures::new(ligand_model.shared_topology()),
-        InteractionFeatures::new(rest_model.shared_topology()),
+        InteractionFeatures::new(ligand_structure.shared_topology()),
+        InteractionFeatures::new(rest_structure.shared_topology()),
     );
     let (ligand_atoms, rest_atoms) = (
-        AtomSelection::all(ligand_model.shared_topology()),
-        AtomSelection::all(rest_model.shared_topology()),
+        AtomSelection::all(ligand_structure.shared_topology()),
+        AtomSelection::all(rest_structure.shared_topology()),
     );
     let between = find_interactions_between(
-        &InteractionSide::new(&ligand_features, &ligand_model, &ligand_atoms).unwrap(),
-        &InteractionSide::new(&rest_features, &rest_model, &rest_atoms).unwrap(),
+        &InteractionSide::new(&ligand_features, &ligand_structure, &ligand_atoms).unwrap(),
+        &InteractionSide::new(&rest_features, &rest_structure, &rest_atoms).unwrap(),
         &criteria,
     )
     .unwrap();

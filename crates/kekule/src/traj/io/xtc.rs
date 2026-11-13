@@ -306,7 +306,7 @@ impl XtcWriteOptions {
     /// which XTC cannot carry: by default a frame with any of them fails to
     /// write; [`UnrepresentablePolicy::Omit`] writes the frame without them
     /// and reports a
-    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState),
+    /// [`WriteOmission::GeometryState`](crate::diagnostics::WriteOmission::GeometryState),
     /// [`WriteOmission::Occupancies`](crate::diagnostics::WriteOmission::Occupancies),
     /// or [`WriteOmission::BFactors`](crate::diagnostics::WriteOmission::BFactors)
     /// for each kind left out (see [`XtcWriter::report`]).

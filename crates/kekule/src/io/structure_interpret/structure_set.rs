@@ -114,7 +114,7 @@ pub(super) fn no_coordinate_models() -> FormatError {
 
 /// Interpreting coordinate model `model_id` failed with `error`.
 fn in_model(error: FormatError, model_id: String) -> FormatError {
-    error.with_detail(FormatErrorDetail::Structure { model_id })
+    error.with_detail(FormatErrorDetail::Model { model_id })
 }
 
 fn inconsistent_atom_set(model_id: String) -> FormatError {
@@ -146,16 +146,16 @@ fn assemble(
     first: StructureInterpretation,
     remaining: impl Iterator<Item = Result<StructureInterpretation, FormatError>>,
 ) -> Result<StructureSetInterpretation, FormatError> {
-    let shared_topology = first.model.shared_topology();
+    let shared_topology = first.structure.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut set = StructureSet::new(Arc::clone(&shared_topology));
     let empty = Distribution::new(Members::All, Partition::one_state(0)).map_err(assembly_error)?;
     set.set_distribution(Some(empty)).map_err(assembly_error)?;
-    let (first_model, first_report) = first.into_parts();
+    let (first_structure, first_report) = first.into_parts();
     // Coordinate models are equally weighted draws of one distribution: one
     // state without weights.
     set.push_state(
-        Geometry::from_structure(first_model),
+        Geometry::from_structure(first_structure),
         None,
         State::new(),
         None,
@@ -163,7 +163,7 @@ fn assemble(
     .map_err(assembly_error)?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
-        let (model, report) = interpreted?.into_parts();
+        let (structure, report) = interpreted?.into_parts();
         let model_id = report
             .selected_model()
             .expect("interpreted model has a source ID")
@@ -178,7 +178,7 @@ fn assemble(
                 },
             );
         }
-        if !shared_topology.same_layout(model.topology()) {
+        if !shared_topology.same_layout(structure.topology()) {
             return Err(structure_set_error(
                 DiagnosticKind::Inconsistent,
                 format!(
@@ -187,12 +187,12 @@ fn assemble(
                 FormatErrorDetail::InconsistentTopology { model_id },
             ));
         }
-        if shared_topology.atom_ids() != model.topology().atom_ids()
-            || shared_topology.bond_ids() != model.topology().bond_ids()
+        if shared_topology.atom_ids() != structure.topology().atom_ids()
+            || shared_topology.bond_ids() != structure.topology().bond_ids()
         {
             return Err(inconsistent_dense_atom_order(model_id));
         }
-        set.push_member(Geometry::from_structure(model), None, 0, None)
+        set.push_member(Geometry::from_structure(structure), None, 0, None)
             .map_err(assembly_error)?;
         reports.push(report);
     }

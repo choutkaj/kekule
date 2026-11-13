@@ -1,17 +1,17 @@
-//! Informational cost of one edit of a ligand in a large model: deleting one
-//! atom of a ligand, attaching one, or changing one's element or formal
+//! Informational cost of one edit of a ligand in a large structure: deleting
+//! one atom of a ligand, attaching one, or changing one's element or formal
 //! charge, then publishing the edited draft and perceiving the result, while
 //! an earlier snapshot stays alive.
 //!
-//! The model is 66 merged copies of an externally supplied mmCIF entry, each
-//! perceived and appended as separate chains and molecules; the merged model
-//! is not perceived again. SeekDelta's request K56 used
+//! The structure is 66 merged copies of an externally supplied mmCIF entry,
+//! each perceived and appended as separate chains and molecules; the merged
+//! structure is not perceived again. SeekDelta's request K56 used
 //! PDB 9UOH (KRas G12C with GDP, Mg2+ and an inhibitor, 1,526 atoms), which
 //! makes 100,716 atoms:
 //!
 //! ```sh
 //! curl -sSfLO https://files.rcsb.org/download/9UOH.cif
-//! cargo bench -p kekule --bench model_edit_scale -- 9UOH.cif A1L9E
+//! cargo bench -p kekule --bench structure_edit_scale -- 9UOH.cif A1L9E
 //! ```
 //!
 //! The arguments are the mmCIF path and the ligand's component ID; the
@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .next()
         .or_else(|| std::env::var("KEKULE_EDIT_SCALE_CIF").ok())
     else {
-        println!("model_edit_scale: no mmCIF path given; nothing measured");
+        println!("structure_edit_scale: no mmCIF path given; nothing measured");
         return Ok(());
     };
     let ligand = args
@@ -59,8 +59,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     for _ in 0..COPIES {
         editor.append_structure(&copy)?;
     }
-    let model = editor.finish()?;
-    let topology = model.topology();
+    let structure = editor.finish()?;
+    let topology = structure.topology();
 
     // An atom of the ligand in the middle copy, bonded to exactly one other
     // atom, so deleting it splits nothing.
@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
          ligand {ligand} molecule atoms={ligand_atoms}; minimum and median of {ROUNDS} rounds",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        model.atom_count(),
+        structure.atom_count(),
         topology.definition_count(),
         topology.instance_count(),
     );
@@ -98,9 +98,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (name, edit) in edits {
         let mut phases = [const { Vec::new() }; 6];
         for _ in 0..ROUNDS {
-            let earlier = model.clone();
+            let earlier = structure.clone();
             let start = Instant::now();
-            let mut editor = model.to_editor();
+            let mut editor = structure.to_editor();
             let built = start.elapsed();
             let start = Instant::now();
             edit(&mut editor, target)?;

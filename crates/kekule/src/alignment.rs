@@ -90,8 +90,8 @@ mod collection;
 mod correspondence;
 mod symmetry;
 pub use collection::{
-    geometry_aligned_rmsd, geometry_rmsd, sample_aligned_rmsd_cancellable, sample_rmsd_cancellable,
-    AlignedRmsdOptions, Reference, SuperpositionReport,
+    geometry_aligned_rmsd, geometry_aligned_rmsd_cancellable, geometry_rmsd,
+    geometry_rmsd_cancellable, AlignedRmsdOptions, Reference, SuperpositionReport,
 };
 pub use correspondence::{
     AmbiguousLabel, AtomCorrespondence, AtomCorrespondenceError, AtomLabel, CorrespondenceSide,

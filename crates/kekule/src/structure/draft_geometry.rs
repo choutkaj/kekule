@@ -6,14 +6,14 @@ use crate::units::Quantity;
 use super::scalars::{b_factor_quantity, canonical_b_factor, AtomScalars};
 use super::{GeometryError, Positions, StructureView};
 
-/// Structure state staged by [`super::StructureBuilder`] and
+/// Geometry state staged by [`super::StructureBuilder`] and
 /// [`super::StructureEditor`] before it becomes a [`super::Structure`].
 ///
 /// Rows follow the draft's staged dense order or private editor slot order and
 /// may include rows of deleted editor slots. Publication projects and moves
 /// these fields into the structure's own.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct StructureState {
+pub(crate) struct DraftGeometry {
     pub(crate) positions: Positions,
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) occupancies: AtomScalars,
@@ -21,7 +21,7 @@ pub(crate) struct StructureState {
     pub(crate) properties: GeometryProperties,
 }
 
-impl Default for StructureState {
+impl Default for DraftGeometry {
     fn default() -> Self {
         Self {
             positions: Positions::default(),
@@ -33,7 +33,7 @@ impl Default for StructureState {
     }
 }
 
-impl StructureState {
+impl DraftGeometry {
     pub(crate) fn set_position(
         &mut self,
         atom: TopologyAtomIndex,

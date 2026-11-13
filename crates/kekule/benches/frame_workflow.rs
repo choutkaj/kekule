@@ -1,4 +1,5 @@
-//! Informational access and superposition timings using an external mmCIF model.
+//! Informational access and superposition timings using an external mmCIF
+//! structure.
 //! Run: cargo bench -p kekule --bench frame_workflow -- SYSTEM.cif
 //! Real coordinates and annotations are repeated to isolate container costs;
 //! this measures API overhead, not physical trajectory sampling or scaling limits.
@@ -11,13 +12,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args_os()
         .nth(1)
         .ok_or("supply an external mmCIF model")?;
-    let model = mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
+    let structure = mmcif::parse_str(&std::fs::read_to_string(path)?, Default::default())?
         .interpret(Default::default())?
         .into_structure();
-    let mut frame = Geometry::new(model.positions().clone());
-    frame.set_cell(model.cell().copied());
+    let mut frame = Geometry::new(structure.positions().clone());
+    frame.set_cell(structure.cell().copied());
     let mut trajectory =
-        StructureSet::from_geometries(model.shared_topology(), (0..64).map(|_| frame.clone()))?;
+        StructureSet::from_geometries(structure.shared_topology(), (0..64).map(|_| frame.clone()))?;
     trajectory.set_order(Some(Order::Time(TimeAxis::default())))?;
     let atoms = AtomSelection::all(trajectory.shared_topology());
     let iterations = 1_000_000;

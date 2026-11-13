@@ -21,7 +21,7 @@ use std::io::Write;
 
 use crate::diagnostics::{
     counted, Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail,
-    StructureField,
+    GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
@@ -30,7 +30,7 @@ use crate::io::structure_interpret::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_structure_set, record_structure_set_properties,
+    check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{
@@ -79,7 +79,7 @@ pub enum PdbChainIdPolicy {
 /// [`PdbChainIdPolicy::SegmentId`] writes as segment identifiers.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PdbWriteOptions {
-    set_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
@@ -98,16 +98,19 @@ impl PdbWriteOptions {
     /// included, or a geometry has velocities or forces; so does a single
     /// geometry with a membership, a place (a frame's time and MD step among
     /// them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes the
-    /// models without them and reports a [`WriteOmission::StructureState`]
+    /// models without them and reports a [`WriteOmission::GeometryState`]
     /// for each field.
-    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
-        self.set_metadata
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// Sets [`Self::set_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
-        self.set_metadata = set_metadata;
+    pub const fn with_geometry_metadata(
+        mut self,
+        geometry_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
@@ -115,7 +118,7 @@ impl PdbWriteOptions {
     /// properties of a structure set or of a geometry's set, which PDB cannot
     /// carry: by default a structure or set with any fails to write, and
     /// under [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::StructureState`]).
+    /// ([`WriteOmission::GeometryState`]).
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -129,7 +132,7 @@ impl PdbWriteOptions {
 
     /// The policies for the state of one structure.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.set_metadata, self.properties)
+        StatePolicies::with_sites(self.geometry_metadata, self.properties)
     }
 
     /// A periodic cell `CRYST1` cannot carry as the structure's cell: one not
@@ -406,13 +409,13 @@ pub enum PdbWriteIssue {
         order: Option<BondOrder>,
     },
     /// The 1-based geometry `geometry` of a structure set has state PDB cannot
-    /// carry, with [`PdbWriteOptions::set_metadata`] set to fail. A
+    /// carry, with [`PdbWriteOptions::geometry_metadata`] set to fail. A
     /// temperature is reported for the first geometry.
     UnrepresentableGeometry {
         /// The 1-based geometry number.
         geometry: usize,
-        /// The state; see [`PdbWriteOptions::set_metadata`].
-        field: StructureField,
+        /// The state; see [`PdbWriteOptions::geometry_metadata`].
+        field: GeometryField,
     },
     /// The structure set has no geometries.
     EmptyStructureSet,
@@ -580,7 +583,7 @@ impl<'a> PdbSource<'a> {
     }
 
     /// A structure set, one `MODEL` per geometry in geometry order. The state PDB
-    /// cannot carry follows [`PdbWriteOptions::set_metadata`], and the
+    /// cannot carry follows [`PdbWriteOptions::geometry_metadata`], and the
     /// set's and geometries' properties [`PdbWriteOptions::properties`].
     pub fn structure_set(set: &'a StructureSet) -> Self {
         Self {
@@ -590,7 +593,7 @@ impl<'a> PdbSource<'a> {
     }
 
     /// States the metal coordination of interpretation reports as `LINK`
-    /// records: one report for a structure, one per geometry for a geometry
+    /// records: one report for a structure, one per geometry for a structure
     /// set. Coordination between residues is no bond of the
     /// structure, so without reports the entry has no `LINK` records.
     ///
@@ -621,8 +624,8 @@ impl<'a> PdbSource<'a> {
 }
 
 impl<'a> From<&'a Structure> for PdbSource<'a> {
-    fn from(model: &'a Structure) -> Self {
-        Self::structure(model)
+    fn from(structure: &'a Structure) -> Self {
+        Self::structure(structure)
     }
 }
 
@@ -677,8 +680,8 @@ pub(crate) fn write_pdb_to<'a>(
     let source = source.into();
     let (views, models) = match source.content {
         Content::Structure(view) => {
-            check_structure_state(Format::Pdb, view, options.state_policies())?;
-            omissions.record_structure_state(view, options.state_policies());
+            check_geometry_state(Format::Pdb, view, options.state_policies())?;
+            omissions.record_geometry_state(view, options.state_policies());
             (vec![view], false)
         }
         Content::StructureSet(set) => {
@@ -688,7 +691,7 @@ pub(crate) fn write_pdb_to<'a>(
             let unrepresentable = |(geometry, field)| {
                 fail(PdbWriteIssue::UnrepresentableGeometry { geometry, field })
             };
-            record_multi_model_structure_set(set, options.set_metadata, &mut omissions)
+            record_multi_model_structure_set(set, options.geometry_metadata, &mut omissions)
                 .map_err(unrepresentable)?;
             record_structure_set_properties(set, options.properties, &mut omissions)
                 .map_err(unrepresentable)?;

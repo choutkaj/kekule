@@ -135,7 +135,7 @@ pub enum TrajectoryIoErrorKind {
     FrameIndexOutOfRange,
     /// A decoded or supplied frame is invalid for its topology; the
     /// [`GeometryError`] is the source.
-    InvalidStructure,
+    InvalidGeometry,
     /// The caller's [`crate::diagnostics::Cancellation`] stopped the
     /// operation; [`crate::diagnostics::Cancelled`] is the source.
     Cancelled,
@@ -174,7 +174,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
             Self::CorruptCompressedData => "corrupt compressed trajectory data",
             Self::TopologyMismatch => "trajectory object belongs to a different topology",
             Self::FrameIndexOutOfRange => "trajectory frame index is out of range",
-            Self::InvalidStructure => "invalid trajectory frame",
+            Self::InvalidGeometry => "invalid trajectory frame",
             Self::Cancelled => "trajectory operation cancelled",
             Self::InvalidIndex => "invalid trajectory frame index",
             Self::IndexMismatch => "trajectory frame index does not match the file",
@@ -620,7 +620,7 @@ impl fmt::Display for TrajectoryIoError {
                     Some(frame) => format!("Frame {frame} does not exist."),
                     None => "The frame does not exist.".to_owned(),
                 },
-                Kind::InvalidStructure => match frame {
+                Kind::InvalidGeometry => match frame {
                     Some(frame) => format!("Frame {frame} is invalid for its topology."),
                     None => "The frame is invalid for its topology.".to_owned(),
                 },
@@ -650,7 +650,7 @@ impl std::error::Error for TrajectoryIoError {
 
 impl From<GeometryError> for TrajectoryIoError {
     fn from(error: GeometryError) -> Self {
-        Self::new(TrajectoryIoErrorKind::InvalidStructure).with_source(error)
+        Self::new(TrajectoryIoErrorKind::InvalidGeometry).with_source(error)
     }
 }
 

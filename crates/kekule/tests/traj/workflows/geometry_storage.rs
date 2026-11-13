@@ -568,7 +568,7 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
 }
 
 #[test]
-fn refresh_keeps_a_distribution_over_some_samples_or_none() {
+fn refresh_keeps_a_distribution_over_some_geometries_or_none() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
     let frames = frames_of(&all);
@@ -607,7 +607,7 @@ fn refresh_keeps_a_distribution_over_some_samples_or_none() {
 /// A host following a growing file takes the set out of its processed
 /// reader, refreshes it, and processes it again.
 #[test]
-fn a_processed_growing_file_reads_the_appended_samples() {
+fn a_processed_growing_file_reads_the_appended_geometries() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 7);
     let directory = Directory::new();
@@ -654,7 +654,7 @@ fn a_processed_growing_file_reads_the_appended_samples() {
 
 /// Wrapping and making whole leave geometries without a cell as they are.
 #[test]
-fn wrapping_a_file_without_cells_reads_the_samples_as_stored() {
+fn wrapping_a_file_without_cells_reads_the_geometries_as_stored() {
     let (path, topology) = fixtures()[0].clone();
     let set = open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let steps = ProcessingSteps::default()
@@ -713,13 +713,13 @@ fn a_set_in_memory_lends_what_a_file_reads() {
     let memory: StructureSet = file.load(0..file.len()).unwrap();
     let readers: [&dyn StructureSetRead; 2] = [&file, &memory];
     for index in 0..file.len() {
-        let [file_sample, memory_sample] = readers.map(|reader| reader.read(index).unwrap());
-        assert_eq!(file_sample, memory_sample);
+        let [file_geometry, memory_geometry] = readers.map(|reader| reader.read(index).unwrap());
+        assert_eq!(file_geometry, memory_geometry);
         assert!(memory
             .peek(index)
             .unwrap()
             .payload()
-            .shares_structure_with(&memory_sample));
+            .shares_storage_with(&memory_geometry));
     }
     assert_eq!(readers[0].order(), readers[1].order());
 }

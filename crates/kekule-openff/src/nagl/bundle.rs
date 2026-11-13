@@ -48,7 +48,7 @@ const METADATA_LIMIT: u64 = 64 * 1024 * 1024;
 pub(super) const WEIGHTS_LIMIT: u64 = 256 * 1024 * 1024;
 
 fn error(detail: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::Structure, detail)
+    Error::new(ErrorKind::Model, detail)
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
@@ -92,7 +92,7 @@ pub(super) fn parse(metadata: &[u8], weights: &[u8]) -> Result<Bundle> {
         )));
     }
     let manifest: Manifest = serde_json::from_slice(metadata)
-        .map_err(|e| Error::caused(ErrorKind::Structure, "Cannot read the bundle manifest.", e))?;
+        .map_err(|e| Error::caused(ErrorKind::Model, "Cannot read the bundle manifest.", e))?;
     if manifest.schema != 2 || manifest.preparation.as_deref() != Some(PREPARATION) {
         return Err(error(format!(
             "The bundle is not schema 2 with preparation profile {PREPARATION:?}."

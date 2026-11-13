@@ -58,7 +58,7 @@ fn member(points: Vec<Point3>, weight: f64) -> (Geometry, f64) {
     (geometry, weight)
 }
 
-/// Distinct weighted geometries, each its own state.
+/// Distinct weighted samples, each its own state.
 fn conformers(
     topology: impl Into<Arc<Topology>>,
     members: impl IntoIterator<Item = (Geometry, f64)>,
@@ -74,7 +74,7 @@ fn conformers(
     set
 }
 
-/// Applies `partition` and checks that regrouping kept every geometry and
+/// Applies `partition` and checks that regrouping kept every sample and
 /// weight.
 fn regrouped(ensemble: &StructureSet, partition: &Partition) -> StructureSet {
     let mut regrouped = ensemble.clone();
@@ -146,8 +146,8 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
         .unwrap();
     assert_eq!(clusters, partition(&[0, 0, 1, 1], &[1, 2]));
     assert_eq!(clusters.samples(1).collect::<Vec<_>>(), [2, 3]);
-    // Applied, the clusters are states whose populations follow the geometries,
-    // relative to the heaviest geometry.
+    // Applied, the clusters are states whose populations follow the samples,
+    // relative to the heaviest sample.
     let states = regrouped(&ensemble, &clusters);
     assert_eq!(states.state(0).unwrap().population(), 1.0 / 3.0 + 1.0);
     assert_eq!(states.state(1).unwrap().population(), 2.0 / 3.0 + 1.0 / 3.0);
@@ -159,7 +159,7 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
         partition(&[0, 0, 0, 0], &[1])
     );
 
-    // By ascending state energy a geometry of the lowest state of each shape
+    // By ascending state energy a sample of the lowest state of each shape
     // leads.
     for (index, energy) in [0.0, 5.0, 1.0, 3.0].into_iter().enumerate() {
         set_energy(&mut ensemble, index, Some(energy));
@@ -291,7 +291,7 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
     set_energy(&mut ensemble, 2, Some(7.0));
 
     // Each cluster merges whole conformer states, so it keeps the energy of
-    // its representative's state: none for geometry 1, 7 kJ/mol for geometry 2.
+    // its representative's state: none for sample 1, 7 kJ/mol for sample 2.
     let clustered = regrouped(&ensemble, &partition(&[0, 0, 1, 1], &[1, 2]));
     let collapsed = clustered.collapse().unwrap();
     assert_eq!(collapsed.len(), 2);
@@ -345,7 +345,7 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             member(shape(false, true), f64::MAX),
         ],
     );
-    // Populations relative to the heaviest geometry do not overflow.
+    // Populations relative to the heaviest sample do not overflow.
     huge.distribution_mut()
         .unwrap()
         .regroup(partition(&[0, 0], &[0]))

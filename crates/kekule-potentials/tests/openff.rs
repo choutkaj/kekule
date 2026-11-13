@@ -340,7 +340,7 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
 }
 
 #[test]
-fn distribution_members_and_trajectory_frames_evaluate_like_models() {
+fn distribution_members_and_trajectory_frames_evaluate_like_structures() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let structure = structure(&topology);

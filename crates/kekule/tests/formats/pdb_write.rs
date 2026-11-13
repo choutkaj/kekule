@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use kekule::diagnostics::{
-    DiagnosticKind, FormatErrorDetail, StructureField, UnrepresentablePolicy, WriteOmission,
+    DiagnosticKind, FormatErrorDetail, GeometryField, UnrepresentablePolicy, WriteOmission,
 };
 use kekule::macromolecular::{
     ModelSelection, StructureInterpretOptions, StructureInterpretation,
@@ -59,12 +59,12 @@ fn issue(error: &kekule::diagnostics::FormatError) -> &PdbWriteIssue {
 #[test]
 fn deposited_entries_round_trip_through_the_writer() {
     for (name, text) in [("1CRN", CRAMBIN), ("1AKE", ADENYLATE_KINASE)] {
-        let model = interpret(text);
-        let written = pdb::write(&model, Default::default())
+        let structure = interpret(text);
+        let written = pdb::write(&structure, Default::default())
             .map(|(text, _)| text)
             .unwrap();
         let reread = interpret(&written);
-        let (left, right) = (reread.topology(), model.topology());
+        let (left, right) = (reread.topology(), structure.topology());
         assert_eq!(left.atom_count(), right.atom_count(), "{name}");
         assert_eq!(bonds(left), bonds(right), "{name}");
         assert_eq!(left.instance_count(), right.instance_count(), "{name}");
@@ -76,8 +76,8 @@ fn deposited_entries_round_trip_through_the_writer() {
             );
             assert_eq!(a.chain().author_id(), b.chain().author_id(), "{name}");
         }
-        assert_eq!(reread.cell(), model.cell(), "{name}");
-        // PDB -> model -> PDB is a fixed point.
+        assert_eq!(reread.cell(), structure.cell(), "{name}");
+        // PDB -> structure -> PDB is a fixed point.
         assert_eq!(
             pdb::write(&reread, Default::default())
                 .map(|(text, _)| text)
@@ -95,7 +95,8 @@ fn deposited_entries_round_trip_through_the_writer() {
             "{name}"
         );
     }
-    // 1CRN's P 1 21 1 cell is not the model's cell, so no CRYST1 is written.
+    // 1CRN's P 1 21 1 cell is not the structure's cell, so no CRYST1 is
+    // written.
     let crambin = pdb::write(&interpret(CRAMBIN), Default::default())
         .map(|(text, _)| text)
         .unwrap();
@@ -133,8 +134,8 @@ fn named_by_segment(text: &str) -> String {
 
 #[test]
 fn chains_named_by_segment_round_trip_under_the_segment_policy() {
-    let model = interpret(ADENYLATE_KINASE);
-    let (named, _) = pdb::write(&model, Default::default()).unwrap();
+    let structure = interpret(ADENYLATE_KINASE);
+    let (named, _) = pdb::write(&structure, Default::default()).unwrap();
     let segmented = named_by_segment(&named);
     let reread = interpret(&segmented);
     let chains = reread
@@ -161,20 +162,20 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
     assert_eq!(ters(&written), ters(&named));
     // One-character chains are written as before under the policy.
     assert_eq!(
-        pdb::write(&model, options).unwrap(),
+        pdb::write(&structure, options).unwrap(),
         (named, Default::default())
     );
 }
 
 /// Methane solvated in a 1.5 nm padded cube of water at 0.15 M salt.
 fn solvated() -> Structure {
-    let mut model = Structure::from_molecule(
+    let mut structure = Structure::from_molecule(
         smiles::to_molecules("C").unwrap().remove(0),
         &Positions::zeros(1),
     )
     .unwrap();
     solvation::add_periodic_box(
-        &mut model,
+        &mut structure,
         &PeriodicBoxOptions::Padding {
             padding: Quantity::new(1.5, NANOMETER),
             shape: BoxShape::Cube,
@@ -182,31 +183,31 @@ fn solvated() -> Structure {
     )
     .unwrap();
     solvation::solvate(
-        &mut model,
+        &mut structure,
         &SolventOptions::default().with_ionic_strength(Quantity::new(0.15, MOLAR)),
     )
     .unwrap();
-    model
+    structure
 }
 
 #[test]
 fn solvated_systems_export_their_solvent_chains_through_every_writer() {
-    let model = solvated();
-    let solvent = model
+    let structure = solvated();
+    let solvent = structure
         .topology()
         .chains()
         .map(|chain| chain.label_id().to_owned())
         .collect::<Vec<_>>();
     assert_eq!(solvent, ["SOL1", "ION1", "ION2"]);
     // Solvent counts no implicit hydrogen, as PDB and mmCIF readers infer.
-    for instance in model.topology().instances().skip(1) {
+    for instance in structure.topology().instances().skip(1) {
         let molecule = instance.definition().molecule();
         for (atom, _) in molecule.atoms() {
             assert_eq!(molecule.implicit_hydrogens(atom), Some(0));
         }
     }
     // By default PDB refuses the chain identifiers, and nothing else.
-    let error = pdb::write(&model, Default::default()).unwrap_err();
+    let error = pdb::write(&structure, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "SOL1"
@@ -214,7 +215,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
 
     // PDB writes the solvent chains as segments, which read back as chains.
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
-    let (text, report) = pdb::write(&model, options).unwrap();
+    let (text, report) = pdb::write(&structure, options).unwrap();
     assert!(report.omissions().contains(&WriteOmission::ChainIds {
         chains: solvent.len()
     }));
@@ -226,7 +227,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
     let reread = interpret(&text);
     assert_eq!(
         reread.topology().atom_count(),
-        model.topology().atom_count()
+        structure.topology().atom_count()
     );
     let chains = reread
         .topology()
@@ -241,7 +242,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
 
     // mmCIF names the chains as they are.
     let (cif, _) = mmcif::write(
-        [mmcif::MmcifBlockSource::structure(&model)],
+        [mmcif::MmcifBlockSource::structure(&structure)],
         Default::default(),
     )
     .unwrap();
@@ -252,7 +253,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
         .into_structure();
     assert_eq!(
         reread.topology().atom_count(),
-        model.topology().atom_count()
+        structure.topology().atom_count()
     );
     let chains = reread
         .topology()
@@ -289,13 +290,13 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
     let points = (0..5)
         .map(|index| Point3::new(f64::from(index) * 1.4, 0.0, 0.0))
         .collect::<Vec<_>>();
-    let model = Structure::new(
+    let structure = Structure::new(
         topology,
         Positions::from_vec(Quantity::new(points, ANGSTROM)).unwrap(),
     )
     .unwrap();
     let omit = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let (written, report) = pdb::write(&model, omit).unwrap();
+    let (written, report) = pdb::write(&structure, omit).unwrap();
     // [O-] and [Na+] fix their counts.
     assert_eq!(
         report.omissions(),
@@ -318,7 +319,7 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
     assert!(lines.contains(&"CONECT    2    1    3    3    4"));
     assert!(lines.contains(&"CONECT    3    2    2"));
     let reread = interpret(&written);
-    assert_eq!(bonds(reread.topology()), bonds(model.topology()));
+    assert_eq!(bonds(reread.topology()), bonds(structure.topology()));
 }
 
 #[test]
@@ -328,12 +329,12 @@ HETATM    1  O   HOH A9999       0.000   0.000   0.000  1.00  0.00           O
 HETATM    2  O   HOH AA000       3.000   0.000   0.000  1.00  0.00           O
 END
 ";
-    let model = interpret(text);
-    let written = pdb::write(&model, Default::default())
+    let structure = interpret(text);
+    let written = pdb::write(&structure, Default::default())
         .map(|(text, _)| text)
         .unwrap();
     assert_eq!(written, text);
-    let numbers = model
+    let numbers = structure
         .topology()
         .residues()
         .map(|residue| residue.author_seq_id().unwrap().to_owned())
@@ -365,14 +366,14 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
 "
         )
     };
-    let model = |text: &str| {
+    let structure = |text: &str| {
         mmcif::parse_str(text, Default::default())
             .unwrap()
             .interpret(Default::default())
             .unwrap()
             .into_structure()
     };
-    let error = pdb::write(&model(&cif("AB", "HOH")), Default::default())
+    let error = pdb::write(&structure(&cif("AB", "HOH")), Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
@@ -380,7 +381,7 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
         issue(&error),
         PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "AB"
     ));
-    let error = pdb::write(&model(&cif("A", "LONG")), Default::default())
+    let error = pdb::write(&structure(&cif("A", "LONG")), Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
@@ -389,7 +390,7 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
     ));
     // Omitting chemistry does not relax identifiers.
     let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&model(&cif("AB", "HOH")), options)
+    assert!(pdb::write(&structure(&cif("AB", "HOH")), options)
         .map(|(text, _)| text)
         .is_err());
 }
@@ -398,8 +399,8 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
 fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     // A bracket atom fixes its implicit hydrogen count.
     let topology = smiles::to_topology("[CH4]").unwrap();
-    let model = Structure::new(topology, Positions::zeros(1)).unwrap();
-    let error = pdb::write(&model, Default::default())
+    let structure = Structure::new(topology, Positions::zeros(1)).unwrap();
+    let error = pdb::write(&structure, Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
@@ -411,17 +412,17 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     ));
     // The chemistry policy no longer covers implicit hydrogens.
     let chemistry = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&model, chemistry).is_err());
+    assert!(pdb::write(&structure, chemistry).is_err());
     let hydrogens = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let (_, report) = pdb::write(&model, hydrogens).unwrap();
+    let (_, report) = pdb::write(&structure, hydrogens).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::ImplicitHydrogens { atoms: 1 }]
     );
 
     let topology = smiles::to_topology("C$C").unwrap();
-    let model = Structure::new(topology, Positions::zeros(2)).unwrap();
-    let error = pdb::write(&model, Default::default())
+    let structure = Structure::new(topology, Positions::zeros(2)).unwrap();
+    let error = pdb::write(&structure, Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
@@ -432,8 +433,8 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
         }
     ));
     // Omitting implicit hydrogens does not omit other chemistry.
-    assert!(pdb::write(&model, hydrogens).is_err());
-    let (written, report) = pdb::write(&model, chemistry).unwrap();
+    assert!(pdb::write(&structure, hydrogens).is_err());
+    let (written, report) = pdb::write(&structure, chemistry).unwrap();
     assert!(!written.contains("CONECT"));
     assert_eq!(report.omissions(), [WriteOmission::Bonds { bonds: 1 }]);
 }
@@ -456,9 +457,11 @@ fn residues_must_be_consecutive_in_dense_order() {
             atom(second, 2),
         ])
         .unwrap();
-    let model = builder.build().unwrap();
+    let structure = builder.build().unwrap();
     let omit = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let error = pdb::write(&model, omit).map(|(text, _)| text).unwrap_err();
+    let error = pdb::write(&structure, omit)
+        .map(|(text, _)| text)
+        .unwrap_err();
     assert!(matches!(
         issue(&error),
         PdbWriteIssue::NonContiguousResidue { .. }
@@ -485,7 +488,7 @@ fn one_state(
 }
 
 #[test]
-fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
+fn structure_sets_write_models_and_geometry_state_fails_unless_omitted() {
     let topology = smiles::to_topology("C").unwrap();
     let positions = |x: f64| {
         Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
@@ -522,7 +525,7 @@ fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
         issue(&error),
         PdbWriteIssue::UnrepresentableGeometry {
             geometry: 2,
-            field: StructureField::State
+            field: GeometryField::State
         }
     ));
     assert_eq!(
@@ -542,25 +545,25 @@ fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
         issue(&error),
         PdbWriteIssue::UnrepresentableGeometry {
             geometry: 2,
-            field: StructureField::Energy
+            field: GeometryField::Energy
         }
     ));
     assert_eq!(
         error.to_string(),
         "Cannot write the PDB output. The state energy of geometry 2 has no PDB representation."
     );
-    let options = PdbWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit);
+    let options = PdbWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
     let (_, report) = pdb::write(&set, options).unwrap();
     assert_eq!(
         report.omissions(),
         [
-            WriteOmission::StructureState {
-                field: StructureField::Energy,
-                structures: 1
+            WriteOmission::GeometryState {
+                field: GeometryField::Energy,
+                geometries: 1
             },
-            WriteOmission::StructureState {
-                field: StructureField::State,
-                structures: 2
+            WriteOmission::GeometryState {
+                field: GeometryField::State,
+                geometries: 2
             }
         ]
     );
@@ -570,7 +573,7 @@ fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::UnrepresentableState(
-            StructureField::Weight
+            GeometryField::Weight
         ))
     );
     assert_eq!(
@@ -580,9 +583,9 @@ fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
     let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
     assert_eq!(
         report.omissions(),
-        [WriteOmission::StructureState {
-            field: StructureField::Weight,
-            structures: 1
+        [WriteOmission::GeometryState {
+            field: GeometryField::Weight,
+            geometries: 1
         }]
     );
 
@@ -597,7 +600,7 @@ fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
         issue(&error),
         PdbWriteIssue::UnrepresentableGeometry {
             geometry: 1,
-            field: StructureField::Temperature
+            field: GeometryField::Temperature
         }
     ));
     assert_eq!(
@@ -608,9 +611,9 @@ fn structure_sets_write_models_and_sample_state_fails_unless_omitted() {
     assert_eq!(text, written);
     assert_eq!(
         report.omissions(),
-        [WriteOmission::StructureState {
-            field: StructureField::Temperature,
-            structures: 2
+        [WriteOmission::GeometryState {
+            field: GeometryField::Temperature,
+            geometries: 2
         }]
     );
 }
@@ -636,20 +639,20 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
         issue(&error),
         PdbWriteIssue::UnrepresentableGeometry {
             geometry: 1,
-            field: StructureField::OrderCoordinate
+            field: GeometryField::OrderCoordinate
         }
     ));
     assert_eq!(
         error.to_string(),
         "Cannot write the PDB output. The order coordinate of geometry 1 has no PDB representation."
     );
-    let options = PdbWriteOptions::default().with_set_metadata(UnrepresentablePolicy::Omit);
+    let options = PdbWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
     let (written, report) = pdb::write(&scan, options).unwrap();
     assert_eq!(
         report.omissions(),
-        [WriteOmission::StructureState {
-            field: StructureField::OrderCoordinate,
-            structures: 3
+        [WriteOmission::GeometryState {
+            field: GeometryField::OrderCoordinate,
+            geometries: 3
         }]
     );
     assert_eq!(written.matches("MODEL ").count(), 3);
@@ -676,7 +679,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
         issue(&error),
         PdbWriteIssue::UnrepresentableGeometry {
             geometry: 1,
-            field: StructureField::OrderStep
+            field: GeometryField::OrderStep
         }
     ));
     let lone = history.get(0).unwrap();
@@ -684,7 +687,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::UnrepresentableState(
-            StructureField::OrderStep
+            GeometryField::OrderStep
         ))
     );
     assert_eq!(
@@ -694,9 +697,9 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
     assert_eq!(
         report.omissions(),
-        [WriteOmission::StructureState {
-            field: StructureField::OrderStep,
-            structures: 1
+        [WriteOmission::GeometryState {
+            field: GeometryField::OrderStep,
+            geometries: 1
         }]
     );
 
@@ -734,13 +737,13 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
     let cell = |lengths: Vector3, periodic: [bool; 3]| {
         PeriodicCell::orthorhombic(Quantity::new(lengths, ANGSTROM), periodic).unwrap()
     };
-    let model = |cell| {
+    let structure = |cell| {
         Structure::new(Arc::clone(&topology), Positions::zeros(1))
             .unwrap()
             .with_cell(cell)
     };
     let written = pdb::write(
-        &model(cell(Vector3::new(10.0, 20.0, 30.0), [true; 3])),
+        &structure(cell(Vector3::new(10.0, 20.0, 30.0), [true; 3])),
         Default::default(),
     )
     .map(|(text, _)| text)
@@ -759,7 +762,7 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
             PdbCellReason::Placeholder,
         ),
     ] {
-        let source = model(cell(lengths, periodic));
+        let source = structure(cell(lengths, periodic));
         let error = pdb::write(&source, Default::default())
             .map(|(text, _)| text)
             .unwrap_err();
@@ -786,14 +789,14 @@ fn sink_failures_are_io_errors_after_validation() {
             Ok(())
         }
     }
-    let model = interpret(CRAMBIN);
-    let error = pdb::write_to(&mut Failing, &model, Default::default()).unwrap_err();
+    let structure = interpret(CRAMBIN);
+    let error = pdb::write_to(&mut Failing, &structure, Default::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Io);
     let mut sink = Vec::new();
-    pdb::write_to(&mut sink, &model, Default::default()).unwrap();
+    pdb::write_to(&mut sink, &structure, Default::default()).unwrap();
     assert_eq!(
         String::from_utf8(sink).unwrap(),
-        pdb::write(&model, Default::default())
+        pdb::write(&structure, Default::default())
             .map(|(text, _)| text)
             .unwrap()
     );
@@ -927,8 +930,9 @@ fn mmcif_metal_coordination_round_trips_through_pdb() {
     editor
         .set_residue_component_ids(residue, label, Some("UNL".to_owned()))
         .unwrap();
-    let model = editor.finish().unwrap();
-    let source = PdbSource::structure(&model).with_reports(std::slice::from_ref(source.report()));
+    let structure = editor.finish().unwrap();
+    let source =
+        PdbSource::structure(&structure).with_reports(std::slice::from_ref(source.report()));
     let (written, report) = pdb::write(source, Default::default()).unwrap();
     assert!(report.omissions().is_empty(), "{:?}", report.omissions());
     assert_eq!(records(&written, "LINK").len(), 2);
@@ -1137,7 +1141,7 @@ fn coordination_link_records_would_not_select_is_reported() {
 }
 
 #[test]
-fn structure_sets_state_the_coordination_every_sample_states() {
+fn structure_sets_state_the_coordination_every_geometry_states() {
     // The same entry without its first LINK record and its CONECT records,
     // which list the coordination again, states three of the four
     // iron-sulfur records.
@@ -1163,7 +1167,7 @@ fn structure_sets_state_the_coordination_every_sample_states() {
     let set = one_state(
         full.structure().shared_topology(),
         [full.structure(), partial.structure()]
-            .map(|model| model.as_structure_view().positions().clone()),
+            .map(|structure| structure.as_structure_view().positions().clone()),
     );
     let options = PdbWriteOptions::default();
 

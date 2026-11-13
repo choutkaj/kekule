@@ -415,7 +415,7 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
         vec![key("system_note")]
     );
     assert_eq!(
-        first.report().cleared_structure_properties(),
+        first.report().cleared_geometry_properties(),
         vec![key("energy")]
     );
     assert_eq!(
@@ -423,13 +423,13 @@ fn complete_import_preserves_every_scope_and_explicit_definition_reuse() {
         vec![key("system_note")]
     );
     assert_eq!(
-        first.report().omitted_structure_properties(),
+        first.report().omitted_geometry_properties(),
         vec![key("energy")]
     );
     let second = editor
         .append_structure(&source.as_structure_view())
         .unwrap();
-    assert!(second.report().cleared_structure_properties().is_empty());
+    assert!(second.report().cleared_geometry_properties().is_empty());
     assert!(second.report().cleared_topology_properties().is_empty());
     let result = editor.finish().unwrap();
     let target = &result;
@@ -825,7 +825,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
 }
 
 #[test]
-fn borrowed_member_sample_and_plain_finish_need_no_intermediate_model() {
+fn borrowed_member_geometry_and_plain_finish_need_no_intermediate_structure() {
     let source = annotated(None);
     let mut set = StructureSet::from_structures([source.clone()]).unwrap();
     set.set_distribution(Some(

@@ -1,7 +1,7 @@
 //! Reads an mmCIF data block into the source-neutral interpretation input.
 use std::collections::BTreeMap;
 
-use super::types::{geometry_error, poll};
+use super::types::{poll, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError, FormatErrorDetail};
 use crate::math::PeriodicCell;
 use crate::molecule::BondOrder;
@@ -40,14 +40,14 @@ pub(crate) fn interpret_mmcif(
         .filter(|block| block.has_category("_atom_site"))
         .collect::<Vec<_>>();
     if blocks.is_empty() {
-        return Err(geometry_error(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "The document has no _atom_site category.",
         ));
     }
     if blocks.len() > 1 {
-        return Err(geometry_error(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "More than one data block has _atom_site data.",
@@ -122,7 +122,7 @@ pub(crate) fn alternate_location_inventory(
     let entities = read_entity_types(block)?;
     let asym = read_asym_entities(block)?;
     let table = block.category("_atom_site")?.ok_or_else(|| {
-        geometry_error(
+        structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "The data block has no _atom_site category.",
@@ -166,14 +166,14 @@ fn mmcif_source(
     let entities = read_entity_types(block)?;
     let asym_entities = read_asym_entities(block)?;
     let atom_table = block.category("_atom_site")?.ok_or_else(|| {
-        geometry_error(
+        structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "The data block has no _atom_site category.",
         )
     })?;
     if atom_table.row_count() == 0 {
-        return Err(geometry_error(
+        return Err(structure_error(
             DiagnosticKind::Inconsistent,
             None,
             "The _atom_site category has no rows.",

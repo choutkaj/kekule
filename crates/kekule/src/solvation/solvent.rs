@@ -13,7 +13,7 @@ use crate::{
 };
 use std::{fmt, sync::Arc};
 
-/// Built-in coordinate structure. This does not install force-field parameters.
+/// Built-in coordinate model. This does not install force-field parameters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WaterModel {
@@ -314,7 +314,7 @@ pub struct SolvationReport {
     pub(crate) charge_basis: SolvationChargeBasis,
     pub(crate) seed: u64,
     pub(crate) cleared_topology_properties: Vec<PropertyKey>,
-    pub(crate) cleared_structure_properties: Vec<PropertyKey>,
+    pub(crate) cleared_geometry_properties: Vec<PropertyKey>,
 }
 
 impl SolvationReport {
@@ -353,9 +353,9 @@ impl SolvationReport {
         &self.cleared_topology_properties
     }
 
-    /// Destination structure owner keys cleared because the structure changed.
-    pub fn cleared_structure_properties(&self) -> &[PropertyKey] {
-        &self.cleared_structure_properties
+    /// Destination geometry owner keys cleared because the structure changed.
+    pub fn cleared_geometry_properties(&self) -> &[PropertyKey] {
+        &self.cleared_geometry_properties
     }
 }
 
@@ -395,8 +395,8 @@ pub enum SolvationError {
     },
     /// A quantity could not be converted to the required unit; see the source.
     Unit(UnitError),
-    /// A periodic-geometry calculation failed; see the source.
-    Geometry(LatticeError),
+    /// A lattice calculation failed; see the source.
+    Lattice(LatticeError),
     /// Position data was rejected; see the source.
     Position(DenseArrayError),
     /// Building the solvated structure failed; see the source.
@@ -442,7 +442,7 @@ impl fmt::Display for SolvationError {
                 "Cannot place {requested} ions: only {placed} water sites satisfy the ion separation."
             ),
             Self::Unit(error) => error.fmt(f),
-            Self::Geometry(error) => error.fmt(f),
+            Self::Lattice(error) => error.fmt(f),
             Self::Position(error) => error.fmt(f),
             Self::Build(_) => f.write_str("Cannot build the solvated structure."),
             Self::Hierarchy(_) => f.write_str("Cannot build the solvent hierarchy."),
@@ -453,7 +453,7 @@ impl std::error::Error for SolvationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unit(e) => e.source(),
-            Self::Geometry(e) => e.source(),
+            Self::Lattice(e) => e.source(),
             Self::Position(e) => e.source(),
             Self::Build(e) => Some(e),
             Self::Hierarchy(e) => Some(e),
@@ -471,7 +471,7 @@ macro_rules! from_error {
     };
 }
 from_error!(UnitError, Unit);
-from_error!(LatticeError, Geometry);
+from_error!(LatticeError, Lattice);
 from_error!(DenseArrayError, Position);
 from_error!(StructureBuildError, Build);
 from_error!(HierarchyError, Hierarchy);

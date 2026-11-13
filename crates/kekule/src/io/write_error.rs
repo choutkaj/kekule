@@ -1,6 +1,6 @@
 //! Failures of the molecule-encoding writers (SMILES and Molfile CTABs).
 use crate::diagnostics::{
-    DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
+    DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField, LimitExceeded,
 };
 use crate::structure::{
     Distribution, Order, Place, SetContext, StructureKind, StructureSet, StructureView,
@@ -197,11 +197,11 @@ pub enum WriteOmission {
         chains: usize,
     },
     /// Geometry or trajectory frame state the format cannot carry.
-    StructureState {
+    GeometryState {
         /// The state left out.
-        field: StructureField,
+        field: GeometryField,
         /// The geometries or frames whose state was left out.
-        structures: usize,
+        geometries: usize,
     },
 }
 
@@ -253,12 +253,12 @@ impl StatePolicies {
     }
 
     /// The policy that decides about `field`.
-    const fn of(self, field: StructureField) -> UnrepresentablePolicy {
+    const fn of(self, field: GeometryField) -> UnrepresentablePolicy {
         match field {
-            StructureField::AtomProperties
-            | StructureField::BondProperties
-            | StructureField::Properties
-            | StructureField::SetProperties => self.properties,
+            GeometryField::AtomProperties
+            | GeometryField::BondProperties
+            | GeometryField::Properties
+            | GeometryField::SetProperties => self.properties,
             _ => self.policy,
         }
     }
@@ -269,15 +269,15 @@ impl StatePolicies {
 /// temperature and the order belong to the whole set.
 pub(crate) fn unrepresentable_state(
     format: impl std::fmt::Display,
-    field: StructureField,
+    field: GeometryField,
     geometry: Option<usize>,
 ) -> String {
     match (field, geometry) {
-        (StructureField::Temperature, _) => {
+        (GeometryField::Temperature, _) => {
             format!("The ensemble temperature has no {format} representation.")
         }
-        (StructureField::Order, _) => format!("The geometry order has no {format} representation."),
-        (StructureField::SetProperties, _) => {
+        (GeometryField::Order, _) => format!("The geometry order has no {format} representation."),
+        (GeometryField::SetProperties, _) => {
             format!("The structure set properties have no {format} representation.")
         }
         (field, Some(geometry)) => {
@@ -293,9 +293,9 @@ pub(crate) fn unrepresentable_state(
 
 /// The sentence for the `field` of a lone structure that `format` cannot
 /// carry: of the geometry for a geometry or a frame, of the structure otherwise.
-fn unrepresentable_structure_state(
+fn unrepresentable_geometry_state(
     format: Format,
-    field: StructureField,
+    field: GeometryField,
     kind: StructureKind<'_>,
 ) -> String {
     match kind {
@@ -309,17 +309,17 @@ fn unrepresentable_structure_state(
 
 /// The verb for `field` as the subject: "have" for a plural field, "has"
 /// otherwise.
-const fn verb(field: StructureField) -> &'static str {
+const fn verb(field: GeometryField) -> &'static str {
     match field {
-        StructureField::Velocities
-        | StructureField::Forces
-        | StructureField::StateProperties
-        | StructureField::AtomProperties
-        | StructureField::BondProperties
-        | StructureField::Properties
-        | StructureField::SetProperties
-        | StructureField::Occupancies
-        | StructureField::BFactors => "have",
+        GeometryField::Velocities
+        | GeometryField::Forces
+        | GeometryField::StateProperties
+        | GeometryField::AtomProperties
+        | GeometryField::BondProperties
+        | GeometryField::Properties
+        | GeometryField::SetProperties
+        | GeometryField::Occupancies
+        | GeometryField::BFactors => "have",
         _ => "has",
     }
 }
@@ -349,14 +349,17 @@ impl Omissions {
             O::Cell { structures }
             | O::Occupancies { structures }
             | O::BFactors { structures }
-            | O::StructureState { structures, .. } => structures,
+            | O::GeometryState {
+                geometries: structures,
+                ..
+            } => structures,
         };
         let added = count(&omission);
         if added == 0 {
             return;
         }
         let same_kind = |existing: &WriteOmission| match (existing, &omission) {
-            (O::StructureState { field: a, .. }, O::StructureState { field: b, .. }) => a == b,
+            (O::GeometryState { field: a, .. }, O::GeometryState { field: b, .. }) => a == b,
             _ => std::mem::discriminant(existing) == std::mem::discriminant(&omission),
         };
         let Some(existing) = self.0.iter_mut().find(|existing| same_kind(existing)) else {
@@ -379,19 +382,22 @@ impl Omissions {
             O::Cell { structures }
             | O::Occupancies { structures }
             | O::BFactors { structures }
-            | O::StructureState { structures, .. } => *structures += added,
+            | O::GeometryState {
+                geometries: structures,
+                ..
+            } => *structures += added,
         }
     }
 
     /// Records the state of the lone structure `view` that the policies
-    /// omit, in the order of [`lost_structure_state`]. Call it after
-    /// [`check_structure_state`] has passed.
-    pub(crate) fn record_structure_state(
+    /// omit, in the order of [`lost_geometry_state`]. Call it after
+    /// [`check_geometry_state`] has passed.
+    pub(crate) fn record_geometry_state(
         &mut self,
         view: StructureView<'_>,
         policies: StatePolicies,
     ) {
-        for field in lost_structure_state(view, policies) {
+        for field in lost_geometry_state(view, policies) {
             if policies.of(field) == UnrepresentablePolicy::Omit {
                 self.record(structure_omission(field, 1));
             }
@@ -405,11 +411,14 @@ impl Omissions {
 
 /// The omission of `field` from `structures` structures: occupancies and B
 /// factors have omissions of their own.
-fn structure_omission(field: StructureField, structures: usize) -> WriteOmission {
+fn structure_omission(field: GeometryField, structures: usize) -> WriteOmission {
     match field {
-        StructureField::Occupancies => WriteOmission::Occupancies { structures },
-        StructureField::BFactors => WriteOmission::BFactors { structures },
-        field => WriteOmission::StructureState { field, structures },
+        GeometryField::Occupancies => WriteOmission::Occupancies { structures },
+        GeometryField::BFactors => WriteOmission::BFactors { structures },
+        field => WriteOmission::GeometryState {
+            field,
+            geometries: structures,
+        },
     }
 }
 
@@ -422,7 +431,7 @@ fn structure_omission(field: StructureField, structures: usize) -> WriteOmission
 /// MD step, velocities, and forces; the structure's occupancies and B
 /// factors, unless the format writes them; and its per-atom, per-bond, and
 /// own properties and those of its set.
-fn lost_structure_state(view: StructureView<'_>, policies: StatePolicies) -> Vec<StructureField> {
+fn lost_geometry_state(view: StructureView<'_>, policies: StatePolicies) -> Vec<GeometryField> {
     let mut fields = Vec::new();
     let context = match view.kind() {
         StructureKind::InSet(context) => Some(context),
@@ -433,12 +442,12 @@ fn lost_structure_state(view: StructureView<'_>, policies: StatePolicies) -> Vec
             if !policies.writes_membership {
                 // A lone record cannot carry a weight relative to other
                 // geometries, so its weight is always left out.
-                fields.push(StructureField::Weight);
+                fields.push(GeometryField::Weight);
                 if membership.state_energy().is_some() {
-                    fields.push(StructureField::Energy);
+                    fields.push(GeometryField::Energy);
                 }
                 if membership.temperature().is_some() {
-                    fields.push(StructureField::Temperature);
+                    fields.push(GeometryField::Temperature);
                 }
             }
             let properties = context
@@ -446,7 +455,7 @@ fn lost_structure_state(view: StructureView<'_>, policies: StatePolicies) -> Vec
                 .and_then(|distribution| distribution.states().get(membership.state()))
                 .is_some_and(|state| !state.properties().is_empty());
             if membership.is_representative() && properties {
-                fields.push(StructureField::StateProperties);
+                fields.push(GeometryField::StateProperties);
             }
         }
         if !policies.writes_place {
@@ -462,23 +471,23 @@ fn lost_structure_state(view: StructureView<'_>, policies: StatePolicies) -> Vec
         .and_then(SetContext::set_properties)
         .is_some_and(|properties| !properties.is_empty())
     {
-        fields.push(StructureField::SetProperties);
+        fields.push(GeometryField::SetProperties);
     }
     fields
 }
 
 /// The occupancies and B factors `view` records.
-fn site_fields(view: StructureView<'_>) -> impl Iterator<Item = StructureField> {
+fn site_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> {
     [
         (
             view.occupancies()
                 .is_some_and(|values| values.iter().any(Option::is_some)),
-            StructureField::Occupancies,
+            GeometryField::Occupancies,
         ),
         (
             view.b_factors()
                 .is_some_and(|values| values.value().iter().any(Option::is_some)),
-            StructureField::BFactors,
+            GeometryField::BFactors,
         ),
     ]
     .into_iter()
@@ -486,18 +495,12 @@ fn site_fields(view: StructureView<'_>) -> impl Iterator<Item = StructureField> 
 }
 
 /// The per-atom, per-bond, and own properties `view` has, in that order.
-fn property_fields(view: StructureView<'_>) -> impl Iterator<Item = StructureField> {
+fn property_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> {
     let properties = view.properties();
     [
-        (
-            properties.atoms().has_data(),
-            StructureField::AtomProperties,
-        ),
-        (
-            properties.bonds().has_data(),
-            StructureField::BondProperties,
-        ),
-        (!properties.owner().is_empty(), StructureField::Properties),
+        (properties.atoms().has_data(), GeometryField::AtomProperties),
+        (properties.bonds().has_data(), GeometryField::BondProperties),
+        (!properties.owner().is_empty(), GeometryField::Properties),
     ]
     .into_iter()
     .filter_map(|(present, field)| present.then_some(field))
@@ -505,26 +508,26 @@ fn property_fields(view: StructureView<'_>) -> impl Iterator<Item = StructureFie
 
 /// The field a geometry's step or coordinate place is written as, if it has
 /// one.
-fn place_field(context: SetContext<'_>) -> Option<StructureField> {
+fn place_field(context: SetContext<'_>) -> Option<GeometryField> {
     match context.place() {
-        Some(Place::Step(_)) => Some(StructureField::OrderStep),
-        Some(Place::Coordinate(_)) => Some(StructureField::OrderCoordinate),
+        Some(Place::Step(_)) => Some(GeometryField::OrderStep),
+        Some(Place::Coordinate(_)) => Some(GeometryField::OrderCoordinate),
         _ => None,
     }
 }
 
 /// A geometry's time, MD step, velocities, and forces that are present, in
 /// that order.
-fn frame_fields(context: SetContext<'_>) -> impl Iterator<Item = StructureField> {
+fn frame_fields(context: SetContext<'_>) -> impl Iterator<Item = GeometryField> {
     let (time, step) = match context.place() {
         Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
         _ => (false, false),
     };
     [
-        (time, StructureField::Time),
-        (step, StructureField::Step),
-        (context.velocities().is_some(), StructureField::Velocities),
-        (context.forces().is_some(), StructureField::Forces),
+        (time, GeometryField::Time),
+        (step, GeometryField::Step),
+        (context.velocities().is_some(), GeometryField::Velocities),
+        (context.forces().is_some(), GeometryField::Forces),
     ]
     .into_iter()
     .filter_map(|(present, field)| present.then_some(field))
@@ -532,13 +535,13 @@ fn frame_fields(context: SetContext<'_>) -> impl Iterator<Item = StructureField>
 
 /// Fails for the first state of the lone structure `view` that `format`
 /// cannot carry and the policies do not omit, in the order of
-/// [`lost_structure_state`].
-pub(crate) fn check_structure_state(
+/// [`lost_geometry_state`].
+pub(crate) fn check_geometry_state(
     format: Format,
     view: StructureView<'_>,
     policies: StatePolicies,
 ) -> Result<(), FormatError> {
-    let lost = lost_structure_state(view, policies);
+    let lost = lost_geometry_state(view, policies);
     let field = lost
         .iter()
         .copied()
@@ -546,9 +549,7 @@ pub(crate) fn check_structure_state(
         // A membership with a state energy fails on the energy, the field
         // the reader would miss most.
         .map(|field| match field {
-            StructureField::Weight if lost.contains(&StructureField::Energy) => {
-                StructureField::Energy
-            }
+            GeometryField::Weight if lost.contains(&GeometryField::Energy) => GeometryField::Energy,
             field => field,
         });
     match field {
@@ -556,7 +557,7 @@ pub(crate) fn check_structure_state(
         Some(field) => Err(FormatError::write(
             format,
             DiagnosticKind::Unsupported,
-            unrepresentable_structure_state(format, field, view.kind()),
+            unrepresentable_geometry_state(format, field, view.kind()),
         )
         .with_detail(FormatErrorDetail::UnrepresentableState(field))),
     }
@@ -573,11 +574,11 @@ pub(crate) fn record_structure_set_properties(
     set: &StructureSet,
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
-) -> Result<(), (usize, StructureField)> {
+) -> Result<(), (usize, GeometryField)> {
     let set_properties = !set.properties().is_empty() && !set.is_empty();
     if policy == UnrepresentablePolicy::Fail {
         if set_properties {
-            return Err((1, StructureField::SetProperties));
+            return Err((1, GeometryField::SetProperties));
         }
         for (index, geometry) in set.iter().enumerate() {
             if let Some(field) = property_fields(geometry.as_structure_view()).next() {
@@ -587,9 +588,9 @@ pub(crate) fn record_structure_set_properties(
         return Ok(());
     }
     if set_properties {
-        omissions.record(WriteOmission::StructureState {
-            field: StructureField::SetProperties,
-            structures: set.len(),
+        omissions.record(WriteOmission::GeometryState {
+            field: GeometryField::SetProperties,
+            geometries: set.len(),
         });
     }
     for geometry in set {
@@ -618,7 +619,7 @@ pub(crate) fn record_multi_model_structure_set(
     set: &StructureSet,
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
-) -> Result<(), (usize, StructureField)> {
+) -> Result<(), (usize, GeometryField)> {
     let distribution = set.distribution();
     let contexts = set.iter().map(|view| SetContext::of_view(view.as_dyn()));
     let weight = contexts
@@ -645,23 +646,23 @@ pub(crate) fn record_multi_model_structure_set(
         let membership = context.membership();
         let mut fields = Vec::new();
         match membership {
-            None if distribution.is_some() => fields.push(StructureField::Membership),
+            None if distribution.is_some() => fields.push(GeometryField::Membership),
             None => {}
             Some(membership) => {
                 if membership.state_energy().is_some() {
-                    fields.push(StructureField::Energy);
+                    fields.push(GeometryField::Energy);
                 }
                 if Some(membership.weight()) != weight {
-                    fields.push(StructureField::Weight);
+                    fields.push(GeometryField::Weight);
                 }
                 if membership.state() != 0 {
-                    fields.push(StructureField::State);
+                    fields.push(GeometryField::State);
                 }
                 if with_properties.contains(&index) {
-                    fields.push(StructureField::StateProperties);
+                    fields.push(GeometryField::StateProperties);
                 }
                 if late.contains(&index) {
-                    fields.push(StructureField::Representative);
+                    fields.push(GeometryField::Representative);
                 }
             }
         }
@@ -672,10 +673,10 @@ pub(crate) fn record_multi_model_structure_set(
         };
         fields.extend(
             [
-                (time, StructureField::Time),
-                (step, StructureField::Step),
-                (context.velocities().is_some(), StructureField::Velocities),
-                (context.forces().is_some(), StructureField::Forces),
+                (time, GeometryField::Time),
+                (step, GeometryField::Step),
+                (context.velocities().is_some(), GeometryField::Velocities),
+                (context.forces().is_some(), GeometryField::Forces),
             ]
             .into_iter()
             .filter_map(|(present, field)| present.then_some(field)),
@@ -694,10 +695,10 @@ pub(crate) fn record_multi_model_structure_set(
             }
         }
         if temperature.is_some() {
-            return Err((1, StructureField::Temperature));
+            return Err((1, GeometryField::Temperature));
         }
         if bare_order && !set.is_empty() {
-            return Err((1, StructureField::Order));
+            return Err((1, GeometryField::Order));
         }
         return Ok(());
     }
@@ -706,7 +707,7 @@ pub(crate) fn record_multi_model_structure_set(
         .clone()
         .filter_map(|context| context.membership())
         .any(|membership| Some(membership.weight()) != weight);
-    let count = |field: StructureField| {
+    let count = |field: GeometryField| {
         contexts
             .clone()
             .enumerate()
@@ -714,44 +715,35 @@ pub(crate) fn record_multi_model_structure_set(
             .count()
     };
     let states = distribution.map_or(0, Distribution::state_count);
-    for (field, structures) in [
-        (StructureField::Weight, if unequal { members } else { 0 }),
-        (StructureField::Energy, count(StructureField::Energy)),
-        (StructureField::State, if states > 1 { members } else { 0 }),
+    for (field, geometries) in [
+        (GeometryField::Weight, if unequal { members } else { 0 }),
+        (GeometryField::Energy, count(GeometryField::Energy)),
+        (GeometryField::State, if states > 1 { members } else { 0 }),
         (
-            StructureField::StateProperties,
-            count(StructureField::StateProperties),
+            GeometryField::StateProperties,
+            count(GeometryField::StateProperties),
         ),
         (
-            StructureField::Representative,
-            count(StructureField::Representative),
+            GeometryField::Representative,
+            count(GeometryField::Representative),
         ),
         (
-            StructureField::Temperature,
+            GeometryField::Temperature,
             if temperature.is_some() { members } else { 0 },
         ),
+        (GeometryField::Order, if bare_order { set.len() } else { 0 }),
+        (GeometryField::Membership, count(GeometryField::Membership)),
+        (GeometryField::Time, count(GeometryField::Time)),
+        (GeometryField::Step, count(GeometryField::Step)),
+        (GeometryField::OrderStep, count(GeometryField::OrderStep)),
         (
-            StructureField::Order,
-            if bare_order { set.len() } else { 0 },
+            GeometryField::OrderCoordinate,
+            count(GeometryField::OrderCoordinate),
         ),
-        (
-            StructureField::Membership,
-            count(StructureField::Membership),
-        ),
-        (StructureField::Time, count(StructureField::Time)),
-        (StructureField::Step, count(StructureField::Step)),
-        (StructureField::OrderStep, count(StructureField::OrderStep)),
-        (
-            StructureField::OrderCoordinate,
-            count(StructureField::OrderCoordinate),
-        ),
-        (
-            StructureField::Velocities,
-            count(StructureField::Velocities),
-        ),
-        (StructureField::Forces, count(StructureField::Forces)),
+        (GeometryField::Velocities, count(GeometryField::Velocities)),
+        (GeometryField::Forces, count(GeometryField::Forces)),
     ] {
-        omissions.record(WriteOmission::StructureState { field, structures });
+        omissions.record(WriteOmission::GeometryState { field, geometries });
     }
     Ok(())
 }

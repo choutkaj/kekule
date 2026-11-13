@@ -51,7 +51,7 @@ use crate::structure::StructureView;
 /// // A set in memory lends every geometry.
 /// assert!(reader.peek(0).is_some());
 /// let geometry = reader.read(0)?;
-/// assert!(geometry.shares_structure_with(&set.get(0).unwrap()));
+/// assert!(geometry.shares_storage_with(&set.get(0).unwrap()));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait StructureSetRead: Send + Sync + fmt::Debug {
@@ -96,7 +96,7 @@ pub trait StructureSetRead: Send + Sync + fmt::Debug {
 /// Forwards every method to the reader behind a reference, a box, or an
 /// [`Arc`], so a [`Processed`](crate::traj::Processed) reader can borrow or
 /// share the reader below it.
-macro_rules! forward_sample_read {
+macro_rules! forward_structure_set_read {
     ($($pointer:ty),+) => {$(
         impl<T: StructureSetRead + ?Sized> StructureSetRead for $pointer {
             fn topology(&self) -> &Arc<Topology> {
@@ -130,7 +130,7 @@ macro_rules! forward_sample_read {
     )+};
 }
 
-forward_sample_read!(&T, Box<T>, Arc<T>);
+forward_structure_set_read!(&T, Box<T>, Arc<T>);
 
 /// Runs `visit` on geometry `index` of `reader`: lent when the reader lends
 /// it, read and checked against the reader's topology otherwise.

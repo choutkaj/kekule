@@ -1,13 +1,13 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::diagnostics::{
-    Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField,
+    counted, Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
 use crate::io::mmcif_cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::structure_interpret::{
     EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::io::write_error::{
-    check_structure_state, record_multi_model_structure_set, record_structure_set_properties,
+    check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
@@ -28,7 +28,7 @@ use entities::{
     entity_plan_from_report, generic_entity_plan, multi_model_entity_plan,
     normalize_entity_classifications,
 };
-use prepare::{prepare_model, validate_sample};
+use prepare::{prepare_model, validate_geometry};
 
 const MAX_COORDINATE_PRECISION: usize = 15;
 
@@ -41,7 +41,7 @@ const MAX_COORDINATE_PRECISION: usize = 15;
 pub struct MmcifWriteOptions {
     block_name: String,
     coordinate_precision: usize,
-    set_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
@@ -106,15 +106,15 @@ impl MmcifWriteOptions {
     /// block of one geometry with a membership, a place (a frame's time and
     /// MD step among them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
     /// the models without them and reports a
-    /// [`WriteOmission::StructureState`] for each field.
-    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
-        self.set_metadata
+    /// [`WriteOmission::GeometryState`] for each field.
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// Sets [`Self::set_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
-        self.set_metadata = set_metadata;
+    pub fn with_geometry_metadata(mut self, geometry_metadata: UnrepresentablePolicy) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
@@ -122,7 +122,7 @@ impl MmcifWriteOptions {
     /// properties of a structure set or of a geometry's set, which mmCIF cannot
     /// carry: by default a structure or set with any fails to write, and
     /// under [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::StructureState`]).
+    /// ([`WriteOmission::GeometryState`]).
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -136,7 +136,7 @@ impl MmcifWriteOptions {
 
     /// The policies for the state of a structure block.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.set_metadata, self.properties)
+        StatePolicies::with_sites(self.geometry_metadata, self.properties)
     }
 
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
@@ -177,7 +177,7 @@ impl Default for MmcifWriteOptions {
         Self {
             block_name: "model".to_owned(),
             coordinate_precision: 3,
-            set_metadata: UnrepresentablePolicy::Fail,
+            geometry_metadata: UnrepresentablePolicy::Fail,
             properties: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
@@ -307,9 +307,9 @@ pub enum MmcifWriteIssue {
         item: String,
     },
     /// The number of interpretation reports does not match the number of
-    /// models.
+    /// structures written.
     ReportCountMismatch {
-        /// The number of models.
+        /// The number of structures.
         expected: usize,
         /// The number of reports.
         actual: usize,
@@ -331,13 +331,13 @@ pub enum MmcifWriteIssue {
     /// The structure set has no geometries.
     EmptyStructureSet,
     /// The 1-based geometry `geometry` of a structure set has state mmCIF cannot
-    /// represent, with [`MmcifWriteOptions::set_metadata`] set to fail. A
+    /// represent, with [`MmcifWriteOptions::geometry_metadata`] set to fail. A
     /// temperature is reported for the first geometry.
     UnrepresentableGeometry {
         /// The 1-based geometry number.
         geometry: usize,
-        /// The state; see [`MmcifWriteOptions::set_metadata`].
-        field: StructureField,
+        /// The state; see [`MmcifWriteOptions::geometry_metadata`].
+        field: GeometryField,
     },
 }
 
@@ -609,7 +609,9 @@ impl fmt::Display for MmcifWriteIssue {
             }
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
-                "There are {actual} interpretation reports for {expected} structures."
+                "The block has {} and {}.",
+                counted(*expected, "structure", "structures"),
+                counted(*actual, "interpretation report", "interpretation reports")
             ),
             Self::IncompatibleGeometry { geometry, field } => write!(
                 f,
@@ -830,7 +832,7 @@ impl<'a> MmcifBlockSource<'a> {
 
     /// One multi-model block with one model per geometry of a structure set, in
     /// geometry order. The state mmCIF cannot carry follows
-    /// [`MmcifWriteOptions::set_metadata`].
+    /// [`MmcifWriteOptions::geometry_metadata`].
     pub fn structure_set(set: &'a StructureSet) -> Self {
         Self {
             content: BlockContent::StructureSet(set),
@@ -892,8 +894,8 @@ impl<'a> MmcifBlockSource<'a> {
 }
 
 impl<'a> From<&'a Structure> for MmcifBlockSource<'a> {
-    fn from(model: &'a Structure) -> Self {
-        Self::structure(model)
+    fn from(structure: &'a Structure) -> Self {
+        Self::structure(structure)
     }
 }
 
@@ -988,7 +990,7 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
                     let unrepresentable = |(geometry, field)| {
                         fail(MmcifWriteIssue::UnrepresentableGeometry { geometry, field })
                     };
-                    record_multi_model_structure_set(set, options.set_metadata, state)
+                    record_multi_model_structure_set(set, options.geometry_metadata, state)
                         .map_err(unrepresentable)?;
                     record_structure_set_properties(set, options.properties, state)
                         .map_err(unrepresentable)
@@ -1015,7 +1017,7 @@ fn write_model_block_to(
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
-    check_structure_state(Format::Mmcif, view, options.state_policies())?;
+    check_geometry_state(Format::Mmcif, view, options.state_policies())?;
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
@@ -1049,7 +1051,7 @@ fn write_model_block_to(
     )?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
-    omissions.record_structure_state(view, options.state_policies());
+    omissions.record_geometry_state(view, options.state_policies());
     if cell.is_none() && view.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }
@@ -1145,7 +1147,7 @@ fn write_multi_model_block_to(
             options.implicit_hydrogens,
             options.coordinate_precision,
         )?;
-        validate_sample(&first, &candidate, index + 1)?;
+        validate_geometry(&first, &candidate, index + 1)?;
         // A bond the reader derives in one model but not another is stated.
         for (connection, geometry) in first.connections.iter_mut().zip(&candidate.connections) {
             if connection.implied != geometry.implied {

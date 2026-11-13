@@ -89,7 +89,7 @@ fn independent_layouts_align_without_changing_identity_or_coordinates() {
 }
 
 #[test]
-fn explicit_pairs_preserve_order_and_fit_reordered_partial_models_in_mixed_units() {
+fn explicit_pairs_preserve_order_and_fit_reordered_partial_structures_in_mixed_units() {
     let source = points();
     let moving = structure(&source);
     let target = [

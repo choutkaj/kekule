@@ -57,7 +57,7 @@ fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b.iter())
-            .all(|(a, b)| Arc::ptr_eq(a.payload().structure(), b.payload().structure()))
+            .all(|(a, b)| Arc::ptr_eq(a.payload().state(), b.payload().state()))
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn requirements_read_as_they_are() {
 }
 
 #[test]
-fn an_order_has_one_value_per_sample_in_every_column() {
+fn an_order_has_one_value_per_geometry_in_every_column() {
     let mut set = set_at(&[0.0, 1.0]);
     assert_eq!(
         set.set_order(Some(Order::Step(vec![0]))),
@@ -218,7 +218,7 @@ fn an_order_has_one_value_per_sample_in_every_column() {
 }
 
 #[test]
-fn order_values_belong_to_the_set_not_to_its_samples() {
+fn order_values_belong_to_the_set_not_to_its_geometries() {
     let mut set = set_at(&[0.0, 1.0, 2.0]);
     set.set_order(Some(time_axis(vec![0.0, 2.0, 4.0], vec![0, 10, 20])))
         .unwrap();
@@ -264,7 +264,7 @@ fn order_values_belong_to_the_set_not_to_its_samples() {
 }
 
 #[test]
-fn any_sample_may_carry_site_fields_and_dynamics() {
+fn any_geometry_may_carry_site_fields_and_dynamics() {
     let mut set = set_at(&[0.0]);
     set.set_order(Some(Order::Step(vec![0]))).unwrap();
     let mut geometry = set.get_mut(0).unwrap();
@@ -313,7 +313,7 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
 }
 
 #[test]
-fn a_distribution_covers_all_samples_or_a_sorted_subset() {
+fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
     assert_eq!(
         Distribution::new(Members::Subset(vec![2, 1]), Partition::one_state(2)),
         Err(StructureSetError::UnsortedMembers)
@@ -477,7 +477,7 @@ fn distribution_of_one_state(members: usize) -> Distribution {
 }
 
 #[test]
-fn selecting_and_removing_samples_remaps_the_members() {
+fn selecting_and_removing_geometries_remaps_the_members() {
     // Five frames; frames 1-4 are an ensemble of two states.
     let mut set = set_at(&[0.0, 1.0, 2.0, 3.0, 4.0]);
     set.set_order(Some(Order::Step(vec![0, 1, 2, 3, 4])))
@@ -592,8 +592,8 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 
     let selected = shared.select([2, 0]).unwrap();
     assert!(Arc::ptr_eq(
-        selected.get(0).unwrap().payload().structure(),
-        shared.get(2).unwrap().payload().structure()
+        selected.get(0).unwrap().payload().state(),
+        shared.get(2).unwrap().payload().state()
     ));
     let collapsed = regrouped.collapse().unwrap();
     assert_eq!(collapsed.order(), None);
@@ -604,8 +604,8 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     assert!(shares_every_geometry(&collapsed, &regrouped));
     let states = regrouped.select_states([1]).unwrap();
     assert!(Arc::ptr_eq(
-        states.get(0).unwrap().payload().structure(),
-        shared.get(1).unwrap().payload().structure()
+        states.get(0).unwrap().payload().state(),
+        shared.get(1).unwrap().payload().state()
     ));
 
     // Editing one geometry of a clone copies that geometry alone.
@@ -616,13 +616,13 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
         .set_position_at(ATOM0, Quantity::new(Point3::new(9.0, 0.0, 0.0), NANOMETER))
         .unwrap();
     assert!(Arc::ptr_eq(
-        edited.get(0).unwrap().payload().structure(),
-        shared.get(0).unwrap().payload().structure()
+        edited.get(0).unwrap().payload().state(),
+        shared.get(0).unwrap().payload().state()
     ));
     assert!(!edited
         .get(1)
         .unwrap()
-        .shares_structure_with(&shared.get(1).unwrap()));
+        .shares_storage_with(&shared.get(1).unwrap()));
     assert_eq!(xs(&shared), [0.0, 1.0, 2.0]);
     assert_eq!(xs(&edited), [0.0, 9.0, 2.0]);
 
@@ -646,7 +646,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 fn distribution_operations_keep_their_results() {
     use crate::tests::debug_fingerprint as fingerprint;
     let mut set = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
-    assert_eq!(fingerprint(&set), 0x9661_9a29_dfa3_cb04);
+    assert_eq!(fingerprint(&set), 0xc1ab_ee67_1af5_633c);
     let distribution = set.distribution().unwrap();
     assert_eq!(
         fingerprint(&distribution.probabilities()),
@@ -676,10 +676,10 @@ fn distribution_operations_keep_their_results() {
         distribution.covering_population(0.0),
         Err(StructureSetError::InvalidFraction)
     );
-    assert_eq!(fingerprint(&set.collapse().unwrap()), 0x111e_e5db_69d1_366a);
+    assert_eq!(fingerprint(&set.collapse().unwrap()), 0x7c56_eadf_18ed_2b76);
 
     let mut energy_set = energy_conformers(&[3.0, 1.0, 2.0]);
-    assert_eq!(fingerprint(&energy_set), 0x5cc5_099f_3348_e72e);
+    assert_eq!(fingerprint(&energy_set), 0x996e_5d78_1f7b_8096);
     let distribution = energy_set.distribution().unwrap();
     assert_eq!(
         fingerprint(&distribution.ranked_by_energy()),
@@ -749,7 +749,7 @@ fn distribution_operations_keep_their_results() {
 }
 
 #[test]
-fn sample_views_write_the_sdf_records_they_always_wrote() {
+fn geometry_views_write_the_sdf_records_they_always_wrote() {
     use crate::tests::debug_fingerprint as fingerprint;
     let mut set = energy_conformers(&[2.5, 1.0]);
     set.push_member(Geometry::new(single_position(1.0)), None, 0, Some(3.0))
@@ -758,7 +758,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         .unwrap()
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    assert_eq!(fingerprint(&set), 0x797f_f62d_d300_adc4);
+    assert_eq!(fingerprint(&set), 0xd1f3_2255_067b_e88c);
     let options = crate::sdf::SdfWriteOptions::default();
     let views = set.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
@@ -775,7 +775,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         values: vec![30.0],
     }))
     .unwrap();
-    assert_eq!(fingerprint(&scan), 0xfcff_0753_c475_c131);
+    assert_eq!(fingerprint(&scan), 0x78d9_7dff_3870_37dd);
     let views = scan.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
         views.iter().map(crate::sdf::SdfRecordSource::structure),
@@ -847,7 +847,7 @@ fn assert_same_set(actual: &StructureSet, expected: &StructureSet) {
 }
 
 #[test]
-fn replacing_a_sample_keeps_its_place_and_membership() {
+fn replacing_a_geometry_keeps_its_place_and_membership() {
     let mut set = set_at(&[0.0, 1.0]);
     set.set_order(Some(Order::Step(vec![3, 4]))).unwrap();
     set.set_distribution(Some(
@@ -943,7 +943,7 @@ fn weighted_walks_join_members_and_samples() {
 }
 
 #[test]
-fn duplicates_in_a_selection_become_separate_samples() {
+fn duplicates_in_a_selection_become_separate_geometries() {
     let mut set = set_at(&[0.0, 1.0]);
     set.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
     set.set_distribution(Some(
@@ -974,7 +974,7 @@ fn duplicates_in_a_selection_become_separate_samples() {
     assert!(twice
         .get(0)
         .unwrap()
-        .shares_structure_with(&twice.get(1).unwrap()));
+        .shares_storage_with(&twice.get(1).unwrap()));
 
     let states = set.select_states([0, 0]).unwrap();
     assert_eq!(xs(&states), [0.0, 0.0]);
@@ -1007,7 +1007,7 @@ fn collapse_keeps_population_shares_of_any_members() {
     assert!(collapsed
         .get(0)
         .unwrap()
-        .shares_structure_with(&set.get(2).unwrap()));
+        .shares_storage_with(&set.get(2).unwrap()));
 
     // Weights whose sum overflows keep their ratios.
     let mut heavy = set_at(&[0.0, 1.0, 2.0]);
@@ -1031,7 +1031,7 @@ fn collapse_keeps_population_shares_of_any_members() {
 }
 
 #[test]
-fn members_pushed_into_a_distribution_of_every_sample() {
+fn members_pushed_into_a_distribution_of_every_geometry() {
     let mut set = set_at(&[0.0]);
     set.set_order(Some(Order::Step(vec![0]))).unwrap();
     set.set_distribution(Some(distribution_of_one_state(1)))
@@ -1169,7 +1169,7 @@ fn regrouping_a_split_state_drops_its_energy() {
 }
 
 #[test]
-fn constructors_refuse_mismatched_samples_and_layouts() {
+fn constructors_refuse_mismatched_geometries_and_layouts() {
     assert!(matches!(
         StructureSet::from_geometries(
             single_atom_topology(),
@@ -1304,7 +1304,7 @@ fn every_error_reads_as_a_sentence() {
                 expected: 2,
                 actual: 3,
             },
-            "The partition covers 3 geometries, but the distribution has 2 members.",
+            "The partition covers 3 samples, but the distribution has 2 members.",
         ),
         (
             E::WeightCountMismatch {
@@ -1333,7 +1333,7 @@ fn every_error_reads_as_a_sentence() {
                 geometry: 0,
                 state: 1,
             },
-            "Geometry 0 represents state 1. Remove the state's other geometries first.",
+            "Geometry 0 represents state 1. Remove the state's other samples first.",
         ),
         (
             E::InvalidTemperature,
@@ -1367,7 +1367,7 @@ fn every_error_reads_as_a_sentence() {
 }
 
 #[test]
-fn failed_and_empty_sample_edits_keep_the_structure_shared() {
+fn failed_and_empty_geometry_edits_keep_the_storage_shared() {
     let shared = Geometry::new(single_position(0.0)).with_cell(cell());
     let mut geometry = shared.clone();
     assert!(geometry
@@ -1393,10 +1393,10 @@ fn failed_and_empty_sample_edits_keep_the_structure_shared() {
     geometry.set_forces(None).unwrap();
     assert_eq!(geometry.take_velocities(), None);
     geometry.set_cell(Some(cell()));
-    assert!(geometry.shares_structure_with(&shared));
+    assert!(geometry.shares_storage_with(&shared));
     // A successful edit copies this geometry alone.
     geometry.set_cell(None);
-    assert!(!geometry.shares_structure_with(&shared));
+    assert!(!geometry.shares_storage_with(&shared));
     assert_eq!(shared.cell(), Some(&cell()));
 
     // The same through a set's guard.

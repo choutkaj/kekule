@@ -495,7 +495,7 @@ fn an_executor_that_skips_work_items_panics() {
 
 /// 1,000 geometries of the first 352 alpha carbons of RCSB 1AKE, each atom
 /// displaced by up to a geometry's own amplitude of 0.2 to 1.5 angstroms.
-fn adenylate_kinase_samples() -> (StructureSet, AtomSelection) {
+fn adenylate_kinase_geometries() -> (StructureSet, AtomSelection) {
     let structure = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),
@@ -532,11 +532,11 @@ fn adenylate_kinase_samples() -> (StructureSet, AtomSelection) {
 
 #[test]
 #[ignore = "timing of 1,000 geometries of 352 atoms; run in release with --ignored --nocapture"]
-fn clustering_timing_on_a_thousand_samples_of_352_atoms() {
+fn clustering_timing_on_a_thousand_geometries_of_352_atoms() {
     use kekule::clustering::{Cut, Linkage};
     use std::time::Instant;
 
-    let (ensemble, atoms) = adenylate_kinase_samples();
+    let (ensemble, atoms) = adenylate_kinase_geometries();
     let available = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let serial = ensemble
         .pairwise_fitted_rmsd(&atoms, Default::default())

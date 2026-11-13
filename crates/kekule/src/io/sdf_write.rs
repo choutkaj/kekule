@@ -9,9 +9,9 @@ use crate::units::{named_unit, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_structure};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::write_error::{check_structure_state, Omissions, StatePolicies};
+use super::write_error::{check_geometry_state, Omissions, StatePolicies};
 use super::{MolfileWriteVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField};
+use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField};
 
 /// Options of SDF writing; the default writes
 /// [`MolfileWriteVersion::Auto`] records and fails on content an SDF record
@@ -20,7 +20,7 @@ use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail,
 pub struct SdfWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
-    set_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
     properties: UnrepresentablePolicy,
 }
 
@@ -59,18 +59,21 @@ impl SdfWriteOptions {
     /// coordinate unit that is not a unit constant; and the occupancies and
     /// B factors of any structure. By default writing a structure with any of
     /// them fails. Under [`UnrepresentablePolicy::Omit`] the report counts
-    /// the records written without each ([`WriteOmission::StructureState`],
+    /// the records written without each ([`WriteOmission::GeometryState`],
     /// [`WriteOmission::Occupancies`], [`WriteOmission::BFactors`]). A
     /// geometry's membership, weight, state, state energy, and temperature, and
     /// its step or coordinate, are written as data fields.
-    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
-        self.set_metadata
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// Sets [`Self::set_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
-        self.set_metadata = set_metadata;
+    pub const fn with_geometry_metadata(
+        mut self,
+        geometry_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
@@ -78,7 +81,7 @@ impl SdfWriteOptions {
     /// properties of a geometry's set, which an SDF record cannot carry: by
     /// default a record of a structure with any fails to write, and under
     /// [`UnrepresentablePolicy::Omit`] the report counts the records written
-    /// without each ([`WriteOmission::StructureState`]). A caller writes the
+    /// without each ([`WriteOmission::GeometryState`]). A caller writes the
     /// values a record should carry as data fields.
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
@@ -122,7 +125,7 @@ pub const SDF_COORDINATE_FIELD: &str = "kekule.coordinate";
 pub const SDF_COORDINATE_UNIT_FIELD: &str = "kekule.coordinate.unit";
 
 /// The data fields a geometry's membership uses.
-const SAMPLE_FIELDS: [&str; 6] = [
+const MEMBERSHIP_FIELDS: [&str; 6] = [
     SDF_WEIGHT_FIELD,
     SDF_STATE_FIELD,
     SDF_REPRESENTATIVE_FIELD,
@@ -156,16 +159,16 @@ const PLACE_FIELDS: [&str; 3] = [
 /// with both a membership and a place writes both groups. A coordinate
 /// unit must be one of the unit constants of [`crate::units`], which the
 /// reader knows by symbol; another fails to write unless
-/// [`SdfWriteOptions::set_metadata`] omits the coordinate. A geometry's
+/// [`SdfWriteOptions::geometry_metadata`] omits the coordinate. A geometry's
 /// time, MD step, velocities, forces, and state properties, and a structure's
 /// occupancies and B factors, fail to write unless
-/// [`SdfWriteOptions::set_metadata`] omits them; structure and set
+/// [`SdfWriteOptions::geometry_metadata`] omits them; structure and set
 /// properties fail unless [`SdfWriteOptions::properties`] omits them. Add
 /// the values a record should carry, such as a geometry's energy, as data
 /// fields.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
-    model: StructureView<'a>,
+    structure: StructureView<'a>,
     title: &'a str,
     data_fields: &'a [SdfDataField],
 }
@@ -176,9 +179,9 @@ impl<'a> SdfRecordSource<'a> {
         Self::view(structure.as_structure_view())
     }
 
-    const fn view(model: StructureView<'a>) -> Self {
+    const fn view(structure: StructureView<'a>) -> Self {
         Self {
-            model,
+            structure,
             title: "",
             data_fields: &[],
         }
@@ -205,8 +208,8 @@ impl<'a> SdfRecordSource<'a> {
 }
 
 impl<'a> From<&'a Structure> for SdfRecordSource<'a> {
-    fn from(model: &'a Structure) -> Self {
-        Self::structure(model)
+    fn from(structure: &'a Structure) -> Self {
+        Self::structure(structure)
     }
 }
 
@@ -267,14 +270,14 @@ fn write_record(
     let policies = StatePolicies {
         writes_membership: true,
         writes_place: true,
-        ..StatePolicies::positions_only(options.set_metadata, options.properties)
+        ..StatePolicies::positions_only(options.geometry_metadata, options.properties)
     };
-    check_structure_state(Format::Sdf, record.model, policies)?;
+    check_geometry_state(Format::Sdf, record.structure, policies)?;
     // A geometry's membership, or its being outside the distribution, and its
     // step or coordinate place, which travel as data fields; whether its
     // set's distribution has weights; and whether its set has a
     // distribution.
-    let (membership, weighted, distributed, place) = match record.model.kind() {
+    let (membership, weighted, distributed, place) = match record.structure.kind() {
         StructureKind::InSet(context) => (
             context.membership(),
             context
@@ -289,7 +292,7 @@ fn write_record(
     };
     // Whether a geometry's own data uses the name.
     let reserved = |name: &str| {
-        (distributed && SAMPLE_FIELDS.contains(&name))
+        (distributed && MEMBERSHIP_FIELDS.contains(&name))
             || (place.is_some() && PLACE_FIELDS.contains(&name))
     };
     // A coordinate unit travels as the symbol of a unit constant, which the
@@ -298,7 +301,7 @@ fn write_record(
         Some(Place::Coordinate(coordinate))
             if named_unit(&coordinate.unit().to_string()) != Some(coordinate.unit()) =>
         {
-            if options.set_metadata == UnrepresentablePolicy::Fail {
+            if options.geometry_metadata == UnrepresentablePolicy::Fail {
                 return Err(FormatError::write(
                     Format::Sdf,
                     DiagnosticKind::Unsupported,
@@ -308,19 +311,19 @@ fn write_record(
                     ),
                 )
                 .with_detail(FormatErrorDetail::UnrepresentableState(
-                    StructureField::OrderCoordinate,
+                    GeometryField::OrderCoordinate,
                 )));
             }
-            omissions.record(WriteOmission::StructureState {
-                field: StructureField::OrderCoordinate,
-                structures: 1,
+            omissions.record(WriteOmission::GeometryState {
+                field: GeometryField::OrderCoordinate,
+                geometries: 1,
             });
             None
         }
         place => place,
     };
     let mut own_fields = match membership {
-        Some(membership) => sample_fields(membership, weighted),
+        Some(membership) => membership_fields(membership, weighted),
         None if distributed => vec![SdfDataField::new(SDF_MEMBER_FIELD, "false")],
         None => Vec::new(),
     };
@@ -345,12 +348,13 @@ fn write_record(
         }
     }
     let molfile = |error: FormatError| error.in_format(Format::Sdf);
-    check_cell(record.model, options.cell).map_err(molfile)?;
-    let ctab = render_structure(record.model, record.title, options.version).map_err(molfile)?;
-    if record.model.cell().is_some() {
+    check_cell(record.structure, options.cell).map_err(molfile)?;
+    let ctab =
+        render_structure(record.structure, record.title, options.version).map_err(molfile)?;
+    if record.structure.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }
-    omissions.record_structure_state(record.model, policies);
+    omissions.record_geometry_state(record.structure, policies);
     let sink = |error| FormatError::sink(Format::Sdf, error);
     writer.write_all(ctab.as_bytes()).map_err(sink)?;
     for field in record.data_fields.iter().chain(&own_fields) {
@@ -377,7 +381,7 @@ fn place_fields(place: Place) -> Vec<SdfDataField> {
 /// state's energy on a representative's record, and the distribution's
 /// temperature as data fields, numbers in the shortest decimal text that
 /// reads back to the same value.
-fn sample_fields(membership: Membership, weighted: bool) -> Vec<SdfDataField> {
+fn membership_fields(membership: Membership, weighted: bool) -> Vec<SdfDataField> {
     let mut fields = Vec::new();
     if weighted {
         fields.push(SdfDataField::new(

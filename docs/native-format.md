@@ -292,7 +292,7 @@ Values are in Kekule's canonical units: positions and cell vectors in nm,
 B factors in nm², velocities in nm/ps, forces in kJ/(mol·nm), energies in
 kJ/mol, temperatures in K, and time in ps. Cell vectors are the columns a, b, c;
 `periodic_axes` bits 0–2 mark a, b, c. Positions and vectors have exactly
-the topology's atom count; structure property tables have one row per
+the topology's atom count; geometry property tables have one row per
 topology atom and bond.
 
 A structure set stores its geometries in set order, after what describes them. A

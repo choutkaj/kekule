@@ -571,7 +571,7 @@ impl<R: StructureSetRead> Processed<R> {
             let shift = target - centroid(geometry.positions().values().value(), center);
             geometry
                 .translate_in_place(shift)
-                .map_err(structure(index))?;
+                .map_err(geometry_error(index))?;
         }
         Ok(())
     }
@@ -604,7 +604,7 @@ impl<R: StructureSetRead> Processed<R> {
             })?;
             geometry
                 .transform_in_place(&fitted.transform())
-                .map_err(structure(index))?;
+                .map_err(geometry_error(index))?;
         }
         Ok(geometry)
     }
@@ -650,7 +650,7 @@ impl<R: StructureSetRead> Processed<R> {
         for (atom, (point, total)) in center.positions_in_place().iter_mut().zip(&sum).enumerate() {
             *point = Point3::origin() + *total / count;
             if !point.is_finite() {
-                return Err(structure(index)(GeometryError::Array(
+                return Err(geometry_error(index)(GeometryError::Array(
                     DenseArrayError::NonFinite { index: atom },
                 )));
             }
@@ -731,7 +731,7 @@ fn periodic(geometry: usize) -> impl FnOnce(PeriodicError) -> StructureSetReadEr
 }
 
 /// Reports a step's failure to store its result in geometry `geometry`.
-fn structure(geometry: usize) -> impl FnOnce(GeometryError) -> StructureSetReadError {
+fn geometry_error(geometry: usize) -> impl FnOnce(GeometryError) -> StructureSetReadError {
     move |source| StructureSetReadError::Geometry {
         geometry,
         source: Box::new(source),

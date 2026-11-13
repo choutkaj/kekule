@@ -1,6 +1,6 @@
 //! Frame state the trajectory writers leave out or give frames themselves.
 
-use crate::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::structure::Geometry;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
@@ -111,52 +111,52 @@ fn omission(field: TrajectoryField, structures: usize) -> WriteOmission {
     match field {
         TrajectoryField::Occupancies => WriteOmission::Occupancies { structures },
         TrajectoryField::BFactors => WriteOmission::BFactors { structures },
-        field => WriteOmission::StructureState {
-            field: structure_field(field),
-            structures,
+        field => WriteOmission::GeometryState {
+            field: geometry_field(field),
+            geometries: structures,
         },
     }
 }
 
 /// The frame state `field` names.
-fn structure_field(field: TrajectoryField) -> StructureField {
+fn geometry_field(field: TrajectoryField) -> GeometryField {
     match field {
-        TrajectoryField::Time => StructureField::Time,
-        TrajectoryField::Step => StructureField::Step,
-        TrajectoryField::Velocities => StructureField::Velocities,
-        TrajectoryField::Forces => StructureField::Forces,
-        TrajectoryField::AtomProperties => StructureField::AtomProperties,
-        TrajectoryField::BondProperties => StructureField::BondProperties,
-        TrajectoryField::Properties => StructureField::Properties,
-        TrajectoryField::OrderStep => StructureField::OrderStep,
-        TrajectoryField::OrderCoordinate => StructureField::OrderCoordinate,
+        TrajectoryField::Time => GeometryField::Time,
+        TrajectoryField::Step => GeometryField::Step,
+        TrajectoryField::Velocities => GeometryField::Velocities,
+        TrajectoryField::Forces => GeometryField::Forces,
+        TrajectoryField::AtomProperties => GeometryField::AtomProperties,
+        TrajectoryField::BondProperties => GeometryField::BondProperties,
+        TrajectoryField::Properties => GeometryField::Properties,
+        TrajectoryField::OrderStep => GeometryField::OrderStep,
+        TrajectoryField::OrderCoordinate => GeometryField::OrderCoordinate,
         other => unreachable!("{other} is not frame state a policy omits"),
     }
 }
 
 /// The trajectory field that names the geometry state `field`.
-pub(crate) fn sample_field(field: StructureField) -> TrajectoryField {
+pub(crate) fn trajectory_field(field: GeometryField) -> TrajectoryField {
     match field {
-        StructureField::Weight => TrajectoryField::Weight,
-        StructureField::Energy => TrajectoryField::Energy,
-        StructureField::State => TrajectoryField::State,
-        StructureField::Temperature => TrajectoryField::Temperature,
-        StructureField::StateProperties => TrajectoryField::StateProperties,
-        StructureField::Representative => TrajectoryField::Representative,
-        StructureField::Order => TrajectoryField::Order,
-        StructureField::Membership => TrajectoryField::Membership,
-        StructureField::Time => TrajectoryField::Time,
-        StructureField::Step => TrajectoryField::Step,
-        StructureField::OrderStep => TrajectoryField::OrderStep,
-        StructureField::OrderCoordinate => TrajectoryField::OrderCoordinate,
-        StructureField::Velocities => TrajectoryField::Velocities,
-        StructureField::Forces => TrajectoryField::Forces,
-        StructureField::AtomProperties => TrajectoryField::AtomProperties,
-        StructureField::BondProperties => TrajectoryField::BondProperties,
-        StructureField::Properties => TrajectoryField::Properties,
-        StructureField::SetProperties => TrajectoryField::CollectionProperties,
-        StructureField::Occupancies => TrajectoryField::Occupancies,
-        StructureField::BFactors => TrajectoryField::BFactors,
+        GeometryField::Weight => TrajectoryField::Weight,
+        GeometryField::Energy => TrajectoryField::Energy,
+        GeometryField::State => TrajectoryField::State,
+        GeometryField::Temperature => TrajectoryField::Temperature,
+        GeometryField::StateProperties => TrajectoryField::StateProperties,
+        GeometryField::Representative => TrajectoryField::Representative,
+        GeometryField::Order => TrajectoryField::Order,
+        GeometryField::Membership => TrajectoryField::Membership,
+        GeometryField::Time => TrajectoryField::Time,
+        GeometryField::Step => TrajectoryField::Step,
+        GeometryField::OrderStep => TrajectoryField::OrderStep,
+        GeometryField::OrderCoordinate => TrajectoryField::OrderCoordinate,
+        GeometryField::Velocities => TrajectoryField::Velocities,
+        GeometryField::Forces => TrajectoryField::Forces,
+        GeometryField::AtomProperties => TrajectoryField::AtomProperties,
+        GeometryField::BondProperties => TrajectoryField::BondProperties,
+        GeometryField::Properties => TrajectoryField::Properties,
+        GeometryField::SetProperties => TrajectoryField::CollectionProperties,
+        GeometryField::Occupancies => TrajectoryField::Occupancies,
+        GeometryField::BFactors => TrajectoryField::BFactors,
     }
 }
 

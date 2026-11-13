@@ -660,7 +660,7 @@ fn adenylate_kinase() -> Structure {
 }
 
 /// Copies of `single` side by side, 10 nm apart, until 100,000 atoms.
-fn large_model(single: &Structure) -> Structure {
+fn large_structure(single: &Structure) -> Structure {
     let mut large = StructureEditor::new();
     let mut offset = 0.0;
     while large.topology().atom_count() < 100_000 {
@@ -768,7 +768,7 @@ fn new_atoms_are_named_uniquely_in_their_residues() {
 #[test]
 fn placing_on_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
-    let large = large_model(&single);
+    let large = large_structure(&single);
     assert!(large.atom_count() >= 100_000);
     let time = |structure: &Structure| {
         let mut editor = structure.to_editor();
@@ -1015,7 +1015,7 @@ fn fragments_attach_toward_directions_and_through_other_atoms() {
 #[test]
 fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
-    let large = large_model(&single);
+    let large = large_structure(&single);
     let phenyl = fragment("phenyl").unwrap();
     let time = |structure: &Structure| {
         let mut editor = structure.to_editor();

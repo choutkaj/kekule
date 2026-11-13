@@ -1,4 +1,4 @@
-//! One geometry of a [`super::StructureSet`] and the structure it shares.
+//! One geometry of a [`super::StructureSet`] and the state it shares.
 
 use std::sync::Arc;
 
@@ -10,14 +10,14 @@ use crate::units::Quantity;
 use crate::structure::owner::StructureView;
 use crate::structure::scalars::{canonical_b_factor, canonical_b_factors, AtomScalars};
 use crate::structure::state::{
-    check_property_rows, is_bound, site_readers, structure_readers, transform_cell,
+    check_property_rows, geometry_readers, is_bound, site_readers, transform_cell,
     transform_positions, validate_binding,
 };
 use crate::structure::{
     DenseArrayError, Forces, GeometryError, Positions, Structure, StructureKind, Velocities,
 };
 
-/// The structure state of a geometry, shared between clones and copied on
+/// The state of a geometry, shared between clones and copied on
 /// write.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GeometryState {
@@ -54,7 +54,7 @@ impl GeometryState {
         }
     }
 
-    /// A structure's structure state; the structure's topology is dropped.
+    /// A structure's geometry state; the structure's topology is dropped.
     pub(crate) fn from_structure(structure: Structure) -> Self {
         Self {
             positions: structure.positions,
@@ -102,14 +102,14 @@ impl GeometryState {
         })
     }
 
-    /// Replaces the positions of a possibly shared structure, copying the
+    /// Replaces the positions of a possibly shared state, copying the
     /// rest of it when it is shared but never the positions being replaced.
-    pub(crate) fn replace_positions(structure: &mut Arc<Self>, positions: Positions) {
-        match Arc::get_mut(structure) {
+    pub(crate) fn replace_positions(state: &mut Arc<Self>, positions: Positions) {
+        match Arc::get_mut(state) {
             Some(owned) => owned.positions = positions,
             None => {
-                let shared = &**structure;
-                *structure = Arc::new(Self {
+                let shared = &**state;
+                *state = Arc::new(Self {
                     positions,
                     cell: shared.cell,
                     occupancies: shared.occupancies.clone(),
@@ -133,24 +133,21 @@ impl GeometryState {
         Ok(())
     }
 
-    /// Binds a possibly shared structure to `topology`, allocating its bond
-    /// rows. A bound structure, such as one taken from another set of this
+    /// Binds a possibly shared state to `topology`, allocating its bond
+    /// rows. A bound state, such as one taken from another set of this
     /// topology, stays shared.
-    pub(crate) fn bind(
-        structure: &mut Arc<Self>,
-        topology: &Topology,
-    ) -> Result<(), GeometryError> {
-        let atoms = structure.positions.len();
-        validate_binding(atoms, &structure.properties, topology)?;
-        if !is_bound(atoms, &structure.properties, topology) {
-            Arc::make_mut(structure)
+    pub(crate) fn bind(state: &mut Arc<Self>, topology: &Topology) -> Result<(), GeometryError> {
+        let atoms = state.positions.len();
+        validate_binding(atoms, &state.properties, topology)?;
+        if !is_bound(atoms, &state.properties, topology) {
+            Arc::make_mut(state)
                 .properties
                 .bind_bond_rows(topology.bond_count());
         }
         Ok(())
     }
 
-    /// Borrows the structure bound to `topology`.
+    /// Borrows the state as a structure bound to `topology`.
     pub(crate) fn structure_view<'a>(
         &'a self,
         topology: &'a Arc<Topology>,
@@ -169,7 +166,7 @@ impl GeometryState {
 }
 
 /// One geometry of a [`super::StructureSet`]: positions in dense topology atom
-/// order, an optional periodic cell, structure properties, and, only when
+/// order, an optional periodic cell, geometry properties, and, only when
 /// stated, occupancies, B-factors, velocities, and forces.
 ///
 /// A geometry has no place and no weight: an order's values and a
@@ -179,7 +176,7 @@ impl GeometryState {
 /// geometries it takes, and [`Self::bind`] binds a geometry outside a set, as a
 /// [`FrameView`](crate::traj::FrameView) of it needs.
 ///
-/// The structure is shared storage: cloning a geometry, and therefore a set,
+/// Its state is shared storage: cloning a geometry, and therefore a set,
 /// copies no coordinates. Editing a geometry whose storage is shared copies
 /// that one geometry (copy on write), so the other holders are unaffected. An
 /// edit that fails, and one that changes nothing such as clearing absent
@@ -189,15 +186,15 @@ impl GeometryState {
 /// use kekule::structure::{Positions, Geometry};
 /// let geometry = Geometry::new(Positions::zeros(3));
 /// let mut moved = geometry.clone();
-/// assert!(moved.shares_structure_with(&geometry));
+/// assert!(moved.shares_storage_with(&geometry));
 /// moved.set_occupancies(Some(vec![Some(0.5); 3]))?;
-/// assert!(!moved.shares_structure_with(&geometry));
+/// assert!(!moved.shares_storage_with(&geometry));
 /// assert_eq!(geometry.occupancies(), None);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry {
-    structure: Arc<GeometryState>,
+    state: Arc<GeometryState>,
 }
 
 impl Geometry {
@@ -213,28 +210,28 @@ impl Geometry {
     }
 
     /// A geometry holding a structure's positions, cell, occupancies, B-factors,
-    /// and structure properties, moving them without copying; the structure's
+    /// and geometry properties, moving them without copying; the structure's
     /// topology is dropped.
     pub fn from_structure(structure: Structure) -> Self {
         Self::from_state(Arc::new(GeometryState::from_structure(structure)))
     }
 
-    pub(crate) const fn from_state(structure: Arc<GeometryState>) -> Self {
-        Self { structure }
+    pub(crate) const fn from_state(state: Arc<GeometryState>) -> Self {
+        Self { state }
     }
 
-    pub(crate) fn structure(&self) -> &Arc<GeometryState> {
-        &self.structure
+    pub(crate) fn state(&self) -> &Arc<GeometryState> {
+        &self.state
     }
 
-    pub(crate) fn structure_mut(&mut self) -> &mut Arc<GeometryState> {
-        &mut self.structure
+    pub(crate) fn state_mut(&mut self) -> &mut Arc<GeometryState> {
+        &mut self.state
     }
 
-    /// The structure for editing in place: one shared with a clone is
+    /// The state for editing in place: one shared with a clone is
     /// copied first, once. The caller keeps it bound and valid.
-    pub(crate) fn structure_in_place(&mut self) -> &mut GeometryState {
-        Arc::make_mut(&mut self.structure)
+    pub(crate) fn state_in_place(&mut self) -> &mut GeometryState {
+        Arc::make_mut(&mut self.state)
     }
 
     /// Binds the geometry to `topology`, as a set binds the geometries it takes:
@@ -262,7 +259,7 @@ impl Geometry {
     /// [`GeometryError::BondCountMismatch`] for bond rows of another
     /// topology. A failed binding changes nothing.
     pub fn bind(&mut self, topology: &Topology) -> Result<(), GeometryError> {
-        GeometryState::bind(&mut self.structure, topology)
+        GeometryState::bind(&mut self.state, topology)
     }
 
     /// This geometry projected onto the dense atom and bond rows of a
@@ -273,17 +270,17 @@ impl Geometry {
         bonds: &[usize],
     ) -> Result<Self, GeometryError> {
         Ok(Self::from_state(Arc::new(
-            self.structure.project(atoms, bonds)?,
+            self.state.project(atoms, bonds)?,
         )))
     }
 
-    /// The positions for writing in place: a structure shared with a clone
+    /// The positions for writing in place: a state shared with a clone
     /// is copied first, once. The caller keeps every value finite.
     pub(crate) fn positions_in_place(&mut self) -> &mut [Point3] {
-        Arc::make_mut(&mut self.structure).positions.as_mut_slice()
+        Arc::make_mut(&mut self.state).positions.as_mut_slice()
     }
 
-    /// Moves every position by `shift` in place, copying a shared structure
+    /// Moves every position by `shift` in place, copying a shared state
     /// once; the cell, velocities, and forces do not change under a
     /// translation. On failure some positions have moved, so the caller
     /// drops the geometry.
@@ -298,27 +295,27 @@ impl Geometry {
     }
 
     /// Applies a rigid transform in place, as
-    /// [`Self::apply_rigid_transform`] does, copying a shared structure
+    /// [`Self::apply_rigid_transform`] does, copying a shared state
     /// once. On failure the geometry is partly transformed, so the caller
     /// drops it.
     pub(crate) fn transform_in_place(
         &mut self,
         transform: &RigidTransform,
     ) -> Result<(), GeometryError> {
-        let cell = transform_cell(self.structure.cell, *transform)?;
-        let structure = Arc::make_mut(&mut self.structure);
-        structure.cell = cell;
-        for (index, point) in structure.positions.as_mut_slice().iter_mut().enumerate() {
+        let cell = transform_cell(self.state.cell, *transform)?;
+        let state = Arc::make_mut(&mut self.state);
+        state.cell = cell;
+        for (index, point) in state.positions.as_mut_slice().iter_mut().enumerate() {
             *point = transform.transform_point(*point);
             if !point.is_finite() {
                 return Err(DenseArrayError::NonFinite { index }.into());
             }
         }
         let rotate = |vector| transform.transform_vector(vector);
-        if let Some(velocities) = &mut structure.velocities {
+        if let Some(velocities) = &mut state.velocities {
             velocities.rotate_in_place(rotate)?;
         }
-        if let Some(forces) = &mut structure.forces {
+        if let Some(forces) = &mut state.forces {
             forces.rotate_in_place(rotate)?;
         }
         Ok(())
@@ -334,58 +331,58 @@ impl Geometry {
     /// Number of atoms, the length of every dense per-atom array of the
     /// geometry.
     pub fn atom_count(&self) -> usize {
-        self.structure.positions.len()
+        self.state.positions.len()
     }
 
-    /// Whether this geometry and `other` share one structure's storage, so
+    /// Whether this geometry and `other` share their storage, so
     /// that neither has copied the other's coordinates. Clones share until
     /// one of them is edited.
-    pub fn shares_structure_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.structure, &other.structure)
+    pub fn shares_storage_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
     }
 
     /// Per-atom velocities (nm/ps), or `None` when the geometry has none.
     pub fn velocities(&self) -> Option<&Velocities> {
-        self.structure.velocities.as_ref()
+        self.state.velocities.as_ref()
     }
 
     /// Per-atom forces (kJ/(mol·nm)), or `None` when the geometry has none.
     pub fn forces(&self) -> Option<&Forces> {
-        self.structure.forces.as_ref()
+        self.state.forces.as_ref()
     }
 
     /// Sets or clears velocities; they must have one vector per atom.
     pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), GeometryError> {
         match &velocities {
-            Some(values) => self.structure.check_len(values.len())?,
-            None if self.structure.velocities.is_none() => return Ok(()),
+            Some(values) => self.state.check_len(values.len())?,
+            None if self.state.velocities.is_none() => return Ok(()),
             None => {}
         }
-        Arc::make_mut(&mut self.structure).velocities = velocities;
+        Arc::make_mut(&mut self.state).velocities = velocities;
         Ok(())
     }
 
     /// Sets or clears forces; they must have one vector per atom.
     pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), GeometryError> {
         match &forces {
-            Some(values) => self.structure.check_len(values.len())?,
-            None if self.structure.forces.is_none() => return Ok(()),
+            Some(values) => self.state.check_len(values.len())?,
+            None if self.state.forces.is_none() => return Ok(()),
             None => {}
         }
-        Arc::make_mut(&mut self.structure).forces = forces;
+        Arc::make_mut(&mut self.state).forces = forces;
         Ok(())
     }
 
     /// Removes velocities, returning them.
     pub fn take_velocities(&mut self) -> Option<Velocities> {
-        self.structure.velocities.as_ref()?;
-        Arc::make_mut(&mut self.structure).velocities.take()
+        self.state.velocities.as_ref()?;
+        Arc::make_mut(&mut self.state).velocities.take()
     }
 
     /// Removes forces, returning them.
     pub fn take_forces(&mut self) -> Option<Forces> {
-        self.structure.forces.as_ref()?;
-        Arc::make_mut(&mut self.structure).forces.take()
+        self.state.forces.as_ref()?;
+        Arc::make_mut(&mut self.state).forces.take()
     }
 
     /// Replaces every position without changing the atom count. Units,
@@ -394,8 +391,8 @@ impl Geometry {
         &mut self,
         positions: Quantity<T>,
     ) -> Result<(), GeometryError> {
-        self.structure.positions.validate_all(&positions)?;
-        self.edit(|structure| Ok(structure.positions.set_all(positions)?))
+        self.state.positions.validate_all(&positions)?;
+        self.edit(|state| Ok(state.positions.set_all(positions)?))
     }
 
     /// Sets one position by dense atom index.
@@ -404,34 +401,34 @@ impl Geometry {
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
     ) -> Result<(), GeometryError> {
-        self.edit(|structure| Ok(structure.positions.set(atom.index(), position)?))
+        self.edit(|state| Ok(state.positions.set(atom.index(), position)?))
     }
 
     /// Replaces the periodic cell; `None` makes the geometry non-periodic.
     /// Positions are not wrapped or rescaled.
     pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
-        if self.structure.cell != cell {
-            Arc::make_mut(&mut self.structure).cell = cell;
+        if self.state.cell != cell {
+            Arc::make_mut(&mut self.state).cell = cell;
         }
     }
 
-    /// Replaces every structure annotation with rows of the same
-    /// dimensions, for example ones copied from another structure of the
+    /// Replaces every geometry annotation with rows of the same
+    /// dimensions, for example ones copied from another geometry of the
     /// same topology. A geometry not yet in a set accepts no bond rows.
     pub fn set_properties(&mut self, properties: GeometryProperties) -> Result<(), GeometryError> {
         check_property_rows(
-            self.structure.positions.len(),
-            &self.structure.properties,
+            self.state.positions.len(),
+            &self.state.properties,
             &properties,
         )?;
-        Arc::make_mut(&mut self.structure).properties = properties;
+        Arc::make_mut(&mut self.state).properties = properties;
         Ok(())
     }
 
-    /// Length-preserving mutable access to structure annotations. A shared
-    /// structure is copied when the guard is taken.
+    /// Length-preserving mutable access to geometry annotations. A shared
+    /// geometry is copied when the guard is taken.
     pub fn properties_mut(&mut self) -> GeometryPropertiesMut<'_> {
-        GeometryPropertiesMut::new(&mut Arc::make_mut(&mut self.structure).properties)
+        GeometryPropertiesMut::new(&mut Arc::make_mut(&mut self.state).properties)
     }
 
     /// Sets or clears one occupancy. Values must be finite.
@@ -440,9 +437,9 @@ impl Geometry {
         atom: TopologyAtomIndex,
         value: Option<f64>,
     ) -> Result<(), GeometryError> {
-        self.edit(|structure| {
-            let len = structure.positions.len();
-            structure.occupancies.set(atom, len, value)
+        self.edit(|state| {
+            let len = state.positions.len();
+            state.occupancies.set(atom, len, value)
         })
     }
 
@@ -451,9 +448,9 @@ impl Geometry {
         &mut self,
         values: Option<Vec<Option<f64>>>,
     ) -> Result<(), GeometryError> {
-        self.edit(|structure| {
-            let len = structure.positions.len();
-            structure.occupancies.replace(len, values)
+        self.edit(|state| {
+            let len = state.positions.len();
+            state.occupancies.replace(len, values)
         })
     }
 
@@ -465,9 +462,9 @@ impl Geometry {
         value: Option<Quantity<f64>>,
     ) -> Result<(), GeometryError> {
         let value = canonical_b_factor(value)?;
-        self.edit(|structure| {
-            let len = structure.positions.len();
-            structure.b_factors.set(atom, len, value)
+        self.edit(|state| {
+            let len = state.positions.len();
+            state.b_factors.set(atom, len, value)
         })
     }
 
@@ -477,9 +474,9 @@ impl Geometry {
         values: Option<Quantity<Vec<Option<f64>>>>,
     ) -> Result<(), GeometryError> {
         let values = canonical_b_factors(values)?;
-        self.edit(|structure| {
-            let len = structure.positions.len();
-            structure.b_factors.replace(len, values)
+        self.edit(|state| {
+            let len = state.positions.len();
+            state.b_factors.replace(len, values)
         })
     }
 
@@ -489,31 +486,31 @@ impl Geometry {
         &mut self,
         transform: &RigidTransform,
     ) -> Result<(), GeometryError> {
-        self.structure = Arc::new(self.structure.transformed(*transform)?);
+        self.state = Arc::new(self.state.transformed(*transform)?);
         Ok(())
     }
 
     fn storage_ref(&self) -> &GeometryState {
-        &self.structure
+        &self.state
     }
 
-    /// Runs an edit that changes nothing when it fails. A shared structure
-    /// is edited as a copy that replaces it only on success, so a failed
-    /// edit keeps the structure shared.
+    /// Runs an edit that changes nothing when it fails. A shared state is
+    /// edited as a copy that replaces it only on success, so a failed edit
+    /// keeps the state shared.
     fn edit<R>(
         &mut self,
         edit: impl FnOnce(&mut GeometryState) -> Result<R, GeometryError>,
     ) -> Result<R, GeometryError> {
-        if let Some(owned) = Arc::get_mut(&mut self.structure) {
+        if let Some(owned) = Arc::get_mut(&mut self.state) {
             return edit(owned);
         }
-        let mut copy = GeometryState::clone(&self.structure);
+        let mut copy = GeometryState::clone(&self.state);
         let result = edit(&mut copy)?;
-        self.structure = Arc::new(copy);
+        self.state = Arc::new(copy);
         Ok(result)
     }
 
-    structure_readers!();
+    geometry_readers!();
     site_readers!();
 }
 
@@ -595,12 +592,12 @@ impl GeometryMut<'_> {
         self.geometry.set_cell(cell);
     }
 
-    /// Replaces every structure annotation; see [`Geometry::set_properties`].
+    /// Replaces every geometry annotation; see [`Geometry::set_properties`].
     pub fn set_properties(&mut self, properties: GeometryProperties) -> Result<(), GeometryError> {
         self.geometry.set_properties(properties)
     }
 
-    /// Length-preserving mutable access to structure annotations; see
+    /// Length-preserving mutable access to geometry annotations; see
     /// [`Geometry::properties_mut`].
     pub fn properties_mut(&mut self) -> GeometryPropertiesMut<'_> {
         self.geometry.properties_mut()

@@ -111,7 +111,7 @@ fn real(value: &PropertyValue) -> f64 {
 }
 
 #[test]
-fn a_history_keeps_its_samples_steps_and_values_in_order() {
+fn a_history_keeps_its_geometries_steps_and_values_in_order() {
     let set = history();
     assert_eq!(set.order(), Some(&Order::Step(vec![0, 5, 10, 15])));
     assert_eq!(set.len(), 4);
@@ -160,7 +160,7 @@ fn a_scan_stores_coordinates_in_its_order_unit_in_any_order() {
 }
 
 #[test]
-fn samples_must_lie_on_the_order_and_fit_its_topology() {
+fn geometries_must_lie_on_the_order_and_fit_its_topology() {
     let mut steps = ordered(Order::Step(Vec::new()));
     let mut scan = ordered(coordinates(ANGSTROM));
     let geometry = || Geometry::new(positions(0.0));
@@ -201,7 +201,7 @@ fn samples_must_lie_on_the_order_and_fit_its_topology() {
 }
 
 #[test]
-fn sample_views_borrow_as_models_with_their_place() {
+fn geometry_views_borrow_as_structures_with_their_place() {
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
         [true; 3],
@@ -228,7 +228,7 @@ fn sample_views_borrow_as_models_with_their_place() {
         &view.shared_topology(),
         &scan.shared_topology()
     ));
-    // A geometry materialized as a structure keeps its structure, not its place.
+    // A geometry materialized as a structure keeps its geometry, not its place.
     let structure = geometry.to_structure();
     assert_eq!(
         structure.as_structure_view().kind(),
@@ -240,7 +240,7 @@ fn sample_views_borrow_as_models_with_their_place() {
 }
 
 #[test]
-fn sets_from_models_take_a_step_order_and_require_one_layout() {
+fn sets_from_structures_take_a_step_order_and_require_one_layout() {
     let topology = chain(3);
     let structures = (0..3)
         .map(|index| {
@@ -280,7 +280,7 @@ fn sets_from_models_take_a_step_order_and_require_one_layout() {
 }
 
 #[test]
-fn samples_move_on_the_order_and_are_selected_with_their_places() {
+fn geometries_move_on_the_order_and_are_selected_with_their_places() {
     let mut set = history();
     set.set_place(1, Some(Place::Step(6))).unwrap();
     assert_eq!(
@@ -384,7 +384,7 @@ fn subsets_keep_places_and_drop_values_of_the_whole_structure() {
 }
 
 #[test]
-fn ordered_sets_superpose_and_measure_rmsd_sample_by_sample() {
+fn ordered_sets_superpose_and_measure_rmsd_geometry_by_geometry() {
     let mut set = history();
     let topology = set.shared_topology();
     let atoms = AtomSelection::all(Arc::clone(&topology));

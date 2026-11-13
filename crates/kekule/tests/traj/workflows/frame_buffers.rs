@@ -94,7 +94,7 @@ fn written_frames_reach_a_memory_writer_without_copying() {
     let set = writer.into_structure_set();
     assert_eq!(set.len(), 2);
     for (geometry, decoded) in set.iter().zip(&decoded) {
-        assert!(geometry.payload().shares_structure_with(decoded));
+        assert!(geometry.payload().shares_storage_with(decoded));
     }
 
     // A frame of a set shows the set's own geometry, and writing the set
@@ -107,7 +107,7 @@ fn written_frames_reach_a_memory_writer_without_copying() {
     }
     let copy = writer.into_structure_set();
     for (copied, geometry) in copy.iter().zip(&set) {
-        assert!(copied.payload().shares_structure_with(geometry.payload()));
+        assert!(copied.payload().shares_storage_with(geometry.payload()));
     }
 }
 
@@ -230,7 +230,7 @@ fn errors_retain_nested_causes() {
     let trajectory_error = TrajectoryIoError::from(frame_error.clone());
     assert_eq!(
         trajectory_error.kind(),
-        TrajectoryIoErrorKind::InvalidStructure
+        TrajectoryIoErrorKind::InvalidGeometry
     );
     assert_eq!(
         trajectory_error

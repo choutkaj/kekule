@@ -398,7 +398,7 @@ impl IndexedFileTrajectoryReader {
 
     /// Reads frame `index` as a geometry, as [`SeekableTrajectoryReader::read_frame`]
     /// verifies it, moving the decoded arrays into the geometry.
-    pub(crate) fn read_sample(&mut self, index: usize) -> Result<Geometry, TrajectoryIoError> {
+    pub(crate) fn read_geometry(&mut self, index: usize) -> Result<Geometry, TrajectoryIoError> {
         let decoded = self.inner.read_decoded(index)?;
         Ok(Geometry::from_decoded(decoded, self.topology())?)
     }

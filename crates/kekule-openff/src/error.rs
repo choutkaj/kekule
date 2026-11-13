@@ -20,7 +20,7 @@ pub enum ErrorKind {
     /// Two force fields cannot be composed with [`crate::ForceField::append`].
     Composition,
     /// A NAGL model bundle is malformed, corrupt, or unsupported.
-    Structure,
+    Model,
     /// The supplied model is not the one the force field declares.
     ModelMismatch,
     /// The molecule is outside the supported chemical domain, for example it
@@ -49,7 +49,7 @@ impl fmt::Display for ErrorKind {
             Self::Io => "reading a file failed",
             Self::ForceField => "the force field is invalid or unsupported",
             Self::Composition => "the force fields cannot be composed",
-            Self::Structure => "the NAGL model bundle is invalid or unsupported",
+            Self::Model => "the NAGL model bundle is invalid or unsupported",
             Self::ModelMismatch => "the model is not the one the force field declares",
             Self::UnsupportedMolecule => "the molecule is outside the supported domain",
             Self::Unparameterized => "the force field leaves the molecule unparameterized",
@@ -228,7 +228,7 @@ impl fmt::Display for Error {
             match self.kind {
                 ErrorKind::Io => write!(f, "Cannot read \"{path}\".")?,
                 ErrorKind::ForceField => write!(f, "Cannot load the force field \"{path}\".")?,
-                ErrorKind::Structure => write!(f, "Cannot load the NAGL model \"{path}\".")?,
+                ErrorKind::Model => write!(f, "Cannot load the NAGL model \"{path}\".")?,
                 _ => write!(f, "Cannot load \"{path}\".")?,
             }
         } else if let Some(definition) = self.definition {

@@ -430,7 +430,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
         None
     );
     assert_eq!(
-        result.atom(new).unwrap().structure_property(&key("live")),
+        result.atom(new).unwrap().geometry_property(&key("live")),
         Some(PropertyValue::Int(8))
     );
     assert_eq!(result.atom_count(), 2);
@@ -447,7 +447,7 @@ fn deletion_prunes_hierarchy_and_projects_properties_and_coordinates() {
 }
 
 #[test]
-fn finish_and_try_finish_publish_the_same_split_model_and_topology() {
+fn finish_and_try_finish_publish_the_same_split_structure_and_topology() {
     let source = structure("CCC");
     let mut editor = source.to_editor();
     let bonds = editor.topology().bond_ids().collect::<Vec<_>>();
@@ -846,7 +846,7 @@ fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
 }
 
 #[test]
-fn model_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
+fn structure_property_batch_recreation_preserves_unit_symbols_and_signed_zero() {
     use kekule::units::Unit;
 
     let mut editor = structure("C").into_editor();
@@ -1159,7 +1159,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
         result
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .structure_property(&key("tag")),
+            .geometry_property(&key("tag")),
         None
     );
 
@@ -1174,7 +1174,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
 }
 
 #[test]
-fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
+fn resumed_structure_builder_retains_entity_state_and_extends_missing_rows() {
     let mut draft = molecule("NCC").into_editor();
     let removed = draft.atom_ids().next().unwrap();
     draft.delete_atom(removed).unwrap();
@@ -1264,7 +1264,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         carbon.perception()
     );
     assert_eq!(
-        result.atom(a).unwrap().structure_property(&key("dynamic")),
+        result.atom(a).unwrap().geometry_property(&key("dynamic")),
         Some(PropertyValue::Int(4))
     );
     assert_eq!(
@@ -1275,7 +1275,7 @@ fn resumed_model_builder_retains_entity_state_and_extends_missing_rows() {
         result
             .atom(result.topology().atom_ids()[4])
             .unwrap()
-            .structure_property(&key("dynamic")),
+            .geometry_property(&key("dynamic")),
         None
     );
     assert!(result.properties().owner().get(&key("old_owner")).is_none());
@@ -1352,7 +1352,7 @@ fn sparse_batches_are_atomic_and_deleted_rows_do_not_poison_new_values() {
         result
             .atom(result.topology().atom_ids()[0])
             .unwrap()
-            .structure_property(&key("tag")),
+            .geometry_property(&key("tag")),
         Some(PropertyValue::String("valid".into()))
     );
 }

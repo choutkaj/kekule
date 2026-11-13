@@ -118,11 +118,11 @@ impl<'a> MolfileRecord<'a> {
         })
     }
 
-    pub(super) fn model(
-        model: StructureView<'a>,
+    pub(super) fn structure(
+        structure: StructureView<'a>,
         version: MolfileVersion,
     ) -> Result<Self, FormatError> {
-        let topology = model.topology();
+        let topology = structure.topology();
         let mut atoms = Vec::with_capacity(topology.atom_count());
         let mut indexes = BTreeMap::new();
         let mut positions = BTreeMap::new();
@@ -130,7 +130,7 @@ impl<'a> MolfileRecord<'a> {
             let qualified = view.id();
             let atom = view.atom();
             let occurrence = view.instance();
-            let position = model
+            let position = structure
                 .position(qualified)
                 .ok_or_else(|| {
                     MOLFILE_WRITE

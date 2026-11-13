@@ -1,4 +1,4 @@
-//! Biological assemblies that mmCIF and PDB entries state, and the models
+//! Biological assemblies that mmCIF and PDB entries state, and the structures
 //! built from them.
 
 use kekule::diagnostics::Cancellation;
@@ -32,8 +32,8 @@ fn angstroms(point: Quantity<Point3>) -> Point3 {
     point.into_unit(ANGSTROM).unwrap().into_value()
 }
 
-fn chain_labels(model: &kekule::structure::Structure) -> Vec<(String, Option<String>)> {
-    model
+fn chain_labels(structure: &kekule::structure::Structure) -> Vec<(String, Option<String>)> {
+    structure
         .topology()
         .chains()
         .map(|chain| {
@@ -61,17 +61,20 @@ fn assert_copies_are_placed(
     assembly: &Assembly,
     tolerance: f64,
 ) {
-    let model = interpretation.structure();
-    let built = assembly.to_structure(model, None).unwrap();
+    let structure = interpretation.structure();
+    let built = assembly.to_structure(structure, None).unwrap();
     let generator = &assembly.generators()[0];
     let operations = generator.operations();
-    assert_eq!(built.atom_count(), model.atom_count() * operations.len());
     assert_eq!(
-        assembly.atom_count(model.topology()),
+        built.atom_count(),
+        structure.atom_count() * operations.len()
+    );
+    assert_eq!(
+        assembly.atom_count(structure.topology()),
         built.atom_count(),
         "the count matches the build"
     );
-    let source = model.topology().atom_ids();
+    let source = structure.topology().atom_ids();
     let copies = built.topology().atom_ids();
     for (index, operation) in operations.iter().enumerate() {
         let rotation = operation.rotation();
@@ -81,7 +84,7 @@ fn assert_copies_are_placed(
             .unwrap()
             .into_value();
         for (offset, atom) in source.iter().enumerate().step_by(97) {
-            let from = angstroms(model.position(*atom).unwrap());
+            let from = angstroms(structure.position(*atom).unwrap());
             let turned =
                 rotation.transform_vector(kekule::math::Vector3::new(from.x, from.y, from.z));
             let copy = angstroms(
@@ -138,11 +141,11 @@ fn mmcif_assemblies_list_chains_and_crystal_operators() {
 #[test]
 fn copies_keep_identity_chains_and_name_the_others_by_operation() {
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
-    let model = interpretation.structure();
+    let structure = interpretation.structure();
     let built = interpretation.report().assemblies()[0]
-        .to_structure(model, None)
+        .to_structure(structure, None)
         .unwrap();
-    let source = chain_labels(model);
+    let source = chain_labels(structure);
     let labels = chain_labels(&built);
     assert_eq!(labels.len(), source.len() * 3);
     assert_eq!(labels[..source.len()], source[..]);
@@ -157,14 +160,14 @@ fn copies_keep_identity_chains_and_name_the_others_by_operation() {
     assert!(built.cell().is_none(), "copies are not a lattice");
     assert_eq!(
         built.topology().definition_count(),
-        model.topology().definition_count(),
+        structure.topology().definition_count(),
         "copies share their molecules' definitions"
     );
 }
 
-/// The chains of a model, sorted.
-fn sorted_chains(model: &kekule::structure::Structure) -> Vec<(String, Option<String>)> {
-    let mut chains = chain_labels(model);
+/// The chains of a structure, sorted.
+fn sorted_chains(structure: &kekule::structure::Structure) -> Vec<(String, Option<String>)> {
+    let mut chains = chain_labels(structure);
     chains.sort();
     chains
 }
@@ -206,7 +209,7 @@ fn written_assemblies_name_every_copy() {
 #[test]
 fn assemblies_pick_their_chains() {
     let interpretation = from_mmcif(ADENYLATE_KINASE);
-    let model = interpretation.structure();
+    let structure = interpretation.structure();
     let assemblies = interpretation.report().assemblies();
     assert_eq!(
         assemblies.iter().map(Assembly::id).collect::<Vec<_>>(),
@@ -214,15 +217,15 @@ fn assemblies_pick_their_chains() {
     );
     let built = assemblies
         .iter()
-        .map(|assembly| assembly.to_structure(model, None).unwrap())
+        .map(|assembly| assembly.to_structure(structure, None).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         built[0].atom_count() + built[1].atom_count(),
-        model.atom_count(),
+        structure.atom_count(),
         "the two assemblies partition the chains"
     );
-    for (model, chains) in built.iter().zip([["A", "C", "E"], ["B", "D", "F"]]) {
-        let labels = chain_labels(model)
+    for (structure, chains) in built.iter().zip([["A", "C", "E"], ["B", "D", "F"]]) {
+        let labels = chain_labels(structure)
             .into_iter()
             .map(|(label, _)| label)
             .collect::<Vec<_>>();
@@ -479,7 +482,7 @@ fn a_chain_copied_twice_under_one_name_is_refused() {
 }
 
 #[test]
-fn a_model_without_the_chains_builds_nothing() {
+fn a_structure_without_the_chains_builds_nothing() {
     let interpretation = from_mmcif(&block("1 1 Z", ""));
     let error = interpretation.report().assemblies()[0]
         .to_structure(interpretation.structure(), None)

@@ -137,14 +137,14 @@ fn a_molecule_crossing_the_boundary_is_imaged_onto_references_before_and_after_i
         let streamed = imaged(&set, index, 0, &mut recorded).unwrap();
         assert_eq!(
             Frame::of(&streamed),
-            Frame::of_set_sample(loaded.get(index).unwrap())
+            Frame::of_set_geometry(loaded.get(index).unwrap())
         );
     }
     // Imaging is idempotent: a frame imaged onto itself is unchanged.
     let itself = imaged(&set, 1, 1, &mut recorded).unwrap();
     assert_eq!(
         Frame::of(&itself),
-        Frame::of_set_sample(set.get(1).unwrap())
+        Frame::of_set_geometry(set.get(1).unwrap())
     );
 }
 

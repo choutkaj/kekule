@@ -7,13 +7,13 @@
 //!
 //! The first SDF record must contain explicit hydrogens with 3D coordinates.
 //! The ligand is appended to the optional mmCIF environment to form a larger
-//! model. The example then mimics an edit: it displaces the ligand's last three
-//! heavy atoms (all of them in smaller ligands) and their hydrogens, the "new
-//! group", by up to 0.3 Å. Clean-up takes the molecule of the target atoms out
-//! of the model, parameterizes it with OpenFF Rosemary and the bundled Ash
-//! charges, minimizes the targets with the rest of the molecule fixed, and
-//! writes the coordinates back. `--whole` cleans up the whole ligand instead of
-//! the group.
+//! structure. The example then mimics an edit: it displaces the ligand's last
+//! three heavy atoms (all of them in smaller ligands) and their hydrogens, the
+//! "new group", by up to 0.3 Å. Clean-up takes the molecule of the target
+//! atoms out of the structure, parameterizes it with OpenFF Rosemary and the
+//! bundled Ash charges, minimizes the targets with the rest of the molecule
+//! fixed, and writes the coordinates back. `--whole` cleans up the whole ligand
+//! instead of the group.
 
 use std::{collections::BTreeSet, env, error::Error, fs, ops::ControlFlow, time::Instant};
 
@@ -196,14 +196,17 @@ fn bits(position: Quantity<Point3>) -> [u64; 3] {
 }
 
 /// Compares the analytic gradient with central differences.
-fn check_gradient(potential: &OpenFfPotential, model: &Structure) -> Result<(), Box<dyn Error>> {
-    let analytic = potential.evaluate(model.as_structure_view())?;
+fn check_gradient(
+    potential: &OpenFfPotential,
+    structure: &Structure,
+) -> Result<(), Box<dyn Error>> {
+    let analytic = potential.evaluate(structure.as_structure_view())?;
     let h = 1e-6;
     let mut worst: f64 = 0.0;
     let mut largest: f64 = 0.0;
-    let mut trial = model.clone();
-    for (index, id) in model.topology().atom_ids().iter().enumerate() {
-        let p = model.position(*id).unwrap().value_in(NANOMETER)?;
+    let mut trial = structure.clone();
+    for (index, id) in structure.topology().atom_ids().iter().enumerate() {
+        let p = structure.position(*id).unwrap().value_in(NANOMETER)?;
         let g = analytic.gradient().into_value()[index];
         for (axis, step) in [
             Vector3::new(h, 0.0, 0.0),

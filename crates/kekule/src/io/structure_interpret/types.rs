@@ -18,7 +18,7 @@ use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
 ///
-/// Structure IDs are mmCIF `_atom_site.pdbx_PDB_model_num` values or PDB `MODEL`
+/// Model IDs are mmCIF `_atom_site.pdbx_PDB_model_num` values or PDB `MODEL`
 /// serial numbers as text; a source without them has the one model `"1"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1428,14 +1428,14 @@ impl StructureInterpretationReport {
 #[derive(Debug, Clone, PartialEq)]
 /// One final canonical structure and its interpretation report.
 pub struct StructureInterpretation {
-    pub(crate) model: Structure,
+    pub(crate) structure: Structure,
     pub(crate) report: StructureInterpretationReport,
 }
 
 impl StructureInterpretation {
     /// The interpreted structure.
     pub fn structure(&self) -> &Structure {
-        &self.model
+        &self.structure
     }
 
     /// How the structure was read from its source.
@@ -1445,13 +1445,13 @@ impl StructureInterpretation {
 
     /// The topology of [`Self::structure`].
     pub fn topology(&self) -> &crate::topology::Topology {
-        self.model.topology()
+        self.structure.topology()
     }
 
     /// Borrows molecule definitions once per occurrence in authoritative
     /// topology instance order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
-        self.model
+        self.structure
             .topology()
             .instances()
             .map(|occurrence| occurrence.molecule())
@@ -1460,7 +1460,7 @@ impl StructureInterpretation {
     /// Clones each molecule definition once per occurrence, in topology instance
     /// order.
     pub fn into_molecules(self) -> Vec<Molecule> {
-        self.model
+        self.structure
             .topology()
             .instances()
             .map(|occurrence| occurrence.molecule().clone())
@@ -1469,24 +1469,24 @@ impl StructureInterpretation {
 
     /// Retains shared ownership of the structure's exact topology allocation.
     pub fn into_topology(self) -> Arc<Topology> {
-        self.model.shared_topology()
+        self.structure.shared_topology()
     }
 
     /// The interpreted structure, discarding the report.
     pub fn into_structure(self) -> Structure {
-        self.model
+        self.structure
     }
 
     /// The structure and its report.
     pub fn into_parts(self) -> (Structure, StructureInterpretationReport) {
-        (self.model, self.report)
+        (self.structure, self.report)
     }
 }
 
 /// A macromolecular interpretation failure, located at the source line it
 /// concerns when it concerns one. The pipeline is shared, so errors start as
 /// mmCIF errors and PDB entry points relabel them.
-pub(in crate::io) fn geometry_error(
+pub(in crate::io) fn structure_error(
     kind: DiagnosticKind,
     line: Option<usize>,
     message: impl Into<String>,
@@ -1515,7 +1515,7 @@ pub(in crate::io) fn poll_every(
     Cancellation::poll_every(cancellation, step).map_err(cancelled)
 }
 
-/// A geometry-set-level failure with typed `detail`.
+/// A structure-set-level failure with typed `detail`.
 pub(in crate::io) fn structure_set_error(
     kind: DiagnosticKind,
     message: impl Into<String>,

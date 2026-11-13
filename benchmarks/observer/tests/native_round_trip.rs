@@ -2,7 +2,7 @@
 //! interprets round-trips through the native format exactly.
 //!
 //! Small molecules (Molfile, SDF, SMILES) and macromolecular entries (mmCIF,
-//! as structures and, for several coordinate structures, structure sets)
+//! as structures and, for several coordinate models, structure sets)
 //! are checked for molecular and layout equality, properties,
 //! classifications, perception, and bitwise-identical coordinates. Inputs
 //! Kekule does not interpret are the benchmark's business, not this test's,
@@ -123,7 +123,7 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
 
 /// Checks a structure with and without perception, so stored perception is
 /// exercised wherever Kekule can perceive the input.
-fn check_model(mut structure: Structure) {
+fn check_structure(mut structure: Structure) {
     let decoded = round_trip(&structure)
         .into_structure()
         .expect("a structure");
@@ -162,14 +162,14 @@ $$$$
                 if let Ok(document) = sdf::parse_str(&record_text, Default::default()) {
                     for record in document.records() {
                         if let Ok(interpretation) = record.interpret(Default::default()) {
-                            check_model(interpretation.structure().clone());
+                            check_structure(interpretation.structure().clone());
                             checked += 1;
                         }
                     }
                 } else if let Ok(interpretation) = molfile::parse_str(&text, Default::default())
                     .and_then(|document| document.interpret(Default::default()))
                 {
-                    check_model(interpretation.into_structure());
+                    check_structure(interpretation.into_structure());
                     checked += 1;
                 }
             }
@@ -211,7 +211,7 @@ fn curated_biomolecules_round_trip_exactly() {
             continue;
         };
         if let Ok(interpretation) = document.interpret(Default::default()) {
-            check_model(interpretation.into_structure());
+            check_structure(interpretation.into_structure());
             checked += 1;
         }
         if let Ok(interpretation) = document.interpret_structure_set(Default::default()) {

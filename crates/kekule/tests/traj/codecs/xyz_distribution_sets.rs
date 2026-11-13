@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
@@ -61,7 +61,7 @@ fn options() -> XyzWriteOptions {
 }
 
 fn omit() -> XyzWriteOptions {
-    options().with_set_metadata(UnrepresentablePolicy::Omit)
+    options().with_geometry_metadata(UnrepresentablePolicy::Omit)
 }
 
 /// Writes `set` and returns the text and report.
@@ -93,8 +93,8 @@ fn assert_rejects(
     error
 }
 
-fn state_omission(field: StructureField, structures: usize) -> WriteOmission {
-    WriteOmission::StructureState { field, structures }
+fn state_omission(field: GeometryField, geometries: usize) -> WriteOmission {
+    WriteOmission::GeometryState { field, geometries }
 }
 
 /// The text of [`waters`] under [`options`].
@@ -103,7 +103,7 @@ fn plain() -> String {
 }
 
 #[test]
-fn an_equally_weighted_set_writes_one_frame_per_sample_and_reads_back() {
+fn an_equally_weighted_set_writes_one_frame_per_geometry_and_reads_back() {
     let set = waters();
     let (text, report) = write(&set, options()).unwrap();
     assert_eq!(report.omissions(), [BONDS]);
@@ -143,7 +143,7 @@ fn unequal_weights_are_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain());
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Weight, 3)]
+        [BONDS, state_omission(GeometryField::Weight, 3)]
     );
 }
 
@@ -159,7 +159,7 @@ fn several_states_are_rejected_or_omitted_with_a_report() {
     let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::State, 3)]
+        [BONDS, state_omission(GeometryField::State, 3)]
     );
 }
 
@@ -183,8 +183,8 @@ fn energies_are_rejected_or_omitted_with_a_report() {
         report.omissions(),
         [
             BONDS,
-            state_omission(StructureField::Energy, 2),
-            state_omission(StructureField::State, 3),
+            state_omission(GeometryField::Energy, 2),
+            state_omission(GeometryField::State, 3),
         ]
     );
 }
@@ -201,7 +201,7 @@ fn a_temperature_is_rejected_or_omitted_with_a_report() {
     let (_, report) = write(&set, omit()).unwrap();
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Temperature, 3)]
+        [BONDS, state_omission(GeometryField::Temperature, 3)]
     );
 }
 
@@ -266,7 +266,7 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
 }
 
 #[test]
-fn every_kind_of_sample_state_is_reported_together() {
+fn every_kind_of_geometry_state_is_reported_together() {
     let mut set = waters();
     let mut distribution = set.distribution_mut().unwrap();
     distribution
@@ -288,10 +288,10 @@ fn every_kind_of_sample_state_is_reported_together() {
         report.omissions(),
         [
             BONDS,
-            state_omission(StructureField::Weight, 3),
-            state_omission(StructureField::Energy, 1),
-            state_omission(StructureField::State, 3),
-            state_omission(StructureField::Temperature, 3),
+            state_omission(GeometryField::Weight, 3),
+            state_omission(GeometryField::Energy, 1),
+            state_omission(GeometryField::State, 3),
+            state_omission(GeometryField::Temperature, 3),
         ]
     );
 }
@@ -378,7 +378,7 @@ fn foreign_and_empty_sets_are_rejected() {
 }
 
 #[test]
-fn sample_state_rules_match_the_pdb_writer() {
+fn geometry_state_rules_match_the_pdb_writer() {
     // The XYZ writer's geometry-state rules are kekule's PDB and mmCIF ones.
     // PDB omits the fixed implicit-hydrogen counts XYZ interpretation gives.
     let mut set = waters();
@@ -390,7 +390,7 @@ fn sample_state_rules_match_the_pdb_writer() {
     let pdb = kekule::pdb::write(
         &set,
         kekule::pdb::PdbWriteOptions::default()
-            .with_set_metadata(UnrepresentablePolicy::Omit)
+            .with_geometry_metadata(UnrepresentablePolicy::Omit)
             .with_implicit_hydrogens(UnrepresentablePolicy::Omit),
     )
     .unwrap()
@@ -401,15 +401,15 @@ fn sample_state_rules_match_the_pdb_writer() {
             .omissions()
             .iter()
             .copied()
-            .filter(|omission| matches!(omission, WriteOmission::StructureState { .. }))
+            .filter(|omission| matches!(omission, WriteOmission::GeometryState { .. }))
             .collect::<Vec<_>>()
     };
     assert_eq!(state(&xyz), state(&pdb));
     assert_eq!(
         state(&xyz),
         [
-            state_omission(StructureField::Weight, 3),
-            state_omission(StructureField::Temperature, 3),
+            state_omission(GeometryField::Weight, 3),
+            state_omission(GeometryField::Temperature, 3),
         ]
     );
 }
@@ -472,22 +472,22 @@ fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did()
         )
         .unwrap();
     let mut recorded = Recorded::new(&[
-        0x7a0f_368c_0a4e_25a4, // waters
+        0xf14d_cdd2_f26b_1088, // waters
         0x4939_b251_4e51_e9cb, // waters, fail
         0x4939_b251_4e51_e9cb, // waters, omit
-        0xd1aa_e549_c09d_c6be, // weighted
+        0x7e93_965f_759b_09ee, // weighted
         0x6c2d_94d0_1919_47c1, // weighted, fail
-        0x6d81_8fec_dcfd_575a, // weighted, omit
-        0x4450_5253_551b_8159, // clustered
+        0x9d0c_c4f1_8a4c_1fcd, // weighted, omit
+        0x0ba9_867b_4244_e045, // clustered
         0x3ebe_6cee_6493_523a, // clustered, fail
-        0x2e5e_8bc9_b17e_38b8, // clustered, omit
-        0x9de7_b301_8433_ebdf, // boxed
+        0x2c01_a7fc_aaa6_ee15, // clustered, omit
+        0xf3a1_d233_9761_76d3, // boxed
         0x0ebd_2b21_c872_bfdf, // boxed, fail
         0x03c3_ae9e_91dc_8c0c, // boxed, omit
-        0x2b3c_0e3b_7eda_b3ff, // occupied
+        0x77cc_a4b8_28e4_f383, // occupied
         0x447b_f888_5d4d_1835, // occupied, fail
         0x447b_f888_5d4d_1835, // occupied, omit
-        0xa609_3ae0_60cb_8fe8, // labelled
+        0xd016_a79f_cb50_844c, // labelled
         0x5001_e09a_cc79_1f23, // labelled, fail
         0x5001_e09a_cc79_1f23, // labelled, omit
     ]);
@@ -496,14 +496,14 @@ fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did()
         for policy in [UnrepresentablePolicy::Fail, UnrepresentablePolicy::Omit] {
             recorded.check(&outcome(write(
                 &set,
-                options().with_set_metadata(policy).with_cell(policy),
+                options().with_geometry_metadata(policy).with_cell(policy),
             )));
         }
     }
 }
 
 #[test]
-fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
+fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     let plain = plain();
 
     // A time order.
@@ -518,7 +518,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Time, 3)]
+        [BONDS, state_omission(GeometryField::Time, 3)]
     );
 
     // A time order without times or steps reads back unordered.
@@ -530,7 +530,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Order, 3)]
+        [BONDS, state_omission(GeometryField::Order, 3)]
     );
 
     // A lone state represented by its second member.
@@ -548,7 +548,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Representative, 1)]
+        [BONDS, state_omission(GeometryField::Representative, 1)]
     );
 
     // Velocities on one geometry.
@@ -569,7 +569,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Velocities, 1)]
+        [BONDS, state_omission(GeometryField::Velocities, 1)]
     );
 
     // A geometry outside the distribution: XYZ reads every frame back as a
@@ -585,7 +585,7 @@ fn sample_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     assert_eq!(text, plain);
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(StructureField::Membership, 1)]
+        [BONDS, state_omission(GeometryField::Membership, 1)]
     );
 
     // Without a distribution, the frames read back as one state of equally

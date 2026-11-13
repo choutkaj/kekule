@@ -10,7 +10,7 @@ pub(crate) fn frame_offset_context(
 ) -> TrajectoryIoError {
     if matches!(
         error.kind(),
-        TrajectoryIoErrorKind::InvalidStructure
+        TrajectoryIoErrorKind::InvalidGeometry
             | TrajectoryIoErrorKind::TopologyMismatch
             | TrajectoryIoErrorKind::FrameIndexOutOfRange
             | TrajectoryIoErrorKind::UnsupportedField

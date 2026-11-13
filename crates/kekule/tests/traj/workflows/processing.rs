@@ -164,15 +164,15 @@ fn fitted(set: &StructureSet, atoms: &AtomSelection) -> StructureSet {
 #[test]
 fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     let mut recorded = Recorded::new(&[
-        0x7324_51a7_a937_6e3d, // the source
-        0x688c_a6df_25cd_509b, // whole
-        0x023c_5470_ede1_9063, // wrap
-        0x023c_5470_ede1_9063, // whole and wrap
-        0xcc67_9e97_d1dc_f223, // center
-        0xc3ff_c9a2_11e5_1140, // fit
-        0x5ab2_8aee_a0d0_68b8, // fit onto positions
-        0x9bd7_b6f6_1f55_88c2, // subset
-        0x90c1_dfd5_4a90_a6eb, // no step
+        0x4fe7_8cc9_9ea6_6841, // the source
+        0x7d61_c968_325d_e8ff, // whole
+        0x3c3d_0c50_c7c9_0fa3, // wrap
+        0x3c3d_0c50_c7c9_0fa3, // whole and wrap
+        0xf4ec_bcf5_2066_89df, // center
+        0x62a0_a213_9f0e_9940, // fit
+        0xf8e8_9396_535e_8c58, // fit onto positions
+        0xc7e1_24ff_ca1e_706a, // subset
+        0x0f1b_7aa3_97b7_2aab, // no step
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -282,9 +282,9 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
 #[test]
 fn every_step_together_equals_the_functions_in_order() {
     let mut recorded = Recorded::new(&[
-        0x7324_51a7_a937_6e3d, // the source
-        0xb000_d3c6_d255_1797, // the functions in order
-        0x90cf_cd04_baa7_ea17, // processed
+        0x4fe7_8cc9_9ea6_6841, // the source
+        0xb286_da85_876e_2b2b, // the functions in order
+        0x54ef_bcf6_372c_8913, // processed
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -346,10 +346,10 @@ fn molecule_centers_from_cell_center(topology: &Topology, geometry: &Geometry) -
 #[test]
 fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
     let mut recorded = Recorded::new(&[
-        0x7324_51a7_a937_6e3d, // the source
-        0x002e_84b2_93ff_0174, // the first chain
-        0x7f51_eedb_a255_2e7e, // the second chain
-        0x8893_61fe_4886_31ea, // every atom
+        0x4fe7_8cc9_9ea6_6841, // the source
+        0xcf8c_de1f_fc55_7de0, // the first chain
+        0x3df3_6687_8073_cbfe, // the second chain
+        0x2710_66a0_7fa8_50fa, // every atom
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -410,18 +410,18 @@ fn smoothed_by_hand(stepped: &StructureSet, window: usize, index: usize) -> Vec<
 }
 
 #[test]
-fn smoothing_averages_the_window_imaged_onto_each_sample() {
+fn smoothing_averages_the_window_imaged_onto_each_geometry() {
     let mut recorded = Recorded::new(&[
-        0x7324_51a7_a937_6e3d, // the source
-        0x6c96_d2a6_8979_a782, // window 1
-        0x6c96_d2a6_8979_a782, // window 1 unsmoothed
-        0x9d03_93be_c02b_7034, // window 3
-        0x6c96_d2a6_8979_a782, // window 3 unsmoothed
-        0x3cc8_320c_447c_faf2, // window 5
-        0x6c96_d2a6_8979_a782, // window 5 unsmoothed
-        0x904b_595b_f2dd_24b0, // window 15
-        0x6c96_d2a6_8979_a782, // window 15 unsmoothed
-        0x24d0_413e_e6bd_d1c9, // smoothing alone
+        0x4fe7_8cc9_9ea6_6841, // the source
+        0x4da2_d680_c62a_711a, // window 1
+        0x4da2_d680_c62a_711a, // window 1 unsmoothed
+        0xea2c_d51c_d3e8_c05c, // window 3
+        0x4da2_d680_c62a_711a, // window 3 unsmoothed
+        0x700f_6e7f_6202_5db6, // window 5
+        0x4da2_d680_c62a_711a, // window 5 unsmoothed
+        0xcc44_ebf4_eb2c_4558, // window 15
+        0x4da2_d680_c62a_711a, // window 15 unsmoothed
+        0x9eb8_cb60_b337_440d, // smoothing alone
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -467,8 +467,8 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
 #[test]
 fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
     let mut recorded = Recorded::new(&[
-        0x7324_51a7_a937_6e3d, // the source
-        0x5df4_afd9_7e57_3cc5, // processed
+        0x4fe7_8cc9_9ea6_6841, // the source
+        0x411a_7a89_4dc1_d98d, // processed
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -492,11 +492,11 @@ fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
 }
 
 #[test]
-fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
+fn smoothing_images_each_geometry_of_the_window_in_its_own_cell() {
     let mut recorded = Recorded::new(&[
-        0xaa06_98fc_bcf7_6889, // the source in growing cells
-        0x6a28_bcd9_942d_a727, // window 3
-        0x75b5_caac_7b62_5ea0, // window 5
+        0x90b1_5648_d0f4_79c9, // the source in growing cells
+        0x1a20_e0f8_140c_7e0b, // window 3
+        0x8484_92f6_ffdf_ecdc, // window 5
     ]);
     let mut set = source();
     for index in 0..set.len() {
@@ -530,10 +530,10 @@ fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
 }
 
 #[test]
-fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
+fn geometries_without_a_cell_skip_imaging_and_center_where_geometry_0_was() {
     let mut recorded = Recorded::new(&[
-        0xda94_1fe8_2f88_f055, // the source without cells
-        0x304b_3c10_03f7_2a17, // processed
+        0xa84f_340b_275f_a6f9, // the source without cells
+        0x9d5d_970c_e8ff_ac0f, // processed
     ]);
     let mut set = source();
     for index in 0..set.len() {
@@ -571,7 +571,7 @@ fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
 #[test]
 fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
     let mut recorded = Recorded::new(&[
-        0x4374_27bf_dbd5_f4b7, // processed from the file
+        0x86c3_7b1b_fdaa_edab, // processed from the file
     ]);
     let set = source();
     let directory = std::env::temp_dir().join(format!("kekule-processing-{}", std::process::id()));
@@ -617,7 +617,7 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
 }
 
 #[test]
-fn steps_that_cannot_process_the_samples_fail_on_construction() {
+fn steps_that_cannot_process_the_geometries_fail_on_construction() {
     let set = source();
     let foreign = AtomSelection::all(linear_carbon_topology(6));
     let none = AtomSelection::empty(set.shared_topology());
@@ -756,9 +756,9 @@ impl StructureSetRead for Panicking {
 }
 
 #[test]
-fn a_panic_in_the_reader_below_leaves_the_other_samples_readable() {
+fn a_panic_in_the_reader_below_leaves_the_other_geometries_readable() {
     let mut recorded = Recorded::new(&[
-        0x4bf5_8692_bcc2_a3a0, // processed from the set
+        0xe144_50c6_ae4c_c334, // processed from the set
     ]);
     let set = source();
     let panicking = Panicking(set.clone());
@@ -837,9 +837,9 @@ impl StructureSetRead for Unique {
 }
 
 #[test]
-fn the_steps_change_a_unique_sample_in_place_and_copy_a_shared_one() {
+fn the_steps_change_a_unique_geometry_in_place_and_copy_a_shared_one() {
     let mut recorded = Recorded::new(&[
-        0xb33d_d873_02fa_717a, // processed from the set
+        0x13a6_b8ce_bc32_a8b6, // processed from the set
     ]);
     let set = source();
     let topology = set.shared_topology();
@@ -868,14 +868,14 @@ fn the_steps_change_a_unique_sample_in_place_and_copy_a_shared_one() {
         assert_eq!(geometry.positions(), shared.positions(), "geometry {index}");
         // A shared geometry is copied, and the set's geometry is unchanged.
         let stored = set.read(index).unwrap();
-        assert!(!shared.shares_structure_with(&stored), "geometry {index}");
+        assert!(!shared.shares_storage_with(&stored), "geometry {index}");
         assert_ne!(address(&shared), address(&stored), "geometry {index}");
         assert_geometry(&stored, set.get(index).unwrap().payload(), "stored");
     }
 }
 
 #[test]
-fn samples_of_another_layout_fail_instead_of_being_processed() {
+fn geometries_of_another_layout_fail_instead_of_being_processed() {
     let set = source();
     let first = atoms(&set, &[0, 1, 2]);
     let short = Short(set.clone());
@@ -930,9 +930,9 @@ impl StructureSetRead for Counting {
 }
 
 #[test]
-fn the_reader_lends_sample_0_it_processed_on_construction() {
+fn the_reader_lends_geometry_0_it_processed_on_construction() {
     let mut recorded = Recorded::new(&[
-        0x91c1_dcde_1993_d380, // processed from the set
+        0x3f82_a3b1_468f_3700, // processed from the set
     ]);
     let set = source();
     let first = atoms(&set, &[0, 1, 2]);
@@ -960,7 +960,7 @@ fn the_reader_lends_sample_0_it_processed_on_construction() {
     assert_eq!(lent.index(), 0);
     assert_eq!(lent.payload(), &expected.read(0).unwrap());
     let read = processed.read(0).unwrap();
-    assert!(read.shares_structure_with(lent.payload()));
+    assert!(read.shares_storage_with(lent.payload()));
     assert_eq!(counting.reads(0), reads);
     assert!(processed.peek(1).is_none());
     assert_eq!(processed.read(1).unwrap(), expected.read(1).unwrap());

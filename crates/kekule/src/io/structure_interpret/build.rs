@@ -1,6 +1,6 @@
 //! Builds molecules, provenance, and the topology hierarchy from the selected
 //! atom rows of one coordinate model.
-use super::types::{geometry_error, poll, poll_every};
+use super::types::{poll, poll_every, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -302,7 +302,7 @@ impl BuiltMolecule {
         let working = source.working();
         let components = working.connected_components();
         if components.is_empty() {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::Chemistry,
                 None,
                 "A molecule group has no atoms.",
@@ -374,7 +374,7 @@ impl BuiltMolecule {
                     .get(&(left.min(right), left.max(right)))
                     .cloned()
                     .ok_or_else(|| {
-                        geometry_error(
+                        structure_error(
                             DiagnosticKind::Chemistry,
                             None,
                             "A bond has no source record.",
@@ -478,7 +478,7 @@ pub(super) fn build_molecule(
                 || prior.comp_id != row.comp_id
                 || prior.entity_id != row.entity_id
             {
-                return Err(geometry_error(
+                return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     Some(row.line),
                     format!(
@@ -512,7 +512,7 @@ pub(super) fn build_molecule(
         .first()
         .map(|row| row.model_id.clone())
         .ok_or_else(|| {
-            geometry_error(
+            structure_error(
                 DiagnosticKind::Chemistry,
                 None,
                 "A molecule group has no atoms.",
@@ -523,7 +523,7 @@ pub(super) fn build_molecule(
     for (step, (row, &atom)) in rows.iter().zip(&row_atoms).enumerate() {
         poll_every(cancellation, step)?;
         let point = row.point.ok_or_else(|| {
-            geometry_error(
+            structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
@@ -579,7 +579,7 @@ pub(super) fn build_molecule(
                 .order
                 != connection.order
             {
-                return Err(geometry_error(
+                return Err(structure_error(
                     DiagnosticKind::Inconsistent,
                     None,
                     "Two connection records give one bond different orders.",
@@ -805,7 +805,7 @@ fn covalent_bond_cell(point: Point3, line: usize) -> Result<[i64; 3], FormatErro
 fn covalent_bond_cell_axis(coordinate: f64, axis: &str, line: usize) -> Result<i64, FormatError> {
     let cell = (coordinate / COVALENT_BOND_CELL_ANGSTROM).floor();
     if !cell.is_finite() || cell <= i64::MIN as f64 || cell >= i64::MAX as f64 {
-        return Err(geometry_error(DiagnosticKind::Limit,
+        return Err(structure_error(DiagnosticKind::Limit,
             Some(line),
             format!(
                 "The _atom_site.Cartn_{axis} coordinate {coordinate} Å is too large to search for bonds."
@@ -1016,7 +1016,7 @@ fn merge_optional_source_value(
     };
     if let Some(current) = current {
         if current != incoming {
-            return Err(geometry_error(DiagnosticKind::Inconsistent,
+            return Err(structure_error(DiagnosticKind::Inconsistent,
                 Some(source_line),
                 format!(
                     "The atom sites of {identity:?} have two _atom_site.{field} values: {current:?} and {incoming:?}."
@@ -1030,7 +1030,7 @@ fn merge_optional_source_value(
 }
 
 fn inconsistent_residue_metadata(atom: &AtomProvenance, field: &'static str) -> FormatError {
-    geometry_error(
+    structure_error(
         DiagnosticKind::Inconsistent,
         Some(atom.source_line),
         format!(
@@ -1042,7 +1042,7 @@ fn inconsistent_residue_metadata(atom: &AtomProvenance, field: &'static str) -> 
 
 /// Molecule construction failed with `source` as the cause.
 pub(super) fn graph_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
-    geometry_error(
+    structure_error(
         DiagnosticKind::Chemistry,
         None,
         "Cannot build the molecule.",
@@ -1051,7 +1051,7 @@ pub(super) fn graph_error(source: impl std::error::Error + Send + Sync + 'static
 }
 
 fn hierarchy_error(source: impl std::error::Error + Send + Sync + 'static) -> FormatError {
-    geometry_error(
+    structure_error(
         DiagnosticKind::Inconsistent,
         None,
         "Cannot build the chains and residues.",

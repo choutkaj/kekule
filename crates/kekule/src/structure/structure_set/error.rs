@@ -156,7 +156,7 @@ pub enum StructureSetError {
     PartitionMismatch {
         /// The number of members.
         expected: usize,
-        /// The partition's geometry count.
+        /// The partition's sample count.
         actual: usize,
     },
     /// Weights were given in a different number than the distribution has
@@ -287,7 +287,7 @@ impl fmt::Display for StructureSetError {
             Self::PartitionMismatch { expected, actual } => write!(
                 formatter,
                 "The partition covers {}, but the distribution has {}.",
-                counted(*actual, "geometry", "geometries"),
+                counted(*actual, "sample", "samples"),
                 counted(*expected, "member", "members")
             ),
             Self::WeightCountMismatch { expected, actual } => write!(
@@ -310,7 +310,7 @@ impl fmt::Display for StructureSetError {
                 .write_str("The new member has no weight, but the other members have weights."),
             Self::RepresentativeRemoval { geometry, state } => write!(
                 formatter,
-                "Geometry {geometry} represents state {state}. Remove the state's other geometries first."
+                "Geometry {geometry} represents state {state}. Remove the state's other samples first."
             ),
             Self::InvalidTemperature => {
                 formatter.write_str("The temperature is not finite and positive.")

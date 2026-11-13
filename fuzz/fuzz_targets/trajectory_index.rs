@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::structure::{Place, Geometry};
+use kekule::structure::{Geometry, Place};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, TrajectoryFileFingerprint,

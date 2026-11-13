@@ -221,7 +221,7 @@ fn memory_streams_debug_their_progress_without_their_frames() {
 }
 
 #[test]
-fn members_and_samples_off_a_time_order_are_not_frames() {
+fn members_and_geometries_off_a_time_order_are_not_frames() {
     let mut set = annotated();
     set.set_distribution(Some(
         crate::structure::Distribution::new(

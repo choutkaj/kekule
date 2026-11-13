@@ -276,7 +276,7 @@ impl TrrWriteOptions {
     /// cannot carry: by default a frame with any of them fails to write;
     /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
     /// reports a
-    /// [`WriteOmission::StructureState`](crate::diagnostics::WriteOmission::StructureState)
+    /// [`WriteOmission::GeometryState`](crate::diagnostics::WriteOmission::GeometryState)
     /// for each kind left out (see [`TrrWriter::report`]). The lambda
     /// policy's own requirements are never omitted.
     pub const fn frame_properties(&self) -> UnrepresentablePolicy {

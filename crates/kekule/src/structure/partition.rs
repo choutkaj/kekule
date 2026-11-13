@@ -14,7 +14,7 @@ use std::fmt;
 /// states. Clustering returns a new one without changing the set, and
 /// [`one_state`](Self::one_state) and [`state_per_sample`](Self::state_per_sample)
 /// say what a source's samples are: draws of one distribution, such as the
-/// structures of an NMR bundle or the frames of a trajectory, or distinct
+/// models of an NMR bundle or the frames of a trajectory, or distinct
 /// conformers.
 ///
 /// ```
@@ -82,7 +82,7 @@ impl Partition {
     }
 
     /// One state holding all `samples` samples, represented by the first:
-    /// samples drawn from one distribution, such as the structures of an NMR
+    /// samples drawn from one distribution, such as the models of an NMR
     /// bundle or the frames of a trajectory. No samples give no states.
     pub fn one_state(samples: usize) -> Self {
         Self {
@@ -197,7 +197,7 @@ impl fmt::Display for PartitionError {
                 states,
             } => write!(
                 formatter,
-                "Geometry {sample} is assigned to state {state}, but there are {states} states."
+                "Sample {sample} is assigned to state {state}, but there are {states} states."
             ),
             Self::RepresentativeOutOfRange {
                 state,
@@ -209,7 +209,7 @@ impl fmt::Display for PartitionError {
             ),
             Self::RepresentativeNotInState { state, sample } => write!(
                 formatter,
-                "Geometry {sample} represents state {state} but is assigned to another state."
+                "Sample {sample} represents state {state} but is assigned to another state."
             ),
         }
     }

@@ -135,12 +135,12 @@ Owning perception runs once per reusable definition and publishes atomically.
 A definition whose installed perception is the default profile's, installed by
 perception and unchanged since, is shared rather than perceived again, so
 perceiving after an edit costs the definitions the edit changed.
-A successful model or structure set perception operation installs a new
+A successful structure or structure set perception operation installs a new
 shared topology snapshot without copying coordinate payloads or static topology
 state. The snapshot keeps the source's layout identity, so existing selections,
 prepared potentials, and streaming bindings stay attached to their original
 snapshot and remain usable with the new one. Failure leaves all definitions and
-structure state intact.
+geometry state intact.
 
 See [graph storage](crates/kekule/src/molecule/graph.rs),
 [represented stereo](crates/kekule/src/molecule/stereo.rs),
@@ -221,7 +221,7 @@ monomer, the file numbers it in a polymer sequence, or it has no bonds, as in
 a Cα trace. A free nucleotide or amino acid bound as a ligand has none. A code
 names its component's parents, so a modified residue is told from a standard
 one. A chain's sequence joins the codes of the monomers it holds. The
-sequence a file states for a polymer entity, with monomers the model does not
+sequence a file states for a polymer entity, with monomers the structure does not
 observe, is format metadata: the mmCIF interpretation report owns it and
 places it on the interpreted structure's chains and residues. See
 [sequences](crates/kekule/src/sequence.rs) and
@@ -398,11 +398,11 @@ geometry's place in its order, its membership (weight, state, whether it
 represents the state, the state's energy, and the temperature), and its
 velocities and forces. A frame of a codec or buffer reports its time and
 step as its place, so writers and reductions never lose that state silently.
-Structure writers hold a geometry to one policy, `set_metadata`, for all of
+Structure writers hold a geometry to one policy, `geometry_metadata`, for all of
 that state, whether it belongs to a set or a frame. Per-atom, per-bond, and
 own properties of a structure, and the properties of its structure set, follow a
 second policy, `properties`. Molfile and SDF, which store no occupancies or B
-factors, put them under `set_metadata`. Each of these fails by default. Owned
+factors, put them under `geometry_metadata`. Each of these fails by default. Owned
 projections (`to_structure`) explicitly materialize a structure while sharing the
 topology. A set built from structures (`from_structures`) consumes them and
 requires equal layouts (`same_layout`), keeping the first structure's
@@ -410,7 +410,7 @@ topology; there is no special single-geometry ownership model.
 
 Read access is through views: `Topology` lookups return `Option` views
 (`AtomView`, `BondView`, molecule, chain, residue, and atom-site views), and
-`Structure::atom` joins an `AtomView` with that atom's structure state. Mutation
+`Structure::atom` joins an `AtomView` with that atom's geometry state. Mutation
 goes through explicit, dimension-preserving setters on structures, detached
 payloads, and the collection item guards returned by `get_mut()`, and through
 `properties_mut()` on topologies (`topology_properties_mut()` on structures and
@@ -867,7 +867,7 @@ per instance, and editors clone a shared definition when an edit touches one
 instance, so the others keep it unchanged. Classes are per instance too: an
 instance whose class a hierarchy edit cleared is published in a definition of
 its own, which shares the molecule, and classified alone, so the other
-instances keep their class. Appending a model or topology to a draft shares
+instances keep their class. Appending a structure or topology to a draft shares
 the same way: an appended molecule identical to a definition the draft holds,
 from its source or an earlier append, becomes an instance of it, when its
 perception and class are equal too. Appending is where copies enter a draft;
@@ -901,7 +901,7 @@ outside the distribution, unequal weights, several states, energies, state
 properties, a representative that is not its state's first member, a
 temperature, a place in the order, a time order without times or steps,
 velocities, and forces fail or are omitted with a report under
-`set_metadata`. XYZ interprets frames as a structure set without a
+`geometry_metadata`. XYZ interprets frames as a structure set without a
 distribution, since the file states none.
 
 | Format scope | Interpretation and projection |
@@ -1070,7 +1070,7 @@ export.
   on the representative's record, its state's energy and the distribution's
   temperature) and its place in a step or coordinate order as data fields. A
   geometry outside the distribution is marked with `kekule.member` `false`
-  instead. State and set properties, structure properties, occupancies, and B
+  instead. State and set properties, geometry properties, occupancies, and B
   factors fail unless omitted. Only the explicit `sdf::structure_set` assembles records into a
   structure set, whose order the steps or coordinates give. It has a
   distribution only when a record has a distribution field, one state per
@@ -1085,10 +1085,10 @@ export.
   coordinate order as one `MODEL` per geometry once places are omitted. A
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
   step, velocities, or forces. A Molfile cannot carry a geometry's weight or
-  its state's energy. mmCIF distinguishes independent model blocks from one
+  its state's energy. mmCIF distinguishes independent structure blocks from one
   structure set's multi-model block, which, like a PDB entry, reads back as one
   state of equal weights without an energy or temperature, so writing unequal
-  weights, several states, any energy, a temperature, or one geometry as a model
+  weights, several states, any energy, a temperature, or one geometry as a structure
   block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
   and reads `_cell` as the structure's cell only in P 1 (or with no space group),
@@ -1118,20 +1118,20 @@ export.
   stated internal bond makes the reader take the residue's bonds from the
   source alone. Bond order within a molecule follows the reader's evidence,
   which mmCIF does not carry. Metal coordination between residues lives in
-  the interpretation report, not the model, so the writer states it as
+  the interpretation report, not the structure, so the writer states it as
   `metalc` rows only when it is given the report, which must still match the
-  model atom for atom; an edited model is written without it, and a record
-  whose partner the model lacks is left out and reported. A model's own
+  structure atom for atom; an edited structure is written without it, and a record
+  whose partner the structure lacks is left out and reported. A structure's own
   dative bond between residues is written as coordination (`metalc`, or
   PDB `CONECT`), which reads back as a record rather than a bond, and the
   write report counts it. Both writers take the coordination records that
-  still match the model from one shared step: each partner must keep the
+  still match the structure from one shared step: each partner must keep the
   atom names, type symbol, and component the report recorded.
   Every entity instance is its own label asym: a chain the source names as
   one asym stays one, while a chain without a source asym that holds a
   polymer, ligands, and water, as a PDB author chain does, is written as
   several asyms that keep its author chain identifier. Chains that share a
-  label, as appended copies of one model do, are distinct instances: later
+  label, as appended copies of one structure do, are distinct instances: later
   ones are written under the label with a copy serial (`A-2`) and their
   author names, and read back with those labels. The hierarchy keeps
   labels as appended, since a label names a source's instance, not one
@@ -1451,10 +1451,10 @@ foundational crate owns no potential. A prepared `Potential` binds one topology
 layout, does not change during evaluation, and accepts any `StructureView` sharing
 that layout, including perceived snapshots; an independently equal topology is
 incompatible. Energies and
-gradients are separate result objects in canonical units, not model properties.
+gradients are separate result objects in canonical units, not geometry properties.
 Backends lower explicit parameters, currently an OpenFF `ParameterizedTopology`,
 into private functional-form kernels. Parameter assignment stays in its own
-companion crate. Unsupported structure state, such as a periodic cell, is
+companion crate. Unsupported geometry state, such as a periodic cell, is
 rejected rather than ignored. Gradients are exact derivatives and never capped;
 coordinates fail only where a requested energy or gradient is undefined.
 Minimization reads a borrowed view and returns new positions without changing

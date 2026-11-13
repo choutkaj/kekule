@@ -234,11 +234,11 @@ fn stored_order_values_and_positions_are_finite() {
 }
 
 #[test]
-fn interpreted_structure_sets_store_their_samples_and_one_report_each() {
+fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
     let (_, mut set) = parts();
     set.set_order(Some(Order::Step(STEPS[..2].to_vec())))
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&set), 0xcfef_2cfe_dd15_5679);
+    assert_eq!(super::debug_fingerprint(&set), 0xb5c1_674f_fb04_d6c5);
     let reports = vec![report(false), report(false)];
     let bytes = native::write(
         NativeSource::interpreted_structure_set(&set, &reports),

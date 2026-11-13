@@ -26,7 +26,7 @@ fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> StructureSet {
     .unwrap()
 }
 
-/// Geometries of `structures` weighted by `weights`, grouped by `partition`.
+/// Samples of `structures` weighted by `weights`, grouped by `partition`.
 fn weighted(
     top: &Arc<Topology>,
     structures: impl IntoIterator<Item = Positions>,
@@ -107,7 +107,7 @@ fn weighted_accumulators_match_hand_computation() {
 fn distribution_statistics_use_sample_weights_not_states() {
     let top = linear_carbon_topology();
     let ids = top.atom_ids();
-    // The two heavier geometries share a state; populations do not enter twice.
+    // The two heavier samples share a state; populations do not enter twice.
     let ensemble = weighted(
         &top,
         weighted_structures(),
@@ -120,7 +120,7 @@ fn distribution_statistics_use_sample_weights_not_states() {
         close(*value, expected);
     }
     assert_eq!(rmsf.observation_count(), 3);
-    // Geometries are observed with their probabilities.
+    // Samples are observed with their probabilities.
     close(rmsf.total_weight(), 1.0);
 
     let pairs = [(ids[0], ids[1]), (ids[1], ids[2])];

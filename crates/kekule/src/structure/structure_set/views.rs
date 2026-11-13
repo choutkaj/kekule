@@ -180,7 +180,7 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
     /// Borrows the geometry as the common kernel input, with the view's full
     /// lifetime.
     pub fn as_structure_view(self) -> StructureView<'a> {
-        self.geometry.structure().structure_view(
+        self.geometry.state().structure_view(
             self.reader.topology(),
             StructureKind::InSet(SetContext::of_view(self.as_dyn())),
         )
@@ -195,13 +195,13 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
 
 /// Fails unless `geometry` is bound to `topology`.
 pub(crate) fn check_bound(topology: &Topology, geometry: &Geometry) -> Result<(), GeometryError> {
-    let structure = geometry.structure();
-    let atoms = structure.positions.len();
-    validate_binding(atoms, &structure.properties, topology)?;
-    if !is_bound(atoms, &structure.properties, topology) {
+    let state = geometry.state();
+    let atoms = state.positions.len();
+    validate_binding(atoms, &state.properties, topology)?;
+    if !is_bound(atoms, &state.properties, topology) {
         return Err(GeometryError::BondCountMismatch {
             expected: topology.bond_count(),
-            actual: structure.properties.bonds().len(),
+            actual: state.properties.bonds().len(),
         });
     }
     Ok(())

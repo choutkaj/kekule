@@ -335,7 +335,7 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
 }
 
 #[test]
-fn errors_leave_every_part_of_model_unchanged() {
+fn errors_leave_every_part_of_structure_unchanged() {
     let mut no_cell = structure("C");
     let before = no_cell.clone();
     assert!(matches!(
@@ -434,15 +434,13 @@ fn original_entities_properties_and_existing_water_survive() {
     assert_eq!(&m.topology().atom_ids()[..ids.len()], ids);
     assert_eq!(&points(&m)[..ids.len()], points(&before));
     assert_eq!(
-        m.atom(ids[0])
-            .unwrap()
-            .structure_property(&key("atom_note")),
+        m.atom(ids[0]).unwrap().geometry_property(&key("atom_note")),
         Some(PropertyValue::Int(3))
     );
     assert_eq!(
         m.atom(m.topology().atom_ids()[3])
             .unwrap()
-            .structure_property(&key("atom_note")),
+            .geometry_property(&key("atom_note")),
         None
     );
     assert_eq!(
@@ -450,7 +448,7 @@ fn original_entities_properties_and_existing_water_survive() {
         vec![key("topology_note")]
     );
     assert_eq!(
-        report.cleared_structure_properties(),
+        report.cleared_geometry_properties(),
         vec![key("model_note")]
     );
     assert_eq!(
@@ -630,7 +628,7 @@ fn translation_that_loses_water_geometry_is_rejected_atomically() {
     let before = m.clone();
     assert!(matches!(
         solvation::solvate(&mut m, &options()),
-        Err(SolvationError::Geometry(LatticeError::NumericalFailure))
+        Err(SolvationError::Lattice(LatticeError::NumericalFailure))
     ));
     assert_eq!(m, before);
 }

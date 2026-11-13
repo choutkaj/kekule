@@ -1,7 +1,7 @@
 //! The evaluation contract shared by every potential and optimizer.
 //!
 //! [`Potential`] makes no assumption about how an energy is built, so pairwise
-//! force fields, machine-learned structures, and quantum-chemical backends can all
+//! force fields, machine-learned models, and quantum-chemical backends can all
 //! implement it. A prepared potential binds one topology layout and evaluates
 //! any [`StructureView`] sharing it, including perceived snapshots: a
 //! [`kekule::structure::Structure`], a geometry, or a trajectory frame.
@@ -523,15 +523,15 @@ mod tests {
 
     #[test]
     fn backend_failures_keep_their_cause_as_the_source() {
-        let cause = std::io::Error::other("structure server unavailable");
+        let cause = std::io::Error::other("model server unavailable");
         let error = EvaluationError::backend(cause);
         assert_eq!(error.to_string(), "The potential backend failed.");
         let source = std::error::Error::source(&error).unwrap();
-        assert_eq!(source.to_string(), "structure server unavailable");
+        assert_eq!(source.to_string(), "model server unavailable");
         assert!(source.downcast_ref::<std::io::Error>().is_some());
         assert_eq!(
             error,
-            EvaluationError::backend(std::io::Error::other("structure server unavailable"))
+            EvaluationError::backend(std::io::Error::other("model server unavailable"))
         );
         assert_ne!(
             error,

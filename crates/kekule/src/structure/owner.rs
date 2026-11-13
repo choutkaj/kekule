@@ -14,24 +14,24 @@ use crate::topology::{
 };
 use crate::units::Quantity;
 
+use super::draft_geometry::DraftGeometry;
 use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
 use super::state::{
-    is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
+    geometry_mutators, geometry_readers, is_bound, site_mutators, site_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
-use super::structure_state::StructureState;
 use super::{DenseArrayError, GeometryError, Positions, SetContext};
 
 /// One concrete structure of one topology.
 ///
-/// A structure owns a shared [`Topology`] and one structure of it, in the
+/// A structure owns a shared [`Topology`] and one geometry of it, in the
 /// topology's dense atom order: a position for every atom, an optional
 /// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
-/// structure properties. The topology stays coordinate-free and may be
+/// geometry properties. The topology stays coordinate-free and may be
 /// shared with other structures, geometries, trajectory frames, selections,
 /// and prepared potentials.
 ///
-/// Read and change structure state through the structure's own
+/// Read and change geometry state through the structure's own
 /// dimension-preserving methods (`structure.positions()`, `structure.set_cell(..)`,
 /// `structure.properties_mut()`, ...). Static annotations live on
 /// [`Self::topology`].
@@ -72,7 +72,7 @@ impl Structure {
         let properties = GeometryProperties::new(positions.len());
         Self::from_state(
             topology.into(),
-            StructureState {
+            DraftGeometry {
                 positions,
                 cell: None,
                 occupancies: AtomScalars::default(),
@@ -85,10 +85,10 @@ impl Structure {
     /// Validates staged state against `topology` and binds its bond rows.
     pub(super) fn from_state(
         topology: Arc<Topology>,
-        state: StructureState,
+        state: DraftGeometry,
     ) -> Result<Self, StructureError> {
         validate_binding(state.positions.len(), &state.properties, &topology)?;
-        let StructureState {
+        let DraftGeometry {
             positions,
             cell,
             occupancies,
@@ -106,11 +106,11 @@ impl Structure {
         })
     }
 
-    /// Moves the structure state out as draft state, keeping the topology.
-    pub(super) fn into_state(self) -> (Arc<Topology>, StructureState) {
+    /// Moves the geometry state out as draft state, keeping the topology.
+    pub(super) fn into_state(self) -> (Arc<Topology>, DraftGeometry) {
         (
             self.topology,
-            StructureState {
+            DraftGeometry {
                 positions: self.positions,
                 cell: self.cell,
                 occupancies: self.occupancies,
@@ -138,7 +138,7 @@ impl Structure {
         StructureBuilder {
             topology: TopologyBuilder::from_shared(topology),
             state,
-            extending_model: true,
+            extending_structure: true,
         }
     }
 
@@ -158,7 +158,7 @@ impl Structure {
         builder.build()
     }
 
-    /// The coordinate-free topology this structure is a structure of.
+    /// The coordinate-free topology of this structure.
     pub fn topology(&self) -> &Topology {
         &self.topology
     }
@@ -281,12 +281,12 @@ impl Structure {
         Arc::make_mut(&mut self.topology).properties_mut()
     }
 
-    /// Publishes an induced topology subset and projects structure state
+    /// Publishes an induced topology subset and projects geometry state
     /// onto it. Structure owner properties are dropped.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureError> {
         let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
-        let state = StructureState {
+        let state = DraftGeometry {
             positions: self.positions.select_indices(&atoms)?,
             cell: self.cell,
             occupancies: self.occupancies.select(&atoms),
@@ -304,7 +304,7 @@ impl Structure {
         self.as_structure_view().position(atom)
     }
 
-    /// One atom with its topology identity and structure state; see
+    /// One atom with its topology identity and geometry state; see
     /// [`StructureAtomView`].
     pub fn atom(&self, atom: InstanceAtomId) -> Option<StructureAtomView<'_>> {
         self.as_structure_view().atom(atom)
@@ -315,7 +315,7 @@ impl Structure {
         self.as_structure_view().atom_at(index)
     }
 
-    /// Atoms with their structure state, in dense order.
+    /// Atoms with their geometry state, in dense order.
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = StructureAtomView<'_>> + '_ {
         self.as_structure_view().atoms()
     }
@@ -369,9 +369,9 @@ impl Structure {
         self
     }
 
-    structure_readers!();
+    geometry_readers!();
     site_readers!();
-    structure_mutators!();
+    geometry_mutators!();
     site_mutators!();
 }
 
@@ -422,8 +422,8 @@ impl<'a> From<&'a Structure> for StructureView<'a> {
     }
 }
 
-/// What a [`StructureView`] borrows: a structure, or one geometry of a collection of
-/// structures with what its collection records about it.
+/// What a [`StructureView`] borrows: a structure, or one geometry of a structure
+/// set or trajectory frame source with what its source records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
 /// it so that a geometry's place, membership, velocities, and forces are
@@ -439,7 +439,7 @@ pub enum StructureKind<'a> {
     InSet(SetContext<'a>),
 }
 
-/// A borrowed topology plus the structure state bound to it: the common
+/// A borrowed topology plus the geometry state bound to it: the common
 /// input contract of coordinate-dependent kernels.
 ///
 /// Structures, geometries, trajectory frames, and frame buffers all borrow as a
@@ -565,7 +565,7 @@ impl<'a> StructureView<'a> {
         self.positions.get(self.topology.atom_index(atom)?.index())
     }
 
-    /// One atom with its topology identity and structure state.
+    /// One atom with its topology identity and geometry state.
     pub fn atom(self, atom: InstanceAtomId) -> Option<StructureAtomView<'a>> {
         let atom = self.topology.atom(atom)?;
         Some(StructureAtomView {
@@ -583,7 +583,7 @@ impl<'a> StructureView<'a> {
         })
     }
 
-    /// Atoms with their structure state, in dense order.
+    /// Atoms with their geometry state, in dense order.
     pub fn atoms(self) -> impl ExactSizeIterator<Item = StructureAtomView<'a>> + 'a {
         self.topology.atoms().map(move |atom| StructureAtomView {
             atom,
@@ -591,8 +591,8 @@ impl<'a> StructureView<'a> {
         })
     }
 
-    /// Materializes this borrowed structure as an owned structure, dropping any
-    /// geometry state reported by [`Self::kind`]. A view of a
+    /// Materializes this borrowed structure as an owned structure, dropping the
+    /// set context reported by [`Self::kind`]. A view of a
     /// trajectory frame yields a structure without occupancies or B-factors.
     pub fn to_structure(self) -> Structure {
         Structure {
@@ -656,9 +656,9 @@ impl<'a> StructureAtomView<'a> {
         self.structure.b_factor(self.atom.index())
     }
 
-    /// One structure annotation of this atom. Static annotations are
+    /// One geometry annotation of this atom. Static annotations are
     /// available through [`crate::topology::AtomView::property`].
-    pub fn structure_property(
+    pub fn geometry_property(
         self,
         key: &crate::properties::PropertyKey,
     ) -> Option<crate::properties::PropertyValue> {
@@ -676,7 +676,7 @@ impl<'a> StructureAtomView<'a> {
 pub enum StructureError {
     /// The atom is not part of the structure's topology.
     InvalidAtomId(InstanceAtomId),
-    /// Structure state is invalid; see the source.
+    /// Geometry state is invalid; see the source.
     Geometry(GeometryError),
     /// Subsetting the topology failed; see the source.
     Subset(TopologySubsetError),
@@ -728,13 +728,13 @@ impl From<TopologySubsetError> for StructureError {
 ///
 /// Each call to [`Self::add_molecule`] adds one molecule occurrence and its
 /// dense positions. [`Self::build`] publishes the coordinate-free topology and
-/// the matching structure transactionally. Staged structure state follows staged
+/// the matching structure transactionally. Staged geometry state follows staged
 /// dense atom order; use [`Self::atom_index`] to address it by atom ID.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct StructureBuilder {
     topology: TopologyBuilder,
-    state: StructureState,
-    extending_model: bool,
+    state: DraftGeometry,
+    extending_structure: bool,
 }
 
 impl StructureBuilder {
@@ -961,22 +961,22 @@ impl StructureBuilder {
 
     fn extend(&mut self, positions: &Positions, added_bonds: usize) {
         self.state.extend(positions, added_bonds);
-        if self.extending_model {
+        if self.extending_structure {
             self.state.properties.owner_mut().clear();
         }
     }
 
-    fn storage_ref(&self) -> &StructureState {
+    fn storage_ref(&self) -> &DraftGeometry {
         &self.state
     }
 
-    fn storage(&mut self) -> &mut StructureState {
+    fn storage(&mut self) -> &mut DraftGeometry {
         &mut self.state
     }
 
-    structure_readers!();
+    geometry_readers!();
     site_readers!();
-    structure_mutators!();
+    geometry_mutators!();
     site_mutators!();
 }
 

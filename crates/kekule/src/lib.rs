@@ -10,8 +10,8 @@
 //!   geometry-independent properties.
 //! - [`topology::Topology`] is one coordinate-free system containing one or
 //!   more explicit molecule instances plus an optional biological hierarchy.
-//! - [`structure::Structure`] is one structure of a topology: positions, an
-//!   optional periodic cell, and structure-scoped properties.
+//! - [`structure::Structure`] is a topology plus one geometry of it: positions,
+//!   an optional periodic cell, and geometry properties.
 //! - [`structure::StructureSet`] stores [`structure::Geometry`]s of one shared
 //!   topology, each with positions and optional cell, velocities, and forces.
 //!   An optional [`structure::Order`] places them in time, as the frames of a
@@ -746,7 +746,7 @@ pub mod molfile {
     /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
     /// a structure's cell, a geometry's state, occupancies, B factors, and
     /// properties ([`MolfileWriteOptions::cell`],
-    /// [`MolfileWriteOptions::set_metadata`],
+    /// [`MolfileWriteOptions::geometry_metadata`],
     /// [`MolfileWriteOptions::properties`]).
     ///
     /// [`MolfileWriteVersion::Auto`] uses V2000 when it can represent the
@@ -942,7 +942,7 @@ pub mod sdf {
     /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
     /// structures' cells, geometry state, occupancies, B factors, and
     /// properties ([`SdfWriteOptions::cell`],
-    /// [`SdfWriteOptions::set_metadata`], [`SdfWriteOptions::properties`]),
+    /// [`SdfWriteOptions::geometry_metadata`], [`SdfWriteOptions::properties`]),
     /// counted over all records.
     ///
     /// Records convert from structures, geometries of a structure set, and
@@ -1370,14 +1370,14 @@ pub mod pdb {
     /// ```no_run
     /// use kekule::pdb::{self, PdbSource};
     /// # fn example(interpretation: &kekule::macromolecular::StructureInterpretation,
-    /// #     models: &kekule::macromolecular::StructureSetInterpretation)
+    /// #     set: &kekule::macromolecular::StructureSetInterpretation)
     /// #     -> Result<(), kekule::diagnostics::FormatError> {
     /// let (entry, _) = pdb::write(interpretation, Default::default())?;
-    /// let (models, _) = pdb::write(
-    ///     PdbSource::structure_set(models.structure_set()).with_reports(models.reports()),
+    /// let (set_entry, _) = pdb::write(
+    ///     PdbSource::structure_set(set.structure_set()).with_reports(set.reports()),
     ///     Default::default(),
     /// )?;
-    /// # let _ = (entry, models);
+    /// # let _ = (entry, set_entry);
     /// # Ok(())
     /// # }
     /// ```
@@ -1521,7 +1521,7 @@ pub mod xyz {
 /// and read them back with
 /// [`NativeObject::into_interpretation`](native::NativeObject::into_interpretation)
 /// or [`NativeObject::into_structure_set_interpretation`](native::NativeObject::into_structure_set_interpretation).
-/// A [`StructureSetDescription`](native::StructureSetDescription) stores a geometry
+/// A [`StructureSetDescription`](native::StructureSetDescription) stores a structure
 /// set whose geometries are kept elsewhere: its topology, properties, order,
 /// distribution, and the number of its geometries.
 /// Installed perception is stored with its provenance unless

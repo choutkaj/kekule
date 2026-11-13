@@ -420,7 +420,7 @@ pub enum MolfileInterpretationWarning {
 /// atom-block order, so components may interleave in the dense order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MolfileInterpretation {
-    model: Structure,
+    structure: Structure,
     reports: Vec<MolfileInterpretationReport>,
     omitted: Vec<MolfileUnsupported>,
 }
@@ -429,12 +429,12 @@ impl MolfileInterpretation {
     /// The interpreted structure, with one molecule instance per connected
     /// component.
     pub fn structure(&self) -> &Structure {
-        &self.model
+        &self.structure
     }
 
     /// The topology of [`Self::structure`].
     pub fn topology(&self) -> &Topology {
-        self.model.topology()
+        self.structure.topology()
     }
 
     /// One component report per molecule instance, in topology instance order.
@@ -465,12 +465,12 @@ impl MolfileInterpretation {
 
     /// Retains the exact topology allocation, including its synthetic hierarchy.
     pub fn into_topology(self) -> std::sync::Arc<Topology> {
-        self.model.shared_topology()
+        self.structure.shared_topology()
     }
 
     /// The interpreted structure, discarding the reports.
     pub fn into_structure(self) -> Structure {
-        self.model
+        self.structure
     }
 
     /// The structure, the component reports, and the omitted content.
@@ -481,7 +481,7 @@ impl MolfileInterpretation {
         Vec<MolfileInterpretationReport>,
         Vec<MolfileUnsupported>,
     ) {
-        (self.model, self.reports, self.omitted)
+        (self.structure, self.reports, self.omitted)
     }
 }
 
@@ -525,7 +525,7 @@ fn publish_molfile_components(
     lines.sort_unstable_by_key(|&(location, _)| location);
     builder.set_atom_order(lines.into_iter().map(|(_, atom)| atom))?;
     Ok(MolfileInterpretation {
-        model: builder.build()?,
+        structure: builder.build()?,
         reports,
         omitted,
     })

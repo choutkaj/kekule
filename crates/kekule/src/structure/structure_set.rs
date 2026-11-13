@@ -215,7 +215,7 @@ impl<S: GeometryStorage> StructureSet<S> {
         self.distribution.as_mut().map(DistributionMut::new)
     }
 
-    /// Each geometry statistics over the set must see, with its relative
+    /// Each sample statistics over the set must see, with its relative
     /// weight: the distribution's members ([`Distribution::weighted_members`])
     /// or, without a distribution, every geometry with weight `1.0`. Items are
     /// geometry indices, in increasing order. The set's own statistics, such
@@ -478,7 +478,7 @@ impl StructureSet {
     /// Collects structures of one topology layout as the geometries of an
     /// unordered set without a distribution, on the first structure's topology
     /// snapshot. Each structure's positions, cell, occupancies, B-factors, and
-    /// structure properties become its geometry, moving without copying.
+    /// geometry properties become its geometry, moving without copying.
     ///
     /// Every structure's topology must have the first one's layout
     /// ([`Topology::same_layout`]), so structures read from separate files are
@@ -712,13 +712,13 @@ impl StructureSet {
             }
         }
         for (geometry, positions) in self.storage.geometries.iter_mut().zip(positions) {
-            GeometryState::replace_positions(geometry.structure_mut(), positions);
+            GeometryState::replace_positions(geometry.state_mut(), positions);
         }
         Ok(())
     }
 
     /// Copies geometries in the requested order, sharing the topology and each
-    /// geometry's structure. Ranges and strides can be written as
+    /// geometry's state. Ranges and strides can be written as
     /// `(start..end).step_by(stride)`; duplicates and reordering are
     /// allowed. Set properties are kept.
     ///
@@ -782,7 +782,7 @@ impl StructureSet {
     }
 
     /// A new set of one geometry per state, in state order: each state's
-    /// representative, sharing its structure, weighted by the state's
+    /// representative, sharing its state, weighted by the state's
     /// population relative to the largest member weight, so population
     /// shares are kept.
     ///
@@ -818,7 +818,7 @@ impl StructureSet {
             .iter()
             .map(|geometry| {
                 Ok(Geometry::from_state(Arc::new(
-                    geometry.structure().project(&atoms, &bonds)?,
+                    geometry.state().project(&atoms, &bonds)?,
                 )))
             })
             .collect::<Result<Vec<_>, GeometryError>>()?;
@@ -851,7 +851,7 @@ impl StructureSet {
 
     /// Applies one rigid transform per geometry transactionally: positions
     /// move; cells, velocities, and forces rotate.
-    pub(crate) fn transform_samples(
+    pub(crate) fn transform_geometries(
         &mut self,
         transforms: &[RigidTransform],
     ) -> Result<(), GeometryError> {
@@ -863,7 +863,7 @@ impl StructureSet {
             .zip(transforms)
             .map(|(geometry, transform)| {
                 Ok(Geometry::from_state(Arc::new(
-                    geometry.structure().transformed(*transform)?,
+                    geometry.state().transformed(*transform)?,
                 )))
             })
             .collect::<Result<Vec<_>, GeometryError>>()?;
@@ -925,10 +925,7 @@ impl StructureSet {
     }
 
     fn bind(&self, geometry: &mut Geometry) -> Result<(), StructureSetError> {
-        Ok(GeometryState::bind(
-            geometry.structure_mut(),
-            &self.topology,
-        )?)
+        Ok(GeometryState::bind(geometry.state_mut(), &self.topology)?)
     }
 }
 

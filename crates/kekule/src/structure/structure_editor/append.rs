@@ -72,7 +72,7 @@ impl StructureEditor {
                 .keys()
                 .cloned()
                 .collect(),
-            cleared_structure_properties: self.slots.properties.owner().keys().cloned().collect(),
+            cleared_geometry_properties: self.slots.properties.owner().keys().cloned().collect(),
             omitted_topology_properties: source
                 .topology()
                 .properties()
@@ -80,7 +80,7 @@ impl StructureEditor {
                 .keys()
                 .cloned()
                 .collect(),
-            omitted_structure_properties: source.properties().owner().keys().cloned().collect(),
+            omitted_geometry_properties: source.properties().owner().keys().cloned().collect(),
         };
         let mut staged = self.clone();
         let (mapping, _) = staged.append_unstaged(source, &|label, author| {
@@ -198,9 +198,9 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureAppendReport {
     pub(crate) cleared_topology_properties: Vec<PropertyKey>,
-    pub(crate) cleared_structure_properties: Vec<PropertyKey>,
+    pub(crate) cleared_geometry_properties: Vec<PropertyKey>,
     pub(crate) omitted_topology_properties: Vec<PropertyKey>,
-    pub(crate) omitted_structure_properties: Vec<PropertyKey>,
+    pub(crate) omitted_geometry_properties: Vec<PropertyKey>,
 }
 
 impl StructureAppendReport {
@@ -209,9 +209,9 @@ impl StructureAppendReport {
         &self.cleared_topology_properties
     }
 
-    /// Destination structure owner keys cleared because the structure changed.
-    pub fn cleared_structure_properties(&self) -> &[PropertyKey] {
-        &self.cleared_structure_properties
+    /// Destination geometry owner keys cleared because the structure changed.
+    pub fn cleared_geometry_properties(&self) -> &[PropertyKey] {
+        &self.cleared_geometry_properties
     }
 
     /// Source topology owner keys that do not describe the combined system.
@@ -219,9 +219,9 @@ impl StructureAppendReport {
         &self.omitted_topology_properties
     }
 
-    /// Source structure owner keys that do not describe the combined structure.
-    pub fn omitted_structure_properties(&self) -> &[PropertyKey] {
-        &self.omitted_structure_properties
+    /// Source geometry owner keys that do not describe the combined structure.
+    pub fn omitted_geometry_properties(&self) -> &[PropertyKey] {
+        &self.omitted_geometry_properties
     }
 }
 

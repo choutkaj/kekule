@@ -172,7 +172,7 @@ impl<'a> FrameView<'a> {
     /// Borrows the frame as the common kernel input, with the view's full
     /// lifetime: a geometry at its time place, without a membership.
     pub fn as_structure_view(self) -> StructureView<'a> {
-        self.geometry.structure().structure_view(
+        self.geometry.state().structure_view(
             self.topology,
             StructureKind::InSet(SetContext::of_frame(self.geometry, self.place())),
         )

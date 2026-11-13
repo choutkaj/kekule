@@ -145,11 +145,11 @@ impl<'a> NativeSource<'a> {
     /// The report is stored as it is. Its IDs name atoms, chains, and
     /// residues of the structure it was interpreted with.
     pub const fn interpreted_structure(
-        model: &'a Structure,
+        structure: &'a Structure,
         report: &'a StructureInterpretationReport,
     ) -> Self {
         Self {
-            content: NativeContent::InterpretedStructure(model, report),
+            content: NativeContent::InterpretedStructure(structure, report),
         }
     }
 
@@ -321,7 +321,7 @@ impl NativeObject {
         }
     }
 
-    /// The decoded structure set, of a structure set or of an interpreted geometry
+    /// The decoded structure set, of a structure set or of an interpreted structure
     /// set, whose reports it drops.
     ///
     /// # Errors
@@ -334,7 +334,7 @@ impl NativeObject {
         match self {
             Self::StructureSet(value) => Ok(value),
             Self::StructureSetInterpretation(value) => Ok(value.into_structure_set()),
-            Self::StructureSetDescription(description) => Err(external_samples(&description)),
+            Self::StructureSetDescription(description) => Err(external_geometries(&description)),
             other => Err(other.kind_error(NativeKind::StructureSet)),
         }
     }
@@ -375,7 +375,7 @@ impl NativeObject {
     }
 }
 
-fn external_samples(description: &StructureSetDescription) -> FormatError {
+fn external_geometries(description: &StructureSetDescription) -> FormatError {
     let geometries = description.geometry_count();
     FormatError::interpret(
         Format::Native,

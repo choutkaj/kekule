@@ -18,7 +18,7 @@
 //! frames of a trajectory, or the geometries of an ensemble, are each assigned
 //! from their backbone coordinates alone, with the same results.
 //!
-//! Assignment does not parse structures, choose coordinate structures or alternate
+//! Assignment does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the structure.
 //! Geometry uses single-precision coordinates and arithmetic, matching DSSP 4;
 //! structure coordinates are unchanged and result values are exposed as `f64`.
@@ -84,8 +84,8 @@ mod kernel;
 /// numbering when complete, otherwise numeric author numbering when complete,
 /// otherwise its topology hierarchy order. Insertion codes break numbered ties.
 ///
-/// `structure` is any structure view: a [`Structure`](crate::structure::Structure), an
-/// geometry, a trajectory frame, or a borrowed
+/// `structure` is any structure view: a [`Structure`](crate::structure::Structure), a
+/// geometry of a structure set, a trajectory frame, or a borrowed
 /// [`StructureView`](crate::structure::StructureView).
 ///
 /// # Errors

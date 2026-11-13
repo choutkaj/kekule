@@ -17,7 +17,7 @@ use crate::topology::{AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex
 pub enum LabelScheme {
     /// Author identifiers, as PDB files and the selection language's `chain`,
     /// `resid`, and `name` terms read them. These are the labels that stay the
-    /// same between depositions and structures of one protein.
+    /// same between depositions and models of one protein.
     ///
     /// - chain: the author chain ID, else the label chain ID;
     /// - residue number: the author sequence ID read as an integer, with the
@@ -176,7 +176,7 @@ impl AtomCorrespondence {
     /// name, read under `scheme` ([`LabelScheme`] says which identifiers). Each
     /// selection's own topology snapshot is that side's topology, so the two
     /// sides may be independent structures: two crystal structures of one
-    /// protein, or a structure and its template. Pairs follow the moving
+    /// protein, or a model and its template. Pairs follow the moving
     /// selection's dense order. Elements, residue names, and bonding are not
     /// compared.
     ///
@@ -207,7 +207,7 @@ impl AtomCorrespondence {
     ///         .interpret(Default::default())?
     ///         .into_structure())
     /// };
-    /// // A structure and a template of one water, the template with a second hydrogen.
+    /// // A model and a template of one water, the template with a second hydrogen.
     /// let structure = read("\
     /// HETATM    1  O   HOH A   1       0.100   0.000   0.000  1.00  0.00           O
     /// HETATM    2  H1  HOH A   1       1.060   0.000   0.000  1.00  0.00           H

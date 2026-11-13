@@ -7,7 +7,7 @@
 use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
 
-use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Forces, Order, Place, Positions, StructureSet, TimeAxis, Velocities};
@@ -137,8 +137,8 @@ fn xtc_cell() -> PeriodicCell {
     .unwrap()
 }
 
-fn omitted(field: StructureField, structures: usize) -> WriteOmission {
-    WriteOmission::StructureState { field, structures }
+fn omitted(field: GeometryField, geometries: usize) -> WriteOmission {
+    WriteOmission::GeometryState { field, geometries }
 }
 
 /// Writes every frame of `frames` with `writer` and returns its stream and
@@ -218,13 +218,13 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
     );
     assert_eq!(bytes, expected);
     let state = [
-        StructureField::Velocities,
-        StructureField::Forces,
-        StructureField::Time,
-        StructureField::Step,
-        StructureField::AtomProperties,
-        StructureField::BondProperties,
-        StructureField::Properties,
+        GeometryField::Velocities,
+        GeometryField::Forces,
+        GeometryField::Time,
+        GeometryField::Step,
+        GeometryField::AtomProperties,
+        GeometryField::BondProperties,
+        GeometryField::Properties,
     ]
     .map(|field| omitted(field, 2));
     let expected_report: WriteReport = topology_report
@@ -278,12 +278,12 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
     );
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = [
-        StructureField::Velocities,
-        StructureField::Forces,
-        StructureField::AtomProperties,
-        StructureField::BondProperties,
-        StructureField::Properties,
-        StructureField::Time,
+        GeometryField::Velocities,
+        GeometryField::Forces,
+        GeometryField::AtomProperties,
+        GeometryField::BondProperties,
+        GeometryField::Properties,
+        GeometryField::Time,
     ]
     .map(|field| omitted(field, 2))
     .into_iter()
@@ -317,7 +317,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
     );
     let (bytes, report) = dcd(DcdWriteOptions::default().with_frame_metadata(OMIT), &timed);
     assert_eq!(bytes, expected);
-    assert_eq!(report.omissions(), [omitted(StructureField::Time, 2)]);
+    assert_eq!(report.omissions(), [omitted(GeometryField::Time, 2)]);
 }
 
 #[test]
@@ -343,11 +343,11 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
     );
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = [
-        StructureField::Velocities,
-        StructureField::Forces,
-        StructureField::AtomProperties,
-        StructureField::BondProperties,
-        StructureField::Properties,
+        GeometryField::Velocities,
+        GeometryField::Forces,
+        GeometryField::AtomProperties,
+        GeometryField::BondProperties,
+        GeometryField::Properties,
     ]
     .map(|field| omitted(field, 2))
     .into_iter()
@@ -416,9 +416,9 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     );
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = [
-        StructureField::AtomProperties,
-        StructureField::BondProperties,
-        StructureField::Properties,
+        GeometryField::AtomProperties,
+        GeometryField::BondProperties,
+        GeometryField::Properties,
     ]
     .map(|field| omitted(field, 2))
     .into_iter()
@@ -556,7 +556,7 @@ fn dcd_numbers_frames_on_the_step_sequence() {
     // frame, has the other steps replaced and reported.
     let (bytes, report) = dcd(numbered, &stepped([100, 120, 140]));
     assert_eq!(bytes, expected);
-    assert_eq!(report.omissions(), [omitted(StructureField::Step, 2)]);
+    assert_eq!(report.omissions(), [omitted(GeometryField::Step, 2)]);
     let read = read_all(
         &mut DcdReader::new(Cursor::new(bytes), topology(), DcdReadOptions::default()).unwrap(),
     );
@@ -624,8 +624,8 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
     );
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = [
-        omitted(StructureField::Step, 2),
-        omitted(StructureField::Time, 2),
+        omitted(GeometryField::Step, 2),
+        omitted(GeometryField::Time, 2),
     ]
     .into_iter()
     .collect();

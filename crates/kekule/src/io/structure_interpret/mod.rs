@@ -48,7 +48,7 @@ pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
     SequenceSource,
 };
-pub(in crate::io) use types::{geometry_error, poll, poll_every};
+pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
     AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
@@ -90,20 +90,20 @@ fn interpret_source(
         options.cancellation().cloned(),
     )?;
     let model_id = match &options.model_selection() {
-        ModelSelection::RequireSingle if prepared.structure_sizes.len() == 1 => {
-            prepared.structure_sizes[0].0.clone()
+        ModelSelection::RequireSingle if prepared.model_sizes.len() == 1 => {
+            prepared.model_sizes[0].0.clone()
         }
         ModelSelection::RequireSingle => {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
                     "The input has {} coordinate models. Select one.",
-                    prepared.structure_sizes.len(),
+                    prepared.model_sizes.len(),
                 ),
             ))
         }
-        ModelSelection::First => prepared.structure_sizes[0].0.clone(),
+        ModelSelection::First => prepared.model_sizes[0].0.clone(),
         ModelSelection::Select(id) => id.clone(),
     };
     prepared.interpret_model(&model_id)
@@ -120,7 +120,7 @@ struct ModelRows {
 /// Shared interpretation of one source; each model's rows are consumed once.
 struct PreparedSource {
     models: BTreeMap<String, ModelRows>,
-    structure_sizes: Vec<(String, usize)>,
+    model_sizes: Vec<(String, usize)>,
     report: StructureInterpretationReport,
     polymer_order: BTreeMap<String, usize>,
     connections: Vec<ConnectionRecord>,
@@ -168,7 +168,7 @@ impl PreparedSource {
         // Models in source order, each source row's model, and each model's
         // row count.
         let mut model_ids = Vec::<String>::new();
-        let mut structure_sizes = Vec::<usize>::new();
+        let mut model_sizes = Vec::<usize>::new();
         let mut indices = BTreeMap::<&str, usize>::new();
         let mut row_models = Vec::with_capacity(rows.len());
         for (step, row) in rows.iter().enumerate() {
@@ -177,15 +177,15 @@ impl PreparedSource {
                 Some(&index) if model_ids[index] == row.model_id => index,
                 _ => *indices.entry(&row.model_id).or_insert_with(|| {
                     model_ids.push(row.model_id.clone());
-                    structure_sizes.push(0);
+                    model_sizes.push(0);
                     model_ids.len() - 1
                 }),
             };
-            structure_sizes[index] += 1;
+            model_sizes[index] += 1;
             row_models.push(index);
         }
         drop(indices);
-        let mut model_rows = structure_sizes
+        let mut model_rows = model_sizes
             .iter()
             .map(|&size| ModelRows {
                 all: Vec::with_capacity(size),
@@ -206,19 +206,19 @@ impl PreparedSource {
                 .selected
                 .push((positions[row], order));
         }
-        let structure_sizes = model_ids
+        let model_sizes = model_ids
             .iter()
             .cloned()
-            .zip(structure_sizes)
+            .zip(model_sizes)
             .collect::<Vec<_>>();
         let models = model_ids
             .into_iter()
             .zip(model_rows)
             .collect::<BTreeMap<_, _>>();
-        report.coordinate_models = structure_sizes.len();
+        report.coordinate_models = model_sizes.len();
         Ok(Self {
             models,
-            structure_sizes,
+            model_sizes,
             report,
             polymer_order,
             connections,
@@ -232,7 +232,7 @@ impl PreparedSource {
     fn interpret_model(&mut self, model_id: &str) -> Result<StructureInterpretation, FormatError> {
         poll(self.cancellation.as_ref())?;
         let rows = self.models.remove(model_id).ok_or_else(|| {
-            geometry_error(
+            structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("Coordinate model {model_id:?} does not exist."),
@@ -244,7 +244,7 @@ impl PreparedSource {
             .map(|&(position, _)| &rows.all[position])
             .find(|row| row.point.is_none())
         {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
@@ -270,7 +270,7 @@ impl PreparedSource {
             }
             _ => true,
         });
-        for (ignored, count) in &self.structure_sizes {
+        for (ignored, count) in &self.model_sizes {
             if ignored != model_id {
                 report.ignored_coordinate_models.push(ignored.clone());
                 report
@@ -281,7 +281,7 @@ impl PreparedSource {
                     });
             }
         }
-        publish_model(
+        publish_structure(
             &self.connections,
             rows,
             &self.polymer_order,
@@ -293,14 +293,14 @@ impl PreparedSource {
         .map(|mut interpretation| {
             interpretation.report.polymer_entities = sequences::place_polymer_entities(
                 &self.polymer_entities,
-                interpretation.model.topology(),
+                interpretation.structure.topology(),
             );
             interpretation
         })
     }
 }
 
-fn publish_model(
+fn publish_structure(
     connections: &[ConnectionRecord],
     rows: ModelRows,
     polymer_asym_order: &BTreeMap<String, usize>,
@@ -438,17 +438,17 @@ fn publish_model(
         cancellation,
     )?);
     poll(cancellation)?;
-    let mut model = builder.build().map_err(graph_error)?;
+    let mut structure = builder.build().map_err(graph_error)?;
     poll(cancellation)?;
-    model.set_cell(cell);
-    let mut occupancies = vec![None; model.atom_count()];
-    let mut b_factors = vec![None; model.atom_count()];
+    structure.set_cell(cell);
+    let mut occupancies = vec![None; structure.atom_count()];
+    let mut b_factors = vec![None; structure.atom_count()];
     let b_factor_scale = SQUARE_ANGSTROM
         .conversion_factor_to(SQUARE_NANOMETER)
         .map_err(graph_error)?;
     for (atom, occupancy, b_factor) in qualified_atom_data {
-        let index = model.topology().atom_index(atom).ok_or_else(|| {
-            geometry_error(
+        let index = structure.topology().atom_index(atom).ok_or_else(|| {
+            structure_error(
                 DiagnosticKind::Chemistry,
                 None,
                 format!("The topology has no {atom}."),
@@ -457,10 +457,10 @@ fn publish_model(
         occupancies[index.index()] = occupancy;
         b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }
-    model
+    structure
         .set_occupancies(Some(occupancies))
         .map_err(graph_error)?;
-    model
+    structure
         .set_b_factors(Some(crate::units::Quantity::new(
             b_factors,
             SQUARE_NANOMETER,
@@ -477,5 +477,5 @@ fn publish_model(
         .iter()
         .filter(|instance| instance.entity_kinds().contains(&EntityKind::Water))
         .count();
-    Ok(StructureInterpretation { model, report })
+    Ok(StructureInterpretation { structure, report })
 }

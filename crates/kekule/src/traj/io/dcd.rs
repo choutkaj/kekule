@@ -63,7 +63,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{
-    LimitExceeded, Resource, StructureField, UnrepresentablePolicy, WriteOmission, WriteReport,
+    GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::DecodedGeometry;
@@ -192,8 +192,8 @@ pub enum DcdFrameTimingPolicy {
     /// without a step or a time is given them. A frame whose own step or
     /// time disagrees has it replaced, and [`DcdWriter::report`] counts the
     /// frames whose steps and times were replaced as
-    /// [`WriteOmission::StructureState`] for [`StructureField::Step`] and
-    /// [`StructureField::Time`]. A frame on the sequence writes as it would
+    /// [`WriteOmission::GeometryState`] for [`GeometryField::Step`] and
+    /// [`GeometryField::Time`]. A frame on the sequence writes as it would
     /// under [`Self::Require`].
     Number,
 }
@@ -374,7 +374,7 @@ impl DcdWriteOptions {
     /// and its time under [`DcdTimePolicy::Absent`], which DCD cannot carry:
     /// by default a frame with any of them fails to write;
     /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
-    /// reports a [`WriteOmission::StructureState`],
+    /// reports a [`WriteOmission::GeometryState`],
     /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
     /// each kind left out (see [`DcdWriter::report`]).
     pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
@@ -2262,12 +2262,12 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
         record(
             &mut self.report,
             [
-                (replaced_step, StructureField::Step),
-                (replaced_time, StructureField::Time),
+                (replaced_step, GeometryField::Step),
+                (replaced_time, GeometryField::Time),
             ]
-            .map(|(replaced, field)| WriteOmission::StructureState {
+            .map(|(replaced, field)| WriteOmission::GeometryState {
                 field,
-                structures: usize::from(replaced),
+                geometries: usize::from(replaced),
             }),
         );
         Ok(())

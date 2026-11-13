@@ -277,7 +277,7 @@ fn unedited_and_sourceless_drafts_report_identity_and_empty_maps() {
 }
 
 #[test]
-fn model_edits_remap_columns_through_the_dense_maps() {
+fn structure_edits_remap_columns_through_the_dense_maps() {
     let source = system();
     let positions = Positions::new(Quantity::new(
         (0..source.atom_count())
@@ -464,7 +464,7 @@ fn describe(structure: &Structure) -> String {
 }
 
 #[test]
-fn edits_through_shared_state_leave_the_source_model_unchanged() {
+fn edits_through_shared_state_leave_the_source_structure_unchanged() {
     let source = system();
     let positions = Positions::new(Quantity::new(
         (0..source.atom_count())

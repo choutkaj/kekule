@@ -323,22 +323,22 @@ impl XyzInterpretationReport {
     }
 }
 
-/// One frame interpreted as a model, with its report.
+/// One frame interpreted as a structure, with its report.
 #[derive(Debug, Clone)]
 pub struct XyzInterpretation {
-    model: Structure,
+    structure: Structure,
     report: XyzInterpretationReport,
 }
 
 impl XyzInterpretation {
-    /// The interpreted model.
+    /// The interpreted structure.
     pub fn structure(&self) -> &Structure {
-        &self.model
+        &self.structure
     }
 
-    /// The model's topology.
+    /// The structure's topology.
     pub fn topology(&self) -> &Topology {
-        self.model.topology()
+        self.structure.topology()
     }
 
     /// What interpretation inferred and why.
@@ -346,14 +346,14 @@ impl XyzInterpretation {
         &self.report
     }
 
-    /// The interpreted model, discarding the report.
+    /// The interpreted structure, discarding the report.
     pub fn into_structure(self) -> Structure {
-        self.model
+        self.structure
     }
 
-    /// The model and its report.
+    /// The structure and its report.
     pub fn into_parts(self) -> (Structure, XyzInterpretationReport) {
-        (self.model, self.report)
+        (self.structure, self.report)
     }
 }
 
@@ -402,7 +402,7 @@ fn in_frame(error: FormatError, frame: usize) -> FormatError {
     if error.detail().is_some() {
         return error;
     }
-    error.with_detail(FormatErrorDetail::Structure {
+    error.with_detail(FormatErrorDetail::Model {
         model_id: frame.to_string(),
     })
 }
@@ -435,11 +435,11 @@ pub(crate) fn interpret_xyz(
     };
     let frame = Frame::analyse(&frames[index], index, &options.common)
         .map_err(|error| in_frame(error, index))?;
-    let model = frame
-        .build_model(options.common.length_unit)
+    let structure = frame
+        .build_structure(options.common.length_unit)
         .map_err(|error| in_frame(error, index))?;
     Ok(XyzInterpretation {
-        model,
+        structure,
         report: frame.report,
     })
 }
@@ -487,14 +487,14 @@ pub(crate) fn interpret_xyz_structure_set(
     let first_index = selected[0];
     let first = Frame::analyse(&frames[first_index], first_index, common)
         .map_err(|error| in_frame(error, first_index))?;
-    let model = first
-        .build_model(common.length_unit)
+    let structure = first
+        .build_structure(common.length_unit)
         .map_err(|error| in_frame(error, first_index))?;
-    let (first_model, first_report) = (model, first.report);
-    let mut set = StructureSet::new(first_model.shared_topology());
+    let (first_structure, first_report) = (structure, first.report);
+    let mut set = StructureSet::new(first_structure.shared_topology());
     let shared_bonds = bond_identity(&first_report.bonds);
     let mut reports = Vec::with_capacity(selected.len());
-    push_sample(&mut set, first.points, common.length_unit, first_index)?;
+    push_geometry(&mut set, first.points, common.length_unit, first_index)?;
     reports.push(first_report);
     for &index in &selected[1..] {
         let frame = &frames[index];
@@ -527,10 +527,10 @@ pub(crate) fn interpret_xyz_structure_set(
                 model_id: index.to_string(),
             }));
         }
-        push_sample(&mut set, analysed.points, common.length_unit, index)?;
+        push_geometry(&mut set, analysed.points, common.length_unit, index)?;
         reports.push(analysed.report);
     }
-    drop(first_model);
+    drop(first_structure);
     Ok(XyzStructureSetInterpretation { set, reports })
 }
 
@@ -539,26 +539,26 @@ fn bond_identity(bonds: &[XyzInferredBond]) -> Vec<([TopologyAtomIndex; 2], Bond
 }
 
 /// Appends one frame as a geometry of the set.
-fn push_sample(
+fn push_geometry(
     set: &mut StructureSet,
     points: Vec<Point3>,
     unit: Unit,
     frame: usize,
 ) -> Result<(), FormatError> {
     let positions = Positions::from_vec(Quantity::new(points, unit))
-        .map_err(|error| sample_error(error, frame))?;
+        .map_err(|error| geometry_error(error, frame))?;
     set.push(Geometry::new(positions), None)
         .map(|_| ())
-        .map_err(|error| sample_error(error, frame))
+        .map_err(|error| geometry_error(error, frame))
 }
 
 /// A failure to build the structure of a frame, keeping its cause.
-fn geometry_error(error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+fn structure_error(error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
     interpret_error(DiagnosticKind::Chemistry, "Cannot build the structure.").with_source(error)
 }
 
 /// A failure to add `frame` to the structure set, keeping its cause.
-fn sample_error(
+fn geometry_error(
     error: impl std::error::Error + Send + Sync + 'static,
     frame: usize,
 ) -> FormatError {
@@ -710,14 +710,14 @@ impl Frame {
     /// Publishes one molecule per connected component, a synthetic hierarchy
     /// of one `UNL` residue per molecule in chain `A`, and atom-line order as
     /// dense atom order.
-    fn build_model(&self, unit: Unit) -> Result<Structure, FormatError> {
+    fn build_structure(&self, unit: Unit) -> Result<Structure, FormatError> {
         let components = components(self.elements.len(), &self.report.bonds);
         let mut builder = StructureBuilder::new();
         let mut definitions = super::definition_reuse::DefinitionReuse::new();
         let chain = builder
             .hierarchy_mut()
             .add_chain("A", None)
-            .map_err(geometry_error)?;
+            .map_err(structure_error)?;
         let mut order = vec![None; self.elements.len()];
         let mut bonds_by_component = vec![Vec::new(); components.len()];
         let mut component_of = vec![0; self.elements.len()];
@@ -737,29 +737,29 @@ impl Frame {
                 // XYZ lists every atom, so no hydrogen is implicit.
                 let atom =
                     Atom::new(self.elements[row]).with_hydrogens(ImplicitHydrogens::Fixed(0));
-                let id = editor.add_atom(atom).map_err(geometry_error)?;
+                let id = editor.add_atom(atom).map_err(structure_error)?;
                 local.insert(row, id);
             }
             for bond in &bonds_by_component[component] {
                 let [a, b] = bond.atoms.map(|atom| local[&atom.index()]);
-                editor.add_bond(a, b, bond.order).map_err(geometry_error)?;
+                editor.add_bond(a, b, bond.order).map_err(structure_error)?;
             }
-            let molecule = editor.finish().map_err(geometry_error)?;
+            let molecule = editor.finish().map_err(structure_error)?;
             let positions = Positions::from_vec(Quantity::new(
                 rows.iter().map(|&row| self.points[row]).collect(),
                 unit,
             ))
-            .map_err(geometry_error)?;
+            .map_err(structure_error)?;
             let atom_ids: Vec<AtomId> = rows.iter().map(|row| local[row]).collect();
             // Atoms carry no names, so chemistry alone decides reuse.
             let labels = vec![(); molecule.atom_count()];
             let definition = definitions
                 .definition(&mut builder, molecule, labels)
-                .map_err(geometry_error)?;
+                .map_err(structure_error)?;
             let instance = builder
                 .add_instance(definition, &positions)
-                .map_err(geometry_error)?;
-            let sequence = i32::try_from(component + 1).map_err(geometry_error)?;
+                .map_err(structure_error)?;
+            let sequence = i32::try_from(component + 1).map_err(structure_error)?;
             let hierarchy = builder.hierarchy_mut();
             let residue = hierarchy
                 .add_residue(
@@ -769,12 +769,12 @@ impl Frame {
                     Some(sequence.to_string()),
                     None,
                 )
-                .map_err(geometry_error)?;
+                .map_err(structure_error)?;
             for (&row, atom) in rows.iter().zip(atom_ids) {
                 let atom = InstanceAtomId::new(instance, atom);
                 hierarchy
                     .add_atom_site(residue, atom, AtomSiteMetadata::default())
-                    .map_err(geometry_error)?;
+                    .map_err(structure_error)?;
                 order[row] = Some(atom);
             }
         }
@@ -784,8 +784,8 @@ impl Frame {
                     .into_iter()
                     .map(|atom| atom.expect("every atom line belongs to one component")),
             )
-            .map_err(geometry_error)?;
-        builder.build().map_err(geometry_error)
+            .map_err(structure_error)?;
+        builder.build().map_err(structure_error)
     }
 }
 

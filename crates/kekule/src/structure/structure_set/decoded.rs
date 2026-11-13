@@ -59,9 +59,9 @@ impl Geometry {
         if let Some(owner) = frame.owner {
             *properties.owner_mut() = owner;
         }
-        let mut structure = GeometryState::from_frame_state(positions, frame.cell, properties);
-        structure.velocities = velocities;
-        structure.forces = forces;
-        Ok(Self::from_state(Arc::new(structure)))
+        let mut state = GeometryState::from_frame_state(positions, frame.cell, properties);
+        state.velocities = velocities;
+        state.forces = forces;
+        Ok(Self::from_state(Arc::new(state)))
     }
 }

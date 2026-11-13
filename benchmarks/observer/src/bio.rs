@@ -114,7 +114,7 @@ fn site_ids(
         .collect()
 }
 
-/// The atom sites Kekule kept from the first structure: identity, element,
+/// The atom sites Kekule kept from the first model: identity, element,
 /// occupancy, B in Å² and coordinates in Å.
 fn hierarchy(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = first_model(document)?;
@@ -262,7 +262,7 @@ fn partner(
     }
 }
 
-/// DSSP per residue of a single-structure, single-conformer input, keyed by
+/// DSSP per residue of a single-model, single-conformer input, keyed by
 /// label chain and sequence number as mkdssp reports them.
 fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = first_model(document)?;
@@ -314,7 +314,7 @@ fn secondary_structure(document: &MmcifDocument) -> Result<Facts, Failure> {
     Ok(facts)
 }
 
-/// Cα RMSD of every coordinate structure after fitting it onto the first.
+/// Cα RMSD of every coordinate model after fitting it onto the first.
 fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
     let interpretation = document
         .interpret_structure_set(Default::default())

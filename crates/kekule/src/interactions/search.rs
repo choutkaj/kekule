@@ -32,7 +32,7 @@ pub struct InteractionSide<'a> {
 }
 
 impl<'a> InteractionSide<'a> {
-    /// A side of `structure`, a structure, geometry, or trajectory frame,
+    /// A side of `structure`, a structure, a geometry of a set, or a trajectory frame,
     /// whose `atoms` take part, with `features` of its topology.
     ///
     /// # Errors

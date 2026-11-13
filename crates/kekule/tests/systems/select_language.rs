@@ -1367,7 +1367,7 @@ fn within_over_many_structures_grows_with_atoms_plus_points() {
 
 /// Copies of `structure` appended into one structure: apart on a cubic grid, or
 /// stacked in one place as a host merges duplicated objects.
-fn copies_in_one_model(structure: &Structure, copies: usize, apart: bool) -> Structure {
+fn copies_in_one_structure(structure: &Structure, copies: usize, apart: bool) -> Structure {
     let points: &[Point3] = structure.positions().values().value();
     let (low, high) = points.iter().fold(
         (
@@ -1444,7 +1444,7 @@ fn threads(count: usize) -> kekule::parallel::ScopedThreads {
 fn within_selects_the_same_atoms_on_any_executor() {
     // About 100k atoms, so `within` splits them into several work items.
     let base = structure("mmcif/1AKE.cif");
-    let structure = copies_in_one_model(&base, 100_000 / base.atom_count() + 1, true);
+    let structure = copies_in_one_structure(&base, 100_000 / base.atom_count() + 1, true);
     let positions: &[Point3] = structure.positions().values().value();
     // Host points near the first and the last copies.
     let points = [positions[17], positions[positions.len() - 40]]
@@ -1581,7 +1581,7 @@ fn selection_terms_on_a_million_atoms_run_within_a_frame() {
     let available = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let pool = threads(available);
     for apart in [true, false] {
-        let structure = copies_in_one_model(&base, copies, apart);
+        let structure = copies_in_one_structure(&base, copies, apart);
         let serial = SelectEvaluateOptions::default().with_resolver(&Everything);
         let mut report = format!(
             "{} ({} atoms), best and median of 7, one thread and {available}:",

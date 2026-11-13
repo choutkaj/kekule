@@ -8,7 +8,7 @@ use crate::units::Quantity;
 
 use super::{Geometry, GeometryView, Place, StructureSetRead};
 
-/// What a borrowed geometry carries besides its structure: its place in its
+/// What a borrowed geometry carries besides its state: its place in its
 /// set's order, its membership in the set's distribution, and its
 /// velocities and forces when present.
 ///

@@ -162,7 +162,7 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
 }
 
 #[test]
-fn model_builder_order_moves_positions_with_atoms() {
+fn structure_builder_order_moves_positions_with_atoms() {
     let (structure, order) = interleaved();
     assert_eq!(structure.topology().atom_ids(), order);
     assert_eq!(xs(&structure), [0.0, 1.0, 2.0]);
@@ -241,7 +241,7 @@ fn editors_keep_surviving_atoms_in_source_order_and_append_new_atoms() {
 }
 
 #[test]
-fn appending_a_model_keeps_its_dense_order_and_positions() {
+fn appending_a_structure_keeps_its_dense_order_and_positions() {
     let (source, _) = interleaved();
     let mut editor = kekule::structure::StructureEditor::new();
     let appended = editor.append_structure(&source).unwrap();

@@ -400,7 +400,7 @@ impl CxFeatures {
         if let Some(offset) = relative {
             // Enhanced groups take precedence over the legacy chiral flag.
             // Preserve the common relative configuration of the remaining
-            // tetrahedral assertions, without asserting a pure or racemic geometry.
+            // tetrahedral assertions, without asserting a pure or racemic sample.
             let atoms = document
                 .program
                 .tetrahedral

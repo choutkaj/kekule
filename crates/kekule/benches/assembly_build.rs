@@ -34,13 +34,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let text = std::fs::read_to_string(&path)?;
     let interpretation =
         mmcif::parse_str(&text, Default::default())?.interpret(Default::default())?;
-    let model = interpretation.structure();
+    let structure = interpretation.structure();
     println!(
         "informational only; target={}-{}; deposited atoms={}; minimum and median of {ROUNDS} \
          rounds",
         std::env::consts::OS,
         std::env::consts::ARCH,
-        model.atom_count(),
+        structure.atom_count(),
     );
     println!("| assembly | copies | atoms | build min ms | build median ms |");
     println!("|---|---:|---:|---:|---:|");
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut atoms = 0;
         for _ in 0..ROUNDS {
             let start = Instant::now();
-            let built = assembly.to_structure(model, None)?;
+            let built = assembly.to_structure(structure, None)?;
             times.push(start.elapsed());
             atoms = built.atom_count();
             black_box(built);

@@ -623,7 +623,7 @@ fn moved(point: Point3) -> Point3 {
     Point3::new(-point.y + 2.0, point.x - 3.0, point.z + 1.0)
 }
 
-fn chain_model(points: &[Point3]) -> Structure {
+fn chain_structure(points: &[Point3]) -> Structure {
     Structure::new(
         chain(points.len()),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
@@ -646,7 +646,7 @@ fn correspondence_fixture() -> (
         Point3::new(0.0, 0.0, 4.0),
         Point3::new(2.0, 2.0, 2.0),
     ];
-    let reference = chain_model(&[
+    let reference = chain_structure(&[
         moved(points[2]),
         moved(points[0]),
         moved(points[3]),
@@ -864,7 +864,7 @@ fn correspondence_failures_preserve_whole_collections() {
         trajectory.aligned_rmsd(&reference, &fit, &measurement, Default::default()),
         Err(AlignmentError::Item { index: 2, .. })
     ));
-    let wrong = chain_model(reference.positions().values().value());
+    let wrong = chain_structure(reference.positions().values().value());
     assert_eq!(
         trajectory.rmsd(&wrong, &measurement, Default::default()),
         Err(AlignmentError::Correspondence(
@@ -940,7 +940,7 @@ fn acetate_points(swapped: bool) -> [Point3; 4] {
     ]
 }
 
-fn acetate_model(topology: &Arc<Topology>, points: &[Point3]) -> Structure {
+fn acetate_structure(topology: &Arc<Topology>, points: &[Point3]) -> Structure {
     Structure::new(
         Arc::clone(topology),
         Positions::new(Quantity::new(points, NANOMETER)).unwrap(),
@@ -957,8 +957,8 @@ fn nanometers(positions: &Positions) -> Vec<Point3> {
 #[test]
 fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
     let topology = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
-    let reference = acetate_model(&topology, &acetate_points(false));
-    let swapped = acetate_model(&topology, &acetate_points(true));
+    let reference = acetate_structure(&topology, &acetate_points(false));
+    let swapped = acetate_structure(&topology, &acetate_points(true));
     let all = AtomSelection::all(Arc::clone(&topology));
     let symmetric = SymmetricSelection::new(&all).unwrap();
     assert_eq!(symmetric.permutation_count(), 2);
@@ -1067,7 +1067,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     // An empty collection still validates the selection binding.
     let foreign = kekule::smiles::to_topology("CC(=O)[O-]").unwrap();
     let foreign = SymmetricSelection::new(&AtomSelection::all(Arc::clone(&foreign))).unwrap();
-    let structure = acetate_model(&topology, &reference);
+    let structure = acetate_structure(&topology, &reference);
     assert_eq!(
         StructureSet::new(Arc::clone(&topology)).rmsd(&structure, &foreign, Default::default()),
         Err(AlignmentError::SelectionTopologyMismatch)

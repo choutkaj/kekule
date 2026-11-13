@@ -151,7 +151,7 @@ impl IndexedFile {
     fn read(&self, index: usize) -> Result<Geometry, TrajectoryIoError> {
         let lost = |error| self.reader.lost_frame(index, error);
         let mut reader = self.take().map_err(lost)?;
-        let read = reader.read_sample(index);
+        let read = reader.read_geometry(index);
         // A failed read puts the stream back, so the reader stays usable.
         self.give_back(reader);
         read.map_err(lost)

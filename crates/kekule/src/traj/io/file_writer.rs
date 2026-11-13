@@ -618,7 +618,7 @@ pub fn write_structure_set(
 /// # use kekule::math::Point3;
 /// # use kekule::structure::{Order, Place, Positions, Geometry, StructureSet, TimeAxis};
 /// # use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
-/// use kekule::diagnostics::{StructureField, UnrepresentablePolicy, WriteOmission};
+/// use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission};
 /// use kekule::traj::io::{write_structure_set_to, TrajectoryWriteOptions};
 /// use kekule::traj::TrajectoryFormat;
 /// # let topology = kekule::smiles::to_topology("[He]")?;
@@ -633,7 +633,7 @@ pub fn write_structure_set(
 /// let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
 ///     .with_frame_metadata(UnrepresentablePolicy::Omit);
 /// let report = write_structure_set_to(&mut stream, &set, options)?;
-/// let omitted = WriteOmission::StructureState { field: StructureField::Time, structures: 1 };
+/// let omitted = WriteOmission::GeometryState { field: GeometryField::Time, geometries: 1 };
 /// assert!(report.omissions().contains(&omitted));
 /// assert!(!stream.into_inner().is_empty());
 /// # Ok::<(), Box<dyn std::error::Error>>(())

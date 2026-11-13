@@ -102,16 +102,16 @@ are marked **Breaking:**.
   selecting, and collapsing copy no coordinates. `GeometryView`, `StateView`,
   and the `GeometryMut` and `DistributionMut` guards read and edit geometries,
   states, and the distribution; a geometry's view implements `AsStructureView`,
-  so writers and kernels take it as they take a model.
+  so writers and kernels take it as they take a structure.
   `StructureSet::weighted_samples` and `Distribution::weighted_members` give
   the geometries statistics see, with their weights. The set's operations fail
   with one `StructureSetError`, and `StructureSetError::Missing` names the
   `Requirement` that is absent, such as a time order.
-  `StructureSet::from_structures` takes models whose topologies have equal layouts
-  (`Topology::same_layout`), so models read from separate files become
-  geometries, each keeping its model's positions, cell, occupancies,
-  B-factors, and structure properties, bound to the first model's
-  topology. A model of another layout fails with
+  `StructureSet::from_structures` takes structures whose topologies have equal layouts
+  (`Topology::same_layout`), so structures read from separate files become
+  geometries, each keeping its structure's positions, cell, occupancies,
+  B-factors, and geometry properties, bound to the first structure's
+  topology. A structure of another layout fails with
   `StructureSetError::TopologyMismatch`.
 - Structure sets in formats (SeekDelta K72c). `native::read` and `write` store
   a `StructureSet` (`NativeKind::StructureSet`) and a structure set with one report
@@ -122,7 +122,7 @@ are marked **Breaking:**.
   properties, order, and distribution, for geometries kept elsewhere;
   `NativeObject::into_structure_set_description` reads it from any structure set
   record, and `into_structure_set` fails on such a record with
-  `FormatErrorDetail::NativeExternalSamples`.
+  `FormatErrorDetail::NativeExternalGeometries`.
   `pdb::PdbDocument::interpret_structure_set` and the mmCIF document's and
   block's `interpret_structure_set` give a
   `macromolecular::StructureSetInterpretation` of one state without
@@ -137,17 +137,17 @@ are marked **Breaking:**.
   `GeometryView`, and `pdb::write`, `mmcif::write`, and `sdf::write` take a
   set directly. `traj::io::write_structure_set` and `write_structure_set_to`
   write a set of a time order or of none, without a distribution or set
-  properties, one frame per geometry. The new `set_metadata` option of the
+  properties, one frame per geometry. The new `geometry_metadata` option of the
   Molfile, SDF, PDB, mmCIF, and XYZ writers decides what happens to the
   state of a geometry a format cannot carry, including a geometry outside the
-  distribution (`StructureField::Membership`). The PDB, mmCIF, and XYZ
+  distribution (`GeometryField::Membership`). The PDB, mmCIF, and XYZ
   writers also refuse or report state properties, a lone state's
   representative that is not its first member, and a time order without
-  times or steps (`StructureField::StateProperties`, `Representative`, and
+  times or steps (`GeometryField::StateProperties`, `Representative`, and
   `Order`; `TrajectoryField::Representative` and `Order`). An SDF coordinate
   unit is the symbol of a unit constant, which the writer and the reader
   take from one table; a set's coordinate in another unit fails to write
-  unless `set_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
+  unless `geometry_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
   gain `UnrepresentableGeometry` and `EmptyStructureSet`, and `TrajectoryField`
   gains `Membership` and `Distribution`.
 - Analysis of structure sets (SeekDelta K72b). `StructureSet::superpose`, `rmsd`,
@@ -180,14 +180,14 @@ are marked **Breaking:**.
   rotation within the tolerance is made exactly orthonormal, so products of
   many stay rigid. A source's assemblies use at most 100,000 operators
   together, counted before anything expands; those beyond are left out.
-  `Assembly::to_structure` builds the assembly from the interpreted model as one
-  new model, with cancellation: a copy under the identity keeps its chains'
+  `Assembly::to_structure` builds the assembly from the interpreted structure as one
+  new structure, with cancellation: a copy under the identity keeps its chains'
   identifiers, and other copies append the operation's name, label and
   author alike, on chains and atom sites (`A-2`, `A-12-60`), so the mmCIF
   and PDB writers name each copy. Copies share their molecules'
   definitions. `Assembly::atom_count` gives the size before building.
   Reports keep their assemblies in native files.
-- Interpretation reports in native files. A model or structure set keeps its
+- Interpretation reports in native files. A structure or structure set keeps its
   structure interpretation reports through native write and read, so an
   application that saves structures in native files keeps what the source
   stated beyond the structure: metal coordination, which the mmCIF and PDB
@@ -195,7 +195,7 @@ are marked **Breaking:**.
   provenance, alternate-location decisions, assemblies, and issues.
   `native::write` takes a `StructureInterpretation` or
   `StructureSetInterpretation`, or `NativeSource::interpreted_structure`
-  and `NativeSource::interpreted_structure_set` pair a model or set with
+  and `NativeSource::interpreted_structure_set` pair a structure or set with
   reports held apart from it. `NativeObject::into_interpretation` and
   `NativeObject::into_structure_set_interpretation` read them back, and the
   reports compare equal to those written. `into_structure` and
@@ -203,7 +203,7 @@ are marked **Breaking:**.
   the `NativeKind`s `StructureInterpretation` (kind 7) and
   `StructureSetInterpretation` (kind 10). Report columns store each repeated
   string once. The report of PDB 7K00 (149,338 atoms) adds 8.1 MB to its
-  15.8 MB model, about 70 ms to writing, and about 130 ms to reading. The
+  15.8 MB structure, about 70 ms to writing, and about 130 ms to reading. The
   `native_interpretation` benchmark measures an entry.
 - PDB export of metal coordination (SeekDelta K65). The PDB writer takes
   interpretation reports as the mmCIF writer does:
@@ -304,10 +304,10 @@ are marked **Breaking:**.
   in the unit and finite (`StructureSetError::NonFiniteOrderValue`); values
   need not increase, as a scan swept back and forth shows. A geometry's
   scalar results, such as its energy or gradient norm, are owner properties
-  of its structure properties. PDB writes such a set as one `MODEL` per
+  of its geometry properties. PDB writes such a set as one `MODEL` per
   geometry and XYZ as one frame per geometry; both fail on the steps or
-  coordinates unless `set_metadata` omits them with a report
-  (`StructureField::OrderStep` and `OrderCoordinate`,
+  coordinates unless `geometry_metadata` omits them with a report
+  (`GeometryField::OrderStep` and `OrderCoordinate`,
   `TrajectoryField::OrderStep` and `OrderCoordinate`), as Molfile and mmCIF
   do for a lone geometry. SDF writes a geometry's step as the `kekule.step`
   data field, or its coordinate as `kekule.coordinate` with its unit as
@@ -433,8 +433,8 @@ are marked **Breaking:**.
   (`cargo bench -p kekule --bench structure_interpretation -- <mmCIF>`),
   which times parsing, interpretation, and default perception of an
   externally supplied entry such as PDB 6SPB or 7K00.
-- An informational benchmark of a ligand edit in a large model
-  (`cargo bench -p kekule --bench model_edit_scale -- <mmCIF> <ligand>`),
+- An informational benchmark of a ligand edit in a large structure
+  (`cargo bench -p kekule --bench structure_edit_scale -- <mmCIF> <ligand>`),
   which merges 66 copies of an externally supplied entry such as PDB 9UOH.
 - Minimization with fixed atoms and position restraints (SeekDelta K57), so
   a host cleans up an edited group while the rest of its molecule keeps its
@@ -451,9 +451,9 @@ are marked **Breaking:**.
   `restraint_energy` on both reports the restraints' share, which
   `final_evaluation` and `energy` leave out. `minimize` and
   `minimize_with_observer` are unchanged. The `clean_up` example cleans up a
-  group of a ligand inside a larger model with OpenFF Rosemary and Ash
+  group of a ligand inside a larger structure with OpenFF Rosemary and Ash
   charges.
-- Builder geometry on model drafts (SeekDelta K3a), so a host that edits a
+- Builder geometry on structure drafts (SeekDelta K3a), so a host that edits a
   `StructureEditor` draft gets coordinates for the atoms it adds as part of that
   edit's one publication. The new `structure::placement` module documents the
   rules. `StructureEditor::add_hydrogens` makes the implicit hydrogens of chosen
@@ -463,7 +463,7 @@ are marked **Breaking:**.
   into counts as `Molecule::remove_hydrogens` does; both report per atom what
   they added or removed (`PlacedHydrogensReport`, `RemovedHydrogensReport`),
   keep represented stereo, and fail with `PlacementError::InvalidValence`
-  naming an atom over its valence. `StructureEditor::atom_geometry` perceives an
+  naming an atom over its valence. `StructureEditor::atom_domains` perceives an
   atom's `AtomShape` (terminal, linear, trigonal planar, tetrahedral,
   trigonal bipyramidal, octahedral) from its element, charge, radical
   electrons, bond orders, neighbors, and implicit hydrogens, and
@@ -477,7 +477,7 @@ are marked **Breaking:**.
   named by element and the next free number (`C21`, `H31`), and
   `StructureEditor::next_atom_name` and `StructureEditor::rename_atom` apply the rule
   to existing atoms. Placement works inside the edited occurrences, so its
-  cost follows the edited atoms rather than the model.
+  cost follows the edited atoms rather than the structure.
 - XYZ documents built from atoms (SeekDelta K54), so a host that holds a
   molecule as elements and positions, such as one reading the atoms a
   Gaussian cube file lists beside its grids, has it interpreted as XYZ
@@ -502,8 +502,8 @@ are marked **Breaking:**.
   fail by default, as before; under `UnrepresentablePolicy::Omit` the frame
   is written without that state, and the new `DcdWriter::report`,
   `TrrWriter::report`, and `XtcWriter::report`, like `XyzWriter::report`,
-  count each kind left out as a `WriteOmission::StructureState` of the new
-  `StructureField::AtomProperties`, `BondProperties`, or `Properties`, or of
+  count each kind left out as a `WriteOmission::GeometryState` of the new
+  `GeometryField::AtomProperties`, `BondProperties`, or `Properties`, or of
   `Time`, `Step`, `Velocities`, or `Forces`. A frame left without its time
   writes the same bytes as one that never had it.
   `TrajectoryWriteOptions::with_frame_metadata` and `with_frame_properties`
@@ -529,8 +529,8 @@ are marked **Breaking:**.
   `with_step_sequence` and, under `DcdTimePolicy::HeaderDelta`, at that step
   × `DELTA`. A frame without a step or time is given them; a frame whose own
   step or time disagrees has it replaced, and `DcdWriter::report` counts the
-  frames whose steps and times were replaced as `WriteOmission::StructureState`
-  of `StructureField::Step` and `Time`. Frames on the sequence write the same
+  frames whose steps and times were replaced as `WriteOmission::GeometryState`
+  of `GeometryField::Step` and `Time`. Frames on the sequence write the same
   bytes and report nothing, as before. The default,
   `DcdFrameTimingPolicy::Require`, fails such frames as before.
 - Trajectory writers over a host's stream (SeekDelta K53), so that a host
@@ -734,7 +734,7 @@ are marked **Breaking:**.
     against the interpreted topology when its element tokens are symbols in
     standard letter case, the only form that reader accepts.
   - The new `xyz` fuzz target covers the parser and interpretation.
-- The PDB writer: `pdb::write` and `pdb::write_to` write a model, a
+- The PDB writer: `pdb::write` and `pdb::write_to` write a structure, a
   geometry's view (`PdbSource::structure`), or a structure set (one `MODEL` per
   geometry) as one entry that reads back with the same atoms, identities,
   bonds, coordinates, occupancies, and B factors at PDB precision.
@@ -765,7 +765,7 @@ are marked **Breaking:**.
     interpretation poll it between stages and periodically inside them.
     Once it turns true, interpretation fails with a `FormatError` of the new
     `DiagnosticKind::Cancelled`, whose source is `diagnostics::Cancelled`.
-  - `Model::perceive_cancellable`, `StructureSet::perceive_cancellable`, and
+  - `Structure::perceive_cancellable`, `StructureSet::perceive_cancellable`, and
     `Topology::perceived_cancellable` poll it between definitions and
     stages and during ring perception. They fail with the new
     `PerceptionError::Cancelled` and leave the owner unchanged.
@@ -795,10 +795,10 @@ are marked **Breaking:**.
   geometry in geometry order (SeekDelta K33), so a host no longer turns geometries
   into frames and reports the loss itself. The whole set is checked before
   its first frame. Geometry state follows the PDB and mmCIF rules under the
-  new `XyzWriteOptions::set_metadata`: unequal weights, more than one
+  new `XyzWriteOptions::geometry_metadata`: unequal weights, more than one
   state, state energies, and a temperature fail by default
   (`TrajectoryIoErrorKind::UnsupportedField`, naming the geometry's frame) and
-  are reported as `WriteOmission::StructureState` under
+  are reported as `WriteOmission::GeometryState` under
   `UnrepresentablePolicy::Omit`; the file reads back as one state of equally
   weighted geometries. The new `XyzWriteOptions::cell` lets frames and geometries
   with a periodic cell be written without it, reported as
@@ -949,12 +949,19 @@ are marked **Breaking:**.
   `to_structure`, `into_structure`, `from_structure`, `from_structures`, and
   `structure()` where an interpretation or write source returned a model.
   Messages follow the words: "The geometry properties of the structure have
-  no PDB representation.", "The input holds a structure, not an interpreted
-  structure.", and "There are 0 interpretation reports for 2 structures."
-  `StructureProperties` and `StructureError` become `GeometryProperties` and
-  `GeometryError`, and `PropertyDomain`'s rows of a structure's own state
-  become `GeometryAtoms` and `GeometryBonds`. `kekule::geometry` becomes
-  `kekule::math`, `PeriodicGeometry` becomes `Lattice` and `AtomGeometry`
+  no PDB representation." and "The input holds a structure, not an
+  interpreted structure." `StructureProperties` and `StructureError` become
+  `GeometryProperties` and `GeometryError`;
+  `TrajectoryIoErrorKind::InvalidStructure`, whose source is that error,
+  becomes `InvalidGeometry`; `StructureField` becomes `GeometryField`;
+  `StructureAtomView::structure_property` becomes `geometry_property`; the
+  append and solvation reports' `cleared_model_properties` and
+  `omitted_model_properties` become `cleared_geometry_properties` and
+  `omitted_geometry_properties`; and `PropertyDomain`'s rows of a
+  structure's own state become `GeometryAtoms` and `GeometryBonds`.
+  `kekule::geometry` becomes `kekule::math`, `PeriodicGeometry` becomes
+  `Lattice` with `LatticeError`, whose wrappers `SolvationError::Geometry`
+  and `PeriodicBoxError::Geometry` become `Lattice`, and `AtomGeometry`
   becomes `AtomDomains`, freeing the word geometry. `Model` keeps its other
   meanings: perception models, physical and machine-learning models, and the
   `MODEL` records of PDB and mmCIF. Native format bytes are unchanged.
@@ -996,16 +1003,16 @@ are marked **Breaking:**.
   and its structure set's properties fail by default ("The geometry
   properties of the structure have no PDB representation.", "The structure set
   properties have no SDF representation.") and are reported as
-  `WriteOmission::StructureState` under `UnrepresentablePolicy::Omit`.
+  `WriteOmission::GeometryState` under `UnrepresentablePolicy::Omit`.
   PDB and mmCIF dropped them silently before. Molfile and SDF also refuse
   occupancies and B factors ("The occupancies of the structure have no SDF
   representation."), reported as `WriteOmission::Occupancies` and
   `WriteOmission::BFactors`, and state properties on the representative's
-  record, all under `set_metadata`. `StructureField` gains
+  record, all under `geometry_metadata`. `GeometryField` gains
   `SetProperties`, `Occupancies`, and `BFactors`; `StructureSetRead` gains a
   provided `properties`, the set's properties, so writers see them through
   any reader. Migration: a host that wrote such structures on purpose sets
-  `properties`, or `set_metadata` for Molfile and SDF sites, to `Omit`.
+  `properties`, or `geometry_metadata` for Molfile and SDF sites, to `Omit`.
 - **Breaking:** SDF reading names the reference record in a disagreement
   (SeekDelta K75): "The data field "kekule.temperature.K" differs from
   that of record 2." and "The data field "kekule.coordinate.unit"
@@ -1032,7 +1039,7 @@ are marked **Breaking:**.
   with its time and step (SeekDelta K74). `FrameView::new(topology, geometry,
   time, step)` lends a geometry held apart from a set and
   `FrameView::from_geometry` one of a time-ordered set, neither copying
-  arrays; `to_structure` copies a frame out as a model. A `FrameBuffer` holds a
+  arrays; `to_structure` copies a frame out as a structure. A `FrameBuffer` holds a
   `Geometry`: `FrameBuffer::from_geometry` binds one, `geometry_mut` edits it,
   and `set_time` and `set_step` set the frame's place. `into_geometry`
   returns the geometry with its `Place` without copying, so a host keeps
@@ -1074,15 +1081,15 @@ are marked **Breaking:**.
   needs progress or cancellation reads geometry by geometry through
   `StructureSetRead`. Reading through `Processed` loads processed geometries.
 - **Breaking:** the Molfile, SDF, PDB, and mmCIF writers hold a geometry to
-  one policy, `set_metadata`, whether it belongs to a set or is a
+  one policy, `geometry_metadata`, whether it belongs to a set or is a
   trajectory frame (SeekDelta K74). XYZ keeps `frame_metadata` for the
-  frames it streams and `set_metadata` for the geometry state of a set.
+  frames it streams and `geometry_metadata` for the geometry state of a set.
 - **Breaking:** writer failure texts name geometries (SeekDelta K74). A geometry
   state a format cannot carry reads "The {field} of geometry {n} has no
   {format} representation." ("of the geometry" for one geometry). Plural
   fields take "have": "The velocities of geometry 1 have no PDB
   representation." (velocities, forces, state properties, and per-atom,
-  per-bond, and structure properties). The temperature reads "The ensemble
+  per-bond, and geometry properties). The temperature reads "The ensemble
   temperature has no {format} representation.", and the order "The geometry
   order has no {format} representation." mmCIF's "Geometry {n} has a
   different {field} from the first geometry." and PDB's and mmCIF's "The
@@ -1116,7 +1123,7 @@ are marked **Breaking:**.
   (`Place`), its membership in a distribution (`Membership`: weight, state,
   whether it represents the state, `state_energy`, and the temperature),
   and its velocities and forces. Geometry views and frame buffers report
-  their state through it, so match `StructureKind::Geometry(context)` where
+  their state through it, so match `StructureKind::InSet(context)` where
   code matched `StructureKind::Member { .. }` or `Frame { .. }`. Every
   writer writes byte for byte as before.
 - **Breaking:** the `kekule-traj` crate is now the `kekule::traj` module
@@ -1141,16 +1148,16 @@ are marked **Breaking:**.
   counts its molecule as its residue. Both `find_interactions_within` and
   `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 10
   hydrophobic contacts instead of 20.
-- **Breaking:** appending a model shares identical definitions (SeekDelta
-  K23b). `StructureEditor::append_model` gives an appended molecule the
+- **Breaking:** appending a structure shares identical definitions (SeekDelta
+  K23b). `StructureEditor::append_structure` gives an appended molecule the
   definition the draft already holds for an identical one, from the draft's
   source or an earlier append, by the identity interpretation uses (K23):
   equal graph in local atom order, properties, and per-atom component and
-  atom names, and also equal perception and class. A 9UOH model with two
+  atom names, and also equal perception and class. A 9UOH structure with two
   copies of itself appended has 6 definitions instead of 18, and each
   definition three times the instances. Editing one instance still copies
   its definition and leaves the others unchanged. Consumers that counted
-  definitions per appended model count instances instead.
+  definitions per appended structure count instances instead.
 - **Breaking:** only monomers of a polymer have one-letter codes (SeekDelta
   K21b). `residue_code` and `chain_sequences` give a code to a residue whose
   component links into a polymer, or an amino-acid or nucleotide residue,
@@ -1213,9 +1220,9 @@ are marked **Breaking:**.
   checks. `TopologyPerceptionError` no longer repeats its source. Variants
   that add nothing to their cause are transparent: they display the cause
   and return the cause's own source. These are `DraftError`, whose cause
-  stays available through `DraftError::error`, `StructureError::Structure`,
-  `StructureBuildError::Model`, `StructureError::{Array, Property, Cell, Unit}`,
-  `StructureEditError::{Topology, Position, Property, Structure, Model}`,
+  stays available through `DraftError::error`, `StructureError::Geometry`,
+  `StructureBuildError::Structure`, `GeometryError::{Array, Property, Cell, Unit}`,
+  `StructureEditError::{Topology, Position, Property, Geometry, Structure}`,
   `PlacementError::Edit`, `TopologyEditError::Property`,
   `TopologyBuildError::Property`, `TopologySubsetError::Selection`,
   `MeasurementError::{Selection, Unit}`, `BondDihedralError::Measurement`,
@@ -1272,10 +1279,10 @@ are marked **Breaking:**.
   dative bond, and XYZ, Molfile, SDF, and SMILES keep their dative bonds.
   The mmCIF writer states the report's coordination as `metalc` rows when it
   is given the report (writing an interpretation does), so mmCIF reads,
-  writes, and reads back with the same records; a model written alone, such
-  as an edited one, has none. A record that names an atom the model lacks
+  writes, and reads back with the same records; a structure written alone, such
+  as an edited one, has none. A record that names an atom the structure lacks
   is left out and counted as the new `WriteOmission::Coordination`. A
-  model's own dative bond between residues, as an editor can add, is still
+  structure's own dative bond between residues, as an editor can add, is still
   written as `metalc` or PDB `CONECT` but reads back as coordination, and
   both writers count it as the new `WriteOmission::CoordinationBonds`.
 - **Breaking:** default aromaticity perception (`AromaticityModel::RdkitLike`)
@@ -1329,11 +1336,11 @@ are marked **Breaking:**.
   as cysteine's HG is now selected. Before, it took only hydrogens bonded to
   N or O; selections using the term now also return S–H hydrogens.
 - **Breaking:** an edit of a large system costs what it changes (SeekDelta
-  K56b). A topology or model draft started from a snapshot stores nothing
+  K56b). A topology or structure draft started from a snapshot stores nothing
   per source atom, bond, or hierarchy node: it reads the source until an
-  edit changes, moves, or deletes one, and a model draft shares the source's
+  edit changes, moves, or deletes one, and a structure draft shares the source's
   positions, occupancies, and B factors until it writes them (`Positions`
-  and the per-atom scalar columns are copied on write, so cloning a model
+  and the per-atom scalar columns are copied on write, so cloning a structure
   copies no coordinates). The source snapshot is never written, so earlier
   snapshots, as an undo history keeps them, stay intact. Publication carries
   untouched occurrences, residues, and atom sites over by index, builds the
@@ -1343,12 +1350,12 @@ are marked **Breaking:**.
   labels and site metadata in row tables shared between snapshots. The
   per-instance lists behind `InstanceView::chains`, `residues`, and
   `atom_sites` are built on first use. Results are unchanged. Definitions
-  appended from a perceived model (`StructureEditor::append_model`) keep the
+  appended from a perceived structure (`StructureEditor::append_structure`) keep the
   record that their perception is the default profile's, as definitions
-  shared from the source do, so a model merged from perceived copies and
+  shared from the source do, so a structure merged from perceived copies and
   never perceived again perceives only what an edit changed, not every
-  definition (63–83 ms before on the model below, 0.5 ms now). One edit of a
-  ligand in a 100,716-atom model (66 perceived copies of PDB 9UOH appended,
+  definition (63–83 ms before on the structure below, 0.5 ms now). One edit of a
+  ligand in a 100,716-atom structure (66 perceived copies of PDB 9UOH appended,
   6,336 definitions), whole cycle of starting the editor, editing, publishing with
   correspondence, and perceiving: deleting an atom takes 6.8 ms instead of
   64 ms, attaching one 6.9 ms instead of 58 ms, and changing an atom's
@@ -1362,16 +1369,16 @@ are marked **Breaking:**.
   and `EditAtomSite` by value, since a draft no longer stores the source
   nodes it has not changed.
 - A structural edit of a large system costs about what it changes (SeekDelta
-  K56). Publishing a topology or model draft shares every definition the
+  K56). Publishing a topology or structure draft shares every definition the
   edit left untouched with the source snapshot, with its perception, even
   while the source is still shared, as by an undo history; before, it cloned
-  them. Perceiving the result (`Topology::perceived` and model and geometry
+  them. Perceiving the result (`Topology::perceived` and structure and structure
   set perception) perceives only the definitions whose perception the
   edit cleared and shares the others, with the same result as perceiving
   every definition. Editors index source atoms, bonds, and hierarchy nodes in
   vectors rather than ordered maps, snapshots share atom-site and residue
   labels, and publication reclassifies only the definitions whose evidence
-  changed. Deleting one atom of a ligand in a 100,716-atom model (66 merged
+  changed. Deleting one atom of a ligand in a 100,716-atom structure (66 merged
   copies of PDB 9UOH, 6,336 definitions) now publishes in about 35–55 ms
   instead of 180–235 ms and perceives in under 1 ms instead of 90–125 ms;
   starting the editor takes 20–40 ms instead of 100–140 ms (fastest of 15
@@ -1386,7 +1393,7 @@ are marked **Breaking:**.
   missing frame time under `DcdTimePolicy::HeaderDelta` name
   `DcdFrameTimingPolicy::Number`.
 - **Breaking:** The mmCIF writer writes chains that share a label, as
-  `StructureEditor::append_model` makes from copies of one model, instead of
+  `StructureEditor::append_structure` makes from copies of one structure, instead of
   failing with `duplicate mmCIF structural-instance ID` (SeekDelta K50). So a
   structure merged from copies, such as 66 copies of a protein or a crystal's
   symmetry mates, is exported as mmCIF. Every hierarchy chain remains a
@@ -1396,7 +1403,7 @@ are marked **Breaking:**.
   `auth_asym_id` keeps the author chain name, so the reader gives back the
   same chains, atoms, bonds, and author names, with the written IDs as their
   labels. `_struct_conn` rows name each copy's own asyms. The hierarchy and
-  `append_model` keep labels as they are. `MmcifWriteIssue::DuplicateAsymId`,
+  `append_structure` keep labels as they are. `MmcifWriteIssue::DuplicateAsymId`,
   which the writer no longer returns, is removed.
 - `within` over many small structures is fast again (SeekDelta K49), with
   unchanged results. Since K42 each structure gathered the near lists of the
@@ -1524,7 +1531,7 @@ are marked **Breaking:**.
     `ClusteringError::PartitionMismatch` is
     `StructureSetError::PartitionMismatch`. `ClusterOrder::Energy` orders
     geometries by their state's energy.
-  - `StructureField` gains `State` and `Temperature`.
+  - `GeometryField` gains `State` and `Temperature`.
   - SDF writes each geometry's weight and state (`sdf::STATE_FIELD`), marks
     representatives (`sdf::REPRESENTATIVE_FIELD`), writes a state's energy on
     its representative's record, and writes the temperature
@@ -1532,7 +1539,7 @@ are marked **Breaking:**.
     per geometry, and of clustered states round-trip.
   - PDB and mmCIF structure sets, which read back as one state of equal
     weights without an energy, also fail on several states or a temperature
-    unless `set_metadata` omits them.
+    unless `geometry_metadata` omits them.
 - **Breaking:** `pdb::write` and `mmcif::write` return the text together with
   a `diagnostics::WriteReport`, and `pdb::write_to` and `mmcif::write_to`
   return the report. The report lists every omission an
@@ -1569,7 +1576,7 @@ are marked **Breaking:**.
   | `Trajectory`, `TrajectoryFrame`, `TrajectoryFrameView`, `TrajectoryFrameMut`, `TrajectoryIter`, `TrajectoryError` | `StructureSet` with `Order::Time(TimeAxis)`; `Geometry` and its `Place::Time { time, step }`; `FrameView` for writers |
   | `Series`, `SeriesItem`, `SeriesItemView`, `SeriesItemMut`, `SeriesIter`, `SeriesAxis`, `SeriesError` | `StructureSet` with `Order::Step` or `Order::Coordinate`; `Place::Step` or `Place::Coordinate` |
   | `EnsemblePartition`, `EnsembleState` | `Partition`, `State` |
-  | `Ensemble::from_models(models, partition)` | `StructureSet::from_structures(models)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
+  | `Ensemble::from_models(models, partition)` | `StructureSet::from_structures(structures)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
   | `Ensemble::from_molecule_positions` | `Topology::from_molecule`, `StructureSet::from_geometries` of `Geometry::new(positions)`, then `set_distribution` |
   | `Ensemble` and `Trajectory` methods (`select`, `subset`, `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, `contact_occupancy`, `group_contact_occupancy`, clustering, `pairwise_fitted_rmsd`, populations, rankings, `collapse`, `assign_boltzmann_populations`) | The `StructureSet` and `DistributionMut` methods of the same names |
   | `Trajectory::validate_monotonic_time(MissingTimePolicy)` | `StructureSet::validate_monotonic_time()`, which fails with `Missing(Times)` on an axis without times |
@@ -1582,8 +1589,8 @@ are marked **Breaking:**.
   | `MmcifDocument::interpret_ensemble`, `PdbDocument::interpret_ensemble`, `XyzDocument::interpret_ensemble`, `StructureEnsembleInterpretation`, `XyzEnsembleInterpretation` | `interpret_structure_set`, `StructureSetInterpretation`, `XyzStructureSetInterpretation` |
   | `sdf::ensemble` | `sdf::structure_set` |
   | `PdbSource::ensemble`, `series`, `MmcifBlockSource::ensemble`, and the conversions from `&Ensemble`, `&Series`, `&StructureEnsembleInterpretation` | `PdbSource::structure_set`, `MmcifBlockSource::structure_set`, and the conversions from `&StructureSet` and `&StructureSetInterpretation` |
-  | `ensemble_metadata`, `series_metadata`, and the Molfile, SDF, PDB, and mmCIF `frame_metadata` writer options with their `with_` setters | `set_metadata` and `with_set_metadata` |
-  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifGeometryField::Weight`, `Energy`, `State`, `Temperature` | `UnrepresentableGeometry`, `EmptyStructureSet` |
+  | `ensemble_metadata`, `series_metadata`, and the Molfile, SDF, PDB, and mmCIF `frame_metadata` writer options with their `with_` setters | `geometry_metadata` and `with_geometry_metadata` |
+  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifMemberField::Weight`, `Energy` | `UnrepresentableGeometry`, `EmptyStructureSet` |
   | `diagnostics::check_multi_model_ensemble`, `UnrepresentableSampleState` | none: writers check geometry state themselves |
   | `StructureError::InvalidWeight`, `NonFiniteCoordinate` | `StructureSetError::InvalidWeight`, `NonFiniteOrderValue` |
 

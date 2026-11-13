@@ -45,8 +45,8 @@
 //! use kekule_openff::{ForceField, NaglModel};
 //! use kekule_potentials::{minimize, openff::OpenFfPotential, MinimizeOptions, Potential};
 //!
-//! # fn explicit_hydrogen_model() -> Structure { unimplemented!() }
-//! let structure = explicit_hydrogen_model();
+//! # fn explicit_hydrogen_structure() -> Structure { unimplemented!() }
+//! let structure = explicit_hydrogen_structure();
 //! let nagl = NaglModel::ash()?;
 //! let parameters = ForceField::rosemary()?.parameterize(structure.shared_topology(), &nagl)?;
 //! let potential = OpenFfPotential::new(&parameters)?;

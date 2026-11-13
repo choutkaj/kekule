@@ -445,19 +445,19 @@ impl PairFits<'_, '_> {
     }
 }
 
-/// Members loaded by one work item at least: reading a sample costs about
-/// as much as many fits.
+/// Members loaded by one work item at least: reading a geometry costs
+/// about as much as many fits.
 const MEMBERS_PER_WORK_ITEM: usize = 16;
 
 /// Fitted RMSD between every pair of members of `reader`'s distribution, or
-/// of every pair of samples of a reader without one, as
+/// of every pair of geometries of a reader without one, as
 /// [`StructureSet::pairwise_fitted_rmsd_with`] computes it for a set in
 /// memory, with the same matrix and errors.
 ///
 /// Only the fitted atoms of each member are kept: every member is lent or
 /// read once, on `run`'s executor, and its fitted positions copied out, so
 /// memory grows with the members times the fitted atoms rather than with
-/// whole samples. Geometry 0 of the members is read once more to check
+/// whole geometries. The first member is read once more to check
 /// `atoms`. Progress counts pairs fitted once the members are loaded;
 /// cancellation is polled before each member is loaded and while fitting.
 ///
@@ -506,10 +506,10 @@ pub fn pairwise_fitted_rmsd<'a>(
     run: ClusteringRun<'_>,
 ) -> Result<DistanceMatrix, ClusteringError> {
     let atoms = undirected(atoms.into())?;
-    let every_sample = Members::All;
+    let every_geometry = Members::All;
     let (samples, count) = match reader.distribution() {
         Some(distribution) => (distribution.members(), distribution.member_count()),
-        None => (&every_sample, reader.len()),
+        None => (&every_geometry, reader.len()),
     };
     let expected = condensed_len(count)?;
     if count == 0 {

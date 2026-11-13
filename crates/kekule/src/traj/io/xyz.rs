@@ -67,7 +67,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
-use super::frame_state::{record, sample_field, site_fields, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, trajectory_field, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
@@ -149,7 +149,7 @@ pub struct XyzWriteOptions {
     cell: UnrepresentablePolicy,
     frame_metadata: UnrepresentablePolicy,
     frame_properties: UnrepresentablePolicy,
-    set_metadata: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
 }
 
 impl Default for XyzWriteOptions {
@@ -161,7 +161,7 @@ impl Default for XyzWriteOptions {
             cell: UnrepresentablePolicy::Fail,
             frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
-            set_metadata: UnrepresentablePolicy::Fail,
+            geometry_metadata: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -209,10 +209,13 @@ impl XyzWriteOptions {
         self
     }
 
-    /// Sets [`Self::set_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_set_metadata(mut self, set_metadata: UnrepresentablePolicy) -> Self {
-        self.set_metadata = set_metadata;
+    pub const fn with_geometry_metadata(
+        mut self,
+        geometry_metadata: UnrepresentablePolicy,
+    ) -> Self {
+        self.geometry_metadata = geometry_metadata;
         self
     }
 
@@ -242,7 +245,7 @@ impl XyzWriteOptions {
     /// A trajectory frame's velocities, forces, time, step, occupancies, and
     /// B-factors, which XYZ cannot carry: by default a frame with any of them
     /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
-    /// and reports a [`WriteOmission::StructureState`],
+    /// and reports a [`WriteOmission::GeometryState`],
     /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
     /// each kind left out. [`XyzWriter::write_structure_set`] leaves a geometry's
     /// occupancies and B-factors out under every policy.
@@ -252,7 +255,7 @@ impl XyzWriteOptions {
 
     /// A frame's or geometry's atom, bond, and own properties, which XYZ cannot
     /// carry: by default a frame or geometry with any of them fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
-    /// and reports a [`WriteOmission::StructureState`] for each kind left
+    /// and reports a [`WriteOmission::GeometryState`] for each kind left
     /// out.
     pub const fn frame_properties(&self) -> UnrepresentablePolicy {
         self.frame_properties
@@ -267,9 +270,9 @@ impl XyzWriteOptions {
     /// first member, a temperature, or an order, a time order without times
     /// or steps among them, or a geometry with velocities or forces;
     /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
-    /// [`WriteOmission::StructureState`] left out.
-    pub const fn set_metadata(&self) -> UnrepresentablePolicy {
-        self.set_metadata
+    /// [`WriteOmission::GeometryState`] left out.
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 }
 
@@ -1313,7 +1316,7 @@ impl<W: Write> XyzWriter<W> {
     /// [`XyzWriteOptions::cell`], frame state omitted under
     /// [`XyzWriteOptions::frame_metadata`] and
     /// [`XyzWriteOptions::frame_properties`], geometry state omitted under
-    /// [`XyzWriteOptions::set_metadata`], and geometries' occupancies and
+    /// [`XyzWriteOptions::geometry_metadata`], and geometries' occupancies and
     /// B factors. The writer writes the same text whatever it reports.
     pub fn report(&self) -> &WriteReport {
         &self.report
@@ -1484,7 +1487,7 @@ impl<W: Write> XyzWriter<W> {
     ///
     /// The whole set is checked before its first frame is written. The
     /// geometries' membership, places, velocities, and forces follow
-    /// [`XyzWriteOptions::set_metadata`], their atom, bond, and own
+    /// [`XyzWriteOptions::geometry_metadata`], their atom, bond, and own
     /// properties [`XyzWriteOptions::frame_properties`], and their cells
     /// [`XyzWriteOptions::cell`]; occupancies and B factors are always left
     /// out. [`Self::report`] gains everything left out.
@@ -1576,9 +1579,13 @@ impl<W: Write> XyzWriter<W> {
             omitted.extend(state);
         }
         let mut state = Omissions::default();
-        record_multi_model_structure_set(set, self.options.set_metadata, &mut state).map_err(
+        record_multi_model_structure_set(set, self.options.geometry_metadata, &mut state).map_err(
             |(geometry, field)| {
-                writer_field_error(&self.source_label, frame(geometry - 1), sample_field(field))
+                writer_field_error(
+                    &self.source_label,
+                    frame(geometry - 1),
+                    trajectory_field(field),
+                )
             },
         )?;
         for geometry in set {

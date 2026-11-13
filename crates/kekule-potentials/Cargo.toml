@@ -10,7 +10,7 @@ license.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
-description = "Energy, gradient, and geometry-optimization machinery for topology-bound Kekule models."
+description = "Energy, gradient, and geometry-optimization machinery for topology-bound Kekule structures."
 publish = true
 # Integration tests (tests/) are not shipped.
 include = ["/src/**", "/examples/**", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]

@@ -88,11 +88,11 @@ fn cell() -> PeriodicCell {
 }
 
 #[test]
-fn canonical_model_constructors_accept_owned_and_shared_topology() {
+fn canonical_structure_constructors_accept_owned_and_shared_topology() {
     let owned = Structure::new(single_atom_topology(), single_position(1.0)).unwrap();
     let shared = owned.shared_topology();
-    let shared_model = Structure::new(Arc::clone(&shared), single_position(2.0)).unwrap();
-    assert!(Arc::ptr_eq(&shared_model.shared_topology(), &shared));
+    let shared_structure = Structure::new(Arc::clone(&shared), single_position(2.0)).unwrap();
+    assert!(Arc::ptr_eq(&shared_structure.shared_topology(), &shared));
 
     let complete = Structure::new(Arc::clone(&shared), single_position(3.0))
         .unwrap()
@@ -105,7 +105,7 @@ fn canonical_model_constructors_accept_owned_and_shared_topology() {
 }
 
 #[test]
-fn model_builder_rejects_instance_position_mismatch_before_mutation() {
+fn structure_builder_rejects_instance_position_mismatch_before_mutation() {
     let topology = single_atom_topology();
     let molecule = topology.instances().next().unwrap();
     let mut builder = StructureBuilder::new();
@@ -128,7 +128,7 @@ fn model_builder_rejects_instance_position_mismatch_before_mutation() {
 }
 
 #[test]
-fn model_builder_rejects_excess_replacement_positions_before_mutation() {
+fn structure_builder_rejects_excess_replacement_positions_before_mutation() {
     let topology = single_atom_topology();
     let molecule = topology.instances().next().unwrap();
     let mut builder = StructureBuilder::new();
@@ -192,7 +192,7 @@ fn structures_reject_rows_of_other_dimensions() {
 }
 
 #[test]
-fn sample_position_replacement_checks_the_count_transactionally() {
+fn geometry_position_replacement_checks_the_count_transactionally() {
     let (structure, _, _) = structure_fixture();
     let mut set = bundle([structure.clone(), structure.clone()]).unwrap();
     assert_eq!(
@@ -244,7 +244,7 @@ fn canonical_structure_set_constructors_accept_owned_and_shared_topology() {
 }
 
 #[test]
-fn sets_from_models_accept_equal_layouts_and_refuse_others() {
+fn sets_from_structures_accept_equal_layouts_and_refuse_others() {
     let structure = |smiles: &str| {
         let topology = crate::smiles::to_topology(smiles).unwrap();
         let atoms = topology.atom_count();
@@ -266,7 +266,7 @@ fn sets_from_models_accept_equal_layouts_and_refuse_others() {
 }
 
 #[test]
-fn member_views_project_borrowed_and_owned_models_in_stable_order() {
+fn member_views_project_borrowed_and_owned_structures_in_stable_order() {
     let topology = Arc::new(single_atom_topology());
     let score = key("score");
     let mut first = Geometry::new(single_position(1.0));
@@ -322,7 +322,7 @@ fn member_views_project_borrowed_and_owned_models_in_stable_order() {
 }
 
 #[test]
-fn detached_samples_get_bond_rows_only_when_bound() {
+fn detached_geometries_get_bond_rows_only_when_bound() {
     let (structure, _, _) = structure_fixture();
     let label = key("label");
     let mut member = Geometry::new(structure.positions().clone());
@@ -371,7 +371,7 @@ fn detached_samples_get_bond_rows_only_when_bound() {
 }
 
 #[test]
-fn sample_replacement_rejects_incompatible_samples_without_changing_state() {
+fn geometry_replacement_rejects_incompatible_geometries_without_changing_state() {
     let (structure, _, _) = structure_fixture();
     let topology = structure.shared_topology();
     let mut set = conformers(
@@ -445,7 +445,7 @@ fn sample_replacement_rejects_incompatible_samples_without_changing_state() {
 }
 
 #[test]
-fn sample_replacement_preserves_order_and_membership_and_publishes_the_whole_sample() {
+fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_geometry() {
     let (structure, _, _) = structure_fixture();
     let topology = structure.shared_topology();
     let original = Geometry::new(structure.positions().clone());
@@ -498,7 +498,7 @@ fn sample_replacement_preserves_order_and_membership_and_publishes_the_whole_sam
 }
 
 #[test]
-fn sample_editor_preserves_dimensions_and_validated_values() {
+fn geometry_editor_preserves_dimensions_and_validated_values() {
     let (structure, _, _) = structure_fixture();
     let mut set = bundle([structure]).unwrap();
     let mut distribution = set.distribution_mut().unwrap();
@@ -547,7 +547,7 @@ fn sample_editor_preserves_dimensions_and_validated_values() {
 }
 
 #[test]
-fn model_view_materialization_clones_structure_and_shares_topology() {
+fn structure_view_materialization_clones_geometry_and_shares_topology() {
     let mut source = Structure::new(single_atom_topology(), single_position(1.0)).unwrap();
     let topology = source.shared_topology();
     let score = key("score");
@@ -638,7 +638,7 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
 }
 
 #[test]
-fn model_subset_projects_entity_state_and_drops_owner_properties() {
+fn structure_subset_projects_entity_state_and_drops_owner_properties() {
     let (mut structure, atom, bond) = structure_fixture();
     structure.set_occupancy(ATOM0, Some(0.5)).unwrap();
     let mut properties = structure.properties_mut();
@@ -687,7 +687,7 @@ fn model_subset_projects_entity_state_and_drops_owner_properties() {
 }
 
 #[test]
-fn set_and_sample_properties_are_separate() {
+fn set_and_geometry_properties_are_separate() {
     let (mut structure, atom, _) = structure_fixture();
     let mut properties = structure.properties_mut();
     properties
@@ -738,7 +738,7 @@ fn set_and_sample_properties_are_separate() {
 }
 
 #[test]
-fn ordered_samples_join_a_distribution_without_copying_positions() {
+fn ordered_geometries_join_a_distribution_without_copying_positions() {
     let (structure, _, _) = structure_fixture();
     let mut geometry = Geometry::new(structure.positions().clone());
     geometry.set_velocities(Some(Velocities::zeros(2))).unwrap();
@@ -764,7 +764,7 @@ fn ordered_samples_join_a_distribution_without_copying_positions() {
 }
 
 #[test]
-fn sets_read_chosen_samples_of_another_set_without_consuming_it() {
+fn sets_read_chosen_geometries_of_another_set_without_consuming_it() {
     let (structure, carbon, _) = structure_fixture();
     let frames = (0..5).map(|index| {
         let mut geometry = Geometry::new(
@@ -805,7 +805,7 @@ fn sets_read_chosen_samples_of_another_set_without_consuming_it() {
     assert!(sampled
         .get(0)
         .unwrap()
-        .shares_structure_with(&trajectory.get(1).unwrap()));
+        .shares_storage_with(&trajectory.get(1).unwrap()));
 
     let atoms =
         crate::topology::AtomSelection::from_atoms(structure.shared_topology(), [carbon]).unwrap();
@@ -902,7 +902,7 @@ impl StructureSetRead for DecodingReader {
 }
 
 #[test]
-fn sets_read_from_a_reader_are_faithful_copies_reading_each_sample_once() {
+fn sets_read_from_a_reader_are_faithful_copies_reading_each_geometry_once() {
     let reader = DecodingReader::new();
 
     // Each picked geometry whole, with its order value and weight; a repeated
@@ -916,9 +916,9 @@ fn sets_read_from_a_reader_are_faithful_copies_reading_each_sample_once() {
     );
     let first = set.get(0).unwrap();
     for index in [2, 3] {
-        assert!(set.get(index).unwrap().shares_structure_with(&first));
+        assert!(set.get(index).unwrap().shares_storage_with(&first));
     }
-    assert!(!set.get(1).unwrap().shares_structure_with(&first));
+    assert!(!set.get(1).unwrap().shares_storage_with(&first));
     assert_eq!(first.positions().values().value()[0].x, 2.0);
     assert_eq!(set.get(1).unwrap().positions().values().value()[0].x, 0.0);
     assert!(first.velocities().is_some());
@@ -962,7 +962,7 @@ fn sets_read_from_a_reader_are_faithful_copies_reading_each_sample_once() {
 }
 
 #[test]
-fn clearing_velocities_and_forces_keeps_samples_without_them_shared() {
+fn clearing_velocities_and_forces_keeps_geometries_without_them_shared() {
     let reader = DecodingReader::new();
     let mut set = StructureSet::from_reader(&reader, [0, 1]).unwrap();
     set.get_mut(1).unwrap().take_velocities();
@@ -975,7 +975,7 @@ fn clearing_velocities_and_forces_keeps_samples_without_them_shared() {
     for geometry in &set {
         assert!(geometry.velocities().is_none() && geometry.forces().is_none());
     }
-    assert!(set.get(1).unwrap().shares_structure_with(&bare));
+    assert!(set.get(1).unwrap().shares_storage_with(&bare));
     assert_eq!(
         set.get(0).unwrap().occupancies(),
         Some([Some(0.5), None].as_slice())
@@ -983,7 +983,7 @@ fn clearing_velocities_and_forces_keeps_samples_without_them_shared() {
 }
 
 #[test]
-fn occupancies_and_b_factors_follow_models_into_samples() {
+fn occupancies_and_b_factors_follow_structures_into_geometries() {
     let (mut structure, _, _) = structure_fixture();
     structure.set_occupancy(ATOM0, Some(0.5)).unwrap();
     structure
@@ -1011,7 +1011,7 @@ fn occupancies_and_b_factors_follow_models_into_samples() {
 }
 
 #[test]
-fn model_atom_views_join_topology_identity_with_structure_state() {
+fn structure_atom_views_join_topology_identity_with_geometry_state() {
     let (mut structure, carbon, _) = structure_fixture();
     structure.set_occupancy(ATOM0, Some(0.5)).unwrap();
     structure
@@ -1032,7 +1032,7 @@ fn model_atom_views_join_topology_identity_with_structure_state() {
     let b_factor = atom.b_factor().unwrap().value_in(SQUARE_ANGSTROM).unwrap();
     assert!((b_factor - 20.0).abs() < 1.0e-12);
     assert_eq!(
-        atom.structure_property(&key("charge")),
+        atom.geometry_property(&key("charge")),
         Some(PropertyValue::Int(-1))
     );
     // Static annotations stay on the topology view.
@@ -1211,7 +1211,7 @@ fn temperature(set: &StructureSet) -> Option<Quantity<f64>> {
 }
 
 #[test]
-fn state_energies_are_canonical_finite_and_never_on_samples() {
+fn state_energies_are_canonical_finite_and_never_on_geometries() {
     let state = State::new();
     assert_eq!(state.energy(), None);
     let mut state = state
@@ -1522,7 +1522,7 @@ fn shares_every_structure(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b.iter())
-            .all(|(a, b)| a.payload().shares_structure_with(b.payload()))
+            .all(|(a, b)| a.payload().shares_storage_with(b.payload()))
 }
 
 fn x(set: &StructureSet, geometry: usize) -> f64 {
@@ -1568,7 +1568,7 @@ fn regrouping_and_reweighting_a_shared_set_copy_no_structure() {
         .get(0)
         .unwrap()
         .payload()
-        .shares_structure_with(shared.get(3).unwrap().payload()));
+        .shares_storage_with(shared.get(3).unwrap().payload()));
     assert!(shares_every_structure(
         &shared.select_states(0..4).unwrap(),
         &shared
@@ -1585,11 +1585,11 @@ fn regrouping_and_reweighting_a_shared_set_copy_no_structure() {
         .get(0)
         .unwrap()
         .payload()
-        .shares_structure_with(shared.get(2).unwrap().payload()));
+        .shares_storage_with(shared.get(2).unwrap().payload()));
 }
 
 #[test]
-fn editing_one_sample_of_a_shared_set_copies_that_sample_alone() {
+fn editing_one_geometry_of_a_shared_set_copies_that_geometry_alone() {
     let original = energy_conformers(&[0.0, 1.0, 2.0]);
     let mut copy = original.clone();
     let moved = Quantity::new(Point3::new(5.0, 0.0, 0.0), NANOMETER);
@@ -1611,7 +1611,7 @@ fn editing_one_sample_of_a_shared_set_copies_that_sample_alone() {
             copy.get(geometry)
                 .unwrap()
                 .payload()
-                .shares_structure_with(original.get(geometry).unwrap().payload()),
+                .shares_storage_with(original.get(geometry).unwrap().payload()),
             shared,
             "geometry {geometry}"
         );
@@ -1789,7 +1789,7 @@ fn collapse_keeps_one_representative_per_state_with_its_population() {
 }
 
 #[test]
-fn selection_copies_samples_and_whole_or_partial_states() {
+fn selection_copies_geometries_and_whole_or_partial_states() {
     // State 0: geometries 0 and 1, represented by 1; state 1: geometry 2.
     let mut set = grouped(&[1.0, 2.0, 3.0], &[0, 0, 1], &[1, 2]);
     set_energies(&mut set, &[Some(1.0), Some(2.0)]);
@@ -1958,7 +1958,7 @@ fn energy_ranking_and_windows_are_relative_to_the_lowest_state() {
 }
 
 #[test]
-fn model_views_report_which_structure_they_borrow() {
+fn structure_views_report_which_structure_they_borrow() {
     let topology = Arc::new(single_atom_topology());
     let structure = Structure::new(Arc::clone(&topology), single_position(0.0)).unwrap();
     assert_eq!(
@@ -2023,7 +2023,7 @@ fn model_views_report_which_structure_they_borrow() {
 }
 
 #[test]
-fn rigid_transforms_move_models_and_samples_with_their_cells() {
+fn rigid_transforms_move_structures_and_geometries_with_their_cells() {
     use crate::math::{Matrix3, RigidTransform};
     let topology = Arc::new(single_atom_topology());
     let box_cell = PeriodicCell::orthorhombic(

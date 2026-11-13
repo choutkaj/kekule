@@ -5,7 +5,7 @@
 //! Weights are relative: scaling every weight by one factor changes no
 //! statistic. [`RmsfAccumulator`], [`ContactOccupancyAccumulator`], and
 //! [`GroupContactOccupancyAccumulator`] observe any borrowed structure
-//! ([`AsStructureView`]: a structure, a sample, or a codec frame such as a streamed
+//! ([`AsStructureView`]: a structure, a geometry of a set, or a codec frame such as a streamed
 //! frame buffer's `frame_view()`) one at a time, with memory bounded by the
 //! selected atoms, pairs, or groups, not the observation count.
 //!

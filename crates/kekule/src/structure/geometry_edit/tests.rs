@@ -370,7 +370,7 @@ fn prepared_edits_reject_independently_equal_topologies_atomically() {
 }
 
 #[test]
-fn invalid_targets_and_units_leave_model_unchanged() {
+fn invalid_targets_and_units_leave_structure_unchanged() {
     let mut structure = chain();
     let [a, b, c, d] = ids(&structure);
     let baseline = structure.clone();
@@ -538,8 +538,8 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
     close_point(point(&structure, c), Point3::new(2.0, 3.0, 3.0));
     // Both huge and subnormal finite axes are accepted.
     for scale in [f64::MAX, f64::from_bits(1)] {
-        let mut geometry = baseline.clone();
-        geometry
+        let mut rotated = baseline.clone();
+        rotated
             .rotate(
                 &selected,
                 Quantity::new(Point3::origin(), NANOMETER),
@@ -547,7 +547,7 @@ fn rigid_operations_use_units_right_handed_rotation_and_exact_selection() {
                 Quantity::new(90.0, DEGREE),
             )
             .unwrap();
-        close_point(point(&geometry, c), Point3::new(0.0, 1.0, 0.0));
+        close_point(point(&rotated, c), Point3::new(0.0, 1.0, 0.0));
     }
 }
 

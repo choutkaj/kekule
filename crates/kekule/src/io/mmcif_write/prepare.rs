@@ -77,7 +77,7 @@ pub(super) struct PreparedModel {
 }
 
 pub(super) fn prepare_model(
-    model: StructureView<'_>,
+    structure: StructureView<'_>,
     plan: EntityPlan,
     implicit_hydrogens: UnrepresentablePolicy,
     coordinate_precision: usize,
@@ -92,22 +92,22 @@ pub(super) fn prepare_model(
 
     let mut atoms = Vec::new();
     let mut omitted_hydrogens = 0;
-    let hierarchy = model.topology().hierarchy();
-    for (id, molecule) in model.topology().instance_records() {
-        let definition = model
+    let hierarchy = structure.topology().hierarchy();
+    for (id, molecule) in structure.topology().instance_records() {
+        let definition = structure
             .topology()
             .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
         omitted_hydrogens += validate_graph_chemistry(molecule, definition, implicit_hydrogens)?;
         if definition.molecule().atom_ids().any(|atom| {
-            model
+            structure
                 .topology()
                 .atom_site_of(molecule.qualify_atom(atom))
                 .is_some()
         }) {
             collect_macro_rows(
-                model,
+                structure,
                 molecule,
                 definition,
                 hierarchy,
@@ -115,14 +115,14 @@ pub(super) fn prepare_model(
                 &mut atoms,
             )?;
         } else {
-            collect_small_rows(model, molecule, definition, &assignments, &mut atoms)?;
+            collect_small_rows(structure, molecule, definition, &assignments, &mut atoms)?;
         }
     }
 
     // Rows follow dense atom order, so the interpreted block keeps this
     // topology's order and coordinate files written in it stay aligned.
     atoms.sort_by_key(|row| {
-        model
+        structure
             .topology()
             .atom_index(row.atom)
             .expect("prepared atom-site row references a topology atom")
@@ -136,7 +136,7 @@ pub(super) fn prepare_model(
         .collect::<BTreeMap<_, _>>();
     validate_atom_identities(&atoms)?;
     let mut connections = Vec::new();
-    for bond in model.topology().bonds() {
+    for bond in structure.topology().bonds() {
         let order = supported_bond_order(bond.id(), bond.order)?;
         let [left, right] = bond.atoms().map(|atom| atom.id());
         connections.push(ConnectionRow {
@@ -149,7 +149,7 @@ pub(super) fn prepare_model(
     let elements = atoms
         .iter()
         .map(|row| {
-            model
+            structure
                 .topology()
                 .atom(row.atom)
                 .map(|atom| atom.atom().element)
@@ -258,7 +258,7 @@ fn validate_graph_chemistry(
 }
 
 fn collect_macro_rows(
-    model: StructureView<'_>,
+    structure: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     hierarchy: &Hierarchy,
@@ -267,7 +267,7 @@ fn collect_macro_rows(
 ) -> Result<(), FormatError> {
     for (atom_id, atom) in definition.molecule().atoms() {
         let qualified = molecule.qualify_atom(atom_id);
-        let site = model
+        let site = structure
             .topology()
             .atom_site_of(qualified)
             .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
@@ -323,14 +323,14 @@ fn collect_macro_rows(
             label_comp_id: label_comp_id.clone(),
             label_seq_id: residue.label_seq_id(),
             insertion_code: residue.insertion_code().map(str::to_owned),
-            position: model
+            position: structure
                 .position(qualified)
                 .ok_or_else(|| missing_position(qualified))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_position(qualified).with_source(error))?,
-            occupancy: model.occupancy(dense_index(model, qualified)?),
-            b_factor: model
-                .b_factor(dense_index(model, qualified)?)
+            occupancy: structure.occupancy(dense_index(structure, qualified)?),
+            b_factor: structure
+                .b_factor(dense_index(structure, qualified)?)
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_b_factor(qualified).with_source(error))?,
@@ -360,7 +360,7 @@ fn collect_macro_rows(
 }
 
 fn collect_small_rows(
-    model: StructureView<'_>,
+    structure: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
@@ -393,14 +393,14 @@ fn collect_small_rows(
             label_comp_id: component_id.to_owned(),
             label_seq_id: None,
             insertion_code: None,
-            position: model
+            position: structure
                 .position(qualified)
                 .ok_or_else(|| missing_position(qualified))?
                 .value_in(ANGSTROM)
                 .map_err(|error| invalid_position(qualified).with_source(error))?,
-            occupancy: model.occupancy(dense_index(model, qualified)?),
-            b_factor: model
-                .b_factor(dense_index(model, qualified)?)
+            occupancy: structure.occupancy(dense_index(structure, qualified)?),
+            b_factor: structure
+                .b_factor(dense_index(structure, qualified)?)
                 .map(|value| value.value_in(crate::units::SQUARE_ANGSTROM))
                 .transpose()
                 .map_err(|error| invalid_b_factor(qualified).with_source(error))?,
@@ -597,7 +597,7 @@ fn invalid_b_factor(atom: InstanceAtomId) -> FormatError {
     invalid_structure(format!("The B factor of {atom} is invalid."))
 }
 
-pub(super) fn validate_sample(
+pub(super) fn validate_geometry(
     model: &PreparedModel,
     candidate: &PreparedModel,
     geometry: usize,
@@ -662,10 +662,10 @@ fn same_static_atom_row(left: &AtomRow, right: &AtomRow) -> bool {
 }
 
 fn dense_index(
-    model: StructureView<'_>,
+    structure: StructureView<'_>,
     atom: InstanceAtomId,
 ) -> Result<crate::topology::TopologyAtomIndex, FormatError> {
-    model
+    structure
         .topology()
         .atom_index(atom)
         .ok_or_else(|| invalid_structure(format!("The topology has no {atom}.")))

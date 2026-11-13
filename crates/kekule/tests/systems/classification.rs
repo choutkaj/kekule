@@ -474,7 +474,7 @@ fn generic_mmcif_writing_maps_canonical_protein_water_and_small_molecule_classes
 }
 
 #[test]
-fn readme_combined_model_workflow_needs_no_mmcif_classification_sidecar() {
+fn readme_combined_structure_workflow_needs_no_mmcif_classification_sidecar() {
     let first = kekule::smiles::to_molecules("CC").unwrap().pop().unwrap();
     let second = kekule::smiles::to_molecules("CO").unwrap().pop().unwrap();
     let mut builder = Structure::builder();

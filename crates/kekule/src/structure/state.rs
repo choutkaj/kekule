@@ -1,4 +1,4 @@
-//! Validation and accessors shared by the flat structure owners: structures,
+//! Validation and accessors shared by the flat geometry owners: structures,
 //! geometries, trajectory frames, and structure drafts.
 //!
 //! Each owner stores its own `positions`, `cell`, and `properties` fields, and
@@ -30,7 +30,7 @@ pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, Geo
     Ok(index)
 }
 
-/// Checks that structure rows can be bound to `topology` without changing
+/// Checks that geometry rows can be bound to `topology` without changing
 /// anything: one position per atom, and bond rows either matching or not yet
 /// allocated.
 pub(crate) fn validate_binding(
@@ -52,7 +52,7 @@ pub(crate) fn validate_binding(
         })
 }
 
-/// Whether structure rows already cover every atom and bond of `topology`.
+/// Whether geometry rows already cover every atom and bond of `topology`.
 pub(crate) fn is_bound(atoms: usize, properties: &GeometryProperties, topology: &Topology) -> bool {
     atoms == topology.atom_count() && properties.bonds().len() == topology.bond_count()
 }
@@ -125,8 +125,8 @@ pub(crate) fn transform_cell(
     .transpose()
 }
 
-/// Positions, cell, and structure-property readers.
-macro_rules! structure_readers {
+/// Positions, cell, and geometry-property readers.
+macro_rules! geometry_readers {
     () => {
         /// Positions in dense topology atom order.
         pub fn positions(&self) -> &$crate::structure::Positions {
@@ -138,14 +138,14 @@ macro_rules! structure_readers {
             self.storage_ref().cell.as_ref()
         }
 
-        /// Structure annotations: owner values plus one row per dense atom
+        /// Geometry annotations: owner values plus one row per dense atom
         /// and bond.
         pub fn properties(&self) -> &$crate::properties::GeometryProperties {
             &self.storage_ref().properties
         }
     };
 }
-pub(crate) use structure_readers;
+pub(crate) use geometry_readers;
 
 /// Occupancy and B-factor readers of structures and geometries.
 macro_rules! site_readers {
@@ -180,8 +180,8 @@ macro_rules! site_readers {
 }
 pub(crate) use site_readers;
 
-/// Dimension-preserving position, cell, and structure-property mutators.
-macro_rules! structure_mutators {
+/// Dimension-preserving position, cell, and geometry-property mutators.
+macro_rules! geometry_mutators {
     () => {
         /// Replaces every position without changing the atom count. Units,
         /// dimensions, and finite values are checked before mutation.
@@ -207,8 +207,8 @@ macro_rules! structure_mutators {
             self.storage().cell = cell;
         }
 
-        /// Replaces every structure annotation with rows of the same
-        /// dimensions, for example ones copied from another structure of the
+        /// Replaces every geometry annotation with rows of the same
+        /// dimensions, for example ones copied from another geometry of the
         /// same topology. Detached payloads accept no bond rows.
         pub fn set_properties(
             &mut self,
@@ -224,13 +224,13 @@ macro_rules! structure_mutators {
             Ok(())
         }
 
-        /// Length-preserving mutable access to structure annotations.
+        /// Length-preserving mutable access to geometry annotations.
         pub fn properties_mut(&mut self) -> $crate::properties::GeometryPropertiesMut<'_> {
             $crate::properties::GeometryPropertiesMut::new(&mut self.storage().properties)
         }
     };
 }
-pub(crate) use structure_mutators;
+pub(crate) use geometry_mutators;
 
 /// Occupancy and B-factor mutators of structures and geometries.
 macro_rules! site_mutators {
@@ -302,7 +302,7 @@ pub enum GeometryError {
     NonFiniteEnergy,
     /// The payload exceeds addressable capacity.
     CapacityOverflow,
-    /// A structure property edit failed; see the source.
+    /// A geometry property edit failed; see the source.
     Property(Box<PropertyError>),
     /// The periodic cell is invalid; see the source.
     Cell(Box<PeriodicCellError>),

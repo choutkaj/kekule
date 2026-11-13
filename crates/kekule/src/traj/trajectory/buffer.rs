@@ -53,10 +53,10 @@ impl<'a> FrameData<'a> {
     }
 
     /// Borrows every field, including occupancies, B-factors, and all
-    /// structure properties, from a topology-bound frame.
+    /// geometry properties, from a topology-bound frame.
     pub fn from_frame_view(frame: FrameView<'a>) -> Self {
         let geometry = frame.payload();
-        let structure = geometry.structure();
+        let state = geometry.state();
         Self {
             positions: geometry.positions().values(),
             cell: geometry.cell().copied(),
@@ -66,7 +66,7 @@ impl<'a> FrameData<'a> {
             step: frame.step(),
             owner: None,
             annotations: Some(geometry.properties()),
-            sites: Some((&structure.occupancies, &structure.b_factors)),
+            sites: Some((&state.occupancies, &state.b_factors)),
         }
     }
 
@@ -169,7 +169,7 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`TrajectoryIoErrorKind::InvalidStructure`] when the geometry's
+    /// Returns [`TrajectoryIoErrorKind::InvalidGeometry`] when the geometry's
     /// atom count or property rows do not match `topology`.
     pub fn from_geometry(
         topology: impl Into<Arc<Topology>>,
@@ -307,11 +307,11 @@ impl FrameBuffer {
         self.publish_forces(None);
         self.step = None;
         self.time = None;
-        let structure = self.geometry.structure_in_place();
-        structure.cell = None;
-        structure.occupancies = AtomScalars::default();
-        structure.b_factors = AtomScalars::default();
-        GeometryPropertiesMut::new(&mut structure.properties).clear();
+        let state = self.geometry.state_in_place();
+        state.cell = None;
+        state.occupancies = AtomScalars::default();
+        state.b_factors = AtomScalars::default();
+        GeometryPropertiesMut::new(&mut state.properties).clear();
     }
 
     /// Replaces the complete visible frame transactionally.
@@ -366,26 +366,26 @@ impl FrameBuffer {
         self.publish_forces(forces);
         self.step = data.step;
         self.time = time;
-        let structure = self.geometry.structure_in_place();
-        structure
+        let state = self.geometry.state_in_place();
+        state
             .positions
             .set_all(data.positions)
             .expect("positions were validated");
-        structure.cell = data.cell;
+        state.cell = data.cell;
         match data.sites {
             Some((occupancies, b_factors)) => {
-                structure.occupancies.clone_from(occupancies);
-                structure.b_factors.clone_from(b_factors);
+                state.occupancies.clone_from(occupancies);
+                state.b_factors.clone_from(b_factors);
             }
             None => {
-                structure.occupancies = AtomScalars::default();
-                structure.b_factors = AtomScalars::default();
+                state.occupancies = AtomScalars::default();
+                state.b_factors = AtomScalars::default();
             }
         }
         match data.annotations {
-            Some(source) => structure.properties.clone_from(source),
+            Some(source) => state.properties.clone_from(source),
             None => {
-                let mut properties = GeometryPropertiesMut::new(&mut structure.properties);
+                let mut properties = GeometryPropertiesMut::new(&mut state.properties);
                 properties.clear();
                 if let Some(owner) = data.owner {
                     *properties.owner_mut() = owner.clone();
@@ -453,10 +453,8 @@ impl FrameBuffer {
         if velocities.is_none() && self.geometry.velocities().is_none() {
             return;
         }
-        let previous = std::mem::replace(
-            &mut self.geometry.structure_in_place().velocities,
-            velocities,
-        );
+        let previous =
+            std::mem::replace(&mut self.geometry.state_in_place().velocities, velocities);
         if previous.is_some() {
             self.spare_velocities = previous;
         }
@@ -466,7 +464,7 @@ impl FrameBuffer {
         if forces.is_none() && self.geometry.forces().is_none() {
             return;
         }
-        let previous = std::mem::replace(&mut self.geometry.structure_in_place().forces, forces);
+        let previous = std::mem::replace(&mut self.geometry.state_in_place().forces, forces);
         if previous.is_some() {
             self.spare_forces = previous;
         }

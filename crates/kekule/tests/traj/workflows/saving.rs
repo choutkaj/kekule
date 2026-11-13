@@ -635,7 +635,7 @@ fn dcd_fixture() -> StructureSet {
 
 #[test]
 fn frames_without_times_save_as_every_format_by_omitting_or_numbering_state() {
-    use kekule::diagnostics::{StructureField, WriteOmission};
+    use kekule::diagnostics::{GeometryField, WriteOmission};
     use kekule::units::PICOSECOND;
 
     let directory = Directory::new();
@@ -660,9 +660,9 @@ fn frames_without_times_save_as_every_format_by_omitting_or_numbering_state() {
             .collect::<Vec<_>>();
         match format {
             TrajectoryFormat::Xyz => {
-                assert!(report.omissions().contains(&WriteOmission::StructureState {
-                    field: StructureField::Step,
-                    structures: frames,
+                assert!(report.omissions().contains(&WriteOmission::GeometryState {
+                    field: GeometryField::Step,
+                    geometries: frames,
                 }));
                 assert!(report
                     .omissions()
@@ -721,11 +721,11 @@ fn structure_sets_save_and_load_as_the_trajectories_they_replace_did() {
     use kekule::structure::{Distribution, Members, Order, Partition};
 
     let mut recorded = Recorded::new(&[
-        0x17e5_86d5_8a15_b0fb, // the DCD fixture
-        0x5fd6_90cb_0a2e_2225, // read back from XYZ
-        0x7554_ff13_816b_e76f, // read back from DCD
-        0x7f23_34ee_2782_e1f6, // read back from TRR
-        0x4132_133a_1248_0a1a, // read back from XTC
+        0x206b_cba1_e8d8_a76f, // the DCD fixture
+        0x5903_2844_2058_60e1, // read back from XYZ
+        0xcd09_1f3d_16d1_a47f, // read back from DCD
+        0x18cd_9466_67ba_83a6, // read back from TRR
+        0xea7d_1dc0_cd0f_0f8a, // read back from XTC
     ]);
     let directory = Directory::new();
     let set = dcd_fixture();
@@ -838,7 +838,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
 }
 
 #[test]
-fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
+fn a_standalone_geometry_bound_to_a_solvated_topology_writes_as_a_frame() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::structure::{Geometry, GeometryError};
     use kekule::topology::TopologyBuilder;
@@ -915,7 +915,7 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
 }
 
 #[test]
-fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
+fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_geometry() {
     use kekule::structure::{Geometry, GeometryError};
     use kekule::units::{Quantity, NANOMETER};
 
@@ -934,7 +934,7 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
         GeometryError::Array(_)
     ));
     assert_eq!(geometry, before);
-    assert!(geometry.shares_structure_with(&before));
+    assert!(geometry.shares_storage_with(&before));
     assert_eq!(geometry.positions().values().value().as_ptr(), stored);
 
     // Bound, the geometry refuses the bond rows of another topology with as
@@ -949,17 +949,17 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
         GeometryError::BondCountMismatch { .. }
     ));
     assert_eq!(geometry, bound);
-    assert!(geometry.shares_structure_with(&bound));
+    assert!(geometry.shares_storage_with(&bound));
     // A topology with the same bond count binds as the geometry already is.
     geometry.bind(&dimethyl_ether).unwrap();
-    assert!(geometry.shares_structure_with(&bound));
+    assert!(geometry.shares_storage_with(&bound));
 
     // Binding a geometry that shares its storage copies it once and leaves the
     // other geometry unbound and unchanged.
     let mut copy = before.clone();
-    assert!(copy.shares_structure_with(&before));
+    assert!(copy.shares_storage_with(&before));
     copy.bind(&ethanol).unwrap();
-    assert!(!copy.shares_structure_with(&before));
+    assert!(!copy.shares_storage_with(&before));
     assert_eq!(copy.positions(), before.positions());
     assert_eq!(
         FrameView::new(&ethanol, &before, None, None).unwrap_err(),

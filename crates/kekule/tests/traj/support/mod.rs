@@ -33,11 +33,11 @@ pub(crate) struct Frame {
 impl Frame {
     /// A frame of `positions` without a cell, time, or step.
     pub(crate) fn new(positions: Positions) -> Self {
-        Self::of_sample(Geometry::new(positions))
+        Self::of_geometry(Geometry::new(positions))
     }
 
     /// A frame of `geometry` without a time or step.
-    pub(crate) fn of_sample(geometry: Geometry) -> Self {
+    pub(crate) fn of_geometry(geometry: Geometry) -> Self {
         Self {
             geometry,
             time: None,
@@ -60,7 +60,7 @@ impl Frame {
     }
 
     /// A geometry of a set as a frame: the time and step of a time order.
-    pub(crate) fn of_set_sample(view: GeometryView<'_>) -> Self {
+    pub(crate) fn of_set_geometry(view: GeometryView<'_>) -> Self {
         let (time, step) = match view.place() {
             Some(Place::Time { time, step }) => (time, step),
             _ => (None, None),
@@ -164,7 +164,7 @@ pub(crate) fn time_ordered(
 
 /// The frames of a set, in set order.
 pub(crate) fn frames_of(set: &StructureSet) -> Vec<Frame> {
-    set.iter().map(Frame::of_set_sample).collect()
+    set.iter().map(Frame::of_set_geometry).collect()
 }
 
 /// FNV-1a 64 over `bytes`.

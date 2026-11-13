@@ -50,7 +50,7 @@ fn one_atom_macro() -> (Molecule, Positions, AtomId) {
 }
 
 #[test]
-fn model_uses_compact_local_ids_and_dense_round_trips() {
+fn structure_uses_compact_local_ids_and_dense_round_trips() {
     let (small, positions, a, b, _) = two_atom_small(1.5);
     let mut builder = Structure::builder();
     let instance = builder.add_molecule(small.clone(), &positions).unwrap();
@@ -76,7 +76,7 @@ fn model_uses_compact_local_ids_and_dense_round_trips() {
 }
 
 #[test]
-fn positions_convert_source_units_before_model_construction() {
+fn positions_convert_source_units_before_structure_construction() {
     let mut graph = crate::molecule::MoleculeEditor::new();
     let atom = graph
         .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
@@ -97,7 +97,7 @@ fn positions_convert_source_units_before_model_construction() {
 }
 
 #[test]
-fn topology_allocation_is_shared_only_by_model_clones() {
+fn topology_allocation_is_shared_only_by_structure_clones() {
     let (small, positions, _, b, _) = two_atom_small(1.5);
     let structure = Structure::from_molecule(small.clone(), &positions).unwrap();
     let mut cloned = structure.clone();

@@ -4,8 +4,8 @@
 //!   [`Velocities`] (nm/ps) and [`Forces`] (kJ/(mol·nm)). They carry no atom
 //!   identity and are validated against a topology by their owner.
 //! - [`Structure`]: one shared, immutable [`Topology`](crate::topology::Topology)
-//!   plus one complete structure of it: positions, an optional periodic cell,
-//!   optional occupancies and B-factors, and structure-scoped properties.
+//!   plus one complete geometry of it: positions, an optional periodic cell,
+//!   optional occupancies and B-factors, and geometry properties.
 //! - Publication: [`StructureBuilder`] assembles a new topology and its positions
 //!   together; [`StructureEditor`] edits a detached draft of a structure whose
 //!   positions follow atoms through structural edits, and
@@ -13,7 +13,7 @@
 //!   ([`StructureAppend`], [`StructureAppendReport`]). [`StructureEditor::topology_mut`]
 //!   ([`StructureEditorTopologyMut`]) and [`StructureEditor::properties_mut`]
 //!   ([`StructureEditorPropertiesMut`]) reach annotations without geometry.
-//! - [`StructureSet`]: many structures of one shared topology as [`Geometry`]s,
+//! - [`StructureSet`]: many geometries ([`Geometry`]) of one shared topology,
 //!   each shared and copied on write, with an optional [`Order`] that places
 //!   every geometry ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
 //!   an optional [`Distribution`] over all geometries or some of them
@@ -32,7 +32,7 @@
 //!   kernels. Structures, geometries ([`GeometryView`]), and codec frames
 //!   ([`crate::traj::FrameView`]) all borrow as one without copying
 //!   ([`AsStructureView`]); [`StructureAtomView`] pairs one topology atom with its
-//!   structure state. [`StructureView::kind`] says whether a view borrows a structure
+//!   geometry state. [`StructureView::kind`] says whether a view borrows a structure
 //!   or a geometry ([`StructureKind`]); a geometry's [`SetContext`] reports
 //!   its place, [`Membership`], velocities, and forces, so that state is
 //!   never silently dropped.
@@ -51,7 +51,7 @@
 //! Each owner has its own error type ([`StructureError`], [`StructureBuildError`],
 //! [`StructureEditError`], [`StructureSetError`], [`PartitionError`],
 //! [`GeometryEditError`]); [`GeometryError`] and [`DenseArrayError`] report
-//! invalid structure state shared by all of them.
+//! invalid geometry state shared by all of them.
 //!
 //! ```
 //! use kekule::{math::Point3, smiles, units::{Quantity, NANOMETER}};
@@ -86,9 +86,9 @@
 //! structure.set_distance(b, c, Quantity::new(1.6, ANGSTROM))?;
 //! let edit = DihedralEdit::new(structure.shared_topology(), [a, b, c, d])?;
 //! for degrees in [-180.0, -60.0, 60.0, 180.0] {
-//!     let mut geometry = structure.clone();
-//!     edit.apply(&mut geometry, Quantity::new(degrees, DEGREE))?;
-//!     // Evaluate or collect geometry; structure remains the scan baseline.
+//!     let mut scanned = structure.clone();
+//!     edit.apply(&mut scanned, Quantity::new(degrees, DEGREE))?;
+//!     // Evaluate or collect scanned; structure remains the scan baseline.
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -115,6 +115,7 @@
 //! [`Structure::apply_rigid_transform`] moves the whole structure and rotates its cell.
 //! No relaxation is performed.
 
+mod draft_geometry;
 mod dynamics;
 mod geometry_edit;
 pub mod measure;
@@ -126,7 +127,6 @@ pub(crate) mod scalars;
 mod state;
 mod structure_editor;
 mod structure_set;
-mod structure_state;
 
 pub use dynamics::{Forces, Velocities};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};

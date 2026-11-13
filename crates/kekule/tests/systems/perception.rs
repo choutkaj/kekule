@@ -51,7 +51,7 @@ fn failing_topology() -> Arc<Topology> {
         .is_some_and(|cip| cip.cip_descriptors().len() != 0));
     assert!(good.perception().resonance().is_some());
 
-    // Publication permits represented chemistry rejected by the default valence structure.
+    // Publication permits represented chemistry rejected by the default valence model.
     let mut editor = MoleculeEditor::new();
     let carbon =
         Atom::new(Element::from_symbol("C").unwrap()).with_hydrogens(ImplicitHydrogens::Fixed(5));
@@ -187,7 +187,7 @@ fn perceived_topology_preserves_edited_ids_reuse_hierarchy_and_annotations() {
 }
 
 #[test]
-fn model_perception_changes_snapshot_preserving_structure_and_existing_bindings() {
+fn structure_perception_changes_snapshot_preserving_geometry_and_existing_bindings() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let selection =
         AtomSelection::from_atoms(Arc::clone(&topology), [topology.atom_ids()[0]]).unwrap();
@@ -289,7 +289,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 }
 
 #[test]
-fn structure_set_perception_preserves_samples_weights_and_set_properties() {
+fn structure_set_perception_preserves_geometries_weights_and_set_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let mut member = Geometry::new(Positions::zeros(6));
     member.set_cell(Some(
@@ -366,7 +366,7 @@ fn structure_set_perception_preserves_samples_weights_and_set_properties() {
 }
 
 #[test]
-fn topology_model_and_structure_set_failure_preserve_complete_previous_state() {
+fn topology_structure_and_structure_set_failure_preserve_complete_previous_state() {
     let topology = failing_topology();
     let previous = installed(&topology);
     let error = topology.perceived().unwrap_err();

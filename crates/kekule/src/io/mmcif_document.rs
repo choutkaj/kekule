@@ -232,7 +232,7 @@ impl MmcifDocument {
     /// # Errors
     ///
     /// The errors of [`Self::interpret`] for each geometry, with
-    /// [`FormatErrorDetail::Structure`](crate::diagnostics::FormatErrorDetail::Structure)
+    /// [`FormatErrorDetail::Model`](crate::diagnostics::FormatErrorDetail::Model)
     /// naming the failing model, and
     /// [`Inconsistent`](DiagnosticKind::Inconsistent) errors whose
     /// [`detail`](FormatError::detail) is

@@ -639,16 +639,16 @@ fn within_and_between_agree() {
         &InteractionCriteria::default(),
     );
 
-    let (left, left_model) = structure("CC(=O)[O-]", &acetate);
-    let (right, right_model) = structure("C[NH3+]", &amine);
+    let (left, left_structure) = structure("CC(=O)[O-]", &acetate);
+    let (right, right_structure) = structure("C[NH3+]", &amine);
     let (left_features, right_features) = (
         InteractionFeatures::new(Arc::clone(&left)),
         InteractionFeatures::new(Arc::clone(&right)),
     );
     let (left_atoms, right_atoms) = (AtomSelection::all(left), AtomSelection::all(right));
     let between = find_interactions_between(
-        &InteractionSide::new(&left_features, &left_model, &left_atoms).unwrap(),
-        &InteractionSide::new(&right_features, &right_model, &right_atoms).unwrap(),
+        &InteractionSide::new(&left_features, &left_structure, &left_atoms).unwrap(),
+        &InteractionSide::new(&right_features, &right_structure, &right_atoms).unwrap(),
         &InteractionCriteria::default(),
     )
     .unwrap();
@@ -857,7 +857,7 @@ fn shared_across_threads() {
 
 #[test]
 fn reperceives_other_installed_models() {
-    // Furan is aromatic under the default RDKit-like structure but not under
+    // Furan is aromatic under the default RDKit-like model but not under
     // MDL's: installed MDL aromaticity is not reused.
     let mut furan = crate::smiles::to_molecules("c1ccoc1")
         .unwrap()

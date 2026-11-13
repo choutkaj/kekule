@@ -36,10 +36,13 @@ fn molfile_projections_retain_the_interpreted_structure_and_reports() {
         &interpretation.clone().into_structure().shared_topology(),
         &topology
     ));
-    let (model, moved_reports, omitted) = interpretation.into_parts();
+    let (structure, moved_reports, omitted) = interpretation.into_parts();
     assert!(omitted.is_empty());
-    assert!(std::sync::Arc::ptr_eq(&model.shared_topology(), &topology));
-    assert_eq!(model.positions().values().value().as_ptr(), positions);
+    assert!(std::sync::Arc::ptr_eq(
+        &structure.shared_topology(),
+        &topology
+    ));
+    assert_eq!(structure.positions().values().value().as_ptr(), positions);
     assert_eq!(moved_reports, reports);
     assert_eq!(
         moved_reports
@@ -76,30 +79,36 @@ fn empty_molfile_fails_at_interpretation_before_any_projection() {
 }
 
 #[test]
-fn sdf_model_can_install_perception_without_losing_source_order_or_geometry() {
+fn sdf_structure_can_install_perception_without_losing_source_order_or_geometry() {
     let text = format!("{INTERLEAVED_COMPONENT_MOLFILE}$$$$\n");
     let document = sdf::parse_str(&text, Default::default()).unwrap();
-    let mut model = document.records()[0]
+    let mut structure = document.records()[0]
         .interpret(Default::default())
         .unwrap()
         .into_structure();
-    let original = model.clone();
-    let positions_ptr = model.positions().values().value().as_ptr();
-    assert!(structure_molecules(&model)
+    let original = structure.clone();
+    let positions_ptr = structure.positions().values().value().as_ptr();
+    assert!(structure_molecules(&structure)
         .iter()
         .all(|m| m.perception() == &Perception::default()));
 
-    model.perceive().unwrap();
+    structure.perceive().unwrap();
 
-    assert!(model.topology().same_layout(original.topology()));
-    assert_eq!(model.topology().atom_ids(), original.topology().atom_ids());
+    assert!(structure.topology().same_layout(original.topology()));
     assert_eq!(
-        hierarchy_record(model.topology()),
+        structure.topology().atom_ids(),
+        original.topology().atom_ids()
+    );
+    assert_eq!(
+        hierarchy_record(structure.topology()),
         hierarchy_record(original.topology())
     );
-    assert_eq!(model.positions(), original.positions());
-    assert_eq!(model.positions().values().value().as_ptr(), positions_ptr);
-    for (perceived, source) in structure_molecules(&model)
+    assert_eq!(structure.positions(), original.positions());
+    assert_eq!(
+        structure.positions().values().value().as_ptr(),
+        positions_ptr
+    );
+    for (perceived, source) in structure_molecules(&structure)
         .into_iter()
         .zip(structure_molecules(&original))
     {
@@ -120,8 +129,8 @@ fn element(molecule: &Molecule) -> Element {
         .element()
 }
 
-fn structure_molecules(model: &kekule::structure::Structure) -> Vec<&Molecule> {
-    model
+fn structure_molecules(structure: &kekule::structure::Structure) -> Vec<&Molecule> {
+    structure
         .topology()
         .instances()
         .map(|instance| instance.molecule())
@@ -159,7 +168,7 @@ fn parsed_smiles_document_converts_components_in_source_order() {
 }
 
 #[test]
-fn molfile_document_model_retains_published_component_geometry() {
+fn molfile_document_structure_retains_published_component_geometry() {
     let document =
         molfile::parse_str(DISCONNECTED_MOLFILE, Default::default()).expect("Molfile parses");
     assert_eq!(
@@ -212,32 +221,36 @@ fn molfile_document_model_retains_published_component_geometry() {
         .interpret(Default::default())
         .expect("Molfile topology builds")
         .into_topology();
-    let model = document
+    let structure = document
         .interpret(Default::default())
-        .expect("Molfile model builds")
+        .expect("Molfile structure builds")
         .into_structure();
 
     assert_eq!(molecules.len(), 2);
-    assert_eq!(model.topology().instance_count(), 2);
-    assert_eq!(model.atom_count(), 2);
-    assert!(topology.same_layout(model.topology()));
+    assert_eq!(structure.topology().instance_count(), 2);
+    assert_eq!(structure.atom_count(), 2);
+    assert!(topology.same_layout(structure.topology()));
     assert_eq!(
-        structure_molecules(&model),
+        structure_molecules(&structure),
         molecules.iter().collect::<Vec<_>>()
     );
     assert_points_close(
-        model.positions().values().value(),
+        structure.positions().values().value(),
         &[
             Point3::new(0.125, 0.25, 0.375),
             Point3::new(-0.4, 0.55, -0.625),
         ],
     );
-    assert_eq!(element(structure_molecules(&model)[0]).symbol(), "Na");
-    assert_eq!(element(structure_molecules(&model)[1]).symbol(), "Cl");
-    assert!(structure_molecules(&model)
+    assert_eq!(element(structure_molecules(&structure)[0]).symbol(), "Na");
+    assert_eq!(element(structure_molecules(&structure)[1]).symbol(), "Cl");
+    assert!(structure_molecules(&structure)
         .iter()
         .all(|molecule| molecule.perception() == &Perception::default()));
-    let chain = model.topology().chains().next().expect("synthetic chain");
+    let chain = structure
+        .topology()
+        .chains()
+        .next()
+        .expect("synthetic chain");
     assert_eq!(chain.label_id(), "A");
     assert_eq!(chain.author_id(), None);
     assert_eq!(chain.residues().len(), 2);
@@ -253,22 +266,22 @@ fn molfile_document_model_retains_published_component_geometry() {
 }
 
 #[test]
-fn molfile_model_keeps_interleaved_source_atom_order() {
+fn molfile_structure_keeps_interleaved_source_atom_order() {
     let document = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE, Default::default())
         .expect("Molfile parses");
     let molecules = document
         .interpret(Default::default())
         .expect("Molfile interprets")
         .into_molecules();
-    let model = document
+    let structure = document
         .interpret(Default::default())
-        .expect("Molfile model builds")
+        .expect("Molfile structure builds")
         .into_structure();
 
     assert_eq!(molecules.len(), 3);
-    assert_eq!(model.topology().instance_count(), 3);
+    assert_eq!(structure.topology().instance_count(), 3);
     assert_eq!(
-        structure_molecules(&model),
+        structure_molecules(&structure),
         molecules.iter().collect::<Vec<_>>()
     );
     assert_eq!(
@@ -283,14 +296,14 @@ fn molfile_model_keeps_interleaved_source_atom_order() {
     // Dense atom order is the atom-block order even though components interleave,
     // so a coordinate file in this order addresses the same atoms.
     assert_eq!(
-        model
+        structure
             .topology()
             .atoms()
             .map(|atom| atom.element().symbol())
             .collect::<Vec<_>>(),
         ["C", "Na", "O", "Cl"]
     );
-    let instances = model
+    let instances = structure
         .topology()
         .atom_ids()
         .iter()
@@ -298,7 +311,7 @@ fn molfile_model_keeps_interleaved_source_atom_order() {
         .collect::<Vec<_>>();
     assert_eq!(instances, [0, 1, 0, 2]);
     assert_points_close(
-        model.positions().values().value(),
+        structure.positions().values().value(),
         &[
             Point3::new(1.0, 1.1, 1.2),
             Point3::new(2.0, 2.1, 2.2),
@@ -351,9 +364,9 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         ],
     );
     let projected_topology = first_interpretation.clone().into_topology();
-    let projected_model = first_interpretation.clone().into_structure();
+    let projected_structure = first_interpretation.clone().into_structure();
     let projected_molecules = first_interpretation.into_molecules();
-    assert!(projected_topology.same_layout(projected_model.topology()));
+    assert!(projected_topology.same_layout(projected_structure.topology()));
     assert_eq!(
         projected_topology
             .instances()
@@ -368,27 +381,27 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
         .interpret(Default::default())
         .expect("first record interprets")
         .into_molecules();
-    let first_model = records[0]
+    let first_structure = records[0]
         .interpret(Default::default())
-        .expect("first record model builds")
+        .expect("first record structure builds")
         .into_structure();
     let second_molecules = records[1]
         .interpret(Default::default())
         .expect("second record interprets")
         .into_molecules();
-    let second_model = records[1]
+    let second_structure = records[1]
         .interpret(Default::default())
-        .expect("second record model builds")
+        .expect("second record structure builds")
         .into_structure();
 
     assert_eq!(first_molecules.len(), 2);
-    assert_eq!(first_model.topology().instance_count(), 2);
+    assert_eq!(first_structure.topology().instance_count(), 2);
     assert_eq!(
-        structure_molecules(&first_model),
+        structure_molecules(&first_structure),
         first_molecules.iter().collect::<Vec<_>>()
     );
     assert_points_close(
-        first_model.positions().values().value(),
+        first_structure.positions().values().value(),
         &[
             Point3::new(0.125, 0.25, 0.375),
             Point3::new(-0.4, 0.55, -0.625),
@@ -396,18 +409,18 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     );
 
     assert_eq!(second_molecules.len(), 1);
-    assert_eq!(second_model.topology().instance_count(), 1);
+    assert_eq!(second_structure.topology().instance_count(), 1);
     assert_points_close(
-        second_model.positions().values().value(),
+        second_structure.positions().values().value(),
         &[Point3::new(0.9, 0.8, 0.7)],
     );
     assert!(first_molecules
         .iter()
         .chain(second_molecules.iter())
         .all(|molecule| molecule.perception() == &Perception::default()));
-    assert!(structure_molecules(&first_model)
+    assert!(structure_molecules(&first_structure)
         .into_iter()
-        .chain(structure_molecules(&second_model))
+        .chain(structure_molecules(&second_structure))
         .all(|molecule| molecule.perception() == &Perception::default()));
 
     let interpretations = document

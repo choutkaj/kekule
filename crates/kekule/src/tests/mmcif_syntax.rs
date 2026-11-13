@@ -83,7 +83,7 @@ fn mmcif_scalar_categories_support_document_block_and_structure_set_paths() {
     let interpreted = scalar.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(
         super::debug_fingerprint(&interpreted),
-        0x4c66_4b31_c744_850d
+        0x7ba5_967c_f9fc_063d
     );
     assert_eq!(interpreted.structure_set().len(), 1);
     assert!(interpreted.topology().same_layout(expected.topology()));

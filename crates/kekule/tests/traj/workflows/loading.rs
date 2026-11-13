@@ -138,7 +138,7 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
         assert!(frame.cell().is_none());
         assert!(frame.velocities().is_none());
         assert!(frame.forces().is_none());
-        let stamped = Frame::of_set_sample(frame);
+        let stamped = Frame::of_set_geometry(frame);
         assert!(stamped.time().is_none());
         assert!(stamped.step().is_none());
         assert!(frame.properties().is_empty());

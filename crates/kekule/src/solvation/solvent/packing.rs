@@ -197,7 +197,7 @@ pub(super) fn solvate(
             .iter()
             .map(|(k, _)| k.clone())
             .collect(),
-        cleared_structure_properties: structure.properties().owner().keys().cloned().collect(),
+        cleared_geometry_properties: structure.properties().owner().keys().cloned().collect(),
     };
     let mut builder = structure.to_builder();
     if report.waters_added > 0 {

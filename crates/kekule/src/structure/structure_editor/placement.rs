@@ -86,7 +86,7 @@ impl StructureEditor {
     /// Makes the implicit hydrogens of each distinct atom in `atoms` explicit,
     /// bonded at the ideal length along its free directions, as
     /// [`Molecule::add_hydrogens`](crate::molecule::Molecule::add_hydrogens)
-    /// does for a molecule. Inferred counts come from the valence structure on
+    /// does for a molecule. Inferred counts come from the valence model on
     /// the draft's current graph, so a bond order or charge changed earlier in
     /// the same draft counts; no perception is needed. A fixed count becomes
     /// zero. Represented stereo naming an implicit hydrogen names the new atom.
@@ -872,7 +872,7 @@ impl StructureEditor {
             .expect("placed positions are finite");
     }
 
-    /// Grows structure rows to the topology's slots and, when the topology
+    /// Grows geometry rows to the topology's slots and, when the topology
     /// changed structurally since `revision`, clears structure owner
     /// annotations, as [`Self::structural`] does.
     fn sync_slots(&mut self, revision: u64) {

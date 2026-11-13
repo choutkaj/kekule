@@ -183,7 +183,7 @@ fn is_representability_limit(issue: &PdbWriteIssue) -> bool {
 
 /// Writes, rereads, and rewrites one structure; `None` when PDB cannot represent
 /// it.
-fn round_trip_model(structure: &Structure, label: &str) -> Result<Structure, String> {
+fn round_trip_structure(structure: &Structure, label: &str) -> Result<Structure, String> {
     let written = match pdb::write(structure, Default::default()).map(|(text, _)| text) {
         Ok(written) => written,
         Err(error) => {
@@ -218,7 +218,7 @@ fn round_trip_model(structure: &Structure, label: &str) -> Result<Structure, Str
     Ok(reread)
 }
 
-fn round_trip_models(structures: &StructureSet, label: &str) {
+fn round_trip_structure_set(structures: &StructureSet, label: &str) {
     let written = pdb::write(structures, Default::default())
         .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{label}: structures do not write: {error}"));
@@ -231,7 +231,7 @@ fn round_trip_models(structures: &StructureSet, label: &str) {
         assert_same_structure(
             left.as_structure_view(),
             right.as_structure_view(),
-            &format!("{label} structure {index}"),
+            &format!("{label} model {index}"),
         );
     }
     let again = pdb::write(&reread, Default::default())
@@ -258,7 +258,7 @@ fn curated_biomolecules_round_trip_through_pdb() {
         let Ok(interpretation) = document.interpret(first) else {
             continue;
         };
-        match round_trip_model(interpretation.structure(), &label) {
+        match round_trip_structure(interpretation.structure(), &label) {
             Ok(_) => written += 1,
             Err(reason) => {
                 unrepresentable.push(format!("{label}: {reason}"));
@@ -267,13 +267,13 @@ fn curated_biomolecules_round_trip_through_pdb() {
         }
         if let Ok(interpretation) = document.interpret_structure_set(Default::default()) {
             if interpretation.structure_set().len() > 1 {
-                round_trip_models(interpretation.structure_set(), &label);
+                round_trip_structure_set(interpretation.structure_set(), &label);
                 multi_model += 1;
             }
         }
     }
     eprintln!(
-        "{written} entries round-tripped, {multi_model} with every structure; unrepresentable: {unrepresentable:#?}"
+        "{written} entries round-tripped, {multi_model} with every model; unrepresentable: {unrepresentable:#?}"
     );
     assert!(written >= 15, "only {written} entries round-tripped");
     // mmCIF and PDB readings agree on metal coordination, so every curated

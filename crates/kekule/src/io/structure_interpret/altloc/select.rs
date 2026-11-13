@@ -1,5 +1,5 @@
 //! Alternate-location selection and inventory over typed atom rows.
-use super::super::types::{geometry_error, poll, poll_every};
+use super::super::types::{poll, poll_every, structure_error};
 use crate::diagnostics::{Cancellation, Capitalized, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -47,7 +47,7 @@ fn residues<'a>(
             let mut identities = BTreeSet::new();
             for row in &rows {
                 if !identities.insert((&row.comp_id, &row.atom_name, &row.alt_id)) {
-                    return Err(geometry_error(
+                    return Err(structure_error(
                         DiagnosticKind::Inconsistent,
                         Some(row.line),
                         format!(
@@ -93,7 +93,7 @@ fn selection_error(
     kind: DiagnosticKind,
     message: impl std::fmt::Display,
 ) -> FormatError {
-    geometry_error(
+    structure_error(
         kind,
         Some(residue.rows[0].line),
         format!("{} {message}", Capitalized(&residue.id)),
@@ -217,7 +217,7 @@ fn groups(
         .chain(selection.groups.iter().flatten())
     {
         if !indices.contains_key(id) || residues[indices[id]].labels.is_empty() {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
@@ -228,14 +228,14 @@ fn groups(
     }
     for group in &selection.groups {
         if group.len() < 2 || group.iter().collect::<BTreeSet<_>>().len() != group.len() {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 "An alternate-location group names fewer than two distinct residues.",
             ));
         }
         if group.iter().any(|id| id.model_id != group[0].model_id) {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 "An alternate-location group spans more than one coordinate model.",
@@ -294,7 +294,7 @@ pub(in crate::io::structure_interpret) fn select_alt_locations(
     let selection = configuration(policy);
     if let Some(id) = &selection.source_conformation {
         if !conformations.contains_key(id) {
-            return Err(geometry_error(
+            return Err(structure_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("Source conformation {id:?} does not exist."),

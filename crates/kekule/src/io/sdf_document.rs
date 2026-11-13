@@ -195,7 +195,7 @@ impl SdfRecord {
         &self,
         options: MolfileInterpretOptions,
     ) -> Result<SdfRecordInterpretation, FormatError> {
-        let (model, molfile_components, omitted) = self
+        let (structure, molfile_components, omitted) = self
             .molfile
             .interpret(options)
             .map_err(|error| error.in_format(Format::Sdf).in_record(self.number))?
@@ -208,7 +208,7 @@ impl SdfRecord {
         };
         Ok(SdfRecordInterpretation {
             title: self.title().to_owned(),
-            model,
+            structure,
             data_fields: self.data_fields.clone(),
             report,
         })
@@ -241,7 +241,7 @@ impl SdfDocument {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdfRecordInterpretation {
     title: String,
-    model: Structure,
+    structure: Structure,
     data_fields: Vec<SdfDataField>,
     report: SdfRecordInterpretationReport,
 }
@@ -252,10 +252,14 @@ impl SdfRecordInterpretation {
     /// Source correspondence is empty because this value did not originate
     /// from SDF parsing. Parsed records receive a populated report through the
     /// authoritative interpreter.
-    pub fn new(title: impl Into<String>, model: Structure, data_fields: Vec<SdfDataField>) -> Self {
+    pub fn new(
+        title: impl Into<String>,
+        structure: Structure,
+        data_fields: Vec<SdfDataField>,
+    ) -> Self {
         Self {
             title: title.into(),
-            model,
+            structure,
             data_fields,
             report: SdfRecordInterpretationReport::default(),
         }
@@ -269,7 +273,7 @@ impl SdfRecordInterpretation {
     /// Borrows molecule definitions once per occurrence in authoritative
     /// topology instance order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
-        self.model
+        self.structure
             .topology()
             .instances()
             .map(|occurrence| occurrence.molecule())
@@ -278,7 +282,7 @@ impl SdfRecordInterpretation {
     /// Clones one molecule per topology instance, in instance order, so a
     /// reused definition appears once per occurrence.
     pub fn into_molecules(self) -> Vec<Molecule> {
-        self.model
+        self.structure
             .topology()
             .instances()
             .map(|occurrence| occurrence.molecule().clone())
@@ -287,23 +291,23 @@ impl SdfRecordInterpretation {
 
     /// The authoritative structure: topology and coordinates in angstroms.
     pub fn structure(&self) -> &Structure {
-        &self.model
+        &self.structure
     }
 
     /// The structure's topology.
     pub fn topology(&self) -> &Topology {
-        self.model.topology()
+        self.structure.topology()
     }
 
     /// Consumes the format wrapper into its structure.
     pub fn into_structure(self) -> Structure {
-        self.model
+        self.structure
     }
 
     /// Consumes the format wrapper and retains shared ownership of its exact
     /// structure topology.
     pub fn into_topology(self) -> Arc<Topology> {
-        self.model.shared_topology()
+        self.structure.shared_topology()
     }
 
     /// Data fields in record order.
@@ -326,7 +330,7 @@ impl SdfRecordInterpretation {
         Vec<SdfDataField>,
         SdfRecordInterpretationReport,
     ) {
-        (self.title, self.model, self.data_fields, self.report)
+        (self.title, self.structure, self.data_fields, self.report)
     }
 }
 

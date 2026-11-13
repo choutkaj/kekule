@@ -44,7 +44,7 @@ fuzz_target!(|data: &[u8]| {
         for view in interpreted
             .structure_set()
             .iter()
-            .map(|sample| sample.as_structure_view())
+            .map(|geometry| geometry.as_structure_view())
         {
             for atom in view.topology().atom_ids() {
                 let _ = view.topology().atom(*atom);

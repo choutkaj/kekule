@@ -1,12 +1,12 @@
-//! Informational cost of reading geometries from an XTC file through a geometry
+//! Informational cost of reading geometries from an XTC file through a structure
 //! set, against the indexed reader it wraps, and of processing them as they
 //! are read, against the streaming adapters.
 //! Run: cargo bench -p kekule --bench geometry_storage -- SYSTEM.cif [TRAJECTORY.xtc]
-//! The topology comes from an external mmCIF model, in its cell or a box
-//! around its atoms. The frames
-//! come from an external XTC file of the same atoms, or else are the model's
-//! own coordinates repeated, to isolate storage and processing costs; this
-//! measures API overhead, not physical trajectory sampling.
+//! The topology comes from an external mmCIF structure, in its cell or a box
+//! around its atoms. The frames come from an external XTC file of the same
+//! atoms, or else are the structure's own coordinates repeated, to isolate
+//! storage and processing costs; this measures API overhead, not physical
+//! trajectory sampling.
 
 use std::error::Error;
 use std::hint::black_box;
@@ -42,19 +42,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args_os()
         .skip(1)
         .filter(|argument| !argument.to_string_lossy().starts_with("--"));
-    let model_path = arguments
+    let cif_path = arguments
         .next()
         .ok_or("supply an external mmCIF model, and optionally its XTC trajectory")?;
-    let model = mmcif::parse_str(&std::fs::read_to_string(model_path)?, Default::default())?
+    let structure = mmcif::parse_str(&std::fs::read_to_string(cif_path)?, Default::default())?
         .interpret(Default::default())?
         .into_structure();
-    // A model without a cell, such as a crystal structure of another space
-    // group than P1, gets a box 1 nm longer than its extent on every axis.
-    let cell = match model.cell() {
+    // A structure without a cell, such as a crystal structure of another
+    // space group than P1, gets a box 1 nm longer than its extent on every
+    // axis.
+    let cell = match structure.cell() {
         Some(cell) => *cell,
-        None => enclosing_cell(model.positions().values().value())?,
+        None => enclosing_cell(structure.positions().values().value())?,
     };
-    let topology = model.shared_topology();
+    let topology = structure.shared_topology();
 
     let scratch =
         std::env::temp_dir().join(format!("kekule-bench-geometries-{}", std::process::id()));
@@ -65,7 +66,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let path = scratch.join("repeated.xtc");
             let mut frame = FrameBuffer::from_geometry(
                 Arc::clone(&topology),
-                Geometry::new(model.positions().clone()).with_cell(cell),
+                Geometry::new(structure.positions().clone()).with_cell(cell),
             )?;
             let file = std::io::BufWriter::new(std::fs::File::create(&path)?);
             let mut writer = create_trajectory_stream_writer(
@@ -179,7 +180,7 @@ fn benchmark(path: &Path, topology: &Arc<Topology>) -> Result<(), Box<dyn Error>
 /// An orthorhombic box 1 nm longer than the extent of `points` on every
 /// axis.
 fn enclosing_cell(points: &[Point3]) -> Result<PeriodicCell, Box<dyn Error>> {
-    let first = *points.first().ok_or("the model has no atoms")?;
+    let first = *points.first().ok_or("the structure has no atoms")?;
     let (mut low, mut high) = (first, first);
     for point in points {
         low = Point3::new(low.x.min(point.x), low.y.min(point.y), low.z.min(point.z));

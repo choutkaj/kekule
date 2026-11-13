@@ -3,7 +3,7 @@ mod append;
 mod placement;
 pub use append::{StructureAppend, StructureAppendReport};
 
-use super::structure_state::StructureState;
+use super::draft_geometry::DraftGeometry;
 use super::{DenseArrayError, GeometryError, Positions, Structure, StructureError};
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
@@ -49,8 +49,8 @@ use std::fmt;
 #[derive(Debug, Clone, Default)]
 pub struct StructureEditor {
     topology: TopologyEditor,
-    /// Structure state in private editor slot order.
-    slots: StructureState,
+    /// Geometry state in private editor slot order.
+    slots: DraftGeometry,
 }
 
 impl Structure {
@@ -58,7 +58,7 @@ impl Structure {
     pub fn to_editor(&self) -> StructureEditor {
         self.clone().into_editor()
     }
-    /// Moves the structure state into a draft while retaining the shared
+    /// Moves the geometry state into a draft while retaining the shared
     /// topology. Source slots are source dense indices.
     pub fn into_editor(self) -> StructureEditor {
         let (topology, slots) = self.into_state();
@@ -77,7 +77,7 @@ impl StructureEditor {
     /// Clears structure, geometry, hierarchy, cell and annotations in the draft.
     pub fn clear(&mut self) {
         self.topology.clear();
-        self.slots = StructureState::default();
+        self.slots = DraftGeometry::default();
     }
     /// The coordinate-free structural draft.
     pub fn topology(&self) -> &TopologyEditor {
@@ -726,7 +726,7 @@ pub enum StructureEditError {
     },
     /// A property edit failed; see the source.
     Property(PropertyError),
-    /// Structure state is invalid; see the source.
+    /// Geometry state is invalid; see the source.
     Geometry(GeometryError),
     /// The edited structure is invalid; see the source.
     Structure(Box<StructureError>),
@@ -734,7 +734,7 @@ pub enum StructureEditError {
     CapacityOverflow,
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
-    /// An imported structure property cannot be combined with its destination table.
+    /// An imported geometry property cannot be combined with its destination table.
     AppendProperty {
         /// The table whose rows could not be appended.
         domain: crate::properties::PropertyDomain,
