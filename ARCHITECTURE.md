@@ -13,92 +13,178 @@ Rustdoc beside their implementations. The links below point to those sources;
 | --- | --- | --- |
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
-| `Model` | One shared `Topology` and one structure of it: dense positions, optional cell, occupancies, B factors, and `StructureProperties`, addressed by dense topology index | A second chemical or hierarchy model; temporal state |
-| `SampleSet` | One shared topology, collection owner properties, `Sample` structures in a stable order (positions, optional cell, occupancies, B factors, velocities, forces, and properties, each shared and copied on write), an optional `Order` with one value per sample (a `TimeAxis` of times and steps, steps, or one coordinate in a unit), and an optional `Distribution` over all samples or a subset (weights, one `Partition`, one `State` per state, and a temperature) | An order value, weight, or state on a sample; an energy on a sample; a stored population |
+| `Geometry` | One arrangement of a topology's atoms, in dense atom order: positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a membership in a distribution |
+| `Structure` | One shared `Topology` and one `Geometry` of it | A second chemical or hierarchy model; temporal state |
+| `StructureSet` | One shared topology, set owner properties, `Geometry` values in a stable order (each shared and copied on write), and an optional `Order` with one value per geometry (a `TimeAxis` of times and steps, steps, or one coordinate in a unit) | An order value on a geometry; a weight, a state, or a distribution |
+| `Ensemble` | One `StructureSet` and one `Distribution` reading its geometries as draws: samples (all of the set or a sorted subset), log weights, one `Partition`, one `State` per state, and a temperature | Geometries of its own; an energy on a geometry; a stored population |
 
-A `SampleSet` is the one container for many structures of one topology. Its
-samples are flat structures; what makes the set a path, a scan, or a
-distribution is stated beside them. An order, when present, places every
-sample: a time axis for a path produced by dynamics, steps for an
-optimization, or values of one coordinate in a unit for a scan or a reaction
-path (values need not increase, as a scan swept back and forth shows). A time
-axis has times, steps, both, or neither, and each column covers every
-sample or none.
-Order values belong to the order, not to the samples: selecting keeps each
-selected sample's value, a removed sample takes its value with it, and
-collapsing to states drops the order.
+### Vocabulary
 
-A distribution, when present, covers every sample or a sorted subset, its
-members. Weights, when present, are finite and positive, one per member;
-without them the members weigh equally. Weights and the partition are indexed
-by member position. Every member is in exactly one state and every state has a
-representative member; a state's population is the total weight of its
-members, derived and never stored. Only states have energies, on one scale
-per distribution: a conformer's minimized energy or a computed free energy,
-never a snapshot's instantaneous energy, which stays a property of its
-sample. Selecting and removing samples remap the members; a selection keeps
-the energy and properties of the states it keeps whole. Order and
-distribution are independent, so a trajectory clustered into states is one
-set. A sample's structure is shared through `Arc` and copied on write, so
-regrouping, reweighting, selecting, and collapsing copy no coordinates, and
-editing one sample copies that sample alone. The operations of the set and
-its distribution fail with one `SampleSetError`, whose `Missing` variant
-names the `Requirement` an operation lacks, such as a time order or an
-energy for every state; a sample's own edits fail with `StructureError`, and
-perception with `TopologyPerceptionError`. Statistics and clustering over a
-set read `SampleSet::weighted_samples`: the members, or every sample
-without a distribution; samples outside the distribution are left out.
-Superposition and RMSD act on every sample.
+Kekule names what a system is made of with these words and uses no others for
+these concepts.
 
-Where the samples live is a type parameter. `SampleSet` (`SampleSet<InMemory>`)
-holds them and lends them by reference, so its accessors cannot fail.
-`SampleSet<IndexedFile>` holds none: it reads sample `i` from an indexed
-trajectory file as an owned `Sample`, and a read can fail. Both share the
-topology, properties, order, distribution, and the operations on them; only
-a set in memory edits samples or its order. A set of either storage reads
-through the object-safe `SampleRead` trait (topology, length, order,
-distribution, `peek`, `read`), which is open to the host. `peek` lends a
-sample the reader holds; `read` returns an owned one. Everything in kekule
-that reads many samples takes a `&dyn SampleRead`: the observation of
-statistics, RMSD of listed samples, pairwise fitted RMSD, and lazy
-processing. kekule keeps no samples a reader read, but for the sample 0
+A **geometry** is where the atoms of one topology are, plus the per-atom state
+recorded at that arrangement: positions in dense atom order, an optional
+periodic cell, occupancies, B factors, velocities, forces, and geometry
+properties. A geometry carries no topology; it is *bound* to one when it has a
+property row per atom and bond of that topology.
+
+A **structure** is a topology and one geometry of it, so `Structure` is
+`Topology` plus `Geometry`. The topology stays coordinate-free and may be
+shared with other structures, sets, frames, selections, and prepared
+potentials.
+
+A **structure set** is one shared topology and many geometries of it, in a
+stable order, with an optional `Order` saying what that order means.
+
+An **ensemble** is a structure set read as draws from a distribution: which of
+its geometries are samples, what each weighs, and how they group into states.
+
+A **frame** is a geometry as a trajectory file stores it, with its time and
+step. Frames belong to `kekule::traj` alone.
+
+**Sample** and **state** belong to the statistical reading alone: a sample is
+a geometry an ensemble's distribution covers, and a state is a group of
+samples with one representative.
+
+New types take the prefix of what they belong to: `Geometry*`, `Structure*`,
+`StructureSet*`, `Ensemble*`, `Frame*`. `Model` never names a structure. It
+stays for perception models (`AromaticityModel`, `ValenceModel`), physical and
+machine-learning models (`WaterModel`, NAGL bundles), and the `MODEL` records
+of PDB and mmCIF, which this document calls coordinate models.
+
+### One container, one optional reading
+
+`StructureSet` is the one container for many geometries of one topology. What
+makes a set a trajectory, a scan, or an ensemble is stated beside the
+geometries, never carried by its type. Sources differ along two independent
+axes and real ones combine them: an MCMC chain is ordered and a distribution,
+a metadynamics run is time-ordered and weighted, a clustered trajectory is
+both. A reader cannot know which it has — a multi-model PDB may be an NMR
+bundle or an MD run, and a multi-frame XYZ may be conformers or an
+optimization history — so a reader loads geometries and the caller states what
+they mean, which is an annotation rather than a conversion.
+
+The two axes divide on what the source recorded against what an analysis
+infers.
+
+An order is recorded, so it belongs to the set. An MD engine writes each
+frame's time and step, an optimizer numbers its steps, and a scan driver
+records its coordinate; trajectory files carry these values. An order, when
+present, places every geometry: a time axis for a path produced by dynamics,
+steps for an optimization, or values of one coordinate in a unit for a scan or
+a reaction path (values need not increase, as a scan swept back and forth
+shows). A time axis has times, steps, both, or neither, and each column covers
+every geometry or none. Order values belong to the order, not to the
+geometries: selecting keeps each selected geometry's value, and a removed
+geometry takes its value with it.
+
+A distribution is inferred, so it belongs to `Ensemble` and never to the set.
+Reweighting a biased run, MBAR, clustering into states, and Boltzmann
+populations from energies are interpretations, and one set often carries
+several at once. An `Ensemble` owns one `StructureSet` and one `Distribution`
+over it, validated together once; `Ensemble::into_parts` returns both without
+copying. It lends the set but never lends it mutably, so everything that
+changes which geometries exist goes through the ensemble, which remaps the
+samples. Several readings of one set are several ensembles sharing every
+coordinate.
+
+A distribution covers every geometry of its set or a sorted subset, its
+samples. Weights are stored as natural logarithms, one per sample, each
+finite: weights from bias reweighting or importance sampling span hundreds of
+orders of magnitude, and a stored linear weight would underflow to zero and be
+rejected as nonpositive. Normalized weights and probabilities are derived on
+request. Without weights the samples weigh equally. Log weights and the
+partition are indexed by sample position. Every sample is in exactly one state
+and every state has a representative sample; a state's population is the total
+weight of its samples, derived and never stored. Only states have energies, on
+one scale per distribution: a conformer's minimized energy or a computed free
+energy, never a snapshot's instantaneous energy, which stays a property of its
+geometry. Selecting and removing geometries remap the samples; a selection
+keeps the energy and properties of the states it keeps whole.
+
+A weight means something only against a target, so it is never a field of a
+geometry or of a set. The same geometries weigh uniformly at 300 K and
+differently reweighted to 310 K, and a metadynamics run has one set of weights
+under c(t) reweighting and another under MBAR. What the engine recorded per
+geometry — a bias potential, collective-variable values, an instantaneous
+energy, a repeat count — is a geometry property, and the weights an analysis
+uses are derived from those. `Ensemble::uniform` and `Ensemble::weighted` build
+the one-state readings, so weighting a trajectory needs no partition.
+
+A geometry is shared through `Arc` and copied on write, so regrouping,
+reweighting, selecting, and collapsing copy no coordinates, and editing one
+geometry copies that geometry alone. Set and ensemble operations fail with one
+`StructureSetError`, whose `Missing` variant names the `Requirement` an
+operation lacks, such as a time order or an energy for every state; a
+geometry's own edits fail with `GeometryError`, and perception with
+`TopologyPerceptionError`. Statistics and clustering over an ensemble observe
+its samples with their probabilities and leave the other geometries out; over
+a bare set they observe every geometry equally. Superposition and RMSD act on
+every geometry.
+
+Two axes are deliberately absent. Kekule records no runs or segments: replica
+exchange, metadynamics walkers, umbrella windows and repeated runs are the
+concern of the code that produced them, which knows its own boundaries, and a
+pooled weighting across them is still one ensemble. `Order::Coordinate` holds
+one coordinate, so a multi-dimensional scan uses `Order::Step` with the
+coordinate values as geometry properties.
+
+Where the geometries live is a type parameter. `StructureSet`
+(`StructureSet<InMemory>`) holds them and lends them by reference, so its
+accessors cannot fail. `StructureSet<IndexedFile>` holds none: it reads
+geometry `i` from an indexed trajectory file as an owned `Geometry`, and a
+read can fail. Both share the topology, properties, order, and the operations
+on them; only a set in memory edits geometries or its order. A set of either
+storage reads through the object-safe `StructureSetRead` trait (topology,
+length, order, `peek`, `read`), which is open to the host. `peek` lends a
+geometry the reader holds; `read` returns an owned one. Everything in kekule
+that reads many geometries takes a `&dyn StructureSetRead`: the observation of
+statistics, RMSD of listed geometries, pairwise fitted RMSD, and lazy
+processing. kekule keeps no geometries a reader read, but for the geometry 0
 that lazy processing checks its steps on, and starts no threads: caching,
 read-ahead, and parallel observation belong to the host.
 
-A host loads chosen samples of any reader with `SampleSet::from_reader`,
-which takes sample indices (a range, a stride, or a list) in any order and
-makes a faithful copy: each picked sample whole, the reader's order values,
-and its distribution restricted to the picked samples. It keeps no set
-properties. Every index is checked against the reader's length first, and a
-repeated index is read once and its sample shared. Samples picked out of
-ascending order keep their times, so `validate_monotonic_time` refuses the
-set when a time decreases. The host changes what the samples mean with
-`set_order` and `set_distribution`; reading through `Processed` loads
-processed samples. A host that needs progress or cancellation reads sample
-by sample through `SampleRead`.
+A reader describes geometries and their order and never a distribution, so
+`Processed` and a host's own readers carry none. Processing neither removes
+nor reorders geometries, so indices are preserved, and a host that wants a
+processed ensemble reads the processed set and pairs it with the distribution
+it already had.
 
-Structures are flat. A structure is one set of coordinates and per-atom state
-of a topology: a `Model` or a `Sample`. Positions, cell, occupancies, B
-factors, and structure properties are common to both; velocities and forces
-belong to samples. A place in an order and a membership in a distribution
-belong to the collection, never to a structure; an energy belongs to a state,
-not to any structure, except as a structure's own property. Coordinate
-kernels share code through the borrowed `ModelView`, not through a common
-owned payload.
+A host loads chosen geometries of any reader with `StructureSet::from_reader`,
+which takes indices (a range, a stride, or a list) in any order and makes a
+faithful copy: each picked geometry whole, with the reader's order values. It
+keeps no set properties. Every index is checked against the reader's length
+first, and a repeated index is read once and its geometry shared. Geometries
+picked out of ascending order keep their times, so `validate_monotonic_time`
+refuses the set when a time decreases. The host changes what the geometries
+mean with `set_order` and by building an `Ensemble`; `Ensemble::select`
+restricts a distribution to the geometries it keeps. A host that needs
+progress or cancellation reads geometry by geometry through
+`StructureSetRead`.
 
-Both live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
+Geometries are flat. One `Geometry` holds all the coordinates and per-atom
+state of one arrangement, and a `Structure` holds exactly one of them, so a
+structure read from a restart file carries its velocities and a single-point
+result carries its forces. A place in an order and a membership in a
+distribution belong to the set and to the ensemble, never to a geometry; an
+energy belongs to a state, not to any geometry, except as a geometry's own
+property. Coordinate kernels share code through the borrowed `StructureView`,
+not through a common owned payload.
+
+These live in `kekule::structure`. `kekule::traj` owns file codecs, streaming
 reader and writer contracts, the reusable `FrameBuffer`, the `IndexedFile`
-storage of sample sets, periodic preprocessing, streaming superposition, and
-lazy processing (`Processed`); it owns no second in-memory trajectory type.
-A trajectory writer takes a `FrameView`: a borrowed `Sample` with its time
-and step. `FrameView::from_sample` lends a sample of a time-ordered set and
-`FrameView::new` one held apart from a set, without copying arrays. A
-`FrameBuffer` holds one `Sample` bound to its topology plus the frame's time
-and step; it lends its frame as a `FrameView` and becomes a `Sample` with its
-`Place` through `into_sample`, again without copying. A frame the buffer
+storage of structure sets, periodic preprocessing, streaming superposition,
+and lazy processing (`Processed`); it owns no second in-memory trajectory
+type. A trajectory writer takes a `FrameView`: a borrowed `Geometry` with its
+time and step. `FrameView::from_geometry` lends a geometry of a time-ordered
+set and `FrameView::new` one held apart from a set, without copying arrays. A
+`FrameBuffer` holds one `Geometry` bound to its topology plus the frame's time
+and step; it lends its frame as a `FrameView` and becomes a `Geometry` with
+its `Place` through `into_geometry`, again without copying. A frame the buffer
 publishes replaces every field, occupancies and B factors included, so a
-buffer never keeps a previous frame's state. `read_sample_set` and
-`write_sample_set` move whole time-ordered sets.
+buffer never keeps a previous frame's state. `read_structure_set` and
+`write_structure_set` move whole time-ordered sets.
 
 A salt, solvent box, or protein-ligand complex is a topology containing connected
 molecules. Covalent connectedness determines molecule boundaries; hierarchy and
