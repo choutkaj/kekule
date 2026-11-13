@@ -323,8 +323,8 @@ fn stereo_projections(
     } else {
         molecule
     };
-    // The reader keeps only the double-bond configurations a conformation's
-    // coordinates specify, so planning verifies against the same set.
+    // The reader keeps only the double-bond configurations the coordinates,
+    // flat or not, specify, so planning verifies against the same set.
     let coordinate_double_bonds = geometry
         .map(|geometry| molfile_coordinate_double_bonds(molecule, geometry))
         .transpose()

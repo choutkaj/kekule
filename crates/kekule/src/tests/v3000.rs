@@ -627,10 +627,10 @@ fn drawn_propene(deuterium: bool, methyl_z: f64) -> String {
 }
 
 #[test]
-fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
+fn molfile_coordinates_specify_e_z_only_at_locally_eligible_double_bonds() {
     // RDKit 2026.03.3 assigns no E/Z to either propene and Z to the
-    // 3D isotopologue, whose 2H and methyl share a side. Kekule keeps the E/Z
-    // that a flat drawing asserts.
+    // 3D isotopologue, whose 2H and methyl share a side. A flat drawing, like
+    // a conformation, gives E/Z only to a bond that can have it.
     let together = DoubleBondStereo {
         bond: BondId::new(0),
         left: AtomId::new(0),
@@ -641,8 +641,9 @@ fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
     };
     for (deuterium, methyl_z, expected) in [
         (false, 0.1, vec![]),
-        (false, 0.0, vec![together.clone()]),
+        (false, 0.0, vec![]),
         (true, 0.1, vec![together.clone()]),
+        (true, 0.0, vec![together.clone()]),
     ] {
         let molecule = read_molfile(&drawn_propene(deuterium, methyl_z)).unwrap();
         let double_bonds = molecule
@@ -660,54 +661,86 @@ fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
 }
 
 #[test]
-fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
-    // A conformation neither invents an unknown mark for the methylene nor
-    // carries an E/Z assertion there, which its coordinates cannot express.
-    let interpretation = molfile::parse_str(&drawn_propene(false, 0.1), Default::default())
+fn molfile_writes_no_e_z_at_ineligible_double_bonds() {
+    // Coordinates, flat or not, neither invent an unknown mark for the
+    // methylene nor carry an E/Z assertion there, which they cannot express.
+    for methyl_z in [0.1, 0.0] {
+        let interpretation =
+            molfile::parse_str(&drawn_propene(false, methyl_z), Default::default())
+                .unwrap()
+                .interpret(Default::default())
+                .unwrap();
+        for version in [
+            molfile::MolfileWriteVersion::V2000,
+            molfile::MolfileWriteVersion::V3000,
+        ] {
+            let written = molfile::write(
+                interpretation.model(),
+                molfile::MolfileWriteOptions::default().with_version(version),
+            )
+            .unwrap()
+            .0;
+            assert!(
+                read_molfile(&written)
+                    .unwrap()
+                    .stereo_elements()
+                    .next()
+                    .is_none(),
+                "z {methyl_z}: {written}"
+            );
+        }
+
+        let mut asserted = interpretation.molecules().next().unwrap().clone();
+        let mut editor = asserted.to_editor();
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                DoubleBondStereo {
+                    bond: BondId::new(0),
+                    left: AtomId::new(0),
+                    right: AtomId::new(1),
+                    left_carrier: StereoCarrier::Atom(AtomId::new(3)),
+                    right_carrier: StereoCarrier::Atom(AtomId::new(2)),
+                    orientation: Some(DoubleBondOrientation::Together),
+                },
+            )))
+            .unwrap();
+        asserted = editor.finish().unwrap();
+        let model = Model::from_molecule(asserted, interpretation.model().positions()).unwrap();
+        let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            crate::diagnostics::DiagnosticKind::Unsupported
+        );
+        assert_eq!(
+            error.message(),
+            "Cannot encode the specified stereo of bond 0. The bond is aromatic, or an endpoint has identical terminal ligands."
+        );
+    }
+}
+
+#[test]
+fn molfile_drawings_of_double_bonds_without_e_z_round_trip_unmarked() {
+    // 2-methylbut-2-ene: the drawn C(CH3)2=CH bond has no configuration to
+    // assert, so it reads without E/Z and writes without a crossed bond.
+    let drawing = "\n  kekule\n\n  5  4  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.3300    0.0000    0.0000 C   0  0  0  0  0  0\n   -0.7000    1.2000    0.0000 C   0  0  0  0  0  0\n   -0.7000   -1.2000    0.0000 C   0  0  0  0  0  0\n    2.0000    1.2000    0.0000 C   0  0  0  0  0  0\n  1  2  2  0\n  1  3  1  0\n  1  4  1  0\n  2  5  1  0\nM  END\n";
+    let interpretation = molfile::parse_str(drawing, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    for version in [
-        molfile::MolfileWriteVersion::V2000,
-        molfile::MolfileWriteVersion::V3000,
-    ] {
-        let written = molfile::write(
-            interpretation.model(),
-            molfile::MolfileWriteOptions::default().with_version(version),
-        )
+    assert!(interpretation
+        .molecules()
+        .next()
+        .unwrap()
+        .stereo_elements()
+        .next()
+        .is_none());
+    let written = molfile::write(interpretation.model(), Default::default())
         .unwrap()
         .0;
-        assert!(read_molfile(&written)
-            .unwrap()
-            .stereo_elements()
-            .next()
-            .is_none());
-    }
-
-    let mut asserted = interpretation.molecules().next().unwrap().clone();
-    let mut editor = asserted.to_editor();
-    editor
-        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
-            DoubleBondStereo {
-                bond: BondId::new(0),
-                left: AtomId::new(0),
-                right: AtomId::new(1),
-                left_carrier: StereoCarrier::Atom(AtomId::new(3)),
-                right_carrier: StereoCarrier::Atom(AtomId::new(2)),
-                orientation: Some(DoubleBondOrientation::Together),
-            },
-        )))
-        .unwrap();
-    asserted = editor.finish().unwrap();
-    let model = Model::from_molecule(asserted, interpretation.model().positions()).unwrap();
-    let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
-    assert_eq!(
-        error.kind(),
-        crate::diagnostics::DiagnosticKind::Unsupported
-    );
-    assert_eq!(
-        error.message(),
-        "Cannot encode the specified stereo of bond 0. The bond is aromatic, or an endpoint has identical terminal ligands."
+    let document = molfile::parse_str(&written, Default::default()).unwrap();
+    assert!(
+        document.bonds().iter().all(|bond| bond.stereo().is_none()),
+        "{written}"
     );
 }
 

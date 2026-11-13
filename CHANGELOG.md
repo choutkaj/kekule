@@ -932,6 +932,14 @@ are marked **Breaking:**.
 
 ### Changed
 
+- A flat Molfile or SDF drawing gives E/Z only to a double bond that can
+  have it, as a conformation does: not to an aromatic bond or one whose
+  endpoint bears two identical terminal ligands, such as the drawn
+  `C(CH3)2=CH` of 2-methylbut-2-ene or a vinyl `=CH2` drawn with its
+  hydrogens. Such a drawing asserted a configuration that no conformation
+  of the molecule could be written with. Writing an unasserted molecule as a
+  drawing no longer marks such a bond crossed (either), and writing one with
+  a specified E/Z there fails as unsupported, flat or not.
 - **Breaking:** the Molfile and SDF writers return a `WriteReport`, as the
   PDB and mmCIF writers do (SeekDelta K75). `molfile::write` and
   `sdf::write` return `(String, WriteReport)`, and `molfile::write_to` and

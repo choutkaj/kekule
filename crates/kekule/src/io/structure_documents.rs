@@ -611,11 +611,15 @@ pub(crate) fn interpret_molfile_document(
             )
             .with_source(error)
         })?;
-        if let Some(double_bonds) =
+        // A drawn configuration the coordinates do not specify was never
+        // asserted, so nothing reports its removal. Classifying the double
+        // bonds perceives the graph, which a drawing without E/Z skips.
+        let double_bonds = if crate::chemistry::has_specified_double_bond_stereo(editor.working()) {
             molfile_coordinate_double_bonds(editor.working(), &raw.geometry)?
-        {
-            // A drawn configuration the coordinates do not specify was never
-            // asserted, so nothing reports its removal.
+        } else {
+            None
+        };
+        if let Some(double_bonds) = double_bonds {
             crate::chemistry::remove_unkept_source_stereo(
                 &mut editor,
                 &double_bonds,
@@ -1014,24 +1018,25 @@ fn molfile_points(
         .collect()
 }
 
-/// In a conformation, the double bonds whose E/Z the coordinates specify: those
-/// eligible before graph-symmetry analysis, so a bond with an endpoint bearing
-/// two identical terminal ligands (`=CH2` with drawn hydrogens, `=C(CH3)2`)
-/// has none. `None` for a flat drawing, whose drawn double bonds all assert
-/// their configuration, and for a graph outside the valence model, which
-/// coordinate tetrahedra report. Import and writer planning share it.
+/// The double bonds whose E/Z the coordinates, flat or not, specify: those
+/// eligible before graph-symmetry analysis, so neither an aromatic bond nor
+/// one with an endpoint bearing two identical terminal ligands (`=CH2` with
+/// drawn hydrogens, `=C(CH3)2`), whose drawing has no configuration to
+/// assert. `None` for a graph outside the valence model, which coordinate
+/// tetrahedra report, and for a flat drawing whose graph cannot be
+/// perceived; every drawn double bond then keeps its configuration. Import
+/// and writer planning share it.
 pub(super) fn molfile_coordinate_double_bonds(
     molecule: &Molecule,
     geometry: &dyn crate::chemistry::AtomPositionSource,
 ) -> Result<Option<BTreeSet<BondId>>, FormatError> {
-    if molfile_coordinates_are_flat(&molfile_points(molecule, geometry)?) {
-        return Ok(None);
-    }
+    let flat = molfile_coordinates_are_flat(&molfile_points(molecule, geometry)?);
     match crate::algorithms::locally_eligible_double_bonds(molecule) {
         Ok(bonds) => Ok(Some(bonds)),
         Err(crate::algorithms::StereoSearchError::Perception(
             crate::chemistry::PerceptionError::Valence(_),
         )) => Ok(None),
+        Err(_) if flat => Ok(None),
         Err(error) => Err(interpret_error(
             DiagnosticKind::Chemistry,
             None,
