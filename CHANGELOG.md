@@ -11,6 +11,23 @@ are marked **Breaking:**.
 
 ### Added
 
+- Sample set follow-ups (SeekDelta K75). `Sample::bind(&topology)` gives
+  a sample held apart from a set the bond rows of a topology, so
+  `FrameView::new` lends it as a frame; it copies no positions of a sample
+  only it holds. `Distribution::states` views the states, and
+  `Distribution::extended_to(len)` re-expresses a distribution over the
+  first samples of a longer set, as `refresh` of a growing file does
+  (`Members::All` becomes a subset of the samples it covered).
+  `SampleSetDescription::extended_to(sample_count)` does the same to a
+  saved description, which then takes the longer set's order through
+  `with_order`. `FrameIndex::prefix_fingerprint(path, frames)` fingerprints
+  a file's first frames through the frame index, as `fingerprint` samples
+  a whole file, so a host learns whether the frames it used are unchanged
+  after the file grew or its tail was rewritten. A `SampleSet<IndexedFile>`
+  is `Clone`: a clone reads nothing, shares the open file, reader and frame
+  index, and refreshes on its own. `Processed::skipped_periodic_steps(&sample)`
+  says whether making whole or wrapping skipped a sample because it has no
+  cell.
 - `SampleSet::clear_velocities_and_forces` removes every sample's
   velocities and forces; a sample without them stays shared (SeekDelta
   K74).
@@ -22,10 +39,7 @@ are marked **Breaking:**.
   `SampleSet<IndexedFile>` from a reader the host opened, so a host that
   opens the reader itself, for the scan's progress or a file still being
   written, does not open and scan the file twice.
-  `SampleSet<IndexedFile>::snapshot` makes a set of the samples indexed so
-  far that reads the same open file and shares the frame index, keeping
-  the set properties, order, and distribution; the set goes on refreshing
-  without changing it. `Processed` keeps the sample 0 its construction
+  `Processed` keeps the sample 0 its construction
   processes and lends it through `peek`, and `read(0)` returns it, so a
   cache in front of the reader does not process it again. The
   `clustering_fits` benchmark times the pairwise fitted RMSD matrix,
@@ -918,6 +932,32 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** the Molfile and SDF writers return a `WriteReport`, as the
+  PDB and mmCIF writers do (SeekDelta K75). `molfile::write` and
+  `sdf::write` return `(String, WriteReport)`, and `molfile::write_to` and
+  `sdf::write_to` return `WriteReport`; the report names the cells and the
+  sample state that `UnrepresentablePolicy::Omit` left out, with the number
+  of records. Migration: take `.0` of `write`, or bind `(text, report)`.
+- **Breaking:** SDF writes a distribution over some samples so it reads
+  back (SeekDelta K75). A sample outside the distribution writes a record
+  without distribution fields, and `sdf::sample_set` reads such a record,
+  among records with `kekule.state`, as a sample outside the distribution
+  instead of failing. An output whose records are all outside the
+  distribution fails ("Cannot write the SDF output in record 1. The
+  distribution membership of the sample has no SDF representation.")
+  unless `sample_metadata` omits it, which reports
+  `StructureField::Membership`. A record outside the distribution of a set
+  with one reserves the distribution's field names too. Migration: none for
+  members; a host writing non-members alone sets `sample_metadata` to
+  `Omit`.
+- **Breaking:** `SampleSet<IndexedFile>::snapshot` is removed; the set is
+  `Clone` (SeekDelta K75). Migration: `set.snapshot()?` becomes
+  `set.clone()`, which reads nothing and cannot fail.
+- **Breaking:** atom field texts agree with their subjects (SeekDelta K75).
+  mmCIF reads "The radical electrons of atom 0 of instance 0 have no mmCIF
+  representation." and "The implicit hydrogens of atom 0 of instance 0
+  have no mmCIF representation.", and PDB "The radical electrons of atom 0
+  of instance 0 have no PDB representation."; singular fields keep "has".
 - **Breaking:** one container for many structures (SeekDelta K74).
   `SampleSet` replaces `Ensemble` and `Trajectory`, which are removed with
   everything that existed only for them (see Removed).

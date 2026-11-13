@@ -258,13 +258,15 @@ fn canonical_tetrahedral_stereo_is_identical_across_smiles_molfile_and_manual_so
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V2000),
         )
-        .expect("canonical stereo should project to V2000"),
+        .expect("canonical stereo should project to V2000")
+        .0,
         molfile::write(
             &model,
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000),
         )
-        .expect("canonical stereo should project to V3000"),
+        .expect("canonical stereo should project to V3000")
+        .0,
     ] {
         let interpreted = read_molfile(&written).expect("projected Molfile should interpret");
         let actual = interpreted
@@ -687,13 +689,15 @@ fn molfile_writers_project_tetrahedral_stereo_independent_of_bond_endpoint_stora
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V2000),
             )
-            .expect("V2000 projects tetrahedral stereo"),
+            .expect("V2000 projects tetrahedral stereo")
+            .0,
             molfile::write(
                 &model,
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
-            .expect("V3000 projects tetrahedral stereo"),
+            .expect("V3000 projects tetrahedral stereo")
+            .0,
         ] {
             let (reparsed, report) =
                 read_molfile_with_report(&written).expect("projected tetrahedral stereo reparses");
@@ -1059,13 +1063,15 @@ fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V2000),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
             molfile::write(
                 &model,
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
         ] {
             let (parsed, _) = read_molfile_with_report(&source).unwrap();
             let unknown = parsed
@@ -1392,7 +1398,8 @@ fn molfile_wedges_decode_and_write_stereogenic_nitrogen_lone_pairs() {
                 interpretation.model(),
                 molfile::MolfileWriteOptions::default().with_version(version),
             )
-            .expect("nitrogen wedge writes");
+            .expect("nitrogen wedge writes")
+            .0;
             let reread = read_molfile(&written).expect("written drawing interprets");
             assert_eq!(
                 reread
@@ -1425,13 +1432,15 @@ fn molfile_model_writing_preserves_tetrahedral_drawing_orientation() {
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V2000),
                 )
-                .expect("V2000 model writes"),
+                .expect("V2000 model writes")
+                .0,
                 molfile::write(
                     interpreted.model(),
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V3000),
                 )
-                .expect("V3000 model writes"),
+                .expect("V3000 model writes")
+                .0,
             ] {
                 let reparsed = read_molfile(&written).expect("written drawing interprets");
                 assert_eq!(
@@ -1502,7 +1511,8 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
         interpreted.model(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     for (group, expected) in [
         ("MDLV30/STEABS", StereoGroupKind::Absolute),
         ("MDLV30/STEREL1", StereoGroupKind::Or),
@@ -1540,8 +1550,9 @@ fn v3000_round_trips_absolute_or_and_stereo_groups_and_promotes_auto_output() {
             cx
         );
         assert!(document.unsupported().is_empty());
-        let written =
-            molfile::write(interpreted.model(), molfile::MolfileWriteOptions::default()).unwrap();
+        let written = molfile::write(interpreted.model(), molfile::MolfileWriteOptions::default())
+            .unwrap()
+            .0;
         assert!(written.contains("V3000"));
         let document = molfile::parse_str(&written, Default::default()).unwrap();
         let reparsed = document.interpret(Default::default()).unwrap();
@@ -1575,7 +1586,8 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
         interpreted.model(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     // RDKit represents enhanced axis membership using either endpoint atom,
     // and collapses a pair of endpoint references to one bond member.
     for (name, kind) in [
@@ -1601,7 +1613,8 @@ fn v3000_round_trips_atropisomeric_bond_group_members() {
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
-            .unwrap();
+            .unwrap()
+            .0;
             assert!(!output.contains("BONDS="));
             assert!(output.contains("ATOMS=(1 3)"));
             let reread = molfile::parse_str(&output, Default::default())
@@ -1664,13 +1677,15 @@ M  V30 7 1 7 8\nM  V30 8 2 8 9\nM  V30 9 1 9 4\nM  V30 END BOND\nM  V30 END CTAB
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V2000),
                 )
-                .unwrap(),
+                .unwrap()
+                .0,
                 molfile::write(
                     interpretation.model(),
                     molfile::MolfileWriteOptions::default()
                         .with_version(molfile::MolfileWriteVersion::V3000),
                 )
-                .unwrap(),
+                .unwrap()
+                .0,
             ] {
                 let mut reread = read_molfile(&output).unwrap();
                 perceive(&mut reread).unwrap();
@@ -1742,7 +1757,8 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         model.model(),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let unmarked_v3000 = read_molfile(&v3000).unwrap();
     for cfg in [1, 3] {
         let conflicting = v3000
@@ -1817,6 +1833,7 @@ fn v3000_stereo_groups_validate_members_and_preserve_source_ids_and_continuation
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .unwrap()
+    .0
     .replace("M  V30 1 C", "M  V30 101 C")
     .replace("M  V30 1 1 1 2", "M  V30 1 1 101 2")
     .replace("M  V30 2 1 1 3", "M  V30 2 1 101 3")
@@ -1880,7 +1897,8 @@ fn v3000_repeated_group_ids_preserve_one_relation() {
         &model,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     for kind in ["STEREL", "STERAC"] {
         for number in ["1", "01"] {
             let grouped = source.replace("M  V30 END CTAB", &format!("M  V30 BEGIN COLLECTION\nM  V30 MDLV30/{kind}1 ATOMS=(1 2)\nM  V30 MDLV30/{kind}{number} ATOMS=(1 4)\nM  V30 END COLLECTION\nM  V30 END CTAB"));
@@ -1900,7 +1918,7 @@ fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_member
         molfile::parse_str(&wedged_tetrahedron("C", 0, false), Default::default()).unwrap();
     let interpreted = document.interpret(Default::default()).unwrap();
     let source = molfile::write(interpreted.model(), molfile::MolfileWriteOptions::default()
-.with_version(molfile::MolfileWriteVersion::V3000)).unwrap()
+.with_version(molfile::MolfileWriteVersion::V3000)).unwrap().0
         .replace("COUNTS 4 3", "COUNTS 8 6")
         .replace("M  V30 END ATOM", "M  V30 5 C 5 0 0 0\nM  V30 6 F 6 0 0 0\nM  V30 7 Cl 4 0 0 0\nM  V30 8 Br 5 1 0 0\nM  V30 END ATOM")
         .replace("M  V30 END BOND", "M  V30 4 1 5 6 CFG=1\nM  V30 5 1 5 7\nM  V30 6 1 5 8\nM  V30 END BOND");
@@ -1918,7 +1936,8 @@ fn v3000_rejects_relative_groups_across_components_and_preserves_absolute_member
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V3000),
             )
-            .unwrap();
+            .unwrap()
+            .0;
             assert_eq!(output.matches("MDLV30/STEABS").count(), 1);
             assert!(output.contains("ATOMS=(2 1 5)"));
             assert_eq!(

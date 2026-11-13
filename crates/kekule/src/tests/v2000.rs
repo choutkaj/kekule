@@ -533,7 +533,8 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         &[record],
         sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .expect("representable field should write");
+    .expect("representable field should write")
+    .0;
     let reparsed = read_sdf_records(&written).expect("written field should parse");
     assert_eq!(
         reparsed[0].data_fields()[0].value(),
@@ -589,7 +590,8 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V2000),
         )
-        .expect("radical record should write");
+        .expect("radical record should write")
+        .0;
         assert!(
             written.contains(&format!("M  RAD  1   1   {code}")),
             "written code {code}: {written}"
@@ -676,7 +678,8 @@ fn v2000_declared_valence_defines_stereo_hydrogen_carriers() {
                 molfile::MolfileWriteOptions::default()
                     .with_version(molfile::MolfileWriteVersion::V2000),
             )
-            .expect("canonical stereo should project with its drawing");
+            .expect("canonical stereo should project with its drawing")
+            .0;
             let molecule = interpreted.into_molecule();
             let center = molecule.atom(AtomId::new(0)).expect("stereo center");
             assert_eq!(
@@ -846,7 +849,8 @@ $$$$
         &records,
         sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .expect("sdf should write");
+    .expect("sdf should write")
+    .0;
     let reparsed = read_sdf_records(&sdf).expect("written sdf parses");
 
     assert_eq!(reparsed.len(), 1);
@@ -882,7 +886,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V2000),
         )
-        .expect("charge should write");
+        .expect("charge should write")
+        .0;
         let reparsed = read_molfile(&written).expect("charge should reparse");
         assert_eq!(
             reparsed.atom(AtomId::new(0)).expect("atom").formal_charge,
@@ -947,7 +952,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .expect("metadata molecule should write");
+    .expect("metadata molecule should write")
+    .0;
     assert_eq!(mol_text.lines().nth(1), Some("  kekule            2D"));
     assert_eq!(mol_text.matches("M  CHG").count(), 2);
     assert_eq!(mol_text.matches("M  ISO").count(), 2);
@@ -962,7 +968,8 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
         &records,
         sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .expect("two records should write");
+    .expect("two records should write")
+    .0;
     assert_eq!(sdf_text.lines().nth(1), Some("  kekule            2D"));
     let records = read_sdf_records(&sdf_text).expect("written records should parse");
     assert_eq!(records.len(), 2);
@@ -1008,7 +1015,8 @@ fn v2000_atom_fields_are_read_from_their_ctfile_columns() {
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V2000),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         let document = molfile::parse_str(&written, Default::default()).unwrap();
         assert_eq!(document.atoms()[0].atom_map(), Some(atom_map), "{written}");
         let reread = document.interpret(Default::default()).unwrap();

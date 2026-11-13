@@ -173,7 +173,8 @@ fn molfile_v3000_continues_records_past_80_columns() {
         &charged,
         MolfileWriteOptions::default().with_version(MolfileWriteVersion::V3000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let stored = charged
         .positions()
         .get(0)
@@ -224,7 +225,8 @@ fn molfile_chiral_flag_states_whether_stereo_is_absolute() {
             &model(source, &layout),
             MolfileWriteOptions::default().with_version(version),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         let document = molfile::parse_str(&text, Default::default()).unwrap();
         assert_eq!(
             document.chiral_flag(),
@@ -254,9 +256,12 @@ fn automatic_molfile_version_writes_what_explicit_v3000_writes_when_v2000_cannot
             model,
             MolfileWriteOptions::default().with_version(MolfileWriteVersion::V3000),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert_eq!(
-            molfile::write(model, MolfileWriteOptions::default()).unwrap(),
+            molfile::write(model, MolfileWriteOptions::default())
+                .unwrap()
+                .0,
             explicit
         );
     }
@@ -268,7 +273,9 @@ fn molfile_model_flattens_disconnected_topology_and_preserves_coordinates() {
         "CO.O",
         &[[1.25, 2.5, 3.75], [2.0, 2.5, 3.75], [-4.0, 0.5, 8.0]],
     );
-    let text = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
+    let text = molfile::write(&model, MolfileWriteOptions::default())
+        .unwrap()
+        .0;
     assert!(text.contains("V2000"));
 
     let interpreted = (molfile::parse_str(&text, Default::default()).unwrap())
@@ -310,7 +317,9 @@ fn molfile_version_policy_promotes_counts_and_explicit_v2000_fails() {
     .unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
 
-    let promoted = molfile::write(&model, MolfileWriteOptions::default()).unwrap();
+    let promoted = molfile::write(&model, MolfileWriteOptions::default())
+        .unwrap()
+        .0;
     assert!(promoted.contains("V3000"));
     assert!(promoted.contains("M  V30 COUNTS 1000 0 0 0 0"));
     assert_eq!(
@@ -354,8 +363,9 @@ fn molfile_header_dimension_code_states_the_emitted_coordinate_kind() {
         ((&coordinate_free).into(), V2000, DRAWING_HEADER),
         ((&coordinate_free).into(), V3000, DRAWING_HEADER),
     ] {
-        let text =
-            molfile::write(source, MolfileWriteOptions::default().with_version(version)).unwrap();
+        let text = molfile::write(source, MolfileWriteOptions::default().with_version(version))
+            .unwrap()
+            .0;
         assert_eq!(text.lines().nth(1), Some(expected), "{version:?}\n{text}");
         assert_eq!(text.lines().nth(2), Some(""));
     }
@@ -367,7 +377,8 @@ fn molfile_header_dimension_code_states_the_emitted_coordinate_kind() {
         ],
         SdfWriteOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let headers = text
         .split("$$$$\n")
         .filter(|record| !record.is_empty())
@@ -401,7 +412,8 @@ fn molfile_writes_a_marked_flat_drawing_on_the_z_zero_plane() {
             &raised_drawing,
             MolfileWriteOptions::default().with_version(version),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert_eq!(
             text.lines().nth(1),
             Some(DRAWING_HEADER),
@@ -442,7 +454,9 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
 fn sdf_writes_independent_models_and_set_samples_in_order() {
     let first = model("C", &[[1.0, 0.0, 0.0]]);
     let second = model("O", &[[2.0, 0.0, 0.0]]);
-    let text = sdf::write(&[first.clone(), second.clone()], SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&[first.clone(), second.clone()], SdfWriteOptions::default())
+        .unwrap()
+        .0;
     let interpreted = interpret_records(&text);
     assert_eq!(interpreted.len(), 2);
     assert_eq!(
@@ -475,7 +489,7 @@ fn sdf_writes_independent_models_and_set_samples_in_order() {
     )
     .unwrap();
     let set = distributed([first, later], Partition::one_state(2));
-    let set_text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    let set_text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&set_text), 0x5a81_ddae_c2c0_94b9);
     let records = interpret_records(&set_text);
     assert_eq!(records.len(), 2);
@@ -619,7 +633,7 @@ fn data_fields(records: &[SdfRecordInterpretation]) -> Vec<Vec<(String, String)>
 #[test]
 fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
     let set = weighted_set();
-    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text), 0x335f_7889_a7ba_d12f);
     let records = interpret_records(&text);
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
@@ -659,7 +673,9 @@ fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
     assert_eq!(crate::native_fingerprint(&read), 0x4ae5_cd3f_eab9_4c61);
     // Records without any of the fields have no distribution.
     let plain = interpret_records(
-        &sdf::write(&[model("C", &[[0.0; 3]])], SdfWriteOptions::default()).unwrap(),
+        &sdf::write(&[model("C", &[[0.0; 3]])], SdfWriteOptions::default())
+            .unwrap()
+            .0,
     );
     let read = sdf::sample_set(&plain).unwrap();
     assert_eq!(read.distribution(), None);
@@ -708,7 +724,7 @@ fn sdf_samples_carry_their_weight_state_and_energy_through_data_fields() {
 #[test]
 fn sdf_round_trips_one_state_and_clustered_states() {
     let set = clustered_set();
-    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text), 0x7c1a_5784_711d_b34e);
     let records = interpret_records(&text);
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
@@ -744,7 +760,7 @@ fn sdf_round_trips_one_state_and_clustered_states() {
     let mut distribution = one.distribution_mut().unwrap();
     distribution.regroup(Partition::one_state(4)).unwrap();
     distribution.set_temperature(None).unwrap();
-    let text_one = sdf::write(&one, SdfWriteOptions::default()).unwrap();
+    let text_one = sdf::write(&one, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text_one), 0x8638_8572_626a_81dc);
     let reread = sdf::sample_set(&interpret_records(&text_one)).unwrap();
     assert_eq!(set_metadata(&reread), set_metadata(&one));
@@ -911,11 +927,13 @@ fn write_structure(
         molfile::write(
             molfile::MolfileSource::model(&view),
             MolfileWriteOptions::default().with_sample_metadata(policy),
-        ),
+        )
+        .map(|(text, _)| text),
         sdf::write(
             [sdf::SdfRecordSource::model(&view)],
             SdfWriteOptions::default().with_sample_metadata(policy),
-        ),
+        )
+        .map(|(text, _)| text),
         mmcif::write(
             [mmcif::MmcifBlockSource::model(&view)],
             MmcifWriteOptions::default().with_sample_metadata(policy),
@@ -985,7 +1003,7 @@ fn structure_writers_fail_on_sample_and_frame_state_unless_told_to_omit_it() {
                 None if format == Format::Sdf && row < 2 => {
                     // Both SDF paths write the sample's own data fields.
                     let sample = set.get(row).unwrap();
-                    let typed = sdf::write([sample], SdfWriteOptions::default()).unwrap();
+                    let typed = sdf::write([sample], SdfWriteOptions::default()).unwrap().0;
                     assert_eq!(failed[writer].as_ref().unwrap(), &typed);
                     assert!(typed.contains(
                         ">  <kekule.weight>
@@ -1037,7 +1055,7 @@ fn methane_series() -> (SampleSet, SampleSet) {
 fn sdf_ordered_samples_carry_their_step_or_coordinate_through_data_fields() {
     let (history, scan) = methane_series();
     let field = |name: &str, value: &str| (name.to_owned(), value.to_owned());
-    let text = sdf::write(&history, SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&history, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text), 0x2543_22fa_c15f_63d1);
     assert_eq!(
         data_fields(&interpret_records(&text)),
@@ -1047,7 +1065,7 @@ fn sdf_ordered_samples_carry_their_step_or_coordinate_through_data_fields() {
             vec![field(sdf::STEP_FIELD, "9")],
         ]
     );
-    let text = sdf::write(&scan, SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&scan, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text), 0x5065_032e_d48f_d515);
     assert_eq!(
         data_fields(&interpret_records(&text)),
@@ -1067,7 +1085,7 @@ fn sdf_ordered_samples_carry_their_step_or_coordinate_through_data_fields() {
     // give a sample another place.
     let energy = [SdfDataField::new("energy", "-3.5")];
     let sample = sdf::SdfRecordSource::from(history.get(1).unwrap()).with_data_fields(&energy);
-    let text = sdf::write([sample], SdfWriteOptions::default()).unwrap();
+    let text = sdf::write([sample], SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text), 0x3b6b_1074_f00f_9ca7);
     assert_eq!(
         data_fields(&interpret_records(&text)),
@@ -1127,8 +1145,11 @@ fn single_structure_writers_fail_on_a_sample_place_unless_told_to_omit_it() {
                 molfile::MolfileSource::model(&view),
                 MolfileWriteOptions::default().with_sample_metadata(omit),
             )
-            .unwrap(),
-            molfile::write(&plain, MolfileWriteOptions::default()).unwrap()
+            .unwrap()
+            .0,
+            molfile::write(&plain, MolfileWriteOptions::default())
+                .unwrap()
+                .0
         );
 
         let error = mmcif::write(
@@ -1199,8 +1220,8 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
         );
         let omitted = options.with_cell(UnrepresentablePolicy::Omit);
         assert_eq!(
-            molfile::write(&boxed, omitted).unwrap(),
-            molfile::write(&open, options).unwrap()
+            molfile::write(&boxed, omitted).unwrap().0,
+            molfile::write(&open, options).unwrap().0
         );
     }
     let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
@@ -1210,8 +1231,8 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     );
     let omitted = SdfWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
     assert_eq!(
-        sdf::write([&boxed], omitted).unwrap(),
-        sdf::write([&open], SdfWriteOptions::default()).unwrap()
+        sdf::write([&boxed], omitted).unwrap().0,
+        sdf::write([&open], SdfWriteOptions::default()).unwrap().0
     );
 }
 
@@ -1382,7 +1403,7 @@ fn sdf_explicit_records_preserve_title_and_data_fields() {
         model("CO.O", &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0]]),
         vec![SdfDataField::new("SOURCE", "round trip")],
     );
-    let text = sdf::write(&[record], SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&[record], SdfWriteOptions::default()).unwrap().0;
     let records = interpret_records(&text);
     assert_eq!(records[0].title(), "named record");
     assert_eq!(records[0].data_fields()[0].name(), "SOURCE");
@@ -2139,7 +2160,9 @@ fn molfile_titles_and_smiles_names_round_trip_and_reject_unreadable_text() {
         molfile::MolfileSource::molecule(&ethanol),
         molfile::MolfileSource::model(&positioned),
     ] {
-        let text = molfile::write(source.with_title("ethanol 1"), Default::default()).unwrap();
+        let text = molfile::write(source.with_title("ethanol 1"), Default::default())
+            .unwrap()
+            .0;
         let document = molfile::parse_str(&text, Default::default()).unwrap();
         assert_eq!(document.header().title(), "ethanol 1");
         assert_eq!(
@@ -2198,14 +2221,20 @@ fn outcome<T: std::fmt::Debug>(result: Result<T, FormatError>) -> String {
 fn view_outcomes(view: ModelView<'_>, policy: UnrepresentablePolicy) -> u64 {
     crate::fingerprint(
         [
-            outcome(molfile::write(
-                molfile::MolfileSource::model(&view),
-                MolfileWriteOptions::default().with_sample_metadata(policy),
-            )),
-            outcome(sdf::write(
-                [sdf::SdfRecordSource::model(&view)],
-                SdfWriteOptions::default().with_sample_metadata(policy),
-            )),
+            outcome(
+                molfile::write(
+                    molfile::MolfileSource::model(&view),
+                    MolfileWriteOptions::default().with_sample_metadata(policy),
+                )
+                .map(|(text, _)| text),
+            ),
+            outcome(
+                sdf::write(
+                    [sdf::SdfRecordSource::model(&view)],
+                    SdfWriteOptions::default().with_sample_metadata(policy),
+                )
+                .map(|(text, _)| text),
+            ),
             outcome(mmcif::write(
                 [mmcif::MmcifBlockSource::model(&view)],
                 MmcifWriteOptions::default().with_sample_metadata(policy),
@@ -2396,13 +2425,15 @@ fn sample_sets_write_their_distribution_and_order_or_fail_on_them() {
         for (set, _) in &distributed_sets {
             outcomes.push(outcome(pdb::write(set, pdb_options)));
             outcomes.push(outcome(mmcif::write([set], mmcif_options.clone())));
-            outcomes.push(outcome(sdf::write(set, sdf_options)));
+            outcomes.push(outcome(sdf::write(set, sdf_options).map(|(text, _)| text)));
         }
         for set in [&history, &scan] {
             outcomes.push(outcome(pdb::write(set, pdb_options)));
-            outcomes.push(outcome(sdf::write(set, sdf_options)));
+            outcomes.push(outcome(sdf::write(set, sdf_options).map(|(text, _)| text)));
         }
-        outcomes.push(outcome(sdf::write(&timed, sdf_options)));
+        outcomes.push(outcome(
+            sdf::write(&timed, sdf_options).map(|(text, _)| text),
+        ));
         assert_eq!(outcomes.len(), fingerprints.len());
         for (index, (outcome, fingerprint)) in outcomes.iter().zip(fingerprints).enumerate() {
             assert_eq!(
@@ -2513,7 +2544,8 @@ fn a_sample_with_a_place_and_a_membership_writes_both_in_sdf() {
         [sdf::SdfRecordSource::model(&view)],
         SdfWriteOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     // The membership's fields, then the place's.
     let expected = "
   kekule            2D
@@ -2751,5 +2783,264 @@ fn mmcif_samples_share_the_first_sample_s_entities() {
     assert_eq!(
         error.to_string(),
         "Cannot write the mmCIF output. Sample 2 has a different entity representation from the first sample."
+    );
+}
+
+#[test]
+fn atom_field_messages_agree_with_their_subjects() {
+    let message = |source: &str, mmcif: bool| {
+        let topology = smiles::to_topology(source).unwrap();
+        let atoms = topology.atom_count();
+        let model = Model::new(topology, Positions::zeros(atoms)).unwrap();
+        let error = if mmcif {
+            mmcif::write([&model], MmcifWriteOptions::default()).map(|(text, _)| text)
+        } else {
+            pdb::write(&model, PdbWriteOptions::default()).map(|(text, _)| text)
+        };
+        error.unwrap_err().to_string()
+    };
+    assert_eq!(
+        message("[CH4]", true),
+        "Cannot write the mmCIF output. The implicit hydrogens of atom 0 of instance 0 have no mmCIF representation."
+    );
+    assert_eq!(
+        message("[CH3]", true),
+        "Cannot write the mmCIF output. The radical electrons of atom 0 of instance 0 have no mmCIF representation."
+    );
+    assert_eq!(
+        message("[13CH4]", true),
+        "Cannot write the mmCIF output. The isotope of atom 0 of instance 0 has no mmCIF representation."
+    );
+    assert_eq!(
+        message("[CH3]", false),
+        "Cannot write the PDB output. The radical electrons of atom 0 of instance 0 have no PDB representation."
+    );
+    assert_eq!(
+        message("[CH4]", false),
+        "Cannot write the PDB output. The fixed implicit hydrogen count of atom 0 of instance 0 has no PDB representation."
+    );
+}
+
+#[test]
+fn molfile_and_sdf_report_what_they_leave_out() {
+    use StructureField::{Energy, Forces as ForceField, Step, Temperature, Time};
+    use StructureField::{Velocities as VelocityField, Weight};
+    let omit = UnrepresentablePolicy::Omit;
+    let state = |field, structures| WriteOmission::StructureState { field, structures };
+    let plain = model("C", &[[0.0; 3]]);
+    let (_, report) = sdf::write([&plain, &plain], SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    let (_, report) = molfile::write(&plain, MolfileWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    let (_, report) = molfile::write(&molecule("CCO"), MolfileWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+
+    // The cells of the records written without them.
+    let boxed = boxed_model([true; 3]);
+    let open = SdfWriteOptions::default().with_cell(omit);
+    let (_, report) = sdf::write([&boxed, &plain, &boxed], open).unwrap();
+    assert_eq!(report.omissions(), [WriteOmission::Cell { structures: 2 }]);
+    let mut stream = Vec::new();
+    let streamed = sdf::write_to(&mut stream, [&boxed, &plain, &boxed], open).unwrap();
+    assert_eq!(streamed, report);
+    let (_, report) =
+        molfile::write(&boxed, MolfileWriteOptions::default().with_cell(omit)).unwrap();
+    assert_eq!(report.omissions(), [WriteOmission::Cell { structures: 1 }]);
+    let mut stream = Vec::new();
+    let streamed = molfile::write_to(
+        &mut stream,
+        &boxed,
+        MolfileWriteOptions::default().with_cell(omit),
+    )
+    .unwrap();
+    assert_eq!(streamed, report);
+
+    // The times, steps, velocities, and forces of frames.
+    let frames = StatefulFrames::new();
+    let frames = frames.views();
+    let metadata = SdfWriteOptions::default().with_sample_metadata(omit);
+    let (_, report) = sdf::write(frames.clone(), metadata).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [
+            state(Time, 1),
+            state(Step, 1),
+            state(VelocityField, 1),
+            state(ForceField, 1),
+        ]
+    );
+    // Counted over a time-ordered set's samples.
+    let (_, report) = sdf::write(&timed_set(), metadata).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [state(Time, 2), state(Step, 2), state(VelocityField, 1)]
+    );
+    let molfile_metadata = MolfileWriteOptions::default().with_sample_metadata(omit);
+    for (frame, field) in frames
+        .iter()
+        .skip(1)
+        .zip([Time, Step, VelocityField, ForceField])
+    {
+        let (_, report) =
+            molfile::write(molfile::MolfileSource::model(frame), molfile_metadata).unwrap();
+        assert_eq!(report.omissions(), [state(field, 1)]);
+    }
+    // A Molfile of a sample cannot carry its membership, which SDF writes.
+    let mut weighted = weighted_set();
+    weighted
+        .distribution_mut()
+        .unwrap()
+        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .unwrap();
+    let (_, report) = molfile::write(
+        molfile::MolfileSource::model(&weighted.get(0).unwrap()),
+        molfile_metadata,
+    )
+    .unwrap();
+    assert_eq!(
+        report.omissions(),
+        [state(Weight, 1), state(Energy, 1), state(Temperature, 1)]
+    );
+    let (_, report) = sdf::write(&weighted, SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+}
+
+/// Four methane samples with a distribution over samples 1 and 2 in one
+/// state each, weighted, with state energies and a temperature.
+fn subset_set() -> SampleSet {
+    let first = model("C", &[[0.0, 0.0, 0.0]]);
+    let models = (0..4).map(|index| {
+        Model::new(
+            first.shared_topology(),
+            Positions::new(Quantity::new(
+                [Point3::new(f64::from(index), 0.0, 0.0)],
+                ANGSTROM,
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    });
+    let mut set = SampleSet::from_models(models).unwrap();
+    let states = vec![
+        State::new()
+            .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
+            .unwrap(),
+        State::new()
+            .with_energy(Quantity::new(0.1 + 0.2, KILOJOULE_PER_MOLE))
+            .unwrap(),
+    ];
+    set.set_distribution(Some(
+        Distribution::new(Members::Subset(vec![1, 2]), Partition::state_per_sample(2))
+            .unwrap()
+            .with_weights(vec![0.25, 1.0 / 3.0])
+            .unwrap()
+            .with_states(states)
+            .unwrap()
+            .with_temperature(Quantity::new(298.15, KELVIN))
+            .unwrap(),
+    ))
+    .unwrap();
+    set
+}
+
+#[test]
+fn sdf_round_trips_a_distribution_over_some_samples() {
+    let set = subset_set();
+    let (text, report) = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    let records = interpret_records(&text);
+    assert_eq!(records.len(), 4);
+    // The non-members' records have no distribution fields.
+    let fields = data_fields(&records);
+    assert!(fields[0].is_empty() && fields[3].is_empty());
+    assert!(fields[1].iter().any(|(name, _)| name == sdf::WEIGHT_FIELD));
+    let read = sdf::sample_set(&records).unwrap();
+    assert_eq!(read.len(), 4);
+    assert_eq!(read.distribution(), set.distribution());
+    let distribution = read.distribution().unwrap();
+    assert_eq!(distribution.members(), &Members::Subset(vec![1, 2]));
+    assert_eq!(
+        distribution.weights().unwrap()[1].to_bits(),
+        (1.0_f64 / 3.0).to_bits()
+    );
+    assert_eq!(distribution.weight(0), None);
+    // Writing the set read back gives the same bytes.
+    assert_eq!(
+        sdf::write(&read, SdfWriteOptions::default()).unwrap().0,
+        text
+    );
+
+    // A non-member's record keeps the distribution's field names free.
+    let fields = [SdfDataField::new(sdf::STATE_FIELD, "0")];
+    let record = sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields);
+    assert_eq!(
+        described(sdf::write([record], SdfWriteOptions::default()).unwrap_err()),
+        (
+            DiagnosticKind::Inconsistent,
+            Some(FormatErrorDetail::DataField {
+                name: sdf::STATE_FIELD.to_owned()
+            }),
+            format!(
+                "The data field {:?} is reserved for the data of the sample.",
+                sdf::STATE_FIELD
+            ),
+        )
+    );
+    // A record without fields among records with them is a non-member,
+    // but one with a weight and no state is not.
+    let mut records = interpret_records(&text);
+    let weight = SdfDataField::new(sdf::WEIGHT_FIELD, "1");
+    records[0] = SdfRecordInterpretation::new("", records[0].model().clone(), vec![weight]);
+    let error = sdf::sample_set(&records).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot interpret the SDF input in record 1. The data field \"kekule.state\" is missing. Other records have it."
+    );
+}
+
+#[test]
+fn sdf_refuses_or_reports_non_members_without_a_member_in_the_output() {
+    let set = subset_set();
+    let outside = [set.get(0).unwrap(), set.get(3).unwrap()];
+    let error = sdf::write(outside, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::UnrepresentableState(
+            StructureField::Membership
+        ))
+    );
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the SDF output in record 1. The distribution membership of the sample has no SDF representation."
+    );
+    let omit = SdfWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
+    let (text, report) = sdf::write(outside, omit).unwrap();
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::StructureState {
+            field: StructureField::Membership,
+            structures: 2,
+        }]
+    );
+    // The records are the bare models, which read back as a set without a
+    // distribution.
+    let models = outside.map(|sample| sample.to_model());
+    assert_eq!(
+        text,
+        sdf::write(&models, SdfWriteOptions::default()).unwrap().0
+    );
+    assert!(sdf::sample_set(&interpret_records(&text))
+        .unwrap()
+        .distribution()
+        .is_none());
+    // With a member in the output, the non-members are written as such.
+    let some = [set.get(0).unwrap(), set.get(2).unwrap()];
+    let (text, report) = sdf::write(some, SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    let read = sdf::sample_set(&interpret_records(&text)).unwrap();
+    assert_eq!(
+        read.distribution().unwrap().members(),
+        &Members::Subset(vec![1])
     );
 }

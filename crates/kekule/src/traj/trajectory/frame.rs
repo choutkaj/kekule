@@ -16,7 +16,8 @@ use super::{TrajectoryField, TrajectoryIoError};
 /// A [`FrameBuffer`](super::FrameBuffer) lends its frame
 /// ([`FrameBuffer::frame_view`](super::FrameBuffer::frame_view)); a sample
 /// of a time-ordered [`SampleSet`](crate::structure::SampleSet) becomes one
-/// with [`Self::from_sample`], and any bound sample with [`Self::new`].
+/// with [`Self::from_sample`], and any bound sample with [`Self::new`]
+/// ([`Sample::bind`] binds one made outside a set).
 /// Frame state reads through `Deref` (`frame.positions()`,
 /// `frame.velocities()`, ...), and [`AsModelView`] lends it to kernels as a
 /// sample at a time place.
@@ -59,12 +60,18 @@ impl std::ops::Deref for FrameView<'_> {
 impl<'a> FrameView<'a> {
     /// A frame of `sample`, bound to `topology`, at `time` and `step`.
     ///
+    /// The sample must be bound to `topology`, as a sample of a set of it
+    /// is. Bind a sample made with [`Sample::new`] first with
+    /// [`Sample::bind`]; the frame borrows the sample and copies nothing.
+    ///
     /// # Errors
     ///
     /// [`StructureError`] when the sample does not have a position per atom
-    /// and a property row per atom and bond of `topology`, as a sample of a
-    /// set does, and [`StructureError::NonFiniteTime`] or
-    /// [`StructureError::Unit`] for an invalid time.
+    /// and a property row per atom and bond of `topology`, such as an
+    /// unbound sample of a topology with bonds
+    /// ([`StructureError::BondCountMismatch`]), and
+    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// invalid time.
     pub fn new(
         topology: &'a Arc<Topology>,
         sample: &'a Sample,

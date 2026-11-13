@@ -57,9 +57,20 @@ use super::{
 /// Open one with [`open_indexed_sample_set`] or
 /// [`open_indexed_sample_set_from_index`], or make one from a reader already
 /// open with [`IndexedFileTrajectoryReader::into_sample_set`]. Follow a
-/// growing file with [`SampleSet::refresh`], take a set of the samples
-/// indexed so far with [`SampleSet::snapshot`], and load samples into memory
+/// growing file with [`SampleSet::refresh`], and load samples into memory
 /// with [`SampleSet::load`].
+///
+/// Cloning a set over a file reads nothing: the clone reads the file
+/// object this set reads, shares its frame index, and keeps the set
+/// properties, the order, and the distribution, so a host that changes only
+/// the distribution or the properties copies the set as cheaply as one in
+/// memory. Its pool starts empty. The clone keeps its samples while the
+/// set follows the file: refreshing either adds frames to it alone. A
+/// host hands a clone to an analysis and refreshes the set meanwhile. While
+/// both share the index, a refresh that finds new frames copies its whole
+/// offset table first, one offset per frame, and the first refresh of
+/// either reads the start of the file once more, as opening a reader of
+/// the pool does.
 ///
 /// A read allocates the sample's arrays on the thread that reads it, and
 /// the pool's readers keep none for their next read, so that the arrays are
@@ -68,9 +79,21 @@ use super::{
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
 pub struct IndexedFile {
     /// The reader the set opened: the pool's readers are forked from it,
-    /// and it alone refreshes. It serves no read.
-    reader: IndexedFileTrajectoryReader,
+    /// and it alone refreshes. It serves no read, and clones of the set
+    /// share it until one of them refreshes.
+    reader: Arc<IndexedFileTrajectoryReader>,
     idle: Mutex<Vec<IndexedFileTrajectoryReader>>,
+}
+
+/// A storage of the same file object and frame index, with an empty pool;
+/// it reads nothing.
+impl Clone for IndexedFile {
+    fn clone(&self) -> Self {
+        Self {
+            reader: Arc::clone(&self.reader),
+            idle: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 impl fmt::Debug for IndexedFile {
@@ -216,7 +239,7 @@ impl IndexedFileTrajectoryReader {
         let topology = self.shared_topology();
         let order = time_order(&self.to_frame_index());
         let storage = IndexedFile {
-            reader: self,
+            reader: Arc::new(self),
             idle: Mutex::new(Vec::new()),
         };
         SampleSet::from_storage(topology, storage, Some(order), None)
@@ -240,8 +263,10 @@ impl SampleSet<IndexedFile> {
     /// distribution over every sample becomes one over the samples it
     /// covered, so the new samples are outside it, as
     /// [`SampleSet::push`] leaves an appended sample; a distribution over a
-    /// subset keeps its members. The pool's readers are kept and read by the
-    /// new index, which they share. Failure changes nothing.
+    /// subset keeps its members, as [`Distribution::extended_to`] gives it.
+    /// The pool's readers are kept and read by the new index, which they
+    /// share. A set whose clone shares its reader first opens a reader of
+    /// its own, as the pool does. Failure changes nothing.
     ///
     /// ```no_run
     /// use kekule::structure::SampleRead;
@@ -273,67 +298,31 @@ impl SampleSet<IndexedFile> {
     pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
         let previous = self.len();
         let storage = self.storage_mut();
+        if Arc::get_mut(&mut storage.reader).is_none() {
+            // A clone shares the reader, so this set refreshes one of its own.
+            storage.reader = Arc::new(storage.reader.fork()?);
+        }
+        let reader = Arc::get_mut(&mut storage.reader).expect("the set alone holds its reader");
         let idle = storage
             .idle
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
         // The pool lets go of the index, so the refresh extends it in place.
-        for reader in idle.iter_mut() {
-            reader.release_index();
+        for pooled in idle.iter_mut() {
+            pooled.release_index();
         }
-        let refreshed = storage.reader.refresh();
-        for reader in idle.iter_mut() {
-            reader.share_index(&storage.reader);
+        let refreshed = reader.refresh();
+        for pooled in idle.iter_mut() {
+            pooled.share_index(reader);
         }
         refreshed?;
-        let count = storage.reader.frame_count().unwrap_or(previous);
+        let count = reader.frame_count().unwrap_or(previous);
         if count <= previous {
             return Ok(0);
         }
-        let order = time_order(&storage.reader.to_frame_index());
+        let order = time_order(&reader.to_frame_index());
         self.grown(previous, Some(order));
         Ok(count - previous)
-    }
-
-    /// A set of the samples indexed now, which reads the file object this
-    /// set reads and shares its frame index, without opening the file
-    /// again. The set properties, the order, and the distribution are kept.
-    ///
-    /// The snapshot keeps its samples while this set follows the file:
-    /// refreshing either adds frames to it alone. A host hands the snapshot
-    /// to an analysis and refreshes this set meanwhile. While both share the
-    /// index, a refresh that finds new frames copies its whole offset table
-    /// first, one offset per frame.
-    ///
-    /// ```no_run
-    /// use kekule::structure::SampleRead;
-    /// use kekule::traj::io::{open_indexed_sample_set, TrajectoryOpenOptions};
-    ///
-    /// let topology = kekule::smiles::to_topology("CC")?;
-    /// let options = TrajectoryOpenOptions::default().with_growing(true);
-    /// let mut set = open_indexed_sample_set("run.xtc", topology, options)?;
-    /// let snapshot = set.snapshot()?;
-    /// set.refresh()?;
-    /// assert!(snapshot.len() <= set.len());
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// The snapshot reads the start of the file, as every reader of the
-    /// pool does: [`TrajectoryIoErrorKind::Io`] when it cannot be read,
-    /// the header errors of [`open_indexed_trajectory`], and
-    /// [`TrajectoryIoErrorKind::IndexMismatch`] when the first frame is no
-    /// longer where the index places it.
-    ///
-    /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
-    /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
-    pub fn snapshot(&self) -> Result<Self, TrajectoryIoError> {
-        let storage = IndexedFile {
-            reader: self.storage().reader.fork()?,
-            idle: Mutex::new(Vec::new()),
-        };
-        Ok(self.with_storage(storage))
     }
 
     /// Reads the samples `indices` into a set in memory, as

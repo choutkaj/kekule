@@ -110,9 +110,8 @@ impl Frame {
     /// buffer binds a sample.
     #[must_use]
     pub(crate) fn bound(self, topology: &Arc<Topology>) -> Self {
-        let (sample, _) = FrameBuffer::from_sample(Arc::clone(topology), self.sample)
-            .unwrap()
-            .into_sample();
+        let mut sample = self.sample;
+        sample.bind(topology).unwrap();
         Self { sample, ..self }
     }
 

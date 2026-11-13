@@ -690,7 +690,7 @@ pub mod smarts {
 /// use kekule::{molfile, smiles};
 ///
 /// let ethanol = smiles::to_molecules("CCO")?.remove(0);
-/// let text = molfile::write(&ethanol, Default::default())?;
+/// let (text, _) = molfile::write(&ethanol, Default::default())?;
 /// let document = molfile::parse_str(&text, Default::default())?;
 /// let interpretation = document.interpret(Default::default())?;
 /// assert_eq!(interpretation.model().atom_count(), 3);
@@ -740,7 +740,11 @@ pub mod molfile {
         crate::io::parse_molfile_reader(reader, options)
     }
 
-    /// Writes one CTAB from a molecule (zero coordinates) or a model.
+    /// Writes one CTAB from a molecule (zero coordinates) or a model, with
+    /// the [`WriteReport`](crate::diagnostics::WriteReport) of what it left
+    /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
+    /// a model's cell and a sample's state
+    /// ([`MolfileWriteOptions::cell`], [`MolfileWriteOptions::sample_metadata`]).
     ///
     /// [`MolfileWriteVersion::Auto`] uses V2000 when it can represent the
     /// chemistry and V3000 otherwise. V2000 rounds coordinates to four decimal
@@ -758,13 +762,14 @@ pub mod molfile {
     pub fn write<'a>(
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
-    ) -> Result<String, FormatError> {
+    ) -> Result<(String, crate::diagnostics::WriteReport), FormatError> {
         crate::io::write_molfile(source, options)
     }
 
-    /// Writes the CTAB [`write()`] would return. It renders the whole CTAB
-    /// first, since automatic version selection learns whether V2000 can hold
-    /// it only by rendering it, so nothing reaches `writer` on failure.
+    /// Writes the CTAB [`write()`] would return and returns its report. It
+    /// renders the whole CTAB first, since automatic version selection
+    /// learns whether V2000 can hold it only by rendering it, so nothing
+    /// reaches `writer` on failure.
     ///
     /// # Errors
     ///
@@ -774,7 +779,7 @@ pub mod molfile {
         writer: &mut impl std::io::Write,
         source: impl Into<MolfileSource<'a>>,
         options: MolfileWriteOptions,
-    ) -> Result<(), FormatError> {
+    ) -> Result<crate::diagnostics::WriteReport, FormatError> {
         crate::io::write_molfile_to(writer, source, options)
     }
 }
@@ -797,7 +802,8 @@ pub mod molfile {
 /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
 /// let model = Model::from_molecule(water, &positions)?;
 ///
-/// let text = sdf::write([&model, &model], Default::default())?;
+/// let (text, report) = sdf::write([&model, &model], Default::default())?;
+/// assert!(report.is_empty());
 /// let document = sdf::parse_str(&text, Default::default())?;
 /// assert_eq!(document.records().len(), 2);
 /// let first = document.records()[0].interpret(Default::default())?;
@@ -837,6 +843,12 @@ pub mod sdf {
     /// kelvin, is the distribution's temperature, the same on every record
     /// or on none.
     ///
+    /// When some records carry [`STATE_FIELD`], a record without any
+    /// ensemble field is outside the distribution, as [`write()`] emits a
+    /// sample outside a distribution over some of a set's samples: the
+    /// distribution is over the others ([`Members::Subset`](crate::structure::Members::Subset)),
+    /// and the temperature is the members'.
+    ///
     /// When the records carry [`STEP_FIELD`], or [`COORDINATE_FIELD`] with
     /// [`COORDINATE_UNIT_FIELD`], as [`write()`] emits for samples of a step
     /// or coordinate order, the samples are ordered by them. The unit is the
@@ -851,7 +863,7 @@ pub mod sdf {
     /// let water = kekule::smiles::to_molecules("O")?.remove(0);
     /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
     /// let model = Model::from_molecule(water, &positions)?;
-    /// let text = sdf::write([&model, &model], Default::default())?;
+    /// let (text, _) = sdf::write([&model, &model], Default::default())?;
     /// let records = sdf::parse_str(&text, Default::default())?
     ///     .records()
     ///     .iter()
@@ -921,13 +933,18 @@ pub mod sdf {
         crate::io::parse_sdf_reader(reader, options)
     }
 
-    /// Writes independent records in input order.
+    /// Writes independent records in input order, with the
+    /// [`WriteReport`](crate::diagnostics::WriteReport) of what they left
+    /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
+    /// models' cells and samples' state ([`SdfWriteOptions::cell`],
+    /// [`SdfWriteOptions::sample_metadata`]), counted over all records.
     ///
     /// Records convert from models, samples of a sample set, and trajectory
     /// frames (`sdf::write(&set, options)` writes one record per sample,
     /// which [`sample_set`] reads back with its weight, state, state energy,
-    /// temperature, and step or coordinate), or interpreted records, which
-    /// keep their titles and data fields.
+    /// temperature, and step or coordinate, and a distribution over some of
+    /// the samples), or interpreted records, which keep their titles and
+    /// data fields.
     ///
     /// # Errors
     ///
@@ -940,24 +957,25 @@ pub mod sdf {
     pub fn write<'a, R: Into<SdfRecordSource<'a>>>(
         records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
-    ) -> Result<String, FormatError> {
+    ) -> Result<(String, crate::diagnostics::WriteReport), FormatError> {
         crate::io::write_sdf(records, options)
     }
 
     /// Streams the records [`write()`] would return, each as soon as it is
-    /// rendered; wrap an unbuffered sink such as a `File` in a
-    /// [`BufWriter`](std::io::BufWriter).
+    /// rendered, and returns their report; wrap an unbuffered sink such as
+    /// a `File` in a [`BufWriter`](std::io::BufWriter).
     ///
     /// # Errors
     ///
     /// The errors of [`write()`]; records before the failing one have already
-    /// reached `writer`. A failing `writer` gives
+    /// reached `writer`, and every record has when the output holds samples
+    /// outside a distribution but no member. A failing `writer` gives
     /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn write_to<'a, R: Into<SdfRecordSource<'a>>>(
         writer: &mut impl std::io::Write,
         records: impl IntoIterator<Item = R>,
         options: SdfWriteOptions,
-    ) -> Result<(), FormatError> {
+    ) -> Result<crate::diagnostics::WriteReport, FormatError> {
         crate::io::write_sdf_to(writer, records, options)
     }
 }

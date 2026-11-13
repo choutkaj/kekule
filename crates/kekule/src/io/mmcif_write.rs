@@ -344,6 +344,17 @@ pub enum MmcifAtomField {
     TypeSymbol,
 }
 
+impl MmcifAtomField {
+    /// The verb for the field as the subject: "have" for a plural field,
+    /// "has" otherwise.
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Radical | Self::Hydrogens => "have",
+            _ => "has",
+        }
+    }
+}
+
 impl fmt::Display for MmcifAtomField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -554,7 +565,8 @@ impl fmt::Display for MmcifWriteIssue {
             ),
             Self::UnsupportedAtomField { atom, field } => write!(
                 f,
-                "The {field} of {atom} has no mmCIF representation."
+                "The {field} of {atom} {} no mmCIF representation.",
+                field.verb()
             ),
             Self::FormalChargeOutOfRange { atom, charge } => write!(
                 f,

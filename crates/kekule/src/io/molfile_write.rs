@@ -4,8 +4,8 @@ use std::io::Write;
 use crate::molecule::Molecule;
 use crate::structure::{AsModelView, Model, ModelView};
 
-use super::write_error::{check_structure_state, StatePolicies, MOLFILE_WRITE};
-use super::{MolfileVersion, UnrepresentablePolicy};
+use super::write_error::{check_structure_state, Omissions, StatePolicies, MOLFILE_WRITE};
+use super::{MolfileVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
 
 mod record;
@@ -52,7 +52,9 @@ impl MolfileWriteOptions {
     }
 
     /// A model's periodic cell, which a Molfile cannot carry: by default a
-    /// model with a cell fails to write.
+    /// model with a cell fails to write, and under
+    /// [`UnrepresentablePolicy::Omit`] the report names it
+    /// ([`WriteOmission::Cell`]).
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
     }
@@ -68,7 +70,8 @@ impl MolfileWriteOptions {
     /// set or a trajectory frame: its membership in the set's distribution,
     /// its place in the set's order (a frame's time and MD step among them),
     /// and its velocities and forces. By default writing a view of a sample
-    /// with any of them fails.
+    /// with any of them fails, and under [`UnrepresentablePolicy::Omit`]
+    /// the report names each ([`WriteOmission::StructureState`]).
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata
     }
@@ -92,7 +95,7 @@ impl MolfileWriteOptions {
 /// ```
 /// use kekule::molfile::{self, MolfileSource};
 /// let ethanol = kekule::smiles::to_molecules("CCO")?.remove(0);
-/// let text = molfile::write(MolfileSource::molecule(&ethanol).with_title("ethanol"), Default::default())?;
+/// let (text, _) = molfile::write(MolfileSource::molecule(&ethanol).with_title("ethanol"), Default::default())?;
 /// assert_eq!(molfile::parse_str(&text, Default::default())?.header().title(), "ethanol");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -147,13 +150,14 @@ impl<'a> From<&'a Model> for MolfileSource<'a> {
     }
 }
 
-/// Writes one CTAB. V2000 rounds coordinates to four decimal places in
-/// angstroms; V3000 keeps round-trip decimal text. Stereo is projected
-/// against the coordinates emitted by the chosen version.
+/// Writes one CTAB and reports what it leaves out. V2000 rounds
+/// coordinates to four decimal places in angstroms; V3000 keeps round-trip
+/// decimal text. Stereo is projected against the coordinates emitted by the
+/// chosen version.
 pub(crate) fn write_molfile<'a>(
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
-) -> Result<String, FormatError> {
+) -> Result<(String, WriteReport), FormatError> {
     let source = source.into();
     if source.title.contains(['\r', '\n']) {
         return Err(MOLFILE_WRITE
@@ -161,19 +165,25 @@ pub(crate) fn write_molfile<'a>(
             .with_detail(crate::diagnostics::FormatErrorDetail::Title));
     }
     match source.content {
-        MolfileContent::Molecule(molecule) => render_molecule(
-            &MolfileRecord::molecule(molecule)?,
-            source.title,
-            options.version,
-        ),
-        MolfileContent::Model(model) => {
-            check_cell(model, options.cell)?;
-            check_structure_state(
-                Format::Molfile,
-                model.kind(),
-                StatePolicies::positions_only(options.sample_metadata),
+        MolfileContent::Molecule(molecule) => {
+            let text = render_molecule(
+                &MolfileRecord::molecule(molecule)?,
+                source.title,
+                options.version,
             )?;
-            render_model(model, source.title, options.version)
+            Ok((text, WriteReport::default()))
+        }
+        MolfileContent::Model(model) => {
+            let policies = StatePolicies::positions_only(options.sample_metadata);
+            check_cell(model, options.cell)?;
+            check_structure_state(Format::Molfile, model.kind(), policies)?;
+            let text = render_model(model, source.title, options.version)?;
+            let mut omissions = Omissions::default();
+            if model.cell().is_some() {
+                omissions.record(WriteOmission::Cell { structures: 1 });
+            }
+            omissions.record_structure_state(model.kind(), policies);
+            Ok((text, omissions.into_report()))
         }
     }
 }
@@ -182,10 +192,12 @@ pub(crate) fn write_molfile_to<'a>(
     writer: &mut impl Write,
     source: impl Into<MolfileSource<'a>>,
     options: MolfileWriteOptions,
-) -> Result<(), FormatError> {
+) -> Result<WriteReport, FormatError> {
+    let (text, report) = write_molfile(source, options)?;
     writer
-        .write_all(write_molfile(source, options)?.as_bytes())
-        .map_err(|error| MOLFILE_WRITE.io(error))
+        .write_all(text.as_bytes())
+        .map_err(|error| MOLFILE_WRITE.io(error))?;
+    Ok(report)
 }
 
 fn render_molecule(

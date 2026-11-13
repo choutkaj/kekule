@@ -648,13 +648,27 @@ fn wrapping_a_file_without_cells_reads_the_samples_as_stored() {
     let set = open_indexed_sample_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let steps = ProcessingSteps::default()
         .with_whole(true)
-        .with_wrap(AtomSelection::all(topology));
+        .with_wrap(AtomSelection::all(Arc::clone(&topology)));
     let processed = Processed::new(&set, steps).unwrap();
     for index in 0..set.len() {
         let stored = set.read(index).unwrap();
         assert!(stored.cell().is_none(), "sample {index}");
-        assert_eq!(processed.read(index).unwrap(), stored, "sample {index}");
+        let read = processed.read(index).unwrap();
+        assert!(processed.skipped_periodic_steps(&read), "sample {index}");
+        assert_eq!(read, stored, "sample {index}");
     }
+    // Samples with a cell are made whole.
+    let chain_topology = linear_carbon_topology(12);
+    let boxed = chain(&chain_topology, 2);
+    let whole = Processed::new(&boxed, ProcessingSteps::default().with_whole(true)).unwrap();
+    assert!(!whole.skipped_periodic_steps(&whole.read(1).unwrap()));
+    // Without making whole or wrapping, nothing is skipped.
+    let centered = Processed::new(
+        &set,
+        ProcessingSteps::default().with_center(AtomSelection::all(topology)),
+    )
+    .unwrap();
+    assert!(!centered.skipped_periodic_steps(&centered.read(0).unwrap()));
 }
 
 #[test]
@@ -901,10 +915,10 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
 }
 
 /// A set made from a reader already open reads as one opened from the path,
-/// and a snapshot keeps its samples and its file while the set follows the
+/// and a clone keeps its samples and its file while the set follows the
 /// file.
 #[test]
-fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
+fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
     let directory = Directory::new();
@@ -928,9 +942,9 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
         .map(|index| set.read(index).unwrap())
         .collect::<Vec<_>>();
 
-    let mut snapshot = set.snapshot().unwrap();
-    assert_eq!(snapshot.order(), set.order());
-    assert_eq!(snapshot.distribution(), set.distribution());
+    let mut copy = set.clone();
+    assert_eq!(copy.order(), set.order());
+    assert_eq!(copy.distribution(), set.distribution());
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
@@ -941,11 +955,11 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
     writer.finish().unwrap();
     assert_eq!(set.refresh().unwrap(), 3);
     assert_eq!(set.len(), 6);
-    assert_eq!(snapshot.len(), 3);
-    assert_eq!(snapshot.storage().frame_index().frame_count(), 3);
-    assert_eq!(snapshot.distribution().unwrap().members(), &Members::All);
+    assert_eq!(copy.len(), 3);
+    assert_eq!(copy.storage().frame_index().frame_count(), 3);
+    assert_eq!(copy.distribution().unwrap().members(), &Members::All);
 
-    // Another file at the path: the snapshot reads the file it shares.
+    // Another file at the path: the clone reads the file it shares.
     let other = directory.0.join("other.xtc");
     write_sample_set(
         &other,
@@ -955,18 +969,18 @@ fn a_set_from_an_open_reader_and_its_snapshot_read_without_opening_the_file() {
     .unwrap();
     fs::rename(&other, &path).unwrap();
     for (index, sample) in expected.iter().enumerate() {
-        assert_eq!(&snapshot.read(index).unwrap(), sample, "sample {index}");
+        assert_eq!(&copy.read(index).unwrap(), sample, "sample {index}");
     }
-    // Refreshed, the snapshot follows the path on its own.
-    let refused = snapshot.refresh().unwrap_err();
+    // Refreshed, the clone follows the path on its own.
+    let refused = copy.refresh().unwrap_err();
     assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
-    assert_eq!(snapshot.len(), 3);
+    assert_eq!(copy.len(), 3);
 }
 
-/// A snapshot and its set each take the frames appended to the file on
+/// A clone and its set each take the frames appended to the file on
 /// their own refresh, and the other keeps the samples it had.
 #[test]
-fn a_snapshot_and_its_set_grow_apart() {
+fn a_clone_and_its_set_grow_apart() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
     let directory = Directory::new();
@@ -996,28 +1010,28 @@ fn a_snapshot_and_its_set_grow_apart() {
     };
     let growing = TrajectoryOpenOptions::default().with_growing(true);
     let mut set = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
-    let mut snapshot = set.snapshot().unwrap();
+    let mut copy = set.clone();
 
     append(2, 4);
-    assert_eq!(snapshot.refresh().unwrap(), 2);
-    assert_eq!(snapshot.len(), 4);
+    assert_eq!(copy.refresh().unwrap(), 2);
+    assert_eq!(copy.len(), 4);
     assert_eq!(set.len(), 2);
     assert_eq!(set.storage().frame_index().frame_count(), 2);
 
     append(4, 6);
     assert_eq!(set.refresh().unwrap(), 4);
     assert_eq!(set.len(), 6);
-    assert_eq!(snapshot.len(), 4);
-    assert_eq!(snapshot.storage().frame_index().frame_count(), 4);
+    assert_eq!(copy.len(), 4);
+    assert_eq!(copy.storage().frame_index().frame_count(), 4);
 
     let frames = indexed_frames(&path, &topology);
     for (index, frame) in frames.iter().enumerate() {
         assert_frame(&set, index, &set.read(index).unwrap(), frame);
         if index < 4 {
-            assert_frame(&snapshot, index, &snapshot.read(index).unwrap(), frame);
+            assert_frame(&copy, index, &copy.read(index).unwrap(), frame);
         }
     }
-    assert!(snapshot.read(4).is_err());
+    assert!(copy.read(4).is_err());
 }
 
 /// Two frames of a chain in a cell: frame 0 on a regular line, frame 1
@@ -1211,4 +1225,231 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
             );
         }
     }
+}
+
+/// The distribution of three samples a host saved, with weights, states
+/// with energies and properties, and a temperature.
+fn saved_distribution() -> Distribution {
+    use kekule::properties::{PropertyKey, PropertyValue};
+    use kekule::structure::State;
+    use kekule::units::{KELVIN, KILOJOULE_PER_MOLE};
+
+    let mut labelled = State::new()
+        .with_energy(Quantity::new(-1.25, KILOJOULE_PER_MOLE))
+        .unwrap();
+    labelled
+        .properties_mut()
+        .insert(
+            PropertyKey::new("label").unwrap(),
+            PropertyValue::String("folded".into()),
+        )
+        .unwrap();
+    let other = State::new()
+        .with_energy(Quantity::new(0.1 + 0.2, KILOJOULE_PER_MOLE))
+        .unwrap();
+    Distribution::new(
+        Members::All,
+        Partition::new(vec![0, 1, 0], vec![2, 1]).unwrap(),
+    )
+    .unwrap()
+    .with_weights(vec![0.1, 0.7, 1.0 / 3.0])
+    .unwrap()
+    .with_states(vec![labelled, other])
+    .unwrap()
+    .with_temperature(Quantity::new(298.15, KELVIN))
+    .unwrap()
+}
+
+/// A saved distribution of three samples binds to the file grown to five as
+/// a distribution of its first three, and a refresh gives the same.
+#[test]
+fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 5);
+    let frames = frames_of(&all);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
+    write_sample_set(&path, &head, options.clone()).unwrap();
+
+    // The host saves the description of the three samples and keeps
+    // following the file with the set.
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut followed =
+        open_indexed_sample_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
+    followed
+        .set_distribution(Some(saved_distribution()))
+        .unwrap();
+    let saved = SampleSetDescription::of(&followed);
+    let states = saved.distribution().unwrap().states();
+    assert_eq!(states.len(), 2);
+    assert_eq!(
+        states[0].energy().unwrap().value().to_bits(),
+        (-1.25_f64).to_bits()
+    );
+    assert_eq!(states[0].properties().len(), 1);
+
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
+    for frame in all.iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(followed.refresh().unwrap(), 2);
+
+    // Opened again, the file has five samples; the saved distribution of
+    // three does not cover them, and extended it does.
+    let mut reopened = open_indexed_sample_set(&path, Arc::clone(&topology), growing).unwrap();
+    assert_eq!(reopened.len(), 5);
+    let distribution = saved.distribution().unwrap().clone();
+    assert!(reopened
+        .set_distribution(Some(distribution.clone()))
+        .is_err());
+    let extended = distribution.clone().extended_to(5).unwrap();
+    reopened.set_distribution(Some(extended.clone())).unwrap();
+    assert_eq!(extended.members(), &Members::Subset(vec![0, 1, 2]));
+    assert_eq!(extended.weights(), distribution.weights());
+    assert_eq!(extended.partition(), distribution.partition());
+    assert_eq!(extended.states(), distribution.states());
+    assert_eq!(extended.temperature(), distribution.temperature());
+    let bits = |weights: Option<&[f64]>| {
+        weights
+            .unwrap()
+            .iter()
+            .map(|weight| weight.to_bits())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(bits(extended.weights()), bits(distribution.weights()));
+    // The refresh and the public operation agree.
+    assert_eq!(followed.distribution(), Some(&extended));
+    assert_eq!(reopened.distribution(), followed.distribution());
+
+    // The description extends alike, and takes the longer set's order.
+    let grown = saved
+        .clone()
+        .extended_to(5)
+        .unwrap()
+        .with_order(reopened.order().cloned())
+        .unwrap();
+    assert_eq!(grown.sample_count(), 5);
+    assert_eq!(grown.distribution(), Some(&extended));
+    assert_eq!(grown.properties(), saved.properties());
+    assert_eq!(grown.order(), reopened.order());
+    assert_eq!(saved.clone().extended_to(3).unwrap().order(), saved.order());
+    assert!(saved.extended_to(2).is_err());
+    assert!(extended.extended_to(2).is_err());
+}
+
+/// The fingerprint of a file's first frames stays while the file grows or
+/// its later frames are rewritten, and changes with a frame among them.
+#[test]
+fn the_fingerprint_of_the_first_frames_ignores_what_follows_them() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 5);
+    let frames = frames_of(&all);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
+    write_sample_set(&path, &head, options.clone()).unwrap();
+    let three = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
+        .unwrap()
+        .to_frame_index();
+    let used = three.prefix_fingerprint(&path, 3).unwrap();
+    assert!(used.same_content(three.fingerprint()));
+
+    // The file grows by two frames.
+    let (mut writer, _) = append_trajectory(
+        &path,
+        Arc::clone(&topology),
+        KeepFrames::First(3),
+        options.clone(),
+    )
+    .unwrap();
+    for frame in all.iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_sample(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    let five = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
+        .unwrap()
+        .to_frame_index();
+    assert!(five
+        .prefix_fingerprint(&path, 3)
+        .unwrap()
+        .same_content(&used));
+    assert!(three
+        .prefix_fingerprint(&path, 3)
+        .unwrap()
+        .same_content(&used));
+    assert!(five
+        .prefix_fingerprint(&path, 5)
+        .unwrap()
+        .same_content(five.fingerprint()));
+    assert!(!five
+        .prefix_fingerprint(&path, 4)
+        .unwrap()
+        .same_content(&used));
+    assert!(used.is_prefix_of_path(&path).unwrap());
+    // Frame 0 starts the file, so no frames cover no bytes.
+    assert_eq!(five.prefix_fingerprint(&path, 0).unwrap().byte_count(), 0);
+
+    // A restarted run rewrites the last frame: the first three are as they
+    // were.
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(4), options).unwrap();
+    writer
+        .write_frame(FrameView::from_sample(shifted(&all, 0.25).get(4).unwrap()).unwrap())
+        .unwrap();
+    writer.finish().unwrap();
+    let rewritten = open_indexed_trajectory(&path, Arc::clone(&topology), Default::default())
+        .unwrap()
+        .to_frame_index();
+    assert!(!rewritten.fingerprint().same_content(five.fingerprint()));
+    assert!(rewritten
+        .prefix_fingerprint(&path, 3)
+        .unwrap()
+        .same_content(&used));
+
+    // A byte inside frame 1 changes.
+    let first_frame = five.prefix_fingerprint(&path, 1).unwrap();
+    let (start, end) = (five.frame_offsets()[1], five.frame_offsets()[2]);
+    let middle = start + (end - start) / 2;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    let mut byte = [0_u8];
+    file.seek(SeekFrom::Start(middle)).unwrap();
+    std::io::Read::read_exact(&mut file, &mut byte).unwrap();
+    file.seek(SeekFrom::Start(middle)).unwrap();
+    file.write_all(&[byte[0] ^ 0x5a]).unwrap();
+    drop(file);
+    assert!(!five
+        .prefix_fingerprint(&path, 3)
+        .unwrap()
+        .same_content(&used));
+    assert!(!used.is_prefix_of_path(&path).unwrap());
+    // Frame 0 is unchanged.
+    assert!(five
+        .prefix_fingerprint(&path, 1)
+        .unwrap()
+        .same_content(&first_frame));
+
+    let beyond = five.prefix_fingerprint(&path, 6).unwrap_err();
+    assert_eq!(beyond.kind(), TrajectoryIoErrorKind::FrameIndexOutOfRange);
+    OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(end - 1)
+        .unwrap();
+    let short = five.prefix_fingerprint(&path, 2).unwrap_err();
+    assert_eq!(short.kind(), TrajectoryIoErrorKind::IndexMismatch);
+    assert!(five.prefix_fingerprint(&path, 1).is_ok());
 }

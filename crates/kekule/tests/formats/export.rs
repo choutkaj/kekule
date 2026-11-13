@@ -205,7 +205,8 @@ fn molfile_control_text_in_positional_headers_is_not_a_terminator() {
             &original,
             MolfileWriteOptions::default().with_version(version),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         for header in 0..3 {
             let mut lines = written.lines().collect::<Vec<_>>();
             lines[header] = "M  END";
@@ -230,7 +231,8 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         &molecule("CO"),
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let model = molfile::parse_str(&mol, Default::default())
         .unwrap()
         .interpret(Default::default())
@@ -239,7 +241,7 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
         let options = SdfWriteOptions::default().with_version(version);
         let record = SdfRecordInterpretation::new("M  END", model.clone(), Vec::new());
-        let written = sdf::write(&[record], options).unwrap();
+        let written = sdf::write(&[record], options).unwrap().0;
         let document = sdf::parse_str(&written, Default::default()).unwrap();
         assert_eq!(document.records().len(), 1);
         assert_eq!(document.records()[0].title(), "M  END");
@@ -281,7 +283,8 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
             molfile::MolfileWriteOptions::default()
                 .with_version(molfile::MolfileWriteVersion::V3000),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         let mut restored = molfile::parse_str(&written, Default::default())
             .unwrap()
             .interpret(Default::default())
@@ -314,8 +317,12 @@ fn automatic_molfile_and_sdf_promotion_preserve_zero_hydrogens_on_reused_instanc
         builder.add_instance(definition).unwrap();
     }
     let model = Model::new(builder.build().unwrap(), Positions::zeros(1_000)).unwrap();
-    let molfile = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap();
-    let sdf = sdf::write(&[model], sdf::SdfWriteOptions::default()).unwrap();
+    let molfile = molfile::write(&model, molfile::MolfileWriteOptions::default())
+        .unwrap()
+        .0;
+    let sdf = sdf::write(&[model], sdf::SdfWriteOptions::default())
+        .unwrap()
+        .0;
     assert!(molfile.contains("V3000"));
     assert!(sdf.contains("V3000"));
     let molfile_model = molfile::parse_str(&molfile, Default::default())

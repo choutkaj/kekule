@@ -726,6 +726,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                         .with_version(molfile::MolfileWriteVersion::V2000),
                 )
                 .map_err(|e| Failure::new("write", e))?
+                .0
             } else {
                 let version = if target == "molfile-v3000" {
                     molfile::MolfileWriteVersion::V3000
@@ -737,6 +738,7 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                     molfile::MolfileWriteOptions::default().with_version(version),
                 )
                 .map_err(|e| Failure::new("write", e))?
+                .0
             }
         }
         other => {

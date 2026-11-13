@@ -154,7 +154,7 @@ fn sdf_sample_sets_are_the_distributions_and_orders_of_their_records() {
     // Weights, states and energies make the distribution.
     let set = weighted_methanes();
     assert_eq!(crate::native_fingerprint(&set), 0x8fe6_53ce_8dea_5590);
-    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     assert_eq!(crate::fingerprint(&text), 0xa96d_0167_e29e_65c6);
     let read = sdf::sample_set(&interpret_records(&text)).unwrap();
     assert_eq!(read.order(), None);
@@ -179,7 +179,7 @@ fn sdf_sample_sets_are_the_distributions_and_orders_of_their_records() {
     ] {
         let series = methane_series(axis);
         assert_eq!(crate::native_fingerprint(&series), native, "{axis:?}");
-        let text = sdf::write(&series, SdfWriteOptions::default()).unwrap();
+        let text = sdf::write(&series, SdfWriteOptions::default()).unwrap().0;
         assert_eq!(crate::fingerprint(&text), written, "{axis:?}");
         let set = sdf::sample_set(&interpret_records(&text)).unwrap();
         assert_eq!(crate::native_fingerprint(&set), reread, "{axis:?}");
@@ -201,7 +201,7 @@ fn sdf_sample_sets_are_the_distributions_and_orders_of_their_records() {
 #[test]
 fn sdf_records_that_do_not_form_an_order_are_refused() {
     let series = methane_series(Axis::Step);
-    let text = sdf::write(&series, SdfWriteOptions::default()).unwrap();
+    let text = sdf::write(&series, SdfWriteOptions::default()).unwrap().0;
     let mut records = interpret_records(&text);
     // A record without the step its neighbours have.
     let stepless = interpret_records(
@@ -211,7 +211,8 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
             )],
             SdfWriteOptions::default(),
         )
-        .unwrap(),
+        .unwrap()
+        .0,
     );
     records.push(stepless[0].clone());
     let error = sdf::sample_set(&records).unwrap_err();
@@ -223,7 +224,7 @@ fn sdf_records_that_do_not_form_an_order_are_refused() {
 
     // Steps and coordinates together.
     let scan = methane_series(Axis::Coordinate(ANGSTROM));
-    let mut mixed = interpret_records(&sdf::write(&scan, SdfWriteOptions::default()).unwrap());
+    let mut mixed = interpret_records(&sdf::write(&scan, SdfWriteOptions::default()).unwrap().0);
     mixed.extend(interpret_records(&text));
     let error = sdf::sample_set(&mixed).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
@@ -270,7 +271,7 @@ fn methane_record(x: f64, fields: &[(&str, &str)]) -> SdfRecordInterpretation {
 
 /// The set an SDF text of `set` reads back as.
 fn sdf_round_trip(set: &SampleSet, options: SdfWriteOptions) -> SampleSet {
-    sdf::sample_set(&interpret_records(&sdf::write(set, options).unwrap())).unwrap()
+    sdf::sample_set(&interpret_records(&sdf::write(set, options).unwrap().0)).unwrap()
 }
 
 #[test]
@@ -413,8 +414,15 @@ fn sdf_coordinate_units_are_the_unit_constants() {
         );
         assert!(error.to_string().contains("coordinate unit"), "{error}");
         let omit = SdfWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
-        let text = sdf::write(&set, omit).unwrap();
+        let (text, report) = sdf::write(&set, omit).unwrap();
         assert!(!text.contains(sdf::COORDINATE_FIELD), "{text}");
+        assert_eq!(
+            report.omissions(),
+            [WriteOmission::StructureState {
+                field: StructureField::OrderCoordinate,
+                structures: set.len(),
+            }]
+        );
         assert_eq!(sdf_round_trip(&set, omit).order(), None);
     }
 }

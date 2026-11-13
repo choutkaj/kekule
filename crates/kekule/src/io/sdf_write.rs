@@ -9,8 +9,8 @@ use crate::units::{named_unit, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::write_error::{check_structure_state, StatePolicies};
-use super::{MolfileWriteVersion, UnrepresentablePolicy};
+use super::write_error::{check_structure_state, unrepresentable_state, Omissions, StatePolicies};
+use super::{MolfileWriteVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField};
 
 /// Options of SDF writing; the default writes
@@ -37,7 +37,9 @@ impl SdfWriteOptions {
     }
 
     /// A model's periodic cell, which an SDF record cannot carry: by default
-    /// a record whose model has a cell fails to write.
+    /// a record whose model has a cell fails to write, and under
+    /// [`UnrepresentablePolicy::Omit`] the report counts the records written
+    /// without one ([`WriteOmission::Cell`]).
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
     }
@@ -52,10 +54,14 @@ impl SdfWriteOptions {
     /// The state of a sample that an SDF record cannot carry, whether of a
     /// sample set or a trajectory frame: its time and MD step in a time
     /// order, its velocities and forces, a coordinate unit that is not a unit
-    /// constant, and its being outside the set's distribution, which a
-    /// record cannot tell from membership. By default writing a sample with
-    /// any of them fails. Its weight, state, state energy, and temperature,
-    /// and its step or coordinate, are otherwise written as data fields.
+    /// constant, and its being outside the set's distribution when no record
+    /// of the output is a member, since then no record tells it from a
+    /// sample of a set without a distribution. By default writing a sample
+    /// with any of them fails. Under [`UnrepresentablePolicy::Omit`] the
+    /// report counts the samples written without each
+    /// ([`WriteOmission::StructureState`]). Its weight, state, state energy,
+    /// and temperature, and its step or coordinate, are otherwise written as
+    /// data fields.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata
     }
@@ -119,7 +125,10 @@ const PLACE_FIELDS: [&str; 3] = [
 /// [`SDF_WEIGHT_FIELD`], [`SDF_STATE_FIELD`], and [`SDF_TEMPERATURE_FIELD`];
 /// a representative's record is marked with [`SDF_REPRESENTATIVE_FIELD`]
 /// and carries its state's energy as [`SDF_ENERGY_FIELD`], whichever way
-/// its view is passed. A step place follows as [`SDF_STEP_FIELD`], and a
+/// its view is passed. A sample outside the distribution has none of these
+/// fields, which tells it from the members, so a distribution over some of
+/// a set's samples is written whole when the output holds a member. A step
+/// place follows as [`SDF_STEP_FIELD`], and a
 /// coordinate place as [`SDF_COORDINATE_FIELD`] with
 /// [`SDF_COORDINATE_UNIT_FIELD`]; a sample with both a membership and a
 /// place writes both groups. A coordinate unit must be one of the unit
@@ -200,54 +209,86 @@ impl<'a> From<&'a SdfRecordInterpretation> for SdfRecordSource<'a> {
 pub(crate) fn write_sdf<'a, R: Into<SdfRecordSource<'a>>>(
     records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
-) -> Result<String, FormatError> {
+) -> Result<(String, WriteReport), FormatError> {
     let mut output = Vec::new();
-    write_sdf_to(&mut output, records, options)?;
-    Ok(String::from_utf8(output).expect("SDF writer emits UTF-8"))
+    let report = write_sdf_to(&mut output, records, options)?;
+    let text = String::from_utf8(output).expect("SDF writer emits UTF-8");
+    Ok((text, report))
 }
 
-/// Writes independent records in input order. A sample set writes one
-/// record per sample (`sdf::write(&set, options)`).
+/// Writes independent records in input order and reports what they leave
+/// out. A sample set writes one record per sample (`sdf::write(&set,
+/// options)`).
 pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     writer: &mut impl Write,
     records: impl IntoIterator<Item = R>,
     options: SdfWriteOptions,
-) -> Result<(), FormatError> {
+) -> Result<WriteReport, FormatError> {
+    let mut omissions = Omissions::default();
+    // The records of samples outside their set's distribution, which only
+    // the records of members tell from samples of a set without one.
+    let mut outside = Vec::new();
+    let mut member = false;
     for (number, record) in (1..).zip(records) {
-        write_record(writer, record.into(), options).map_err(|error| error.in_record(number))?;
+        let record = record.into();
+        if let StructureKind::Sample(context) = record.model.kind() {
+            member |= context.membership().is_some();
+            if context.is_outside_distribution() {
+                outside.push(number);
+            }
+        }
+        write_record(writer, record, options, &mut omissions)
+            .map_err(|error| error.in_record(number))?;
     }
-    Ok(())
+    if let (false, Some(&first)) = (member, outside.first()) {
+        if options.sample_metadata == UnrepresentablePolicy::Fail {
+            return Err(FormatError::write(
+                Format::Sdf,
+                DiagnosticKind::Unsupported,
+                unrepresentable_state(Format::Sdf, StructureField::Membership, None),
+            )
+            .with_detail(FormatErrorDetail::UnrepresentableState(
+                StructureField::Membership,
+            ))
+            .in_record(first));
+        }
+        omissions.record(WriteOmission::StructureState {
+            field: StructureField::Membership,
+            structures: outside.len(),
+        });
+    }
+    Ok(omissions.into_report())
 }
 
 fn write_record(
     writer: &mut impl Write,
     record: SdfRecordSource<'_>,
     options: SdfWriteOptions,
+    omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
     validate_title(record.title)?;
-    check_structure_state(
-        Format::Sdf,
-        record.model.kind(),
-        StatePolicies {
-            policy: options.sample_metadata,
-            writes_membership: true,
-            writes_place: true,
-        },
-    )?;
+    let policies = StatePolicies {
+        policy: options.sample_metadata,
+        writes_membership: true,
+        writes_place: true,
+    };
+    check_structure_state(Format::Sdf, record.model.kind(), policies)?;
     // A sample's membership and its step or coordinate place, which travel
-    // as data fields.
-    let (membership, place) = match record.model.kind() {
+    // as data fields, and whether its set has a distribution, whose
+    // non-members' records have no membership fields.
+    let (membership, distributed, place) = match record.model.kind() {
         StructureKind::Sample(context) => (
             context.membership(),
+            context.membership().is_some() || context.is_outside_distribution(),
             context
                 .place()
                 .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
         ),
-        _ => (None, None),
+        _ => (None, false, None),
     };
     // Whether a sample's own data uses the name.
     let reserved = |name: &str| {
-        (membership.is_some() && SAMPLE_FIELDS.contains(&name))
+        (distributed && SAMPLE_FIELDS.contains(&name))
             || (place.is_some() && PLACE_FIELDS.contains(&name))
     };
     // A coordinate unit travels as the symbol of a unit constant, which the
@@ -269,6 +310,10 @@ fn write_record(
                     StructureField::OrderCoordinate,
                 )));
             }
+            omissions.record(WriteOmission::StructureState {
+                field: StructureField::OrderCoordinate,
+                structures: 1,
+            });
             None
         }
         place => place,
@@ -297,6 +342,10 @@ fn write_record(
     let molfile = |error: FormatError| error.in_format(Format::Sdf);
     check_cell(record.model, options.cell).map_err(molfile)?;
     let ctab = render_model(record.model, record.title, options.version).map_err(molfile)?;
+    if record.model.cell().is_some() {
+        omissions.record(WriteOmission::Cell { structures: 1 });
+    }
+    omissions.record_structure_state(record.model.kind(), policies);
     let sink = |error| FormatError::sink(Format::Sdf, error);
     writer.write_all(ctab.as_bytes()).map_err(sink)?;
     for field in record.data_fields.iter().chain(&own_fields) {

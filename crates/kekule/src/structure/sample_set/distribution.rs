@@ -271,6 +271,62 @@ impl Distribution {
         self.states.len()
     }
 
+    /// The payload of every state, its energy and properties, in state
+    /// order, as [`Self::with_states`] takes them.
+    pub fn states(&self) -> &[State] {
+        &self.states
+    }
+
+    /// This distribution in a set of `len` samples whose first samples are
+    /// the ones it describes, such as a file that grew after the
+    /// distribution was saved. A distribution of every sample becomes one
+    /// of the samples it covered, [`Members::Subset`] of `0..n` for `n`
+    /// members, so the samples after them are outside it; a subset keeps
+    /// its members. A subset listing all `len` samples becomes
+    /// [`Members::All`]. The weights, the partition, the states with their
+    /// energies and properties, and the temperature are kept bit for bit.
+    /// [`SampleSet::refresh`](super::SampleSet::refresh) gives a set's
+    /// distribution so when the file grows.
+    ///
+    /// ```
+    /// use kekule::structure::{Distribution, Members, Partition};
+    ///
+    /// let saved = Distribution::new(Members::All, Partition::one_state(3))?
+    ///     .with_weights(vec![1.0, 2.0, 3.0])?;
+    /// let grown = saved.clone().extended_to(5)?;
+    /// assert_eq!(grown.members(), &Members::Subset(vec![0, 1, 2]));
+    /// assert_eq!(grown.weights(), saved.weights());
+    /// assert_eq!(grown.weight(4), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::CoverageMismatch`] when a distribution of every
+    /// sample covers more than `len`, and
+    /// [`SampleSetError::IndexOutOfRange`] when a subset lists a sample past
+    /// them.
+    pub fn extended_to(mut self, len: usize) -> Result<Self, SampleSetError> {
+        self.extend(len)?;
+        Ok(self)
+    }
+
+    /// Re-expresses this distribution in place for a set of `len` samples,
+    /// as [`Self::extended_to`] does; failure changes nothing.
+    pub(crate) fn extend(&mut self, len: usize) -> Result<(), SampleSetError> {
+        if self.members == Members::All {
+            let covered = self.member_count();
+            if covered > len {
+                return Err(SampleSetError::CoverageMismatch {
+                    covered,
+                    samples: len,
+                });
+            }
+            self.members = normalized((0..covered).collect(), len);
+        }
+        self.bind(len)
+    }
+
     /// The state of sample `sample`, or `None` when it is not a member.
     pub fn state_of(&self, sample: usize) -> Option<usize> {
         self.member_position(sample)
@@ -603,14 +659,6 @@ impl Distribution {
             });
         }
         Ok(())
-    }
-
-    /// Records that sample `sample`, the new last sample of the set, is not
-    /// a member.
-    pub(crate) fn push_non_member(&mut self, sample: usize) {
-        if self.members == Members::All {
-            self.members = Members::Subset((0..sample).collect());
-        }
     }
 
     /// Adds sample `sample`, the new last sample of the set, to an existing

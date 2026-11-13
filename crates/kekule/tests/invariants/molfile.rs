@@ -99,7 +99,7 @@ fn molfile_and_sdf_round_trips_preserve_chemistry_and_stereo() {
         ] {
             let must_reject = unspecified_spin || (format == "V2000" && !v2000_fits);
             match (written, must_reject) {
-                (Ok(text), false) => outputs.push((format, text)),
+                (Ok((text, _)), false) => outputs.push((format, text)),
                 (Err(_), true) => {}
                 (Ok(_), true) => fail(format!("{format}: writer accepted unencodable content")),
                 (Err(error), false) => fail(format!("{format}: {error}")),

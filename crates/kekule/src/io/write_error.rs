@@ -210,7 +210,8 @@ pub(crate) struct StatePolicies {
     /// The policy for every such state.
     pub(crate) policy: UnrepresentablePolicy,
     /// Whether the format writes a sample's membership in a distribution
-    /// itself.
+    /// itself, and its writer decides about a sample outside the
+    /// distribution.
     pub(crate) writes_membership: bool,
     /// Whether the format writes a sample's step or coordinate place itself.
     pub(crate) writes_place: bool,
@@ -325,8 +326,9 @@ impl Omissions {
     }
 
     /// Records the sample state `kind` has that the policies omit: its
-    /// membership, its step or coordinate, and its time, step, velocities,
-    /// and forces. Call it after [`check_structure_state`] has passed.
+    /// membership, unless the format writes memberships, its step or
+    /// coordinate, and its time, step, velocities, and forces. Call it after
+    /// [`check_structure_state`] has passed.
     pub(crate) fn record_structure_state(
         &mut self,
         kind: StructureKind<'_>,
@@ -339,11 +341,8 @@ impl Omissions {
             return;
         }
         let mut fields = Vec::new();
-        if policies.writes_membership {
-            if context.is_outside_distribution() {
-                fields.push(StructureField::Membership);
-            }
-        } else if let Some(membership) = context.membership() {
+        let membership = context.membership().filter(|_| !policies.writes_membership);
+        if let Some(membership) = membership {
             // A lone record cannot carry a weight relative to other
             // samples, so its weight is always left out.
             fields.push(StructureField::Weight);
@@ -399,9 +398,9 @@ fn frame_fields(context: SampleContext<'_>) -> impl Iterator<Item = StructureFie
 }
 
 /// Fails for sample state that `format` cannot carry, unless the caller
-/// chose to omit it: a membership, or for a format that writes memberships,
-/// a sample outside its set's distribution; a step or coordinate place; and
-/// a time, MD step, velocities, or forces, checked in that order.
+/// chose to omit it: a membership, unless the format writes memberships; a
+/// step or coordinate place; and a time, MD step, velocities, or forces,
+/// checked in that order.
 pub(crate) fn check_structure_state(
     format: Format,
     kind: StructureKind<'_>,
@@ -414,9 +413,7 @@ pub(crate) fn check_structure_state(
         return Ok(());
     }
     let membership = if policies.writes_membership {
-        context
-            .is_outside_distribution()
-            .then_some(StructureField::Membership)
+        None
     } else {
         // A lone record cannot carry a weight relative to other samples.
         context.membership().map(|membership| {

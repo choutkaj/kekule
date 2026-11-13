@@ -762,7 +762,8 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         views.iter().map(crate::sdf::SdfRecordSource::model),
         options,
     )
-    .unwrap();
+    .unwrap()
+    .0;
     assert_eq!(fingerprint(&written), 0xfdd2_1ccf_3060_ad78);
 
     let mut scan = set_at(&[0.0]);
@@ -777,7 +778,8 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         views.iter().map(crate::sdf::SdfRecordSource::model),
         options,
     )
-    .unwrap();
+    .unwrap()
+    .0;
     assert_eq!(fingerprint(&written), 0x3c58_9dc0_2772_0fe0);
 }
 

@@ -109,6 +109,52 @@ impl SampleSetDescription {
         Ok(self)
     }
 
+    /// This description for `sample_count` samples whose first
+    /// [`Self::sample_count`] are the samples it describes, such as a
+    /// trajectory file that grew after the description was saved: the
+    /// distribution as [`Distribution::extended_to`] gives it, keeping its
+    /// weights, partition, states, and temperature bit for bit, and the set
+    /// properties. The order describes the samples it was made for, so a
+    /// description that gains samples is unordered; give it the longer
+    /// set's order with [`Self::with_order`].
+    ///
+    /// ```
+    /// use kekule::native::SampleSetDescription;
+    /// use kekule::structure::{Distribution, Members, Partition};
+    ///
+    /// let topology = kekule::smiles::to_topology("O")?;
+    /// let saved = SampleSetDescription::new(topology, 3).with_distribution(Some(
+    ///     Distribution::new(Members::All, Partition::one_state(3))?,
+    /// ))?;
+    /// let grown = saved.extended_to(5)?;
+    /// assert_eq!(grown.sample_count(), 5);
+    /// assert_eq!(grown.distribution().unwrap().members(), &Members::Subset(vec![0, 1, 2]));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`SampleSetError::CoverageMismatch`] for fewer samples than the
+    /// description describes.
+    pub fn extended_to(mut self, sample_count: usize) -> Result<Self, SampleSetError> {
+        if sample_count < self.sample_count {
+            return Err(SampleSetError::CoverageMismatch {
+                covered: self.sample_count,
+                samples: sample_count,
+            });
+        }
+        if sample_count == self.sample_count {
+            return Ok(self);
+        }
+        self.distribution = self
+            .distribution
+            .map(|distribution| distribution.extended_to(sample_count))
+            .transpose()?;
+        self.order = None;
+        self.sample_count = sample_count;
+        Ok(self)
+    }
+
     /// The topology every sample shares.
     pub fn topology(&self) -> &Topology {
         &self.topology

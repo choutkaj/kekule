@@ -53,8 +53,16 @@ impl SharedFile {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The reads of shared files on this thread, which tests count.
+    pub(crate) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Read for SharedFile {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        #[cfg(test)]
+        READS.with(|reads| reads.set(reads.get() + 1));
         let read = read_at(&self.file, buffer, self.position)?;
         self.position += read as u64;
         Ok(read)

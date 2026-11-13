@@ -201,6 +201,17 @@ pub enum PdbAtomField {
     AtomMap,
 }
 
+impl PdbAtomField {
+    /// The verb for the field as the subject: "have" for a plural field,
+    /// "has" otherwise.
+    const fn verb(self) -> &'static str {
+        match self {
+            Self::Radical => "have",
+            _ => "has",
+        }
+    }
+}
+
 impl fmt::Display for PdbAtomField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -471,9 +482,11 @@ impl fmt::Display for PdbWriteIssue {
                 "{} has formal charge {charge}, outside PDB's range of -9 to 9.",
                 Capitalized(atom)
             ),
-            Self::UnsupportedAtomField { atom, field } => {
-                write!(f, "The {field} of {atom} has no PDB representation.")
-            }
+            Self::UnsupportedAtomField { atom, field } => write!(
+                f,
+                "The {field} of {atom} {} no PDB representation.",
+                field.verb()
+            ),
             Self::UnsupportedStereo(molecule) => write!(
                 f,
                 "The stereochemistry of {molecule} has no PDB representation."
