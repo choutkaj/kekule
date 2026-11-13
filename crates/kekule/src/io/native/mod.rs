@@ -66,7 +66,7 @@ pub enum NativeKind {
     StructureSet,
     /// A [`StructureSet`] with one interpretation report per geometry, a
     /// [`StructureSetInterpretation`].
-    SampleSetInterpretation,
+    StructureSetInterpretation,
 }
 
 impl NativeKind {
@@ -77,7 +77,7 @@ impl NativeKind {
             Self::Structure => 3,
             Self::StructureInterpretation => 7,
             Self::StructureSet => 9,
-            Self::SampleSetInterpretation => 10,
+            Self::StructureSetInterpretation => 10,
         }
     }
 
@@ -88,7 +88,7 @@ impl NativeKind {
             3 => Self::Structure,
             7 => Self::StructureInterpretation,
             9 => Self::StructureSet,
-            10 => Self::SampleSetInterpretation,
+            10 => Self::StructureSetInterpretation,
             _ => return None,
         })
     }
@@ -96,7 +96,7 @@ impl NativeKind {
     /// The kind with its indefinite article, such as "an interpreted model".
     fn with_article(self) -> String {
         let article = match self {
-            Self::StructureInterpretation | Self::SampleSetInterpretation => "an",
+            Self::StructureInterpretation | Self::StructureSetInterpretation => "an",
             _ => "a",
         };
         format!("{article} {self}")
@@ -111,7 +111,7 @@ impl fmt::Display for NativeKind {
             Self::Structure => "model",
             Self::StructureInterpretation => "interpreted model",
             Self::StructureSet => "structure set",
-            Self::SampleSetInterpretation => "interpreted structure set",
+            Self::StructureSetInterpretation => "interpreted structure set",
         })
     }
 }
@@ -135,7 +135,7 @@ pub(super) enum NativeContent<'a> {
     Structure(&'a Structure),
     InterpretedStructure(&'a Structure, &'a StructureInterpretationReport),
     StructureSet(&'a StructureSet),
-    InterpretedSampleSet(&'a StructureSet, &'a [StructureInterpretationReport]),
+    InterpretedStructureSet(&'a StructureSet, &'a [StructureInterpretationReport]),
     StructureSetDescription(&'a StructureSetDescription),
 }
 
@@ -163,7 +163,7 @@ impl<'a> NativeSource<'a> {
         reports: &'a [StructureInterpretationReport],
     ) -> Self {
         Self {
-            content: NativeContent::InterpretedSampleSet(set, reports),
+            content: NativeContent::InterpretedStructureSet(set, reports),
         }
     }
 
@@ -177,7 +177,7 @@ impl<'a> NativeSource<'a> {
             NativeContent::StructureSet(_) | NativeContent::StructureSetDescription(_) => {
                 NativeKind::StructureSet
             }
-            NativeContent::InterpretedSampleSet(..) => NativeKind::SampleSetInterpretation,
+            NativeContent::InterpretedStructureSet(..) => NativeKind::StructureSetInterpretation,
         }
     }
 }
@@ -233,7 +233,7 @@ pub enum NativeObject {
     StructureSet(StructureSet),
     /// A structure set with its topology and one interpretation report per
     /// geometry.
-    SampleSetInterpretation(Box<StructureSetInterpretation>),
+    StructureSetInterpretation(Box<StructureSetInterpretation>),
     /// A structure set record that stores the number of its geometries, not the
     /// geometries: its topology, properties, order, and distribution.
     StructureSetDescription(Box<StructureSetDescription>),
@@ -248,7 +248,7 @@ impl NativeObject {
             Self::Structure(_) => NativeKind::Structure,
             Self::StructureInterpretation(_) => NativeKind::StructureInterpretation,
             Self::StructureSet(_) | Self::StructureSetDescription(_) => NativeKind::StructureSet,
-            Self::SampleSetInterpretation(_) => NativeKind::SampleSetInterpretation,
+            Self::StructureSetInterpretation(_) => NativeKind::StructureSetInterpretation,
         }
     }
 
@@ -333,7 +333,7 @@ impl NativeObject {
     pub fn into_structure_set(self) -> Result<StructureSet, FormatError> {
         match self {
             Self::StructureSet(value) => Ok(value),
-            Self::SampleSetInterpretation(value) => Ok(value.into_structure_set()),
+            Self::StructureSetInterpretation(value) => Ok(value.into_structure_set()),
             Self::StructureSetDescription(description) => Err(external_samples(&description)),
             other => Err(other.kind_error(NativeKind::StructureSet)),
         }
@@ -350,8 +350,8 @@ impl NativeObject {
         self,
     ) -> Result<StructureSetInterpretation, FormatError> {
         match self {
-            Self::SampleSetInterpretation(value) => Ok(*value),
-            other => Err(other.kind_error(NativeKind::SampleSetInterpretation)),
+            Self::StructureSetInterpretation(value) => Ok(*value),
+            other => Err(other.kind_error(NativeKind::StructureSetInterpretation)),
         }
     }
 
@@ -367,7 +367,7 @@ impl NativeObject {
         match self {
             Self::StructureSetDescription(value) => Ok(*value),
             Self::StructureSet(set) => Ok(StructureSetDescription::of(&set)),
-            Self::SampleSetInterpretation(value) => {
+            Self::StructureSetInterpretation(value) => {
                 Ok(StructureSetDescription::of(value.structure_set()))
             }
             other => Err(other.kind_error(NativeKind::StructureSet)),

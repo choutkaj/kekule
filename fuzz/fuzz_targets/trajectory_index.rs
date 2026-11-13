@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::structure::{Place, Sample};
+use kekule::structure::{Place, Geometry};
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, TrajectoryFileFingerprint,
@@ -21,7 +21,7 @@ struct Case {
     path: PathBuf,
     topology: Arc<Topology>,
     index: TrajectoryFrameIndex,
-    frames: Vec<(Sample, Place)>,
+    frames: Vec<(Geometry, Place)>,
 }
 
 fn topology(symbols: &[&str]) -> Arc<Topology> {

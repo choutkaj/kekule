@@ -52,7 +52,7 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
         NativeObject::StructureInterpretation(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
-        NativeObject::SampleSetInterpretation(value) => {
+        NativeObject::StructureSetInterpretation(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         _ => unreachable!("every kind is listed"),
@@ -751,7 +751,7 @@ fn interpreted_structure_sets_keep_one_report_per_sample() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::NativeKind {
-            expected: NativeKind::SampleSetInterpretation,
+            expected: NativeKind::StructureSetInterpretation,
             found: NativeKind::StructureSet,
         })
     );

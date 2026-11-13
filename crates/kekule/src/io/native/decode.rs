@@ -89,7 +89,7 @@ pub(crate) fn read_native(
             Decoded::Inline(set) => NativeObject::StructureSet(*set),
             Decoded::External(description) => NativeObject::StructureSetDescription(description),
         },
-        NativeKind::SampleSetInterpretation => {
+        NativeKind::StructureSetInterpretation => {
             let Decoded::Inline(set) = decoder.structure_set(true)? else {
                 unreachable!("an interpreted structure set is read with its geometries")
             };
@@ -97,7 +97,7 @@ pub(crate) fn read_native(
             for _ in 0..set.len() {
                 reports.push(decoder.report()?);
             }
-            NativeObject::SampleSetInterpretation(Box::new(StructureSetInterpretation {
+            NativeObject::StructureSetInterpretation(Box::new(StructureSetInterpretation {
                 set: *set,
                 reports,
             }))

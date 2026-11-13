@@ -43,7 +43,7 @@ pub(crate) fn write_native_to<'a>(
 ) -> Result {
     let source = source.into();
     let reports = match source.content {
-        NativeContent::InterpretedSampleSet(set, reports) => Some((set.len(), reports)),
+        NativeContent::InterpretedStructureSet(set, reports) => Some((set.len(), reports)),
         _ => None,
     };
     if let Some((geometries, reports)) = reports {
@@ -79,7 +79,7 @@ pub(crate) fn write_native_to<'a>(
             encoder.report(report)?;
         }
         NativeContent::StructureSet(set) => encoder.structure_set(set)?,
-        NativeContent::InterpretedSampleSet(set, reports) => {
+        NativeContent::InterpretedStructureSet(set, reports) => {
             encoder.structure_set(set)?;
             encoder.reports(reports)?;
         }

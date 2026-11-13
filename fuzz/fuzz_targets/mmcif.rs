@@ -40,16 +40,16 @@ fuzz_target!(|data: &[u8]| {
         let options =
             StructureInterpretOptions::default().with_model_selection(ModelSelection::First);
         if let Ok(interpreted) = document.interpret(options) {
-            for atom in interpreted.model().topology().atom_ids() {
-                let _ = interpreted.model().topology().atom(*atom);
-                let _ = interpreted.model().position(*atom);
+            for atom in interpreted.structure().topology().atom_ids() {
+                let _ = interpreted.structure().topology().atom(*atom);
+                let _ = interpreted.structure().position(*atom);
             }
         }
-        if let Ok(interpreted) = document.interpret_sample_set(Default::default()) {
+        if let Ok(interpreted) = document.interpret_structure_set(Default::default()) {
             for view in interpreted
-                .sample_set()
+                .structure_set()
                 .iter()
-                .map(|sample| sample.as_model_view())
+                .map(|sample| sample.as_structure_view())
             {
                 for atom in view.topology().atom_ids() {
                     let _ = view.topology().atom(*atom);

@@ -7,11 +7,11 @@ fn encode(object: &NativeObject) -> Vec<u8> {
     match object {
         NativeObject::Molecule(value) => native::write(value.as_ref(), options),
         NativeObject::Topology(value) => native::write(value, options),
-        NativeObject::Model(value) => native::write(value, options),
+        NativeObject::Structure(value) => native::write(value, options),
         NativeObject::StructureInterpretation(value) => native::write(value.as_ref(), options),
-        NativeObject::SampleSet(value) => native::write(value, options),
-        NativeObject::SampleSetInterpretation(value) => native::write(value.as_ref(), options),
-        NativeObject::SampleSetDescription(value) => native::write(value.as_ref(), options),
+        NativeObject::StructureSet(value) => native::write(value, options),
+        NativeObject::StructureSetInterpretation(value) => native::write(value.as_ref(), options),
+        NativeObject::StructureSetDescription(value) => native::write(value.as_ref(), options),
         _ => return Vec::new(),
     }
     .expect("a decoded object encodes")
