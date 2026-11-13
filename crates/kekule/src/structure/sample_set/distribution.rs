@@ -286,7 +286,10 @@ impl Distribution {
     /// [`Members::All`]. The weights, the partition, the states with their
     /// energies and properties, and the temperature are kept bit for bit.
     /// [`SampleSet::refresh`](super::SampleSet::refresh) gives a set's
-    /// distribution so when the file grows.
+    /// distribution so when the file grows. A subset does not record how
+    /// many samples it was made for, so a `len` shorter than that is not
+    /// detected; [`SampleSetDescription::extended_to`](crate::native::SampleSetDescription::extended_to)
+    /// checks it against the saved sample count.
     ///
     /// ```
     /// use kekule::structure::{Distribution, Members, Partition};

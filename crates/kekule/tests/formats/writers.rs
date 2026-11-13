@@ -799,7 +799,7 @@ fn sdf_round_trips_one_state_and_clustered_states() {
             1
         )),
         "Cannot interpret the SDF input in record 2. The data field \"kekule.temperature.K\" \
-         differs from that of the first record."
+         differs from that of record 1."
     );
 }
 
@@ -2739,6 +2739,9 @@ fn structure_fields_name_the_state_a_format_loses() {
         (OrderStep, "order step"),
         (OrderCoordinate, "order coordinate"),
         (Membership, "distribution membership"),
+        (SetProperties, "sample set properties"),
+        (Occupancies, "occupancies"),
+        (BFactors, "B factors"),
     ];
     for (field, name) in names {
         assert_eq!(field.to_string(), name, "{field:?}");
@@ -2905,22 +2908,27 @@ fn molfile_and_sdf_report_what_they_leave_out() {
     assert!(report.is_empty());
 }
 
-/// Four methane samples with a distribution over samples 1 and 2 in one
-/// state each, weighted, with state energies and a temperature.
-fn subset_set() -> SampleSet {
+/// `count` methane samples, sample `i` at `i` Å along x.
+fn methane_set(count: usize) -> SampleSet {
     let first = model("C", &[[0.0, 0.0, 0.0]]);
-    let models = (0..4).map(|index| {
+    let models = (0..count).map(|index| {
         Model::new(
             first.shared_topology(),
             Positions::new(Quantity::new(
-                [Point3::new(f64::from(index), 0.0, 0.0)],
+                [Point3::new(index as f64, 0.0, 0.0)],
                 ANGSTROM,
             ))
             .unwrap(),
         )
         .unwrap()
     });
-    let mut set = SampleSet::from_models(models).unwrap();
+    SampleSet::from_models(models).unwrap()
+}
+
+/// Four methane samples with a distribution over samples 1 and 3 in one
+/// state each, weighted, with state energies and a temperature.
+fn subset_set() -> SampleSet {
+    let mut set = methane_set(4);
     let states = vec![
         State::new()
             .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
@@ -2930,7 +2938,7 @@ fn subset_set() -> SampleSet {
             .unwrap(),
     ];
     set.set_distribution(Some(
-        Distribution::new(Members::Subset(vec![1, 2]), Partition::state_per_sample(2))
+        Distribution::new(Members::Subset(vec![1, 3]), Partition::state_per_sample(2))
             .unwrap()
             .with_weights(vec![0.25, 1.0 / 3.0])
             .unwrap()
@@ -2943,6 +2951,16 @@ fn subset_set() -> SampleSet {
     set
 }
 
+/// The set the records of `text` form.
+fn read_back(text: &str) -> Result<SampleSet, FormatError> {
+    sdf::sample_set(&interpret_records(text))
+}
+
+/// The data fields of a record outside the distribution.
+fn outside_fields() -> Vec<(String, String)> {
+    vec![(sdf::MEMBER_FIELD.to_owned(), "false".to_owned())]
+}
+
 #[test]
 fn sdf_round_trips_a_distribution_over_some_samples() {
     let set = subset_set();
@@ -2950,15 +2968,16 @@ fn sdf_round_trips_a_distribution_over_some_samples() {
     assert!(report.is_empty());
     let records = interpret_records(&text);
     assert_eq!(records.len(), 4);
-    // The non-members' records have no distribution fields.
+    // The non-members' records are marked and carry nothing else.
     let fields = data_fields(&records);
-    assert!(fields[0].is_empty() && fields[3].is_empty());
+    assert_eq!(fields[0], outside_fields());
+    assert_eq!(fields[2], outside_fields());
     assert!(fields[1].iter().any(|(name, _)| name == sdf::WEIGHT_FIELD));
     let read = sdf::sample_set(&records).unwrap();
     assert_eq!(read.len(), 4);
     assert_eq!(read.distribution(), set.distribution());
     let distribution = read.distribution().unwrap();
-    assert_eq!(distribution.members(), &Members::Subset(vec![1, 2]));
+    assert_eq!(distribution.members(), &Members::Subset(vec![1, 3]));
     assert_eq!(
         distribution.weights().unwrap()[1].to_bits(),
         (1.0_f64 / 3.0).to_bits()
@@ -2970,77 +2989,563 @@ fn sdf_round_trips_a_distribution_over_some_samples() {
         text
     );
 
-    // A non-member's record keeps the distribution's field names free.
-    let fields = [SdfDataField::new(sdf::STATE_FIELD, "0")];
-    let record = sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields);
-    assert_eq!(
-        described(sdf::write([record], SdfWriteOptions::default()).unwrap_err()),
-        (
-            DiagnosticKind::Inconsistent,
-            Some(FormatErrorDetail::DataField {
-                name: sdf::STATE_FIELD.to_owned()
-            }),
-            format!(
-                "The data field {:?} is reserved for the data of the sample.",
-                sdf::STATE_FIELD
+    // A sample of a set with a distribution owns every distribution field
+    // name, whether it is a member or not.
+    for (sample, name) in [(0, sdf::STATE_FIELD), (1, sdf::MEMBER_FIELD)] {
+        let fields = [SdfDataField::new(name, "0")];
+        let record = sdf::SdfRecordSource::from(set.get(sample).unwrap()).with_data_fields(&fields);
+        assert_eq!(
+            described(sdf::write([record], SdfWriteOptions::default()).unwrap_err()),
+            (
+                DiagnosticKind::Inconsistent,
+                Some(FormatErrorDetail::DataField {
+                    name: name.to_owned()
+                }),
+                format!("The data field {name:?} is reserved for the data of the sample."),
             ),
-        )
-    );
-    // A record without fields among records with them is a non-member,
-    // but one with a weight and no state is not.
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn sdf_takes_only_a_marked_record_as_outside_the_distribution() {
+    let error =
+        |records: &[SdfRecordInterpretation]| sdf::sample_set(records).unwrap_err().to_string();
+    // A record stripped of its fields among the records of a distribution
+    // over every sample is refused, not taken as outside.
+    let set = distributed(methane_set(3).iter().map(|sample| sample.to_model()), {
+        Partition::state_per_sample(3)
+    });
+    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
     let mut records = interpret_records(&text);
-    let weight = SdfDataField::new(sdf::WEIGHT_FIELD, "1");
-    records[0] = SdfRecordInterpretation::new("", records[0].model().clone(), vec![weight]);
-    let error = sdf::sample_set(&records).unwrap_err();
+    records[1] = SdfRecordInterpretation::new("", records[1].model().clone(), Vec::new());
     assert_eq!(
-        error.to_string(),
-        "Cannot interpret the SDF input in record 1. The data field \"kekule.state\" is missing. Other records have it."
+        error(&records),
+        "Cannot interpret the SDF input in record 2. The data field \"kekule.state\" is \
+         missing. Other records have it."
+    );
+    // So is a record of another program appended to a written file.
+    let mut records = interpret_records(&text);
+    records.push(SdfRecordInterpretation::new(
+        "",
+        records[0].model().clone(),
+        Vec::new(),
+    ));
+    assert_eq!(
+        error(&records),
+        "Cannot interpret the SDF input in record 4. The data field \"kekule.state\" is \
+         missing. Other records have it."
+    );
+
+    // The marker is `false`, on a record with no other distribution field.
+    let text = sdf::write(&subset_set(), SdfWriteOptions::default())
+        .unwrap()
+        .0;
+    let marker = ">  <kekule.member>\nfalse\n\n";
+    let marked = |replacement: &str| interpret_records(&text.replacen(marker, replacement, 1));
+    assert_eq!(
+        error(&marked(">  <kekule.member>\ntrue\n\n")),
+        "Cannot interpret the SDF input in record 1. The data field \"kekule.member\" holds \
+         \"true\", not \"false\"."
+    );
+    assert_eq!(
+        error(&marked(
+            ">  <kekule.member>\nfalse\n\n>  <kekule.weight>\n1\n\n"
+        )),
+        "Cannot interpret the SDF input in record 1. The data field \"kekule.weight\" is on \
+         a record outside the distribution."
+    );
+
+    // A temperature that differs names the first member's record.
+    let temperature = ">  <kekule.temperature.K>\n298.15\n";
+    let last = text.rfind(temperature).unwrap();
+    let mut changed = text.clone();
+    changed.replace_range(
+        last..last + temperature.len(),
+        ">  <kekule.temperature.K>\n310\n",
+    );
+    assert_eq!(
+        error(&interpret_records(&changed)),
+        "Cannot interpret the SDF input in record 4. The data field \"kekule.temperature.K\" \
+         differs from that of record 2."
     );
 }
 
 #[test]
-fn sdf_refuses_or_reports_non_members_without_a_member_in_the_output() {
+fn sdf_writes_and_reads_records_outside_the_distribution_alone() {
     let set = subset_set();
-    let outside = [set.get(0).unwrap(), set.get(3).unwrap()];
-    let error = sdf::write(outside, SdfWriteOptions::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
-    assert_eq!(
-        error.detail(),
-        Some(&FormatErrorDetail::UnrepresentableState(
-            StructureField::Membership
-        ))
-    );
-    assert_eq!(
-        error.to_string(),
-        "Cannot write the SDF output in record 1. The distribution membership of the sample has no SDF representation."
-    );
-    let omit = SdfWriteOptions::default().with_sample_metadata(UnrepresentablePolicy::Omit);
-    let (text, report) = sdf::write(outside, omit).unwrap();
-    assert_eq!(
-        report.omissions(),
-        [WriteOmission::StructureState {
-            field: StructureField::Membership,
-            structures: 2,
-        }]
-    );
-    // The records are the bare models, which read back as a set without a
-    // distribution.
-    let models = outside.map(|sample| sample.to_model());
-    assert_eq!(
-        text,
-        sdf::write(&models, SdfWriteOptions::default()).unwrap().0
-    );
-    assert!(sdf::sample_set(&interpret_records(&text))
-        .unwrap()
-        .distribution()
-        .is_none());
-    // With a member in the output, the non-members are written as such.
-    let some = [set.get(0).unwrap(), set.get(2).unwrap()];
-    let (text, report) = sdf::write(some, SdfWriteOptions::default()).unwrap();
+    let outside = [set.get(0).unwrap(), set.get(2).unwrap()];
+    let (text, report) = sdf::write(outside, SdfWriteOptions::default()).unwrap();
     assert!(report.is_empty());
-    let read = sdf::sample_set(&interpret_records(&text)).unwrap();
+    let records = interpret_records(&text);
+    assert_eq!(data_fields(&records), [outside_fields(), outside_fields()]);
+    // Record by record the output reads and writes back the same.
+    assert_eq!(
+        sdf::write(&records, SdfWriteOptions::default()).unwrap().0,
+        text
+    );
+    // The records form a set whose distribution has no members, which
+    // writes back the same.
+    let read = sdf::sample_set(&records).unwrap();
+    assert_eq!(read.len(), 2);
+    assert_eq!(
+        read.distribution().unwrap().members(),
+        &Members::Subset(Vec::new())
+    );
+    assert_eq!(
+        sdf::write(&read, SdfWriteOptions::default()).unwrap().0,
+        text
+    );
+    // A set with such a distribution round-trips.
+    let mut empty = methane_set(2);
+    empty
+        .set_distribution(Some(
+            Distribution::new(Members::Subset(Vec::new()), Partition::state_per_sample(0)).unwrap(),
+        ))
+        .unwrap();
+    let written = sdf::write(&empty, SdfWriteOptions::default()).unwrap().0;
+    let reread = read_back(&written).unwrap();
+    assert_eq!(reread.distribution(), empty.distribution());
+    assert_eq!(
+        sdf::write(&reread, SdfWriteOptions::default()).unwrap().0,
+        written
+    );
+    // With a member in the output, the others lie outside a distribution of
+    // it.
+    let some = [set.get(0).unwrap(), set.get(3).unwrap()];
+    let read = read_back(&sdf::write(some, SdfWriteOptions::default()).unwrap().0).unwrap();
     assert_eq!(
         read.distribution().unwrap().members(),
         &Members::Subset(vec![1])
     );
+}
+
+#[test]
+fn sdf_writes_weights_only_for_a_weighted_distribution() {
+    for members in [Members::All, Members::Subset(vec![0, 2])] {
+        let mut set = methane_set(3);
+        let count = match &members {
+            Members::Subset(members) => members.len(),
+            _ => 3,
+        };
+        set.set_distribution(Some(
+            Distribution::new(members.clone(), Partition::state_per_sample(count)).unwrap(),
+        ))
+        .unwrap();
+        let (text, report) = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+        assert!(report.is_empty());
+        assert!(!text.contains(sdf::WEIGHT_FIELD), "{members:?}");
+        let read = read_back(&text).unwrap();
+        assert_eq!(read.distribution(), set.distribution(), "{members:?}");
+        assert_eq!(read.distribution().unwrap().weights(), None);
+        assert_eq!(
+            sdf::write(&read, SdfWriteOptions::default()).unwrap().0,
+            text
+        );
+    }
+}
+
+#[test]
+fn sdf_judges_each_record_by_its_own_sample() {
+    let set = subset_set();
+    // Interpreted records of members, which carry their distribution fields
+    // as their own, written with a sample outside the distribution.
+    let members = interpret_records(
+        &sdf::write(
+            [set.get(1).unwrap(), set.get(3).unwrap()],
+            SdfWriteOptions::default(),
+        )
+        .unwrap()
+        .0,
+    );
+    let mixed: Vec<sdf::SdfRecordSource<'_>> = vec![
+        (&members[0]).into(),
+        set.get(0).unwrap().into(),
+        (&members[1]).into(),
+    ];
+    let (text, report) = sdf::write(mixed, SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    let read = read_back(&text).unwrap();
+    let distribution = read.distribution().unwrap();
+    assert_eq!(distribution.members(), &Members::Subset(vec![0, 2]));
+    assert_eq!(
+        distribution.weights(),
+        set.distribution().unwrap().weights()
+    );
+    assert_eq!(distribution.states(), set.distribution().unwrap().states());
+
+    // A sample outside the distribution of another set is marked all the
+    // same.
+    let other = subset_set();
+    let records = [
+        other.get(0).unwrap(),
+        set.get(1).unwrap(),
+        set.get(3).unwrap(),
+    ];
+    let read = read_back(&sdf::write(records, SdfWriteOptions::default()).unwrap().0).unwrap();
+    assert_eq!(
+        read.distribution().unwrap().members(),
+        &Members::Subset(vec![1, 2])
+    );
+    // Members of two sets each carry their own set's state, so two
+    // representatives of state 0 do not read as one distribution.
+    let records = [set.get(1).unwrap(), other.get(1).unwrap()];
+    assert_eq!(
+        read_back(&sdf::write(records, SdfWriteOptions::default()).unwrap().0)
+            .unwrap_err()
+            .to_string(),
+        "Cannot interpret the SDF input in record 2. The data field \"kekule.representative\" \
+         marks a second representative of state 0."
+    );
+}
+
+/// A two-atom model with each kind of state a Molfile and an SDF record
+/// cannot carry, one at a time, with the field that names it and the
+/// omission that reports it.
+fn models_with_unwritable_state() -> Vec<(Model, StructureField, WriteOmission)> {
+    use kekule::properties::{PropertyKey, PropertyValue};
+    use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};
+    use kekule::units::SQUARE_NANOMETER;
+
+    let base = model("CO", &[[0.0; 3], [1.4, 0.0, 0.0]]);
+    let key = || PropertyKey::new("note").unwrap();
+    let state = |field| WriteOmission::StructureState {
+        field,
+        structures: 1,
+    };
+    let mut occupied = base.clone();
+    occupied
+        .set_occupancies(Some(vec![Some(0.5), None]))
+        .unwrap();
+    let mut b_factors = base.clone();
+    b_factors
+        .set_b_factors(Some(Quantity::new(vec![None, Some(0.2)], SQUARE_NANOMETER)))
+        .unwrap();
+    let mut atoms = base.clone();
+    atoms
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
+            key(),
+            TopologyAtomIndex::new(1),
+            Some(PropertyValue::Int(1)),
+        )
+        .unwrap();
+    let mut bonds = base.clone();
+    bonds
+        .properties_mut()
+        .bonds_mut()
+        .set_value(
+            key(),
+            TopologyBondIndex::new(0),
+            Some(PropertyValue::Int(2)),
+        )
+        .unwrap();
+    let mut owner = base.clone();
+    owner
+        .properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(3))
+        .unwrap();
+    vec![
+        (
+            occupied,
+            StructureField::Occupancies,
+            WriteOmission::Occupancies { structures: 1 },
+        ),
+        (
+            b_factors,
+            StructureField::BFactors,
+            WriteOmission::BFactors { structures: 1 },
+        ),
+        (
+            atoms,
+            StructureField::AtomProperties,
+            state(StructureField::AtomProperties),
+        ),
+        (
+            bonds,
+            StructureField::BondProperties,
+            state(StructureField::BondProperties),
+        ),
+        (
+            owner,
+            StructureField::Properties,
+            state(StructureField::Properties),
+        ),
+    ]
+}
+
+#[test]
+fn molfile_and_sdf_refuse_or_report_sites_and_properties() {
+    let omit = UnrepresentablePolicy::Omit;
+    let plain = model("CO", &[[0.0; 3], [1.4, 0.0, 0.0]]);
+    let plain_molfile = molfile::write(&plain, MolfileWriteOptions::default())
+        .unwrap()
+        .0;
+    let plain_sdf = sdf::write([&plain], SdfWriteOptions::default()).unwrap().0;
+    for (model, field, omission) in models_with_unwritable_state() {
+        let properties = !matches!(
+            field,
+            StructureField::Occupancies | StructureField::BFactors
+        );
+        // Each field follows its own policy, and the other one does not
+        // omit it.
+        let (molfile_omit, molfile_other) = if properties {
+            (
+                MolfileWriteOptions::default().with_properties(omit),
+                MolfileWriteOptions::default().with_sample_metadata(omit),
+            )
+        } else {
+            (
+                MolfileWriteOptions::default().with_sample_metadata(omit),
+                MolfileWriteOptions::default().with_properties(omit),
+            )
+        };
+        let (sdf_omit, sdf_other) = if properties {
+            (
+                SdfWriteOptions::default().with_properties(omit),
+                SdfWriteOptions::default().with_sample_metadata(omit),
+            )
+        } else {
+            (
+                SdfWriteOptions::default().with_sample_metadata(omit),
+                SdfWriteOptions::default().with_properties(omit),
+            )
+        };
+        let verb = "have";
+        for options in [MolfileWriteOptions::default(), molfile_other] {
+            assert_eq!(
+                described(molfile::write(&model, options).unwrap_err()),
+                (
+                    DiagnosticKind::Unsupported,
+                    Some(FormatErrorDetail::UnrepresentableState(field)),
+                    format!("The {field} of the model {verb} no Molfile representation."),
+                ),
+                "{field:?}"
+            );
+        }
+        for options in [SdfWriteOptions::default(), sdf_other] {
+            let error = sdf::write([&plain, &model], options).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "Cannot write the SDF output in record 2. The {field} of the model {verb} \
+                     no SDF representation."
+                ),
+                "{field:?}"
+            );
+            assert_eq!(
+                error.detail(),
+                Some(&FormatErrorDetail::UnrepresentableState(field))
+            );
+        }
+        let (text, report) = molfile::write(&model, molfile_omit).unwrap();
+        assert_eq!(text, plain_molfile, "{field:?}");
+        assert_eq!(report.omissions(), [omission], "{field:?}");
+        let (text, report) = sdf::write([&model], sdf_omit).unwrap();
+        assert_eq!(text, plain_sdf, "{field:?}");
+        assert_eq!(report.omissions(), [omission], "{field:?}");
+    }
+
+    // A sample's sites and properties name the sample.
+    let (model, _, _) = models_with_unwritable_state().remove(0);
+    let set = SampleSet::from_models([model]).unwrap();
+    assert_eq!(
+        sdf::write(&set, SdfWriteOptions::default())
+            .unwrap_err()
+            .to_string(),
+        "Cannot write the SDF output in record 1. The occupancies of the sample have no SDF \
+         representation."
+    );
+}
+
+#[test]
+fn sdf_and_molfile_refuse_or_report_set_and_state_properties() {
+    use kekule::properties::{PropertyKey, PropertyValue};
+    let omit = UnrepresentablePolicy::Omit;
+    let key = || PropertyKey::new("note").unwrap();
+    let state = |field, structures| WriteOmission::StructureState { field, structures };
+
+    // The set's own properties, which every record of its samples loses.
+    let mut set = methane_set(2);
+    let bare = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
+    set.properties_mut()
+        .insert(key(), PropertyValue::Int(1))
+        .unwrap();
+    let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the SDF output in record 1. The sample set properties have no SDF \
+         representation."
+    );
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::UnrepresentableState(
+            StructureField::SetProperties
+        ))
+    );
+    let (text, report) =
+        sdf::write(&set, SdfWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare);
+    assert_eq!(
+        report.omissions(),
+        [state(StructureField::SetProperties, 2)]
+    );
+    assert_eq!(
+        molfile::write(
+            molfile::MolfileSource::model(&set.get(0).unwrap()),
+            MolfileWriteOptions::default()
+        )
+        .unwrap_err()
+        .to_string(),
+        "Cannot write the Molfile output. The sample set properties have no Molfile \
+         representation."
+    );
+
+    // A state's properties, on the record of its representative.
+    let mut labelled = subset_set();
+    let bare = sdf::write(&labelled, SdfWriteOptions::default()).unwrap().0;
+    labelled
+        .distribution_mut()
+        .unwrap()
+        .state_mut(1)
+        .unwrap()
+        .properties_mut()
+        .insert(key(), PropertyValue::Int(2))
+        .unwrap();
+    let error = sdf::write(&labelled, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the SDF output in record 4. The state properties of the sample have no \
+         SDF representation."
+    );
+    let (text, report) = sdf::write(
+        &labelled,
+        SdfWriteOptions::default().with_sample_metadata(omit),
+    )
+    .unwrap();
+    assert_eq!(text, bare);
+    assert_eq!(
+        report.omissions(),
+        [state(StructureField::StateProperties, 1)]
+    );
+    // A Molfile loses the membership whole.
+    let (_, report) = molfile::write(
+        molfile::MolfileSource::model(&labelled.get(3).unwrap()),
+        MolfileWriteOptions::default().with_sample_metadata(omit),
+    )
+    .unwrap();
+    assert_eq!(
+        report.omissions(),
+        [
+            state(StructureField::Weight, 1),
+            state(StructureField::Energy, 1),
+            state(StructureField::Temperature, 1),
+            state(StructureField::StateProperties, 1),
+        ]
+    );
+}
+
+#[test]
+fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
+    use kekule::properties::{PropertyKey, PropertyValue};
+    use kekule::topology::TopologyAtomIndex;
+    let omit = UnrepresentablePolicy::Omit;
+    let key = || PropertyKey::new("note").unwrap();
+    let state = |field, structures| WriteOmission::StructureState { field, structures };
+
+    // A model's own properties.
+    let plain = model("C", &[[0.0; 3]]);
+    let mut noted = plain.clone();
+    noted
+        .properties_mut()
+        .owner_mut()
+        .insert(key(), PropertyValue::Int(1))
+        .unwrap();
+    assert_eq!(
+        pdb::write(&noted, PdbWriteOptions::default())
+            .unwrap_err()
+            .to_string(),
+        "Cannot write the PDB output. The structure properties of the model have no PDB \
+         representation."
+    );
+    let (text, report) =
+        pdb::write(&noted, PdbWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(
+        text,
+        pdb::write(&plain, PdbWriteOptions::default()).unwrap().0
+    );
+    assert_eq!(report.omissions(), [state(StructureField::Properties, 1)]);
+    let mmcif_default = || MmcifWriteOptions::default();
+    assert_eq!(
+        mmcif::write([&noted], mmcif_default())
+            .unwrap_err()
+            .to_string(),
+        "Cannot write the mmCIF output. The structure properties of the model have no mmCIF \
+         representation."
+    );
+    let (text, report) = mmcif::write([&noted], mmcif_default().with_properties(omit)).unwrap();
+    assert_eq!(text, mmcif::write([&plain], mmcif_default()).unwrap().0);
+    assert!(report
+        .omissions()
+        .contains(&state(StructureField::Properties, 1)));
+
+    // A set's properties and a sample's.
+    let mut set = SampleSet::from_models([plain.clone(), plain.clone()]).unwrap();
+    let bare_pdb = pdb::write(&set, PdbWriteOptions::default()).unwrap().0;
+    let bare_mmcif = mmcif::write([&set], mmcif_default()).unwrap().0;
+    set.properties_mut()
+        .insert(key(), PropertyValue::Int(2))
+        .unwrap();
+    set.get_mut(1)
+        .unwrap()
+        .properties_mut()
+        .atoms_mut()
+        .set_value(
+            key(),
+            TopologyAtomIndex::new(0),
+            Some(PropertyValue::Int(3)),
+        )
+        .unwrap();
+    let error = pdb::write(&set, PdbWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::PdbWrite(
+            pdb::PdbWriteIssue::UnrepresentableSample {
+                sample: 1,
+                field: StructureField::SetProperties,
+            }
+        ))
+    );
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The sample set properties have no PDB representation."
+    );
+    let expected = [
+        state(StructureField::SetProperties, 2),
+        state(StructureField::AtomProperties, 1),
+    ];
+    let (text, report) =
+        pdb::write(&set, PdbWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare_pdb);
+    assert_eq!(report.omissions(), expected);
+    let (text, report) = mmcif::write([&set], mmcif_default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare_mmcif);
+    assert!(expected
+        .iter()
+        .all(|omission| report.omissions().contains(omission)));
+    // Without the set's properties, the sample's name it.
+    set.properties_mut().clear();
+    assert_eq!(
+        mmcif_issue(mmcif::write([&set], mmcif_default())),
+        Some(MmcifWriteIssue::UnrepresentableSample {
+            sample: 2,
+            field: StructureField::AtomProperties,
+        })
+    );
+    // Occupancies are written, as PDB and mmCIF carry them.
+    let (occupied, _, _) = models_with_unwritable_state().remove(0);
+    assert!(pdb::write(&occupied, PdbWriteOptions::default()).is_ok());
 }

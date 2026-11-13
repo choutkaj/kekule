@@ -912,3 +912,61 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
         assert!((*read - *written).norm() < 1.0e-3);
     }
 }
+
+#[test]
+fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
+    use kekule::structure::{Sample, StructureError};
+    use kekule::units::{Quantity, NANOMETER};
+
+    let ethanol = kekule::smiles::to_topology("CCO").unwrap();
+    let water = kekule::smiles::to_topology("O").unwrap();
+    let points = (0..ethanol.atom_count())
+        .map(|atom| kekule::geometry::Point3::new(atom as f64, 0.5, -0.25))
+        .collect::<Vec<_>>();
+    let mut sample = Sample::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
+    let before = sample.clone();
+    let stored = sample.positions().values().value().as_ptr();
+
+    // Another atom count fails and leaves the sample as it was.
+    assert!(matches!(
+        sample.bind(&water).unwrap_err(),
+        StructureError::Array(_)
+    ));
+    assert_eq!(sample, before);
+    assert!(sample.shares_structure_with(&before));
+    assert_eq!(sample.positions().values().value().as_ptr(), stored);
+
+    // Bound, the sample refuses the bond rows of another topology with as
+    // many atoms and keeps its own.
+    sample.bind(&ethanol).unwrap();
+    let bound = sample.clone();
+    let dimethyl_ether = kekule::smiles::to_topology("COC").unwrap();
+    let ring = kekule::smiles::to_topology("C1CO1").unwrap();
+    assert_eq!(ring.atom_count(), ethanol.atom_count());
+    assert!(matches!(
+        sample.bind(&ring).unwrap_err(),
+        StructureError::BondCountMismatch { .. }
+    ));
+    assert_eq!(sample, bound);
+    assert!(sample.shares_structure_with(&bound));
+    // A topology with the same bond count binds as the sample already is.
+    sample.bind(&dimethyl_ether).unwrap();
+    assert!(sample.shares_structure_with(&bound));
+
+    // Binding a sample that shares its storage copies it once and leaves the
+    // other sample unbound and unchanged.
+    let mut copy = before.clone();
+    assert!(copy.shares_structure_with(&before));
+    copy.bind(&ethanol).unwrap();
+    assert!(!copy.shares_structure_with(&before));
+    assert_eq!(copy.positions(), before.positions());
+    assert_eq!(
+        FrameView::new(&ethanol, &before, None, None).unwrap_err(),
+        StructureError::BondCountMismatch {
+            expected: ethanol.bond_count(),
+            actual: 0,
+        }
+    );
+    assert!(FrameView::new(&ethanol, &copy, None, None).is_ok());
+    assert_eq!(before.positions().values().value().as_ptr(), stored);
+}

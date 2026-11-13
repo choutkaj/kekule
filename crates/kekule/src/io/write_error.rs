@@ -2,7 +2,9 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, StructureField,
 };
-use crate::structure::{Distribution, Order, Place, SampleContext, SampleSet, StructureKind};
+use crate::structure::{
+    Distribution, ModelView, Order, Place, SampleContext, SampleSet, StructureKind,
+};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -203,27 +205,61 @@ pub enum WriteOmission {
     },
 }
 
-/// What a structure writer does with the state of a sample, a sample set's
-/// or a trajectory frame's, that its format cannot carry.
+/// What a structure writer does with the state of a structure that its
+/// format cannot carry: a sample's, a sample set's, or a trajectory frame's
+/// state, a structure's occupancies and B factors, and properties.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StatePolicies {
-    /// The policy for every such state.
+    /// The policy for sample state, and for occupancies and B factors.
     pub(crate) policy: UnrepresentablePolicy,
+    /// The policy for per-atom, per-bond, and own structure properties and
+    /// for the properties of a sample's set.
+    pub(crate) properties: UnrepresentablePolicy,
     /// Whether the format writes a sample's membership in a distribution
     /// itself, and its writer decides about a sample outside the
     /// distribution.
     pub(crate) writes_membership: bool,
     /// Whether the format writes a sample's step or coordinate place itself.
     pub(crate) writes_place: bool,
+    /// Whether the format writes occupancies and B factors.
+    pub(crate) writes_sites: bool,
 }
 
 impl StatePolicies {
-    /// The policies of a format that writes no sample state itself.
-    pub(crate) const fn positions_only(policy: UnrepresentablePolicy) -> Self {
+    /// The policies of a format that writes coordinates and nothing else of
+    /// a structure's state.
+    pub(crate) const fn positions_only(
+        policy: UnrepresentablePolicy,
+        properties: UnrepresentablePolicy,
+    ) -> Self {
         Self {
             policy,
+            properties,
             writes_membership: false,
             writes_place: false,
+            writes_sites: false,
+        }
+    }
+
+    /// The policies of a format that also writes occupancies and B factors.
+    pub(crate) const fn with_sites(
+        policy: UnrepresentablePolicy,
+        properties: UnrepresentablePolicy,
+    ) -> Self {
+        Self {
+            writes_sites: true,
+            ..Self::positions_only(policy, properties)
+        }
+    }
+
+    /// The policy that decides about `field`.
+    const fn of(self, field: StructureField) -> UnrepresentablePolicy {
+        match field {
+            StructureField::AtomProperties
+            | StructureField::BondProperties
+            | StructureField::Properties
+            | StructureField::SetProperties => self.properties,
+            _ => self.policy,
         }
     }
 }
@@ -241,6 +277,9 @@ pub(crate) fn unrepresentable_state(
             format!("The ensemble temperature has no {format} representation.")
         }
         (StructureField::Order, _) => format!("The sample order has no {format} representation."),
+        (StructureField::SetProperties, _) => {
+            format!("The sample set properties have no {format} representation.")
+        }
         (field, Some(sample)) => {
             let verb = verb(field);
             format!("The {field} of sample {sample} {verb} no {format} representation.")
@@ -248,6 +287,22 @@ pub(crate) fn unrepresentable_state(
         (field, None) => {
             let verb = verb(field);
             format!("The {field} of the sample {verb} no {format} representation.")
+        }
+    }
+}
+
+/// The sentence for the `field` of a lone structure that `format` cannot
+/// carry: of the sample for a sample or a frame, of the model otherwise.
+fn unrepresentable_structure_state(
+    format: Format,
+    field: StructureField,
+    kind: StructureKind<'_>,
+) -> String {
+    match kind {
+        StructureKind::Sample(_) => unrepresentable_state(format, field, None),
+        StructureKind::Model => {
+            let verb = verb(field);
+            format!("The {field} of the model {verb} no {format} representation.")
         }
     }
 }
@@ -261,7 +316,10 @@ const fn verb(field: StructureField) -> &'static str {
         | StructureField::StateProperties
         | StructureField::AtomProperties
         | StructureField::BondProperties
-        | StructureField::Properties => "have",
+        | StructureField::Properties
+        | StructureField::SetProperties
+        | StructureField::Occupancies
+        | StructureField::BFactors => "have",
         _ => "has",
     }
 }
@@ -325,49 +383,120 @@ impl Omissions {
         }
     }
 
-    /// Records the sample state `kind` has that the policies omit: its
-    /// membership, unless the format writes memberships, its step or
-    /// coordinate, and its time, step, velocities, and forces. Call it after
+    /// Records the state of the lone structure `view` that the policies
+    /// omit, in the order of [`lost_structure_state`]. Call it after
     /// [`check_structure_state`] has passed.
-    pub(crate) fn record_structure_state(
-        &mut self,
-        kind: StructureKind<'_>,
-        policies: StatePolicies,
-    ) {
-        let StructureKind::Sample(context) = kind else {
-            return;
-        };
-        if policies.policy == UnrepresentablePolicy::Fail {
-            return;
-        }
-        let mut fields = Vec::new();
-        let membership = context.membership().filter(|_| !policies.writes_membership);
-        if let Some(membership) = membership {
-            // A lone record cannot carry a weight relative to other
-            // samples, so its weight is always left out.
-            fields.push(StructureField::Weight);
-            if membership.state_energy().is_some() {
-                fields.push(StructureField::Energy);
+    pub(crate) fn record_structure_state(&mut self, view: ModelView<'_>, policies: StatePolicies) {
+        for field in lost_structure_state(view, policies) {
+            if policies.of(field) == UnrepresentablePolicy::Omit {
+                self.record(structure_omission(field, 1));
             }
-            if membership.temperature().is_some() {
-                fields.push(StructureField::Temperature);
-            }
-        }
-        if !policies.writes_place {
-            fields.extend(place_field(context));
-        }
-        fields.extend(frame_fields(context));
-        for field in fields {
-            self.record(WriteOmission::StructureState {
-                field,
-                structures: 1,
-            });
         }
     }
 
     pub(crate) fn into_report(self) -> WriteReport {
         WriteReport { omissions: self.0 }
     }
+}
+
+/// The omission of `field` from `structures` structures: occupancies and B
+/// factors have omissions of their own.
+fn structure_omission(field: StructureField, structures: usize) -> WriteOmission {
+    match field {
+        StructureField::Occupancies => WriteOmission::Occupancies { structures },
+        StructureField::BFactors => WriteOmission::BFactors { structures },
+        field => WriteOmission::StructureState { field, structures },
+    }
+}
+
+/// The state of the lone structure `view` that a format with `policies`
+/// cannot carry, whatever the policies decide about it, in checking order:
+/// a sample's membership, unless the format writes memberships (its weight,
+/// its state's energy, and the temperature); its
+/// state's properties, on the record of the state's representative; its
+/// step or coordinate place, unless the format writes places; its time,
+/// MD step, velocities, and forces; the structure's occupancies and B
+/// factors, unless the format writes them; and its per-atom, per-bond, and
+/// own properties and those of its set.
+fn lost_structure_state(view: ModelView<'_>, policies: StatePolicies) -> Vec<StructureField> {
+    let mut fields = Vec::new();
+    let context = match view.kind() {
+        StructureKind::Sample(context) => Some(context),
+        StructureKind::Model => None,
+    };
+    if let Some(context) = context {
+        if let Some(membership) = context.membership() {
+            if !policies.writes_membership {
+                // A lone record cannot carry a weight relative to other
+                // samples, so its weight is always left out.
+                fields.push(StructureField::Weight);
+                if membership.state_energy().is_some() {
+                    fields.push(StructureField::Energy);
+                }
+                if membership.temperature().is_some() {
+                    fields.push(StructureField::Temperature);
+                }
+            }
+            let properties = context
+                .distribution()
+                .and_then(|distribution| distribution.states().get(membership.state()))
+                .is_some_and(|state| !state.properties().is_empty());
+            if membership.is_representative() && properties {
+                fields.push(StructureField::StateProperties);
+            }
+        }
+        if !policies.writes_place {
+            fields.extend(place_field(context));
+        }
+        fields.extend(frame_fields(context));
+    }
+    if !policies.writes_sites {
+        fields.extend(site_fields(view));
+    }
+    fields.extend(property_fields(view));
+    if context
+        .and_then(SampleContext::set_properties)
+        .is_some_and(|properties| !properties.is_empty())
+    {
+        fields.push(StructureField::SetProperties);
+    }
+    fields
+}
+
+/// The occupancies and B factors `view` records.
+fn site_fields(view: ModelView<'_>) -> impl Iterator<Item = StructureField> {
+    [
+        (
+            view.occupancies()
+                .is_some_and(|values| values.iter().any(Option::is_some)),
+            StructureField::Occupancies,
+        ),
+        (
+            view.b_factors()
+                .is_some_and(|values| values.value().iter().any(Option::is_some)),
+            StructureField::BFactors,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(present, field)| present.then_some(field))
+}
+
+/// The per-atom, per-bond, and own properties `view` has, in that order.
+fn property_fields(view: ModelView<'_>) -> impl Iterator<Item = StructureField> {
+    let properties = view.properties();
+    [
+        (
+            properties.atoms().has_data(),
+            StructureField::AtomProperties,
+        ),
+        (
+            properties.bonds().has_data(),
+            StructureField::BondProperties,
+        ),
+        (!properties.owner().is_empty(), StructureField::Properties),
+    ]
+    .into_iter()
+    .filter_map(|(present, field)| present.then_some(field))
 }
 
 /// The field a sample's step or coordinate place is written as, if it has
@@ -397,45 +526,74 @@ fn frame_fields(context: SampleContext<'_>) -> impl Iterator<Item = StructureFie
     .filter_map(|(present, field)| present.then_some(field))
 }
 
-/// Fails for sample state that `format` cannot carry, unless the caller
-/// chose to omit it: a membership, unless the format writes memberships; a
-/// step or coordinate place; and a time, MD step, velocities, or forces,
-/// checked in that order.
+/// Fails for the first state of the lone structure `view` that `format`
+/// cannot carry and the policies do not omit, in the order of
+/// [`lost_structure_state`].
 pub(crate) fn check_structure_state(
     format: Format,
-    kind: StructureKind<'_>,
+    view: ModelView<'_>,
     policies: StatePolicies,
 ) -> Result<(), FormatError> {
-    let StructureKind::Sample(context) = kind else {
-        return Ok(());
-    };
-    if policies.policy == UnrepresentablePolicy::Omit {
-        return Ok(());
-    }
-    let membership = if policies.writes_membership {
-        None
-    } else {
-        // A lone record cannot carry a weight relative to other samples.
-        context.membership().map(|membership| {
-            if membership.state_energy().is_some() {
+    let lost = lost_structure_state(view, policies);
+    let field = lost
+        .iter()
+        .copied()
+        .find(|&field| policies.of(field) == UnrepresentablePolicy::Fail)
+        // A membership with a state energy fails on the energy, the field
+        // the reader would miss most.
+        .map(|field| match field {
+            StructureField::Weight if lost.contains(&StructureField::Energy) => {
                 StructureField::Energy
-            } else {
-                StructureField::Weight
             }
-        })
-    };
-    let field = membership
-        .or_else(|| place_field(context).filter(|_| !policies.writes_place))
-        .or_else(|| frame_fields(context).next());
+            field => field,
+        });
     match field {
         None => Ok(()),
         Some(field) => Err(FormatError::write(
             format,
             DiagnosticKind::Unsupported,
-            unrepresentable_state(format, field, None),
+            unrepresentable_structure_state(format, field, view.kind()),
         )
         .with_detail(FormatErrorDetail::UnrepresentableState(field))),
     }
+}
+
+/// Records or rejects the properties of `set` and of its samples that a
+/// multi-model format cannot carry: the set's own properties, then each
+/// sample's per-atom, per-bond, and own properties. With
+/// [`UnrepresentablePolicy::Fail`], returns the 1-based number of the first
+/// sample with such properties and the field, sample 1 for the set's.
+/// With [`UnrepresentablePolicy::Omit`], records the omissions, the set's
+/// counting every sample.
+pub(crate) fn record_sample_set_properties(
+    set: &SampleSet,
+    policy: UnrepresentablePolicy,
+    omissions: &mut Omissions,
+) -> Result<(), (usize, StructureField)> {
+    let set_properties = !set.properties().is_empty() && !set.is_empty();
+    if policy == UnrepresentablePolicy::Fail {
+        if set_properties {
+            return Err((1, StructureField::SetProperties));
+        }
+        for (index, sample) in set.iter().enumerate() {
+            if let Some(field) = property_fields(sample.as_model_view()).next() {
+                return Err((index + 1, field));
+            }
+        }
+        return Ok(());
+    }
+    if set_properties {
+        omissions.record(WriteOmission::StructureState {
+            field: StructureField::SetProperties,
+            structures: set.len(),
+        });
+    }
+    for sample in set {
+        for field in property_fields(sample.as_model_view()) {
+            omissions.record(structure_omission(field, 1));
+        }
+    }
+    Ok(())
 }
 
 /// Records or rejects the state of `set` that a multi-model format cannot

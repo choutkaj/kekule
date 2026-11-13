@@ -9,17 +9,19 @@ use crate::units::{named_unit, KELVIN, KILOJOULE_PER_MOLE};
 
 use super::molfile_write::{check_cell, render_model};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
-use super::write_error::{check_structure_state, unrepresentable_state, Omissions, StatePolicies};
+use super::write_error::{check_structure_state, Omissions, StatePolicies};
 use super::{MolfileWriteVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, StructureField};
 
 /// Options of SDF writing; the default writes
-/// [`MolfileWriteVersion::Auto`] records and fails on a periodic cell.
+/// [`MolfileWriteVersion::Auto`] records and fails on content an SDF record
+/// cannot carry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
     sample_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
 }
 
 impl SdfWriteOptions {
@@ -51,17 +53,16 @@ impl SdfWriteOptions {
         self
     }
 
-    /// The state of a sample that an SDF record cannot carry, whether of a
+    /// The state that an SDF record cannot carry of a sample, whether of a
     /// sample set or a trajectory frame: its time and MD step in a time
-    /// order, its velocities and forces, a coordinate unit that is not a unit
-    /// constant, and its being outside the set's distribution when no record
-    /// of the output is a member, since then no record tells it from a
-    /// sample of a set without a distribution. By default writing a sample
-    /// with any of them fails. Under [`UnrepresentablePolicy::Omit`] the
-    /// report counts the samples written without each
-    /// ([`WriteOmission::StructureState`]). Its weight, state, state energy,
-    /// and temperature, and its step or coordinate, are otherwise written as
-    /// data fields.
+    /// order, its velocities and forces, its state's properties, and a
+    /// coordinate unit that is not a unit constant; and the occupancies and
+    /// B factors of any model. By default writing a structure with any of
+    /// them fails. Under [`UnrepresentablePolicy::Omit`] the report counts
+    /// the records written without each ([`WriteOmission::StructureState`],
+    /// [`WriteOmission::Occupancies`], [`WriteOmission::BFactors`]). A
+    /// sample's membership, weight, state, state energy, and temperature, and
+    /// its step or coordinate, are written as data fields.
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata
     }
@@ -72,10 +73,28 @@ impl SdfWriteOptions {
         self.sample_metadata = sample_metadata;
         self
     }
+
+    /// A structure's per-atom, per-bond, and own properties and the
+    /// properties of a sample's set, which an SDF record cannot carry: by
+    /// default a record of a structure with any fails to write, and under
+    /// [`UnrepresentablePolicy::Omit`] the report counts the records written
+    /// without each ([`WriteOmission::StructureState`]). A caller writes the
+    /// values a record should carry as data fields.
+    pub const fn properties(&self) -> UnrepresentablePolicy {
+        self.properties
+    }
+
+    /// Sets [`Self::properties`].
+    #[must_use]
+    pub const fn with_properties(mut self, properties: UnrepresentablePolicy) -> Self {
+        self.properties = properties;
+        self
+    }
 }
 
 /// The data field a sample's relative weight is written to and
-/// [`sdf::sample_set`](crate::sdf::sample_set) reads it from.
+/// [`sdf::sample_set`](crate::sdf::sample_set) reads it from, on the records
+/// of a distribution with weights.
 pub const SDF_WEIGHT_FIELD: &str = "kekule.weight";
 /// The data field the index of a sample's state is written to.
 pub const SDF_STATE_FIELD: &str = "kekule.state";
@@ -88,6 +107,9 @@ pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
 /// The data field the temperature a distribution's populations describe is
 /// written to, in kelvin, on the record of every member.
 pub const SDF_TEMPERATURE_FIELD: &str = "kekule.temperature.K";
+/// The data field, `false`, that marks the record of a sample outside its
+/// set's distribution.
+pub const SDF_MEMBER_FIELD: &str = "kekule.member";
 
 /// The data field a sample's step in a step order is written to.
 pub const SDF_STEP_FIELD: &str = "kekule.step";
@@ -100,12 +122,13 @@ pub const SDF_COORDINATE_FIELD: &str = "kekule.coordinate";
 pub const SDF_COORDINATE_UNIT_FIELD: &str = "kekule.coordinate.unit";
 
 /// The data fields a sample's membership uses.
-const SAMPLE_FIELDS: [&str; 5] = [
+const SAMPLE_FIELDS: [&str; 6] = [
     SDF_WEIGHT_FIELD,
     SDF_STATE_FIELD,
     SDF_REPRESENTATIVE_FIELD,
     SDF_ENERGY_FIELD,
     SDF_TEMPERATURE_FIELD,
+    SDF_MEMBER_FIELD,
 ];
 
 /// The data fields a sample's step or coordinate place uses.
@@ -121,23 +144,25 @@ const PLACE_FIELDS: [&str; 3] = [
 /// frame, or `&SdfRecordInterpretation` (which keeps its title and data
 /// fields); `sdf::write(&set, options)` writes a record per sample. A
 /// sample's membership in a distribution follows its data fields: its
-/// weight, its state, and the distribution's temperature as
-/// [`SDF_WEIGHT_FIELD`], [`SDF_STATE_FIELD`], and [`SDF_TEMPERATURE_FIELD`];
-/// a representative's record is marked with [`SDF_REPRESENTATIVE_FIELD`]
-/// and carries its state's energy as [`SDF_ENERGY_FIELD`], whichever way
-/// its view is passed. A sample outside the distribution has none of these
-/// fields, which tells it from the members, so a distribution over some of
-/// a set's samples is written whole when the output holds a member. A step
-/// place follows as [`SDF_STEP_FIELD`], and a
-/// coordinate place as [`SDF_COORDINATE_FIELD`] with
-/// [`SDF_COORDINATE_UNIT_FIELD`]; a sample with both a membership and a
-/// place writes both groups. A coordinate unit must be one of the unit
-/// constants of [`crate::units`], which the reader knows by symbol; another
-/// fails to write unless [`SdfWriteOptions::sample_metadata`] omits the
-/// coordinate. State, set, and structure properties are not written; add
+/// state and the distribution's temperature as [`SDF_STATE_FIELD`] and
+/// [`SDF_TEMPERATURE_FIELD`], and its weight as [`SDF_WEIGHT_FIELD`] when
+/// the distribution has weights; a representative's record is marked with
+/// [`SDF_REPRESENTATIVE_FIELD`] and carries its state's energy as
+/// [`SDF_ENERGY_FIELD`], whichever way its view is passed. The record of a
+/// sample outside the distribution is marked with [`SDF_MEMBER_FIELD`]
+/// alone, so a distribution over some of a set's samples is written whole.
+/// A step place follows as [`SDF_STEP_FIELD`], and a coordinate place as
+/// [`SDF_COORDINATE_FIELD`] with [`SDF_COORDINATE_UNIT_FIELD`]; a sample
+/// with both a membership and a place writes both groups. A coordinate
+/// unit must be one of the unit constants of [`crate::units`], which the
+/// reader knows by symbol; another fails to write unless
+/// [`SdfWriteOptions::sample_metadata`] omits the coordinate. A sample's
+/// time, MD step, velocities, forces, and state properties, and a model's
+/// occupancies and B factors, fail to write unless
+/// [`SdfWriteOptions::sample_metadata`] omits them; structure and set
+/// properties fail unless [`SdfWriteOptions::properties`] omits them. Add
 /// the values a record should carry, such as a sample's energy, as data
-/// fields. A sample's time, MD step, velocities, and forces fail to write
-/// unless [`SdfWriteOptions::sample_metadata`] omits them.
+/// fields.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     model: ModelView<'a>,
@@ -225,37 +250,9 @@ pub(crate) fn write_sdf_to<'a, R: Into<SdfRecordSource<'a>>>(
     options: SdfWriteOptions,
 ) -> Result<WriteReport, FormatError> {
     let mut omissions = Omissions::default();
-    // The records of samples outside their set's distribution, which only
-    // the records of members tell from samples of a set without one.
-    let mut outside = Vec::new();
-    let mut member = false;
     for (number, record) in (1..).zip(records) {
-        let record = record.into();
-        if let StructureKind::Sample(context) = record.model.kind() {
-            member |= context.membership().is_some();
-            if context.is_outside_distribution() {
-                outside.push(number);
-            }
-        }
-        write_record(writer, record, options, &mut omissions)
+        write_record(writer, record.into(), options, &mut omissions)
             .map_err(|error| error.in_record(number))?;
-    }
-    if let (false, Some(&first)) = (member, outside.first()) {
-        if options.sample_metadata == UnrepresentablePolicy::Fail {
-            return Err(FormatError::write(
-                Format::Sdf,
-                DiagnosticKind::Unsupported,
-                unrepresentable_state(Format::Sdf, StructureField::Membership, None),
-            )
-            .with_detail(FormatErrorDetail::UnrepresentableState(
-                StructureField::Membership,
-            ))
-            .in_record(first));
-        }
-        omissions.record(WriteOmission::StructureState {
-            field: StructureField::Membership,
-            structures: outside.len(),
-        });
     }
     Ok(omissions.into_report())
 }
@@ -268,23 +265,27 @@ fn write_record(
 ) -> Result<(), FormatError> {
     validate_title(record.title)?;
     let policies = StatePolicies {
-        policy: options.sample_metadata,
         writes_membership: true,
         writes_place: true,
+        ..StatePolicies::positions_only(options.sample_metadata, options.properties)
     };
-    check_structure_state(Format::Sdf, record.model.kind(), policies)?;
-    // A sample's membership and its step or coordinate place, which travel
-    // as data fields, and whether its set has a distribution, whose
-    // non-members' records have no membership fields.
-    let (membership, distributed, place) = match record.model.kind() {
+    check_structure_state(Format::Sdf, record.model, policies)?;
+    // A sample's membership, or its being outside the distribution, and its
+    // step or coordinate place, which travel as data fields; whether its
+    // set's distribution has weights; and whether its set has a
+    // distribution.
+    let (membership, weighted, distributed, place) = match record.model.kind() {
         StructureKind::Sample(context) => (
             context.membership(),
+            context
+                .distribution()
+                .is_some_and(|distribution| distribution.weights().is_some()),
             context.membership().is_some() || context.is_outside_distribution(),
             context
                 .place()
                 .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
         ),
-        _ => (None, false, None),
+        StructureKind::Model => (None, false, false, None),
     };
     // Whether a sample's own data uses the name.
     let reserved = |name: &str| {
@@ -318,7 +319,11 @@ fn write_record(
         }
         place => place,
     };
-    let mut own_fields = membership.map_or_else(Vec::new, sample_fields);
+    let mut own_fields = match membership {
+        Some(membership) => sample_fields(membership, weighted),
+        None if distributed => vec![SdfDataField::new(SDF_MEMBER_FIELD, "false")],
+        None => Vec::new(),
+    };
     own_fields.extend(written_place.map_or_else(Vec::new, place_fields));
     for field in record.data_fields {
         validate_data_field(field)?;
@@ -345,7 +350,7 @@ fn write_record(
     if record.model.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }
-    omissions.record_structure_state(record.model.kind(), policies);
+    omissions.record_structure_state(record.model, policies);
     let sink = |error| FormatError::sink(Format::Sdf, error);
     writer.write_all(ctab.as_bytes()).map_err(sink)?;
     for field in record.data_fields.iter().chain(&own_fields) {
@@ -368,14 +373,22 @@ fn place_fields(place: Place) -> Vec<SdfDataField> {
     }
 }
 
-/// A sample's weight and state, its state's energy on a representative's
-/// record, and the distribution's temperature as data fields,
-/// numbers in the shortest decimal text that reads back to the same value.
-fn sample_fields(membership: Membership) -> Vec<SdfDataField> {
-    let mut fields = vec![
-        SdfDataField::new(SDF_WEIGHT_FIELD, membership.weight().to_string()),
-        SdfDataField::new(SDF_STATE_FIELD, membership.state().to_string()),
-    ];
+/// A sample's weight when the distribution has weights, its state, its
+/// state's energy on a representative's record, and the distribution's
+/// temperature as data fields, numbers in the shortest decimal text that
+/// reads back to the same value.
+fn sample_fields(membership: Membership, weighted: bool) -> Vec<SdfDataField> {
+    let mut fields = Vec::new();
+    if weighted {
+        fields.push(SdfDataField::new(
+            SDF_WEIGHT_FIELD,
+            membership.weight().to_string(),
+        ));
+    }
+    fields.push(SdfDataField::new(
+        SDF_STATE_FIELD,
+        membership.state().to_string(),
+    ));
     if membership.is_representative() {
         fields.push(SdfDataField::new(SDF_REPRESENTATIVE_FIELD, "true"));
         if let Some(energy) = membership.state_energy() {

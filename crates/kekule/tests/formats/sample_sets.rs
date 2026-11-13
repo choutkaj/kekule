@@ -428,6 +428,31 @@ fn sdf_coordinate_units_are_the_unit_constants() {
 }
 
 #[test]
+fn sdf_coordinate_units_must_match_the_first_record() {
+    let records = [
+        methane_record(
+            0.0,
+            &[
+                (sdf::COORDINATE_FIELD, "1"),
+                (sdf::COORDINATE_UNIT_FIELD, "A"),
+            ],
+        ),
+        methane_record(
+            1.0,
+            &[
+                (sdf::COORDINATE_FIELD, "2"),
+                (sdf::COORDINATE_UNIT_FIELD, "nm"),
+            ],
+        ),
+    ];
+    assert_eq!(
+        sdf::sample_set(&records).unwrap_err().to_string(),
+        "Cannot interpret the SDF input in record 2. The data field \"kekule.coordinate.unit\" \
+         differs from that of record 1."
+    );
+}
+
+#[test]
 fn sdf_place_fields_appear_once_per_record() {
     for (name, value) in [
         (sdf::STEP_FIELD, "4"),

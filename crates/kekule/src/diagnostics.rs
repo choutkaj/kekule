@@ -849,9 +849,9 @@ pub enum FormatErrorDetail {
     MmcifWrite(crate::io::MmcifWriteIssue),
     /// A failure specific to the PDB writer.
     PdbWrite(crate::io::PdbWriteIssue),
-    /// The written structure is a sample or a trajectory frame
-    /// with this state, which the format cannot carry, and the writer's
-    /// policy for it is [`UnrepresentablePolicy::Fail`].
+    /// The written structure, a model, a sample, or a trajectory frame, has
+    /// this state, which the format cannot carry, and the writer's policy
+    /// for it is [`UnrepresentablePolicy::Fail`].
     UnrepresentableState(StructureField),
     /// A configured or built-in resource limit was exceeded; the kind is
     /// [`DiagnosticKind::Limit`].
@@ -891,7 +891,7 @@ pub enum FormatErrorDetail {
     },
 }
 
-/// Sample or trajectory frame state named by
+/// Structure, sample, or trajectory frame state named by
 /// [`FormatErrorDetail::UnrepresentableState`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -925,6 +925,12 @@ pub enum StructureField {
     BondProperties,
     /// A sample's or frame's own properties.
     Properties,
+    /// A sample set's own properties.
+    SetProperties,
+    /// A structure's crystallographic occupancies.
+    Occupancies,
+    /// A structure's crystallographic B factors.
+    BFactors,
     /// A sample's step in a step order.
     OrderStep,
     /// A sample's coordinate in a coordinate order.
@@ -951,6 +957,9 @@ impl fmt::Display for StructureField {
             Self::AtomProperties => "per-atom structure properties",
             Self::BondProperties => "per-bond structure properties",
             Self::Properties => "structure properties",
+            Self::SetProperties => "sample set properties",
+            Self::Occupancies => "occupancies",
+            Self::BFactors => "B factors",
             Self::OrderStep => "order step",
             Self::OrderCoordinate => "order coordinate",
             Self::Membership => "distribution membership",

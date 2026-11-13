@@ -4,6 +4,7 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::properties::OwnerProperties;
 use crate::structure::{
     sample_storage, Distribution, Order, Sample, SampleRead, SampleReadError, SampleSet,
     SampleStorage, SampleView, TimeAxis,
@@ -356,6 +357,10 @@ impl SampleRead for SampleSet<IndexedFile> {
 
     fn distribution(&self) -> Option<&Distribution> {
         SampleSet::distribution(self)
+    }
+
+    fn properties(&self) -> Option<&OwnerProperties> {
+        Some(SampleSet::properties(self))
     }
 
     fn peek(&self, _index: usize) -> Option<SampleView<'_, dyn SampleRead>> {

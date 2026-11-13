@@ -114,43 +114,49 @@ impl SampleSetDescription {
     /// trajectory file that grew after the description was saved: the
     /// distribution as [`Distribution::extended_to`] gives it, keeping its
     /// weights, partition, states, and temperature bit for bit, and the set
-    /// properties. The order describes the samples it was made for, so a
-    /// description that gains samples is unordered; give it the longer
-    /// set's order with [`Self::with_order`].
+    /// properties. A saved order describes the samples it was made for, so
+    /// `order` replaces it: the longer set's order, or `None` for an
+    /// unordered set.
     ///
     /// ```
     /// use kekule::native::SampleSetDescription;
-    /// use kekule::structure::{Distribution, Members, Partition};
+    /// use kekule::structure::{Distribution, Members, Order, Partition};
     ///
     /// let topology = kekule::smiles::to_topology("O")?;
     /// let saved = SampleSetDescription::new(topology, 3).with_distribution(Some(
     ///     Distribution::new(Members::All, Partition::one_state(3))?,
     /// ))?;
-    /// let grown = saved.extended_to(5)?;
+    /// let grown = saved.extended_to(5, Some(Order::Step(vec![0, 10, 20, 30, 40])))?;
     /// assert_eq!(grown.sample_count(), 5);
     /// assert_eq!(grown.distribution().unwrap().members(), &Members::Subset(vec![0, 1, 2]));
+    /// assert_eq!(grown.order(), Some(&Order::Step(vec![0, 10, 20, 30, 40])));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
     ///
     /// [`SampleSetError::CoverageMismatch`] for fewer samples than the
-    /// description describes.
-    pub fn extended_to(mut self, sample_count: usize) -> Result<Self, SampleSetError> {
+    /// description describes, and the errors of [`Self::with_order`]
+    /// against `sample_count`.
+    pub fn extended_to(
+        mut self,
+        sample_count: usize,
+        order: Option<Order>,
+    ) -> Result<Self, SampleSetError> {
         if sample_count < self.sample_count {
             return Err(SampleSetError::CoverageMismatch {
                 covered: self.sample_count,
                 samples: sample_count,
             });
         }
-        if sample_count == self.sample_count {
-            return Ok(self);
+        if let Some(order) = &order {
+            order.validate(sample_count)?;
         }
         self.distribution = self
             .distribution
             .map(|distribution| distribution.extended_to(sample_count))
             .transpose()?;
-        self.order = None;
+        self.order = order;
         self.sample_count = sample_count;
         Ok(self)
     }

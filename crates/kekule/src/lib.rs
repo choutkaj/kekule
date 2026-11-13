@@ -743,8 +743,10 @@ pub mod molfile {
     /// Writes one CTAB from a molecule (zero coordinates) or a model, with
     /// the [`WriteReport`](crate::diagnostics::WriteReport) of what it left
     /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
-    /// a model's cell and a sample's state
-    /// ([`MolfileWriteOptions::cell`], [`MolfileWriteOptions::sample_metadata`]).
+    /// a model's cell, a sample's state, occupancies, B factors, and
+    /// properties ([`MolfileWriteOptions::cell`],
+    /// [`MolfileWriteOptions::sample_metadata`],
+    /// [`MolfileWriteOptions::properties`]).
     ///
     /// [`MolfileWriteVersion::Auto`] uses V2000 when it can represent the
     /// chemistry and V3000 otherwise. V2000 rounds coordinates to four decimal
@@ -817,9 +819,9 @@ pub mod sdf {
         SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteOptions,
         SDF_COORDINATE_FIELD as COORDINATE_FIELD,
         SDF_COORDINATE_UNIT_FIELD as COORDINATE_UNIT_FIELD, SDF_ENERGY_FIELD as ENERGY_FIELD,
-        SDF_REPRESENTATIVE_FIELD as REPRESENTATIVE_FIELD, SDF_STATE_FIELD as STATE_FIELD,
-        SDF_STEP_FIELD as STEP_FIELD, SDF_TEMPERATURE_FIELD as TEMPERATURE_FIELD,
-        SDF_WEIGHT_FIELD as WEIGHT_FIELD,
+        SDF_MEMBER_FIELD as MEMBER_FIELD, SDF_REPRESENTATIVE_FIELD as REPRESENTATIVE_FIELD,
+        SDF_STATE_FIELD as STATE_FIELD, SDF_STEP_FIELD as STEP_FIELD,
+        SDF_TEMPERATURE_FIELD as TEMPERATURE_FIELD, SDF_WEIGHT_FIELD as WEIGHT_FIELD,
     };
 
     /// Assembles interpreted records, in order, into one sample set whose
@@ -829,8 +831,8 @@ pub mod sdf {
     ///
     /// Records without ensemble fields give a set without a distribution.
     /// When a record has one ([`WEIGHT_FIELD`], [`STATE_FIELD`],
-    /// [`REPRESENTATIVE_FIELD`], [`ENERGY_FIELD`], or
-    /// [`TEMPERATURE_FIELD`]), the set has a distribution: the ensemble of
+    /// [`REPRESENTATIVE_FIELD`], [`ENERGY_FIELD`], [`TEMPERATURE_FIELD`], or
+    /// [`MEMBER_FIELD`]), the set has a distribution: the ensemble of
     /// the formats' terms. It has weights only when a record has
     /// [`WEIGHT_FIELD`], each sample's weight being its record's (1.0 when
     /// absent). Records without [`STATE_FIELD`], such as a conformer set
@@ -843,11 +845,12 @@ pub mod sdf {
     /// kelvin, is the distribution's temperature, the same on every record
     /// or on none.
     ///
-    /// When some records carry [`STATE_FIELD`], a record without any
-    /// ensemble field is outside the distribution, as [`write()`] emits a
-    /// sample outside a distribution over some of a set's samples: the
-    /// distribution is over the others ([`Members::Subset`](crate::structure::Members::Subset)),
-    /// and the temperature is the members'.
+    /// A record marked with [`MEMBER_FIELD`] (`false`), as [`write()`]
+    /// emits a sample outside a distribution over some of a set's samples,
+    /// is outside the distribution: the distribution is over the others
+    /// ([`Members::Subset`](crate::structure::Members::Subset)), and the
+    /// temperature is the members'. Such a record carries no other ensemble
+    /// field, and a record is never taken as outside for lacking fields.
     ///
     /// When the records carry [`STEP_FIELD`], or [`COORDINATE_FIELD`] with
     /// [`COORDINATE_UNIT_FIELD`], as [`write()`] emits for samples of a step
@@ -936,8 +939,9 @@ pub mod sdf {
     /// Writes independent records in input order, with the
     /// [`WriteReport`](crate::diagnostics::WriteReport) of what they left
     /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
-    /// models' cells and samples' state ([`SdfWriteOptions::cell`],
-    /// [`SdfWriteOptions::sample_metadata`]), counted over all records.
+    /// models' cells, sample state, occupancies, B factors, and properties
+    /// ([`SdfWriteOptions::cell`], [`SdfWriteOptions::sample_metadata`],
+    /// [`SdfWriteOptions::properties`]), counted over all records.
     ///
     /// Records convert from models, samples of a sample set, and trajectory
     /// frames (`sdf::write(&set, options)` writes one record per sample,
@@ -968,8 +972,7 @@ pub mod sdf {
     /// # Errors
     ///
     /// The errors of [`write()`]; records before the failing one have already
-    /// reached `writer`, and every record has when the output holds samples
-    /// outside a distribution but no member. A failing `writer` gives
+    /// reached `writer`. A failing `writer` gives
     /// [`DiagnosticKind::Io`](crate::diagnostics::DiagnosticKind::Io).
     pub fn write_to<'a, R: Into<SdfRecordSource<'a>>>(
         writer: &mut impl std::io::Write,

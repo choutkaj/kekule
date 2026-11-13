@@ -940,6 +940,10 @@ impl SampleRead for SampleSet {
         self.distribution.as_ref()
     }
 
+    fn properties(&self) -> Option<&OwnerProperties> {
+        Some(&self.properties)
+    }
+
     fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
         self.get(index).map(SampleView::as_dyn)
     }

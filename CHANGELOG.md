@@ -18,9 +18,9 @@ are marked **Breaking:**.
   `Distribution::extended_to(len)` re-expresses a distribution over the
   first samples of a longer set, as `refresh` of a growing file does
   (`Members::All` becomes a subset of the samples it covered).
-  `SampleSetDescription::extended_to(sample_count)` does the same to a
-  saved description, which then takes the longer set's order through
-  `with_order`. `FrameIndex::prefix_fingerprint(path, frames)` fingerprints
+  `SampleSetDescription::extended_to(sample_count, order)` does the same
+  to a saved description and takes the longer set's order, checked
+  against `sample_count`. `FrameIndex::prefix_fingerprint(path, frames)` fingerprints
   a file's first frames through the frame index, as `fingerprint` samples
   a whole file, so a host learns whether the frames it used are unchanged
   after the file grew or its tail was rewritten. A `SampleSet<IndexedFile>`
@@ -940,16 +940,43 @@ are marked **Breaking:**.
   of records. Migration: take `.0` of `write`, or bind `(text, report)`.
 - **Breaking:** SDF writes a distribution over some samples so it reads
   back (SeekDelta K75). A sample outside the distribution writes a record
-  without distribution fields, and `sdf::sample_set` reads such a record,
-  among records with `kekule.state`, as a sample outside the distribution
-  instead of failing. An output whose records are all outside the
-  distribution fails ("Cannot write the SDF output in record 1. The
-  distribution membership of the sample has no SDF representation.")
-  unless `sample_metadata` omits it, which reports
-  `StructureField::Membership`. A record outside the distribution of a set
-  with one reserves the distribution's field names too. Migration: none for
-  members; a host writing non-members alone sets `sample_metadata` to
-  `Omit`.
+  marked `kekule.member` with `false` (`sdf::MEMBER_FIELD`), and
+  `sdf::sample_set` takes only a marked record as outside the distribution.
+  A record without the fields the other records carry stays an error ("The
+  data field "kekule.state" is missing. Other records have it."). An
+  output of records all outside the distribution reads back as a set whose
+  distribution has no members. A marked record that carries another
+  distribution field fails ("... is on a record outside the
+  distribution."), as does a marker other than `false`. A sample of a set
+  with a distribution reserves the distribution's field names, the marker
+  included. Migration: none for members; files written earlier without
+  markers read as before when every record is a member.
+- **Breaking:** SDF writes `kekule.weight` only when the distribution has
+  weights (SeekDelta K75), so an unweighted distribution reads back
+  unweighted, over every sample or some. Outputs of unweighted
+  distributions change: they lose the `kekule.weight` field of 1.
+- **Breaking:** every structure writer refuses or reports the state it
+  cannot store (SeekDelta K75). `PdbWriteOptions`, `MmcifWriteOptions`,
+  `MolfileWriteOptions`, and `SdfWriteOptions` gain `properties` with
+  `with_properties`: a structure's per-atom, per-bond, and own properties
+  and its sample set's properties fail by default ("The structure
+  properties of the model have no PDB representation.", "The sample set
+  properties have no SDF representation.") and are reported as
+  `WriteOmission::StructureState` under `UnrepresentablePolicy::Omit`.
+  PDB and mmCIF dropped them silently before. Molfile and SDF also refuse
+  occupancies and B factors ("The occupancies of the model have no SDF
+  representation."), reported as `WriteOmission::Occupancies` and
+  `WriteOmission::BFactors`, and state properties on the representative's
+  record, all under `sample_metadata`. `StructureField` gains
+  `SetProperties`, `Occupancies`, and `BFactors`; `SampleRead` gains a
+  provided `properties`, the set's properties, so writers see them through
+  any reader. Migration: a host that wrote such structures on purpose sets
+  `properties`, or `sample_metadata` for Molfile and SDF sites, to `Omit`.
+- **Breaking:** SDF reading names the reference record in a disagreement
+  (SeekDelta K75): "The data field "kekule.temperature.K" differs from
+  that of record 2." and "The data field "kekule.coordinate.unit"
+  differs from that of record 1." replace "differs from that of the first
+  record.".
 - **Breaking:** `SampleSet<IndexedFile>::snapshot` is removed; the set is
   `Clone` (SeekDelta K75). Migration: `set.snapshot()?` becomes
   `set.clone()`, which reads nothing and cannot fail.

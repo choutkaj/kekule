@@ -1,7 +1,8 @@
 use super::{
     debug_fingerprint, deterministic_text_mutations, error_detail, mmcif_issue, test_positions,
 };
-use crate::diagnostics::FormatErrorDetail;
+use crate::diagnostics::{FormatErrorDetail, StructureField};
+use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::geometry::Point3;
 use crate::macromolecular::{
     self, AltLocPolicy, EntityKind, InstanceProvenance, ModelSelection, StructureInterpretOptions,
@@ -2067,9 +2068,19 @@ covale A N 1 A CA 1 doub
             .with_block_name("round_trip".to_owned())
             .unwrap()
             .with_coordinate_precision(4)
-            .unwrap(),
+            .unwrap()
+            .with_properties(UnrepresentablePolicy::Omit),
     )
-    .map(|(text, _)| text)
+    .map(|(text, report)| {
+        assert_eq!(
+            report.omissions(),
+            [WriteOmission::StructureState {
+                field: StructureField::AtomProperties,
+                structures: 1,
+            }]
+        );
+        text
+    })
     .expect("supported model should write");
     assert!(written.starts_with("data_round_trip\n"));
     assert!(written.contains("_struct_conn.pdbx_value_order"));

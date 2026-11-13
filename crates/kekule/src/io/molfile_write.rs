@@ -30,12 +30,14 @@ pub enum MolfileWriteVersion {
 }
 
 /// Options of Molfile writing; the default writes
-/// [`MolfileWriteVersion::Auto`] and fails on a periodic cell.
+/// [`MolfileWriteVersion::Auto`] and fails on content a Molfile cannot
+/// carry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MolfileWriteOptions {
     version: MolfileWriteVersion,
     cell: UnrepresentablePolicy,
     sample_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
 }
 
 impl MolfileWriteOptions {
@@ -66,12 +68,15 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// The state of a sample that a Molfile cannot carry, whether of a sample
-    /// set or a trajectory frame: its membership in the set's distribution,
-    /// its place in the set's order (a frame's time and MD step among them),
-    /// and its velocities and forces. By default writing a view of a sample
-    /// with any of them fails, and under [`UnrepresentablePolicy::Omit`]
-    /// the report names each ([`WriteOmission::StructureState`]).
+    /// The state that a Molfile cannot carry of a sample, whether of a
+    /// sample set or a trajectory frame: its membership in the set's
+    /// distribution, its state's properties, its place in the set's order (a
+    /// frame's time and MD step among them), and its velocities and forces;
+    /// and the occupancies and B factors of any model. By default writing a
+    /// structure with any of them fails, and under
+    /// [`UnrepresentablePolicy::Omit`] the report names each
+    /// ([`WriteOmission::StructureState`], [`WriteOmission::Occupancies`],
+    /// [`WriteOmission::BFactors`]).
     pub const fn sample_metadata(&self) -> UnrepresentablePolicy {
         self.sample_metadata
     }
@@ -80,6 +85,22 @@ impl MolfileWriteOptions {
     #[must_use]
     pub const fn with_sample_metadata(mut self, sample_metadata: UnrepresentablePolicy) -> Self {
         self.sample_metadata = sample_metadata;
+        self
+    }
+
+    /// A structure's per-atom, per-bond, and own properties and the
+    /// properties of a sample's set, which a Molfile cannot carry: by
+    /// default a structure with any fails to write, and under
+    /// [`UnrepresentablePolicy::Omit`] the report names each
+    /// ([`WriteOmission::StructureState`]).
+    pub const fn properties(&self) -> UnrepresentablePolicy {
+        self.properties
+    }
+
+    /// Sets [`Self::properties`].
+    #[must_use]
+    pub const fn with_properties(mut self, properties: UnrepresentablePolicy) -> Self {
+        self.properties = properties;
         self
     }
 }
@@ -174,15 +195,16 @@ pub(crate) fn write_molfile<'a>(
             Ok((text, WriteReport::default()))
         }
         MolfileContent::Model(model) => {
-            let policies = StatePolicies::positions_only(options.sample_metadata);
+            let policies =
+                StatePolicies::positions_only(options.sample_metadata, options.properties);
             check_cell(model, options.cell)?;
-            check_structure_state(Format::Molfile, model.kind(), policies)?;
+            check_structure_state(Format::Molfile, model, policies)?;
             let text = render_model(model, source.title, options.version)?;
             let mut omissions = Omissions::default();
             if model.cell().is_some() {
                 omissions.record(WriteOmission::Cell { structures: 1 });
             }
-            omissions.record_structure_state(model.kind(), policies);
+            omissions.record_structure_state(model, policies);
             Ok((text, omissions.into_report()))
         }
     }

@@ -1330,16 +1330,24 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
     // The description extends alike, and takes the longer set's order.
     let grown = saved
         .clone()
-        .extended_to(5)
-        .unwrap()
-        .with_order(reopened.order().cloned())
+        .extended_to(5, reopened.order().cloned())
         .unwrap();
     assert_eq!(grown.sample_count(), 5);
     assert_eq!(grown.distribution(), Some(&extended));
     assert_eq!(grown.properties(), saved.properties());
     assert_eq!(grown.order(), reopened.order());
-    assert_eq!(saved.clone().extended_to(3).unwrap().order(), saved.order());
-    assert!(saved.extended_to(2).is_err());
+    let same = saved
+        .clone()
+        .extended_to(3, saved.order().cloned())
+        .unwrap();
+    assert_eq!(same.order(), saved.order());
+    assert_eq!(same.distribution(), saved.distribution());
+    // The order must cover the longer set, and the set must not be shorter.
+    assert!(saved
+        .clone()
+        .extended_to(5, saved.order().cloned())
+        .is_err());
+    assert!(saved.extended_to(2, None).is_err());
     assert!(extended.extended_to(2).is_err());
 }
 

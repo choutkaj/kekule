@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::alignment::{self, AlignmentOptions};
 use crate::geometry::{PeriodicCell, Point3, Vector3};
+use crate::properties::OwnerProperties;
 use crate::structure::{
     subset_rows, DenseArrayError, Distribution, Model, ModelError, Order, Positions, Sample,
     SampleRead, SampleReadError, SampleView, StructureError,
@@ -688,6 +689,10 @@ impl<R: SampleRead> SampleRead for Processed<R> {
 
     fn distribution(&self) -> Option<&Distribution> {
         self.inner.distribution()
+    }
+
+    fn properties(&self) -> Option<&OwnerProperties> {
+        self.inner.properties()
     }
 
     /// Sample 0, which the reader keeps; `None` for every other sample.

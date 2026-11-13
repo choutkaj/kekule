@@ -4,6 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::alignment::AlignmentError;
+use crate::properties::OwnerProperties;
 use crate::structure::StructureError;
 use crate::topology::Topology;
 use crate::traj::periodic::PeriodicError;
@@ -71,6 +72,12 @@ pub trait SampleRead: Send + Sync + fmt::Debug {
     /// The distribution over the samples, or `None` without one.
     fn distribution(&self) -> Option<&Distribution>;
 
+    /// The set-level properties, for a reader that has them; `None` by
+    /// default. Structure writers refuse or report what they cannot write.
+    fn properties(&self) -> Option<&OwnerProperties> {
+        None
+    }
+
     /// Sample `index` lent by reference, when the reader holds it: always
     /// for a set in memory, never for one in a file. `None` past the last
     /// sample.
@@ -106,6 +113,10 @@ macro_rules! forward_sample_read {
 
             fn distribution(&self) -> Option<&Distribution> {
                 (**self).distribution()
+            }
+
+            fn properties(&self) -> Option<&OwnerProperties> {
+                (**self).properties()
             }
 
             fn peek(&self, index: usize) -> Option<SampleView<'_, dyn SampleRead>> {
