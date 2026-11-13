@@ -360,24 +360,17 @@ fn aromaticity_facts(
     options: &Value,
     facts: &mut Facts,
 ) -> Result<(), Failure> {
-    let structure = match options["structure"].as_str() {
+    // The protocol key is the aromaticity model, which tasks.py and the RDKit
+    // reference both read as "model".
+    let model = match options["model"].as_str() {
         Some("rdkit") | None => AromaticityModel::RdkitLike,
         Some("mdl") => AromaticityModel::Mdl,
-        Some(other) => {
-            return Err(Failure::new(
-                "request",
-                format!("unknown structure {other:?}"),
-            ))
-        }
+        Some(other) => return Err(Failure::new("request", format!("unknown model {other:?}"))),
     };
     for component in components.iter_mut() {
-        if structure != AromaticityModel::RdkitLike {
-            aromaticity::perceive_aromaticity(
-                &mut component.molecule,
-                structure,
-                Default::default(),
-            )
-            .map_err(|e| Failure::new("aromaticity", e))?;
+        if model != AromaticityModel::RdkitLike {
+            aromaticity::perceive_aromaticity(&mut component.molecule, model, Default::default())
+                .map_err(|e| Failure::new("aromaticity", e))?;
         }
         let molecule = &component.molecule;
         for id in molecule.atom_ids() {

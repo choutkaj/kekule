@@ -344,7 +344,9 @@ fn superposition(document: &MmcifDocument) -> Result<Facts, Failure> {
         .map_err(|e| Failure::new("units", e))?;
     let mut facts = vec![json!(["alpha", "count", count])];
     for (report, value) in interpretation.reports().iter().zip(rmsd) {
-        facts.push(json!(["structure", report.selected_model(), "rmsd", value]));
+        // compare.py matches facts by their full keys and keys the RMSD
+        // tolerance at "model.rmsd", as references/bio.py emits it.
+        facts.push(json!(["model", report.selected_model(), "rmsd", value]));
     }
     Ok(facts)
 }
