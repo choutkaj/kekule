@@ -2048,7 +2048,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     );
     assert_eq!(
         structure_error.to_string(),
-        "Cannot write the mmCIF output. There are 0 interpretation reports for 1 models."
+        "Cannot write the mmCIF output. There are 0 interpretation reports for 1 structures."
     );
 
     let set = distributed([first, second], Partition::one_state(2));
@@ -2069,7 +2069,7 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     );
     assert_eq!(
         set_error.to_string(),
-        "Cannot write the mmCIF output. There are 0 interpretation reports for 2 models."
+        "Cannot write the mmCIF output. There are 0 interpretation reports for 2 structures."
     );
 }
 
@@ -2739,9 +2739,9 @@ fn structure_fields_name_the_state_a_format_loses() {
         (Step, "MD step"),
         (Velocities, "velocities"),
         (Forces, "forces"),
-        (AtomProperties, "per-atom structure properties"),
-        (BondProperties, "per-bond structure properties"),
-        (Properties, "structure properties"),
+        (AtomProperties, "per-atom geometry properties"),
+        (BondProperties, "per-bond geometry properties"),
+        (Properties, "geometry properties"),
         (OrderStep, "order step"),
         (OrderCoordinate, "order coordinate"),
         (Membership, "distribution membership"),
@@ -2785,7 +2785,7 @@ fn mmcif_samples_share_the_first_sample_s_entities() {
         Some(&FormatErrorDetail::MmcifWrite(
             MmcifWriteIssue::IncompatibleGeometry {
                 geometry: 2,
-                field: kekule::mmcif::MmcifSampleField::Entities,
+                field: kekule::mmcif::MmcifGeometryField::Entities,
             }
         ))
     );
@@ -3331,7 +3331,7 @@ fn molfile_and_sdf_refuse_or_report_sites_and_properties() {
                 (
                     DiagnosticKind::Unsupported,
                     Some(FormatErrorDetail::UnrepresentableState(field)),
-                    format!("The {field} of the model {verb} no Molfile representation."),
+                    format!("The {field} of the structure {verb} no Molfile representation."),
                 ),
                 "{field:?}"
             );
@@ -3341,7 +3341,7 @@ fn molfile_and_sdf_refuse_or_report_sites_and_properties() {
             assert_eq!(
                 error.to_string(),
                 format!(
-                    "Cannot write the SDF output in record 2. The {field} of the model {verb} \
+                    "Cannot write the SDF output in record 2. The {field} of the structure {verb} \
                      no SDF representation."
                 ),
                 "{field:?}"
@@ -3478,7 +3478,7 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
         pdb::write(&noted, PdbWriteOptions::default())
             .unwrap_err()
             .to_string(),
-        "Cannot write the PDB output. The structure properties of the model have no PDB \
+        "Cannot write the PDB output. The geometry properties of the structure have no PDB \
          representation."
     );
     let (text, report) =
@@ -3493,7 +3493,7 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
         mmcif::write([&noted], mmcif_default())
             .unwrap_err()
             .to_string(),
-        "Cannot write the mmCIF output. The structure properties of the model have no mmCIF \
+        "Cannot write the mmCIF output. The geometry properties of the structure have no mmCIF \
          representation."
     );
     let (text, report) = mmcif::write([&noted], mmcif_default().with_properties(omit)).unwrap();

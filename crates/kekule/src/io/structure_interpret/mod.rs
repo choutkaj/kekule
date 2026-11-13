@@ -74,7 +74,7 @@ struct StructureSource {
     cell: Option<PeriodicCell>,
     /// Issues found while reading the source.
     issues: Vec<StructureInterpretIssue>,
-    /// The polymer entities the source states, not yet placed in a model.
+    /// The polymer entities the source states, not yet placed in a structure.
     polymer_entities: Vec<PolymerEntity>,
     /// The biological assemblies the source states.
     assemblies: Vec<Assembly>,

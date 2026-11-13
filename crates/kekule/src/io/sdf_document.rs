@@ -236,7 +236,7 @@ impl SdfDocument {
 
 /// Rich canonical interpretation of one SDF record.
 ///
-/// The owned model is the single authoritative topology/geometry state. Its
+/// The owned structure is the single authoritative topology/geometry state. Its
 /// molecule and topology projections never reinterpret the source.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdfRecordInterpretation {
@@ -247,7 +247,7 @@ pub struct SdfRecordInterpretation {
 }
 
 impl SdfRecordInterpretation {
-    /// Creates a writable SDF record from an already canonical model.
+    /// Creates a writable SDF record from an already canonical structure.
     ///
     /// Source correspondence is empty because this value did not originate
     /// from SDF parsing. Parsed records receive a populated report through the
@@ -285,23 +285,23 @@ impl SdfRecordInterpretation {
             .collect()
     }
 
-    /// The authoritative model: topology and coordinates in angstroms.
+    /// The authoritative structure: topology and coordinates in angstroms.
     pub fn structure(&self) -> &Structure {
         &self.model
     }
 
-    /// The model's topology.
+    /// The structure's topology.
     pub fn topology(&self) -> &Topology {
         self.model.topology()
     }
 
-    /// Consumes the format wrapper into its model.
+    /// Consumes the format wrapper into its structure.
     pub fn into_structure(self) -> Structure {
         self.model
     }
 
     /// Consumes the format wrapper and retains shared ownership of its exact
-    /// model topology.
+    /// structure topology.
     pub fn into_topology(self) -> Arc<Topology> {
         self.model.shared_topology()
     }
@@ -316,7 +316,7 @@ impl SdfRecordInterpretation {
         &self.report
     }
 
-    /// Splits the interpretation into its title, model, data fields, and
+    /// Splits the interpretation into its title, structure, data fields, and
     /// report.
     pub fn into_parts(
         self,

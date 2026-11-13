@@ -53,8 +53,8 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// A model's periodic cell, which a Molfile cannot carry: by default a
-    /// model with a cell fails to write, and under
+    /// A structure's periodic cell, which a Molfile cannot carry: by default a
+    /// structure with a cell fails to write, and under
     /// [`UnrepresentablePolicy::Omit`] the report names it
     /// ([`WriteOmission::Cell`]).
     pub const fn cell(&self) -> UnrepresentablePolicy {
@@ -72,7 +72,7 @@ impl MolfileWriteOptions {
     /// structure set or a trajectory frame: its membership in the set's
     /// distribution, its state's properties, its place in the set's order (a
     /// frame's time and MD step among them), and its velocities and forces;
-    /// and the occupancies and B factors of any model. By default writing a
+    /// and the occupancies and B factors of any structure. By default writing a
     /// structure with any of them fails, and under
     /// [`UnrepresentablePolicy::Omit`] the report names each
     /// ([`WriteOmission::StructureState`], [`WriteOmission::Occupancies`],
@@ -106,8 +106,8 @@ impl MolfileWriteOptions {
 }
 
 /// What one Molfile CTAB describes: a coordinate-free molecule written with
-/// zero coordinates, or a geometry-bearing model, with the title written on
-/// its first header line.
+/// zero coordinates, or a structure, with the title written on its first
+/// header line.
 ///
 /// Convert from `&Molecule` or `&Structure`, or build one with [`Self::molecule`]
 /// or [`Self::structure`], which accepts any borrowed structure view. Specified stereo
@@ -129,7 +129,7 @@ pub struct MolfileSource<'a> {
 #[derive(Debug, Clone, Copy)]
 enum MolfileContent<'a> {
     Molecule(&'a Molecule),
-    /// A model snapshot, written with its coordinates in angstroms.
+    /// A structure snapshot, written with its coordinates in angstroms.
     Structure(StructureView<'a>),
 }
 
@@ -142,7 +142,7 @@ impl<'a> MolfileSource<'a> {
         }
     }
 
-    /// A geometry-bearing model, geometry of a structure set, or trajectory frame.
+    /// A structure, geometry of a structure set, or trajectory frame.
     pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self {
             content: MolfileContent::Structure(structure.as_structure_view()),
@@ -236,7 +236,7 @@ fn render_molecule(
     }
 }
 
-/// Fails for a model with a periodic cell, which no CTAB can carry, unless
+/// Fails for a structure with a periodic cell, which no CTAB can carry, unless
 /// the caller chose to omit it.
 pub(super) fn check_cell(
     model: StructureView<'_>,
@@ -248,7 +248,7 @@ pub(super) fn check_cell(
     Ok(())
 }
 
-/// Renders one model CTAB with an SDF or Molfile title.
+/// Renders one structure CTAB with an SDF or Molfile title.
 pub(super) fn render_structure(
     model: StructureView<'_>,
     title: &str,

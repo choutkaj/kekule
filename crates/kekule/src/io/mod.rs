@@ -41,7 +41,7 @@ pub use mmcif_document::{
 pub(crate) use mmcif_write::{write_mmcif, write_mmcif_to};
 pub use mmcif_write::{
     MmcifAtomField, MmcifBlockSource, MmcifCellReason, MmcifEntityClassifications,
-    MmcifSampleField, MmcifWriteIssue, MmcifWriteOptions,
+    MmcifGeometryField, MmcifWriteIssue, MmcifWriteOptions,
 };
 pub(crate) use molfile_document::{parse_molfile_document, parse_molfile_reader};
 pub use molfile_document::{

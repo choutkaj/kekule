@@ -292,7 +292,7 @@ impl<R: Read> Decoder<'_, R> {
                     translation,
                 };
                 // Reading refuses what is not a rigid motion, and so does
-                // decoding, so a model built from it keeps its geometry.
+                // decoding, so a structure built from it keeps its geometry.
                 if !operation.is_rigid() {
                     return Err(self.invalid(format!(
                         "Assembly operation {:?} is not a rotation and a translation.",

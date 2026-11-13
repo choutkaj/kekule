@@ -14,7 +14,7 @@ const DISCONNECTED_MOLFILE: &str = "salt-like\nkekule\n\n  2  0  0  0  0  0     
 const INTERLEAVED_COMPONENT_MOLFILE: &str = "interleaved\nkekule\n\n  4  1  0  0  0  0            999 V2000\n   10.0000   11.0000   12.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n   20.0000   21.0000   22.0000 Na  0  3  0  0  0  0  0  0  0  0  0  0\n   30.0000   31.0000   32.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n   40.0000   41.0000   42.0000 Cl  0  5  0  0  0  0  0  0  0  0  0  0\n  1  3  1  0  0  0  0\nM  END\n";
 
 #[test]
-fn molfile_projections_retain_the_interpreted_model_and_reports() {
+fn molfile_projections_retain_the_interpreted_structure_and_reports() {
     let interpretation = molfile::parse_str(INTERLEAVED_COMPONENT_MOLFILE, Default::default())
         .unwrap()
         .interpret(Default::default())

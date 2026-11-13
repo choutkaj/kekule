@@ -73,9 +73,10 @@ pub use bonds::{BondSelection, BondSelectionMode};
 ///
 /// Structural edits publish a different layout: keep selections with their
 /// source and rebuild explicitly for a new one. Owning perception and
-/// geometry-only changes keep the layout, so selections remain usable. [`Topology::subset`] and model,
-/// ensemble, or trajectory slicing consume atom selections as induced subsets;
-/// bond selection does not change their structural-subset semantics.
+/// geometry-only changes keep the layout, so selections remain usable.
+/// [`Topology::subset`] and structure, ensemble, or trajectory slicing consume
+/// atom selections as induced subsets; bond selection does not change their
+/// structural-subset semantics.
 #[derive(Debug, Clone)]
 pub struct AtomSelection {
     topology: Arc<Topology>,

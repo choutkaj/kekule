@@ -44,7 +44,7 @@
 //!
 //! Format APIs deliberately separate parsing from chemical interpretation.
 //! Interpretation publishes represented chemistry but does not run perception
-//! implicitly. Geometry is supplied only when constructing a model.
+//! implicitly. Geometry is supplied only when constructing a structure.
 //!
 //! ```
 //! use kekule::{
@@ -66,10 +66,10 @@
 //!     ],
 //!     ANGSTROM,
 //! ))?;
-//! let model = Structure::from_molecule(ethanol, &positions)?;
+//! let structure = Structure::from_molecule(ethanol, &positions)?;
 //!
-//! assert_eq!(model.topology().instance_count(), 1);
-//! assert_eq!(model.atom_count(), 3);
+//! assert_eq!(structure.topology().instance_count(), 1);
+//! assert_eq!(structure.atom_count(), 3);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -95,11 +95,12 @@
 //! `into_editor()` to move an owner into one. System editors resolve source IDs
 //! to stable draft-only editing handles and publish completed values through
 //! `finish()`. A bond deletion can split a system molecule;
-//! a bond addition can join two occurrences. New model atoms require coordinates.
+//! a bond addition can join two occurrences. New structure atoms require
+//! coordinates.
 //!
-//! Coordinate-dependent algorithms consume [`structure::StructureView`]. A model,
-//! a geometry of a structure set, or a streamed trajectory frame can therefore
-//! share kernels without copying coordinates. APIs that address atoms
+//! Coordinate-dependent algorithms consume [`structure::StructureView`]. A
+//! structure, a geometry of a structure set, or a streamed trajectory frame can
+//! therefore share kernels without copying coordinates. APIs that address atoms
 //! by index accept any topology snapshot sharing their layout
 //! ([`topology::Topology::shares_layout`]), so perception never detaches
 //! selections, buffers, or prepared potentials. Use
@@ -611,7 +612,7 @@ pub mod smiles {
 /// its canonical text. [`select::SelectionExpr::evaluate`] evaluates
 /// topology terms against a topology;
 /// [`select::SelectionExpr::evaluate_structure`] also evaluates spatial and
-/// site terms against a model, geometry, or trajectory frame. Chemistry
+/// site terms against a structure, geometry, or trajectory frame. Chemistry
 /// terms read installed perception and never perceive. Applications add
 /// `#...`, `$name`, and keyword terms through a [`select::SelectionResolver`],
 /// which may answer spatial references with another object's points and add
@@ -740,10 +741,10 @@ pub mod molfile {
         crate::io::parse_molfile_reader(reader, options)
     }
 
-    /// Writes one CTAB from a molecule (zero coordinates) or a model, with
+    /// Writes one CTAB from a molecule (zero coordinates) or a structure, with
     /// the [`WriteReport`](crate::diagnostics::WriteReport) of what it left
     /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
-    /// a model's cell, a geometry's state, occupancies, B factors, and
+    /// a structure's cell, a geometry's state, occupancies, B factors, and
     /// properties ([`MolfileWriteOptions::cell`],
     /// [`MolfileWriteOptions::set_metadata`],
     /// [`MolfileWriteOptions::properties`]).
@@ -752,7 +753,7 @@ pub mod molfile {
     /// chemistry and V3000 otherwise. V2000 rounds coordinates to four decimal
     /// places in angstroms; V3000 preserves round-trip decimal text. Stereo is
     /// projected against the coordinates emitted by the chosen version, so
-    /// specified stereo requires a geometry-bearing model.
+    /// specified stereo requires a structure.
     ///
     /// # Errors
     ///
@@ -792,7 +793,7 @@ pub mod molfile {
 /// them one at a time, so a malformed record fails alone; [`sdf::parse_str`]
 /// collects every record into a [`sdf::SdfDocument`]. Interpret each record
 /// explicitly with [`sdf::SdfRecord::interpret`]; sibling records are not
-/// merged into one model or reinterpreted as a structure set.
+/// merged into one structure or reinterpreted as a structure set.
 ///
 /// ```
 /// use kekule::math::Point3;
@@ -802,9 +803,9 @@ pub mod molfile {
 ///
 /// let water = smiles::to_molecules("O")?.remove(0);
 /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
-/// let model = Structure::from_molecule(water, &positions)?;
+/// let structure = Structure::from_molecule(water, &positions)?;
 ///
-/// let (text, report) = sdf::write([&model, &model], Default::default())?;
+/// let (text, report) = sdf::write([&structure, &structure], Default::default())?;
 /// assert!(report.is_empty());
 /// let document = sdf::parse_str(&text, Default::default())?;
 /// assert_eq!(document.records().len(), 2);
@@ -865,8 +866,8 @@ pub mod sdf {
     ///
     /// let water = kekule::smiles::to_molecules("O")?.remove(0);
     /// let positions = Positions::new(Quantity::new(vec![Point3::new(0.0, 0.0, 0.0)], ANGSTROM))?;
-    /// let model = Structure::from_molecule(water, &positions)?;
-    /// let (text, _) = sdf::write([&model, &model], Default::default())?;
+    /// let structure = Structure::from_molecule(water, &positions)?;
+    /// let (text, _) = sdf::write([&structure, &structure], Default::default())?;
     /// let records = sdf::parse_str(&text, Default::default())?
     ///     .records()
     ///     .iter()
@@ -939,16 +940,17 @@ pub mod sdf {
     /// Writes independent records in input order, with the
     /// [`WriteReport`](crate::diagnostics::WriteReport) of what they left
     /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
-    /// models' cells, geometry state, occupancies, B factors, and properties
-    /// ([`SdfWriteOptions::cell`], [`SdfWriteOptions::set_metadata`],
-    /// [`SdfWriteOptions::properties`]), counted over all records.
+    /// structures' cells, geometry state, occupancies, B factors, and
+    /// properties ([`SdfWriteOptions::cell`],
+    /// [`SdfWriteOptions::set_metadata`], [`SdfWriteOptions::properties`]),
+    /// counted over all records.
     ///
-    /// Records convert from models, geometries of a structure set, and trajectory
-    /// frames (`sdf::write(&set, options)` writes one record per geometry,
-    /// which [`structure_set`] reads back with its weight, state, state energy,
-    /// temperature, and step or coordinate, and a distribution over some of
-    /// the geometries), or interpreted records, which keep their titles and
-    /// data fields.
+    /// Records convert from structures, geometries of a structure set, and
+    /// trajectory frames (`sdf::write(&set, options)` writes one record per
+    /// geometry, which [`structure_set`] reads back with its weight, state,
+    /// state energy, temperature, and step or coordinate, and a distribution
+    /// over some of the geometries), or interpreted records, which keep their
+    /// titles and data fields.
     ///
     /// # Errors
     ///
@@ -1085,8 +1087,8 @@ pub mod mmcif {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
         MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
-        MmcifEntityClassifications, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifParseOptions,
-        MmcifSampleField, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
+        MmcifEntityClassifications, MmcifEntry, MmcifGeometryField, MmcifItem, MmcifLoopTable,
+        MmcifParseOptions, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
     };
 
     /// Parses a structural mmCIF data document without assigning molecular
@@ -1126,12 +1128,13 @@ pub mod mmcif {
     /// [`WriteReport`](crate::diagnostics::WriteReport) of what the options
     /// chose to omit, summed over the blocks.
     ///
-    /// Sources convert from models (one block), structure sets (one multi-model
-    /// block), and interpretations (keeping their source reports). Entity kinds
-    /// derive from canonical topology classification unless a source carries
-    /// explicit classifications or reports ([`MmcifBlockSource`]). Blocks are
-    /// named by [`MmcifWriteOptions::block_name`], numbered when there are
-    /// several, unless [`MmcifBlockSource::with_block_name`] names them.
+    /// Sources convert from structures (one block), structure sets (one
+    /// multi-model block), and interpretations (keeping their source reports).
+    /// Entity kinds derive from canonical topology classification unless a
+    /// source carries explicit classifications or reports
+    /// ([`MmcifBlockSource`]). Blocks are named by
+    /// [`MmcifWriteOptions::block_name`], numbered when there are several,
+    /// unless [`MmcifBlockSource::with_block_name`] names them.
     ///
     /// As the PDB's own files do, a block states as `_struct_conn` rows only
     /// the bonds its reader cannot derive. A residue whose bundled component
@@ -1146,12 +1149,12 @@ pub mod mmcif {
     /// order within a molecule. Each partner is selected by label and author
     /// sequence numbers, so that waters of one asym are told apart.
     ///
-    /// Metal coordination between residues is no bond of the model: an
+    /// Metal coordination between residues is no bond of the structure: an
     /// interpretation report keeps it
     /// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)).
     /// A block written with its report states it as `metalc` rows; a block
-    /// written from a model alone has none. A record whose partners the
-    /// model no longer has as the report recorded them is left out and
+    /// written from a structure alone has none. A record whose partners the
+    /// structure no longer has as the report recorded them is left out and
     /// counted as
     /// [`WriteOmission::Coordination`](crate::diagnostics::WriteOmission::Coordination).
     ///
@@ -1166,11 +1169,11 @@ pub mod mmcif {
     ///
     /// ```no_run
     /// use kekule::mmcif::{self, MmcifBlockSource, MmcifWriteOptions};
-    /// # fn example(model: &kekule::structure::Structure, other: &kekule::structure::Structure,
+    /// # fn example(structure: &kekule::structure::Structure, other: &kekule::structure::Structure,
     /// #     interpretation: &kekule::macromolecular::StructureInterpretation)
     /// #     -> Result<(), kekule::diagnostics::FormatError> {
-    /// let (one, _) = mmcif::write([model], MmcifWriteOptions::default())?;
-    /// let (two, _) = mmcif::write([model, other], MmcifWriteOptions::default())?;
+    /// let (one, _) = mmcif::write([structure], MmcifWriteOptions::default())?;
+    /// let (two, _) = mmcif::write([structure, other], MmcifWriteOptions::default())?;
     /// let (faithful, _) = mmcif::write([interpretation], MmcifWriteOptions::default())?;
     /// # let _ = (one, two, faithful);
     /// # Ok(())
@@ -1224,7 +1227,7 @@ pub mod mmcif {
 /// residues no bond but a record of the report
 /// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)). Atoms
 /// without an element symbol take the one their name's alignment implies,
-/// and the report lists them. A `CRYST1` cell is the model's periodic cell
+/// and the report lists them. A `CRYST1` cell is the structure's periodic cell
 /// under the rule mmCIF `_cell` follows; otherwise the report says why not.
 ///
 /// Interpretation keeps coordinate records in source order as dense atom order,
@@ -1282,7 +1285,7 @@ pub mod pdb {
         crate::io::parse_pdb_reader(reader, options)
     }
 
-    /// Writes one entry: a model or geometry without `MODEL` records, or a
+    /// Writes one entry: a structure or geometry without `MODEL` records, or a
     /// structure set with one `MODEL` per geometry. Returns the text with a
     /// [`WriteReport`](crate::diagnostics::WriteReport) of what the options
     /// chose to omit.
@@ -1316,7 +1319,7 @@ pub mod pdb {
     /// Bonds within standard residues the dictionary covers, polymer
     /// linkage, and bonds within water are derived by readers and not listed.
     ///
-    /// Metal coordination between residues is no bond of the model: an
+    /// Metal coordination between residues is no bond of the structure: an
     /// interpretation report keeps it
     /// ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)).
     /// An entry written with its reports states it as `LINK` records before
@@ -1352,16 +1355,16 @@ pub mod pdb {
     /// HETATM    3  H2  HOH A   1      -0.240   0.930   0.000  1.00  0.00           H
     /// END
     /// ";
-    /// let model = pdb::parse_str(text, Default::default())?
+    /// let structure = pdb::parse_str(text, Default::default())?
     ///     .interpret(Default::default())?
     ///     .into_structure();
-    /// let (written, report) = pdb::write(&model, Default::default())?;
+    /// let (written, report) = pdb::write(&structure, Default::default())?;
     /// assert_eq!(written, text);
     /// assert!(report.omissions().is_empty());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
-    /// An interpretation keeps its report, and so its coordination; a model
+    /// An interpretation keeps its report, and so its coordination; a structure
     /// or a structure set takes reports from [`PdbSource::with_reports`]:
     ///
     /// ```no_run
@@ -1507,13 +1510,13 @@ pub mod xyz {
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every
-/// structure, geometry, order, and distribution field. A model or structure set
-/// may carry its structure interpretation
+/// structure, geometry, order, and distribution field. A structure or structure
+/// set may carry its structure interpretation
 /// reports: write a
 /// [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)
 /// or [`StructureSetInterpretation`](crate::macromolecular::StructureSetInterpretation),
-/// or pair a model or set with reports held apart through
-/// [`NativeSource::interpreted_model`](native::NativeSource::interpreted_model)
+/// or pair a structure or set with reports held apart through
+/// [`NativeSource::interpreted_structure`](native::NativeSource::interpreted_structure)
 /// and [`NativeSource::interpreted_structure_set`](native::NativeSource::interpreted_structure_set),
 /// and read them back with
 /// [`NativeObject::into_interpretation`](native::NativeObject::into_interpretation)
@@ -1815,9 +1818,10 @@ pub mod hydrogens {
 /// Common foundational types for small examples and interactive use.
 ///
 /// The prelude is intentionally small: the molecule, its editor and parts, the
-/// topology and model that hold it, and [`Quantity`](crate::units::Quantity).
-/// It is the only module that repeats items exported elsewhere. Format APIs,
-/// identifiers, and algorithms remain available through their focused modules.
+/// topology and structure that hold it, and
+/// [`Quantity`](crate::units::Quantity). It is the only module that repeats
+/// items exported elsewhere. Format APIs, identifiers, and algorithms remain
+/// available through their focused modules.
 ///
 /// ```
 /// use kekule::prelude::*;
@@ -1837,8 +1841,8 @@ pub mod hydrogens {
 ///     vec![Point3::new(0.0, 0.0, 0.0), Point3::new(1.43, 0.0, 0.0)],
 ///     ANGSTROM,
 /// ))?;
-/// let model = Structure::from_molecule(molecule, &positions)?;
-/// assert_eq!(model.atom_count(), topology.atom_count());
+/// let structure = Structure::from_molecule(molecule, &positions)?;
+/// assert_eq!(structure.atom_count(), topology.atom_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub mod prelude {

@@ -3,7 +3,7 @@ use super::super::element_symbol::structure_element_symbol;
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
-use super::{fail, invalid_structure, MmcifAtomField, MmcifSampleField, MmcifWriteIssue};
+use super::{fail, invalid_structure, MmcifAtomField, MmcifGeometryField, MmcifWriteIssue};
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::UnrepresentablePolicy;
 use crate::math::Point3;
@@ -38,7 +38,7 @@ pub(super) struct AtomRow {
     pub(super) auth_atom_id: String,
 }
 
-/// One bond of the model, written as a `_struct_conn` row unless the reader
+/// One bond of the structure, written as a `_struct_conn` row unless the reader
 /// derives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ConnectionRow {
@@ -69,7 +69,7 @@ pub(super) struct PreparedModel {
     /// Atoms whose fixed implicit-hydrogen counts the rows leave out.
     pub(super) omitted_hydrogens: usize,
     /// Interpretation-report coordination records left out because they no
-    /// longer match the model.
+    /// longer match the structure.
     pub(super) omitted_coordination: usize,
     /// Dative bonds between residues, stated as `metalc` rows that readers
     /// record as coordination rather than bonds.
@@ -164,7 +164,7 @@ pub(super) fn prepare_model(
         coordinate_precision,
     );
     // Readers record coordination between residues rather than bond it, so
-    // a model's dative bond between residues does not read back as a bond.
+    // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
         .iter()
         .filter(|connection| {
@@ -605,13 +605,13 @@ pub(super) fn validate_sample(
     if candidate.entities != model.entities {
         return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
             geometry,
-            field: MmcifSampleField::Entities,
+            field: MmcifGeometryField::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
         return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
             geometry,
-            field: MmcifSampleField::StructuralAsymmetry,
+            field: MmcifGeometryField::StructuralAsymmetry,
         }));
     }
     let bonds = |model: &PreparedModel| {
@@ -624,7 +624,7 @@ pub(super) fn validate_sample(
     if bonds(candidate) != bonds(model) {
         return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
             geometry,
-            field: MmcifSampleField::Connectivity,
+            field: MmcifGeometryField::Connectivity,
         }));
     }
     if candidate.atoms.len() != model.atoms.len()
@@ -636,7 +636,7 @@ pub(super) fn validate_sample(
     {
         return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
             geometry,
-            field: MmcifSampleField::AtomSites,
+            field: MmcifGeometryField::AtomSites,
         }));
     }
     Ok(())

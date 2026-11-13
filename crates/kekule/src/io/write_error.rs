@@ -39,7 +39,7 @@ impl WriteErrors {
     }
 
     /// The source is internally inconsistent or incomplete, for example a
-    /// model without positions for every atom.
+    /// structure without positions for every atom.
     pub(crate) fn invalid_structure(self, message: impl Into<String>) -> FormatError {
         FormatError::write(self.0, DiagnosticKind::Inconsistent, message)
     }
@@ -292,7 +292,7 @@ pub(crate) fn unrepresentable_state(
 }
 
 /// The sentence for the `field` of a lone structure that `format` cannot
-/// carry: of the geometry for a geometry or a frame, of the model otherwise.
+/// carry: of the geometry for a geometry or a frame, of the structure otherwise.
 fn unrepresentable_structure_state(
     format: Format,
     field: StructureField,
@@ -302,7 +302,7 @@ fn unrepresentable_structure_state(
         StructureKind::InSet(_) => unrepresentable_state(format, field, None),
         StructureKind::Standalone => {
             let verb = verb(field);
-            format!("The {field} of the model {verb} no {format} representation.")
+            format!("The {field} of the structure {verb} no {format} representation.")
         }
     }
 }

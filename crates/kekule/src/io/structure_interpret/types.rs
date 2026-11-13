@@ -412,9 +412,9 @@ pub enum StructureInterpretIssue {
         /// The charged atoms, by atom name, with their formal charge in e.
         charged_atoms: Vec<(String, i8)>,
     },
-    /// The model's hydrogens differ from the reference template: a protonation
-    /// variant was selected, or heteroatom charges were adjusted by one per
-    /// added or removed hydrogen.
+    /// The structure's hydrogens differ from the reference template: a
+    /// protonation variant was selected, or heteroatom charges were adjusted by
+    /// one per added or removed hydrogen.
     ProtonationFromHydrogens {
         /// The residue.
         residue: SourceResidueId,
@@ -427,7 +427,7 @@ pub enum StructureInterpretIssue {
         charged_atoms: Vec<(String, i8)>,
     },
     /// The resolved atoms of one residue lie in more than one molecule, for
-    /// example because a bridging atom is missing from the model.
+    /// example because a bridging atom is missing from the structure.
     ResidueFragmented {
         /// The residue.
         residue: SourceResidueId,
@@ -435,7 +435,7 @@ pub enum StructureInterpretIssue {
         fragments: usize,
     },
     /// The source states unit-cell parameters (mmCIF `_cell`, PDB `CRYST1`)
-    /// that are not the model's periodic cell, so the model has none.
+    /// that are not the structure's periodic cell, so the structure has none.
     CellOmitted {
         /// Why the cell was omitted.
         reason: CellOmissionReason,
@@ -785,7 +785,7 @@ impl fmt::Display for Charged<'_> {
     }
 }
 
-/// Why stated unit-cell parameters are not a model's periodic cell.
+/// Why stated unit-cell parameters are not a structure's periodic cell.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CellOmissionReason {
@@ -1351,8 +1351,8 @@ impl StructureInterpretationReport {
     /// The coordination records that still match `topology`, as writers
     /// state them again. A record matches when each partner is a topology
     /// atom whose atom site keeps the atom names, type symbol, and component
-    /// the report recorded for it; a model edited since it was read can hold
-    /// other atoms under the recorded IDs, or none.
+    /// the report recorded for it; a structure edited since it was read can
+    /// hold other atoms under the recorded IDs, or none.
     pub(crate) fn coordination_in(&self, topology: &Topology) -> CoordinationMatch {
         let partners = self
             .coordination
@@ -1398,7 +1398,7 @@ impl StructureInterpretationReport {
     }
 
     /// The polymer entities the block states, in the block's order, with
-    /// their canonical sequences and the model's residues at each position;
+    /// their canonical sequences and the structure's residues at each position;
     /// empty for PDB entries, which state no entities. Entities whose
     /// monomers neither `_entity_poly_seq` nor the atom sites give are left
     /// out. [`crate::sequence`] gives the sequences of the chains of any
@@ -1426,19 +1426,19 @@ impl StructureInterpretationReport {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-/// One final canonical model and its interpretation report.
+/// One final canonical structure and its interpretation report.
 pub struct StructureInterpretation {
     pub(crate) model: Structure,
     pub(crate) report: StructureInterpretationReport,
 }
 
 impl StructureInterpretation {
-    /// The interpreted model.
+    /// The interpreted structure.
     pub fn structure(&self) -> &Structure {
         &self.model
     }
 
-    /// How the model was read from its source.
+    /// How the structure was read from its source.
     pub fn report(&self) -> &StructureInterpretationReport {
         &self.report
     }
@@ -1467,17 +1467,17 @@ impl StructureInterpretation {
             .collect()
     }
 
-    /// Retains shared ownership of the model's exact topology allocation.
+    /// Retains shared ownership of the structure's exact topology allocation.
     pub fn into_topology(self) -> Arc<Topology> {
         self.model.shared_topology()
     }
 
-    /// The interpreted model, discarding the report.
+    /// The interpreted structure, discarding the report.
     pub fn into_structure(self) -> Structure {
         self.model
     }
 
-    /// The model and its report.
+    /// The structure and its report.
     pub fn into_parts(self) -> (Structure, StructureInterpretationReport) {
         (self.model, self.report)
     }

@@ -80,8 +80,8 @@ are marked **Breaking:**.
   listed geometries of a reader with the distribution restricted to them;
   `RmsfAccumulator`, `ContactOccupancyAccumulator`, and
   `GroupContactOccupancyAccumulator` gain `observe_samples` and
-  `observe_samples_cancellable`. `alignment::sample_rmsd` and
-  `sample_aligned_rmsd` (each with a `_cancellable` form) measure listed
+  `observe_samples_cancellable`. `alignment::geometry_rmsd` and
+  `geometry_aligned_rmsd` (each with a `_cancellable` form) measure listed
   geometries against a geometry of the reader or a structure, and
   `clustering::pairwise_fitted_rmsd` fits the members of a reader, keeping
   only the fitted atoms. `StructureSet::rmsf`, `contact_occupancy`,
@@ -125,7 +125,7 @@ are marked **Breaking:**.
   `FormatErrorDetail::NativeExternalSamples`.
   `pdb::PdbDocument::interpret_structure_set` and the mmCIF document's and
   block's `interpret_structure_set` give a
-  `macromolecular::StructureStructureSetInterpretation` of one state without
+  `macromolecular::StructureSetInterpretation` of one state without
   weights and one report per geometry; `sdf::structure_set` assembles records
   into a set ordered by their steps or coordinates, with a distribution
   only when a record has a weight, state, representative, energy, or
@@ -137,7 +137,7 @@ are marked **Breaking:**.
   `GeometryView`, and `pdb::write`, `mmcif::write`, and `sdf::write` take a
   set directly. `traj::io::write_structure_set` and `write_structure_set_to`
   write a set of a time order or of none, without a distribution or set
-  properties, one frame per geometry. The new `sample_metadata` option of the
+  properties, one frame per geometry. The new `set_metadata` option of the
   Molfile, SDF, PDB, mmCIF, and XYZ writers decides what happens to the
   state of a geometry a format cannot carry, including a geometry outside the
   distribution (`StructureField::Membership`). The PDB, mmCIF, and XYZ
@@ -147,8 +147,8 @@ are marked **Breaking:**.
   `Order`; `TrajectoryField::Representative` and `Order`). An SDF coordinate
   unit is the symbol of a unit constant, which the writer and the reader
   take from one table; a set's coordinate in another unit fails to write
-  unless `sample_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
-  gain `UnrepresentableSample` and `EmptyStructureSet`, and `TrajectoryField`
+  unless `set_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
+  gain `UnrepresentableGeometry` and `EmptyStructureSet`, and `TrajectoryField`
   gains `Membership` and `Distribution`.
 - Analysis of structure sets (SeekDelta K72b). `StructureSet::superpose`, `rmsd`,
   and `aligned_rmsd` act on every geometry. `StructureSet::rmsf`,
@@ -194,7 +194,7 @@ are marked **Breaking:**.
   writers state again, polymer entities with their canonical sequences,
   provenance, alternate-location decisions, assemblies, and issues.
   `native::write` takes a `StructureInterpretation` or
-  `StructureStructureSetInterpretation`, or `NativeSource::interpreted_model`
+  `StructureSetInterpretation`, or `NativeSource::interpreted_structure`
   and `NativeSource::interpreted_structure_set` pair a model or set with
   reports held apart from it. `NativeObject::into_interpretation` and
   `NativeObject::into_structure_set_interpretation` read them back, and the
@@ -209,7 +209,7 @@ are marked **Breaking:**.
   interpretation reports as the mmCIF writer does:
   `PdbSource::with_reports` takes one report for a structure and one per
   geometry for a structure set, and `PdbSource` converts from
-  `&StructureInterpretation` and `&StructureStructureSetInterpretation`. The
+  `&StructureInterpretation` and `&StructureSetInterpretation`. The
   writer states the reports' coordination as `LINK` records before the
   coordinates, in the columns of PDB format version 3.3: each partner as
   its atom record names it, the symmetry operator `1555`, and the distance
@@ -234,7 +234,7 @@ are marked **Breaking:**.
 - Error chains as one message (SeekDelta K62).
   `kekule::diagnostics::ErrorChain` writes an error and every error of its
   `source()` chain as consecutive sentences, such as `Cannot build the
-  solvated model. Atom 12 overlaps atom 3.`; `{:#}` writes one error per
+  solvated structure. Atom 12 overlaps atom 3.`; `{:#}` writes one error per
   line. Errors from outside Kekule in the chain, such as I/O errors, get a
   capital letter and a full stop, and a cause that repeats the previous text
   appears once. `LimitExceeded::describe` writes a limit with its observed
@@ -306,7 +306,7 @@ are marked **Breaking:**.
   scalar results, such as its energy or gradient norm, are owner properties
   of its structure properties. PDB writes such a set as one `MODEL` per
   geometry and XYZ as one frame per geometry; both fail on the steps or
-  coordinates unless `sample_metadata` omits them with a report
+  coordinates unless `set_metadata` omits them with a report
   (`StructureField::OrderStep` and `OrderCoordinate`,
   `TrajectoryField::OrderStep` and `OrderCoordinate`), as Molfile and mmCIF
   do for a lone geometry. SDF writes a geometry's step as the `kekule.step`
@@ -761,7 +761,7 @@ are marked **Breaking:**.
   `diagnostics::Cancellation` wraps a host check, such as
   `Cancellation::from_flag` over an `AtomicBool`.
   - `StructureInterpretOptions::with_cancellation` and
-    `StructureStructureSetInterpretOptions::with_cancellation` make mmCIF and PDB
+    `StructureSetInterpretOptions::with_cancellation` make mmCIF and PDB
     interpretation poll it between stages and periodically inside them.
     Once it turns true, interpretation fails with a `FormatError` of the new
     `DiagnosticKind::Cancelled`, whose source is `diagnostics::Cancelled`.
@@ -795,7 +795,7 @@ are marked **Breaking:**.
   geometry in geometry order (SeekDelta K33), so a host no longer turns geometries
   into frames and reports the loss itself. The whole set is checked before
   its first frame. Geometry state follows the PDB and mmCIF rules under the
-  new `XyzWriteOptions::sample_metadata`: unequal weights, more than one
+  new `XyzWriteOptions::set_metadata`: unequal weights, more than one
   state, state energies, and a temperature fail by default
   (`TrajectoryIoErrorKind::UnsupportedField`, naming the geometry's frame) and
   are reported as `WriteOmission::StructureState` under
@@ -948,6 +948,9 @@ are marked **Breaking:**.
   `StructureSetDescription`. The accessors follow: `as_structure_view`,
   `to_structure`, `into_structure`, `from_structure`, `from_structures`, and
   `structure()` where an interpretation or write source returned a model.
+  Messages follow the words: "The geometry properties of the structure have
+  no PDB representation.", "The input holds a structure, not an interpreted
+  structure.", and "There are 0 interpretation reports for 2 structures."
   `StructureProperties` and `StructureError` become `GeometryProperties` and
   `GeometryError`, and `PropertyDomain`'s rows of a structure's own state
   become `GeometryAtoms` and `GeometryBonds`. `kekule::geometry` becomes
@@ -990,19 +993,19 @@ are marked **Breaking:**.
   cannot store (SeekDelta K75). `PdbWriteOptions`, `MmcifWriteOptions`,
   `MolfileWriteOptions`, and `SdfWriteOptions` gain `properties` with
   `with_properties`: a structure's per-atom, per-bond, and own properties
-  and its structure set's properties fail by default ("The structure
-  properties of the model have no PDB representation.", "The structure set
+  and its structure set's properties fail by default ("The geometry
+  properties of the structure have no PDB representation.", "The structure set
   properties have no SDF representation.") and are reported as
   `WriteOmission::StructureState` under `UnrepresentablePolicy::Omit`.
   PDB and mmCIF dropped them silently before. Molfile and SDF also refuse
-  occupancies and B factors ("The occupancies of the model have no SDF
+  occupancies and B factors ("The occupancies of the structure have no SDF
   representation."), reported as `WriteOmission::Occupancies` and
   `WriteOmission::BFactors`, and state properties on the representative's
-  record, all under `sample_metadata`. `StructureField` gains
+  record, all under `set_metadata`. `StructureField` gains
   `SetProperties`, `Occupancies`, and `BFactors`; `StructureSetRead` gains a
   provided `properties`, the set's properties, so writers see them through
   any reader. Migration: a host that wrote such structures on purpose sets
-  `properties`, or `sample_metadata` for Molfile and SDF sites, to `Omit`.
+  `properties`, or `set_metadata` for Molfile and SDF sites, to `Omit`.
 - **Breaking:** SDF reading names the reference record in a disagreement
   (SeekDelta K75): "The data field "kekule.temperature.K" differs from
   that of record 2." and "The data field "kekule.coordinate.unit"
@@ -1020,17 +1023,17 @@ are marked **Breaking:**.
   `StructureSet` replaces `Ensemble` and `Trajectory`, which are removed with
   everything that existed only for them (see Removed).
   Renames: `StructureEnsembleInterpretOptions` is
-  `StructureStructureSetInterpretOptions`, `MmcifWriteIssue`'s
+  `StructureSetInterpretOptions`, `MmcifWriteIssue`'s
   `IncompatibleEnsembleMember` and `UnrepresentableEnsembleMember` are
-  `IncompatibleSample` and `UnrepresentableSample`, `MmcifMemberField` is
-  `MmcifSampleField` (without `Weight` and `Energy`), and
-  `MmcifCellReason::MemberCellsDiffer` is `SampleCellsDiffer`.
+  `IncompatibleGeometry` and `UnrepresentableGeometry`, `MmcifMemberField` is
+  `MmcifGeometryField` (without `Weight` and `Energy`), and
+  `MmcifCellReason::MemberCellsDiffer` is `GeometryCellsDiffer`.
 - **Breaking:** trajectory writers take a `FrameView`, a borrowed `Geometry`
   with its time and step (SeekDelta K74). `FrameView::new(topology, geometry,
   time, step)` lends a geometry held apart from a set and
-  `FrameView::from_sample` one of a time-ordered set, neither copying
+  `FrameView::from_geometry` one of a time-ordered set, neither copying
   arrays; `to_structure` copies a frame out as a model. A `FrameBuffer` holds a
-  `Geometry`: `FrameBuffer::from_sample` binds one, `sample_mut` edits it,
+  `Geometry`: `FrameBuffer::from_geometry` binds one, `geometry_mut` edits it,
   and `set_time` and `set_step` set the frame's place. `into_geometry`
   returns the geometry with its `Place` without copying, so a host keeps
   decoded frames, in a frame cache for example. Its `Deref` target is
@@ -1071,9 +1074,9 @@ are marked **Breaking:**.
   needs progress or cancellation reads geometry by geometry through
   `StructureSetRead`. Reading through `Processed` loads processed geometries.
 - **Breaking:** the Molfile, SDF, PDB, and mmCIF writers hold a geometry to
-  one policy, `sample_metadata`, whether it belongs to a set or is a
+  one policy, `set_metadata`, whether it belongs to a set or is a
   trajectory frame (SeekDelta K74). XYZ keeps `frame_metadata` for the
-  frames it streams and `sample_metadata` for the geometry state of a set.
+  frames it streams and `set_metadata` for the geometry state of a set.
 - **Breaking:** writer failure texts name geometries (SeekDelta K74). A geometry
   state a format cannot carry reads "The {field} of geometry {n} has no
   {format} representation." ("of the geometry" for one geometry). Plural
@@ -1529,7 +1532,7 @@ are marked **Breaking:**.
     per geometry, and of clustered states round-trip.
   - PDB and mmCIF structure sets, which read back as one state of equal
     weights without an energy, also fail on several states or a temperature
-    unless `sample_metadata` omits them.
+    unless `set_metadata` omits them.
 - **Breaking:** `pdb::write` and `mmcif::write` return the text together with
   a `diagnostics::WriteReport`, and `pdb::write_to` and `mmcif::write_to`
   return the report. The report lists every omission an
@@ -1562,25 +1565,25 @@ are marked **Breaking:**.
 
   | Removed | Instead |
   | --- | --- |
-  | `Ensemble`, `EnsembleSample`, `EnsembleGeometryView`, `EnsembleGeometryMut`, `EnsembleIter`, `EnsembleStateView`, `EnsembleStateIter`, `EnsembleError` | `StructureSet` with a `Distribution`; `Geometry`, `GeometryView`, `GeometryMut`, `StateView`, `StructureSetError` |
+  | `Ensemble`, `EnsembleSample`, `EnsembleSampleView`, `EnsembleSampleMut`, `EnsembleIter`, `EnsembleStateView`, `EnsembleStateIter`, `EnsembleError` | `StructureSet` with a `Distribution`; `Geometry`, `GeometryView`, `GeometryMut`, `StateView`, `StructureSetError` |
   | `Trajectory`, `TrajectoryFrame`, `TrajectoryFrameView`, `TrajectoryFrameMut`, `TrajectoryIter`, `TrajectoryError` | `StructureSet` with `Order::Time(TimeAxis)`; `Geometry` and its `Place::Time { time, step }`; `FrameView` for writers |
   | `Series`, `SeriesItem`, `SeriesItemView`, `SeriesItemMut`, `SeriesIter`, `SeriesAxis`, `SeriesError` | `StructureSet` with `Order::Step` or `Order::Coordinate`; `Place::Step` or `Place::Coordinate` |
   | `EnsemblePartition`, `EnsembleState` | `Partition`, `State` |
-  | `Ensemble::from_structures(models, partition)` | `StructureSet::from_structures(models)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
-  | `Ensemble::from_molecule_positions` | `Topology::from_molecule`, `StructureSet::from_samples` of `Geometry::new(positions)`, then `set_distribution` |
+  | `Ensemble::from_models(models, partition)` | `StructureSet::from_structures(models)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
+  | `Ensemble::from_molecule_positions` | `Topology::from_molecule`, `StructureSet::from_geometries` of `Geometry::new(positions)`, then `set_distribution` |
   | `Ensemble` and `Trajectory` methods (`select`, `subset`, `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, `contact_occupancy`, `group_contact_occupancy`, clustering, `pairwise_fitted_rmsd`, populations, rankings, `collapse`, `assign_boltzmann_populations`) | The `StructureSet` and `DistributionMut` methods of the same names |
   | `Trajectory::validate_monotonic_time(MissingTimePolicy)` | `StructureSet::validate_monotonic_time()`, which fails with `Missing(Times)` on an axis without times |
   | `TrajectorySampler`, `TrajectorySampling`, `Trajectory::to_ensemble`, `Trajectory::into_ensemble`, `traj::read_ensemble`, `read_ensemble_seekable`, `EnsembleReadOptions`, `EnsembleReadProgress` | `StructureSet::from_reader(&reader, indices)`; see the migration below |
   | `StructureSet::from_ensemble`, `from_trajectory`, `from_series`, `to_ensemble`, `into_ensemble`, `to_trajectory`, `into_trajectory`, `to_series`, `into_series`, `ConversionTarget`, `Unconvertible`, `StructureSetError::NotConvertible` | Build the `StructureSet` directly |
   | `NativeObject::into_ensemble`, `into_ensemble_interpretation`, `into_trajectory`, `into_series`, `NativeSource::interpreted_ensemble`, `FormatErrorDetail::NativeStructureSetShape` | `NativeObject::into_structure_set`, `into_structure_set_interpretation`; `NativeSource::interpreted_structure_set` |
   | `traj::io::read_trajectory`, `write_trajectory`, `write_trajectory_to` | `read_structure_set`, `write_structure_set`, `write_structure_set_to` |
-  | `FrameBuffer::from_frame`, `into_trajectory`, `frame_mut` | `FrameBuffer::from_sample`, `into_geometry`, `sample_mut` (time and step through `set_time` and `set_step`) |
+  | `FrameBuffer::from_frame`, `into_trajectory`, `frame_mut` | `FrameBuffer::from_geometry`, `into_geometry`, `geometry_mut` (time and step through `set_time` and `set_step`) |
   | `XyzWriter::write_ensemble`, `write_series` | `XyzWriter::write_structure_set` |
-  | `MmcifDocument::interpret_ensemble`, `PdbDocument::interpret_ensemble`, `XyzDocument::interpret_ensemble`, `StructureEnsembleInterpretation`, `XyzEnsembleInterpretation` | `interpret_structure_set`, `StructureStructureSetInterpretation`, `XyzStructureSetInterpretation` |
+  | `MmcifDocument::interpret_ensemble`, `PdbDocument::interpret_ensemble`, `XyzDocument::interpret_ensemble`, `StructureEnsembleInterpretation`, `XyzEnsembleInterpretation` | `interpret_structure_set`, `StructureSetInterpretation`, `XyzStructureSetInterpretation` |
   | `sdf::ensemble` | `sdf::structure_set` |
-  | `PdbSource::ensemble`, `series`, `MmcifBlockSource::ensemble`, and the conversions from `&Ensemble`, `&Series`, `&StructureEnsembleInterpretation` | `PdbSource::sample_set`, `MmcifBlockSource::sample_set`, and the conversions from `&StructureSet` and `&StructureStructureSetInterpretation` |
-  | `ensemble_metadata`, `series_metadata`, and the Molfile, SDF, PDB, and mmCIF `frame_metadata` writer options with their `with_` setters | `sample_metadata` and `with_sample_metadata` |
-  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifSampleField::Weight`, `Energy`, `State`, `Temperature` | `UnrepresentableSample`, `EmptyStructureSet` |
+  | `PdbSource::ensemble`, `series`, `MmcifBlockSource::ensemble`, and the conversions from `&Ensemble`, `&Series`, `&StructureEnsembleInterpretation` | `PdbSource::structure_set`, `MmcifBlockSource::structure_set`, and the conversions from `&StructureSet` and `&StructureSetInterpretation` |
+  | `ensemble_metadata`, `series_metadata`, and the Molfile, SDF, PDB, and mmCIF `frame_metadata` writer options with their `with_` setters | `set_metadata` and `with_set_metadata` |
+  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifGeometryField::Weight`, `Energy`, `State`, `Temperature` | `UnrepresentableGeometry`, `EmptyStructureSet` |
   | `diagnostics::check_multi_model_ensemble`, `UnrepresentableSampleState` | none: writers check geometry state themselves |
   | `StructureError::InvalidWeight`, `NonFiniteCoordinate` | `StructureSetError::InvalidWeight`, `NonFiniteOrderValue` |
 

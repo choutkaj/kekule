@@ -554,7 +554,7 @@ fn every_report_field_round_trips() {
     assert_eq!(super::debug_fingerprint(&set), 0x72ce_aeac_d3d9_a600);
     let report = report(false);
     let bytes = native::write(
-        NativeSource::interpreted_model(&model, &report),
+        NativeSource::interpreted_structure(&model, &report),
         NativeWriteOptions::default(),
     )
     .unwrap();
@@ -631,7 +631,7 @@ fn decoded_assembly_operations_are_rigid() {
         Vector3::new(0.0, 0.0, 1.0),
     );
     let bytes = native::write(
-        NativeSource::interpreted_model(&model, &report),
+        NativeSource::interpreted_structure(&model, &report),
         NativeWriteOptions::default(),
     )
     .unwrap();
@@ -651,11 +651,11 @@ fn corrupt_report_sections_fail_cleanly() {
     let report = report(true);
     let plain = native::write(&model, NativeWriteOptions::default()).unwrap();
     let bytes = native::write(
-        NativeSource::interpreted_model(&model, &report),
+        NativeSource::interpreted_structure(&model, &report),
         NativeWriteOptions::default(),
     )
     .unwrap();
-    // The report follows the model, before the trailer. Only the kind
+    // The report follows the structure, before the trailer. Only the kind
     // byte of the header differs.
     let start = plain.len() - 8;
     assert_eq!((plain[12], bytes[12]), (3, 7));

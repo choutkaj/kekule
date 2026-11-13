@@ -12,7 +12,8 @@ use crate::molecule::Molecule;
 use crate::structure::{StructureBuildError, StructureBuilder};
 use crate::topology::MoleculeDefinitionId;
 
-/// Stages one definition per distinct molecule of a model under construction.
+/// Stages one definition per distinct molecule of a structure under
+/// construction.
 ///
 /// Two molecules share a definition when they are identical in local atom
 /// order: equal atoms (element, isotope, formal charge, radical, implicit

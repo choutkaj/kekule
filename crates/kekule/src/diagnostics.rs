@@ -530,7 +530,7 @@ impl<T: fmt::Display> fmt::Display for Capitalized<T> {
 ///
 /// Every Kekule error displays as one or two sentences and does not repeat
 /// its source, so the chain reads as one message, such as `Cannot build the
-/// solvated model. Atom 12 overlaps atom 3.` Errors from outside Kekule in
+/// solvated structure. Atom 12 overlaps atom 3.` Errors from outside Kekule in
 /// the chain, such as I/O errors, get an upper-case first letter and a
 /// closing full stop when they lack them. A cause whose text equals the
 /// previous one, as a transparent wrapper writes it, appears once. The
@@ -757,7 +757,7 @@ pub enum FormatStage {
     /// Reading text into a typed document, without assigning chemical meaning.
     Parse,
     /// Assigning canonical meaning to a parsed document: molecules,
-    /// topologies, models and structure sets.
+    /// topologies, structures and structure sets.
     Interpret,
     /// Encoding canonical values as text, including writing to the sink.
     Write,
@@ -849,9 +849,9 @@ pub enum FormatErrorDetail {
     MmcifWrite(crate::io::MmcifWriteIssue),
     /// A failure specific to the PDB writer.
     PdbWrite(crate::io::PdbWriteIssue),
-    /// The written structure, a model, a geometry, or a trajectory frame, has
-    /// this state, which the format cannot carry, and the writer's policy
-    /// for it is [`UnrepresentablePolicy::Fail`].
+    /// The written structure, geometry, or trajectory frame has this state,
+    /// which the format cannot carry, and the writer's policy for it is
+    /// [`UnrepresentablePolicy::Fail`].
     UnrepresentableState(StructureField),
     /// A configured or built-in resource limit was exceeded; the kind is
     /// [`DiagnosticKind::Limit`].
@@ -954,9 +954,9 @@ impl fmt::Display for StructureField {
             Self::Step => "MD step",
             Self::Velocities => "velocities",
             Self::Forces => "forces",
-            Self::AtomProperties => "per-atom structure properties",
-            Self::BondProperties => "per-bond structure properties",
-            Self::Properties => "structure properties",
+            Self::AtomProperties => "per-atom geometry properties",
+            Self::BondProperties => "per-bond geometry properties",
+            Self::Properties => "geometry properties",
             Self::SetProperties => "structure set properties",
             Self::Occupancies => "occupancies",
             Self::BFactors => "B factors",
@@ -1439,7 +1439,7 @@ mod tests {
         struct Outer(std::io::Error);
         impl fmt::Display for Outer {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("Cannot build the solvated model.")
+                formatter.write_str("Cannot build the solvated structure.")
             }
         }
         impl std::error::Error for Outer {
@@ -1451,11 +1451,11 @@ mod tests {
         let error = Outer(std::io::Error::other("disk full"));
         assert_eq!(
             ErrorChain::new(&error).to_string(),
-            "Cannot build the solvated model. Disk full."
+            "Cannot build the solvated structure. Disk full."
         );
         assert_eq!(
             format!("{:#}", ErrorChain::new(&error)),
-            "Cannot build the solvated model.
+            "Cannot build the solvated structure.
 Disk full."
         );
 

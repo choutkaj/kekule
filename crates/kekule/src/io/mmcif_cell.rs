@@ -54,8 +54,8 @@ pub(crate) fn cell_from_parameters(
 /// NMR and EM models.
 const PLACEHOLDER: CellParameters = [1.0, 1.0, 1.0, 90.0, 90.0, 90.0];
 
-/// The model's periodic cell from stated cell parameters and the space groups
-/// the source names, or why they are not one.
+/// The structure's periodic cell from stated cell parameters and the space
+/// groups the source names, or why they are not one.
 ///
 /// The coordinates are a whole unit cell only in space group P 1 or when no
 /// space group is declared. Under another space group they are an asymmetric

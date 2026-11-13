@@ -38,8 +38,8 @@ impl SdfWriteOptions {
         self
     }
 
-    /// A model's periodic cell, which an SDF record cannot carry: by default
-    /// a record whose model has a cell fails to write, and under
+    /// A structure's periodic cell, which an SDF record cannot carry: by
+    /// default a record whose structure has a cell fails to write, and under
     /// [`UnrepresentablePolicy::Omit`] the report counts the records written
     /// without one ([`WriteOmission::Cell`]).
     pub const fn cell(&self) -> UnrepresentablePolicy {
@@ -57,7 +57,7 @@ impl SdfWriteOptions {
     /// structure set or a trajectory frame: its time and MD step in a time
     /// order, its velocities and forces, its state's properties, and a
     /// coordinate unit that is not a unit constant; and the occupancies and
-    /// B factors of any model. By default writing a structure with any of
+    /// B factors of any structure. By default writing a structure with any of
     /// them fails. Under [`UnrepresentablePolicy::Omit`] the report counts
     /// the records written without each ([`WriteOmission::StructureState`],
     /// [`WriteOmission::Occupancies`], [`WriteOmission::BFactors`]). A
@@ -138,7 +138,7 @@ const PLACE_FIELDS: [&str; 3] = [
     SDF_COORDINATE_UNIT_FIELD,
 ];
 
-/// One SDF record: a model view with an optional title and data fields.
+/// One SDF record: a structure view with an optional title and data fields.
 ///
 /// Convert from `&Structure`, a borrowed geometry of a structure set, a trajectory
 /// frame, or `&SdfRecordInterpretation` (which keeps its title and data
@@ -157,7 +157,7 @@ const PLACE_FIELDS: [&str; 3] = [
 /// unit must be one of the unit constants of [`crate::units`], which the
 /// reader knows by symbol; another fails to write unless
 /// [`SdfWriteOptions::set_metadata`] omits the coordinate. A geometry's
-/// time, MD step, velocities, forces, and state properties, and a model's
+/// time, MD step, velocities, forces, and state properties, and a structure's
 /// occupancies and B factors, fail to write unless
 /// [`SdfWriteOptions::set_metadata`] omits them; structure and set
 /// properties fail unless [`SdfWriteOptions::properties`] omits them. Add
@@ -171,7 +171,7 @@ pub struct SdfRecordSource<'a> {
 }
 
 impl<'a> SdfRecordSource<'a> {
-    /// A record of any model view, with an empty title and no data fields.
+    /// A record of any structure view, with an empty title and no data fields.
     pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self::view(structure.as_structure_view())
     }

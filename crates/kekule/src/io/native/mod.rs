@@ -1,6 +1,6 @@
 //! Kekule's native binary serialization: exact, versioned persistence of one
-//! molecule, topology, model, or structure set, and of a model or structure set
-//! with its structure interpretation reports.
+//! molecule, topology, structure, or structure set, and of a structure or
+//! structure set with its structure interpretation reports.
 //!
 //! The byte layout is specified in `docs/native-format.md`; the encoder and
 //! decoder here implement that specification and nothing else.
@@ -93,7 +93,7 @@ impl NativeKind {
         })
     }
 
-    /// The kind with its indefinite article, such as "an interpreted model".
+    /// The kind with its indefinite article, such as "an interpreted structure".
     fn with_article(self) -> String {
         let article = match self {
             Self::StructureInterpretation | Self::StructureSetInterpretation => "an",
@@ -108,8 +108,8 @@ impl fmt::Display for NativeKind {
         formatter.write_str(match self {
             Self::Molecule => "molecule",
             Self::Topology => "topology",
-            Self::Structure => "model",
-            Self::StructureInterpretation => "interpreted model",
+            Self::Structure => "structure",
+            Self::StructureInterpretation => "interpreted structure",
             Self::StructureSet => "structure set",
             Self::StructureSetInterpretation => "interpreted structure set",
         })
@@ -120,9 +120,9 @@ impl fmt::Display for NativeKind {
 ///
 /// Converts from a borrowed [`Molecule`], [`Topology`], [`Structure`],
 /// [`StructureSet`], [`StructureSetDescription`], [`StructureInterpretation`], or
-/// [`StructureSetInterpretation`]. [`Self::interpreted_model`] and
-/// [`Self::interpreted_structure_set`] pair a model or structure set with reports
-/// held apart from it.
+/// [`StructureSetInterpretation`]. [`Self::interpreted_structure`] and
+/// [`Self::interpreted_structure_set`] pair a structure or structure set with
+/// reports held apart from it.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeSource<'a> {
     pub(super) content: NativeContent<'a>,
@@ -140,11 +140,11 @@ pub(super) enum NativeContent<'a> {
 }
 
 impl<'a> NativeSource<'a> {
-    /// A model with the report of its interpretation.
+    /// A structure with the report of its interpretation.
     ///
     /// The report is stored as it is. Its IDs name atoms, chains, and
-    /// residues of the model it was interpreted with.
-    pub const fn interpreted_model(
+    /// residues of the structure it was interpreted with.
+    pub const fn interpreted_structure(
         model: &'a Structure,
         report: &'a StructureInterpretationReport,
     ) -> Self {
@@ -204,7 +204,7 @@ native_source_from!(
 
 impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
     fn from(value: &'a StructureInterpretation) -> Self {
-        Self::interpreted_model(value.structure(), value.report())
+        Self::interpreted_structure(value.structure(), value.report())
     }
 }
 
@@ -225,9 +225,9 @@ pub enum NativeObject {
     Molecule(Box<Molecule>),
     /// A topology.
     Topology(Topology),
-    /// A model with its topology.
+    /// A structure with its topology.
     Structure(Structure),
-    /// A model with its topology and the report of its interpretation.
+    /// A structure with its topology and the report of its interpretation.
     StructureInterpretation(Box<StructureInterpretation>),
     /// A structure set with its topology and geometries.
     StructureSet(StructureSet),
@@ -292,8 +292,8 @@ impl NativeObject {
         }
     }
 
-    /// The decoded model, of a model or of an interpreted model, whose
-    /// report it drops.
+    /// The decoded structure, of a structure or of an interpreted structure,
+    /// whose report it drops.
     ///
     /// # Errors
     ///
@@ -307,13 +307,13 @@ impl NativeObject {
         }
     }
 
-    /// The decoded model with the report of its interpretation.
+    /// The decoded structure with the report of its interpretation.
     ///
     /// # Errors
     ///
     /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
     /// [`FormatErrorDetail::NativeKind`] when the object is of another kind,
-    /// such as a model stored without a report.
+    /// such as a structure stored without a report.
     pub fn into_interpretation(self) -> Result<StructureInterpretation, FormatError> {
         match self {
             Self::StructureInterpretation(value) => Ok(*value),

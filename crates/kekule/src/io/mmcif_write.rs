@@ -102,7 +102,7 @@ impl MmcifWriteOptions {
     /// distribution, weights are unequal, it has more than one state, a
     /// state energy, state properties, another representative, a
     /// temperature, or an order, a time order without times or steps
-    /// included, or a geometry has velocities or forces; so does a model
+    /// included, or a geometry has velocities or forces; so does a structure
     /// block of one geometry with a membership, a place (a frame's time and
     /// MD step among them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
     /// the models without them and reports a
@@ -134,7 +134,7 @@ impl MmcifWriteOptions {
         self
     }
 
-    /// The policies for the state of a model block.
+    /// The policies for the state of a structure block.
     const fn state_policies(&self) -> StatePolicies {
         StatePolicies::with_sites(self.set_metadata, self.properties)
     }
@@ -250,7 +250,7 @@ pub enum MmcifWriteIssue {
         /// The conflicting classifications.
         classifications: Vec<EntityKind>,
     },
-    /// Entity semantics name a molecule instance the model does not have.
+    /// Entity semantics name a molecule instance the structure does not have.
     UnknownClassifiedMolecule(MoleculeInstanceId),
     /// A hierarchy atom has no biomolecular atom site.
     MissingAtomSite(InstanceAtomId),
@@ -270,8 +270,8 @@ pub enum MmcifWriteIssue {
     MissingAtomProvenance(InstanceAtomId),
     /// Interpretation reports carry atom-level provenance for this atom twice.
     DuplicateAtomProvenance(InstanceAtomId),
-    /// Interpretation reports carry provenance for an atom the model does not
-    /// have.
+    /// Interpretation reports carry provenance for an atom the structure does
+    /// not have.
     UnknownAtomProvenance(InstanceAtomId),
     /// An atom has state the writer does not represent.
     UnsupportedAtomField {
@@ -320,7 +320,7 @@ pub enum MmcifWriteIssue {
         /// The 1-based geometry number.
         geometry: usize,
         /// The differing state.
-        field: MmcifSampleField,
+        field: MmcifGeometryField,
     },
     /// A periodic cell mmCIF cannot represent, with
     /// [`UnrepresentablePolicy::Fail`].
@@ -389,7 +389,7 @@ impl fmt::Display for MmcifAtomField {
 /// Geometry state named by [`MmcifWriteIssue::IncompatibleGeometry`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MmcifSampleField {
+pub enum MmcifGeometryField {
     /// The `_entity` representation.
     Entities,
     /// The `_struct_asym` representation.
@@ -400,7 +400,7 @@ pub enum MmcifSampleField {
     AtomSites,
 }
 
-impl fmt::Display for MmcifSampleField {
+impl fmt::Display for MmcifGeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Entities => "entity representation",
@@ -551,7 +551,7 @@ impl fmt::Display for MmcifWriteIssue {
             ),
             Self::UnknownClassifiedMolecule(molecule) => write!(
                 f,
-                "The entity classifications name {molecule}. The model has no such instance."
+                "The entity classifications name {molecule}. The structure has no such instance."
             ),
             Self::MissingAtomSite(atom) => {
                 write!(f, "{} has no atom site.", Capitalized(atom))
@@ -578,7 +578,7 @@ impl fmt::Display for MmcifWriteIssue {
             ),
             Self::UnknownAtomProvenance(atom) => write!(
                 f,
-                "The interpretation reports have a source record of {atom}. The model has no such atom."
+                "The interpretation reports have a source record of {atom}. The structure has no such atom."
             ),
             Self::UnsupportedAtomField { atom, field } => write!(
                 f,
@@ -609,7 +609,7 @@ impl fmt::Display for MmcifWriteIssue {
             }
             Self::ReportCountMismatch { expected, actual } => write!(
                 f,
-                "There are {actual} interpretation reports for {expected} models."
+                "There are {actual} interpretation reports for {expected} structures."
             ),
             Self::IncompatibleGeometry { geometry, field } => write!(
                 f,
@@ -704,7 +704,7 @@ pub(super) fn fail(issue: MmcifWriteIssue) -> FormatError {
         .with_detail(FormatErrorDetail::MmcifWrite(issue))
 }
 
-/// The source model is internally inconsistent or incomplete.
+/// The source structure is internally inconsistent or incomplete.
 pub(super) fn invalid_structure(message: impl Into<String>) -> FormatError {
     FormatError::write(Format::Mmcif, DiagnosticKind::Inconsistent, message)
 }
@@ -774,15 +774,15 @@ impl MmcifEntityClassifications {
     }
 }
 
-/// One mmCIF data block to write: a model or a structure set, plus the entity
-/// semantics used for its `_entity` and asymmetry assignments.
+/// One mmCIF data block to write: a structure or a structure set, plus the
+/// entity semantics used for its `_entity` and asymmetry assignments.
 ///
 /// Convert from `&Structure`, `&StructureSet`, [`GeometryView`],
 /// `&StructureInterpretation`, or `&StructureSetInterpretation`;
 /// interpretations keep their source reports. [`Self::structure`] accepts any
-/// borrowed model view, such as a geometry or a trajectory frame; a geometry's
-/// membership, place, velocities, and forces fail to write unless the
-/// write options omit them.
+/// borrowed structure view, such as a geometry or a trajectory frame; a
+/// geometry's membership, place, velocities, and forces fail to write unless
+/// the write options omit them.
 ///
 /// A block is named by [`MmcifWriteOptions::block_name`] unless
 /// [`Self::with_block_name`] names it.
@@ -818,7 +818,7 @@ enum EntitySemantics<'a> {
 }
 
 impl<'a> MmcifBlockSource<'a> {
-    /// One model block with entity kinds derived from canonical topology
+    /// One structure block with entity kinds derived from canonical topology
     /// classification.
     pub fn structure(structure: &'a (impl AsStructureView + ?Sized)) -> Self {
         Self {
@@ -852,7 +852,7 @@ impl<'a> MmcifBlockSource<'a> {
     }
 
     /// Preserves interpreted mmCIF entity and asymmetry semantics: one report
-    /// for a model block, one per geometry for a structure set block.
+    /// for a structure block, one per geometry for a structure set block.
     ///
     /// Atom-level provenance keeps one source entity and structural asymmetry
     /// consistent even when it spans several molecule instances; conflicting

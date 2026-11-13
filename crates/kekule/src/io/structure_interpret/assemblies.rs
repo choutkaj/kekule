@@ -1,4 +1,4 @@
-//! Biological assemblies a source states, and the models they make: mmCIF
+//! Biological assemblies a source states, and the structures they make: mmCIF
 //! `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
 //! `_pdbx_struct_oper_list`, and PDB `REMARK 350` biomolecules.
 //!
@@ -67,7 +67,7 @@ fn orthonormalized(mut rotation: Matrix3) -> Matrix3 {
 /// placed by an operation, such as a virus capsid from 60 point-symmetry
 /// operators or a dimer from a crystal's two-fold axis.
 ///
-/// [`Self::to_structure`] builds it from the interpreted model.
+/// [`Self::to_structure`] builds it from the interpreted structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assembly {
     pub(crate) id: String,
@@ -136,10 +136,11 @@ impl Assembly {
             .sum()
     }
 
-    /// Builds the assembly from `model`, the model the report was interpreted
-    /// with or one with the same chains and coordinates: for each generator,
-    /// a copy of the model's chains whose label identifiers it lists, moved by
-    /// each operation. Listed chains the model lacks are skipped.
+    /// Builds the assembly from `structure`, the one the report was
+    /// interpreted with or one with the same chains and coordinates: for each
+    /// generator, a copy of the structure's chains whose label identifiers it
+    /// lists, moved by each operation. Listed chains the structure lacks are
+    /// skipped.
     ///
     /// A copy keeps the chemistry, perception, hierarchy, occupancies, B
     /// factors and entity properties of its atoms; copies of one molecule share
@@ -150,25 +151,25 @@ impl Assembly {
     /// product of `12` and `60` `A-12-60`.
     /// Atoms come in generator, operation and source dense order. A generator's
     /// chains that are bonded to chains it does not list lose those bonds. The
-    /// model has no cell, since copies are not a lattice's content.
+    /// structure has no cell, since copies are not a lattice's content.
     ///
     /// # Errors
     ///
-    /// [`AssemblyError::NoAtoms`] when no listed chain has atoms in `model`,
+    /// [`AssemblyError::NoAtoms`] when no listed chain has atoms in `structure`,
     /// [`AssemblyError::RepeatedCopy`] when two copies of one chain would take
     /// the same identifiers, [`AssemblyError::Cancelled`] when `cancellation`
-    /// stops it, and the model errors of taking the chains and publishing the
-    /// copies.
+    /// stops it, and the structure errors of taking the chains and publishing
+    /// the copies.
     pub fn to_structure(
         &self,
-        model: &Structure,
+        structure: &Structure,
         cancellation: Option<&Cancellation>,
     ) -> Result<Structure, AssemblyError> {
         let cancelled = |source| AssemblyError::Cancelled {
             assembly: self.id.clone(),
             source,
         };
-        let topology = model.shared_topology();
+        let topology = structure.shared_topology();
         let mut editor = StructureEditor::new();
         let mut copies = HashSet::<(ChainId, String)>::new();
         let mut copied = false;
@@ -196,10 +197,10 @@ impl Assembly {
             if selection.is_empty() {
                 continue;
             }
-            let part = if selection.len() == model.atom_count() {
-                model.clone()
+            let part = if selection.len() == structure.atom_count() {
+                structure.clone()
             } else {
-                model
+                structure
                     .subset(&selection)
                     .map_err(|source| AssemblyError::Structure {
                         assembly: self.id.clone(),
@@ -358,12 +359,12 @@ impl PartialEq for AssemblyOperation {
 
 impl Eq for AssemblyOperation {}
 
-/// Why an assembly could not be built from a model.
+/// Why an assembly could not be built from a structure.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum AssemblyError {
-    /// None of the chains the assembly lists has atoms in the model, as when
-    /// the model is not the one the report was read with.
+    /// None of the chains the assembly lists has atoms in the structure, as
+    /// when the structure is not the one the report was read with.
     NoAtoms {
         /// The assembly.
         assembly: String,
@@ -384,14 +385,14 @@ pub enum AssemblyError {
         /// The cancellation.
         source: Cancelled,
     },
-    /// The model's chains could not be selected.
+    /// The structure's chains could not be selected.
     Selection {
         /// The assembly.
         assembly: String,
         /// The selection failure.
         source: Box<SelectionError>,
     },
-    /// The model's chains could not be taken apart from the rest.
+    /// The structure's chains could not be taken apart from the rest.
     Structure {
         /// The assembly.
         assembly: String,
@@ -412,7 +413,7 @@ impl fmt::Display for AssemblyError {
         match self {
             Self::NoAtoms { assembly } => write!(
                 formatter,
-                "Assembly {assembly:?} copies no atoms. The model has none of its chains."
+                "Assembly {assembly:?} copies no atoms. The structure has none of its chains."
             ),
             Self::RepeatedCopy { assembly, chain } => write!(
                 formatter,

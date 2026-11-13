@@ -1,4 +1,4 @@
-//! PDB writing of models and structure sets.
+//! PDB writing of structures and structure sets.
 //!
 //! A written entry holds these records, in this order:
 //! - `LINK` for the metal coordination of interpretation reports, when the
@@ -132,7 +132,7 @@ impl PdbWriteOptions {
         StatePolicies::with_sites(self.set_metadata, self.properties)
     }
 
-    /// A periodic cell `CRYST1` cannot carry as the model's cell: one not
+    /// A periodic cell `CRYST1` cannot carry as the structure's cell: one not
     /// periodic along all three axes, not in the standard crystallographic
     /// orientation, differing between geometries, or written as PDB's
     /// 1 Å placeholder cube. By default such a cell fails to write;
@@ -239,7 +239,7 @@ impl fmt::Display for PdbAtomField {
     }
 }
 
-/// Why `CRYST1` cannot carry a periodic cell as the model's cell.
+/// Why `CRYST1` cannot carry a periodic cell as the structure's cell.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PdbCellReason {
@@ -555,7 +555,7 @@ fn fail(issue: PdbWriteIssue) -> FormatError {
 /// Convert from `&Structure`, `&StructureSet`, [`GeometryView`],
 /// `&StructureInterpretation`, or `&StructureSetInterpretation`;
 /// interpretations keep their source reports. [`Self::structure`] accepts
-/// any borrowed model view, such as a geometry of a structure set or a
+/// any borrowed structure view, such as a geometry of a structure set or a
 /// trajectory frame, whose own state fails to write unless the write
 /// options omit it.
 #[derive(Debug, Clone, Copy)]
@@ -592,7 +592,7 @@ impl<'a> PdbSource<'a> {
     /// States the metal coordination of interpretation reports as `LINK`
     /// records: one report for a structure, one per geometry for a geometry
     /// set. Coordination between residues is no bond of the
-    /// model, so without reports the entry has no `LINK` records.
+    /// structure, so without reports the entry has no `LINK` records.
     ///
     /// Each record names both partners as their atom records do, with blank
     /// alternate locations, the identity symmetry operator `1555`, and the

@@ -1,6 +1,6 @@
 //! Interpretation of Molfile and SDF records: the represented graph, stereo
-//! from bond marks, atom parities, and 3D coordinates, and one model with one
-//! molecule instance per connected component, with source-line reports.
+//! from bond marks, atom parities, and 3D coordinates, and one structure with
+//! one molecule instance per connected component, with source-line reports.
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
@@ -414,7 +414,7 @@ pub enum MolfileInterpretationWarning {
     },
 }
 
-/// One final canonical model and source reports in molecule-instance order.
+/// One final canonical structure and source reports in molecule-instance order.
 ///
 /// Each connected component is one instance. Dense atom order is the source
 /// atom-block order, so components may interleave in the dense order.
@@ -426,7 +426,8 @@ pub struct MolfileInterpretation {
 }
 
 impl MolfileInterpretation {
-    /// The interpreted model, with one molecule instance per connected component.
+    /// The interpreted structure, with one molecule instance per connected
+    /// component.
     pub fn structure(&self) -> &Structure {
         &self.model
     }
@@ -467,12 +468,12 @@ impl MolfileInterpretation {
         self.model.shared_topology()
     }
 
-    /// The interpreted model, discarding the reports.
+    /// The interpreted structure, discarding the reports.
     pub fn into_structure(self) -> Structure {
         self.model
     }
 
-    /// The model, the component reports, and the omitted content.
+    /// The structure, the component reports, and the omitted content.
     pub fn into_parts(
         self,
     ) -> (
@@ -763,8 +764,12 @@ pub(crate) fn interpret_molfile_document(
         ));
     }
     publish_molfile_components(components, omitted).map_err(|error| {
-        interpret_error(DiagnosticKind::Chemistry, None, "Cannot build the model.")
-            .with_source(error)
+        interpret_error(
+            DiagnosticKind::Chemistry,
+            None,
+            "Cannot build the structure.",
+        )
+        .with_source(error)
     })
 }
 

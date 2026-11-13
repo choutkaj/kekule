@@ -364,7 +364,7 @@ fn macromolecular_models_round_trip_bitwise() {
 }
 
 #[test]
-fn interpreted_models_keep_their_reports() {
+fn interpreted_structures_keep_their_reports() {
     let mut unobserved = 0;
     for name in ["mmcif/9UOH.cif", "mmcif/1IRO.cif", "mmcif/1AKE.cif"] {
         let text = std::fs::read_to_string(fixture(name)).unwrap();
@@ -410,7 +410,7 @@ fn interpreted_models_keep_their_reports() {
         // A model and its report held apart write the same bytes.
         let (model, report) = interpretation.clone().into_parts();
         let apart = native::write(
-            NativeSource::interpreted_model(&model, &report),
+            NativeSource::interpreted_structure(&model, &report),
             NativeWriteOptions::default(),
         )
         .unwrap();
@@ -504,7 +504,7 @@ fn reports_are_stored_only_when_given() {
     );
     assert_eq!(
         error.to_string(),
-        "Cannot interpret the native input. The input holds a model, not an interpreted model."
+        "Cannot interpret the native input. The input holds a structure, not an interpreted structure."
     );
 
     // This reader rejects the retired kinds 4, 5, 6, and 8 and the unused

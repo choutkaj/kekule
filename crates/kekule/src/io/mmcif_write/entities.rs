@@ -78,10 +78,10 @@ pub(super) struct EntityPlan {
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     /// The report's metal coordination between residues, written as
-    /// `metalc` rows: the records that still match the model.
+    /// `metalc` rows: the records that still match the structure.
     pub(super) coordination: Vec<[InstanceAtomId; 2]>,
     /// The report's coordination records left out because they no longer
-    /// match the model.
+    /// match the structure.
     pub(super) omitted_coordination: usize,
 }
 
@@ -125,12 +125,13 @@ pub(super) fn entity_plan_from_report(
     }
 }
 
-/// The label asym IDs of a model's hierarchy chains. Chains may share a label,
-/// as copies [`append_structure`](crate::structure::StructureEditor::append_structure)
-/// appends do, while mmCIF requires every structural instance to have an ID
-/// of its own. The first chain with a label keeps it; each later one is the
-/// label with a copy serial, `A-2`, `A-3`, and so on, that no chain label or
-/// other written asym uses. Author chain identifiers are written as they are.
+/// The label asym IDs of a structure's hierarchy chains. Chains may share a
+/// label, as copies
+/// [`append_structure`](crate::structure::StructureEditor::append_structure)
+/// appends do, while mmCIF requires every structural instance to have an ID of
+/// its own. The first chain with a label keeps it; each later one is the label
+/// with a copy serial, `A-2`, `A-3`, and so on, that no chain label or other
+/// written asym uses. Author chain identifiers are written as they are.
 struct AsymIds {
     reserved: BTreeSet<String>,
     named: BTreeSet<String>,
@@ -731,7 +732,7 @@ fn carbohydrate_entity_kind(
 }
 
 fn invalid_molecule(molecule: MoleculeInstanceId) -> FormatError {
-    invalid_structure(format!("The model has no {molecule}."))
+    invalid_structure(format!("The structure has no {molecule}."))
 }
 
 #[cfg(test)]
