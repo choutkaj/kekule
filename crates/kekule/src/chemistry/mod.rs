@@ -15,7 +15,7 @@ pub(crate) use normalization::{
 pub use perception::PerceptionError;
 pub(crate) use perception::{perceive_molecule, perceive_molecule_cancellable};
 pub(crate) use source_stereo::{
-    molfile_double_bond_geometry_marks, molfile_keeps_decoded_stereo, normalize_source_stereo,
-    project_molfile_stereo_bond_marks, source_tetrahedral_carriers, SourceStereoBondMark,
-    SourceStereoBondMarkKind,
+    has_specified_double_bond_stereo, molfile_double_bond_geometry_marks, normalize_source_stereo,
+    project_molfile_stereo_bond_marks, remove_unkept_source_stereo, source_tetrahedral_carriers,
+    SourceStereoBondMark, SourceStereoBondMarkKind,
 };

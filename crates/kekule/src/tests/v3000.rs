@@ -627,10 +627,10 @@ fn drawn_propene(deuterium: bool, methyl_z: f64) -> String {
 }
 
 #[test]
-fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
+fn molfile_coordinates_specify_e_z_only_at_locally_eligible_double_bonds() {
     // RDKit 2026.03.3 assigns no E/Z to either propene and Z to the
-    // 3D isotopologue, whose 2H and methyl share a side. Kekule keeps the E/Z
-    // that a flat drawing asserts.
+    // 3D isotopologue, whose 2H and methyl share a side. A flat drawing, like
+    // a conformation, gives E/Z only to a bond that can have it.
     let together = DoubleBondStereo {
         bond: BondId::new(0),
         left: AtomId::new(0),
@@ -641,8 +641,9 @@ fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
     };
     for (deuterium, methyl_z, expected) in [
         (false, 0.1, vec![]),
-        (false, 0.0, vec![together.clone()]),
+        (false, 0.0, vec![]),
         (true, 0.1, vec![together.clone()]),
+        (true, 0.0, vec![together.clone()]),
     ] {
         let molecule = read_molfile(&drawn_propene(deuterium, methyl_z)).unwrap();
         let double_bonds = molecule
@@ -660,55 +661,197 @@ fn molfile_conformation_specifies_e_z_only_at_locally_eligible_double_bonds() {
 }
 
 #[test]
-fn molfile_conformation_writes_no_e_z_at_ineligible_double_bonds() {
-    // A conformation neither invents an unknown mark for the methylene nor
-    // carries an E/Z assertion there, which its coordinates cannot express.
-    let interpretation = molfile::parse_str(&drawn_propene(false, 0.1), Default::default())
+fn molfile_writes_no_e_z_at_ineligible_double_bonds() {
+    // Coordinates, flat or not, neither invent an unknown mark for the
+    // methylene nor carry an E/Z assertion there, which they cannot express.
+    for methyl_z in [0.1, 0.0] {
+        let interpretation =
+            molfile::parse_str(&drawn_propene(false, methyl_z), Default::default())
+                .unwrap()
+                .interpret(Default::default())
+                .unwrap();
+        for version in [
+            molfile::MolfileWriteVersion::V2000,
+            molfile::MolfileWriteVersion::V3000,
+        ] {
+            let written = molfile::write(
+                interpretation.model(),
+                molfile::MolfileWriteOptions::default().with_version(version),
+            )
+            .unwrap()
+            .0;
+            assert!(
+                read_molfile(&written)
+                    .unwrap()
+                    .stereo_elements()
+                    .next()
+                    .is_none(),
+                "z {methyl_z}: {written}"
+            );
+        }
+
+        let mut asserted = interpretation.molecules().next().unwrap().clone();
+        let mut editor = asserted.to_editor();
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
+                DoubleBondStereo {
+                    bond: BondId::new(0),
+                    left: AtomId::new(0),
+                    right: AtomId::new(1),
+                    left_carrier: StereoCarrier::Atom(AtomId::new(3)),
+                    right_carrier: StereoCarrier::Atom(AtomId::new(2)),
+                    orientation: Some(DoubleBondOrientation::Together),
+                },
+            )))
+            .unwrap();
+        asserted = editor.finish().unwrap();
+        let model = Model::from_molecule(asserted, interpretation.model().positions()).unwrap();
+        let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            crate::diagnostics::DiagnosticKind::Unsupported
+        );
+        assert_eq!(
+            error.message(),
+            "Cannot encode the specified stereo of bond 0. The bond is aromatic, or an endpoint has identical terminal ligands."
+        );
+    }
+}
+
+#[test]
+fn molfile_drawings_of_double_bonds_without_e_z_round_trip_unmarked() {
+    // 2-methylbut-2-ene: the drawn C(CH3)2=CH bond has no configuration to
+    // assert, so it reads without E/Z and writes without a crossed bond.
+    let drawing = "\n  kekule\n\n  5  4  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 C   0  0  0  0  0  0\n    1.3300    0.0000    0.0000 C   0  0  0  0  0  0\n   -0.7000    1.2000    0.0000 C   0  0  0  0  0  0\n   -0.7000   -1.2000    0.0000 C   0  0  0  0  0  0\n    2.0000    1.2000    0.0000 C   0  0  0  0  0  0\n  1  2  2  0\n  1  3  1  0\n  1  4  1  0\n  2  5  1  0\nM  END\n";
+    let interpretation = molfile::parse_str(drawing, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    for version in [
-        molfile::MolfileWriteVersion::V2000,
-        molfile::MolfileWriteVersion::V3000,
-    ] {
-        let written = molfile::write(
-            interpretation.model(),
-            molfile::MolfileWriteOptions::default().with_version(version),
-        )
+    assert!(interpretation
+        .molecules()
+        .next()
+        .unwrap()
+        .stereo_elements()
+        .next()
+        .is_none());
+    let written = molfile::write(interpretation.model(), Default::default())
         .unwrap()
         .0;
-        assert!(read_molfile(&written)
-            .unwrap()
-            .stereo_elements()
-            .next()
-            .is_none());
-    }
+    let document = molfile::parse_str(&written, Default::default()).unwrap();
+    assert!(
+        document.bonds().iter().all(|bond| bond.stereo().is_none()),
+        "{written}"
+    );
+}
 
-    let mut asserted = interpretation.molecules().next().unwrap().clone();
-    let mut editor = asserted.to_editor();
-    editor
-        .add_stereo_element(StereoElement::new(StereoElementKind::DoubleBond(
-            DoubleBondStereo {
-                bond: BondId::new(0),
-                left: AtomId::new(0),
-                right: AtomId::new(1),
-                left_carrier: StereoCarrier::Atom(AtomId::new(3)),
-                right_carrier: StereoCarrier::Atom(AtomId::new(2)),
-                orientation: Some(DoubleBondOrientation::Together),
-            },
-        )))
+/// 3D positions in which `molecule` has the configurations its tetrahedral
+/// stereo asserts: the atoms on a circle, each stereocenter lifted above or
+/// below it, in the first pattern of lifts the coordinates do not contradict.
+fn lifted_conformation(molecule: &Molecule) -> Positions {
+    let centers = molecule
+        .stereo_elements()
+        .filter_map(|(_, element)| match &element.kind {
+            StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let count = molecule.atom_count() as f64;
+    for lifts in 0..1_u32 << centers.len() {
+        let positions = test_positions(
+            molecule
+                .atom_ids()
+                .enumerate()
+                .map(|(index, atom)| {
+                    let angle = std::f64::consts::TAU * index as f64 / count;
+                    let z = centers
+                        .iter()
+                        .position(|center| *center == atom)
+                        .map_or(0.0, |bit| if lifts >> bit & 1 == 1 { 0.8 } else { -0.8 });
+                    Point3::new(4.0 * angle.cos(), 4.0 * angle.sin(), z)
+                })
+                .collect(),
+        );
+        let inferred = stereo_api::coordinates::infer_coordinate_stereo(
+            molecule,
+            &positions,
+            Default::default(),
+        )
         .unwrap();
-    asserted = editor.finish().unwrap();
-    let model = Model::from_molecule(asserted, interpretation.model().positions()).unwrap();
-    let error = molfile::write(&model, molfile::MolfileWriteOptions::default()).unwrap_err();
-    assert_eq!(
-        error.kind(),
-        crate::diagnostics::DiagnosticKind::Unsupported
-    );
-    assert_eq!(
-        error.message(),
-        "Cannot encode the specified stereo of bond 0. The bond is aromatic, or an endpoint has identical terminal ligands."
-    );
+        if inferred.disagreements().is_empty() {
+            return positions;
+        }
+    }
+    panic!("no lifts give the asserted configurations");
+}
+
+#[test]
+fn sdf_conformations_of_smiles_with_e_z_marks_at_bonds_without_e_z_round_trip() {
+    // GEOM-drugs SMILES that mark the C(CH3)2=C bond. Interpretation omits
+    // that E/Z, so writing a conformation meets no assertion it cannot encode.
+    for source in [
+        "C/C(C)=C\\CN1CCN(CC#Cc2ccccc2)C[C@H]1CCO",
+        "C/C(C)=C/[C@H]1[C@H](C(=O)O)C1(C)C",
+    ] {
+        let mut molecule = read_smiles(source).unwrap();
+        assert!(
+            molecule
+                .stereo_elements()
+                .all(|(_, element)| matches!(element.kind, StereoElementKind::Tetrahedral(_))),
+            "{source}"
+        );
+        let model =
+            Model::from_molecule(molecule.clone(), &lifted_conformation(&molecule)).unwrap();
+        let (text, report) = sdf::write([&model], Default::default()).unwrap();
+        assert!(report.is_empty(), "{source}");
+        let document = sdf::parse_str(&text, Default::default()).unwrap();
+        let record = document.records()[0].interpret(Default::default()).unwrap();
+        // V2000 keeps four decimal places of angstroms.
+        let angstroms = |positions: &Positions| {
+            (0..positions.len())
+                .map(|index| {
+                    positions
+                        .get(index)
+                        .unwrap()
+                        .value_in(crate::units::ANGSTROM)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        for (read, written) in angstroms(record.model().positions())
+            .into_iter()
+            .zip(angstroms(model.positions()))
+        {
+            assert!(
+                (read - written).norm() < 1e-4,
+                "{source}: {read:?} {written:?}"
+            );
+        }
+        let mut reread = record.molecule().clone();
+        assert_eq!(
+            reread
+                .stereo_elements()
+                .map(|(_, element)| std::mem::discriminant(&element.kind))
+                .collect::<Vec<_>>(),
+            molecule
+                .stereo_elements()
+                .map(|(_, element)| std::mem::discriminant(&element.kind))
+                .collect::<Vec<_>>(),
+            "{source}"
+        );
+        perceive(&mut molecule).unwrap();
+        perceive(&mut reread).unwrap();
+        let expected = stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
+            .unwrap()
+            .assigned;
+        assert_eq!(expected.len(), reread.stereo_elements().count(), "{source}");
+        assert_eq!(
+            stereo_api::cip::assign_cip_descriptors(&mut reread, Default::default())
+                .unwrap()
+                .assigned,
+            expected,
+            "{source}"
+        );
+    }
 }
 
 #[test]

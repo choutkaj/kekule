@@ -2074,20 +2074,116 @@ fn smiles_aromatic_arsenic_round_trip() {
 
 #[test]
 fn smiles_canonicalization_retains_supplied_nonstereogenic_assertions() {
-    let mut molecule = read_smiles("F/C=C(/F)F").unwrap();
-    perceive(&mut molecule).unwrap();
-    assert_eq!(molecule.stereo_elements().count(), 1);
-    assert!(assigned_descriptors(&mut molecule).is_empty());
-    for options in [
-        smiles_api::SmilesWriteOptions::isomeric(),
-        smiles_api::SmilesWriteOptions::canonical(),
-    ] {
-        let written = smiles_api::write(&molecule, options).unwrap();
-        let mut restored = read_smiles(&written).unwrap();
-        perceive(&mut restored).unwrap();
-        assert_eq!(restored.stereo_elements().count(), 1);
-        assert!(assigned_descriptors(&mut restored).is_empty());
+    // Only symmetry analysis shows these are not stereogenic: the ethyls and
+    // methyls are equivalent, and coordinates can state either configuration.
+    for source in ["C/C=C(/CC)CC", "C[C@H](C)CC"] {
+        let mut molecule = read_smiles(source).unwrap();
+        perceive(&mut molecule).unwrap();
+        assert_eq!(molecule.stereo_elements().count(), 1, "{source}");
+        assert!(assigned_descriptors(&mut molecule).is_empty(), "{source}");
+        for options in [
+            smiles_api::SmilesWriteOptions::isomeric(),
+            smiles_api::SmilesWriteOptions::canonical(),
+        ] {
+            let written = smiles_api::write(&molecule, options).unwrap();
+            let mut restored = read_smiles(&written).unwrap();
+            perceive(&mut restored).unwrap();
+            assert_eq!(restored.stereo_elements().count(), 1, "{written}");
+            assert!(assigned_descriptors(&mut restored).is_empty(), "{written}");
+        }
     }
+}
+
+/// The stereo element kinds of a SMILES record's one component, with its
+/// report.
+fn smiles_stereo(
+    source: &str,
+) -> (
+    Vec<StereoElementKind>,
+    smiles_api::SmilesInterpretationReport,
+) {
+    let (molecule, report) = smiles_api::parse_str(source, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_parts()
+        .unwrap();
+    let kinds = molecule
+        .stereo_elements()
+        .map(|(_, element)| element.kind.clone())
+        .collect();
+    (kinds, report)
+}
+
+#[test]
+fn smiles_omits_e_z_at_double_bonds_without_e_z() {
+    // Directional marks at a double bond that is aromatic, or whose endpoint
+    // bears two identical terminal ligands, assert a configuration the bond
+    // cannot have; the first two inputs are GEOM-drugs SMILES.
+    for (source, bonds, tetrahedral) in [
+        ("C/C(C)=C\\CN1CCN(CC#Cc2ccccc2)C[C@H]1CCO", vec![2], 1),
+        ("C/C(C)=C/[C@H]1[C@H](C(=O)O)C1(C)C", vec![2], 2),
+        ("F/C=C(/F)F", vec![1], 0),
+        ("[H]/C([H])=C/C", vec![2], 0),
+        ("[2H]/C([2H])=C/C", vec![2], 0),
+        ("C/N=C(/N)N", vec![1], 0),
+        // [18]annulene: every double bond is aromatic.
+        (
+            "C1=C/C=C/C=C/C=C/C=C/C=C/C=C/C=C/C=C/1",
+            (0..9).map(|bond| 2 * bond).collect(),
+            0,
+        ),
+    ] {
+        let (kinds, report) = smiles_stereo(source);
+        assert_eq!(
+            report.omitted_double_bond_stereo(),
+            bonds.into_iter().map(BondId::new).collect::<Vec<_>>(),
+            "{source}"
+        );
+        assert!(
+            kinds
+                .iter()
+                .all(|kind| matches!(kind, StereoElementKind::Tetrahedral(_))),
+            "{source}: {kinds:?}"
+        );
+        assert_eq!(kinds.len(), tetrahedral, "{source}");
+        assert_eq!(report.created_stereo_elements().len(), 0, "{source}");
+    }
+}
+
+#[test]
+fn smiles_keeps_e_z_at_double_bonds_with_e_z() {
+    for (source, orientation) in [
+        ("C/C=C/C", DoubleBondOrientation::Opposite),
+        ("C/C=C\\C", DoubleBondOrientation::Together),
+        ("C/C(Cl)=C/C", DoubleBondOrientation::Opposite),
+        ("[2H]/C([H])=C/C", DoubleBondOrientation::Opposite),
+        ("c1ccccc1/C=C/C", DoubleBondOrientation::Opposite),
+        ("CC(C)/C=C/C", DoubleBondOrientation::Opposite),
+    ] {
+        let (kinds, report) = smiles_stereo(source);
+        assert!(report.omitted_double_bond_stereo().is_empty(), "{source}");
+        assert_eq!(report.created_stereo_elements().len(), 1, "{source}");
+        let [StereoElementKind::DoubleBond(stereo)] = kinds.as_slice() else {
+            panic!("{source}: expected one double-bond element, found {kinds:?}");
+        };
+        assert_eq!(stereo.orientation, Some(orientation), "{source}");
+    }
+    // An omitted assertion in one component leaves the others' E/Z alone.
+    let components = smiles_api::parse_str("F/C=C(/F)F.C/C=C/C", Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let omitted = components
+        .components()
+        .iter()
+        .map(|component| component.report().omitted_double_bond_stereo().len())
+        .collect::<Vec<_>>();
+    let elements = components
+        .molecules()
+        .map(|molecule| molecule.stereo_elements().count())
+        .collect::<Vec<_>>();
+    assert_eq!((omitted, elements), (vec![1, 0], vec![0, 1]));
 }
 
 #[test]

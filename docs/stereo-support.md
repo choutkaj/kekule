@@ -14,8 +14,9 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | Isomeric and canonical SMILES | Tetrahedral and ordinary double-bond stereo, isotope labels, disconnected component projections, and supported tetrahedral groups through CXSMILES |
 | SMARTS stereo | Tetrahedral and directional double-bond predicates, Boolean stereo expressions, and enhanced tetrahedral group matching; see the [current dialect](../crates/kekule/src/query/dialect.md) |
 | V2000/V3000 Model output | Coordinate-consistent tetrahedral, double-bond, and atropisomer stereo; validation uses coordinates rounded to the emitted precision |
+| SMILES and Molfile E/Z input | Directional marks and coordinates, flat or 3D, specify E/Z only at a double bond eligible before symmetry analysis; an aromatic bond, or one whose endpoint bears two identical terminal ligands (`C/C(C)=C/C`), has none, and the SMILES interpretation report names a marked one |
 | Specified E/Z Model output | Supplied coordinates must encode the assertion; conflicting or degenerate drawings fail explicitly |
-| Molfile output of an unasserted alkene | Crossed/either syntax prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
+| Molfile output of an unasserted alkene | Crossed/either syntax at a bond that can have E/Z prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
 | Geometry-free Molfile output | Specified E/Z requires a Model; the writer does not synthesize a layout |
 | V3000 atom CFG input | Tetrahedral parity 1/2 and unknown 3; CTfile carrier order puts hydrogen last, including explicit hydrogen rows |
 | V3000 enhanced atropisomer groups | Axis endpoint `ATOMS` convention, with unambiguous membership; tetrahedral and axial members may share a group |

@@ -121,15 +121,19 @@ pub(crate) fn normalize_source_stereo(
     })
 }
 
-/// Whether interpretation keeps a decoded Molfile stereo element. In a
-/// conformation, `coordinate_double_bonds` names the double bonds at which
-/// coordinates specify E/Z; a configuration decoded elsewhere is no assertion.
-/// A flat drawing (`None`) keeps every decoded element.
-pub(crate) fn molfile_keeps_decoded_stereo(
+/// Whether interpretation keeps a decoded or asserted source stereo element.
+/// `e_z_double_bonds` names the double bonds that can have E/Z: those
+/// [`locally_eligible_double_bonds`](crate::algorithms::locally_eligible_double_bonds)
+/// gives, so neither an aromatic bond nor one whose endpoint bears two
+/// identical terminal ligands. No conformation's coordinates specify a
+/// configuration elsewhere, so one decoded or asserted there is no
+/// assertion. An unknown configuration is kept anywhere. `None`, for a graph
+/// those bonds cannot be found in, keeps every element.
+pub(crate) fn keeps_source_stereo(
     element: &StereoElement,
-    coordinate_double_bonds: Option<&BTreeSet<BondId>>,
+    e_z_double_bonds: Option<&BTreeSet<BondId>>,
 ) -> bool {
-    match (&element.kind, coordinate_double_bonds) {
+    match (&element.kind, e_z_double_bonds) {
         (StereoElementKind::DoubleBond(stereo), Some(bonds)) => {
             stereo.orientation.is_none() || bonds.contains(&stereo.bond)
         }
@@ -137,19 +141,53 @@ pub(crate) fn molfile_keeps_decoded_stereo(
     }
 }
 
+/// Removes the elements [`keeps_source_stereo`] does not keep from `editor`
+/// and from `created`, and returns their double bonds in element order.
+pub(crate) fn remove_unkept_source_stereo(
+    editor: &mut MoleculeEditor,
+    e_z_double_bonds: &BTreeSet<BondId>,
+    created: &mut Vec<crate::stereo::StereoElementId>,
+) -> Vec<BondId> {
+    let unkept = editor
+        .stereo_elements()
+        .filter_map(|(id, element)| match &element.kind {
+            StereoElementKind::DoubleBond(stereo)
+                if !keeps_source_stereo(element, Some(e_z_double_bonds)) =>
+            {
+                Some((id, stereo.bond))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (id, _) in &unkept {
+        editor
+            .remove_stereo_element(*id)
+            .expect("collected live stereo element");
+    }
+    created.retain(|id| unkept.iter().all(|(unkept, _)| unkept != id));
+    unkept.into_iter().map(|(_, bond)| bond).collect()
+}
+
+/// Whether the molecule has a specified double-bond configuration, the only
+/// stereo [`keeps_source_stereo`] can decline.
+pub(crate) fn has_specified_double_bond_stereo(molecule: &Molecule) -> bool {
+    molecule.stereo_elements().any(|(_, element)| {
+        matches!(&element.kind, StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_some())
+    })
+}
+
 /// Project canonical stereo elements into format-local Molfile bond marks.
 ///
 /// The marks are detached writer state and are never stored back on the
 /// canonical molecule. Candidate projections are verified by decoding them
 /// with the same source-stereo kernel used during interpretation, and keeping
-/// what interpretation keeps (see [`molfile_keeps_decoded_stereo`]).
+/// what interpretation keeps (see [`keeps_source_stereo`]).
 pub(crate) fn project_molfile_stereo_bond_marks(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
     coordinate_double_bonds: Option<&BTreeSet<BondId>>,
 ) -> std::result::Result<BTreeMap<BondId, MolfileStereoBondProjection>, FormatError> {
-    let keeps =
-        |element: &StereoElement| molfile_keeps_decoded_stereo(element, coordinate_double_bonds);
+    let keeps = |element: &StereoElement| keeps_source_stereo(element, coordinate_double_bonds);
     if molecule.stereo_elements().next().is_none() && geometry.is_none() {
         return Ok(BTreeMap::new());
     }

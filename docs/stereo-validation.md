@@ -78,9 +78,12 @@ canonical writer or require identical emitted strings.
   differences are not suppressed when whole-graph identity agrees.
 - **Redundant stereo tags:** RDKit's writer removes supplied configurations at
   nonstereogenic units. Kekule retains these represented assertions, although
-  CIP assigns no descriptor. Such a cleaned encoding is not an atom permutation
-  of the same asserted graph. The checker compares assertion counts before
-  cleanup and records this reference transformation explicitly.
+  CIP assigns no descriptor, except SMILES E/Z at a double bond that is
+  aromatic or whose endpoint bears two identical terminal ligands, which
+  interpretation omits, as RDKit's sanitization does. Such a cleaned encoding
+  is not an atom permutation of the same asserted graph. The checker compares
+  assertion counts before cleanup and records this reference transformation
+  explicitly.
 
 - **VS132 (Troger's base):** the published 3D structure and Kekule give S/S.
   RDKit's default sanitization removes the nitrogen tags; retaining them gives
