@@ -1486,7 +1486,7 @@ impl StructureInterpretation {
 /// A macromolecular interpretation failure, located at the source line it
 /// concerns when it concerns one. The pipeline is shared, so errors start as
 /// mmCIF errors and PDB entry points relabel them.
-pub(in crate::io) fn structure_error(
+pub(in crate::io) fn geometry_error(
     kind: DiagnosticKind,
     line: Option<usize>,
     message: impl Into<String>,

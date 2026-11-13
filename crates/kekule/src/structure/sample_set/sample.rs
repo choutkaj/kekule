@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, RigidTransform, Vector3};
-use crate::properties::{StructureProperties, StructurePropertiesMut};
+use crate::properties::{GeometryProperties, GeometryPropertiesMut};
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::Quantity;
 
@@ -14,7 +14,7 @@ use crate::structure::state::{
     transform_positions, validate_binding,
 };
 use crate::structure::{
-    DenseArrayError, Forces, Model, Positions, StructureError, StructureKind, Velocities,
+    DenseArrayError, Forces, GeometryError, Model, Positions, StructureKind, Velocities,
 };
 
 /// The structure state of a sample, shared between clones and copied on
@@ -25,7 +25,7 @@ pub(crate) struct SampleStructure {
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) occupancies: AtomScalars,
     pub(crate) b_factors: AtomScalars,
-    pub(crate) properties: StructureProperties,
+    pub(crate) properties: GeometryProperties,
     pub(crate) velocities: Option<Velocities>,
     pub(crate) forces: Option<Forces>,
 }
@@ -33,7 +33,7 @@ pub(crate) struct SampleStructure {
 impl SampleStructure {
     /// Positions alone: no cell, site fields, properties, or dynamics.
     pub(crate) fn new(positions: Positions) -> Self {
-        let properties = StructureProperties::new(positions.len());
+        let properties = GeometryProperties::new(positions.len());
         Self::from_frame_state(positions, None, properties)
     }
 
@@ -41,7 +41,7 @@ impl SampleStructure {
     pub(crate) fn from_frame_state(
         positions: Positions,
         cell: Option<PeriodicCell>,
-        properties: StructureProperties,
+        properties: GeometryProperties,
     ) -> Self {
         Self {
             positions,
@@ -68,7 +68,7 @@ impl SampleStructure {
     }
 
     /// Projects every dense row through a subset correspondence.
-    pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
+    pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, GeometryError> {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,
@@ -81,7 +81,7 @@ impl SampleStructure {
     }
 
     /// Positions move; the cell, velocities, and forces rotate.
-    pub(crate) fn transformed(&self, transform: RigidTransform) -> Result<Self, StructureError> {
+    pub(crate) fn transformed(&self, transform: RigidTransform) -> Result<Self, GeometryError> {
         let rotate = |vector| transform.transform_vector(vector);
         Ok(Self {
             cell: transform_cell(self.cell, transform)?,
@@ -123,9 +123,9 @@ impl SampleStructure {
     }
 
     /// Checks that a per-atom array has one row per atom.
-    fn check_len(&self, actual: usize) -> Result<(), StructureError> {
+    fn check_len(&self, actual: usize) -> Result<(), GeometryError> {
         if actual != self.positions.len() {
-            return Err(StructureError::Array(DenseArrayError::CountMismatch {
+            return Err(GeometryError::Array(DenseArrayError::CountMismatch {
                 expected: self.positions.len(),
                 actual,
             }));
@@ -139,7 +139,7 @@ impl SampleStructure {
     pub(crate) fn bind(
         structure: &mut Arc<Self>,
         topology: &Topology,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let atoms = structure.positions.len();
         validate_binding(atoms, &structure.properties, topology)?;
         if !is_bound(atoms, &structure.properties, topology) {
@@ -258,10 +258,10 @@ impl Sample {
     ///
     /// # Errors
     ///
-    /// [`StructureError::Array`] for another atom count, and
-    /// [`StructureError::BondCountMismatch`] for bond rows of another
+    /// [`GeometryError::Array`] for another atom count, and
+    /// [`GeometryError::BondCountMismatch`] for bond rows of another
     /// topology. A failed binding changes nothing.
-    pub fn bind(&mut self, topology: &Topology) -> Result<(), StructureError> {
+    pub fn bind(&mut self, topology: &Topology) -> Result<(), GeometryError> {
         SampleStructure::bind(&mut self.structure, topology)
     }
 
@@ -271,7 +271,7 @@ impl Sample {
         &self,
         atoms: &[usize],
         bonds: &[usize],
-    ) -> Result<Self, StructureError> {
+    ) -> Result<Self, GeometryError> {
         Ok(Self::from_structure(Arc::new(
             self.structure.project(atoms, bonds)?,
         )))
@@ -287,7 +287,7 @@ impl Sample {
     /// once; the cell, velocities, and forces do not change under a
     /// translation. On failure some positions have moved, so the caller
     /// drops the sample.
-    pub(crate) fn translate_in_place(&mut self, shift: Vector3) -> Result<(), StructureError> {
+    pub(crate) fn translate_in_place(&mut self, shift: Vector3) -> Result<(), GeometryError> {
         for (index, point) in self.positions_in_place().iter_mut().enumerate() {
             *point = *point + shift;
             if !point.is_finite() {
@@ -304,7 +304,7 @@ impl Sample {
     pub(crate) fn transform_in_place(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let cell = transform_cell(self.structure.cell, *transform)?;
         let structure = Arc::make_mut(&mut self.structure);
         structure.cell = cell;
@@ -355,7 +355,7 @@ impl Sample {
     }
 
     /// Sets or clears velocities; they must have one vector per atom.
-    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), StructureError> {
+    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), GeometryError> {
         match &velocities {
             Some(values) => self.structure.check_len(values.len())?,
             None if self.structure.velocities.is_none() => return Ok(()),
@@ -366,7 +366,7 @@ impl Sample {
     }
 
     /// Sets or clears forces; they must have one vector per atom.
-    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), StructureError> {
+    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), GeometryError> {
         match &forces {
             Some(values) => self.structure.check_len(values.len())?,
             None if self.structure.forces.is_none() => return Ok(()),
@@ -393,7 +393,7 @@ impl Sample {
     pub fn set_positions<T: AsRef<[Point3]>>(
         &mut self,
         positions: Quantity<T>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.structure.positions.validate_all(&positions)?;
         self.edit(|structure| Ok(structure.positions.set_all(positions)?))
     }
@@ -403,7 +403,7 @@ impl Sample {
         &mut self,
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.edit(|structure| Ok(structure.positions.set(atom.index(), position)?))
     }
 
@@ -418,10 +418,7 @@ impl Sample {
     /// Replaces every structure annotation with rows of the same
     /// dimensions, for example ones copied from another structure of the
     /// same topology. A sample not yet in a set accepts no bond rows.
-    pub fn set_properties(
-        &mut self,
-        properties: StructureProperties,
-    ) -> Result<(), StructureError> {
+    pub fn set_properties(&mut self, properties: GeometryProperties) -> Result<(), GeometryError> {
         check_property_rows(
             self.structure.positions.len(),
             &self.structure.properties,
@@ -433,8 +430,8 @@ impl Sample {
 
     /// Length-preserving mutable access to structure annotations. A shared
     /// structure is copied when the guard is taken.
-    pub fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
-        StructurePropertiesMut::new(&mut Arc::make_mut(&mut self.structure).properties)
+    pub fn properties_mut(&mut self) -> GeometryPropertiesMut<'_> {
+        GeometryPropertiesMut::new(&mut Arc::make_mut(&mut self.structure).properties)
     }
 
     /// Sets or clears one occupancy. Values must be finite.
@@ -442,7 +439,7 @@ impl Sample {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<f64>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.edit(|structure| {
             let len = structure.positions.len();
             structure.occupancies.set(atom, len, value)
@@ -453,7 +450,7 @@ impl Sample {
     pub fn set_occupancies(
         &mut self,
         values: Option<Vec<Option<f64>>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.edit(|structure| {
             let len = structure.positions.len();
             structure.occupancies.replace(len, values)
@@ -466,7 +463,7 @@ impl Sample {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<Quantity<f64>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let value = canonical_b_factor(value)?;
         self.edit(|structure| {
             let len = structure.positions.len();
@@ -478,7 +475,7 @@ impl Sample {
     pub fn set_b_factors(
         &mut self,
         values: Option<Quantity<Vec<Option<f64>>>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let values = canonical_b_factors(values)?;
         self.edit(|structure| {
             let len = structure.positions.len();
@@ -491,7 +488,7 @@ impl Sample {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.structure = Arc::new(self.structure.transformed(*transform)?);
         Ok(())
     }
@@ -505,8 +502,8 @@ impl Sample {
     /// edit keeps the structure shared.
     fn edit<R>(
         &mut self,
-        edit: impl FnOnce(&mut SampleStructure) -> Result<R, StructureError>,
-    ) -> Result<R, StructureError> {
+        edit: impl FnOnce(&mut SampleStructure) -> Result<R, GeometryError>,
+    ) -> Result<R, GeometryError> {
         if let Some(owned) = Arc::get_mut(&mut self.structure) {
             return edit(owned);
         }
@@ -548,12 +545,12 @@ impl std::ops::Deref for SampleMut<'_> {
 
 impl SampleMut<'_> {
     /// Sets or clears velocities; see [`Sample::set_velocities`].
-    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), StructureError> {
+    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), GeometryError> {
         self.sample.set_velocities(velocities)
     }
 
     /// Sets or clears forces; see [`Sample::set_forces`].
-    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), StructureError> {
+    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), GeometryError> {
         self.sample.set_forces(forces)
     }
 
@@ -572,7 +569,7 @@ impl SampleMut<'_> {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.apply_rigid_transform(transform)
     }
 
@@ -580,7 +577,7 @@ impl SampleMut<'_> {
     pub fn set_positions<T: AsRef<[Point3]>>(
         &mut self,
         positions: Quantity<T>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.set_positions(positions)
     }
 
@@ -589,7 +586,7 @@ impl SampleMut<'_> {
         &mut self,
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.set_position_at(atom, position)
     }
 
@@ -599,16 +596,13 @@ impl SampleMut<'_> {
     }
 
     /// Replaces every structure annotation; see [`Sample::set_properties`].
-    pub fn set_properties(
-        &mut self,
-        properties: StructureProperties,
-    ) -> Result<(), StructureError> {
+    pub fn set_properties(&mut self, properties: GeometryProperties) -> Result<(), GeometryError> {
         self.sample.set_properties(properties)
     }
 
     /// Length-preserving mutable access to structure annotations; see
     /// [`Sample::properties_mut`].
-    pub fn properties_mut(&mut self) -> StructurePropertiesMut<'_> {
+    pub fn properties_mut(&mut self) -> GeometryPropertiesMut<'_> {
         self.sample.properties_mut()
     }
 
@@ -617,7 +611,7 @@ impl SampleMut<'_> {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<f64>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.set_occupancy(atom, value)
     }
 
@@ -625,7 +619,7 @@ impl SampleMut<'_> {
     pub fn set_occupancies(
         &mut self,
         values: Option<Vec<Option<f64>>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.set_occupancies(values)
     }
 
@@ -634,7 +628,7 @@ impl SampleMut<'_> {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<Quantity<f64>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.set_b_factor(atom, value)
     }
 
@@ -642,7 +636,7 @@ impl SampleMut<'_> {
     pub fn set_b_factors(
         &mut self,
         values: Option<Quantity<Vec<Option<f64>>>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         self.sample.set_b_factors(values)
     }
 }

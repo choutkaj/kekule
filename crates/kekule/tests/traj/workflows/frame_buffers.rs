@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use kekule::math::Point3;
 use kekule::structure::{
-    DenseArrayError, Place, Positions, Sample, SampleSetError, StructureError, StructureKind,
+    DenseArrayError, GeometryError, Place, Positions, Sample, SampleSetError, StructureKind,
 };
 use kekule::traj::io::xyz::{XyzReadOptions, XyzReader};
 use kekule::traj::{
@@ -214,7 +214,7 @@ fn buffers_from_samples_validate_them_against_the_topology() {
     assert_eq!(buffer.properties().bonds().len(), 1);
     assert_eq!(
         FrameBuffer::from_sample(topology, Sample::new(Positions::zeros(3))).unwrap_err(),
-        TrajectoryIoError::from(StructureError::Array(DenseArrayError::CountMismatch {
+        TrajectoryIoError::from(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 3,
         }))
@@ -225,7 +225,7 @@ fn buffers_from_samples_validate_them_against_the_topology() {
 fn errors_retain_nested_causes() {
     let position_error =
         Positions::new(Quantity::new([Point3::new(f64::NAN, 0.0, 0.0)], NANOMETER)).unwrap_err();
-    let frame_error = StructureError::from(position_error);
+    let frame_error = GeometryError::from(position_error);
     let trajectory_error = TrajectoryIoError::from(frame_error.clone());
     assert_eq!(
         trajectory_error.kind(),
@@ -235,7 +235,7 @@ fn errors_retain_nested_causes() {
         trajectory_error
             .source()
             .unwrap()
-            .downcast_ref::<StructureError>()
+            .downcast_ref::<GeometryError>()
             .map(ToString::to_string),
         Some(frame_error.to_string())
     );

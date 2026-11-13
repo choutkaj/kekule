@@ -82,7 +82,7 @@ use std::fmt;
 
 use crate::diagnostics::Cancelled;
 use crate::math::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
-use crate::structure::{ModelView, SampleReadError, StructureError};
+use crate::structure::{GeometryError, ModelView, SampleReadError};
 use crate::topology::{AtomSelection, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
@@ -704,7 +704,7 @@ pub enum AlignmentError {
         source: Box<AlignmentError>,
     },
     /// A fitted transform could not be applied to one item's state.
-    Transform(StructureError),
+    Transform(GeometryError),
     /// A sample cannot be read; see the source.
     Read(Box<SampleReadError>),
     /// The measurement was cancelled.

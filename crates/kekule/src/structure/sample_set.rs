@@ -6,7 +6,7 @@ use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::state::subset_rows;
-use super::{DenseArrayError, Model, Positions, StructureError};
+use super::{DenseArrayError, GeometryError, Model, Positions};
 
 mod context;
 mod decoded;
@@ -406,7 +406,7 @@ impl SampleSet {
     ///
     /// [`SampleReadError::IndexOutOfRange`] for the first index not below
     /// `reader.len()`, before anything is read;
-    /// [`SampleReadError::Structure`] for a sample the reader does not bind
+    /// [`SampleReadError::Geometry`] for a sample the reader does not bind
     /// to its topology; and otherwise the first failure to read a sample.
     pub fn from_reader<R: SampleRead + ?Sized>(
         reader: &R,
@@ -420,7 +420,7 @@ impl SampleSet {
         let read = |index: usize| {
             let sample = reader.read(index)?;
             check_bound(reader.topology(), &sample).map_err(|source| {
-                SampleReadError::Structure {
+                SampleReadError::Geometry {
                     sample: index,
                     source: Box::new(source),
                 }
@@ -689,7 +689,7 @@ impl SampleSet {
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(StructureError::Array(DenseArrayError::CountMismatch {
+                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
                     expected: self.topology.atom_count(),
                     actual: values.len(),
                 })
@@ -803,7 +803,7 @@ impl SampleSet {
                     sample.structure().project(&atoms, &bonds)?,
                 )))
             })
-            .collect::<Result<Vec<_>, StructureError>>()?;
+            .collect::<Result<Vec<_>, GeometryError>>()?;
         Ok(Self {
             topology: subset.shared_topology(),
             properties: OwnerProperties::new(),
@@ -836,7 +836,7 @@ impl SampleSet {
     pub(crate) fn transform_samples(
         &mut self,
         transforms: &[RigidTransform],
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         debug_assert_eq!(transforms.len(), self.storage.samples.len());
         let samples = self
             .storage
@@ -848,7 +848,7 @@ impl SampleSet {
                     sample.structure().transformed(*transform)?,
                 )))
             })
-            .collect::<Result<Vec<_>, StructureError>>()?;
+            .collect::<Result<Vec<_>, GeometryError>>()?;
         self.storage.samples = samples;
         Ok(())
     }

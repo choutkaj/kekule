@@ -315,7 +315,7 @@ fn mmcif_altloc_source_combinations_constrain_default_and_exact_selection() {
     assert!(selected(&source, AltLocPolicy::Configured(conflict)).is_err());
     let interpreted = source.interpret_sample_set(Default::default()).unwrap();
     assert_eq!(interpreted.sample_set().len(), 1);
-    assert_eq!(debug_fingerprint(&interpreted), 0xc68a_19fe_a15d_8066);
+    assert_eq!(debug_fingerprint(&interpreted), 0x9126_c12f_b7fa_b1f9);
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn mmcif_altloc_sample_set_uses_source_models_and_stable_site_order() {
     let source = document(rows);
     let result = source.interpret_sample_set(Default::default()).unwrap();
     assert_eq!(result.sample_set().len(), 2);
-    assert_eq!(debug_fingerprint(&result), 0x90e6_ee77_3819_41a7);
+    assert_eq!(debug_fingerprint(&result), 0x9510_af60_d910_92cd);
     assert_eq!(
         result.reports()[0].alternate_locations()[0].selected_labels,
         ["A"]
@@ -401,7 +401,7 @@ fn mmcif_altloc_sample_set_uses_source_models_and_stable_site_order() {
         result.reports()[1].alternate_locations()[0].selected_labels,
         ["A"]
     );
-    assert_eq!(debug_fingerprint(&result), 0x11e5_5666_c8fb_fbc2);
+    assert_eq!(debug_fingerprint(&result), 0x524a_81ba_ea5e_8d98);
     assert!(source
         .interpret_sample_set(
             StructureSampleSetInterpretOptions::default().with_altloc_policy(
@@ -422,7 +422,7 @@ fn mmcif_altloc_sample_set_rejects_changed_chemistry_and_keeps_single_plain_mode
     assert!(plain.blocks()[0].alternate_locations().unwrap().is_empty());
     let interpreted = plain.interpret_sample_set(Default::default()).unwrap();
     assert_eq!(interpreted.sample_set().len(), 1);
-    assert_eq!(debug_fingerprint(&interpreted), 0x0a17_8230_7238_9c88);
+    assert_eq!(debug_fingerprint(&interpreted), 0xd1e1_61e8_fb91_29ef);
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn mmcif_altloc_explicit_conformer_sample_set_is_unweighted_and_preserves_order(
     });
     let result = source.interpret_conformations(&options).unwrap();
     assert_eq!(result.sample_set().len(), 3);
-    assert_eq!(debug_fingerprint(&result), 0x95cc_4357_8e04_a9be);
+    assert_eq!(debug_fingerprint(&result), 0xba12_545c_7089_c2d9);
     let detached = document(
         &CROSSED
             .replace("B 0.1 2.4 2.4 0 1", "B 0.1 10 0 0 1")
@@ -466,7 +466,7 @@ fn mmcif_altloc_explicit_conformer_sample_set_is_unweighted_and_preserves_order(
         .interpret_conformations(&options)
         .unwrap();
     assert_eq!(block.reports(), result.reports());
-    assert_eq!(debug_fingerprint(&block), 0x95cc_4357_8e04_a9be);
+    assert_eq!(debug_fingerprint(&block), 0xba12_545c_7089_c2d9);
     assert!(block
         .sample_set()
         .topology()

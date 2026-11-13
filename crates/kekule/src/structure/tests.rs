@@ -136,7 +136,7 @@ fn model_builder_rejects_excess_replacement_positions_before_mutation() {
     let before = builder.clone();
     assert_eq!(
         builder.set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
-        Err(StructureError::Array(DenseArrayError::CountMismatch {
+        Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 1,
             actual: 2
         }))
@@ -150,7 +150,7 @@ fn structures_reject_rows_of_other_dimensions() {
     let (model, _, _) = model_fixture();
     assert_eq!(
         Model::new(model.shared_topology(), single_position(1.0)).unwrap_err(),
-        ModelError::Structure(StructureError::Array(DenseArrayError::CountMismatch {
+        ModelError::Geometry(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 1
         }))
@@ -178,7 +178,7 @@ fn structures_reject_rows_of_other_dimensions() {
     assert_eq!(bound.properties().bonds().len(), 1);
     assert_eq!(
         conformers(two_atoms, [bound]).unwrap_err(),
-        SampleSetError::Structure(StructureError::BondCountMismatch {
+        SampleSetError::Geometry(GeometryError::BondCountMismatch {
             expected: 0,
             actual: 1
         })
@@ -198,7 +198,7 @@ fn sample_position_replacement_checks_the_count_transactionally() {
     );
     assert_eq!(
         set.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
-        Err(SampleSetError::Structure(StructureError::Array(
+        Err(SampleSetError::Geometry(GeometryError::Array(
             DenseArrayError::CountMismatch {
                 expected: 2,
                 actual: 3
@@ -392,11 +392,10 @@ fn sample_replacement_rejects_incompatible_samples_without_changing_state() {
         .unwrap();
 
     let replacement = Sample::new(Positions::zeros(1));
-    let expected =
-        SampleSetError::Structure(StructureError::Array(DenseArrayError::CountMismatch {
-            expected: 2,
-            actual: 1,
-        }));
+    let expected = SampleSetError::Geometry(GeometryError::Array(DenseArrayError::CountMismatch {
+        expected: 2,
+        actual: 1,
+    }));
     assert_eq!(set.replace(0, replacement.clone()), Err(expected.clone()));
     assert_eq!(
         set.push_state(replacement, None, State::new(), Some(1.0)),
@@ -505,7 +504,7 @@ fn sample_editor_preserves_dimensions_and_validated_values() {
         let detached = Sample::new(Positions::zeros(2)).properties().clone();
         assert_eq!(
             member.set_properties(detached),
-            Err(StructureError::BondCountMismatch {
+            Err(GeometryError::BondCountMismatch {
                 expected: 1,
                 actual: 0
             })
@@ -513,7 +512,7 @@ fn sample_editor_preserves_dimensions_and_validated_values() {
         let wrong_atoms = Sample::new(Positions::zeros(1)).properties().clone();
         assert_eq!(
             member.set_properties(wrong_atoms),
-            Err(StructureError::Array(DenseArrayError::CountMismatch {
+            Err(GeometryError::Array(DenseArrayError::CountMismatch {
                 expected: 2,
                 actual: 1
             }))
@@ -521,7 +520,7 @@ fn sample_editor_preserves_dimensions_and_validated_values() {
         assert_eq!(member.properties(), &properties);
         assert_eq!(
             member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
-            Err(StructureError::Array(DenseArrayError::CountMismatch {
+            Err(GeometryError::Array(DenseArrayError::CountMismatch {
                 expected: 2,
                 actual: 3
             }))
@@ -594,24 +593,24 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
     let before = model.clone();
     assert_eq!(
         model.set_occupancy(ATOM0, Some(f64::NAN)),
-        Err(StructureError::Array(DenseArrayError::NonFinite {
+        Err(GeometryError::Array(DenseArrayError::NonFinite {
             index: 0
         }))
     );
     assert!(matches!(
         model.set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
-        Err(StructureError::Unit(_))
+        Err(GeometryError::Unit(_))
     ));
     assert_eq!(
         model.set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
-        Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
+        Err(GeometryError::Array(DenseArrayError::IndexOutOfRange {
             index: 2,
             len: 2
         }))
     );
     assert_eq!(
         model.set_occupancies(Some(vec![Some(1.0)])),
-        Err(StructureError::Array(DenseArrayError::CountMismatch {
+        Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 1
         }))
@@ -732,7 +731,7 @@ fn ordered_samples_join_a_distribution_without_copying_positions() {
     sample.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
         sample.set_forces(Some(Forces::zeros(3))),
-        Err(StructureError::Array(DenseArrayError::CountMismatch {
+        Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 3
         }))
@@ -1196,12 +1195,12 @@ fn state_energies_are_canonical_finite_and_never_on_samples() {
     for value in [f64::NAN, f64::INFINITY] {
         assert_eq!(
             state.set_energy(Some(Quantity::new(value, KILOJOULE_PER_MOLE))),
-            Err(StructureError::NonFiniteEnergy)
+            Err(GeometryError::NonFiniteEnergy)
         );
     }
     assert_eq!(
         state.set_energy(Some(Quantity::new(1.0, KELVIN))),
-        Err(StructureError::Unit(Box::new(
+        Err(GeometryError::Unit(Box::new(
             UnitError::IncompatibleUnits {
                 from: KELVIN,
                 to: KILOJOULE_PER_MOLE,

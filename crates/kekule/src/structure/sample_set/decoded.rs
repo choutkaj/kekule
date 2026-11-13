@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::properties::{OwnerProperties, StructureProperties};
-use crate::structure::{DenseArrayError, Forces, Positions, StructureError, Velocities};
+use crate::properties::{GeometryProperties, OwnerProperties};
+use crate::structure::{DenseArrayError, Forces, GeometryError, Positions, Velocities};
 use crate::topology::Topology;
 use crate::units::Quantity;
 
@@ -26,13 +26,13 @@ impl Sample {
     pub(crate) fn from_decoded(
         frame: DecodedSample,
         topology: &Topology,
-    ) -> Result<Self, StructureError> {
+    ) -> Result<Self, GeometryError> {
         let atoms = topology.atom_count();
         let count = |actual: usize| {
             if actual == atoms {
                 Ok(())
             } else {
-                Err(StructureError::Array(DenseArrayError::CountMismatch {
+                Err(GeometryError::Array(DenseArrayError::CountMismatch {
                     expected: atoms,
                     actual,
                 }))
@@ -44,17 +44,17 @@ impl Sample {
             .velocities
             .map(|values| {
                 count(values.value().len())?;
-                Ok::<_, StructureError>(Velocities::from_vec(values)?)
+                Ok::<_, GeometryError>(Velocities::from_vec(values)?)
             })
             .transpose()?;
         let forces = frame
             .forces
             .map(|values| {
                 count(values.value().len())?;
-                Ok::<_, StructureError>(Forces::from_vec(values)?)
+                Ok::<_, GeometryError>(Forces::from_vec(values)?)
             })
             .transpose()?;
-        let mut properties = StructureProperties::new(atoms);
+        let mut properties = GeometryProperties::new(atoms);
         properties.bind_bond_rows(topology.bond_count());
         if let Some(owner) = frame.owner {
             *properties.owner_mut() = owner;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::properties::{OwnerProperties, StructureProperties, StructurePropertiesMut};
+use crate::properties::{GeometryProperties, GeometryPropertiesMut, OwnerProperties};
 use crate::structure::scalars::AtomScalars;
 use crate::structure::{
-    DenseArrayError, Forces, ModelView, Place, Positions, Sample, SampleMut, StructureError,
+    DenseArrayError, Forces, GeometryError, ModelView, Place, Positions, Sample, SampleMut,
     Velocities,
 };
 use crate::topology::Topology;
@@ -31,7 +31,7 @@ pub struct FrameData<'a> {
     time: Option<Quantity<f64>>,
     step: Option<u64>,
     owner: Option<&'a OwnerProperties>,
-    annotations: Option<&'a StructureProperties>,
+    annotations: Option<&'a GeometryProperties>,
     /// Occupancies and B-factors, shared rather than copied.
     sites: Option<(&'a AtomScalars, &'a AtomScalars)>,
 }
@@ -239,9 +239,9 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
     /// invalid time; the buffer is then unchanged.
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureError> {
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), GeometryError> {
         self.time = canonical_time(time)?;
         Ok(())
     }
@@ -255,13 +255,13 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`StructureError::Array`] when the count differs from the atom
+    /// Returns [`GeometryError::Array`] when the count differs from the atom
     /// count, a value is not finite, or the unit is not a velocity; the
     /// buffer is then unchanged.
     pub fn set_velocities<T>(
         &mut self,
         velocities: Option<Quantity<T>>,
-    ) -> Result<(), StructureError>
+    ) -> Result<(), GeometryError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -276,10 +276,10 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`StructureError::Array`] when the count differs from the atom
+    /// Returns [`GeometryError::Array`] when the count differs from the atom
     /// count, a value is not finite, or the unit is not a force; the buffer is
     /// then unchanged.
-    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), StructureError>
+    pub fn set_forces<T>(&mut self, forces: Option<Quantity<T>>) -> Result<(), GeometryError>
     where
         T: AsRef<[Vector3]>,
     {
@@ -310,7 +310,7 @@ impl FrameBuffer {
         structure.cell = None;
         structure.occupancies = AtomScalars::default();
         structure.b_factors = AtomScalars::default();
-        StructurePropertiesMut::new(&mut structure.properties).clear();
+        GeometryPropertiesMut::new(&mut structure.properties).clear();
     }
 
     /// Replaces the complete visible frame transactionally.
@@ -321,24 +321,24 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`StructureError::Array`] when positions, velocities, forces or
+    /// Returns [`GeometryError::Array`] when positions, velocities, forces or
     /// atom annotations have the wrong count, a non-finite value or a unit of
-    /// the wrong dimension, [`StructureError::BondCountMismatch`] when bond
+    /// the wrong dimension, [`GeometryError::BondCountMismatch`] when bond
     /// annotations have the wrong row count, and
-    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
     /// invalid time. On error the buffer is unchanged.
-    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), StructureError> {
+    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), GeometryError> {
         self.positions().validate_all(&data.positions)?;
         let time = canonical_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(StructureError::Array(DenseArrayError::CountMismatch {
+                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
                     expected: self.atom_count(),
                     actual: source.atoms().len(),
                 }));
             }
             if source.bonds().len() != self.properties().bonds().len() {
-                return Err(StructureError::BondCountMismatch {
+                return Err(GeometryError::BondCountMismatch {
                     expected: self.properties().bonds().len(),
                     actual: source.bonds().len(),
                 });
@@ -384,7 +384,7 @@ impl FrameBuffer {
         match data.annotations {
             Some(source) => structure.properties.clone_from(source),
             None => {
-                let mut properties = StructurePropertiesMut::new(&mut structure.properties);
+                let mut properties = GeometryPropertiesMut::new(&mut structure.properties);
                 properties.clear();
                 if let Some(owner) = data.owner {
                     *properties.owner_mut() = owner.clone();
@@ -414,7 +414,7 @@ impl FrameBuffer {
     fn stage_velocities<T: AsRef<[Vector3]>>(
         &mut self,
         values: Quantity<T>,
-    ) -> Result<Velocities, StructureError> {
+    ) -> Result<Velocities, GeometryError> {
         let atoms = self.atom_count();
         let mut storage = self
             .spare_velocities
@@ -432,7 +432,7 @@ impl FrameBuffer {
     fn stage_forces<T: AsRef<[Vector3]>>(
         &mut self,
         values: Quantity<T>,
-    ) -> Result<Forces, StructureError> {
+    ) -> Result<Forces, GeometryError> {
         let atoms = self.atom_count();
         let mut storage = self
             .spare_forces

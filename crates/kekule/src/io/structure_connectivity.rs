@@ -846,7 +846,7 @@ impl<'r> Resolver<'r, '_> {
     /// distance, when the caller allows it.
     fn infer_residue_bonds(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         if !self.catalog.infer_bonds_from_distance {
-            return Err(raw::structure_error(
+            return Err(raw::geometry_error(
                 DiagnosticKind::Unsupported,
                 residue.sites.first().map(|site| site.line),
                 format!(
@@ -1124,7 +1124,7 @@ impl<'r> Resolver<'r, '_> {
             .find(|(_, charges)| charges.iter().all(|charge| charge.delta == 0))
             .or_else(|| evaluated.first())
             .ok_or_else(|| {
-                raw::structure_error(
+                raw::geometry_error(
                     DiagnosticKind::Inconsistent,
                     residue.sites.first().map(|site| site.line),
                     format!(
@@ -1302,7 +1302,7 @@ fn match_template(
     for site in &residue.sites {
         let failure = |message: String| {
             if strict {
-                Err(raw::structure_error(
+                Err(raw::geometry_error(
                     DiagnosticKind::Inconsistent,
                     Some(site.line),
                     message,
@@ -1609,7 +1609,7 @@ fn row_error(
     kind: DiagnosticKind,
     message: impl Into<String>,
 ) -> FormatError {
-    raw::structure_error(kind, table.row_line(row), message)
+    raw::geometry_error(kind, table.row_line(row), message)
 }
 
 /// Molecule construction failed with `source` as the cause.
@@ -1618,7 +1618,7 @@ fn interpret_error(source: impl std::error::Error + Send + Sync + 'static) -> Fo
 }
 
 fn chemistry_error(message: impl Into<String>) -> FormatError {
-    raw::structure_error(DiagnosticKind::Chemistry, None, message)
+    raw::geometry_error(DiagnosticKind::Chemistry, None, message)
 }
 
 #[cfg(test)]

@@ -238,7 +238,7 @@ fn interpreted_sample_sets_store_their_samples_and_one_report_each() {
     let (_, mut set) = parts();
     set.set_order(Some(Order::Step(STEPS[..2].to_vec())))
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&set), 0xd62a_4fbb_4cc5_1e47);
+    assert_eq!(super::debug_fingerprint(&set), 0xf307_a469_20a7_f979);
     let reports = vec![report(false), report(false)];
     let bytes = native::write(
         NativeSource::interpreted_sample_set(&set, &reports),

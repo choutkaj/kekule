@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use kekule::molecule::Molecule;
 use kekule::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
-use kekule::structure::{Model, Positions, Sample, SampleSet, StructureError};
+use kekule::structure::{GeometryError, Model, Positions, Sample, SampleSet};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, Topology,
     TopologyBuildError, TopologyBuilder,
@@ -156,7 +156,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let original = model.properties().clone();
     assert_eq!(
         model.set_properties(bound.clone()),
-        Err(StructureError::Array(
+        Err(GeometryError::Array(
             kekule::structure::DenseArrayError::CountMismatch {
                 expected: 1,
                 actual: 2
@@ -170,7 +170,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let detached = member.properties().clone();
     assert_eq!(
         member.set_properties(bound.clone()),
-        Err(StructureError::BondCountMismatch {
+        Err(GeometryError::BondCountMismatch {
             expected: 0,
             actual: 1
         })

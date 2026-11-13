@@ -2,7 +2,7 @@
 
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
-use crate::structure::{DenseArrayError, Model, ModelBuildError, Positions, StructureError};
+use crate::structure::{DenseArrayError, GeometryError, Model, ModelBuildError, Positions};
 use crate::topology::AtomSiteMetadata;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyBuildError};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT, NANOMETER};
@@ -228,14 +228,14 @@ fn position_updates_are_complete_finite_and_transactional() {
     let original = model.positions().values().value().to_vec();
     assert!(matches!(
         model.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
-        Err(StructureError::Array(DenseArrayError::CountMismatch { .. }))
+        Err(GeometryError::Array(DenseArrayError::CountMismatch { .. }))
     ));
     assert_eq!(model.positions().values().into_value(), original.as_slice());
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(matches!(
         model.set_positions(Quantity::new(&invalid, ANGSTROM)),
-        Err(StructureError::Array(DenseArrayError::NonFinite {
+        Err(GeometryError::Array(DenseArrayError::NonFinite {
             index: 0
         }))
     ));

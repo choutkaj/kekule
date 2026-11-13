@@ -9,7 +9,7 @@ use kekule::properties::{
 };
 use kekule::smiles;
 use kekule::structure::{
-    DenseArrayError, Model, ModelError, Positions, Sample, SampleSetError, StructureError,
+    DenseArrayError, GeometryError, Model, ModelError, Positions, Sample, SampleSetError,
 };
 use kekule::topology::TopologyAtomIndex;
 use kekule::units::{
@@ -68,7 +68,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
             },
             CANONICAL_LENGTH_UNIT
         )),
-        Err(StructureError::Array(DenseArrayError::NonFinite {
+        Err(GeometryError::Array(DenseArrayError::NonFinite {
             index: 0
         }))
     ));
@@ -196,9 +196,9 @@ fn structural_error_chains_retain_the_underlying_unit_failure() {
     let position_error =
         Positions::new(Quantity::new([Point3::origin()], DIMENSIONLESS)).unwrap_err();
     assert!(position_error.source().unwrap().is::<UnitError>());
-    let error = SampleSetError::from(StructureError::from(position_error.clone()));
+    let error = SampleSetError::from(GeometryError::from(position_error.clone()));
     let structure = error.source().unwrap();
-    assert!(structure.is::<StructureError>());
+    assert!(structure.is::<GeometryError>());
     // Structure state wraps its array error transparently: it displays the
     // array error and continues with the array error's own source.
     assert_eq!(structure.to_string(), position_error.to_string());

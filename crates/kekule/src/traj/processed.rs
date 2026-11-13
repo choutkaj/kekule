@@ -8,8 +8,8 @@ use crate::alignment::{self, AlignmentOptions};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::OwnerProperties;
 use crate::structure::{
-    subset_rows, DenseArrayError, Distribution, Model, ModelError, Order, Positions, Sample,
-    SampleRead, SampleReadError, SampleView, StructureError,
+    subset_rows, DenseArrayError, Distribution, GeometryError, Model, ModelError, Order, Positions,
+    Sample, SampleRead, SampleReadError, SampleView,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
 
@@ -641,7 +641,7 @@ impl<R: SampleRead> Processed<R> {
         for (atom, (point, total)) in center.positions_in_place().iter_mut().zip(&sum).enumerate() {
             *point = Point3::origin() + *total / count;
             if !point.is_finite() {
-                return Err(structure(index)(StructureError::Array(
+                return Err(structure(index)(GeometryError::Array(
                     DenseArrayError::NonFinite { index: atom },
                 )));
             }
@@ -664,7 +664,7 @@ impl<R: SampleRead> Processed<R> {
             Some((atoms, bonds)) => {
                 sample
                     .projected(atoms, bonds)
-                    .map_err(|source| SampleReadError::Structure {
+                    .map_err(|source| SampleReadError::Geometry {
                         sample: index,
                         source: Box::new(source),
                     })
@@ -722,8 +722,8 @@ fn periodic(sample: usize) -> impl FnOnce(PeriodicError) -> SampleReadError {
 }
 
 /// Reports a step's failure to store its result in sample `sample`.
-fn structure(sample: usize) -> impl FnOnce(StructureError) -> SampleReadError {
-    move |source| SampleReadError::Structure {
+fn structure(sample: usize) -> impl FnOnce(GeometryError) -> SampleReadError {
+    move |source| SampleReadError::Geometry {
         sample,
         source: Box::new(source),
     }

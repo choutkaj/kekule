@@ -20,7 +20,7 @@ pub use stream::{
 
 use std::{fmt, io};
 
-use crate::structure::StructureError;
+use crate::structure::GeometryError;
 
 /// Stable identity for a trajectory file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -134,7 +134,7 @@ pub enum TrajectoryIoErrorKind {
     /// No frame has the requested index; [`TrajectoryIoError::frame`] is it.
     FrameIndexOutOfRange,
     /// A decoded or supplied frame is invalid for its topology; the
-    /// [`StructureError`] is the source.
+    /// [`GeometryError`] is the source.
     InvalidStructure,
     /// The caller's [`crate::diagnostics::Cancellation`] stopped the
     /// operation; [`crate::diagnostics::Cancelled`] is the source.
@@ -269,7 +269,7 @@ impl fmt::Display for TrajectoryField {
 /// [`kind`](Self::kind) classifies it; the accessors give the operation,
 /// format, source label, frame, byte offset and counts when known, and
 /// [`source`](std::error::Error::source) the underlying [`std::io::Error`],
-/// [`StructureError`] or [`SampleSetError`](crate::structure::SampleSetError).
+/// [`GeometryError`] or [`SampleSetError`](crate::structure::SampleSetError).
 /// `Display` gives the context
 /// and never repeats the source.
 ///
@@ -648,14 +648,14 @@ impl std::error::Error for TrajectoryIoError {
     }
 }
 
-impl From<StructureError> for TrajectoryIoError {
-    fn from(error: StructureError) -> Self {
+impl From<GeometryError> for TrajectoryIoError {
+    fn from(error: GeometryError) -> Self {
         Self::new(TrajectoryIoErrorKind::InvalidStructure).with_source(error)
     }
 }
 
 impl From<crate::structure::DenseArrayError> for TrajectoryIoError {
     fn from(error: crate::structure::DenseArrayError) -> Self {
-        StructureError::from(error).into()
+        GeometryError::from(error).into()
     }
 }

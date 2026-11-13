@@ -50,7 +50,7 @@
 //! indexes), translate IDs to dense indexes, and check every array's length.
 //! Each owner has its own error type ([`ModelError`], [`ModelBuildError`],
 //! [`ModelEditError`], [`SampleSetError`], [`PartitionError`],
-//! [`GeometryEditError`]); [`StructureError`] and [`DenseArrayError`] report
+//! [`GeometryEditError`]); [`GeometryError`] and [`DenseArrayError`] report
 //! invalid structure state shared by all of them.
 //!
 //! ```
@@ -148,7 +148,7 @@ pub use sample_set::{
     SampleSetError, SampleStorage, SampleView, State, StateIter, StateView, TimeAxis,
 };
 pub(crate) use state::subset_rows;
-pub use state::StructureError;
+pub use state::GeometryError;
 
 #[cfg(test)]
 mod model_tests;

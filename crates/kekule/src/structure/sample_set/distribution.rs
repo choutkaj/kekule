@@ -2,7 +2,7 @@
 //! their weights, and their grouping into states.
 
 use crate::properties::OwnerProperties;
-use crate::structure::{Partition, StructureError};
+use crate::structure::{GeometryError, Partition};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
 use super::{Membership, Requirement, SampleSetError};
@@ -36,7 +36,7 @@ impl State {
     }
 
     /// Returns this state with a finite energy.
-    pub fn with_energy(mut self, energy: Quantity<f64>) -> Result<Self, StructureError> {
+    pub fn with_energy(mut self, energy: Quantity<f64>) -> Result<Self, GeometryError> {
         self.set_energy(Some(energy))?;
         Ok(self)
     }
@@ -54,12 +54,12 @@ impl State {
 
     /// Sets or clears a finite energy, converted to the canonical energy
     /// unit. No weight changes.
-    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), StructureError> {
+    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), GeometryError> {
         self.energy = energy
             .map(|energy| {
                 let energy = energy.into_unit(CANONICAL_ENERGY_UNIT)?;
                 if !energy.value().is_finite() {
-                    return Err(StructureError::NonFiniteEnergy);
+                    return Err(GeometryError::NonFiniteEnergy);
                 }
                 Ok(energy)
             })

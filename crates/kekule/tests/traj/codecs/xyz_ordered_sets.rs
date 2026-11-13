@@ -279,16 +279,16 @@ fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
         (boxed(), vec![(fail, fail), (omit, fail), (omit, omit)]),
     ];
     let mut recorded = Recorded::new(&[
-        0xa343_d6fe_8905_ac25, // history
+        0x94bc_4e85_2282_20a6, // history
         0x5d60_039d_d2ae_01d3, // history, places fail, rest fail
         0x557b_ee40_7701_4a6f, // history, places omit, rest fail
-        0xc7a2_15ef_ec11_d93f, // scan
+        0x515b_7344_15ec_d958, // scan
         0x7cb3_6b28_1b51_187f, // scan, places fail, rest fail
         0x779f_1eda_44dc_5c93, // scan, places omit, rest fail
-        0x19f5_8772_5396_7c7b, // valued
+        0x2f1d_f1c4_f487_eeb0, // valued
         0x5001_e09a_cc79_1f23, // valued, places omit, rest fail
         0xd56e_4571_1877_e511, // valued, places omit, rest omit
-        0xe59a_d794_16ac_794e, // boxed
+        0xba72_4a1b_2c5e_746d, // boxed
         0x13e3_9b29_c744_e766, // boxed, places fail, rest fail
         0x13e3_9b29_c744_e766, // boxed, places omit, rest fail
         0xfc16_a448_989e_9f4e, // boxed, places omit, rest omit

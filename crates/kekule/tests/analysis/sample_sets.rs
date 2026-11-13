@@ -192,11 +192,11 @@ fn fixtures_are_the_sets_the_retired_collections_converted_to() {
     // The sets the retired ensemble, trajectory, and series fixtures
     // converted to, and the extreme ensemble of the Boltzmann checks.
     let mut recorded = Recorded::new(&[
-        0x517cbfe724257b28,
-        0x7c099035c921e319,
-        0x09e75bae4b9200b5,
-        0xb1120e59672ab7f5,
-        0xe5a4aefdf185b909,
+        0x483cfe19f0a18ac0,
+        0xd5cc0b35c5417e11,
+        0x1a76e5f22f445a61,
+        0x966ccd61cea2ed4b,
+        0x523a1a405fd5d75e,
     ]);
     recorded.check(&contents(&ensemble(true)));
     recorded.check(&contents(&ensemble(false)));
@@ -329,23 +329,23 @@ fn sample_set_alignments_keep_the_retired_values() {
     // Fingerprints of the values the retired paths gave.
     let mut recorded = Recorded::new(&[
         0xa708ddfed8a897b0,
-        0x331785badfff6617,
+        0xe202c0ff94569e93,
         0xa708ddfed8a897b0,
-        0xd5e4489eb03b8551,
+        0x1e17e9213f02d2af,
         0x7d356d80e26864d5,
-        0x0a1c5a5c34cf8c0e,
+        0x3a12790618c63a4e,
         0xa46e16252c8a8818,
-        0x91af45f09e0c25a5,
+        0x386c5202f641f2d1,
         0xa46e16252c8a8818,
-        0xdb5ba879aff19fd9,
+        0x02ca2a82a915f61b,
         0xef9aa5844b998ecc,
-        0xf290b272ece57707,
+        0xb4af5961268f022b,
         0xd0250a17c77174b1,
-        0xe60b202766fc4e56,
+        0x67d5d880aeec533e,
         0xd0250a17c77174b1,
-        0x9f151e81121ce15e,
+        0x97d42d31e553ca52,
         0x4f8e715505afaaa7,
-        0x4a175ab9d70e019c,
+        0x01173cb6e0ee6b4e,
     ]);
     let model = Model::new(topology(), positions(points(11))).unwrap();
     // A sample of the set, an independent view, and a reference out of range.

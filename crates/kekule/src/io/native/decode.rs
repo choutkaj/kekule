@@ -35,8 +35,8 @@ use crate::perception::{
     Perception,
 };
 use crate::properties::{
-    MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey, PropertyValue,
-    RawPropertyTable, StructureProperties, TopologyProperties,
+    GeometryProperties, MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey,
+    PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
     Distribution, Forces, Members, Model, Order, Partition, Positions, Sample, SampleSet, State,
@@ -1215,18 +1215,15 @@ impl<R: Read> Decoder<'_, R> {
         self.cells(&present, Self::f64).map(Some)
     }
 
-    fn structure_properties(&mut self, atoms: usize, bonds: usize) -> Result<StructureProperties> {
-        let mut properties = StructureProperties::default();
+    fn geometry_properties(&mut self, atoms: usize, bonds: usize) -> Result<GeometryProperties> {
+        let mut properties = GeometryProperties::default();
         *properties.owner_mut() = self.owner()?;
         *properties.atoms_raw_mut() = self.table(atoms)?;
         *properties.bonds_raw_mut() = self.table(bonds)?;
         Ok(properties)
     }
 
-    fn structure_error(
-        &self,
-        error: impl std::error::Error + Send + Sync + 'static,
-    ) -> FormatError {
+    fn geometry_error(&self, error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
         self.rejected(
             DiagnosticKind::InvalidValue,
             "The stored structure is not valid.",
@@ -1241,19 +1238,19 @@ impl<R: Read> Decoder<'_, R> {
         let cell = self.cell()?;
         let occupancies = self.scalars(atoms)?;
         let b_factors = self.scalars(atoms)?;
-        let properties = self.structure_properties(atoms, bonds)?;
+        let properties = self.geometry_properties(atoms, bonds)?;
         let mut model =
-            Model::new(topology, positions).map_err(|error| self.structure_error(error))?;
+            Model::new(topology, positions).map_err(|error| self.geometry_error(error))?;
         model.set_cell(cell);
         model
             .set_occupancies(occupancies)
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         model
             .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         model
             .set_properties(properties)
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         Ok(model)
     }
 
@@ -1273,7 +1270,7 @@ impl<R: Read> Decoder<'_, R> {
                     .with_properties(owner)
                     .with_order(order)
                     .and_then(|description| description.with_distribution(distribution))
-                    .map_err(|error| self.structure_error(error))?;
+                    .map_err(|error| self.geometry_error(error))?;
                 return Ok(Decoded::External(Box::new(description)));
             }
             SAMPLES_EXTERNAL => {
@@ -1292,12 +1289,12 @@ impl<R: Read> Decoder<'_, R> {
             let cell = self.cell()?;
             let occupancies = self.scalars(atoms)?;
             let b_factors = self.scalars(atoms)?;
-            properties.push(self.structure_properties(atoms, bonds)?);
+            properties.push(self.geometry_properties(atoms, bonds)?);
             let velocities = if self.tag("velocities")? {
                 let values = self.vectors(atoms)?;
                 Some(
                     Velocities::from_vec(Quantity::new(values, CANONICAL_VELOCITY_UNIT))
-                        .map_err(|error| self.structure_error(error))?,
+                        .map_err(|error| self.geometry_error(error))?,
                 )
             } else {
                 None
@@ -1306,7 +1303,7 @@ impl<R: Read> Decoder<'_, R> {
                 let values = self.vectors(atoms)?;
                 Some(
                     Forces::from_vec(Quantity::new(values, CANONICAL_FORCE_UNIT))
-                        .map_err(|error| self.structure_error(error))?,
+                        .map_err(|error| self.geometry_error(error))?,
                 )
             } else {
                 None
@@ -1315,31 +1312,31 @@ impl<R: Read> Decoder<'_, R> {
             sample.set_cell(cell);
             sample
                 .set_occupancies(occupancies)
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
             sample
                 .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
             sample
                 .set_velocities(velocities)
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
             sample
                 .set_forces(forces)
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
             samples.push(sample);
         }
         let mut set = SampleSet::from_samples(topology, samples)
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         *set.properties_mut() = owner;
         for (index, properties) in properties.into_iter().enumerate() {
             set.get_mut(index)
                 .expect("every decoded sample was added")
                 .set_properties(properties)
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
         }
         set.set_order(order)
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         set.set_distribution(distribution)
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         Ok(Decoded::Inline(Box::new(set)))
     }
 
@@ -1362,7 +1359,7 @@ impl<R: Read> Decoder<'_, R> {
                     times.map(|times| Quantity::new(times, CANONICAL_TIME_UNIT)),
                     steps,
                 )
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
                 Order::Time(axis)
             }
             2 => Order::Step(self.u64_array(count)?),
@@ -1423,25 +1420,25 @@ impl<R: Read> Decoder<'_, R> {
             let mut state = State::new();
             state
                 .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
             *state.properties_mut() = self.owner()?;
             states.push(state);
         }
         let temperature = self.opt_f64()?;
         let partition = Partition::new(assignments, representatives)
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         let mut distribution = Distribution::new(members, partition)
             .and_then(|distribution| distribution.with_states(states))
-            .map_err(|error| self.structure_error(error))?;
+            .map_err(|error| self.geometry_error(error))?;
         if let Some(weights) = weights {
             distribution = distribution
                 .with_weights(weights)
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
         }
         if let Some(temperature) = temperature {
             distribution = distribution
                 .with_temperature(Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT))
-                .map_err(|error| self.structure_error(error))?;
+                .map_err(|error| self.geometry_error(error))?;
         }
         Ok(Some(distribution))
     }

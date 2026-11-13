@@ -2,7 +2,7 @@
 //! retains scalar items and loops exactly as parsed; no coordinate table is copied.
 use crate::diagnostics::DiagnosticKind;
 
-use super::structure_interpret::structure_error;
+use super::structure_interpret::geometry_error;
 use super::{MmcifBlock, MmcifEntry, MmcifItem, MmcifLoopTable, MmcifValue};
 use crate::diagnostics::FormatError;
 
@@ -47,14 +47,14 @@ impl MmcifBlock {
                         .iter()
                         .any(|tag| !in_category(tag, category))
                     {
-                        return Err(structure_error(
+                        return Err(geometry_error(
                             DiagnosticKind::Inconsistent,
                             line,
                             format!("Category {category} shares a loop with another category."),
                         ));
                     }
                     if table.replace(candidate).is_some() {
-                        return Err(structure_error(
+                        return Err(geometry_error(
                             DiagnosticKind::Inconsistent,
                             line,
                             format!("Category {category} is split across several loops."),
@@ -65,7 +65,7 @@ impl MmcifBlock {
             }
         }
         match (table, scalars.is_empty()) {
-            (Some(_), false) => Err(structure_error(
+            (Some(_), false) => Err(geometry_error(
                 DiagnosticKind::Inconsistent,
                 Some(scalars[0].value().line()),
                 format!("Category {category} mixes single items and a loop."),

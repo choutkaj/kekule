@@ -470,22 +470,22 @@ fn sets_with_a_distribution_hold_and_write_what_the_ensembles_they_replace_did()
         )
         .unwrap();
     let mut recorded = Recorded::new(&[
-        0x66fd_f771_a788_11af, // waters
+        0xdaab_a165_95bd_a0a8, // waters
         0x4939_b251_4e51_e9cb, // waters, fail
         0x4939_b251_4e51_e9cb, // waters, omit
-        0x7318_e53a_76d8_e6bd, // weighted
+        0x58b3_3f27_dc15_b29e, // weighted
         0x6c2d_94d0_1919_47c1, // weighted, fail
         0x6d81_8fec_dcfd_575a, // weighted, omit
-        0xd213_6ff6_981e_da48, // clustered
+        0xe314_c9d5_8090_88b1, // clustered
         0x3ebe_6cee_6493_523a, // clustered, fail
         0x2e5e_8bc9_b17e_38b8, // clustered, omit
-        0x1ec6_bcd7_133f_6010, // boxed
+        0x6da0_d685_57dc_05af, // boxed
         0x0ebd_2b21_c872_bfdf, // boxed, fail
         0x03c3_ae9e_91dc_8c0c, // boxed, omit
-        0x755a_0a00_9b04_f60a, // occupied
+        0x9a2b_87dc_b8f0_750b, // occupied
         0x447b_f888_5d4d_1835, // occupied, fail
         0x447b_f888_5d4d_1835, // occupied, omit
-        0x523d_28cd_6097_828b, // labelled
+        0xa67d_fbcd_a83f_edd4, // labelled
         0x5001_e09a_cc79_1f23, // labelled, fail
         0x5001_e09a_cc79_1f23, // labelled, omit
     ]);

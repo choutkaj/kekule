@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::structure::{
-    check_bound, AsModelView, Model, ModelView, ModelViewSealed, Place, Sample, SampleContext,
-    SampleView, StructureError, StructureKind,
+    check_bound, AsModelView, GeometryError, Model, ModelView, ModelViewSealed, Place, Sample,
+    SampleContext, SampleView, StructureKind,
 };
 use crate::topology::Topology;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
@@ -66,18 +66,18 @@ impl<'a> FrameView<'a> {
     ///
     /// # Errors
     ///
-    /// [`StructureError`] when the sample does not have a position per atom
+    /// [`GeometryError`] when the sample does not have a position per atom
     /// and a property row per atom and bond of `topology`, such as an
     /// unbound sample of a topology with bonds
-    /// ([`StructureError::BondCountMismatch`]), and
-    /// [`StructureError::NonFiniteTime`] or [`StructureError::Unit`] for an
+    /// ([`GeometryError::BondCountMismatch`]), and
+    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
     /// invalid time.
     pub fn new(
         topology: &'a Arc<Topology>,
         sample: &'a Sample,
         time: Option<Quantity<f64>>,
         step: Option<u64>,
-    ) -> Result<Self, StructureError> {
+    ) -> Result<Self, GeometryError> {
         check_bound(topology, sample)?;
         Ok(Self::bound(topology, sample, canonical_time(time)?, step))
     }
@@ -187,11 +187,11 @@ impl<'a> FrameView<'a> {
 /// `time` in [`CANONICAL_TIME_UNIT`], checked finite.
 pub(super) fn canonical_time(
     time: Option<Quantity<f64>>,
-) -> Result<Option<Quantity<f64>>, StructureError> {
+) -> Result<Option<Quantity<f64>>, GeometryError> {
     time.map(|time| {
         let time = time.into_unit(CANONICAL_TIME_UNIT)?;
         if !time.value().is_finite() {
-            return Err(StructureError::NonFiniteTime);
+            return Err(GeometryError::NonFiniteTime);
         }
         Ok(time)
     })

@@ -4,7 +4,7 @@ mod placement;
 pub use append::{ModelAppend, ModelAppendReport};
 
 use super::model_state::ModelState;
-use super::{DenseArrayError, Model, ModelError, Positions, StructureError};
+use super::{DenseArrayError, GeometryError, Model, ModelError, Positions};
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{OwnerProperties, PropertyError};
@@ -118,7 +118,7 @@ impl ModelEditor {
     ///
     /// Returns [`ModelEditError::Position`] when the unit is not a length,
     /// [`ModelEditError::NonFinitePosition`] when the converted position is not
-    /// finite, and [`ModelEditError::Structure`] when capacity is exhausted. The
+    /// finite, and [`ModelEditError::Geometry`] when capacity is exhausted. The
     /// draft is unchanged on error.
     pub fn add_atom(
         &mut self,
@@ -139,7 +139,7 @@ impl ModelEditor {
     /// # Errors
     ///
     /// Returns [`ModelEditError::Position`] when the position count differs from
-    /// the molecule's atom count, [`ModelEditError::Structure`] when capacity is
+    /// the molecule's atom count, [`ModelEditError::Geometry`] when capacity is
     /// exhausted, and [`ModelEditError::Topology`] when the molecule is rejected.
     pub fn add_molecule(
         &mut self,
@@ -311,7 +311,7 @@ impl ModelEditor {
     /// # Errors
     ///
     /// Returns [`ModelEditError::Topology`] when `id` names no live atom and
-    /// [`ModelEditError::Structure`] when the unit is not a length or the converted
+    /// [`ModelEditError::Geometry`] when the unit is not a length or the converted
     /// position is not finite.
     pub fn set_position(
         &mut self,
@@ -376,7 +376,7 @@ impl ModelEditor {
     /// # Errors
     ///
     /// Returns [`ModelEditError::Topology`] when `id` names no live atom and
-    /// [`ModelEditError::Structure`] when the occupancy is not finite.
+    /// [`ModelEditError::Geometry`] when the occupancy is not finite.
     pub fn set_occupancy(
         &mut self,
         id: EditAtomId,
@@ -397,7 +397,7 @@ impl ModelEditor {
     /// # Errors
     ///
     /// Returns [`ModelEditError::Topology`] when `id` names no live atom and
-    /// [`ModelEditError::Structure`] when the unit is not an area or the value is
+    /// [`ModelEditError::Geometry`] when the unit is not an area or the value is
     /// not finite.
     pub fn set_b_factor(
         &mut self,
@@ -723,7 +723,7 @@ pub enum ModelEditError {
     /// A property edit failed; see the source.
     Property(PropertyError),
     /// Structure state is invalid; see the source.
-    Structure(StructureError),
+    Geometry(GeometryError),
     /// The edited model is invalid; see the source.
     Model(Box<ModelError>),
     /// The edit exceeds coordinate capacity.
@@ -750,7 +750,7 @@ impl fmt::Display for ModelEditError {
                 f.write_str("The position of the added atom is not finite.")
             }
             Self::Property(error) => error.fmt(f),
-            Self::Structure(error) => error.fmt(f),
+            Self::Geometry(error) => error.fmt(f),
             Self::Model(error) => error.fmt(f),
             Self::CapacityOverflow => {
                 f.write_str("The edit exceeds the addressable number of atoms.")
@@ -770,7 +770,7 @@ impl std::error::Error for ModelEditError {
             Self::Topology(e) => e.source(),
             Self::Position(e) => e.source(),
             Self::Property(e) => e.source(),
-            Self::Structure(e) => e.source(),
+            Self::Geometry(e) => e.source(),
             Self::Model(e) => e.source(),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
             Self::CapacityOverflow
@@ -791,7 +791,7 @@ macro_rules! convert {
 convert!(TopologyEditError, Topology);
 convert!(DenseArrayError, Position);
 convert!(PropertyError, Property);
-convert!(StructureError, Structure);
+convert!(GeometryError, Geometry);
 impl From<ModelError> for ModelEditError {
     fn from(error: ModelError) -> Self {
         Self::Model(Box::new(error))

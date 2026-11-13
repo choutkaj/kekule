@@ -272,7 +272,7 @@ fn any_sample_may_carry_site_fields_and_dynamics() {
     sample.set_velocities(Some(velocities(1.0))).unwrap();
     assert_eq!(
         sample.set_forces(Some(Forces::zeros(2))),
-        Err(StructureError::Array(DenseArrayError::CountMismatch {
+        Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 1,
             actual: 2
         }))
@@ -643,7 +643,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 fn distribution_operations_keep_their_results() {
     use crate::tests::debug_fingerprint as fingerprint;
     let mut set = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
-    assert_eq!(fingerprint(&set), 0x9ea9_4bd6_e625_0908);
+    assert_eq!(fingerprint(&set), 0xae56_a282_43ff_8c80);
     let distribution = set.distribution().unwrap();
     assert_eq!(
         fingerprint(&distribution.probabilities()),
@@ -673,10 +673,10 @@ fn distribution_operations_keep_their_results() {
         distribution.covering_population(0.0),
         Err(SampleSetError::InvalidFraction)
     );
-    assert_eq!(fingerprint(&set.collapse().unwrap()), 0xb860_e760_087d_2a22);
+    assert_eq!(fingerprint(&set.collapse().unwrap()), 0x4877_d1ef_e888_ad46);
 
     let mut energy_set = energy_conformers(&[3.0, 1.0, 2.0]);
-    assert_eq!(fingerprint(&energy_set), 0x2d1d_d3e7_bdac_0a45);
+    assert_eq!(fingerprint(&energy_set), 0x50d9_63cc_18ea_ebda);
     let distribution = energy_set.distribution().unwrap();
     assert_eq!(
         fingerprint(&distribution.ranked_by_energy()),
@@ -755,7 +755,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         .unwrap()
         .set_temperature(Some(Quantity::new(300.0, KELVIN)))
         .unwrap();
-    assert_eq!(fingerprint(&set), 0x0655_a44b_5c90_6abb);
+    assert_eq!(fingerprint(&set), 0x5442_794d_0e77_3138);
     let options = crate::sdf::SdfWriteOptions::default();
     let views = set.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
@@ -772,7 +772,7 @@ fn sample_views_write_the_sdf_records_they_always_wrote() {
         values: vec![30.0],
     }))
     .unwrap();
-    assert_eq!(fingerprint(&scan), 0x2652_64cd_7ece_ac1a);
+    assert_eq!(fingerprint(&scan), 0x4371_fa5e_2cee_9445);
     let views = scan.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
         views.iter().map(crate::sdf::SdfRecordSource::model),
@@ -864,7 +864,7 @@ fn replacing_a_sample_keeps_its_place_and_membership() {
     // Two atoms do not bind to a one-atom topology.
     assert!(matches!(
         set.replace(0, Sample::new(Positions::zeros(2))),
-        Err(SampleSetError::Structure(_))
+        Err(SampleSetError::Geometry(_))
     ));
     assert_eq!(
         set.replace(2, Sample::new(single_position(0.0))),
@@ -1063,15 +1063,15 @@ fn members_pushed_into_a_distribution_of_every_sample() {
     let wide = || Sample::new(Positions::zeros(2));
     assert!(matches!(
         set.push_member(wide(), Some(Place::Step(3)), 1, None),
-        Err(SampleSetError::Structure(_))
+        Err(SampleSetError::Geometry(_))
     ));
     assert!(matches!(
         set.push_state(wide(), Some(Place::Step(3)), State::new(), None),
-        Err(SampleSetError::Structure(_))
+        Err(SampleSetError::Geometry(_))
     ));
     assert!(matches!(
         set.push(wide(), Some(Place::Step(3))),
-        Err(SampleSetError::Structure(_))
+        Err(SampleSetError::Geometry(_))
     ));
     assert_same_set(&set, &before);
     // Without a distribution there is nothing to join.
@@ -1175,7 +1175,7 @@ fn constructors_refuse_mismatched_samples_and_layouts() {
                 Sample::new(Positions::zeros(2))
             ],
         ),
-        Err(SampleSetError::Structure(StructureError::Array(
+        Err(SampleSetError::Geometry(GeometryError::Array(
             DenseArrayError::CountMismatch {
                 expected: 1,
                 actual: 2
@@ -1345,7 +1345,7 @@ fn every_error_reads_as_a_sentence() {
             "The population fraction is not greater than 0 and at most 1.",
         ),
         (
-            E::Structure(StructureError::NonFiniteTime),
+            E::Geometry(GeometryError::NonFiniteTime),
             "A sample is invalid.",
         ),
         (
@@ -1359,9 +1359,7 @@ fn every_error_reads_as_a_sentence() {
     assert_eq!(E::from(unit).to_string(), unit.to_string());
     // Wrapped causes are the error's source.
     use std::error::Error;
-    assert!(E::Structure(StructureError::NonFiniteTime)
-        .source()
-        .is_some());
+    assert!(E::Geometry(GeometryError::NonFiniteTime).source().is_some());
     assert!(E::EmptySource.source().is_none());
 }
 

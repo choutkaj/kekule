@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::structure::model::sealed::Sealed;
 use crate::structure::state::{is_bound, validate_binding};
-use crate::structure::{AsModelView, Model, ModelView, State, StructureError, StructureKind};
+use crate::structure::{AsModelView, GeometryError, Model, ModelView, State, StructureKind};
 use crate::topology::Topology;
 
 use super::{Place, Sample, SampleContext, SampleRead, SampleReadError, SampleSet};
@@ -67,7 +67,7 @@ impl<'a> SampleView<'a, dyn SampleRead> {
     /// # Errors
     ///
     /// [`SampleReadError::IndexOutOfRange`] past the reader's last sample,
-    /// and [`SampleReadError::Structure`] for a sample not bound to the
+    /// and [`SampleReadError::Geometry`] for a sample not bound to the
     /// reader's topology: one without a position per atom and a property
     /// row per atom and bond.
     pub fn new(
@@ -79,7 +79,7 @@ impl<'a> SampleView<'a, dyn SampleRead> {
         if index >= len {
             return Err(SampleReadError::IndexOutOfRange { index, len });
         }
-        check_bound(reader.topology(), sample).map_err(|source| SampleReadError::Structure {
+        check_bound(reader.topology(), sample).map_err(|source| SampleReadError::Geometry {
             sample: index,
             source: Box::new(source),
         })?;
@@ -186,12 +186,12 @@ impl<'a, R: ?Sized> SampleView<'a, R> {
 }
 
 /// Fails unless `sample` is bound to `topology`.
-pub(crate) fn check_bound(topology: &Topology, sample: &Sample) -> Result<(), StructureError> {
+pub(crate) fn check_bound(topology: &Topology, sample: &Sample) -> Result<(), GeometryError> {
     let structure = sample.structure();
     let atoms = structure.positions.len();
     validate_binding(atoms, &structure.properties, topology)?;
     if !is_bound(atoms, &structure.properties, topology) {
-        return Err(StructureError::BondCountMismatch {
+        return Err(GeometryError::BondCountMismatch {
             expected: topology.bond_count(),
             actual: structure.properties.bonds().len(),
         });

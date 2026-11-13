@@ -553,7 +553,7 @@ fn push_sample(
 }
 
 /// A failure to build the structure of a frame, keeping its cause.
-fn structure_error(error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
+fn geometry_error(error: impl std::error::Error + Send + Sync + 'static) -> FormatError {
     interpret_error(DiagnosticKind::Chemistry, "Cannot build the structure.").with_source(error)
 }
 
@@ -717,7 +717,7 @@ impl Frame {
         let chain = builder
             .hierarchy_mut()
             .add_chain("A", None)
-            .map_err(structure_error)?;
+            .map_err(geometry_error)?;
         let mut order = vec![None; self.elements.len()];
         let mut bonds_by_component = vec![Vec::new(); components.len()];
         let mut component_of = vec![0; self.elements.len()];
@@ -737,29 +737,29 @@ impl Frame {
                 // XYZ lists every atom, so no hydrogen is implicit.
                 let atom =
                     Atom::new(self.elements[row]).with_hydrogens(ImplicitHydrogens::Fixed(0));
-                let id = editor.add_atom(atom).map_err(structure_error)?;
+                let id = editor.add_atom(atom).map_err(geometry_error)?;
                 local.insert(row, id);
             }
             for bond in &bonds_by_component[component] {
                 let [a, b] = bond.atoms.map(|atom| local[&atom.index()]);
-                editor.add_bond(a, b, bond.order).map_err(structure_error)?;
+                editor.add_bond(a, b, bond.order).map_err(geometry_error)?;
             }
-            let molecule = editor.finish().map_err(structure_error)?;
+            let molecule = editor.finish().map_err(geometry_error)?;
             let positions = Positions::from_vec(Quantity::new(
                 rows.iter().map(|&row| self.points[row]).collect(),
                 unit,
             ))
-            .map_err(structure_error)?;
+            .map_err(geometry_error)?;
             let atom_ids: Vec<AtomId> = rows.iter().map(|row| local[row]).collect();
             // Atoms carry no names, so chemistry alone decides reuse.
             let labels = vec![(); molecule.atom_count()];
             let definition = definitions
                 .definition(&mut builder, molecule, labels)
-                .map_err(structure_error)?;
+                .map_err(geometry_error)?;
             let instance = builder
                 .add_instance(definition, &positions)
-                .map_err(structure_error)?;
-            let sequence = i32::try_from(component + 1).map_err(structure_error)?;
+                .map_err(geometry_error)?;
+            let sequence = i32::try_from(component + 1).map_err(geometry_error)?;
             let hierarchy = builder.hierarchy_mut();
             let residue = hierarchy
                 .add_residue(
@@ -769,12 +769,12 @@ impl Frame {
                     Some(sequence.to_string()),
                     None,
                 )
-                .map_err(structure_error)?;
+                .map_err(geometry_error)?;
             for (&row, atom) in rows.iter().zip(atom_ids) {
                 let atom = InstanceAtomId::new(instance, atom);
                 hierarchy
                     .add_atom_site(residue, atom, AtomSiteMetadata::default())
-                    .map_err(structure_error)?;
+                    .map_err(geometry_error)?;
                 order[row] = Some(atom);
             }
         }
@@ -784,8 +784,8 @@ impl Frame {
                     .into_iter()
                     .map(|atom| atom.expect("every atom line belongs to one component")),
             )
-            .map_err(structure_error)?;
-        builder.build().map_err(structure_error)
+            .map_err(geometry_error)?;
+        builder.build().map_err(geometry_error)
     }
 }
 

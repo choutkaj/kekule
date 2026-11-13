@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::structure::StructureError;
+use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
 
@@ -198,7 +198,7 @@ pub enum SampleSetError {
     /// A population fraction is not in `(0, 1]`.
     InvalidFraction,
     /// A sample's structural state is invalid; see the source.
-    Structure(StructureError),
+    Geometry(GeometryError),
     /// Projecting the topology onto a selection failed; see the source.
     Subset(TopologySubsetError),
     /// A quantity could not be converted to the required unit; see the
@@ -321,7 +321,7 @@ impl fmt::Display for SampleSetError {
             Self::InvalidFraction => {
                 formatter.write_str("The population fraction is not greater than 0 and at most 1.")
             }
-            Self::Structure(_) => formatter.write_str("A sample is invalid."),
+            Self::Geometry(_) => formatter.write_str("A sample is invalid."),
             Self::Subset(_) => formatter.write_str("Cannot subset the sample set."),
             Self::Unit(error) => error.fmt(formatter),
         }
@@ -337,7 +337,7 @@ fn given(count: usize, one: &str, many: &str) -> String {
 impl std::error::Error for SampleSetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Structure(error) => Some(error),
+            Self::Geometry(error) => Some(error),
             Self::Subset(error) => Some(error),
             Self::Unit(error) => error.source(),
             _ => None,
@@ -351,9 +351,9 @@ impl From<Requirement> for SampleSetError {
     }
 }
 
-impl From<StructureError> for SampleSetError {
-    fn from(error: StructureError) -> Self {
-        Self::Structure(error)
+impl From<GeometryError> for SampleSetError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 

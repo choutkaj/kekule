@@ -551,7 +551,7 @@ pub(super) fn read(
 #[test]
 fn every_report_field_round_trips() {
     let (model, set) = parts();
-    assert_eq!(super::debug_fingerprint(&set), 0x3f40_ab36_f0b2_dad2);
+    assert_eq!(super::debug_fingerprint(&set), 0xaee8_1413_b55e_5100);
     let report = report(false);
     let bytes = native::write(
         NativeSource::interpreted_model(&model, &report),
@@ -578,7 +578,7 @@ fn every_report_field_round_trips() {
         .unwrap()
         .into_sample_set_interpretation()
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&decoded), 0x1648_6503_5a44_75c0);
+    assert_eq!(super::debug_fingerprint(&decoded), 0x2197_62b3_fc13_a71a);
     assert_eq!(decoded.reports(), reports.as_slice());
     assert_eq!(decoded.sample_set().len(), 2);
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();

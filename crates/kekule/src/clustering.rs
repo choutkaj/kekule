@@ -112,8 +112,8 @@ use crate::alignment::{
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
 use crate::structure::{
-    Distribution, Members, ModelView, Partition, Requirement, SampleReadError, SampleSet,
-    SampleSetError, StructureError,
+    Distribution, GeometryError, Members, ModelView, Partition, Requirement, SampleReadError,
+    SampleSet, SampleSetError,
 };
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use run::{FirstFailure, Stop, Tracker};
@@ -652,9 +652,9 @@ impl From<SampleSetError> for ClusteringError {
     }
 }
 
-impl From<StructureError> for ClusteringError {
-    fn from(error: StructureError) -> Self {
-        Self::SampleSet(Box::new(SampleSetError::Structure(error)))
+impl From<GeometryError> for ClusteringError {
+    fn from(error: GeometryError) -> Self {
+        Self::SampleSet(Box::new(SampleSetError::Geometry(error)))
     }
 }
 

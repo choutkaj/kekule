@@ -414,5 +414,5 @@ fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), 
     frame
         .sample_mut()
         .set_positions(positions.values())
-        .map_err(|error| PeriodicError::Publication(Box::new(SampleSetError::Structure(error))))
+        .map_err(|error| PeriodicError::Publication(Box::new(SampleSetError::Geometry(error))))
 }

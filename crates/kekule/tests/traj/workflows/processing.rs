@@ -164,15 +164,15 @@ fn fitted(set: &SampleSet, atoms: &AtomSelection) -> SampleSet {
 #[test]
 fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     let mut recorded = Recorded::new(&[
-        0xa549_77de_911b_bb78, // the source
-        0xb309_664f_9f45_1e52, // whole
-        0xdb65_e88b_76ff_1106, // wrap
-        0xdb65_e88b_76ff_1106, // whole and wrap
-        0xb079_5215_fe05_ca8c, // center
-        0xbd59_005d_be9e_672f, // fit
-        0xd87d_000f_0650_7b67, // fit onto positions
-        0x5d79_7569_13b9_f2f7, // subset
-        0xcf9e_8746_f544_05c8, // no step
+        0x1c73_83b4_30b1_5bc1, // the source
+        0xce18_6937_c257_97ff, // whole
+        0xca72_e35f_7876_f587, // wrap
+        0xca72_e35f_7876_f587, // whole and wrap
+        0x401f_b596_b97c_0b93, // center
+        0x5aab_a194_45c8_e438, // fit
+        0x0615_9ad2_e9cb_96e4, // fit onto positions
+        0x7588_e517_569e_9d9e, // subset
+        0xc702_2520_1877_7247, // no step
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -282,9 +282,9 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
 #[test]
 fn every_step_together_equals_the_functions_in_order() {
     let mut recorded = Recorded::new(&[
-        0xa549_77de_911b_bb78, // the source
-        0x1585_a1a0_e321_46c4, // the functions in order
-        0x2c30_0947_d5eb_c322, // processed
+        0x1c73_83b4_30b1_5bc1, // the source
+        0xf0f6_8473_a8cd_578f, // the functions in order
+        0x2b6d_7a1a_0f8e_8083, // processed
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -346,10 +346,10 @@ fn molecule_centers_from_cell_center(topology: &Topology, sample: &Sample) -> Ve
 #[test]
 fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
     let mut recorded = Recorded::new(&[
-        0xa549_77de_911b_bb78, // the source
-        0xf586_3c36_0dbd_08a7, // the first chain
-        0x5282_d536_197f_f0bd, // the second chain
-        0x2f4b_73d8_061b_8ff1, // every atom
+        0x1c73_83b4_30b1_5bc1, // the source
+        0x3c26_5242_83eb_7504, // the first chain
+        0xce69_047e_954c_7b6a, // the second chain
+        0x1a2a_61a2_2ecc_ff56, // every atom
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -412,16 +412,16 @@ fn smoothed_by_hand(stepped: &SampleSet, window: usize, index: usize) -> Vec<Poi
 #[test]
 fn smoothing_averages_the_window_imaged_onto_each_sample() {
     let mut recorded = Recorded::new(&[
-        0xa549_77de_911b_bb78, // the source
-        0x738f_0850_1fc8_470d, // window 1
-        0x738f_0850_1fc8_470d, // window 1 unsmoothed
-        0xd0f2_4d0b_fe3a_89dd, // window 3
-        0x738f_0850_1fc8_470d, // window 3 unsmoothed
-        0xf805_325f_129d_8c29, // window 5
-        0x738f_0850_1fc8_470d, // window 5 unsmoothed
-        0xc14d_ba4b_c065_ca6b, // window 15
-        0x738f_0850_1fc8_470d, // window 15 unsmoothed
-        0x1c81_cd72_f135_b300, // smoothing alone
+        0x1c73_83b4_30b1_5bc1, // the source
+        0xe358_66a6_0a36_60e6, // window 1
+        0xe358_66a6_0a36_60e6, // window 1 unsmoothed
+        0xab92_da89_1c05_ca8c, // window 3
+        0xe358_66a6_0a36_60e6, // window 3 unsmoothed
+        0xfb6d_8481_da32_12ae, // window 5
+        0xe358_66a6_0a36_60e6, // window 5 unsmoothed
+        0xb8c0_2058_9622_caf0, // window 15
+        0xe358_66a6_0a36_60e6, // window 15 unsmoothed
+        0x6de2_f8aa_b485_5db9, // smoothing alone
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -467,8 +467,8 @@ fn smoothing_averages_the_window_imaged_onto_each_sample() {
 #[test]
 fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
     let mut recorded = Recorded::new(&[
-        0xa549_77de_911b_bb78, // the source
-        0x50f9_dbed_b335_a8a2, // processed
+        0x1c73_83b4_30b1_5bc1, // the source
+        0x3564_c00a_9257_4f19, // processed
     ]);
     let set = source();
     recorded.check(&contents(&set));
@@ -494,9 +494,9 @@ fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
 #[test]
 fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
     let mut recorded = Recorded::new(&[
-        0x9e0a_7a50_c2a0_9c34, // the source in growing cells
-        0xf831_92cf_db4e_6b20, // window 3
-        0x4311_3f0f_d9d6_1209, // window 5
+        0x3f02_c7a0_a31f_de31, // the source in growing cells
+        0x6814_1ffd_f161_ef8f, // window 3
+        0xd08c_5b33_2366_552c, // window 5
     ]);
     let mut set = source();
     for index in 0..set.len() {
@@ -532,8 +532,8 @@ fn smoothing_images_each_sample_of_the_window_in_its_own_cell() {
 #[test]
 fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
     let mut recorded = Recorded::new(&[
-        0x45cf_5136_e607_3f68, // the source without cells
-        0x4c6d_9a00_90c7_bb02, // processed
+        0x5b17_e91e_f1de_fdb9, // the source without cells
+        0xb236_0084_cce8_5e8b, // processed
     ]);
     let mut set = source();
     for index in 0..set.len() {
@@ -571,7 +571,7 @@ fn samples_without_a_cell_skip_imaging_and_center_where_sample_0_was() {
 #[test]
 fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
     let mut recorded = Recorded::new(&[
-        0x4b7f_d20b_0ee3_d80c, // processed from the file
+        0x5f0a_3655_c435_b9e7, // processed from the file
     ]);
     let set = source();
     let directory = std::env::temp_dir().join(format!("kekule-processing-{}", std::process::id()));
@@ -758,7 +758,7 @@ impl SampleRead for Panicking {
 #[test]
 fn a_panic_in_the_reader_below_leaves_the_other_samples_readable() {
     let mut recorded = Recorded::new(&[
-        0x8131_df28_bb39_9479, // processed from the set
+        0xe920_6172_1b76_1e78, // processed from the set
     ]);
     let set = source();
     let panicking = Panicking(set.clone());
@@ -838,7 +838,7 @@ impl SampleRead for Unique {
 #[test]
 fn the_steps_change_a_unique_sample_in_place_and_copy_a_shared_one() {
     let mut recorded = Recorded::new(&[
-        0x5a14_dfd8_4689_5cb5, // processed from the set
+        0x8447_fcb9_e74c_eef6, // processed from the set
     ]);
     let set = source();
     let topology = set.shared_topology();
@@ -880,7 +880,7 @@ fn samples_of_another_layout_fail_instead_of_being_processed() {
     let short = Short(set.clone());
     assert!(matches!(
         Processed::new(&short, ProcessingSteps::default().with_center(first)),
-        Err(ProcessingError::Sample(SampleReadError::Structure {
+        Err(ProcessingError::Sample(SampleReadError::Geometry {
             sample: 0,
             ..
         }))
@@ -931,7 +931,7 @@ impl SampleRead for Counting {
 #[test]
 fn the_reader_lends_sample_0_it_processed_on_construction() {
     let mut recorded = Recorded::new(&[
-        0x2242_d7ac_7251_1755, // processed from the set
+        0x5f4b_76fe_1988_34c8, // processed from the set
     ]);
     let set = source();
     let first = atoms(&set, &[0, 1, 2]);

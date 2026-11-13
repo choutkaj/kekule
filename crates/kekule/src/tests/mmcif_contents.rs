@@ -1189,8 +1189,8 @@ fn sample_set_block_interpretation_matches_exactly_one_document_helper() {
     let from_block = document.blocks()[0]
         .interpret_sample_set(Default::default())
         .expect("block sample set interprets");
-    assert_eq!(debug_fingerprint(&from_document), 0x8f27_63a5_f370_c651);
-    assert_eq!(debug_fingerprint(&from_block), 0x8f27_63a5_f370_c651);
+    assert_eq!(debug_fingerprint(&from_document), 0xc41c_672c_1406_da85);
+    assert_eq!(debug_fingerprint(&from_block), 0xc41c_672c_1406_da85);
     let method_default = document.blocks()[0]
         .interpret_sample_set(Default::default())
         .expect("default block method interprets");
@@ -1235,7 +1235,7 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let interpreted = (parse(MULTI_MODEL))
         .interpret_sample_set(Default::default())
         .expect("consistent coordinate models form a sample set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x8f27_63a5_f370_c651);
+    assert_eq!(debug_fingerprint(&interpreted), 0xc41c_672c_1406_da85);
     let set = interpreted.sample_set();
     assert_eq!(set.len(), 2);
     assert_eq!(interpreted.reports().len(), 2);
@@ -1274,8 +1274,8 @@ fn sample_set_preparation_preserves_selected_order_reports_and_shared_connectivi
     let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
     let document = parse(&input);
     for (model_ids, fingerprint) in [
-        (vec!["2", "1"], 0x84d7_9c91_08f3_31c3),
-        (vec!["2"], 0x5fa3_68eb_2b13_7995),
+        (vec!["2", "1"], 0xa115_cf3c_80dd_0cf9),
+        (vec!["2"], 0xdd19_ebcb_21eb_f116),
     ] {
         let interpreted = document
             .interpret_sample_set(
@@ -1364,7 +1364,7 @@ fn sample_set_identity_distinguishes_repeated_residues_and_insertion_codes() {
     let interpreted = (parse(REPEATED_RESIDUE_MODELS))
         .interpret_sample_set(Default::default())
         .expect("stable repeated-residue identities form a sample set");
-    assert_eq!(debug_fingerprint(&interpreted), 0xe848_fc76_cff3_8d8d);
+    assert_eq!(debug_fingerprint(&interpreted), 0x6a12_640a_7a55_4d5b);
 
     assert_eq!(interpreted.sample_set().len(), 2);
     assert_eq!(interpreted.sample_set().topology().atom_count(), 3);
@@ -1389,7 +1389,7 @@ fn sample_set_identity_preserves_repeated_nonpolymer_occurrences() {
     let interpreted = (parse(REPEATED_NONPOLYMER_MODELS))
         .interpret_sample_set(Default::default())
         .expect("stable occurrence discriminators form a sample set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x97f8_15c1_df5a_2a60);
+    assert_eq!(debug_fingerprint(&interpreted), 0x0da8_5029_b06b_452c);
 
     assert_eq!(interpreted.sample_set().len(), 2);
     assert_eq!(interpreted.sample_set().topology().instance_count(), 2);
@@ -1488,7 +1488,7 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
     let interpreted = (parse(input))
         .interpret_sample_set(Default::default())
         .expect("selected altloc is provenance rather than atom identity");
-    assert_eq!(debug_fingerprint(&interpreted), 0x7eac_7cde_ef5e_0950);
+    assert_eq!(debug_fingerprint(&interpreted), 0x0355_49dd_b8ec_079e);
     let set = interpreted.sample_set();
     assert_eq!(set.len(), 2);
     assert_eq!(set.topology().atom_count(), 1);

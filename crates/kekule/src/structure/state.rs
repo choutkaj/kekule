@@ -11,7 +11,7 @@
 use std::fmt;
 
 use crate::math::{PeriodicCell, PeriodicCellError, RigidTransform};
-use crate::properties::{PropertyError, StructureProperties};
+use crate::properties::{GeometryProperties, PropertyError};
 use crate::topology::TopologySubset;
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -19,10 +19,10 @@ use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use super::{DenseArrayError, Positions};
 
 /// The row of one dense atom index in an owner with `len` atoms.
-pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, StructureError> {
+pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, GeometryError> {
     let index = atom.index();
     if index >= len {
-        return Err(StructureError::Array(DenseArrayError::IndexOutOfRange {
+        return Err(GeometryError::Array(DenseArrayError::IndexOutOfRange {
             index,
             len,
         }));
@@ -35,46 +35,42 @@ pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, Str
 /// allocated.
 pub(crate) fn validate_binding(
     atoms: usize,
-    properties: &StructureProperties,
+    properties: &GeometryProperties,
     topology: &Topology,
-) -> Result<(), StructureError> {
+) -> Result<(), GeometryError> {
     if atoms != topology.atom_count() {
-        return Err(StructureError::Array(DenseArrayError::CountMismatch {
+        return Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: topology.atom_count(),
             actual: atoms,
         }));
     }
     properties
         .validate_bond_rows(topology.bond_count())
-        .map_err(|_| StructureError::BondCountMismatch {
+        .map_err(|_| GeometryError::BondCountMismatch {
             expected: topology.bond_count(),
             actual: properties.bonds().len(),
         })
 }
 
 /// Whether structure rows already cover every atom and bond of `topology`.
-pub(crate) fn is_bound(
-    atoms: usize,
-    properties: &StructureProperties,
-    topology: &Topology,
-) -> bool {
+pub(crate) fn is_bound(atoms: usize, properties: &GeometryProperties, topology: &Topology) -> bool {
     atoms == topology.atom_count() && properties.bonds().len() == topology.bond_count()
 }
 
 /// Checks that a replacement keeps the current atom and bond row counts.
 pub(crate) fn check_property_rows(
     atoms: usize,
-    current: &StructureProperties,
-    replacement: &StructureProperties,
-) -> Result<(), StructureError> {
+    current: &GeometryProperties,
+    replacement: &GeometryProperties,
+) -> Result<(), GeometryError> {
     if replacement.atoms().len() != atoms {
-        return Err(StructureError::Array(DenseArrayError::CountMismatch {
+        return Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: atoms,
             actual: replacement.atoms().len(),
         }));
     }
     if replacement.bonds().len() != current.bonds().len() {
-        return Err(StructureError::BondCountMismatch {
+        return Err(GeometryError::BondCountMismatch {
             expected: current.bonds().len(),
             actual: replacement.bonds().len(),
         });
@@ -102,7 +98,7 @@ pub(crate) fn subset_rows(subset: &TopologySubset) -> (Vec<usize>, Vec<usize>) {
 pub(crate) fn transform_positions(
     positions: &Positions,
     transform: RigidTransform,
-) -> Result<Positions, StructureError> {
+) -> Result<Positions, GeometryError> {
     let points = positions
         .values()
         .value()
@@ -119,7 +115,7 @@ pub(crate) fn transform_positions(
 pub(crate) fn transform_cell(
     cell: Option<PeriodicCell>,
     transform: RigidTransform,
-) -> Result<Option<PeriodicCell>, StructureError> {
+) -> Result<Option<PeriodicCell>, GeometryError> {
     cell.map(|cell| {
         let vectors = cell
             .vectors()
@@ -144,7 +140,7 @@ macro_rules! structure_readers {
 
         /// Structure annotations: owner values plus one row per dense atom
         /// and bond.
-        pub fn properties(&self) -> &$crate::properties::StructureProperties {
+        pub fn properties(&self) -> &$crate::properties::GeometryProperties {
             &self.storage_ref().properties
         }
     };
@@ -192,7 +188,7 @@ macro_rules! structure_mutators {
         pub fn set_positions<T: AsRef<[$crate::math::Point3]>>(
             &mut self,
             positions: $crate::units::Quantity<T>,
-        ) -> Result<(), $crate::structure::StructureError> {
+        ) -> Result<(), $crate::structure::GeometryError> {
             Ok(self.storage().positions.set_all(positions)?)
         }
 
@@ -201,7 +197,7 @@ macro_rules! structure_mutators {
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
             position: $crate::units::Quantity<$crate::math::Point3>,
-        ) -> Result<(), $crate::structure::StructureError> {
+        ) -> Result<(), $crate::structure::GeometryError> {
             Ok(self.storage().positions.set(atom.index(), position)?)
         }
 
@@ -216,8 +212,8 @@ macro_rules! structure_mutators {
         /// same topology. Detached payloads accept no bond rows.
         pub fn set_properties(
             &mut self,
-            properties: $crate::properties::StructureProperties,
-        ) -> Result<(), $crate::structure::StructureError> {
+            properties: $crate::properties::GeometryProperties,
+        ) -> Result<(), $crate::structure::GeometryError> {
             let storage = self.storage();
             $crate::structure::state::check_property_rows(
                 storage.positions.len(),
@@ -229,8 +225,8 @@ macro_rules! structure_mutators {
         }
 
         /// Length-preserving mutable access to structure annotations.
-        pub fn properties_mut(&mut self) -> $crate::properties::StructurePropertiesMut<'_> {
-            $crate::properties::StructurePropertiesMut::new(&mut self.storage().properties)
+        pub fn properties_mut(&mut self) -> $crate::properties::GeometryPropertiesMut<'_> {
+            $crate::properties::GeometryPropertiesMut::new(&mut self.storage().properties)
         }
     };
 }
@@ -244,7 +240,7 @@ macro_rules! site_mutators {
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
             value: Option<f64>,
-        ) -> Result<(), $crate::structure::StructureError> {
+        ) -> Result<(), $crate::structure::GeometryError> {
             let storage = self.storage();
             let len = storage.positions.len();
             storage.occupancies.set(atom, len, value)
@@ -254,7 +250,7 @@ macro_rules! site_mutators {
         pub fn set_occupancies(
             &mut self,
             values: Option<Vec<Option<f64>>>,
-        ) -> Result<(), $crate::structure::StructureError> {
+        ) -> Result<(), $crate::structure::GeometryError> {
             let storage = self.storage();
             let len = storage.positions.len();
             storage.occupancies.replace(len, values)
@@ -266,7 +262,7 @@ macro_rules! site_mutators {
             &mut self,
             atom: $crate::topology::TopologyAtomIndex,
             value: Option<$crate::units::Quantity<f64>>,
-        ) -> Result<(), $crate::structure::StructureError> {
+        ) -> Result<(), $crate::structure::GeometryError> {
             let value = $crate::structure::scalars::canonical_b_factor(value)?;
             let storage = self.storage();
             let len = storage.positions.len();
@@ -277,7 +273,7 @@ macro_rules! site_mutators {
         pub fn set_b_factors(
             &mut self,
             values: Option<$crate::units::Quantity<Vec<Option<f64>>>>,
-        ) -> Result<(), $crate::structure::StructureError> {
+        ) -> Result<(), $crate::structure::GeometryError> {
             let values = $crate::structure::scalars::canonical_b_factors(values)?;
             let storage = self.storage();
             let len = storage.positions.len();
@@ -287,10 +283,10 @@ macro_rules! site_mutators {
 }
 pub(crate) use site_mutators;
 
-/// Invalid structure payload state.
+/// Invalid geometry state.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
-pub enum StructureError {
+pub enum GeometryError {
     /// Dense per-atom state is invalid.
     Array(DenseArrayError),
     /// Bound bond property rows have the wrong length.
@@ -314,18 +310,18 @@ pub enum StructureError {
     Unit(Box<UnitError>),
 }
 
-impl fmt::Display for StructureError {
+impl fmt::Display for GeometryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Array(error) => error.fmt(formatter),
             Self::BondCountMismatch { expected, actual } => write!(
                 formatter,
-                "The bond properties have {actual} rows, but the structure has {expected} bonds."
+                "The bond properties have {actual} rows, but the topology has {expected} bonds."
             ),
             Self::NonFiniteTime => formatter.write_str("The frame time is not finite."),
             Self::NonFiniteEnergy => formatter.write_str("The state energy is not finite."),
             Self::CapacityOverflow => {
-                formatter.write_str("The structure exceeds the addressable capacity.")
+                formatter.write_str("The geometry exceeds the addressable capacity.")
             }
             Self::Property(error) => error.fmt(formatter),
             Self::Cell(error) => error.fmt(formatter),
@@ -334,7 +330,7 @@ impl fmt::Display for StructureError {
     }
 }
 
-impl std::error::Error for StructureError {
+impl std::error::Error for GeometryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Array(error) => error.source(),
@@ -346,25 +342,25 @@ impl std::error::Error for StructureError {
     }
 }
 
-impl From<DenseArrayError> for StructureError {
+impl From<DenseArrayError> for GeometryError {
     fn from(error: DenseArrayError) -> Self {
         Self::Array(error)
     }
 }
 
-impl From<PropertyError> for StructureError {
+impl From<PropertyError> for GeometryError {
     fn from(error: PropertyError) -> Self {
         Self::Property(Box::new(error))
     }
 }
 
-impl From<PeriodicCellError> for StructureError {
+impl From<PeriodicCellError> for GeometryError {
     fn from(error: PeriodicCellError) -> Self {
         Self::Cell(Box::new(error))
     }
 }
 
-impl From<UnitError> for StructureError {
+impl From<UnitError> for GeometryError {
     fn from(error: UnitError) -> Self {
         Self::Unit(Box::new(error))
     }

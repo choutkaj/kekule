@@ -5,7 +5,7 @@ use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, SQUARE_NANOMETER};
 
 use super::state::atom_row;
-use super::StructureError;
+use super::GeometryError;
 
 /// One optional per-atom scalar column in dense atom order, such as the
 /// occupancies or B-factors of a model or sample.
@@ -43,7 +43,7 @@ impl AtomScalars {
         atom: TopologyAtomIndex,
         len: usize,
         value: Option<f64>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let row = atom_row(len, atom)?;
         self.set_row(row, len, value)
     }
@@ -53,10 +53,10 @@ impl AtomScalars {
         &mut self,
         len: usize,
         values: Option<Vec<Option<f64>>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         if let Some(values) = &values {
             if values.len() != len {
-                return Err(StructureError::Array(DenseArrayError::CountMismatch {
+                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
                     expected: len,
                     actual: values.len(),
                 }));
@@ -65,7 +65,7 @@ impl AtomScalars {
                 .iter()
                 .position(|value| value.is_some_and(|value| !value.is_finite()))
             {
-                return Err(StructureError::Array(DenseArrayError::NonFinite { index }));
+                return Err(GeometryError::Array(DenseArrayError::NonFinite { index }));
             }
         }
         self.0 = values
@@ -113,14 +113,9 @@ impl AtomScalars {
         }
     }
 
-    fn set_row(
-        &mut self,
-        row: usize,
-        len: usize,
-        value: Option<f64>,
-    ) -> Result<(), StructureError> {
+    fn set_row(&mut self, row: usize, len: usize, value: Option<f64>) -> Result<(), GeometryError> {
         if value.is_some_and(|value| !value.is_finite()) {
-            return Err(StructureError::Array(DenseArrayError::NonFinite {
+            return Err(GeometryError::Array(DenseArrayError::NonFinite {
                 index: row,
             }));
         }
@@ -144,7 +139,7 @@ impl AtomScalars {
 /// Converts one B-factor to the stored square nanometres.
 pub(crate) fn canonical_b_factor(
     value: Option<Quantity<f64>>,
-) -> Result<Option<f64>, StructureError> {
+) -> Result<Option<f64>, GeometryError> {
     Ok(value
         .map(|value| value.into_unit(SQUARE_NANOMETER).map(Quantity::into_value))
         .transpose()?)
@@ -153,7 +148,7 @@ pub(crate) fn canonical_b_factor(
 /// Converts a B-factor column to the stored square nanometres.
 pub(crate) fn canonical_b_factors(
     values: Option<Quantity<Vec<Option<f64>>>>,
-) -> Result<Option<Vec<Option<f64>>>, StructureError> {
+) -> Result<Option<Vec<Option<f64>>>, GeometryError> {
     values
         .map(|values| {
             let factor = values.unit().conversion_factor_to(SQUARE_NANOMETER)?;

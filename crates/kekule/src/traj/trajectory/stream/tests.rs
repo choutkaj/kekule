@@ -286,7 +286,7 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
                 ))
                 .collect::<Vec<_>>()
         ),
-        0x8ed5_23b8_b5e0_48e6
+        0x5382_8ce3_eccc_df37
     );
     assert_eq!(loaded.len(), 3);
     assert!(loaded.topology().shares_layout(set.topology()));
@@ -318,7 +318,7 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
                 ))
                 .collect::<Vec<_>>()
         ),
-        0x03f1_2e1b_0b7c_4a09
+        0x4d55_21b7_9819_a76f
     );
     assert_eq!(
         crate::tests::debug_fingerprint(&loaded.topology()),

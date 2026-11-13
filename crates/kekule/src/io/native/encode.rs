@@ -20,7 +20,7 @@ use crate::perception::{
     rings::RingBasisModel, valence::ValenceModel, valence::ValenceValidation, Perception,
 };
 use crate::properties::{
-    OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue, StructureProperties,
+    GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
 };
 use crate::structure::{Distribution, Members, Model, ModelView, Order, SampleSet, StructureKind};
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
@@ -685,7 +685,7 @@ impl<W: Write> Encoder<'_, W> {
         Ok(())
     }
 
-    fn structure_properties(&mut self, properties: &StructureProperties) -> Result {
+    fn geometry_properties(&mut self, properties: &GeometryProperties) -> Result {
         self.owner(properties.owner())?;
         self.table(properties.atoms())?;
         self.table(properties.bonds())
@@ -697,7 +697,7 @@ impl<W: Write> Encoder<'_, W> {
         self.cell(model.cell())?;
         self.scalars(model.occupancies())?;
         self.scalars(model.b_factors().map(|values| *values.value()))?;
-        self.structure_properties(model.properties())
+        self.geometry_properties(model.properties())
     }
 
     // Sample sets.
@@ -809,7 +809,7 @@ impl<W: Write> Encoder<'_, W> {
             self.cell(view.cell())?;
             self.scalars(view.occupancies())?;
             self.scalars(view.b_factors().map(|values| *values.value()))?;
-            self.structure_properties(view.properties())?;
+            self.geometry_properties(view.properties())?;
             match velocities {
                 None => self.u8(0)?,
                 Some(velocities) => {

@@ -8,7 +8,7 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    AsModelView, Model, Order, Place, Positions, Sample, SampleSet, SampleSetError, StructureError,
+    AsModelView, GeometryError, Model, Order, Place, Positions, Sample, SampleSet, SampleSetError,
     StructureKind,
 };
 use kekule::topology::{AtomSelection, Topology};
@@ -184,7 +184,7 @@ fn samples_must_lie_on_the_order_and_fit_its_topology() {
     // Too few atoms for the topology.
     assert!(matches!(
         steps.push(Sample::new(Positions::zeros(2)), Some(Place::Step(0))),
-        Err(SampleSetError::Structure(StructureError::Array(_)))
+        Err(SampleSetError::Geometry(GeometryError::Array(_)))
     ));
     assert!(steps.is_empty() && scan.is_empty());
     // An order has one value per sample.

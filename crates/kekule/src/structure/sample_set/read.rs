@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::alignment::AlignmentError;
 use crate::properties::OwnerProperties;
-use crate::structure::StructureError;
+use crate::structure::GeometryError;
 use crate::topology::Topology;
 use crate::traj::periodic::PeriodicError;
 use crate::traj::TrajectoryIoError;
@@ -26,7 +26,7 @@ use crate::structure::ModelView;
 /// # Contract
 ///
 /// An implementor keeps these. Kekule checks that every sample it reads is
-/// bound to the topology, and fails with [`SampleReadError::Structure`]
+/// bound to the topology, and fails with [`SampleReadError::Geometry`]
 /// when one is not; it relies on the rest:
 ///
 /// - [`Self::len`], [`Self::order`], and [`Self::distribution`] change only
@@ -190,11 +190,11 @@ pub enum SampleReadError {
     },
     /// A sample does not fit the reader's topology, or a step cannot store
     /// its result; see the source.
-    Structure {
+    Geometry {
         /// The sample index.
         sample: usize,
         /// The failure.
-        source: Box<StructureError>,
+        source: Box<GeometryError>,
     },
     /// A host's reader cannot provide the sample, for its own reason, such
     /// as a cache whose source is gone; see the source. Made with
@@ -263,8 +263,8 @@ impl PartialEq for SampleReadError {
                 },
             ) => sample == other_sample && source == other_source,
             (
-                Self::Structure { sample, source },
-                Self::Structure {
+                Self::Geometry { sample, source },
+                Self::Geometry {
                     sample: other_sample,
                     source: other_source,
                 },
@@ -289,7 +289,7 @@ impl fmt::Display for SampleReadError {
                 "Sample {index} does not exist. There are {}.",
                 crate::diagnostics::counted(*len, "sample", "samples")
             ),
-            Self::Periodic { sample, .. } | Self::Structure { sample, .. } => {
+            Self::Periodic { sample, .. } | Self::Geometry { sample, .. } => {
                 write!(formatter, "Cannot process sample {sample}.")
             }
             Self::Alignment { sample, .. } => write!(formatter, "Cannot fit sample {sample}."),
@@ -307,7 +307,7 @@ impl std::error::Error for SampleReadError {
             Self::Trajectory { source, .. } => Some(source),
             Self::Periodic { source, .. } => Some(source.as_ref()),
             Self::Alignment { source, .. } => Some(source.as_ref()),
-            Self::Structure { source, .. } => Some(source.as_ref()),
+            Self::Geometry { source, .. } => Some(source.as_ref()),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }
     }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, RigidTransform};
 use crate::molecule::Molecule;
-use crate::properties::{StructureProperties, TopologyPropertiesMut};
+use crate::properties::{GeometryProperties, TopologyPropertiesMut};
 use crate::topology::TopologySubsetError;
 use crate::topology::{
     AtomSelection, HierarchyBuilder, InstanceAtomId, InstanceBondId, MoleculeClass,
@@ -20,7 +20,7 @@ use super::state::{
     is_bound, site_mutators, site_readers, structure_mutators, structure_readers, subset_rows,
     transform_cell, transform_positions, validate_binding,
 };
-use super::{DenseArrayError, Positions, SampleContext, StructureError};
+use super::{DenseArrayError, GeometryError, Positions, SampleContext};
 
 /// One concrete structure of one topology.
 ///
@@ -46,7 +46,7 @@ pub struct Model {
     pub(super) cell: Option<PeriodicCell>,
     pub(super) occupancies: AtomScalars,
     pub(super) b_factors: AtomScalars,
-    pub(super) properties: StructureProperties,
+    pub(super) properties: GeometryProperties,
 }
 
 impl PartialEq for Model {
@@ -69,7 +69,7 @@ impl Model {
         topology: impl Into<Arc<Topology>>,
         positions: Positions,
     ) -> Result<Self, ModelError> {
-        let properties = StructureProperties::new(positions.len());
+        let properties = GeometryProperties::new(positions.len());
         Self::from_state(
             topology.into(),
             ModelState {
@@ -198,7 +198,7 @@ impl Model {
     pub fn apply_rigid_transform(
         &mut self,
         transform: &RigidTransform,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let cell = transform_cell(self.cell, *transform)?;
         let positions = transform_positions(&self.positions, *transform)?;
         self.cell = cell;
@@ -294,7 +294,7 @@ impl Model {
             properties: self
                 .properties
                 .project(&atoms, &bonds)
-                .map_err(StructureError::from)?,
+                .map_err(GeometryError::from)?,
         };
         Self::from_state(subset.shared_topology(), state)
     }
@@ -327,7 +327,7 @@ impl Model {
     /// # Errors
     ///
     /// Returns [`ModelError::InvalidAtomId`] when `atom` is not in the topology
-    /// and [`ModelError::Structure`] when the unit is not a length or the
+    /// and [`ModelError::Geometry`] when the unit is not a length or the
     /// converted position is not finite.
     pub fn set_position(
         &mut self,
@@ -453,7 +453,7 @@ pub struct ModelView<'a> {
     cell: Option<&'a PeriodicCell>,
     occupancies: &'a AtomScalars,
     b_factors: &'a AtomScalars,
-    properties: &'a StructureProperties,
+    properties: &'a GeometryProperties,
     kind: StructureKind<'a>,
 }
 
@@ -465,7 +465,7 @@ impl<'a> ModelView<'a> {
         cell: Option<&'a PeriodicCell>,
         occupancies: &'a AtomScalars,
         b_factors: &'a AtomScalars,
-        properties: &'a StructureProperties,
+        properties: &'a GeometryProperties,
         kind: StructureKind<'a>,
     ) -> Self {
         debug_assert!(is_bound(positions.len(), properties, topology));
@@ -523,7 +523,7 @@ impl<'a> ModelView<'a> {
     }
 
     /// Structure annotations: owner values plus one row per dense atom and bond.
-    pub fn properties(self) -> &'a StructureProperties {
+    pub fn properties(self) -> &'a GeometryProperties {
         self.properties
     }
 
@@ -669,7 +669,7 @@ pub enum ModelError {
     /// The atom is not part of the model's topology.
     InvalidAtomId(InstanceAtomId),
     /// Structure state is invalid; see the source.
-    Structure(StructureError),
+    Geometry(GeometryError),
     /// Subsetting the topology failed; see the source.
     Subset(TopologySubsetError),
 }
@@ -682,7 +682,7 @@ impl fmt::Display for ModelError {
                 "{} is not in the model's topology.",
                 crate::diagnostics::Capitalized(atom)
             ),
-            Self::Structure(error) => error.fmt(formatter),
+            Self::Geometry(error) => error.fmt(formatter),
             Self::Subset(_) => formatter.write_str("Cannot subset the model's topology."),
         }
     }
@@ -691,22 +691,22 @@ impl fmt::Display for ModelError {
 impl std::error::Error for ModelError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Structure(error) => error.source(),
+            Self::Geometry(error) => error.source(),
             Self::Subset(error) => Some(error),
             _ => None,
         }
     }
 }
 
-impl From<StructureError> for ModelError {
-    fn from(error: StructureError) -> Self {
-        Self::Structure(error)
+impl From<GeometryError> for ModelError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 
 impl From<DenseArrayError> for ModelError {
     fn from(error: DenseArrayError) -> Self {
-        Self::Structure(error.into())
+        Self::Geometry(error.into())
     }
 }
 
@@ -810,7 +810,7 @@ impl ModelBuilder {
     /// # Errors
     ///
     /// Returns [`ModelBuildError::Model`] wrapping [`ModelError::InvalidAtomId`]
-    /// when `atom` is not staged, or [`ModelError::Structure`] when the unit is
+    /// when `atom` is not staged, or [`ModelError::Geometry`] when the unit is
     /// not a length or the converted position is not finite.
     pub fn set_position(
         &mut self,
@@ -1036,8 +1036,8 @@ impl From<DenseArrayError> for ModelBuildError {
     }
 }
 
-impl From<StructureError> for ModelBuildError {
-    fn from(error: StructureError) -> Self {
+impl From<GeometryError> for ModelBuildError {
+    fn from(error: GeometryError) -> Self {
         ModelError::from(error).into()
     }
 }

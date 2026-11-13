@@ -47,7 +47,7 @@ pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
     SequenceSource,
 };
-pub(in crate::io) use types::{poll, poll_every, structure_error};
+pub(in crate::io) use types::{geometry_error, poll, poll_every};
 pub use types::{
     AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
@@ -93,7 +93,7 @@ fn interpret_source(
             prepared.model_sizes[0].0.clone()
         }
         ModelSelection::RequireSingle => {
-            return Err(structure_error(
+            return Err(geometry_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!(
@@ -231,7 +231,7 @@ impl PreparedSource {
     fn interpret_model(&mut self, model_id: &str) -> Result<StructureInterpretation, FormatError> {
         poll(self.cancellation.as_ref())?;
         let rows = self.models.remove(model_id).ok_or_else(|| {
-            structure_error(
+            geometry_error(
                 DiagnosticKind::Inconsistent,
                 None,
                 format!("Coordinate model {model_id:?} does not exist."),
@@ -243,7 +243,7 @@ impl PreparedSource {
             .map(|&(position, _)| &rows.all[position])
             .find(|row| row.point.is_none())
         {
-            return Err(structure_error(
+            return Err(geometry_error(
                 DiagnosticKind::InvalidValue,
                 Some(row.line),
                 format!(
@@ -447,7 +447,7 @@ fn publish_model(
         .map_err(graph_error)?;
     for (atom, occupancy, b_factor) in qualified_atom_data {
         let index = model.topology().atom_index(atom).ok_or_else(|| {
-            structure_error(
+            geometry_error(
                 DiagnosticKind::Chemistry,
                 None,
                 format!("The topology has no {atom}."),

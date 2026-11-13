@@ -1,10 +1,10 @@
 use crate::math::{PeriodicCell, Point3};
-use crate::properties::StructureProperties;
+use crate::properties::GeometryProperties;
 use crate::topology::TopologyAtomIndex;
 use crate::units::Quantity;
 
 use super::scalars::{b_factor_quantity, canonical_b_factor, AtomScalars};
-use super::{ModelView, Positions, StructureError};
+use super::{GeometryError, ModelView, Positions};
 
 /// Structure state staged by [`super::ModelBuilder`] and
 /// [`super::ModelEditor`] before it becomes a [`super::Model`].
@@ -18,7 +18,7 @@ pub(crate) struct ModelState {
     pub(crate) cell: Option<PeriodicCell>,
     pub(crate) occupancies: AtomScalars,
     pub(crate) b_factors: AtomScalars,
-    pub(crate) properties: StructureProperties,
+    pub(crate) properties: GeometryProperties,
 }
 
 impl Default for ModelState {
@@ -28,7 +28,7 @@ impl Default for ModelState {
             cell: None,
             occupancies: AtomScalars::default(),
             b_factors: AtomScalars::default(),
-            properties: StructureProperties::new(0),
+            properties: GeometryProperties::new(0),
         }
     }
 }
@@ -38,7 +38,7 @@ impl ModelState {
         &mut self,
         atom: TopologyAtomIndex,
         position: Quantity<Point3>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         Ok(self.positions.set(atom.index(), position)?)
     }
 
@@ -50,7 +50,7 @@ impl ModelState {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<f64>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let len = self.positions.len();
         self.occupancies.set(atom, len, value)
     }
@@ -63,16 +63,16 @@ impl ModelState {
         &mut self,
         atom: TopologyAtomIndex,
         value: Option<Quantity<f64>>,
-    ) -> Result<(), StructureError> {
+    ) -> Result<(), GeometryError> {
         let value = canonical_b_factor(value)?;
         let len = self.positions.len();
         self.b_factors.set(atom, len, value)
     }
 
-    pub(crate) fn try_reserve_atoms(&mut self, additional: usize) -> Result<(), StructureError> {
+    pub(crate) fn try_reserve_atoms(&mut self, additional: usize) -> Result<(), GeometryError> {
         self.positions
             .try_reserve(additional)
-            .map_err(|_| StructureError::CapacityOverflow)
+            .map_err(|_| GeometryError::CapacityOverflow)
     }
 
     /// Appends atoms and bond rows for staged construction. Owner properties
@@ -147,7 +147,7 @@ impl ModelState {
 
     /// Projects atom and bond rows into published dense order. Owner
     /// properties are dropped because the projection is a new owner.
-    pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, StructureError> {
+    pub(crate) fn project(&self, atoms: &[usize], bonds: &[usize]) -> Result<Self, GeometryError> {
         Ok(Self {
             positions: self.positions.select_indices(atoms)?,
             cell: self.cell,

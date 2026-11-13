@@ -251,7 +251,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
         }
         let index = self.set.len();
         self.collect(frame).map_err(|error| match error {
-            SampleSetError::Structure(error) => error.into(),
+            SampleSetError::Geometry(error) => error.into(),
             error => TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,

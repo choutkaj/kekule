@@ -80,7 +80,7 @@ fn mmcif_scalar_categories_support_document_block_and_sample_set_paths() {
     let interpreted = scalar.interpret_sample_set(Default::default()).unwrap();
     assert_eq!(
         super::debug_fingerprint(&interpreted),
-        0xc9c4_a1b8_abc3_5a3a
+        0xf86a_d228_94ba_104b
     );
     assert_eq!(interpreted.sample_set().len(), 1);
     assert!(interpreted.topology().same_layout(expected.topology()));

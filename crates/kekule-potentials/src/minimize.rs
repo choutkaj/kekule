@@ -28,7 +28,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use kekule::math::{Point3, Vector3};
-use kekule::structure::{DenseArrayError, Model, ModelView, Positions, StructureError};
+use kekule::structure::{DenseArrayError, GeometryError, Model, ModelView, Positions};
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
     Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_CONSTANT_UNIT,
@@ -448,7 +448,7 @@ impl Minimization {
 ///   trial fails for a reason other than singular geometry.
 /// - [`MinimizationError::NumericalFailure`] if finite evaluations cannot
 ///   produce a representable descent step.
-/// - [`MinimizationError::Position`] or [`MinimizationError::Structure`] if
+/// - [`MinimizationError::Position`] or [`MinimizationError::Geometry`] if
 ///   trial coordinates cannot be stored.
 pub fn minimize<P: Potential + ?Sized>(
     potential: &P,
@@ -1066,7 +1066,7 @@ pub enum MinimizationError {
     /// belongs to a different topology layout.
     IncompatibleTopology,
     /// The minimized structure could not be built; see the source.
-    Structure(StructureError),
+    Geometry(GeometryError),
     /// The positions could not be updated; see the source.
     Position(DenseArrayError),
     /// An option could not be converted to the canonical unit; see the
@@ -1088,7 +1088,7 @@ impl fmt::Display for MinimizationError {
             Self::IncompatibleTopology => {
                 f.write_str("The model view has a different topology layout from the minimization.")
             }
-            Self::Structure(_) => f.write_str("Cannot build the minimized structure."),
+            Self::Geometry(_) => f.write_str("Cannot build the minimized structure."),
             Self::Position(_) => f.write_str("Cannot update the positions."),
             Self::Unit(_) => {
                 f.write_str("Cannot convert a minimization quantity to its canonical unit.")
@@ -1101,7 +1101,7 @@ impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Evaluation(error) => Some(error),
-            Self::Structure(error) => Some(error),
+            Self::Geometry(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
             Self::InvalidOptions(_)
@@ -1118,9 +1118,9 @@ impl From<EvaluationError> for MinimizationError {
     }
 }
 
-impl From<StructureError> for MinimizationError {
-    fn from(error: StructureError) -> Self {
-        Self::Structure(error)
+impl From<GeometryError> for MinimizationError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
     }
 }
 

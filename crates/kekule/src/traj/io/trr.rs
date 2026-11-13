@@ -65,7 +65,7 @@ use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::properties::{OwnerProperties, PropertyKey, PropertyValue, StructureProperties};
+use crate::properties::{GeometryProperties, OwnerProperties, PropertyKey, PropertyValue};
 use crate::structure::DecodedSample;
 use crate::topology::Topology;
 use crate::traj::{
@@ -2333,7 +2333,7 @@ fn has_unwritten_owner_properties(owner: &OwnerProperties, policy: TrrLambdaPoli
 /// [`has_unwritten_owner_properties`] names are ignored, and atom and bond
 /// properties are left to the caller.
 fn writer_lambda(
-    properties: &StructureProperties,
+    properties: &GeometryProperties,
     policy: TrrLambdaPolicy,
     frame_properties: UnrepresentablePolicy,
     source_label: &str,

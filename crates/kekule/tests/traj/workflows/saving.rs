@@ -720,11 +720,11 @@ fn sample_sets_save_and_load_as_the_trajectories_they_replace_did() {
     use kekule::structure::{Distribution, Members, Order, Partition};
 
     let mut recorded = Recorded::new(&[
-        0xded4_b250_42dd_4141, // the DCD fixture
-        0xa9d0_5a35_2281_6863, // read back from XYZ
-        0x1279_da89_45bc_8d39, // read back from DCD
-        0x70b9_984f_7a16_b98a, // read back from TRR
-        0x2b6f_fb22_6b5f_a5a8, // read back from XTC
+        0x4e13_6f92_f94d_802b, // the DCD fixture
+        0x500b_371c_a6a3_af9d, // read back from XYZ
+        0x7de1_6355_3e95_213b, // read back from DCD
+        0xd938_d1ba_a79e_f5e2, // read back from TRR
+        0x8b88_e741_c94c_7f76, // read back from XTC
     ]);
     let directory = Directory::new();
     let set = dcd_fixture();
@@ -839,7 +839,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
 #[test]
 fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
-    use kekule::structure::{Sample, StructureError};
+    use kekule::structure::{GeometryError, Sample};
     use kekule::topology::TopologyBuilder;
     use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -870,7 +870,7 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
     let mut sample = Sample::new(positions.clone()).with_cell(cell);
     assert_eq!(
         FrameView::new(&topology, &sample, None, Some(5)).unwrap_err(),
-        StructureError::BondCountMismatch {
+        GeometryError::BondCountMismatch {
             expected: 2 * waters,
             actual: 0,
         }
@@ -915,7 +915,7 @@ fn a_standalone_sample_bound_to_a_solvated_topology_writes_as_a_frame() {
 
 #[test]
 fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
-    use kekule::structure::{Sample, StructureError};
+    use kekule::structure::{GeometryError, Sample};
     use kekule::units::{Quantity, NANOMETER};
 
     let ethanol = kekule::smiles::to_topology("CCO").unwrap();
@@ -930,7 +930,7 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
     // Another atom count fails and leaves the sample as it was.
     assert!(matches!(
         sample.bind(&water).unwrap_err(),
-        StructureError::Array(_)
+        GeometryError::Array(_)
     ));
     assert_eq!(sample, before);
     assert!(sample.shares_structure_with(&before));
@@ -945,7 +945,7 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
     assert_eq!(ring.atom_count(), ethanol.atom_count());
     assert!(matches!(
         sample.bind(&ring).unwrap_err(),
-        StructureError::BondCountMismatch { .. }
+        GeometryError::BondCountMismatch { .. }
     ));
     assert_eq!(sample, bound);
     assert!(sample.shares_structure_with(&bound));
@@ -962,7 +962,7 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_sample() {
     assert_eq!(copy.positions(), before.positions());
     assert_eq!(
         FrameView::new(&ethanol, &before, None, None).unwrap_err(),
-        StructureError::BondCountMismatch {
+        GeometryError::BondCountMismatch {
             expected: ethanol.bond_count(),
             actual: 0,
         }

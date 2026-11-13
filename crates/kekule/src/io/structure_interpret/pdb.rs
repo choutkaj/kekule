@@ -9,7 +9,7 @@
 //! polymer adjacency.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::types::{poll, poll_every, structure_error};
+use super::types::{geometry_error, poll, poll_every};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::molecule::{BondOrder, Element};
 
@@ -93,7 +93,7 @@ fn pdb_source(
     cancellation: Option<&Cancellation>,
 ) -> Result<StructureSource, FormatError> {
     if strict_entity_metadata {
-        return Err(structure_error(
+        return Err(geometry_error(
             DiagnosticKind::Inconsistent,
             None,
             "A PDB entry declares no entity types. Turn off strict entity metadata.",
@@ -128,7 +128,7 @@ fn pdb_source(
                     None
                 }
                 Err(error) => {
-                    return Err(structure_error(
+                    return Err(geometry_error(
                         DiagnosticKind::InvalidValue,
                         Some(record.location().line()),
                         "The CRYST1 record is not a valid periodic cell.",
@@ -244,7 +244,7 @@ fn read_rows(
 ) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
     let atoms = document.atoms();
     if atoms.is_empty() {
-        return Err(structure_error(
+        return Err(geometry_error(
             DiagnosticKind::Inconsistent,
             None,
             "The entry has no coordinate records.",
@@ -320,7 +320,7 @@ fn read_rows(
         let line = atom.location().line();
         let (element, isotope) = match atom.element() {
             Some(symbol) => parse_structure_element_symbol(symbol).ok_or_else(|| {
-                structure_error(
+                geometry_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!("The element symbol {symbol:?} is unknown."),
@@ -330,7 +330,7 @@ fn read_rows(
                 inferred.push(line);
                 let element = element_from_atom_name(atom.name_field(), atom.residue_name())
                     .ok_or_else(|| {
-                        structure_error(
+                        geometry_error(
                             DiagnosticKind::InvalidValue,
                             Some(line),
                             format!(
@@ -460,7 +460,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
         let line = record.location().line();
         for &bonded in record.bonded() {
             if bonded == serial {
-                return Err(structure_error(
+                return Err(geometry_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!("CONECT record bonds atom {serial} to itself"),
@@ -481,7 +481,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             2 => BondOrder::Double,
             3 => BondOrder::Triple,
             count => {
-                return Err(structure_error(
+                return Err(geometry_error(
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!(
