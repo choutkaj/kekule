@@ -122,7 +122,7 @@ impl<'a> FrameData<'a> {
 /// the frame to a [`TrajectoryWriter`](super::TrajectoryWriter).
 ///
 /// To keep a decoded frame, for example in a structure set or a frame cache,
-/// take it out with [`Self::into_sample`] rather than copying it: the geometry
+/// take it out with [`Self::into_geometry`] rather than copying it: the geometry
 /// is bound to the buffer's topology, and its place goes with it into a
 /// time-ordered set ([`StructureSet::push`](crate::structure::StructureSet::push)).
 /// A geometry that is no longer needed becomes a buffer again with
@@ -193,7 +193,7 @@ impl FrameBuffer {
     /// The geometry keeps every field of the buffered frame. Spare velocity
     /// and force allocations are dropped; clear velocities or forces first
     /// to drop those of the frame as well.
-    pub fn into_sample(self) -> (Geometry, Place) {
+    pub fn into_geometry(self) -> (Geometry, Place) {
         let place = Place::Time {
             time: self.time,
             step: self.step,

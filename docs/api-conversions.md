@@ -8,20 +8,20 @@ view. Ordinary getters and operations use semantic names. Copyable views may tak
 | Operation | Contract |
 | --- | --- |
 | `Molecule::into_editor()`, `DraftError::into_draft()` | Transfer ownership into a mutable draft. |
-| Interpretation `into_molecule()`, `into_molecules()`, `into_model()`, `into_parts()` | Consume the interpretation and extract canonical results. |
+| Interpretation `into_molecule()`, `into_molecules()`, `into_structure()`, `into_parts()` | Consume the interpretation and extract canonical results. |
 | `smiles::to_molecules(&str)`, `smiles::to_topology(&str)` | Interpret borrowed input. |
-| Collection item view `to_model()`, `payload().clone()` | Materialize an owned model or payload while retaining the collection. |
-| `Model::to_builder()` | Clone into staging. |
-| `Model::into_builder()`, `Topology::into_builder()` | Consume the owner to resume assembly. |
+| Collection item view `to_structure()`, `payload().clone()` | Materialize an owned structure or payload while retaining the collection. |
+| `Structure::to_builder()` | Clone into staging. |
+| `Structure::into_builder()`, `Topology::into_builder()` | Consume the owner to resume assembly. |
 | `Quantity::to_unit(unit)` | Convert a borrowed, cloneable payload. |
 | `Quantity::into_unit(unit)`, `Quantity::into_value()` | Consume the quantity; the payload need not be cloneable. |
-| `FrameBuffer::into_sample()` | Consume a buffer; its sample and place move without copying. |
-| `MemoryTrajectoryWriter::into_sample_set()` | Transfer writer ownership. |
+| `FrameBuffer::into_geometry()` | Consume a buffer; its geometry and place move without copying. |
+| `MemoryTrajectoryWriter::into_structure_set()` | Transfer writer ownership. |
 | `as_model_view()` (`AsModelView`), `Quantity::as_ref()`, `PropertyKey::as_str()` | Return borrowed projections. |
 
 Ownership does not imply cost: opening an indexed reader scans input, and extracting
 molecules from shared topology may clone definitions. Likewise,
-`document.interpret(options)?.into_model()` retains the document and consumes only
+`document.interpret(options)?.into_structure()` retains the document and consumes only
 the temporary interpretation.
 `model.to_editor()` creates a detached draft; `model.into_editor()` moves the model
 into its draft.

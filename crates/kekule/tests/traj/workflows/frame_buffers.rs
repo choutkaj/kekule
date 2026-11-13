@@ -44,7 +44,7 @@ fn decoded_frames_leave_and_return_to_a_buffer_without_copying() {
     let decoded = buffer.positions().values().value().as_ptr();
 
     // The frame leaves the buffer bound, with the storage it was decoded into.
-    let (geometry, place) = buffer.into_sample();
+    let (geometry, place) = buffer.into_geometry();
     assert_eq!(
         place,
         Place::Time {

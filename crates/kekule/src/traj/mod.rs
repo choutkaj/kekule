@@ -23,7 +23,7 @@
 //! held apart from a set, neither copying arrays.
 //! A buffer reads its geometry through `Deref`, lends a
 //! [`crate::structure::StructureView`] through [`FrameBuffer::as_structure_view`],
-//! and becomes a geometry with its place through [`FrameBuffer::into_sample`].
+//! and becomes a geometry with its place through [`FrameBuffer::into_geometry`].
 //! Analyses and prepared potentials therefore operate on structures, geometries,
 //! and buffered frames through one contract.
 //!

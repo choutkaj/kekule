@@ -199,7 +199,7 @@ See the [crate overview](crates/kekule/src/lib.rs),
 [molecular owner](crates/kekule/src/molecule/owner.rs),
 [topology types](crates/kekule/src/topology/mod.rs),
 [structure types](crates/kekule/src/structure/mod.rs),
-[structure sets](crates/kekule/src/structure/sample_set.rs), and
+[structure sets](crates/kekule/src/structure/structure_set.rs), and
 [streaming contracts](crates/kekule/src/traj/trajectory/mod.rs).
 
 ## Represented and derived chemistry
@@ -561,7 +561,7 @@ geometry yields an absent value rather than substituting references. Numerical
 policies and supported geometries live with
 [positions](crates/kekule/src/structure/positions.rs),
 [structures](crates/kekule/src/structure/owner.rs),
-[structure sets](crates/kekule/src/structure/sample_set.rs),
+[structure sets](crates/kekule/src/structure/structure_set.rs),
 [measurements](crates/kekule/src/structure/measure.rs), and
 [alignment](crates/kekule/src/alignment.rs).
 
@@ -807,13 +807,13 @@ and merge rules of the weighted statistics. See
 
 For format profiles, limits, periodic conventions, statistical definitions, and
 streaming sequence/reset contracts, see
-[structure sets](crates/kekule/src/structure/sample_set.rs),
+[structure sets](crates/kekule/src/structure/structure_set.rs),
 [collection alignment](crates/kekule/src/alignment/collection.rs),
 [frame buffers](crates/kekule/src/traj/trajectory/buffer.rs),
 [file I/O](crates/kekule/src/traj/io/mod.rs),
 [structure sets read from files](crates/kekule/src/traj/io/indexed_file.rs),
 [lazy processing](crates/kekule/src/traj/processed.rs),
-[sample readers](crates/kekule/src/structure/sample_set/read.rs),
+[sample readers](crates/kekule/src/structure/structure_set/read.rs),
 [periodic operations](crates/kekule/src/traj/periodic.rs),
 [streaming periodic operations](crates/kekule/src/traj/periodic/stream.rs), and
 [weighted statistics](crates/kekule/src/statistics.rs).
