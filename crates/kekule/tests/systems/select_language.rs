@@ -1488,6 +1488,97 @@ fn evaluation_stops_at_the_first_term_once_cancelled() {
 }
 
 #[test]
+fn within_and_smarts_stop_inside_the_term_once_cancelled() {
+    use kekule::diagnostics::{Cancellation, Cancelled};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Requested from the third poll on. The polls before each term pass, so
+    // only a poll inside the term can stop it.
+    let third_poll = || {
+        let polls = Arc::new(AtomicUsize::new(0));
+        Cancellation::new(move || polls.fetch_add(1, Ordering::Relaxed) >= 2)
+    };
+    let assert_cancelled_at = |error: SelectEvaluateError, expression: &SelectionExpr| {
+        assert!(
+            matches!(&error, SelectEvaluateError::Cancelled { .. }),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Evaluation stopped at the term {:?}.",
+                expression.to_string()
+            )
+        );
+        assert!(std::error::Error::source(&error).is_some_and(|source| source.is::<Cancelled>()));
+    };
+
+    // `within` polls while it measures, on the calling thread and in every
+    // work item of an executor: the term and its reference poll first.
+    let base = structure("mmcif/1AKE.cif");
+    let large = copies_in_one_structure(&base, 100_000 / base.atom_count() + 1, true);
+    let pool = threads(4);
+    let within = parse("within 5 of resname GLY");
+    for (structure, run) in [
+        (&base, Run::new()),
+        (&large, Run::new().with_executor(&pool)),
+    ] {
+        let cancellation = third_poll();
+        let error = within
+            .evaluate_structure_with(
+                structure,
+                Default::default(),
+                run.with_cancellation(&cancellation),
+            )
+            .unwrap_err();
+        assert_cancelled_at(error, &within);
+        let never = Cancellation::new(|| false);
+        assert_eq!(
+            within
+                .evaluate_structure_with(
+                    structure,
+                    Default::default(),
+                    run.with_cancellation(&never)
+                )
+                .unwrap(),
+            within
+                .evaluate_structure(structure, Default::default())
+                .unwrap()
+        );
+    }
+
+    // SMARTS matching polls once the target is prepared, and per match.
+    let topology = Arc::new(
+        smiles::to_topology("c1ccccc1CC(=O)[OH].[Na+]")
+            .unwrap()
+            .perceived()
+            .unwrap(),
+    );
+    let smarts = parse("smarts \"[#6]\"");
+    let cancellation = third_poll();
+    let error = smarts
+        .evaluate_with(
+            topology.clone(),
+            Default::default(),
+            Run::new().with_cancellation(&cancellation),
+        )
+        .unwrap_err();
+    assert_cancelled_at(error, &smarts);
+    let never = Cancellation::new(|| false);
+    assert_eq!(
+        smarts
+            .evaluate_with(
+                topology.clone(),
+                Default::default(),
+                Run::new().with_cancellation(&never)
+            )
+            .unwrap()
+            .len(),
+        8
+    );
+}
+
+#[test]
 fn within_selects_the_same_atoms_on_any_executor() {
     // About 100k atoms, so `within` splits them into several work items.
     let base = structure("mmcif/1AKE.cif");

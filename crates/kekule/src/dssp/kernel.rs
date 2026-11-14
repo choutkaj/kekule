@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{Cancellation, LimitExceeded, Resource};
 use crate::math::{bounding_box, Point3, PointGrid};
 use crate::structure::StructureView;
 use crate::topology::{
@@ -19,6 +19,12 @@ const STAGES: usize = 5;
 
 /// Fewest residues a stage gives one thread.
 const MIN_CHUNK: usize = 256;
+
+/// Polls `cancellation` on every [`Cancellation::POLL_STRIDE`]th `step` of a
+/// kernel loop.
+fn poll(cancellation: Option<&Cancellation>, step: usize) -> Result<(), DsspError> {
+    Cancellation::poll_every(cancellation, step).map_err(DsspError::Cancelled)
+}
 
 const MAX_PEPTIDE_BOND_ANGSTROMS: f64 = 2.5;
 const MAX_CA_PAIR_DISTANCE_ANGSTROMS: f64 = 9.0;
@@ -209,6 +215,7 @@ pub(super) fn assign(
     run: Run<'_>,
 ) -> Result<DsspResult, DsspError> {
     let executor = run.executor();
+    let cancellation = run.cancellation();
     // Reports `done` stages and polls the cancellation.
     let stage = |done: usize| {
         run.report(Progress::of(done, STAGES));
@@ -222,7 +229,12 @@ pub(super) fn assign(
     }
     stage(1)?;
 
-    let candidates = analyze_backbone(&mut residues, options.limits.max_candidate_pairs, executor)?;
+    let candidates = analyze_backbone(
+        &mut residues,
+        options.limits.max_candidate_pairs,
+        executor,
+        cancellation,
+    )?;
     report.candidate_hydrogen_bond_pairs = candidates.len();
     stage(2)?;
     let hierarchy = structure.topology().hierarchy();
@@ -232,6 +244,7 @@ pub(super) fn assign(
         &candidates,
         options.limits.max_ladders,
         executor,
+        cancellation,
     )?;
     drop(candidates);
     report.generated_ladders = sheets.counts.ladders;
@@ -912,18 +925,34 @@ impl CandidatePairs {
 
 /// Computes every residue's backbone geometry, the candidate pairs and
 /// their hydrogen-bond energies, installs the geometry and the bonds, and
-/// returns the candidate pairs.
+/// returns the candidate pairs, polling `cancellation` as it goes.
 fn analyze_backbone(
     residues: &mut [BackboneResidue],
     max_candidate_pairs: usize,
     executor: &dyn Executor,
+    cancellation: Option<&Cancellation>,
 ) -> Result<CandidatePairs, DsspError> {
     let grid = ca_grid(residues);
     let found = AtomicUsize::new(0);
     let shared = &*residues;
     let ranges = map_ranges(executor, shared.len(), MIN_CHUNK, |range| {
-        analyze_range(shared, &grid, range, &found, max_candidate_pairs)
+        analyze_range(
+            shared,
+            &grid,
+            range,
+            &found,
+            max_candidate_pairs,
+            cancellation,
+        )
     });
+    // A range that saw the cancellation stopped early, leaving the pairs
+    // incomplete whatever the other ranges found.
+    if let Some(Err(cancelled)) = ranges
+        .iter()
+        .find(|range| matches!(range, Err(DsspError::Cancelled(_))))
+    {
+        return Err(cancelled.clone());
+    }
     // DSSP finds every candidate before it evaluates any energy, so the
     // candidate limit takes precedence over an earlier range's energy error.
     if let Some(Err(limit)) = ranges
@@ -941,6 +970,7 @@ fn analyze_backbone(
     // residues and then from those with later ones, each in increasing
     // order of the partner, so every residue fills its slots on its own.
     for (index, residue) in residues.iter_mut().enumerate() {
+        poll(cancellation, index)?;
         let (part, local) = candidates.locate(index);
         residue.geometry = part.geometry[local];
         for &(earlier, [forward, backward]) in candidates.earlier(index).flatten() {
@@ -970,14 +1000,23 @@ fn analyze_range(
     range: Range<usize>,
     found: &AtomicUsize,
     max_candidate_pairs: usize,
+    cancellation: Option<&Cancellation>,
 ) -> Result<RangeAnalysis, DsspError> {
-    let mut analysis = candidate_pairs(residues, grid, range.clone(), found, max_candidate_pairs)?;
+    let mut analysis = candidate_pairs(
+        residues,
+        grid,
+        range.clone(),
+        found,
+        max_candidate_pairs,
+        cancellation,
+    )?;
     analysis.geometry = range
         .clone()
         .map(|index| residue_geometry(residues, index))
         .collect();
     analysis.energies = Vec::with_capacity(analysis.later.len());
     for (local, first) in range.enumerate() {
+        poll(cancellation, local)?;
         let span = analysis.later_starts[local]..analysis.later_starts[local + 1];
         for &second in &analysis.later[span] {
             let forward = hydrogen_bond_energy(residues, first, second)?;
@@ -1124,6 +1163,7 @@ fn candidate_pairs(
     range: Range<usize>,
     found: &AtomicUsize,
     max_candidate_pairs: usize,
+    cancellation: Option<&Cancellation>,
 ) -> Result<RangeAnalysis, DsspError> {
     let maximum_squared = MAX_CA_PAIR_DISTANCE_ANGSTROMS.powi(2);
     let mut analysis = RangeAnalysis {
@@ -1132,7 +1172,8 @@ fn candidate_pairs(
         ..RangeAnalysis::default()
     };
     let mut partners = Vec::new();
-    for first in range {
+    for (local, first) in range.enumerate() {
+        poll(cancellation, local)?;
         let ca = residues[first].ca;
         partners.clear();
         let candidate = Point3::new(f64::from(ca.x), f64::from(ca.y), f64::from(ca.z));
@@ -1252,17 +1293,20 @@ fn calculate_beta_sheets(
     candidates: &CandidatePairs,
     max_ladders: usize,
     executor: &dyn Executor,
+    cancellation: Option<&Cancellation>,
 ) -> Result<BetaSheets, DsspError> {
     let found = map_ranges(executor, residues.len(), MIN_CHUNK, |range| {
-        range
-            .flat_map(|first| {
-                candidates.later(first).0.iter().filter_map(move |&second| {
-                    test_bridge(residues, first, second)
-                        .map(|bridge_type| (first, second, bridge_type))
-                })
-            })
-            .collect::<Vec<_>>()
+        let mut found = Vec::new();
+        for (local, first) in range.enumerate() {
+            poll(cancellation, local)?;
+            found.extend(candidates.later(first).0.iter().filter_map(|&second| {
+                test_bridge(residues, first, second).map(|bridge_type| (first, second, bridge_type))
+            }));
+        }
+        Ok(found)
     });
+    // Cancellation is the only error of a range.
+    let found = found.into_iter().collect::<Result<Vec<_>, DsspError>>()?;
     let mut bridges = Vec::<Bridge>::new();
     // A bridge extends the ladder whose last pair is its predecessor, one
     // residue back on its first strand. Bridges come in candidate order, so
@@ -1273,7 +1317,8 @@ fn calculate_beta_sheets(
     let (mut previous, mut current) = (Vec::<(usize, BridgeType, usize)>::new(), Vec::new());
     let mut row = None;
     let mut counts = BetaCounts::default();
-    for (first, second, bridge_type) in found.into_iter().flatten() {
+    for (step, (first, second, bridge_type)) in found.into_iter().flatten().enumerate() {
+        poll(cancellation, step)?;
         if row != Some(first) {
             if row.is_some_and(|row| row + 1 == first) {
                 std::mem::swap(&mut previous, &mut current);
@@ -1348,7 +1393,7 @@ fn calculate_beta_sheets(
             right.i[0],
         ))
     });
-    merge_bulges(residues, &mut bridges);
+    merge_bulges(residues, &mut bridges, cancellation)?;
     if bridges.len() > max_ladders {
         return Err(DsspError::LimitExceeded(LimitExceeded::new(
             Resource::Ladders,
@@ -1369,8 +1414,12 @@ fn calculate_beta_sheets(
 
 /// Merges ladders across beta bulges, as DSSP does: each ladder in order
 /// absorbs every later ladder, in order, that continues it across a bulge,
-/// growing as it goes.
-fn merge_bulges(residues: &[BackboneResidue], bridges: &mut Vec<Bridge>) {
+/// growing as it goes, and polls `cancellation` periodically.
+fn merge_bulges(
+    residues: &[BackboneResidue],
+    bridges: &mut Vec<Bridge>,
+    cancellation: Option<&Cancellation>,
+) -> Result<(), DsspError> {
     // A ladder continues another only if its first strand starts at most
     // five residues after the other's first strand ends, so later ladders
     // are found by where their first strand starts, which merging never
@@ -1381,6 +1430,7 @@ fn merge_bulges(residues: &[BackboneResidue], bridges: &mut Vec<Bridge>) {
     }
     let mut merged = vec![false; bridges.len()];
     for first in 0..bridges.len() {
+        poll(cancellation, first)?;
         if merged[first] {
             continue;
         }
@@ -1420,6 +1470,7 @@ fn merge_bulges(residues: &[BackboneResidue], bridges: &mut Vec<Bridge>) {
     }
     let mut merged = merged.into_iter();
     bridges.retain(|_| !merged.next().expect("one flag per ladder"));
+    Ok(())
 }
 
 /// Whether ladder `second` continues ladder `first` across a beta bulge.
@@ -2082,7 +2133,8 @@ mod tests {
             }
             let grid = ca_grid(&residues);
             let found = AtomicUsize::new(0);
-            let analysis = candidate_pairs(&residues, &grid, 0..count, &found, usize::MAX).unwrap();
+            let analysis =
+                candidate_pairs(&residues, &grid, 0..count, &found, usize::MAX, None).unwrap();
             let maximum_squared = MAX_CA_PAIR_DISTANCE_ANGSTROMS.powi(2);
             let mut later = Vec::new();
             let mut later_starts = vec![0];
@@ -2159,7 +2211,7 @@ mod tests {
         insert_bond(&mut residues[7].acceptors, 3, -1.0);
 
         assert!(matches!(
-            calculate_beta_sheets(&Hierarchy::default(), &residues, &candidates(10, &[(2, 5), (4, 7)]), 1, &serial()),
+            calculate_beta_sheets(&Hierarchy::default(), &residues, &candidates(10, &[(2, 5), (4, 7)]), 1, &serial(), None),
             Err(DsspError::LimitExceeded(limit))
                 if limit == LimitExceeded::first_beyond(Resource::Ladders, 1)
         ));
@@ -2176,6 +2228,7 @@ mod tests {
             &candidates(8, &[(2, 5)]),
             1,
             &serial(),
+            None,
         )
         .expect("bridge");
         assert_eq!(sheets.counts.bridges, 1);
@@ -2192,6 +2245,7 @@ mod tests {
             &candidates(8, &[(2, 5)]),
             1,
             &serial(),
+            None,
         )
         .expect("bridge");
         assert!(sheets.residues[2].partners[0]
@@ -2202,7 +2256,8 @@ mod tests {
                 &backbone(8),
                 &candidates(8, &[]),
                 0,
-                &serial()
+                &serial(),
+                None,
             )
             .expect("no bridge")
             .counts

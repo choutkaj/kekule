@@ -1,6 +1,7 @@
 //! Superposition and RMSD over every geometry of a [`StructureSet`], and RMSD
 //! over listed geometries of any [`StructureSetRead`], through one implementation.
 
+use crate::diagnostics::Cancellation;
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
 use crate::structure::{
@@ -296,8 +297,9 @@ fn item_aligned_rmsd<'a>(
 }
 
 /// The RMSD of each of `geometries` of `reader` to the reference, each lent
-/// or read in turn, polling `run`'s cancellation before each and reporting
-/// the geometries measured.
+/// or read in turn, polling `run`'s cancellation before starting, while
+/// listing the geometries, and before each, and reporting the geometries
+/// measured.
 fn geometry_values(
     reader: &dyn StructureSetRead,
     geometries: impl IntoIterator<Item = usize>,
@@ -305,6 +307,7 @@ fn geometry_values(
     measured: Measured<'_, '_>,
     run: Run<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    run.check().map_err(AlignmentError::Cancelled)?;
     let read_error = |error| AlignmentError::Read(Box::new(error));
     let held: Geometry;
     let reference = match reference {
@@ -326,9 +329,16 @@ fn geometry_values(
         }
     };
     let topology = reader.topology();
-    let geometries = geometries.into_iter().collect::<Vec<_>>();
+    // The list is counted for progress; a long or endless one stops when
+    // cancelled.
+    let cancellation = run.cancellation();
+    let geometries = geometries
+        .into_iter()
+        .enumerate()
+        .map(|(step, index)| Cancellation::poll_every(cancellation, step).map(|()| index))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AlignmentError::Cancelled)?;
     if geometries.is_empty() {
-        run.check().map_err(AlignmentError::Cancelled)?;
         Measurement::new(topology, None, reference, measured)?;
         run.report(Progress::of(0, 0));
         return Ok(Quantity::new(Vec::new(), CANONICAL_LENGTH_UNIT));

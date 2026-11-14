@@ -479,6 +479,34 @@ fn rmsd_of_listed_geometries_equals_the_set_in_memory() {
             ),
             Err(AlignmentError::Cancelled(_))
         ));
+        // An endless list stops when cancelled, before or while it is listed.
+        assert!(matches!(
+            alignment::geometry_aligned_rmsd_with(
+                reader,
+                0..,
+                3,
+                &fit,
+                &measured,
+                aligned,
+                Run::new().with_cancellation(&cancelled)
+            ),
+            Err(AlignmentError::Cancelled(_))
+        ));
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let later = Cancellation::new(move || {
+            polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 3
+        });
+        assert!(matches!(
+            alignment::geometry_rmsd_with(
+                reader,
+                std::iter::repeat(0),
+                3,
+                &fit,
+                options,
+                Run::new().with_cancellation(&later)
+            ),
+            Err(AlignmentError::Cancelled(_))
+        ));
         let none = alignment::geometry_rmsd(reader, [0_usize; 0], 3, &fit, options).unwrap();
         assert!(none.value().is_empty());
     }

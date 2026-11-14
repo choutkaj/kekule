@@ -645,6 +645,52 @@ fn dssp_runs_report_their_stages_and_stop_when_cancelled() {
 }
 
 #[test]
+fn dssp_stops_inside_the_bond_and_sheet_stages_once_cancelled() {
+    use kekule::diagnostics::Cancellation;
+    use kekule::parallel::{Progress, ScopedThreads};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let structure = tiled(&adenylate_kinase_structure(), 8);
+    let threads = ScopedThreads::new(std::num::NonZeroUsize::new(4).unwrap());
+    let executors: [&dyn kekule::parallel::Executor; 3] = [
+        &ScopedThreads::new(std::num::NonZeroUsize::MIN),
+        &Reversed(3),
+        &threads,
+    ];
+    // Stage 1 done starts the hydrogen bonds; stage 2 done, the sheets.
+    for stage in [1, 2] {
+        for executor in executors {
+            let done = Arc::new(AtomicU64::new(0));
+            let progress = {
+                let done = Arc::clone(&done);
+                move |progress: Progress| done.store(progress.completed(), Ordering::Relaxed)
+            };
+            // Requested at the second poll after `stage` is reported: the
+            // stage's own poll passes, so only a poll inside the next stage's
+            // kernel stops it, before it reports.
+            let polls = Arc::new(AtomicUsize::new(0));
+            let cancellation = {
+                let done = Arc::clone(&done);
+                Cancellation::new(move || {
+                    done.load(Ordering::Relaxed) == stage
+                        && polls.fetch_add(1, Ordering::Relaxed) >= 1
+                })
+            };
+            let run = Run::new()
+                .with_executor(executor)
+                .with_cancellation(&cancellation)
+                .with_progress(&progress);
+            assert!(matches!(
+                dssp::assign_with(&structure, DsspOptions::default(), run),
+                Err(DsspError::Cancelled(_))
+            ));
+            assert_eq!(done.load(Ordering::Relaxed), stage);
+        }
+    }
+}
+
+#[test]
 fn dssp_plan_rejects_structures_of_another_layout() {
     use kekule::dssp::DsspPlan;
 

@@ -95,7 +95,7 @@ impl SelectionExpr {
     }
 
     /// [`Self::evaluate`] under a [`Run`], polling its cancellation before
-    /// each term.
+    /// each term and periodically while a term matches SMARTS.
     ///
     /// # Errors
     ///
@@ -129,8 +129,8 @@ impl SelectionExpr {
 
     /// [`Self::evaluate_structure`] under a [`Run`]: `within` over many
     /// atoms measures ranges of them as work items on its executor, and its
-    /// cancellation is polled before each term. Every executor selects the
-    /// same atoms.
+    /// cancellation is polled before each term and periodically inside
+    /// `within` and SMARTS matching. Every executor selects the same atoms.
     ///
     /// # Errors
     ///
@@ -712,7 +712,8 @@ pub enum SelectEvaluateError {
     },
     /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
     /// [`SelectionExpr::evaluate_with`] or
-    /// [`SelectionExpr::evaluate_structure_with`] before this term.
+    /// [`SelectionExpr::evaluate_structure_with`] before or while it
+    /// evaluated this term.
     Cancelled {
         /// The term.
         term: String,

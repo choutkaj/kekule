@@ -12,6 +12,7 @@ use super::{
     HostRequest, HostRole, HostTerm, HostValue, ReferencePoints, SelectEvaluateError,
     SelectEvaluateOptions, SelectionExpr,
 };
+use crate::diagnostics::{Cancellation, Cancelled};
 use crate::math::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::parallel::Run;
@@ -33,7 +34,50 @@ type Compare<'c> = &'c dyn Fn(&Literal) -> Option<Ordering>;
 
 /// Marks, through its second argument, the atoms of a range of dense atoms
 /// that a term selects.
-type MarkRange<'m> = dyn Fn(Range<usize>, &mut dyn FnMut(usize)) + Sync + 'm;
+type MarkRange<'m> = dyn Fn(&mut PolledAtoms<'_>, &mut dyn FnMut(usize)) + Sync + 'm;
+
+/// A range of dense atoms that polls a cancellation every
+/// [`Cancellation::POLL_STRIDE`] atoms, and ends early once it is requested.
+struct PolledAtoms<'c> {
+    atoms: Range<usize>,
+    step: usize,
+    cancellation: Option<&'c Cancellation>,
+    cancelled: Option<Cancelled>,
+}
+
+impl<'c> PolledAtoms<'c> {
+    fn new(atoms: Range<usize>, cancellation: Option<&'c Cancellation>) -> Self {
+        Self {
+            atoms,
+            step: 0,
+            cancellation,
+            cancelled: None,
+        }
+    }
+
+    /// Fails when the range ended early because of the cancellation.
+    fn finish(self) -> std::result::Result<(), Cancelled> {
+        self.cancelled.map_or(Ok(()), Err)
+    }
+}
+
+impl Iterator for PolledAtoms<'_> {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        if self.atoms.is_empty() {
+            return None;
+        }
+        if let Err(cancelled) = Cancellation::poll_every(self.cancellation, self.step) {
+            self.cancelled = Some(cancelled);
+            self.atoms.start = self.atoms.end;
+            return None;
+        }
+        self.step += 1;
+        self.atoms.next()
+    }
+}
 
 /// A set of dense atom indices.
 #[derive(Debug, Clone)]
@@ -224,10 +268,15 @@ impl<'a> Evaluator<'a> {
         }
     }
 
+    /// The error of a cancellation that stopped `node`.
+    fn cancelled(&self, node: &Node, source: Cancelled) -> SelectEvaluateError {
+        let (term, span) = self.term(node);
+        SelectEvaluateError::Cancelled { term, span, source }
+    }
+
     fn node(&mut self, node: &Node) -> Result<Bits> {
         if let Err(source) = self.run.check() {
-            let (term, span) = self.term(node);
-            return Err(SelectEvaluateError::Cancelled { term, span, source });
+            return Err(self.cancelled(node, source));
         }
         let len = self.len();
         Ok(match &node.kind {
@@ -414,18 +463,23 @@ impl<'a> Evaluator<'a> {
                 )
             }
         };
+        let cancelled = |source| self.cancelled(node, source);
         let grid = Grid::new(&local, cutoff, positions.len());
-        let mut bits = self.marked(&|atoms, mark| {
-            grid.mark(atoms.map(|index| (index, positions[index])), mark);
-        });
+        let mut bits = self
+            .marked(&|atoms, mark| {
+                grid.mark(atoms.map(|index| (index, positions[index])), mark);
+            })
+            .map_err(cancelled)?;
         if !host.is_empty() {
             // Atoms already near a local reference atom need no second look.
             let grid = host.grid(cutoff);
             let near = &bits;
-            let more = self.marked(&|atoms, mark| {
-                let pending = atoms.filter(|&index| !near.get(index));
-                grid.mark(pending.map(|index| (index, positions[index])), mark);
-            });
+            let more = self
+                .marked(&|atoms, mark| {
+                    let pending = atoms.filter(|&index| !near.get(index));
+                    grid.mark(pending.map(|index| (index, positions[index])), mark);
+                })
+                .map_err(cancelled)?;
             bits.or(&more);
         }
         Ok(bits)
@@ -434,19 +488,23 @@ impl<'a> Evaluator<'a> {
     /// The atoms `mark` marks, given contiguous ranges of all atoms. The
     /// ranges run as work items of the executor, when there is one and more
     /// than [`ATOMS_PER_WORK_ITEM`] atoms; they start at multiples of 64, so
-    /// each marks its own words.
-    fn marked(&self, mark: &MarkRange<'_>) -> Bits {
+    /// each marks its own words. Each range polls the run's cancellation as
+    /// it goes, and stops early once it is requested.
+    fn marked(&self, mark: &MarkRange<'_>) -> std::result::Result<Bits, Cancelled> {
         let len = self.len();
         let mut bits = Bits::empty(len);
         let executor = self.run.executor();
+        let cancellation = self.run.cancellation();
         let items = executor
             .parallelism()
             .get()
             .min(len / ATOMS_PER_WORK_ITEM)
             .max(1);
         if items == 1 {
-            mark(0..len, &mut |index| bits.set(index));
-            return bits;
+            let mut atoms = PolledAtoms::new(0..len, cancellation);
+            mark(&mut atoms, &mut |index| bits.set(index));
+            atoms.finish()?;
+            return Ok(bits);
         }
         let start = |item: usize| (item * len / items / 64 * 64).min(len);
         let marked = (0..items).map(|_| Mutex::new(None)).collect::<Vec<_>>();
@@ -459,8 +517,10 @@ impl<'a> Evaluator<'a> {
                     start(item + 1)
                 },
             );
+            let mut atoms = PolledAtoms::new(first..end, cancellation);
             let mut words = Bits::empty(end - first);
-            mark(first..end, &mut |index| words.set(index - first));
+            mark(&mut atoms, &mut |index| words.set(index - first));
+            let words = atoms.finish().map(|()| words);
             let previous = marked[item]
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -470,15 +530,22 @@ impl<'a> Evaluator<'a> {
                 "selection executor ran work item {item} twice"
             );
         });
+        let marked = marked
+            .into_iter()
+            .enumerate()
+            .map(|(item, words)| {
+                words
+                    .into_inner()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .unwrap_or_else(|| panic!("selection executor skipped work item {item}"))
+            })
+            .collect::<Vec<_>>();
         for (item, words) in marked.into_iter().enumerate() {
-            let words = words
-                .into_inner()
-                .unwrap_or_else(PoisonError::into_inner)
-                .unwrap_or_else(|| panic!("selection executor skipped work item {item}"));
+            let words = words?;
             let first = start(item) / 64;
             bits.words[first..first + words.words.len()].copy_from_slice(&words.words);
         }
-        bits
+        Ok(bits)
     }
 
     fn expand(&mut self, level: Level, inner: &Bits) -> Bits {
@@ -690,9 +757,19 @@ impl<'a> Evaluator<'a> {
             SelectEvaluateError::InvalidSmarts { term, span, source }
         })?;
         let target = crate::substructure::PreparedTopologyTarget::new(self.topology);
+        self.run
+            .check()
+            .map_err(|source| self.cancelled(node, source))?;
+        let cancellation = self.run.cancellation();
         let mut bits = Bits::empty(self.len());
+        let mut cancelled = None;
         target
             .visit(&query, self.options.smarts(), |matched| {
+                // Each match costs more than a poll.
+                if let Err(source) = Cancellation::poll(cancellation) {
+                    cancelled = Some(source);
+                    return ControlFlow::Break(());
+                }
                 for &atom in matched.atoms() {
                     if let Some(index) = self.dense(atom) {
                         bits.set(index);
@@ -701,7 +778,10 @@ impl<'a> Evaluator<'a> {
                 ControlFlow::Continue(())
             })
             .map_err(error)?;
-        Ok(bits)
+        match cancelled {
+            Some(source) => Err(self.cancelled(node, source)),
+            None => Ok(bits),
+        }
     }
 
     /// Evaluates a field term: `test(present, compare)` decides one entity,
