@@ -74,8 +74,8 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
 use crate::traj::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
@@ -84,15 +84,17 @@ use super::codec::{
     writer_limit,
 };
 use super::frame_state::{check_frame_state, record};
+use super::indexed_reader::{
+    indexed_reader_traits, IndexFacts, IndexedCodec, IndexedReader, IndexedSource,
+};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::options::ReadSource;
 use super::TrajectoryWriteOptions;
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
-    projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
-    FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
-    TrajectoryOpenOptions,
+    require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
+    FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.

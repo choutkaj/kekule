@@ -417,42 +417,6 @@ impl<R: BufRead + Seek> XyzReader<R> {
         Ok(())
     }
 
-    /// Indexes a freshly opened reader, whose next frame is frame 0. A
-    /// `growing` stream may end in a partial frame and need not hold a
-    /// complete one yet (see [`IndexedXyzReader::extend`]).
-    pub(super) fn index_frames(
-        self,
-        stream_start: u64,
-        growing: bool,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<IndexedXyzReader<R>, TrajectoryIoError> {
-        let mut indexed = IndexedXyzReader {
-            reader: self,
-            offsets: Arc::new(FrameOffsets::empty(stream_start)),
-            pending_bytes: 0,
-        };
-        indexed.extend(growing, control)?;
-        if indexed.offsets.is_empty() && !growing {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InvalidHeader,
-                TrajectoryIoOperation::Index,
-                Some(FORMAT),
-                &indexed.reader.source.label,
-                "The file holds no frame.",
-            ));
-        }
-        Ok(indexed)
-    }
-
-    pub(super) fn position(
-        &mut self,
-        operation: TrajectoryIoOperation,
-    ) -> Result<u64, TrajectoryIoError> {
-        self.reader
-            .stream_position()
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
-    }
-
     pub(super) fn seek_to(
         &mut self,
         offset: SeekFrom,

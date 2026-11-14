@@ -2,21 +2,10 @@ use super::*;
 
 /// Fully scanned XYZ reader with verified frame offsets.
 pub struct IndexedXyzReader<R> {
-    pub(super) reader: XyzReader<R>,
-    pub(super) offsets: Arc<FrameOffsets>,
-    /// Bytes after the last indexed frame when the index last grew.
-    pub(super) pending_bytes: u64,
+    pub(crate) inner: IndexedReader<XyzReader<R>>,
 }
 
-impl<R> fmt::Debug for IndexedXyzReader<R> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IndexedXyzReader")
-            .field("reader", &self.reader)
-            .field("frame_count", &self.offsets.len())
-            .finish_non_exhaustive()
-    }
-}
+indexed_reader_traits!(IndexedXyzReader, BufRead + Seek);
 
 impl<R: BufRead + Seek> IndexedXyzReader<R> {
     /// Opens a stream whose coordinates follow the supplied topology's dense order
@@ -51,8 +40,8 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
     }
 
     /// Indexes the stream like [`Self::new`], reporting to `control`. A
-    /// `growing` stream may end in a partial frame, and only lines with a
-    /// line break count (see [`Self::extend`]).
+    /// `growing` stream may end in a partial frame, need not hold a complete
+    /// one yet, and only lines with a line break count.
     pub(crate) fn build(
         mut reader: R,
         topology: Arc<Topology>,
@@ -69,11 +58,18 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 error,
             )
         })?;
-        XyzReader::open(reader, topology, options, source)?.index_frames(
-            stream_start,
-            growing,
-            control,
-        )
+        let reader = XyzReader::open(reader, topology, options, source)?;
+        let inner = IndexedReader::build(reader, stream_start, growing, control)?;
+        if inner.offsets().is_empty() && !growing {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidHeader,
+                TrajectoryIoOperation::Index,
+                Some(FORMAT),
+                &inner.codec.source.label,
+                "The file holds no frame.",
+            ));
+        }
+        Ok(Self { inner })
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -101,306 +97,140 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         offsets.verify_start(stream_start, TrajectoryFormat::Xyz, &reader.source.label)?;
         reader.validate_first_frame()?;
         Ok(Self {
-            reader,
-            offsets,
-            pending_bytes: 0,
+            inner: IndexedReader::new(reader, offsets),
         })
-    }
-
-    pub(crate) fn offsets(&self) -> &FrameOffsets {
-        &self.offsets
-    }
-
-    pub(crate) fn shared_offsets(&self) -> &Arc<FrameOffsets> {
-        &self.offsets
-    }
-
-    /// Lets go of the index until [`Self::share_index`], so that a reader
-    /// extending it does not copy it.
-    pub(crate) fn release_index(&mut self) {
-        self.offsets = Arc::new(FrameOffsets::empty(self.offsets.end()));
-    }
-
-    /// Reads by the index of `other`, a reader of the same file, from now
-    /// on.
-    pub(crate) fn share_index(&mut self, other: &Self) {
-        self.offsets = Arc::clone(&other.offsets);
     }
 
     /// Another reader of the same frames over `stream`, which must read the
     /// same file from its start; it shares the index and reads the first
     /// frame alone.
     pub(crate) fn fork(&self, stream: R) -> Result<Self, TrajectoryIoError> {
+        let reader = &self.inner.codec;
         Self::from_offsets(
             stream,
-            Arc::clone(&self.reader.topology),
-            self.reader.options.clone(),
-            self.reader.source.clone(),
-            Arc::clone(&self.offsets),
-            self.reader.growing,
+            Arc::clone(&reader.topology),
+            reader.options.clone(),
+            reader.source.clone(),
+            Arc::clone(self.inner.shared_offsets()),
+            reader.growing,
         )
     }
+}
 
-    /// The stream every read goes through.
-    pub(crate) fn stream(&self) -> &R {
-        &self.reader.reader
+/// Random reads seek with [`TrajectoryIoOperation::ReadFrame`] and report
+/// errors without frame context, which XYZ frames carry themselves.
+impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
+    type Stream = R;
+    type Frame = ();
+    type State = ();
+    const FORMAT: TrajectoryFormat = FORMAT;
+    const SEEK_OPERATION: TrajectoryIoOperation = TrajectoryIoOperation::ReadFrame;
+
+    fn source(&self) -> &ReadSource {
+        &self.source
     }
 
-    /// The stream every read goes through.
-    pub(crate) fn stream_mut(&mut self) -> &mut R {
-        &mut self.reader.reader
+    fn stream(&self) -> &R {
+        &self.reader
     }
 
-    /// Reads frame `index` as [`SeekableTrajectoryReader::read_frame`]
-    /// does and hands over its positions, written once as they were parsed.
-    /// The read allocates them on the calling thread and the reader keeps
-    /// no buffer for its next read, which may run on another.
-    pub(crate) fn read_decoded(
+    fn stream_and_source(&mut self) -> (&mut R, &ReadSource) {
+        (&mut self.reader, &self.source)
+    }
+
+    fn frame_cursor(&self) -> usize {
+        self.frame_cursor
+    }
+
+    fn set_frame_cursor(&mut self, frame: usize) {
+        self.frame_cursor = frame;
+    }
+
+    fn save_state(&self) {}
+
+    fn restore_state(&mut self, (): ()) {}
+
+    fn start_scan(&mut self, end: u64, growing: bool) -> Result<(), TrajectoryIoError> {
+        self.growing = growing;
+        self.seek_to(SeekFrom::Start(end), TrajectoryIoOperation::Index)
+            .map(drop)
+    }
+
+    fn index_full(
         &mut self,
-        index: usize,
+        _indexed: usize,
+        _growing: bool,
+        limit: LimitExceeded,
+    ) -> Result<u64, TrajectoryIoError> {
+        let label = &self.source.label;
+        if self
+            .reader
+            .fill_buf()
+            .map_err(|error| io_context(TrajectoryIoOperation::Index, Some(FORMAT), label, error))?
+            .is_empty()
+        {
+            return Ok(0);
+        }
+        Err(codec_context(
+            TrajectoryIoErrorKind::LimitExceeded,
+            TrajectoryIoOperation::Index,
+            Some(FORMAT),
+            label,
+            "",
+        )
+        .exceeding("The frame index", limit))
+    }
+
+    fn index_next(
+        &mut self,
+        _indexed: usize,
+        _offset: u64,
+        _growing: bool,
+    ) -> Result<Option<FrameStamp>, TrajectoryIoError> {
+        if !self.parse_next(false)? {
+            return Ok(None);
+        }
+        self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
+            frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::Index,
+                &self.source.label,
+                self.frame_cursor,
+                "The frame number exceeds this platform's address range.",
+            )
+        })?;
+        Ok(Some(FrameStamp::default()))
+    }
+
+    fn read_frame(&mut self) -> Result<Option<()>, TrajectoryIoError> {
+        self.parse_next(true).map(|parsed| parsed.then_some(()))
+    }
+
+    fn frame_context(error: TrajectoryIoError, _frame: usize, _offset: u64) -> TrajectoryIoError {
+        error
+    }
+
+    fn publish_frame(
+        &self,
+        (): (),
+        destination: &mut FrameBuffer,
+    ) -> Result<(), TrajectoryIoError> {
+        self.publish(destination)
+    }
+
+    fn take_decoded(
+        &mut self,
+        read: Result<(), TrajectoryIoError>,
     ) -> Result<DecodedGeometry, TrajectoryIoError> {
-        let read = self.read_indexed(index);
-        // Taken whether the read succeeds or fails, so that the reader keeps
-        // no array for a read on another thread.
-        let positions = std::mem::take(&mut self.reader.positions);
+        let positions = std::mem::take(&mut self.positions);
         read?;
         Ok(DecodedGeometry {
-            positions: Quantity::new(positions, self.reader.options.length_unit),
+            positions: Quantity::new(positions, self.options.length_unit),
             cell: None,
             velocities: None,
             forces: None,
             owner: None,
         })
-    }
-
-    /// Bytes after the last indexed frame when the index last grew.
-    pub(crate) const fn pending_bytes(&self) -> u64 {
-        self.pending_bytes
-    }
-
-    /// Drops the frames indexed after `mark`; see [`FrameOffsets::mark`].
-    pub(crate) fn restore_index(&mut self, mark: (usize, u64), pending_bytes: u64) {
-        Arc::make_mut(&mut self.offsets).restore(mark);
-        self.pending_bytes = pending_bytes;
-    }
-
-    /// Verifies and indexes every complete frame after the last indexed one,
-    /// up to the end of the stream, and returns the bytes left after them.
-    ///
-    /// A growing stream (see [`Self::build`]) may end in a frame still being
-    /// written, such as one whose last line has no line break yet: the scan
-    /// stops before it, which is not yet an error. Otherwise such a frame is
-    /// an error, as is any frame that is invalid with all its lines present.
-    /// Failure leaves the index as it was; the sequential cursor is kept
-    /// either way.
-    pub(crate) fn extend(
-        &mut self,
-        growing: bool,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<u64, TrajectoryIoError> {
-        self.reader.growing = growing;
-        let mark = self.offsets.mark();
-        let saved_offset = self.reader.position(TrajectoryIoOperation::Index)?;
-        let saved_cursor = self.reader.frame_cursor;
-        let scanned = self
-            .reader
-            .seek_to(
-                SeekFrom::Start(self.offsets.end()),
-                TrajectoryIoOperation::Index,
-            )
-            .and_then(|_| {
-                self.reader.frame_cursor = self.offsets.len();
-                self.scan(control)
-            });
-        let restored = self
-            .reader
-            .seek_to(SeekFrom::Start(saved_offset), TrajectoryIoOperation::Index);
-        self.reader.frame_cursor = saved_cursor;
-        match scanned.and_then(|pending| restored.map(|_| pending)) {
-            Ok(pending) => {
-                self.pending_bytes = pending;
-                Ok(pending)
-            }
-            Err(error) => {
-                Arc::make_mut(&mut self.offsets).restore(mark);
-                Err(error)
-            }
-        }
-    }
-
-    /// Indexes frames from the current position; see [`Self::extend`].
-    pub(super) fn scan(
-        &mut self,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<u64, TrajectoryIoError> {
-        let label = self.reader.source.label.clone();
-        control.checkpoint(
-            self.offsets.len(),
-            self.offsets.end(),
-            TrajectoryFormat::Xyz,
-            &label,
-        )?;
-        loop {
-            if let Some(limit) =
-                projected_index_limit(self.offsets.len(), &self.reader.source.limits)
-            {
-                if self
-                    .reader
-                    .reader
-                    .fill_buf()
-                    .map_err(|error| {
-                        io_context(TrajectoryIoOperation::Index, Some(FORMAT), &label, error)
-                    })?
-                    .is_empty()
-                {
-                    return Ok(0);
-                }
-                return Err(codec_context(
-                    TrajectoryIoErrorKind::LimitExceeded,
-                    TrajectoryIoOperation::Index,
-                    Some(FORMAT),
-                    &label,
-                    "",
-                )
-                .exceeding("The frame index", limit));
-            }
-            let offset = self.reader.position(TrajectoryIoOperation::Index)?;
-            match self.reader.parse_next(false) {
-                Ok(true) => {}
-                Ok(false) => return Ok(0),
-                Err(error)
-                    if self.reader.growing
-                        && error.kind() == TrajectoryIoErrorKind::TruncatedRecord =>
-                {
-                    let file_end = self
-                        .reader
-                        .seek_to(SeekFrom::End(0), TrajectoryIoOperation::Index)?;
-                    return Ok(file_end.saturating_sub(offset));
-                }
-                Err(error) => return Err(error),
-            }
-            let end = self.reader.position(TrajectoryIoOperation::Index)?;
-            Arc::make_mut(&mut self.offsets).push(
-                offset,
-                end,
-                FrameStamp::default(),
-                &self.reader.source.limits,
-                TrajectoryFormat::Xyz,
-                &label,
-            )?;
-            control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Xyz, &label)?;
-            self.reader.frame_cursor =
-                self.reader.frame_cursor.checked_add(1).ok_or_else(|| {
-                    frame_error(
-                        FORMAT,
-                        TrajectoryIoErrorKind::LimitExceeded,
-                        TrajectoryIoOperation::Index,
-                        &label,
-                        self.reader.frame_cursor,
-                        "The frame number exceeds this platform's address range.",
-                    )
-                })?;
-        }
-    }
-}
-
-impl<R: BufRead + Seek> TrajectoryReader for IndexedXyzReader<R> {
-    fn topology(&self) -> &Topology {
-        self.reader.topology()
-    }
-
-    fn shared_topology(&self) -> Arc<Topology> {
-        self.reader.shared_topology()
-    }
-
-    /// Reads the indexed frames in order and ends after the last of them,
-    /// even when the stream holds more.
-    fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        if self.topology().shares_layout(destination.topology())
-            && self.reader.frame_cursor >= self.offsets.len()
-        {
-            return Ok(false);
-        }
-        self.reader.read_next(destination)
-    }
-}
-
-impl<R: BufRead + Seek> SeekableTrajectoryReader for IndexedXyzReader<R> {
-    fn frame_count(&self) -> Option<usize> {
-        Some(self.offsets.len())
-    }
-
-    fn read_frame(
-        &mut self,
-        index: usize,
-        destination: &mut FrameBuffer,
-    ) -> Result<(), TrajectoryIoError> {
-        if !self.topology().shares_layout(destination.topology()) {
-            return Err(TrajectoryIoError::new(
-                TrajectoryIoErrorKind::TopologyMismatch,
-            ));
-        }
-        self.read_indexed(index)?;
-        self.reader.publish(destination)
-    }
-}
-
-impl<R: BufRead + Seek> IndexedXyzReader<R> {
-    /// Parses and verifies frame `index` into the reader's buffer, then
-    /// puts the stream back where it was.
-    pub(super) fn read_indexed(&mut self, index: usize) -> Result<(), TrajectoryIoError> {
-        let (offset, _) = self
-            .offsets
-            .frame(index)
-            .ok_or(TrajectoryIoError::frame_index_out_of_range(index))?;
-        let saved_offset = self.reader.reader.stream_position().map_err(|error| {
-            io_context(
-                TrajectoryIoOperation::ReadFrame,
-                Some(FORMAT),
-                &self.reader.source.label,
-                error,
-            )
-        })?;
-        let saved_cursor = self.reader.frame_cursor;
-        self.reader
-            .reader
-            .seek(SeekFrom::Start(offset))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::ReadFrame,
-                    Some(FORMAT),
-                    &self.reader.source.label,
-                    error,
-                )
-            })?;
-        self.reader.frame_cursor = index;
-        let parsed = self.reader.parse_next(true).and_then(|parsed| {
-            if parsed {
-                self.offsets.verify_stream_frame_end(
-                    index,
-                    &mut self.reader.reader,
-                    TrajectoryFormat::Xyz,
-                    &self.reader.source.label,
-                )?;
-            }
-            Ok(parsed)
-        });
-        let restore = self
-            .reader
-            .reader
-            .seek(SeekFrom::Start(saved_offset))
-            .map_err(|error| {
-                io_context(
-                    TrajectoryIoOperation::ReadFrame,
-                    Some(FORMAT),
-                    &self.reader.source.label,
-                    error,
-                )
-            });
-        self.reader.frame_cursor = saved_cursor;
-        if !parsed? {
-            return Err(TrajectoryIoError::frame_index_out_of_range(index));
-        }
-        restore.map(|_| ())
     }
 }

@@ -68,21 +68,21 @@ use crate::molecule::Element;
 use crate::structure::{DecodedGeometry, Positions, StructureSet, StructureView};
 use crate::topology::Topology;
 use crate::traj::{
-    FrameBuffer, FrameData, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
-    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, FrameData, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::codec::frame_error;
 use super::frame_state::{check_frame_state, record, writer_field_error};
+use super::indexed_reader::{indexed_reader_traits, IndexedCodec, IndexedReader, IndexedSource};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::options::ReadSource;
 use super::TrajectoryWriteOptions;
 use super::{
-    codec_context, io_context, projected_index_limit, require_no_partial_frame,
-    require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
-    TrajectoryOpenOptions,
+    codec_context, io_context, require_no_partial_frame, require_nonempty_writer, FrameOffsets,
+    FrameStamp, IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.

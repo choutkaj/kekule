@@ -8,7 +8,7 @@ use crate::topology::Topology;
 
 use crate::diagnostics::{LimitExceeded, Resource};
 use crate::parallel::Run;
-use crate::structure::{DecodedGeometry, Geometry, StructureSet};
+use crate::structure::{Geometry, StructureSet};
 use crate::traj::{
     FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
@@ -16,10 +16,11 @@ use crate::traj::{
 
 use crate::traj::trajectory::COLUMN_MISMATCH;
 
+use super::indexed_reader::{IndexFacts, IndexedSource};
 use super::limits::index_hard_capacity;
 use super::options::ReadSource;
 use super::{
-    dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata, FrameOffsets,
+    dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata,
     IndexBuildControl, SharedFile, TrajectoryFileFingerprint, TrajectoryFrameIndex,
     TrajectoryOpenOptions, TrajectoryOpenReport, TrajectoryWriteOptions,
 };
@@ -63,37 +64,42 @@ impl SequentialFileTrajectoryReader {
     }
 }
 
+impl SequentialReaderInner {
+    fn reader(&self) -> &dyn TrajectoryReader {
+        match self {
+            Self::Xyz(reader) => reader,
+            Self::Dcd(reader) => reader,
+            Self::Trr(reader) => reader.as_ref(),
+            Self::Xtc(reader) => reader,
+        }
+    }
+
+    fn reader_mut(&mut self) -> &mut dyn TrajectoryReader {
+        match self {
+            Self::Xyz(reader) => reader,
+            Self::Dcd(reader) => reader,
+            Self::Trr(reader) => reader.as_mut(),
+            Self::Xtc(reader) => reader,
+        }
+    }
+}
+
 impl TrajectoryReader for SequentialFileTrajectoryReader {
     fn topology(&self) -> &Topology {
-        match &self.inner {
-            SequentialReaderInner::Xyz(reader) => reader.topology(),
-            SequentialReaderInner::Dcd(reader) => reader.topology(),
-            SequentialReaderInner::Trr(reader) => reader.topology(),
-            SequentialReaderInner::Xtc(reader) => reader.topology(),
-        }
+        self.inner.reader().topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        match &self.inner {
-            SequentialReaderInner::Xyz(reader) => reader.shared_topology(),
-            SequentialReaderInner::Dcd(reader) => reader.shared_topology(),
-            SequentialReaderInner::Trr(reader) => reader.shared_topology(),
-            SequentialReaderInner::Xtc(reader) => reader.shared_topology(),
-        }
+        self.inner.reader().shared_topology()
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        match &mut self.inner {
-            SequentialReaderInner::Xyz(reader) => reader.read_next(destination),
-            SequentialReaderInner::Dcd(reader) => reader.read_next(destination),
-            SequentialReaderInner::Trr(reader) => {
-                let read = reader.read_next(destination)?;
-                self.metadata
-                    .update_trr_precision(reader.first_header(), reader.precision_mixed());
-                Ok(read)
-            }
-            SequentialReaderInner::Xtc(reader) => reader.read_next(destination),
+        let read = self.inner.reader_mut().read_next(destination)?;
+        if let SequentialReaderInner::Trr(reader) = &self.inner {
+            self.metadata
+                .update_trr_precision(reader.first_header(), reader.precision_mixed());
         }
+        Ok(read)
     }
 }
 
@@ -111,36 +117,26 @@ enum IndexedReaderInner {
 struct IndexSnapshot {
     mark: (usize, u64),
     pending_bytes: u64,
-    precision_mixed: bool,
-    declared_frames: Option<usize>,
+    facts: IndexFacts,
 }
 
 impl IndexedReaderInner {
-    fn offsets(&self) -> &FrameOffsets {
+    /// The codec's indexed reader, which reads every format alike.
+    fn source(&self) -> &dyn IndexedSource<BufReader<SharedFile>> {
         match self {
-            Self::Xyz(reader) => reader.offsets(),
-            Self::Dcd(reader) => reader.offsets(),
-            Self::Trr(reader) => reader.offsets(),
-            Self::Xtc(reader) => reader.offsets(),
+            Self::Xyz(reader) => &reader.inner,
+            Self::Dcd(reader) => &reader.inner,
+            Self::Trr(reader) => &reader.inner,
+            Self::Xtc(reader) => &reader.inner,
         }
     }
 
-    fn shared_offsets(&self) -> &Arc<FrameOffsets> {
+    fn source_mut(&mut self) -> &mut dyn IndexedSource<BufReader<SharedFile>> {
         match self {
-            Self::Xyz(reader) => reader.shared_offsets(),
-            Self::Dcd(reader) => reader.shared_offsets(),
-            Self::Trr(reader) => reader.shared_offsets(),
-            Self::Xtc(reader) => reader.shared_offsets(),
-        }
-    }
-
-    /// See the codecs' `release_index`.
-    fn release_index(&mut self) {
-        match self {
-            Self::Xyz(reader) => reader.release_index(),
-            Self::Dcd(reader) => reader.release_index(),
-            Self::Trr(reader) => reader.release_index(),
-            Self::Xtc(reader) => reader.release_index(),
+            Self::Xyz(reader) => &mut reader.inner,
+            Self::Dcd(reader) => &mut reader.inner,
+            Self::Trr(reader) => &mut reader.inner,
+            Self::Xtc(reader) => &mut reader.inner,
         }
     }
 
@@ -148,14 +144,14 @@ impl IndexedReaderInner {
     /// file object it reads, from now on.
     fn share_index(&mut self, other: &Self) {
         match (&mut *self, other) {
-            (Self::Xyz(reader), Self::Xyz(other)) => reader.share_index(other),
-            (Self::Dcd(reader), Self::Dcd(other)) => reader.share_index(other),
-            (Self::Trr(reader), Self::Trr(other)) => reader.share_index(other),
-            (Self::Xtc(reader), Self::Xtc(other)) => reader.share_index(other),
+            (Self::Xyz(reader), Self::Xyz(other)) => reader.inner.share_index(&other.inner),
+            (Self::Dcd(reader), Self::Dcd(other)) => reader.inner.share_index(&other.inner),
+            (Self::Trr(reader), Self::Trr(other)) => reader.inner.share_index(&other.inner),
+            (Self::Xtc(reader), Self::Xtc(other)) => reader.inner.share_index(&other.inner),
             _ => unreachable!("readers of one file read one format"),
         }
         let file = other.file();
-        let stream = self.stream_mut();
+        let stream = self.source_mut().stream_mut();
         if !stream.get_ref().same_file(file) {
             // The buffered bytes were read but not yet consumed.
             let position = stream.get_ref().position() - stream.buffer().len() as u64;
@@ -175,98 +171,23 @@ impl IndexedReaderInner {
         })
     }
 
-    /// See the codecs' `read_decoded`.
-    fn read_decoded(&mut self, index: usize) -> Result<DecodedGeometry, TrajectoryIoError> {
-        match self {
-            Self::Xyz(reader) => reader.read_decoded(index),
-            Self::Dcd(reader) => reader.read_decoded(index),
-            Self::Trr(reader) => reader.read_decoded(index),
-            Self::Xtc(reader) => reader.read_decoded(index),
-        }
-    }
-
     /// The file every read goes through.
     fn file(&self) -> &SharedFile {
-        match self {
-            Self::Xyz(reader) => reader.stream().get_ref(),
-            Self::Dcd(reader) => reader.stream().get_ref(),
-            Self::Trr(reader) => reader.stream().get_ref(),
-            Self::Xtc(reader) => reader.stream().get_ref(),
-        }
-    }
-
-    fn pending_bytes(&self) -> u64 {
-        match self {
-            Self::Xyz(reader) => reader.pending_bytes(),
-            Self::Dcd(reader) => reader.pending_bytes(),
-            Self::Trr(reader) => reader.pending_bytes(),
-            Self::Xtc(reader) => reader.pending_bytes(),
-        }
-    }
-
-    fn precision_mixed(&self) -> bool {
-        match self {
-            Self::Trr(reader) => reader.precision_mixed(),
-            _ => false,
-        }
-    }
-
-    fn declared_frames(&self) -> Option<usize> {
-        match self {
-            Self::Dcd(reader) => Some(reader.header().declared_frames()),
-            _ => None,
-        }
+        self.source().stream().get_ref()
     }
 
     fn snapshot(&self) -> IndexSnapshot {
+        let source = self.source();
         IndexSnapshot {
-            mark: self.offsets().mark(),
-            pending_bytes: self.pending_bytes(),
-            precision_mixed: self.precision_mixed(),
-            declared_frames: self.declared_frames(),
+            mark: source.offsets().mark(),
+            pending_bytes: source.pending_bytes(),
+            facts: source.facts(),
         }
     }
 
     fn restore(&mut self, snapshot: IndexSnapshot) {
-        let IndexSnapshot {
-            mark,
-            pending_bytes,
-            precision_mixed,
-            declared_frames,
-        } = snapshot;
-        match self {
-            Self::Xyz(reader) => reader.restore_index(mark, pending_bytes),
-            Self::Dcd(reader) => {
-                reader.restore_index(mark, declared_frames.unwrap_or(0), pending_bytes);
-            }
-            Self::Trr(reader) => reader.restore_index(mark, precision_mixed, pending_bytes),
-            Self::Xtc(reader) => reader.restore_index(mark, pending_bytes),
-        }
-    }
-
-    /// Indexes the complete frames after the indexed ones; see the codecs'
-    /// `extend`.
-    fn extend(
-        &mut self,
-        growing: bool,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<u64, TrajectoryIoError> {
-        match self {
-            Self::Xyz(reader) => reader.extend(growing, control),
-            Self::Dcd(reader) => reader.extend(growing, control),
-            Self::Trr(reader) => reader.extend(growing, control),
-            Self::Xtc(reader) => reader.extend(growing, control),
-        }
-    }
-
-    /// The stream every read goes through.
-    fn stream_mut(&mut self) -> &mut BufReader<SharedFile> {
-        match self {
-            Self::Xyz(reader) => reader.stream_mut(),
-            Self::Dcd(reader) => reader.stream_mut(),
-            Self::Trr(reader) => reader.stream_mut(),
-            Self::Xtc(reader) => reader.stream_mut(),
-        }
+        self.source_mut()
+            .restore_index(snapshot.mark, snapshot.facts, snapshot.pending_bytes);
     }
 
     /// Runs `check` on the file the reader reads, then puts the stream back
@@ -278,7 +199,7 @@ impl IndexedReaderInner {
         check: impl FnOnce(&mut SharedFile) -> Result<T, TrajectoryIoError>,
     ) -> Result<T, TrajectoryIoError> {
         let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
-        let stream = self.stream_mut();
+        let stream = self.source_mut().stream_mut();
         let position = stream.stream_position().map_err(io)?;
         let checked = check(stream.get_mut());
         // Seeking also drops the buffer, which the check left behind.
@@ -297,7 +218,7 @@ impl IndexedReaderInner {
         label: &str,
     ) -> Result<BufReader<SharedFile>, TrajectoryIoError> {
         let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
-        let stream = self.stream_mut();
+        let stream = self.source_mut().stream_mut();
         let position = stream.stream_position().map_err(io)?;
         let mut replacement = BufReader::new(SharedFile::new(file));
         replacement.seek(SeekFrom::Start(position)).map_err(io)?;
@@ -357,8 +278,8 @@ impl IndexedFileTrajectoryReader {
         TrajectoryFrameIndex::new(
             self.metadata.format(),
             self.fingerprint.clone(),
-            Arc::clone(self.inner.shared_offsets()),
-            self.inner.precision_mixed(),
+            Arc::clone(self.inner.source().shared_offsets()),
+            self.inner.source().facts().precision_mixed,
         )
     }
 
@@ -390,7 +311,7 @@ impl IndexedFileTrajectoryReader {
     /// Lets go of the index until [`Self::share_index`], so that refreshing
     /// another reader extends the index without copying it.
     pub(crate) fn release_index(&mut self) {
-        self.inner.release_index();
+        self.inner.source_mut().release_index();
     }
 
     /// Reads by the index of `other`, a reader of the same file, and the
@@ -404,7 +325,7 @@ impl IndexedFileTrajectoryReader {
     /// Reads frame `index` as a geometry, as [`SeekableTrajectoryReader::read_frame`]
     /// verifies it, moving the decoded arrays into the geometry.
     pub(crate) fn read_geometry(&mut self, index: usize) -> Result<Geometry, TrajectoryIoError> {
-        let decoded = self.inner.read_decoded(index)?;
+        let decoded = self.inner.source_mut().read_decoded(index)?;
         Ok(Geometry::from_decoded(decoded, self.topology())?)
     }
 
@@ -412,7 +333,7 @@ impl IndexedFileTrajectoryReader {
     /// naming the frame as lost when the file no longer holds all of it,
     /// whatever the read reported, otherwise `error`.
     pub(crate) fn lost_frame(&self, index: usize, error: TrajectoryIoError) -> TrajectoryIoError {
-        let Some((_, end)) = self.inner.offsets().frame(index) else {
+        let Some((_, end)) = self.inner.source().offsets().frame(index) else {
             return error;
         };
         match self.inner.file().len() {
@@ -437,7 +358,7 @@ impl IndexedFileTrajectoryReader {
     /// Only a reader opened with [`TrajectoryOpenOptions::with_growing`]
     /// leaves a partial frame pending; for others it is an error.
     pub fn pending_byte_count(&self) -> u64 {
-        self.inner.pending_bytes()
+        self.inner.source().pending_bytes()
     }
 
     /// Indexes the frames appended to the file since the reader was opened
@@ -522,14 +443,15 @@ impl IndexedFileTrajectoryReader {
         // The scan, the checks, and the fingerprint all read the file
         // checked here, which may not be the one read so far.
         let previous = self.inner.rebind(file, format, &label)?;
-        let before = self.inner.offsets().len();
+        let before = self.inner.source().offsets().len();
         let snapshot = self.inner.snapshot();
         let indexed = &self.fingerprint;
         let checked = self
             .inner
+            .source_mut()
             .extend(self.growing, &IndexBuildControl::default())
             .and_then(|_| {
-                let end = self.inner.offsets().end();
+                let end = self.inner.source().offsets().end();
                 self.inner.check_file(format, &label, |file| {
                     if indexed.is_prefix_of_file(file, &label)? {
                         TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
@@ -542,11 +464,11 @@ impl IndexedFileTrajectoryReader {
             Ok(fingerprint) => {
                 self.fingerprint = fingerprint;
                 self.record_counts();
-                Ok(self.inner.offsets().len() - before)
+                Ok(self.inner.source().offsets().len() - before)
             }
             Err(error) => {
                 self.inner.restore(snapshot);
-                *self.inner.stream_mut() = previous;
+                *self.inner.source_mut().stream_mut() = previous;
                 Err(error)
             }
         }
@@ -568,7 +490,7 @@ impl IndexedFileTrajectoryReader {
             }
             IndexedReaderInner::Trr(reader) => trr::check_append_frames(
                 reader.first_header(),
-                reader.precision_mixed(),
+                reader.inner.facts().precision_mixed,
                 options.trr_options(),
                 &label,
             ),
@@ -593,53 +515,33 @@ impl IndexedFileTrajectoryReader {
 
     /// Updates the metadata with the indexed frames.
     fn record_counts(&mut self) {
-        let count = self.inner.offsets().len();
+        let count = self.inner.source().offsets().len();
         self.metadata
-            .update_frame_counts(count, self.inner.declared_frames());
+            .update_frame_counts(count, self.inner.source().facts().declared_frames);
         if let IndexedReaderInner::Trr(reader) = &self.inner {
             self.metadata
-                .update_trr_precision(reader.first_header(), reader.precision_mixed());
+                .update_trr_precision(reader.first_header(), reader.inner.facts().precision_mixed);
         }
     }
 }
 
 impl TrajectoryReader for IndexedFileTrajectoryReader {
     fn topology(&self) -> &Topology {
-        match &self.inner {
-            IndexedReaderInner::Xyz(reader) => reader.topology(),
-            IndexedReaderInner::Dcd(reader) => reader.topology(),
-            IndexedReaderInner::Trr(reader) => reader.topology(),
-            IndexedReaderInner::Xtc(reader) => reader.topology(),
-        }
+        self.inner.source().topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        match &self.inner {
-            IndexedReaderInner::Xyz(reader) => reader.shared_topology(),
-            IndexedReaderInner::Dcd(reader) => reader.shared_topology(),
-            IndexedReaderInner::Trr(reader) => reader.shared_topology(),
-            IndexedReaderInner::Xtc(reader) => reader.shared_topology(),
-        }
+        self.inner.source().shared_topology()
     }
 
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError> {
-        match &mut self.inner {
-            IndexedReaderInner::Xyz(reader) => reader.read_next(destination),
-            IndexedReaderInner::Dcd(reader) => reader.read_next(destination),
-            IndexedReaderInner::Trr(reader) => reader.read_next(destination),
-            IndexedReaderInner::Xtc(reader) => reader.read_next(destination),
-        }
+        self.inner.source_mut().read_next(destination)
     }
 }
 
 impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
     fn frame_count(&self) -> Option<usize> {
-        match &self.inner {
-            IndexedReaderInner::Xyz(reader) => reader.frame_count(),
-            IndexedReaderInner::Dcd(reader) => reader.frame_count(),
-            IndexedReaderInner::Trr(reader) => reader.frame_count(),
-            IndexedReaderInner::Xtc(reader) => reader.frame_count(),
-        }
+        self.inner.source().frame_count()
     }
 
     fn read_frame(
@@ -647,12 +549,7 @@ impl SeekableTrajectoryReader for IndexedFileTrajectoryReader {
         index: usize,
         destination: &mut FrameBuffer,
     ) -> Result<(), TrajectoryIoError> {
-        match &mut self.inner {
-            IndexedReaderInner::Xyz(reader) => reader.read_frame(index, destination),
-            IndexedReaderInner::Dcd(reader) => reader.read_frame(index, destination),
-            IndexedReaderInner::Trr(reader) => reader.read_frame(index, destination),
-            IndexedReaderInner::Xtc(reader) => reader.read_frame(index, destination),
-        }
+        self.inner.source_mut().read_frame(index, destination)
     }
 }
 
@@ -1107,7 +1004,7 @@ fn open_indexed(
                         offsets,
                         growing,
                     )?;
-                    reader.extend(growing, &control)?;
+                    reader.inner.extend(growing, &control)?;
                     reader
                 }
                 None => xyz::IndexedXyzReader::build(
@@ -1140,7 +1037,7 @@ fn open_indexed(
                         offsets,
                         growing,
                     )?;
-                    reader.extend(growing, &control).map_err(|error| {
+                    reader.inner.extend(growing, &control).map_err(|error| {
                         if error.kind() == TrajectoryIoErrorKind::InconsistentMetadata
                             && error.expected().is_some()
                         {
@@ -1192,7 +1089,7 @@ fn open_indexed(
                         offsets,
                         precision_mixed,
                     )?;
-                    reader.extend(growing, &control)?;
+                    reader.inner.extend(growing, &control)?;
                     reader
                 }
                 None => trr::IndexedTrrReader::build(
@@ -1209,7 +1106,7 @@ fn open_indexed(
             let metadata = FileTrajectoryMetadata::trr(
                 reader.first_header(),
                 Some(count),
-                reader.precision_mixed(),
+                reader.inner.facts().precision_mixed,
             );
             (
                 IndexedReaderInner::Trr(Box::new(reader)),
@@ -1229,7 +1126,7 @@ fn open_indexed(
                         source,
                         offsets,
                     )?;
-                    reader.extend(growing, &control)?;
+                    reader.inner.extend(growing, &control)?;
                     reader
                 }
                 None => xtc::IndexedXtcReader::build(
@@ -1252,18 +1149,18 @@ fn open_indexed(
             )
         }
     };
-    if growing && format != TrajectoryFormat::Dcd && inner.offsets().is_empty() {
+    if growing && format != TrajectoryFormat::Dcd && inner.source().offsets().is_empty() {
         // Only DCD, whose header declares the frame count, opens without a
         // frame; the others need their first frame for its atoms and layout.
         return Err(incomplete(Some(format), &label));
     }
-    let count = inner.offsets().len();
+    let count = inner.source().offsets().len();
     let fingerprint = if imported_count == Some(count) {
         // Nothing was scanned, so nothing scanned can have changed.
         opened
     } else {
         // In the file that was scanned, whatever the path names now.
-        let end = inner.offsets().end();
+        let end = inner.source().offsets().end();
         inner.check_file(format, &label, |file| {
             if !opened.is_prefix_of_file(file, &label)? {
                 return Err(index_mismatch(

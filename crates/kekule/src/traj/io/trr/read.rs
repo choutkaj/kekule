@@ -17,6 +17,8 @@ pub struct TrrReader<R> {
     pub(super) properties: OwnerProperties,
     pub(super) frame_cursor: usize,
     pub(super) precision_mixed: bool,
+    /// Whether the frames an indexed reader indexed mix scalar widths.
+    pub(super) index_mixed: bool,
 }
 
 impl<R> fmt::Debug for TrrReader<R> {
@@ -32,7 +34,7 @@ impl<R> fmt::Debug for TrrReader<R> {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct TrrDecodedFrame {
+pub(crate) struct TrrDecodedFrame {
     pub(super) header: TrrFrameHeader,
     pub(super) cell: Option<PeriodicCell>,
 }
@@ -178,6 +180,7 @@ impl<R: Read + Seek> TrrReader<R> {
             properties,
             frame_cursor: 0,
             precision_mixed: false,
+            index_mixed: false,
         })
     }
 
@@ -455,22 +458,6 @@ impl<R: Read + Seek> TrrReader<R> {
             data = data.with_forces(Quantity::new(forces, KILOJOULE_PER_MOLE_PER_NANOMETER));
         }
         destination.replace_from_data(data).map_err(Into::into)
-    }
-
-    /// Indexes a freshly opened reader, whose next frame is frame 0.
-    pub(super) fn index_frames(
-        self,
-        growing: bool,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<IndexedTrrReader<R>, TrajectoryIoError> {
-        let mut indexed = IndexedTrrReader {
-            offsets: Arc::new(FrameOffsets::empty(self.stream_start)),
-            precision_mixed: false,
-            inner: self,
-            pending_bytes: 0,
-        };
-        indexed.extend(growing, control)?;
-        Ok(indexed)
     }
 
     pub(super) fn position(

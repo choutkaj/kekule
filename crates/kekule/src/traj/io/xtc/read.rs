@@ -862,21 +862,6 @@ impl<R: Read + Seek> XtcReader<R> {
         destination.replace_from_data(data).map_err(Into::into)
     }
 
-    /// Indexes a freshly opened reader, whose next frame is frame 0.
-    pub(super) fn index_frames(
-        self,
-        growing: bool,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<IndexedXtcReader<R>, TrajectoryIoError> {
-        let mut indexed = IndexedXtcReader {
-            offsets: Arc::new(FrameOffsets::empty(self.stream_start)),
-            inner: self,
-            pending_bytes: 0,
-        };
-        indexed.extend(growing, control)?;
-        Ok(indexed)
-    }
-
     pub(super) fn position(
         &mut self,
         operation: TrajectoryIoOperation,

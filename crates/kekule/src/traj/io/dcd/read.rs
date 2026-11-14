@@ -31,7 +31,7 @@ impl<R> fmt::Debug for DcdReader<R> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct DcdDecodedFrame {
+pub(crate) struct DcdDecodedFrame {
     pub(super) cell: Option<PeriodicCell>,
     pub(super) step: u64,
     pub(super) time: Option<f64>,
@@ -698,21 +698,6 @@ impl<R: Read + Seek> DcdReader<R> {
             data = data.with_time(Quantity::new(time, unit));
         }
         destination.replace_from_data(data).map_err(Into::into)
-    }
-
-    /// Indexes a freshly opened reader, whose next frame is frame 0.
-    pub(super) fn index_frames(
-        self,
-        growing: bool,
-        control: &IndexBuildControl<'_>,
-    ) -> Result<IndexedDcdReader<R>, TrajectoryIoError> {
-        let mut indexed = IndexedDcdReader {
-            offsets: Arc::new(FrameOffsets::empty(self.header.data_start)),
-            inner: self,
-            pending_bytes: 0,
-        };
-        indexed.extend(growing, control)?;
-        Ok(indexed)
     }
 
     pub(super) fn position(

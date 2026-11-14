@@ -177,6 +177,7 @@ mod file_writer;
 mod frame_index;
 mod frame_state;
 mod indexed_file;
+mod indexed_reader;
 mod limits;
 mod metadata;
 mod options;
