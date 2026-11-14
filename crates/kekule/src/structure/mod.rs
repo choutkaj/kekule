@@ -117,12 +117,13 @@
 //! [`Structure::apply_rigid_transform`] moves the whole structure and rotates its cell.
 //! No relaxation is performed.
 
+mod builder;
 mod draft_geometry;
 mod dynamics;
 mod ensemble;
 mod geometry_edit;
 pub mod measure;
-mod owner;
+mod owned;
 mod partition;
 pub mod placement;
 mod positions;
@@ -130,16 +131,14 @@ pub(crate) mod scalars;
 mod state;
 mod structure_editor;
 mod structure_set;
+mod view;
 
+pub use builder::{StructureBuildError, StructureBuilder, StructureTopologyMut};
 pub use dynamics::{Forces, Velocities};
 pub(crate) use ensemble::log_sum_exp;
 pub use ensemble::{Distribution, DistributionMut, Ensemble, Members, State, StateIter, StateView};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
-pub(crate) use owner::sealed::Sealed as StructureViewSealed;
-pub use owner::{
-    AsStructureView, Structure, StructureAtomView, StructureBuildError, StructureBuilder,
-    StructureError, StructureKind, StructureTopologyMut, StructureView,
-};
+pub use owned::{Structure, StructureError};
 pub use partition::{Partition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
 pub(crate) use state::subset_rows;
@@ -156,6 +155,8 @@ pub use structure_set::{
     Requirement, SetContext, StructureSet, StructureSetError, StructureSetRead,
     StructureSetReadError, TimeAxis,
 };
+pub(crate) use view::sealed::Sealed as StructureViewSealed;
+pub use view::{AsStructureView, StructureAtomView, StructureKind, StructureView};
 
 #[cfg(test)]
 mod structure_tests;

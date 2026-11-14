@@ -7,12 +7,12 @@ use crate::properties::{GeometryProperties, GeometryPropertiesMut};
 use crate::topology::{Topology, TopologyAtomIndex};
 use crate::units::Quantity;
 
-use crate::structure::owner::StructureView;
 use crate::structure::scalars::{canonical_b_factor, canonical_b_factors, AtomScalars};
 use crate::structure::state::{
     check_property_rows, geometry_readers, is_bound, site_readers, transform_cell,
     transform_positions, validate_binding,
 };
+use crate::structure::view::StructureView;
 use crate::structure::{
     DenseArrayError, Forces, GeometryError, Positions, Structure, StructureKind, Velocities,
 };
