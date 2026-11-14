@@ -12,7 +12,6 @@ use super::{
 };
 
 mod context;
-mod decoded;
 mod error;
 mod order;
 mod read;
@@ -20,7 +19,6 @@ mod storage;
 mod views;
 
 pub use context::SetContext;
-pub(crate) use decoded::DecodedGeometry;
 pub use error::{Requirement, StructureSetError};
 pub use order::{Order, Place, TimeAxis};
 pub(crate) use read::visit_geometry;

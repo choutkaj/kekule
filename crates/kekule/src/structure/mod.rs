@@ -157,9 +157,7 @@ pub use structure_editor::{
     StructureAppend, StructureAppendReport, StructureEditError, StructureEditor,
     StructureEditorProperties, StructureEditorPropertiesMut, StructureEditorTopologyMut,
 };
-pub(crate) use structure_set::{
-    check_bound, sealed as geometry_storage, visit_geometry, DecodedGeometry,
-};
+pub(crate) use structure_set::{check_bound, sealed as geometry_storage, visit_geometry};
 pub use structure_set::{
     GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place, Requirement, SetContext,
     StructureSet, StructureSetError, StructureSetRead, StructureSetReadError, TimeAxis,

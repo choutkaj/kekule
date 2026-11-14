@@ -61,8 +61,9 @@ use std::sync::Arc;
 
 use crate::math::Point3;
 use crate::molecule::Element;
-use crate::structure::{DecodedGeometry, Positions};
+use crate::structure::Positions;
 use crate::topology::Topology;
+use crate::traj::io::DecodedGeometry;
 use crate::traj::{
     FrameBuffer, FrameData, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,

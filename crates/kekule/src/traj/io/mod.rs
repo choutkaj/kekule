@@ -171,6 +171,7 @@
 mod append;
 mod codec;
 pub mod dcd;
+mod decoded;
 mod detect;
 mod file_reader;
 mod file_writer;
@@ -214,6 +215,7 @@ pub use metadata::{
 };
 pub use options::TrajectoryOpenOptions;
 
+pub(crate) use decoded::DecodedGeometry;
 pub(crate) use frame_index::{index_mismatch, FrameOffsets, FrameStamp, IndexBuildControl};
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
 pub(crate) use shared_file::SharedFile;
