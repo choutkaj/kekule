@@ -270,6 +270,16 @@ through the workspace.
   and reports it.
 - **Breaking:** `TrajectoryWriter::flush` replaces the codec writers' own
   `flush`; `TrrWriteOptions` is no longer `Eq`.
+- **Breaking:** Trajectory limits and source labels are set only in
+  `TrajectoryOpenOptions` (`with_limits`, `with_source_label`) and
+  `TrajectoryWriteOptions::with_source_label`: the codec read options lose
+  `with_limits`, `with_source_label`, `limits`, and `source_label`, codec
+  readers take `impl Into<TrajectoryOpenOptions>`, and codec writers' `new`
+  loses its label. Path readers and writers name a set label, not the path.
+- **Breaking:** `DcdWriteOptions::with_step_sequence`,
+  `DcdReadOptions::with_time_policy`, and the XYZ options' `with_length_unit`,
+  `with_decimal_places`, and `with_comment` return `Result`, refusing what
+  the readers and writers refused when opened.
 - **Breaking:** Frame-index fingerprints compare content, not modification
   time, and hash DCD `NSET` and `NSTEP` as zero; sequential reads of an
   indexed reader end after its last indexed frame.
@@ -389,6 +399,8 @@ through the workspace.
   `buffer.as_structure_view()`.
 - **Breaking:** `StructureError::InvalidWeight`; log weights are checked by
   `StructureSetError::NonFiniteLogWeight`.
+- **Breaking:** `DcdWriter::finalize`; `finish` and `TrajectoryWriter::flush`
+  write the frame count.
 
 ### Fixed
 
