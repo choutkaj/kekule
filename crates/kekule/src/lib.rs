@@ -98,7 +98,7 @@
 //! `into_editor()` to move an owner into one. System editors resolve source IDs
 //! to stable draft-only editing handles and publish completed values through
 //! `finish()`. A bond deletion can split a system molecule;
-//! a bond addition can join two occurrences. New structure atoms require
+//! a bond addition can join two instances. New structure atoms require
 //! coordinates.
 //!
 //! Coordinate-dependent algorithms consume [`structure::StructureView`]. A

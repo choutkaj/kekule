@@ -211,14 +211,14 @@ fn canonical_molecule_constructors_preserve_order_without_interning_or_perceptio
     assert_eq!(
         several
             .instances()
-            .map(|occurrence| occurrence.molecule().atom_count())
+            .map(|instance| instance.molecule().atom_count())
             .collect::<Vec<_>>(),
         vec![1, 2, 1]
     );
     assert!(several.hierarchy().is_empty());
     assert!(several
         .instances()
-        .all(|occurrence| occurrence.molecule().perception()
+        .all(|instance| instance.molecule().perception()
             == &crate::perception::Perception::default()));
 
     assert!(matches!(

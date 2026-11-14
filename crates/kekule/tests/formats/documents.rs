@@ -370,7 +370,7 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
     assert_eq!(
         projected_topology
             .instances()
-            .map(|occurrence| occurrence.molecule())
+            .map(|instance| instance.molecule())
             .collect::<Vec<_>>(),
         projected_molecules.iter().collect::<Vec<_>>()
     );
@@ -551,7 +551,7 @@ fn smiles_default_options_and_topology_projection_are_consistent() {
     assert_eq!(
         topology
             .instances()
-            .map(|occurrence| occurrence.molecule().atom_count())
+            .map(|instance| instance.molecule().atom_count())
             .collect::<Vec<_>>(),
         vec![3, 1]
     );

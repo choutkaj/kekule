@@ -17,7 +17,7 @@
 //! editor.add_bond(carbon, oxygen, BondOrder::Single)?;
 //! let molecule: Molecule = editor.finish()?;
 //! let (_, bond): (_, &Bond) = molecule.bonds().next().unwrap();
-//! assert_eq!(bond.order, BondOrder::Single);
+//! assert_eq!(bond.order(), BondOrder::Single);
 //!
 //! let topology = Topology::from_molecule(molecule.clone())?;
 //! let positions = Positions::new(Quantity::new(

@@ -361,7 +361,7 @@ fn assert_import(source: &Structure, target: &Structure, first_instance: usize) 
             let other = InstanceBondId::new(instance(id.instance()), id.bond());
             let before = source.topology().bond(id).unwrap();
             let after = target.topology().bond(other).unwrap();
-            assert_eq!(before.order, after.order);
+            assert_eq!(before.order(), after.order());
             assert_eq!(
                 atom(InstanceAtomId::new(id.instance(), before.a())),
                 InstanceAtomId::new(other.instance(), after.a())

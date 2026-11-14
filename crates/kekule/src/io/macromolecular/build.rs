@@ -790,7 +790,7 @@ fn point_distance_squared(left: Point3, right: Point3) -> f64 {
 }
 
 /// Builds one topology-global hierarchy from source atom identity after every
-/// connected molecule component has received its final instance-qualified IDs.
+/// instance has received its final instance-qualified IDs.
 pub(super) fn build_topology_hierarchy(
     instances: &[InstanceProvenance],
     polymer_asym_order: &BTreeMap<String, usize>,

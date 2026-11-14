@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .indices()
         .iter()
         .enumerate()
-        .filter(|(_, index)| targets.contains_index(**index))
+        .filter(|(_, index)| targets.contains_at(**index))
         .map(|(k, _)| TopologyAtomIndex::new(k as u32));
     let scope = MinimizationScope::moving(AtomSelection::from_indices(
         molecule.shared_topology(),
@@ -164,7 +164,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Write the moving atoms back in one edit.
     let minimized = result.positions().values().into_value();
     for (k, index) in molecules.indices().iter().enumerate() {
-        if targets.contains_index(*index) {
+        if targets.contains_at(*index) {
             let id = system.topology().atom_ids()[index.index()];
             system.set_position(id, Quantity::new(minimized[k], CANONICAL_LENGTH_UNIT))?;
         }

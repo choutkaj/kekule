@@ -29,7 +29,7 @@ pub(crate) struct TopologyPublication {
     pub(super) bonds: DenseCorrespondence<TopologyBondIndex>,
 }
 
-/// The instances publication stages, with the atoms of the occurrences an
+/// The instances publication stages, with the atoms of the instances an
 /// edit touched and the bonds of every instance.
 #[derive(Default)]
 struct StagedInstances {
@@ -328,7 +328,7 @@ impl TopologyEditor {
     /// evidence changes. Editing handles are draft-only.
     ///
     /// Publication costs what the edit touched plus a few passes over plain
-    /// per-atom arrays: occurrences, residues and atom sites no edit touched
+    /// per-atom arrays: instances, residues and atom sites no edit touched
     /// are carried over from the source by index, and only the touched ones
     /// are classified.
     ///
@@ -387,10 +387,10 @@ impl TopologyEditor {
                 .expect("source groups name source instances")
                 .definition()
         };
-        // Preserve definition order/reuse for untouched source occurrences.
-        // An occurrence whose class an edit cleared is classified on its own,
+        // Preserve definition order/reuse for untouched source instances.
+        // An instance whose class an edit cleared is classified on its own,
         // in a definition of its own that shares the molecule, so the other
-        // occurrences of its definition keep their class.
+        // instances of its definition keep their class.
         let mut retained = vec![false; definition_count];
         for (index, group) in groups.iter().enumerate() {
             match group {
@@ -434,7 +434,7 @@ impl TopologyEditor {
             let group = match group {
                 GroupSlot::Merged => continue,
                 GroupSlot::Source => {
-                    // An untouched occurrence keeps its local IDs, and its bonds
+                    // An untouched instance keeps its local IDs, and its bonds
                     // their source slots.
                     let source = source.expect("source groups have a source");
                     let definition = source_definitions[source_definition(index).index()]
@@ -553,7 +553,7 @@ impl TopologyEditor {
                         if let Some(class) = self.component_class(&atoms, None) {
                             builder.set_molecule_class(component.id, class)?;
                         }
-                        // No old occurrence annotation is inherited across a split.
+                        // No old instance annotation is inherited across a split.
                         let instance = staged.add(component.id, None);
                         self.record_component(
                             handles,

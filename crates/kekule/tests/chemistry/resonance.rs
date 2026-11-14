@@ -220,7 +220,7 @@ fn canonical_aromatic_seed_retains_aryne_triple_bonds() {
     let m = molecule("C1#CC=CC=C1");
     let triple = m
         .bonds()
-        .find(|(_, b)| b.order == BondOrder::Triple)
+        .find(|(_, b)| b.order() == BondOrder::Triple)
         .unwrap()
         .0;
     assert_eq!(

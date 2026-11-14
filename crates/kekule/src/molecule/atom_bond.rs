@@ -232,8 +232,7 @@ impl AtomRadical {
 pub struct Bond {
     pub(crate) a: AtomId,
     pub(crate) b: AtomId,
-    /// The localized bond order.
-    pub order: BondOrder,
+    pub(crate) order: BondOrder,
 }
 
 impl Bond {
@@ -258,6 +257,11 @@ impl Bond {
     /// Both endpoints as `(a, b)`.
     pub const fn endpoints(&self) -> (AtomId, AtomId) {
         (self.a, self.b)
+    }
+
+    /// The localized bond order.
+    pub const fn order(&self) -> BondOrder {
+        self.order
     }
 
     pub(crate) fn connects(&self, a: AtomId, b: AtomId) -> bool {

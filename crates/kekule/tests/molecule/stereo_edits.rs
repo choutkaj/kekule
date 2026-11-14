@@ -18,7 +18,7 @@ fn changed_bond_orders_prune_stereo_through_all_molecular_mutators() {
     let source = molecule("F/C=C/F");
     let bond = source
         .bonds()
-        .find(|(_, bond)| bond.order == BondOrder::Double)
+        .find(|(_, bond)| bond.order() == BondOrder::Double)
         .unwrap()
         .0;
     let (a, b) = source.bond(bond).unwrap().endpoints();
@@ -40,7 +40,7 @@ fn changed_bond_orders_prune_stereo_through_all_molecular_mutators() {
         );
         editor.validate().unwrap();
         let result = editor.try_finish().unwrap();
-        assert_eq!(result.bond(bond).unwrap().order, BondOrder::Single);
+        assert_eq!(result.bond(bond).unwrap().order(), BondOrder::Single);
         assert_eq!(result.stereo_elements().count(), 0);
         let text =
             kekule::smiles::write(&result, kekule::smiles::SmilesWriteOptions::isomeric()).unwrap();
@@ -60,7 +60,7 @@ fn order_changes_update_stereo_groups_without_removing_unrelated_assertions() {
     let source = molecule("F/C=C/C=C/F");
     let bonds = source
         .bonds()
-        .filter_map(|(id, bond)| (bond.order == BondOrder::Double).then_some(id))
+        .filter_map(|(id, bond)| (bond.order() == BondOrder::Double).then_some(id))
         .collect::<Vec<_>>();
     let elements = source.stereo_element_ids().collect::<Vec<_>>();
     assert_eq!(elements.len(), 2);

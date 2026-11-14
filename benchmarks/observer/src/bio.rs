@@ -171,7 +171,7 @@ fn connectivity(document: &MmcifDocument) -> Result<Facts, Failure> {
             // is keyed in site order, dative ones included.
             let mut ends = [id(bond.a()), id(bond.b())];
             ends.sort_by_key(|id| site_order(id));
-            let order = match bond.order {
+            let order = match bond.order() {
                 BondOrder::Zero => json!(0),
                 BondOrder::Single => json!(1),
                 BondOrder::Double => json!(2),

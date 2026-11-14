@@ -156,7 +156,7 @@ pub(crate) fn normalize(input: &Molecule) -> Result<Molecule> {
                 if editor
                     .bond(id)
                     .expect("bond IDs come from this molecule")
-                    .order
+                    .order()
                     != order
                 {
                     editor
@@ -334,7 +334,7 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
         .bonds()
         .filter(|(_, b)| {
             !matches!(
-                b.order,
+                b.order(),
                 BondOrder::Single | BondOrder::Double | BondOrder::Triple
             )
         })
@@ -355,7 +355,7 @@ pub(crate) fn average_charges(input: &Molecule) -> Result<Vec<f32>> {
     let mut neighbors = vec![vec![]; ids.len()];
     let mut orders = Vec::new();
     for (_, b) in molecule.bonds() {
-        let order = match b.order {
+        let order = match b.order() {
             BondOrder::Single => 1,
             BondOrder::Double => 2,
             BondOrder::Triple => 3,

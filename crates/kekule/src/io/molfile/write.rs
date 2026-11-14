@@ -263,7 +263,7 @@ pub(in crate::io) fn render_structure(
                 topology.bond_count(),
                 topology
                     .instances()
-                    .any(|occurrence| occurrence.molecule().stereo_groups().next().is_some()),
+                    .any(|instance| instance.molecule().stereo_groups().next().is_some()),
             );
             if fits.is_ok() {
                 match render_structure(structure, title, MolfileWriteVersion::V2000) {

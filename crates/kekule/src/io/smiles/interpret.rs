@@ -246,7 +246,7 @@ impl SmilesInterpretation {
             .collect()
     }
 
-    /// Projects every source component into one topology occurrence.
+    /// Projects every source component into one topology instance.
     ///
     /// Component order becomes authoritative topology instance order. Dense
     /// atom order is the source atom order ([`SmilesAtomMapping::source_index`]),

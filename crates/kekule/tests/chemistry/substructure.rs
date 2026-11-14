@@ -295,7 +295,7 @@ fn recursive_limits_errors_and_prerequisites_survive_negation() {
 }
 
 #[test]
-fn topology_disconnected_queries_keep_occurrences_and_snapshot() {
+fn topology_disconnected_queries_keep_instances_and_snapshot() {
     let molecules = vec![molecule("CC"), molecule("C")];
     let topology = Arc::new(Topology::from_molecules(molecules.clone()).unwrap());
     let prepared = PreparedTopologyTarget::new(&topology);

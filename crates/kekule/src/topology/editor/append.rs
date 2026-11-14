@@ -32,9 +32,9 @@ impl TopologyEditor {
             residues: BTreeMap::new(),
             sites: BTreeMap::new(),
         };
-        // An occurrence shares an identical definition the draft holds, from
+        // An instance shares an identical definition the draft holds, from
         // its source or an earlier append. Otherwise its definition is copied
-        // once per import, so occurrences of one source definition share the
+        // once per import, so instances of one source definition share the
         // copy. The copy keeps the definition's perception, and so its profile.
         let mut copies = BTreeMap::<MoleculeDefinitionId, Arc<Molecule>>::new();
         let instance_start = self.properties.molecule_instances().len();

@@ -25,7 +25,7 @@ use super::{
 ///
 /// Use [`Self::add_molecule`] when definition reuse is unimportant. Use
 /// [`Self::add_molecule_definition`] followed by [`Self::add_instance`] when
-/// several occurrences should share one definition.
+/// several instances should share one definition.
 ///
 /// Each new instance appends its atoms to the dense atom order in local ID
 /// order. [`Self::set_atom_order`] replaces that order with any permutation,
@@ -455,7 +455,7 @@ impl TopologyBuilder {
         self.commit_definition(molecule, default_perception)
     }
 
-    /// Adds one occurrence of a staged definition, appending its atoms to the
+    /// Adds one instance of a staged definition, appending its atoms to the
     /// dense atom order in local ID order.
     pub fn add_instance(
         &mut self,

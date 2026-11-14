@@ -204,11 +204,11 @@ impl BondSelection {
     pub fn contains(&self, bond: InstanceBondId) -> bool {
         self.topology
             .bond_index(bond)
-            .is_some_and(|index| self.contains_index(index))
+            .is_some_and(|index| self.contains_at(index))
     }
 
     /// Tests dense-index membership. Out-of-range indices return false.
-    pub fn contains_index(&self, index: TopologyBondIndex) -> bool {
+    pub fn contains_at(&self, index: TopologyBondIndex) -> bool {
         self.indices.binary_search(&index).is_ok()
     }
 
@@ -271,19 +271,13 @@ impl BondSelection {
     /// Snapshot compatibility is checked even for empty selections.
     pub fn is_subset(&self, other: &Self) -> Result<bool, SelectionError> {
         self.ensure_compatible(&other.topology)?;
-        Ok(self
-            .indices
-            .iter()
-            .all(|index| other.contains_index(*index)))
+        Ok(self.indices.iter().all(|index| other.contains_at(*index)))
     }
 
     /// Tests whether the selections share no bonds, after checking snapshots.
     pub fn is_disjoint(&self, other: &Self) -> Result<bool, SelectionError> {
         self.ensure_compatible(&other.topology)?;
-        Ok(self
-            .indices
-            .iter()
-            .all(|index| !other.contains_index(*index)))
+        Ok(self.indices.iter().all(|index| !other.contains_at(*index)))
     }
 
     /// Inverts membership within this exact topology.

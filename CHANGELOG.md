@@ -410,6 +410,11 @@ through the workspace.
   `add_molecule_definition`, `set_molecule_class`, and `clear_molecule_class`
   move to `topology_mut()`, and return `TopologyBuildError`; read the staged
   hierarchy, atoms, and bonds through `topology()`.
+- **Breaking:** `Bond`'s order is read with `Bond::order()`; the field is
+  private.
+- **Breaking:** `AtomSelection::contains_index` and
+  `BondSelection::contains_index` are `contains_at`, like other methods that
+  take a dense index.
 
 ### Removed
 

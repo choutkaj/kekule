@@ -71,7 +71,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                 match input
                     .bond(input.bond_between(id, next).unwrap())
                     .unwrap()
-                    .order
+                    .order()
                 {
                     BondOrder::Single => 1,
                     BondOrder::Double => 2,
@@ -98,7 +98,7 @@ pub(crate) fn normalize_valence(input: &Molecule) -> Result<Molecule> {
                     let bond = copy.bond_between(id, next).unwrap();
                     (atom.element().atomic_number() == element
                         && atom.formal_charge() == 0
-                        && copy.bond(bond).unwrap().order == old)
+                        && copy.bond(bond).unwrap().order() == old)
                         .then_some((next, bond))
                 });
             if let Some((next, bond)) = found {
@@ -155,14 +155,14 @@ pub(crate) fn normalize_phosphorus(input: &Molecule) -> Result<Molecule> {
             let bond = input
                 .bond(bond_id)
                 .expect("bond IDs come from this molecule");
-            valence += match bond.order {
+            valence += match bond.order() {
                 BondOrder::Single => 1,
                 BondOrder::Double => 2,
                 BondOrder::Triple => 3,
                 _ => 100,
             };
             let neighbor = input.atom(next).expect("atom IDs come from this molecule");
-            if bond.order == BondOrder::Double {
+            if bond.order() == BondOrder::Double {
                 if neighbor.element().atomic_number() == 8 && neighbor.formal_charge() == 0 {
                     oxygen = Some((next, bond_id));
                 } else if matches!(neighbor.element().atomic_number(), 6 | 7)
