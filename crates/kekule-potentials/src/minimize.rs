@@ -32,7 +32,7 @@ use std::fmt;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use kekule::diagnostics::Cancelled;
+use kekule::diagnostics::{Cancelled, TopologyMismatch};
 use kekule::math::{Point3, Vector3};
 use kekule::parallel::{Progress, Run};
 use kekule::structure::{DenseArrayError, GeometryError, Positions, Structure, StructureView};
@@ -430,12 +430,14 @@ impl Minimization {
     ///
     /// # Errors
     ///
-    /// [`MinimizationError::IncompatibleTopology`] if `source` does not share
+    /// [`MinimizationError::TopologyMismatch`] if `source` does not share
     /// the minimized topology layout, and [`MinimizationError::Position`] if
     /// the coordinates cannot be stored.
     pub fn to_structure(&self, source: StructureView<'_>) -> Result<Structure, MinimizationError> {
         if !self.evaluation.topology().shares_layout(source.topology()) {
-            return Err(MinimizationError::IncompatibleTopology);
+            return Err(MinimizationError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
         }
         let mut structure = source.to_structure();
         let mut geometry = structure.geometry_mut();
@@ -505,7 +507,7 @@ pub fn minimize_with<P: Potential + ?Sized>(
 ///
 /// # Errors
 ///
-/// As [`minimize`], and [`MinimizationError::IncompatibleTopology`] if
+/// As [`minimize`], and [`MinimizationError::TopologyMismatch`] if
 /// `scope` does not share the layout of `structure`.
 pub fn minimize_scoped<P: Potential + ?Sized>(
     potential: &P,
@@ -540,7 +542,9 @@ pub fn minimize_scoped_with<P: Potential + ?Sized>(
 ) -> Result<Minimization, MinimizationError> {
     let limits = validate(options)?;
     if !scope.moving.topology().shares_layout(structure.topology()) {
-        return Err(MinimizationError::IncompatibleTopology);
+        return Err(MinimizationError::TopologyMismatch(
+            TopologyMismatch::Selection,
+        ));
     }
     let objective = Objective::new(scope, structure.positions().values().into_value());
     run.report(Progress::new(0, steps(options.max_iterations)));
@@ -1105,9 +1109,12 @@ pub enum MinimizationError {
     /// The initial evaluation failed, or a trial failed for a reason other
     /// than singular geometry.
     Evaluation(Box<EvaluationError>),
-    /// A [`MinimizationScope`] or the view given to [`Minimization::to_structure`]
-    /// belongs to a different topology layout.
-    IncompatibleTopology,
+    /// The moving atoms of a [`MinimizationScope`]
+    /// ([`TopologyMismatch::Selection`]) do not share the minimized
+    /// structure's topology layout, or the view given to
+    /// [`Minimization::to_structure`] ([`TopologyMismatch::Structure`]) does
+    /// not share the minimized one.
+    TopologyMismatch(TopologyMismatch),
     /// The minimized structure could not be built; see the source.
     Geometry(GeometryError),
     /// The positions could not be updated; see the source.
@@ -1131,9 +1138,7 @@ impl fmt::Display for MinimizationError {
                 write!(f, "Cannot continue the minimization. {failure}")
             }
             Self::Evaluation(_) => f.write_str("Cannot evaluate the potential."),
-            Self::IncompatibleTopology => f.write_str(
-                "The structure view has a different topology layout from the minimization.",
-            ),
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::Geometry(_) => f.write_str("Cannot build the minimized structure."),
             Self::Position(_) => f.write_str("Cannot update the positions."),
             Self::Unit(_) => {
@@ -1155,7 +1160,7 @@ impl std::error::Error for MinimizationError {
             Self::InvalidOptions(_)
             | Self::InvalidRestraint { .. }
             | Self::NumericalFailure(_)
-            | Self::IncompatibleTopology => None,
+            | Self::TopologyMismatch(_) => None,
         }
     }
 }

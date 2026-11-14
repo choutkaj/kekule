@@ -437,13 +437,13 @@ impl ForceField {
             let (a, charges) = &definitions[&instance.definition_id()];
             let qualify = |atom| InstanceAtomId::new(instance.id(), atom);
             for (atoms, &i) in &a.bonds {
-                result.bonds.push(Interaction {
+                result.bonds.push(ParameterAssignment {
                     atoms: atoms.map(qualify),
                     parameter: Arc::clone(&bonds[i]),
                 });
             }
             for (atoms, &i) in &a.angles {
-                result.angles.push(Interaction {
+                result.angles.push(ParameterAssignment {
                     atoms: atoms.map(qualify),
                     parameter: Arc::clone(&angles[i]),
                 });
@@ -464,14 +464,14 @@ impl ForceField {
                     }
                     Arc::new(p)
                 });
-                result.propers.push(Interaction {
+                result.propers.push(ParameterAssignment {
                     atoms: atoms.map(qualify),
                     parameter: Arc::clone(parameter),
                 });
             }
             for (atoms, &i) in &a.impropers {
                 for [x, y, z] in [[0, 2, 3], [2, 3, 0], [3, 0, 2]] {
-                    result.impropers.push(Interaction {
+                    result.impropers.push(ParameterAssignment {
                         atoms: [atoms[1], atoms[x], atoms[y], atoms[z]].map(qualify),
                         parameter: Arc::clone(&impropers[i]),
                     });
@@ -487,7 +487,7 @@ impl ForceField {
                             .unwrap_or_else(|| self.bonds[a.bonds[atoms]].parameter.length),
                     })
                 });
-                result.constraints.push(Interaction {
+                result.constraints.push(ParameterAssignment {
                     atoms: atoms.map(qualify),
                     parameter: Arc::clone(parameter),
                 });

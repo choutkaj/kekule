@@ -10,7 +10,7 @@
 
 use kekule::math::{Point3, Vector3};
 
-use crate::potential::{InteractionKind, SingularGeometry};
+use crate::potential::{SingularGeometry, TermKind};
 
 /// Coulomb conversion factor, kJ mol^-1 nm e^-2, matching OpenMM.
 pub(crate) const COULOMB: f64 = 138.935_457_644_381_98;
@@ -27,12 +27,12 @@ pub(crate) const COMPONENTS: usize = 6;
 /// A singular interaction, reported with dense atom indices.
 #[derive(Debug)]
 pub(crate) struct Singular {
-    pub interaction: InteractionKind,
+    pub interaction: TermKind,
     pub atoms: Vec<usize>,
     pub kind: SingularGeometry,
 }
 
-fn singular(interaction: InteractionKind, atoms: &[usize], kind: SingularGeometry) -> Singular {
+fn singular(interaction: TermKind, atoms: &[usize], kind: SingularGeometry) -> Singular {
     Singular {
         interaction,
         atoms: atoms.to_vec(),
@@ -119,7 +119,7 @@ pub(crate) fn bonds(
         if gradients.enabled() {
             if r2 < MIN_DISTANCE_SQUARED {
                 return Err(singular(
-                    InteractionKind::Bond,
+                    TermKind::Bond,
                     &term.atoms,
                     SingularGeometry::CoincidentAtoms,
                 ));
@@ -150,7 +150,7 @@ pub(crate) fn angles(
         // cosine terms underflow are indistinguishable from zero.
         if r1 == 0.0 || r2 == 0.0 || (normal == Vector3::zero() && cosine == 0.0) {
             return Err(singular(
-                InteractionKind::Angle,
+                TermKind::Angle,
                 &term.atoms,
                 SingularGeometry::DegenerateAngle,
             ));
@@ -166,7 +166,7 @@ pub(crate) fn angles(
         if norm == 0.0 {
             if offset.abs() > 1e-12 && term.k != 0.0 {
                 return Err(singular(
-                    InteractionKind::Angle,
+                    TermKind::Angle,
                     &term.atoms,
                     SingularGeometry::LinearAngle,
                 ));
@@ -186,7 +186,7 @@ pub(crate) fn angles(
 
 pub(crate) fn torsions(
     component: usize,
-    interaction: InteractionKind,
+    interaction: TermKind,
     terms: &[PeriodicTorsion],
     x: &[Point3],
     gradients: &mut Gradients,
@@ -311,7 +311,7 @@ impl Nonbonded {
                 let r2 = r.norm_squared();
                 if r2 < MIN_DISTANCE_SQUARED {
                     return Err(singular(
-                        InteractionKind::NonbondedPair,
+                        TermKind::NonbondedPair,
                         &[i, j],
                         SingularGeometry::CoincidentAtoms,
                     ));
@@ -409,7 +409,7 @@ mod tests {
         let points = [p(1., 0., 0.), p(0., 0., 0.), p(0., 0., 1.), p(0., 1., 1.)];
         let energy = torsions(
             0,
-            InteractionKind::ProperTorsion,
+            TermKind::ProperTorsion,
             &[torsion],
             &points,
             &mut Gradients::None,
@@ -471,7 +471,7 @@ mod tests {
         let kernels: [Kernel; 4] = [
             Box::new(|x, g| bonds(&bond, x, g).unwrap()),
             Box::new(|x, g| angles(&angle, x, g).unwrap()),
-            Box::new(|x, g| torsions(0, InteractionKind::ProperTorsion, &torsion, x, g).unwrap()),
+            Box::new(|x, g| torsions(0, TermKind::ProperTorsion, &torsion, x, g).unwrap()),
             Box::new(|x, g| {
                 let (v, q) = nonbonded.evaluate(x, g).unwrap();
                 v + q
@@ -575,7 +575,7 @@ mod tests {
         };
         let energy = torsions(
             0,
-            InteractionKind::ProperTorsion,
+            TermKind::ProperTorsion,
             &torsion(0.0),
             &collinear,
             &mut Gradients::None,
@@ -585,7 +585,7 @@ mod tests {
         let mut gradients = Gradients::total(4);
         let energy = torsions(
             0,
-            InteractionKind::ProperTorsion,
+            TermKind::ProperTorsion,
             &torsion(0.0),
             &collinear,
             &mut gradients,
@@ -596,7 +596,7 @@ mod tests {
         for mut gradients in [Gradients::None, Gradients::total(4)] {
             let error = torsions(
                 0,
-                InteractionKind::ProperTorsion,
+                TermKind::ProperTorsion,
                 &torsion(1.0),
                 &collinear,
                 &mut gradients,
@@ -605,7 +605,7 @@ mod tests {
             assert_eq!(
                 (error.interaction, error.atoms, error.kind),
                 (
-                    InteractionKind::ProperTorsion,
+                    TermKind::ProperTorsion,
                     vec![0, 1, 2, 3],
                     SingularGeometry::DegenerateDihedral
                 )

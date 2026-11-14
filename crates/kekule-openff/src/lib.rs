@@ -61,9 +61,9 @@ pub use error::{Error, ErrorKind};
 pub use nagl::{ChargeAssignment, ChargeSource, ModelIdentity, NaglModel};
 pub use offxml::ForceField;
 pub use parameters::{
-    AngleParameter, BondParameter, ConstraintParameter, ElectrostaticsMethod, Interaction,
-    MoleculeLabels, NonbondedSettings, PairException, ParameterIdentity, ParameterizedTopology,
-    TorsionParameter, TorsionTerm, VdwMethod, VdwParameter,
+    AngleParameter, BondParameter, ConstraintParameter, ElectrostaticsMethod, MoleculeLabels,
+    NonbondedSettings, PairException, ParameterAssignment, ParameterIdentity,
+    ParameterizedTopology, TorsionParameter, TorsionTerm, VdwMethod, VdwParameter,
 };
 
 pub(crate) use error::Result;
