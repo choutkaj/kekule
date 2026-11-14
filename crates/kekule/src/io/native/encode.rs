@@ -629,14 +629,13 @@ impl<W: Write> Encoder<'_, W> {
                 self.u32(atom.atom().raw())?;
             }
         }
-        let hierarchy = topology.hierarchy();
-        let chains = || hierarchy.chains().map(|(_, chain)| chain);
-        self.count(hierarchy.chains().len())?;
+        let chains = || topology.chains();
+        self.count(chains().len())?;
         self.strings(|| chains().map(|chain| Some(chain.label_id())))?;
         self.strings(|| chains().map(|chain| chain.author_id()))?;
-        self.lists(|| chains().map(|chain| chain.residues().iter().map(|id| id.raw())))?;
-        let residues = || hierarchy.residues().map(|(_, residue)| residue);
-        self.count(hierarchy.residues().len())?;
+        self.lists(|| chains().map(|chain| chain.residues().map(|residue| residue.id().raw())))?;
+        let residues = || topology.residues();
+        self.count(residues().len())?;
         self.strings(|| residues().map(|residue| Some(residue.name())))?;
         self.strings(|| residues().map(|residue| residue.label_comp_id()))?;
         self.strings(|| residues().map(|residue| residue.author_comp_id()))?;
@@ -649,13 +648,14 @@ impl<W: Write> Encoder<'_, W> {
         for residue in residues() {
             self.u8(residue_class_code(residue.class()))?;
         }
-        self.bits(residues().map(|residue| residue.explicit_class().is_some()))?;
-        self.lists(|| residues().map(|residue| residue.atom_sites().iter().map(|id| id.raw())))?;
-        let sites = || hierarchy.atom_sites().map(|(_, site)| site);
-        self.count(hierarchy.atom_sites().len())?;
+        self.bits(residues().map(|residue| residue.class_assignment().is_explicit()))?;
+        self.lists(|| residues().map(|residue| residue.atom_sites().map(|site| site.id().raw())))?;
+        let sites = || topology.atom_sites();
+        self.count(sites().len())?;
         for site in sites() {
-            self.u32(site.atom().instance().raw())?;
-            self.u32(site.atom().atom().raw())?;
+            let atom = site.atom().id();
+            self.u32(atom.instance().raw())?;
+            self.u32(atom.atom().raw())?;
         }
         self.strings(|| sites().map(|site| site.metadata().type_symbol()))?;
         self.strings(|| sites().map(|site| site.metadata().label_asym_id()))?;

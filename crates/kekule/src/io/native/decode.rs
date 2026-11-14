@@ -45,9 +45,9 @@ use crate::structure::{
     Structure, StructureSet, TimeAxis, Velocities,
 };
 use crate::topology::{
-    AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
-    MoleculeInstanceId, RawAtomSite, RawChain, RawDefinition, RawHierarchyError, RawResidue,
-    ResidueClass, ResidueId, Topology, TopologyParts,
+    AtomSiteId, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, MoleculeClass,
+    MoleculeDefinitionId, MoleculeInstanceId, RawAtomSite, RawChain, RawDefinition,
+    RawHierarchyError, RawResidue, ResidueClass, ResidueId, Topology, TopologyParts,
 };
 use crate::units::{
     unit_with_symbol, Dimension, Quantity, Unit, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_UNIT,
@@ -1085,7 +1085,7 @@ impl<R: Read> Decoder<'_, R> {
         *properties.chains_mut() = self.table(chain_count)?;
         *properties.residues_mut() = self.table(residue_count)?;
         *properties.atom_sites_mut() = self.table(site_count)?;
-        let hierarchy = Hierarchy::from_raw_parts(chains, residues, sites)
+        let hierarchy = HierarchyBuilder::from_raw_parts(chains, residues, sites)
             .map_err(|error| self.hierarchy_error(error))?;
         Topology::from_parts(TopologyParts {
             definitions,

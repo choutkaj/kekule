@@ -5,8 +5,8 @@ use crate::diagnostics::{AtomField, FormatError};
 use crate::io::macromolecular::{EntityKind, StructureInterpretationReport};
 use crate::structure::StructureView;
 use crate::topology::{
-    AtomSite, Chain, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeInstance,
-    MoleculeInstanceId, Residue, ResidueClass, Topology,
+    ChainView, InstanceAtomId, MoleculeClass, MoleculeInstance, MoleculeInstanceId, ResidueClass,
+    ResidueView, Topology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -140,11 +140,11 @@ struct AsymIds {
 impl AsymIds {
     fn new(structure: StructureView<'_>) -> Result<Self, FormatError> {
         let mut reserved = BTreeSet::new();
-        for (chain_id, chain) in structure.topology().hierarchy().chains() {
+        for chain in structure.topology().chains() {
             if chain.label_id().is_empty() {
                 return Err(invalid_structure(format!(
                     "{} has an empty label ID.",
-                    crate::diagnostics::Capitalized(chain_id)
+                    crate::diagnostics::Capitalized(chain.id())
                 )));
             }
             reserved.insert(chain.label_id().to_owned());
@@ -175,20 +175,19 @@ pub(super) fn generic_entity_plan(
     structure: StructureView<'_>,
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<EntityPlan, FormatError> {
-    let hierarchy = structure.topology().hierarchy();
     let mut asym_ids = AsymIds::new(structure)?;
     let mut entities = Vec::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
 
-    for (_, chain) in hierarchy.chains() {
-        let segments = chain_segments(hierarchy, chain, |residue, sites| {
+    for chain in structure.topology().chains() {
+        let segments = chain_segments(chain, |residue, sites| {
             // Canonical classes describe molecules; a residue that a polymer
             // holds by a bond may still be an entity of another kind. Stated
             // classifications hold as given.
             let molecule_kinds = sites
                 .iter()
-                .filter_map(|site| classifications.get(&site.atom().instance()).copied())
+                .filter_map(|atom| classifications.get(&atom.instance()).copied())
                 .map(|molecule| {
                     if molecule.canonical {
                         residue_entity_kind(molecule.kind, residue.class())
@@ -201,7 +200,7 @@ pub(super) fn generic_entity_plan(
                 .into_iter()
                 .collect::<Vec<_>>();
             let kind = match molecule_kinds.as_slice() {
-                [kind] => entity_kind_from_source(sites[0].atom().instance(), kind)?,
+                [kind] => entity_kind_from_source(sites[0].instance(), kind)?,
                 _ => {
                     return Err(fail(
                         MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
@@ -330,20 +329,20 @@ fn report_entity_plan(
         }
     }
 
-    let hierarchy = structure.topology().hierarchy();
     let mut entities = Vec::new();
     let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
     let mut generated_serial = 1usize;
-    for (_, chain) in hierarchy.chains() {
-        let segments = chain_segments(hierarchy, chain, |_, sites| {
+    for chain in structure.topology().chains() {
+        let segments = chain_segments(chain, |_, sites| {
             let source_atoms = sites
                 .iter()
-                .map(|site| {
-                    provenance.get(&site.atom()).copied().ok_or_else(|| {
-                        fail(MmcifWriteErrorKind::MissingAtomProvenance(site.atom()))
-                    })
+                .map(|atom| {
+                    provenance
+                        .get(atom)
+                        .copied()
+                        .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomProvenance(*atom)))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             for atom in &source_atoms {
@@ -444,11 +443,12 @@ fn report_entity_plan(
     })
 }
 
-/// The atom sites of one hierarchy chain that become one label asym.
-struct ChainSegment<'h> {
+/// The atoms of the atom sites of one hierarchy chain that become one label
+/// asym.
+struct ChainSegment {
     kind: AssignedEntityKind,
     source_entity_id: Option<String>,
-    sites: Vec<AtomSite<'h>>,
+    sites: Vec<InstanceAtomId>,
 }
 
 /// Splits a chain into label asyms, one per entity instance, in residue
@@ -459,41 +459,22 @@ struct ChainSegment<'h> {
 /// residue is an instance of its own. A chain the source names as one asym
 /// stays one, so residues it would split are conflicting classifications.
 fn chain_segments<'h>(
-    hierarchy: &'h Hierarchy,
-    chain: &'h Chain,
+    chain: ChainView<'h>,
     mut classify: impl FnMut(
-        Residue<'h>,
-        &[AtomSite<'h>],
+        ResidueView<'h>,
+        &[InstanceAtomId],
     ) -> Result<(AssignedEntityKind, Option<String>), FormatError>,
-) -> Result<Vec<ChainSegment<'h>>, FormatError> {
-    let mut segments = Vec::<ChainSegment<'h>>::new();
-    let source_asym = chain.residues().iter().any(|residue| {
-        hierarchy
-            .residue(*residue)
-            .expect("published hierarchy chain references a live residue")
+) -> Result<Vec<ChainSegment>, FormatError> {
+    let mut segments = Vec::<ChainSegment>::new();
+    let source_asym = chain.residues().any(|residue| {
+        residue
             .atom_sites()
-            .iter()
-            .any(|site| {
-                hierarchy
-                    .atom_site(*site)
-                    .expect("published hierarchy residue references a live atom site")
-                    .metadata()
-                    .label_asym_id
-                    .is_some()
-            })
+            .any(|site| site.metadata().label_asym_id.is_some())
     });
     for residue in chain.residues() {
-        let residue = hierarchy
-            .residue(*residue)
-            .expect("published hierarchy chain references a live residue");
         let sites = residue
             .atom_sites()
-            .iter()
-            .map(|site| {
-                hierarchy
-                    .atom_site(*site)
-                    .expect("published hierarchy residue references a live atom site")
-            })
+            .map(|site| site.atom().id())
             .collect::<Vec<_>>();
         if sites.is_empty() {
             continue;
@@ -542,11 +523,11 @@ fn chain_segments<'h>(
 
 /// Pairs each segment with its label asym ID. The first keeps the chain's
 /// asym ID; the others extend it with a serial no other asym uses.
-fn segment_asym_ids<'h>(
+fn segment_asym_ids(
     label: &str,
-    segments: Vec<ChainSegment<'h>>,
+    segments: Vec<ChainSegment>,
     reserved_asym_ids: &mut BTreeSet<String>,
-) -> Vec<(String, ChainSegment<'h>)> {
+) -> Vec<(String, ChainSegment)> {
     let mut serial = 2usize;
     segments
         .into_iter()
@@ -568,12 +549,11 @@ fn segment_asym_ids<'h>(
 
 fn assign_sites(
     atoms: &mut BTreeMap<InstanceAtomId, AtomEntityAssignment>,
-    segment: &ChainSegment<'_>,
+    segment: &ChainSegment,
     entity_id: &str,
     asym_id: &str,
 ) -> Result<(), FormatError> {
-    for site in &segment.sites {
-        let atom = site.atom();
+    for &atom in &segment.sites {
         if atoms
             .insert(
                 atom,

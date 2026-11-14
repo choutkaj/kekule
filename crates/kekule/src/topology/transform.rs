@@ -186,24 +186,20 @@ impl Topology {
                 .expect("validated atom selection references a live dense atom")]
         }))?;
         let hierarchy_projection =
-            copy_filtered_hierarchy(this, builder.hierarchy_mut().storage_mut(), &atom_targets)?;
+            copy_filtered_hierarchy(this, builder.hierarchy_mut(), &atom_targets)?;
         for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {
             let residue = this
-                .hierarchy()
-                .require_residue(ResidueId::new(source_index as u32))?;
-            let complete = residue.atom_sites().iter().all(|site| {
-                let atom = this
-                    .hierarchy()
-                    .atom_site(*site)
-                    .expect("published residue references a live atom site")
-                    .atom();
-                atom_targets.contains_key(&atom)
-            });
+                .residue(ResidueId::new(source_index as u32))
+                .expect("projected residues are source residues");
+            let complete = residue
+                .atom_sites()
+                .all(|site| atom_targets.contains_key(&site.atom().id()));
             if complete {
+                let assignment = residue.class_assignment();
                 builder.preserve_residue_class(
                     ResidueId::new(target_index as u32),
-                    residue.class(),
-                    residue.explicit_class().is_some(),
+                    assignment.class(),
+                    assignment.is_explicit(),
                 )?;
             }
         }
@@ -267,28 +263,17 @@ struct HierarchyProjection {
 
 fn copy_filtered_hierarchy(
     source: &Topology,
-    target: &mut super::Hierarchy,
+    target: &mut super::HierarchyBuilder,
     atom_targets: &BTreeMap<InstanceAtomId, InstanceAtomId>,
 ) -> Result<HierarchyProjection, HierarchyError> {
     let mut projection = HierarchyProjection::default();
-    for (source_chain_id, source_chain) in source.hierarchy().chains() {
+    for source_chain in source.chains() {
         let retained_residues = source_chain
             .residues()
-            .iter()
-            .map(|id| {
-                source
-                    .hierarchy()
-                    .residue(*id)
-                    .expect("published hierarchy chain references a live residue")
-            })
             .filter(|residue| {
-                residue.atom_sites().iter().any(|site| {
-                    source
-                        .hierarchy()
-                        .atom_site(*site)
-                        .map(|site| atom_targets.contains_key(&site.atom()))
-                        .expect("published hierarchy residue references a live atom site")
-                })
+                residue
+                    .atom_sites()
+                    .any(|site| atom_targets.contains_key(&site.atom().id()))
             })
             .collect::<Vec<_>>();
         if retained_residues.is_empty() {
@@ -298,7 +283,7 @@ fn copy_filtered_hierarchy(
             source_chain.label_id().to_owned(),
             source_chain.author_id().map(str::to_owned),
         )?;
-        projection.chains.push(source_chain_id.index());
+        projection.chains.push(source_chain.id().index());
         for source_residue in retained_residues {
             let residue = target.add_residue(
                 chain,
@@ -313,15 +298,14 @@ fn copy_filtered_hierarchy(
                 source_residue.label_comp_id().map(str::to_owned),
                 source_residue.author_comp_id().map(str::to_owned),
             )?;
-            for source_site_id in source_residue.atom_sites() {
-                let source_site = source.hierarchy().require_atom_site(*source_site_id)?;
-                let Some(target_atom) = atom_targets.get(&source_site.atom()).copied() else {
+            for source_site in source_residue.atom_sites() {
+                let Some(target_atom) = atom_targets.get(&source_site.atom().id()).copied() else {
                     continue;
                 };
                 target.add_shared_atom_site(
                     residue,
                     target_atom,
-                    &source_site.shared_metadata(),
+                    &source.hierarchy().shared_site_metadata(source_site.id()),
                 )?;
                 projection.atom_sites.push(source_site.id().index());
             }
