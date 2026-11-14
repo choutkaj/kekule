@@ -106,8 +106,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
-      # Compares every publishable crate with its latest crates.io release.
+      # Compares every publishable crate with its latest crates.io release,
+      # judged as the next minor release. Under 0.x a minor release may
+      # break the API, so breaking changes pass until 1.0; from 1.0 they
+      # fail.
       - uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          release-type: minor
 
   windows:
     name: Windows checks
