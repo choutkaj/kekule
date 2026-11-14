@@ -139,11 +139,8 @@ fn check_selection(
 ///
 /// # Errors
 ///
-/// - [`AlignmentError::TopologyMismatch`] or
-///   [`AlignmentError::TopologyMismatch`] when a selection's views or
-///   the selection itself do not share one topology layout, and
-///   [`AlignmentError::Correspondence`] when a correspondence belongs to other
-///   topologies.
+/// - [`AlignmentError::TopologyMismatch`] when a selection's views, the
+///   selection itself or a correspondence do not share one topology layout.
 /// - [`AlignmentError::WeightCountMismatch`],
 ///   [`AlignmentError::NonFiniteWeight`], or
 ///   [`AlignmentError::NonPositiveWeight`] for invalid explicit weights.
@@ -173,11 +170,8 @@ pub fn fit<'a>(
 ///
 /// # Errors
 ///
-/// - [`AlignmentError::TopologyMismatch`] or
-///   [`AlignmentError::TopologyMismatch`] when a selection's views or
-///   the selection itself do not share one topology layout, and
-///   [`AlignmentError::Correspondence`] when a correspondence belongs to other
-///   topologies.
+/// - [`AlignmentError::TopologyMismatch`] when a selection's views, the
+///   selection itself or a correspondence do not share one topology layout.
 /// - [`AlignmentError::WeightCountMismatch`],
 ///   [`AlignmentError::NonFiniteWeight`], or
 ///   [`AlignmentError::NonPositiveWeight`] for invalid explicit weights.

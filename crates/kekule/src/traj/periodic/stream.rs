@@ -64,9 +64,8 @@ impl MoleculeImager {
     ///
     /// # Errors
     ///
-    /// Returns [`PeriodicError::TopologyMismatch`],
-    /// [`PeriodicError::EmptyAnchors`] or [`PeriodicError::TopologyMismatch`]
-    /// for mismatched inputs, and otherwise the per-frame errors of
+    /// Returns [`PeriodicError::TopologyMismatch`] or
+    /// [`PeriodicError::EmptyAnchors`] for mismatched inputs, and otherwise the per-frame errors of
     /// [`super::image_molecules`]. On error the buffer is unchanged.
     pub fn image(
         &self,
