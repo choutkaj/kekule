@@ -188,6 +188,16 @@ pub enum StructureSetError {
     },
     /// A temperature is not finite and positive.
     InvalidTemperature,
+    /// A Boltzmann population is too small for a finite log weight: the
+    /// state's energy lies so far above the lowest, relative to the thermal
+    /// energy of
+    /// [`DistributionMut::assign_boltzmann_populations`](crate::structure::DistributionMut::assign_boltzmann_populations),
+    /// that its population underflows even in log space. A higher
+    /// temperature, or leaving the state out with `select_states`, avoids it.
+    UnrepresentablePopulation {
+        /// The index of the state.
+        state: usize,
+    },
     /// An energy window is not finite and nonnegative.
     InvalidEnergyWindow,
     /// A population fraction is not in `(0, 1]`.
@@ -311,6 +321,10 @@ impl fmt::Display for StructureSetError {
             Self::InvalidTemperature => {
                 formatter.write_str("The temperature is not finite and positive.")
             }
+            Self::UnrepresentablePopulation { state } => write!(
+                formatter,
+                "The Boltzmann population of state {state} is too small to represent at this temperature. Raise the temperature."
+            ),
             Self::InvalidEnergyWindow => {
                 formatter.write_str("The energy window is not finite and nonnegative.")
             }

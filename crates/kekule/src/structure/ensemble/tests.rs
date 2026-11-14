@@ -136,6 +136,13 @@ fn effective_sample_size_is_kish() -> Result<(), StructureSetError> {
     let equal = Distribution::new(Members::All, Partition::one_state(5))?
         .with_log_weights(vec![-3.0; 5])?;
     assert_close(equal.effective_sample_size()?, 5.0);
+    // A common shift too large for the unshifted sums to stay finite or
+    // exact leaves the count unchanged.
+    for offset in [1.0e16, 1.0e308, -1.0e308] {
+        let shifted = Distribution::new(Members::All, Partition::one_state(2))?
+            .with_log_weights(vec![offset; 2])?;
+        assert_eq!(shifted.effective_sample_size()?, 2.0);
+    }
     Ok(())
 }
 
@@ -256,6 +263,37 @@ fn a_remote_state_keeps_a_finite_log_population() -> Result<(), StructureSetErro
         ensemble.distribution().state_probabilities()?,
         vec![1.0, 0.0]
     );
+    Ok(())
+}
+
+#[test]
+fn an_unrepresentable_population_is_refused() -> Result<(), StructureSetError> {
+    // 100 kJ/mol above the ground state at 10⁻³⁰⁸ K: E/RT ≈ 10³¹², beyond
+    // any finite log weight.
+    let states = vec![
+        State::new()
+            .with_energy(Quantity::new(0.0, KILOJOULE_PER_MOLE))
+            .unwrap(),
+        State::new()
+            .with_energy(Quantity::new(100.0, KILOJOULE_PER_MOLE))
+            .unwrap(),
+    ];
+    let mut ensemble = Ensemble::new(
+        set_of(2),
+        Distribution::new(Members::All, Partition::state_per_sample(2))?
+            .with_states(states)?
+            .with_log_weights(vec![0.0, 1.0])?,
+    )?;
+    assert_eq!(
+        ensemble
+            .distribution_mut()
+            .assign_boltzmann_populations(Quantity::new(1.0e-308, KELVIN)),
+        Err(StructureSetError::UnrepresentablePopulation { state: 1 })
+    );
+    // Failure changes nothing.
+    let distribution = ensemble.distribution();
+    assert_eq!(distribution.log_weights(), Some(&[0.0, 1.0][..]));
+    assert!(distribution.temperature().is_none());
     Ok(())
 }
 

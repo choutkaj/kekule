@@ -1409,6 +1409,10 @@ fn every_error_reads_as_a_sentence() {
             "The temperature is not finite and positive.",
         ),
         (
+            E::UnrepresentablePopulation { state: 1 },
+            "The Boltzmann population of state 1 is too small to represent at this temperature. Raise the temperature.",
+        ),
+        (
             E::InvalidEnergyWindow,
             "The energy window is not finite and nonnegative.",
         ),

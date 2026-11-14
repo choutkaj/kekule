@@ -389,8 +389,15 @@ impl Distribution {
         let Some(log_weights) = &self.log_weights else {
             return Ok(self.sample_count() as f64);
         };
-        let total = log_sum_exp(log_weights.iter().copied());
-        let squares = log_sum_exp(log_weights.iter().map(|log_weight| 2.0 * log_weight));
+        // Shifted by the largest log weight, the ratio is unchanged and the
+        // largest term is one, so neither sum overflows or cancels.
+        let maximum = log_weights
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        let shifted = log_weights.iter().map(|log_weight| log_weight - maximum);
+        let total = log_sum_exp(shifted.clone());
+        let squares = log_sum_exp(shifted.map(|log_weight| 2.0 * log_weight));
         Ok((2.0 * total - squares).exp())
     }
 
@@ -1015,8 +1022,10 @@ impl DistributionMut<'_> {
     ///
     /// [`StructureSetError::InvalidTemperature`] and
     /// [`StructureSetError::Unit`] for a temperature that is not finite and
-    /// positive, and `Missing(StateEnergies)` when a state has no energy.
-    /// Failure changes nothing.
+    /// positive, `Missing(StateEnergies)` when a state has no energy, and
+    /// [`StructureSetError::UnrepresentablePopulation`] when a state lies so
+    /// far above the lowest at this temperature that its log weights are not
+    /// finite. Failure changes nothing.
     pub fn assign_boltzmann_populations(
         &mut self,
         temperature: Quantity<f64>,
@@ -1039,11 +1048,19 @@ impl DistributionMut<'_> {
             .iter()
             .enumerate()
             .map(|(position, state)| {
-                distribution.sample_log_weight(position) - populations[*state] + targets[*state]
-                    - target_total
+                (distribution.sample_log_weight(position) - populations[*state])
+                    + (targets[*state] - target_total)
                     + total
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if let Some(position) = log_weights
+            .iter()
+            .position(|log_weight| !log_weight.is_finite())
+        {
+            return Err(StructureSetError::UnrepresentablePopulation {
+                state: distribution.partition.assignments()[position],
+            });
+        }
         distribution.log_weights = Some(log_weights);
         distribution.temperature = Some(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT));
         Ok(())

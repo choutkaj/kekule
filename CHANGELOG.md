@@ -950,9 +950,11 @@ are marked **Breaking:**.
   `normalize_log_weights` replace their weight counterparts, and
   `StateView::log_population` replaces `population`. Errors follow:
   `NotSample`, `LogWeightCountMismatch`, `NonFiniteLogWeight` and
-  `LogWeightRequired`. RMSF, contact occupancy and clustering on a
-  `StructureSet` observe every geometry with weight one; the same methods on
-  an `Ensemble` observe its samples by probability, and
+  `LogWeightRequired`, and `UnrepresentablePopulation` refuses Boltzmann
+  populations too small for a finite log weight. RMSF, contact occupancy
+  and clustering on a `StructureSet` observe every geometry with weight
+  one; the same methods on an `Ensemble` observe its samples by
+  probability, and
   `SampleObservations::weighted` and `weighted_of` read an ensemble.
 - **Breaking:** Interchange formats carry no distribution. SDF no longer
   reads or writes `kekule.weight`, `kekule.state`, `kekule.representative`,
