@@ -603,10 +603,12 @@ population. Pairwise distances are a separate `DistanceMatrix` result. See
 [clustering](crates/kekule/src/clustering.rs).
 
 Superposition and RMSD are methods of structure sets, against one of the set's
-geometries or an independent view, and act on every geometry. Geometric
-correspondence explicitly pairs selected atoms from two exact snapshots, one to
-one, without claiming chemical equivalence; pairing by hierarchy labels reads
-one namespace and reports unpaired atoms. Symmetry-corrected alignment keeps
+geometries or an independent view, and act on every geometry. RMSD reads a set
+of any storage through one loop over `StructureSetRead`; superposition changes
+a set in memory, or the set of an ensemble without touching its distribution.
+Geometric correspondence explicitly pairs selected atoms from two exact
+snapshots, one to one, without claiming chemical equivalence; pairing by
+hierarchy labels reads one namespace and reports unpaired atoms. Symmetry-corrected alignment keeps
 the smallest RMSD over the permutations of equivalent atoms, found by an exact,
 bounded automorphism search that never exchanges molecule instances; exceeding
 a bound is an error, never a truncated result. See

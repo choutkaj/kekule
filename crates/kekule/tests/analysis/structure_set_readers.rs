@@ -465,6 +465,23 @@ fn rmsd_of_listed_geometries_equals_the_set_in_memory() {
     let held = memory.rmsd(3, &fit, options).unwrap();
     let held_aligned = memory.aligned_rmsd(3, &fit, &measured, aligned).unwrap();
     let held_structure = memory.rmsd(&structure, &fit, options).unwrap();
+    // A set read from a file measures every geometry as the set in memory.
+    assert_eq!(
+        bits(file.rmsd(3, &fit, options).unwrap().value()),
+        bits(held.value())
+    );
+    assert_eq!(
+        bits(
+            file.aligned_rmsd(3, &fit, &measured, aligned)
+                .unwrap()
+                .value()
+        ),
+        bits(held_aligned.value())
+    );
+    assert!(matches!(
+        file.rmsd(10, &fit, options),
+        Err(AlignmentError::ReferenceOutOfRange { .. })
+    ));
     let listed = [9, 0, 3, 3, 6];
     for reader in [&file as &dyn StructureSetRead, &memory] {
         let read = alignment::geometry_rmsd(reader, 0..10, 3, &fit, options).unwrap();

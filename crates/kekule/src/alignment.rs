@@ -16,10 +16,12 @@
 //! - `superpose`, `rmsd`, and `aligned_rmsd` on a
 //!   [`StructureSet`](crate::structure::StructureSet::superpose) apply the same
 //!   kernels to every geometry against a [`Reference`]: a geometry of the set
-//!   or any external view.
+//!   or any external view. `rmsd` and `aligned_rmsd` measure a set of any
+//!   storage, such as a set read from a file; `superpose` changes a set in
+//!   memory or an [`Ensemble`](crate::structure::Ensemble::superpose) over one.
 //! - [`geometry_rmsd`] and [`geometry_aligned_rmsd`] measure listed geometries of
-//!   any [`StructureSetRead`](crate::structure::StructureSetRead), such as a set read
-//!   from a file, one at a time.
+//!   any [`StructureSetRead`](crate::structure::StructureSetRead) one at a time,
+//!   through the loop the set methods use.
 //!
 //! Each takes its options, [`AlignmentOptions`] or [`AlignedRmsdOptions`], as
 //! a parameter. The returned transform maps moving coordinates into reference
