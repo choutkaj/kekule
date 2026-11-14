@@ -1,4 +1,4 @@
-use super::*;
+use crate::algorithms::aromaticity::*;
 use crate::diagnostics::Resource;
 
 fn neighbors_for_edges(size: usize, edges: &[(usize, usize)]) -> Vec<Vec<usize>> {

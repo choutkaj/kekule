@@ -1,4 +1,4 @@
-use super::*;
+use crate::alignment::*;
 use crate::math::Point3;
 use crate::structure::{Positions, Structure};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex};

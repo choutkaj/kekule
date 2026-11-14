@@ -1,7 +1,7 @@
 use crate::diagnostics::{LimitExceeded, Resource};
 use std::sync::Arc;
 
-use super::*;
+use crate::alignment::*;
 use crate::smiles;
 use crate::topology::AtomSelection;
 use crate::topology::Topology;

@@ -86,11 +86,7 @@ mod rigid;
 mod symmetry;
 
 #[cfg(test)]
-mod correspondence_label_tests;
-#[cfg(test)]
-mod correspondence_tests;
-#[cfg(test)]
-mod symmetry_tests;
+mod tests;
 
 pub use collection::{
     geometry_aligned_rmsd, geometry_aligned_rmsd_with, geometry_rmsd, geometry_rmsd_with,

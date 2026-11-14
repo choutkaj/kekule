@@ -1,4 +1,4 @@
-use super::*;
+use crate::alignment::*;
 use crate::diagnostics::TopologyMismatch;
 use crate::math::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
