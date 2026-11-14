@@ -4,8 +4,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::structure::owner::sealed::Sealed;
 use crate::structure::state::{is_bound, validate_binding};
+use crate::structure::view::sealed::Sealed;
 use crate::structure::{AsStructureView, GeometryError, Structure, StructureKind, StructureView};
 use crate::topology::Topology;
 

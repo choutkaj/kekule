@@ -1,13 +1,128 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
 };
 
-use super::{
-    codec_context, io_context, FormatDetectionEvidence, TrajectoryFormatHint, TrajectoryIoLimits,
-};
+use super::{codec_context, io_context, TrajectoryIoLimits};
+
+/// Explicit selection or bounded automatic trajectory format detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TrajectoryFormatHint {
+    /// Detect the format from a conclusive content signature, checked against
+    /// the file extension when it names a known format.
+    Auto,
+    /// Use this format without inspecting the signature or extension.
+    Explicit(TrajectoryFormat),
+}
+
+/// Evidence used to select a trajectory format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FormatDetectionEvidence {
+    /// The caller named the format with [`TrajectoryFormatHint::Explicit`].
+    ExplicitHint,
+    /// The content prefix carries a conclusive format signature.
+    Signature,
+    /// The file extension names the format.
+    Extension,
+    /// The signature and the extension select the same format.
+    ExtensionSignatureAgreement,
+    /// The path has no extension naming a supported format, so the signature
+    /// alone selected it.
+    MissingExtension,
+}
+
+/// Bounded result of format detection without opening a codec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrajectoryFormatDetection {
+    format: TrajectoryFormat,
+    evidence: Vec<FormatDetectionEvidence>,
+}
+
+impl TrajectoryFormatDetection {
+    /// The selected format.
+    pub const fn format(&self) -> TrajectoryFormat {
+        self.format
+    }
+
+    /// Why the format was selected, in the order the checks ran.
+    pub fn evidence(&self) -> &[FormatDetectionEvidence] {
+        &self.evidence
+    }
+}
+
+/// Detects a trajectory format from a bounded prefix and an optional filename.
+///
+/// The reader is restored to its original stream position before this function
+/// returns. Automatic detection never trusts a known extension without a
+/// conclusive signature. `source_name` supplies the extension and the
+/// diagnostic source label; nothing is opened.
+///
+/// # Errors
+///
+/// Returns [`TrajectoryIoErrorKind::UnknownFormat`] when automatic detection
+/// finds no conclusive signature, [`TrajectoryIoErrorKind::FormatMismatch`]
+/// when the signature and a known extension disagree,
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`] for a gzip, xz or bzip2
+/// wrapper, [`TrajectoryIoErrorKind::LimitExceeded`] when
+/// [`TrajectoryIoLimits::max_detection_bytes`] is zero or exceeds
+/// [`TrajectoryIoLimits::max_scratch_bytes`], and
+/// [`TrajectoryIoErrorKind::Io`] when reading or seeking fails. The wrapper and
+/// limit checks apply to explicit hints too.
+///
+/// [`TrajectoryIoErrorKind::UnknownFormat`]: crate::traj::TrajectoryIoErrorKind::UnknownFormat
+/// [`TrajectoryIoErrorKind::FormatMismatch`]: crate::traj::TrajectoryIoErrorKind::FormatMismatch
+/// [`TrajectoryIoErrorKind::UnsupportedVariant`]: crate::traj::TrajectoryIoErrorKind::UnsupportedVariant
+/// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::traj::TrajectoryIoErrorKind::LimitExceeded
+/// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
+///
+/// # Examples
+///
+/// ```
+/// use std::io::Cursor;
+///
+/// use kekule::traj::io::{
+///     detect_trajectory_format, FormatDetectionEvidence, TrajectoryFormatHint,
+///     TrajectoryIoLimits,
+/// };
+/// use kekule::traj::TrajectoryFormat;
+///
+/// let mut content = Cursor::new(b"1\ncomment\nO 0.0 0.0 0.0\n".to_vec());
+/// let detection = detect_trajectory_format(
+///     &mut content,
+///     "water.xyz",
+///     TrajectoryFormatHint::Auto,
+///     &TrajectoryIoLimits::default(),
+/// )?;
+/// assert_eq!(detection.format(), TrajectoryFormat::Xyz);
+/// assert_eq!(
+///     detection.evidence(),
+///     [
+///         FormatDetectionEvidence::Signature,
+///         FormatDetectionEvidence::Extension,
+///         FormatDetectionEvidence::ExtensionSignatureAgreement,
+///     ]
+/// );
+/// assert_eq!(content.position(), 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn detect_trajectory_format<R: io::Read + io::Seek>(
+    reader: &mut R,
+    source_name: impl AsRef<Path>,
+    hint: TrajectoryFormatHint,
+    limits: &TrajectoryIoLimits,
+) -> Result<TrajectoryFormatDetection, TrajectoryIoError> {
+    let source_name = source_name.as_ref();
+    let source_label = source_name.display().to_string();
+    let result = select_format(reader, source_name, hint, limits, &source_label, false)?;
+    Ok(TrajectoryFormatDetection {
+        format: result.format,
+        evidence: result.evidence,
+    })
+}
 
 pub(crate) struct DetectionResult {
     pub(crate) format: TrajectoryFormat,

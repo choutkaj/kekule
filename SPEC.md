@@ -371,7 +371,7 @@ distance, angle, and dihedral edits bind references and moving selections to a
 layout, never to cached coordinates, and perform no ring closure, relaxation,
 or periodic imaging. See
 [positions](crates/kekule/src/structure/positions.rs),
-[structures](crates/kekule/src/structure/owner.rs),
+[structures](crates/kekule/src/structure/owned.rs),
 [measurements](crates/kekule/src/structure/measure.rs), and the
 [geometry editing contract](crates/kekule/src/structure/geometry_edit.rs).
 

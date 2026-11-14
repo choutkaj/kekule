@@ -177,6 +177,7 @@ mod frame_state;
 mod indexed_file;
 mod limits;
 mod metadata;
+mod options;
 mod shared_file;
 pub mod trr;
 mod util;
@@ -184,6 +185,10 @@ pub mod xtc;
 pub mod xyz;
 
 pub use append::{append_trajectory, KeepFrames, TrajectoryAppendOptions, TrajectoryAppendReport};
+pub use detect::{
+    detect_trajectory_format, FormatDetectionEvidence, TrajectoryFormatDetection,
+    TrajectoryFormatHint,
+};
 pub use file_reader::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory,
     read_structure_set, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
@@ -200,10 +205,10 @@ pub use indexed_file::{
 };
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
-    detect_trajectory_format, CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata,
-    FormatDetectionEvidence, RandomAccessCapability, ScalarPrecision, TrajectoryFieldAvailability,
-    TrajectoryFormatDetection, TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryOpenReport,
+    CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata, RandomAccessCapability,
+    ScalarPrecision, TrajectoryFieldAvailability, TrajectoryOpenReport,
 };
+pub use options::TrajectoryOpenOptions;
 
 pub(crate) use frame_index::{index_mismatch, FrameOffsets, FrameStamp, IndexBuildControl};
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
