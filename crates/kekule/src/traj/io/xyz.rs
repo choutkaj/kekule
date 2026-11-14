@@ -51,7 +51,9 @@
 use crate::diagnostics::{
     GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
-use crate::io::write_policy::{record_multi_model_structure_set, Omissions};
+use crate::io::write_policy::{
+    record_multi_model_structure_set, Carries, Omissions, StatePolicies,
+};
 use crate::traj::FrameView;
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
@@ -67,11 +69,35 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
-use super::frame_state::{record, site_fields, unrepresentable_frame_state};
+use super::frame_state::{check_frame_state, record, writer_field_error};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
+use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
     require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
+};
+
+/// What an XYZ frame carries: positions alone.
+pub(super) const FIELDS: TrajectoryFieldAvailability = TrajectoryFieldAvailability {
+    positions: FieldAvailability::Required,
+    cell: FieldAvailability::Absent,
+    velocities: FieldAvailability::Absent,
+    forces: FieldAvailability::Absent,
+    time: FieldAvailability::Absent,
+    step: FieldAvailability::Absent,
+    properties: FieldAvailability::Absent,
+};
+
+/// What [`XyzWriter::write_structure_set`] checks of each geometry: its cell
+/// and properties. Its set checks the geometries' other state.
+const GEOMETRY_CARRIES: Carries = Carries {
+    place: true,
+    time: true,
+    step: true,
+    velocities: true,
+    forces: true,
+    sites: true,
+    ..Carries::POSITIONS
 };
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
@@ -147,9 +173,8 @@ pub struct XyzWriteOptions {
     decimal_places: usize,
     comment: String,
     cell: UnrepresentablePolicy,
-    frame_metadata: UnrepresentablePolicy,
-    frame_properties: UnrepresentablePolicy,
     geometry_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
 }
 
 impl Default for XyzWriteOptions {
@@ -159,9 +184,8 @@ impl Default for XyzWriteOptions {
             decimal_places: 8,
             comment: "written by kekule".into(),
             cell: UnrepresentablePolicy::Fail,
-            frame_metadata: UnrepresentablePolicy::Fail,
-            frame_properties: UnrepresentablePolicy::Fail,
             geometry_metadata: UnrepresentablePolicy::Fail,
+            properties: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -195,27 +219,17 @@ impl XyzWriteOptions {
         self
     }
 
-    /// Sets [`Self::frame_metadata`].
-    #[must_use]
-    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
-        self.frame_metadata = frame_metadata;
-        self
-    }
-
-    /// Sets [`Self::frame_properties`].
-    #[must_use]
-    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
-        self.frame_properties = frame_properties;
-        self
-    }
-
     /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_geometry_metadata(
-        mut self,
-        geometry_metadata: UnrepresentablePolicy,
-    ) -> Self {
-        self.geometry_metadata = geometry_metadata;
+    pub const fn with_geometry_metadata(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.geometry_metadata = policy;
+        self
+    }
+
+    /// Sets [`Self::properties`].
+    #[must_use]
+    pub const fn with_properties(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.properties = policy;
         self
     }
 
@@ -235,42 +249,38 @@ impl XyzWriteOptions {
         &self.comment
     }
 
-    /// The periodic cell of a frame or geometry, which XYZ cannot carry: by default a structure with a cell fails to write;
-    /// [`UnrepresentablePolicy::Omit`] writes its positions and reports
-    /// [`WriteOmission::Cell`].
+    /// The periodic cell of a frame or geometry, which XYZ cannot carry; by
+    /// default a frame or geometry with a cell fails to write.
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
     }
 
-    /// A trajectory frame's velocities, forces, time, step, occupancies, and
-    /// B-factors, which XYZ cannot carry: by default a frame with any of them
-    /// fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
-    /// and reports a [`WriteOmission::GeometryState`],
-    /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
-    /// each kind left out. [`XyzWriter::write_structure_set`] leaves a geometry's
-    /// occupancies and B-factors out under every policy.
-    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
-        self.frame_metadata
-    }
-
-    /// A frame's or geometry's atom, bond, and own properties, which XYZ cannot
-    /// carry: by default a frame or geometry with any of them fails to write; [`UnrepresentablePolicy::Omit`] writes its positions
-    /// and reports a [`WriteOmission::GeometryState`] for each kind left
-    /// out.
-    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
-        self.frame_properties
-    }
-
-    /// The state of a structure set's geometries beyond their positions, cells,
-    /// and properties, under the rules of `kekule`'s PDB and mmCIF writers:
-    /// an XYZ file reads back as geometries without an order, so by default
-    /// [`XyzWriter::write_structure_set`] fails for a set with an order, a
-    /// time order without times or steps among them, or a geometry with
-    /// velocities or forces;
-    /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
-    /// [`WriteOmission::GeometryState`] left out.
+    /// A frame's or geometry's state beyond positions, cells, and
+    /// properties, which XYZ cannot carry: its time, step, or place on an
+    /// order, velocities, forces, occupancies, and B-factors. By default a
+    /// frame or geometry with any of them fails to write, and so does a set
+    /// with an order or a time order without times or steps among them
+    /// ([`XyzWriter::write_structure_set`], which leaves a geometry's
+    /// occupancies and B-factors out under every policy).
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
         self.geometry_metadata
+    }
+
+    /// A frame's or geometry's atom, bond, and own properties, which XYZ
+    /// cannot carry; by default a frame or geometry with any of them fails
+    /// to write.
+    pub const fn properties(&self) -> UnrepresentablePolicy {
+        self.properties
+    }
+
+    /// The policies of the shared check for a format that carries `carries`.
+    const fn state_policies(&self, carries: Carries) -> StatePolicies {
+        StatePolicies {
+            carries,
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
+        }
     }
 }
 
@@ -1310,12 +1320,10 @@ impl<W: Write> XyzWriter<W> {
     /// interpreted file, are not counted.
     ///
     /// Each frame or structure set written then adds what it left out, counted
-    /// over every frame written: cells omitted under
-    /// [`XyzWriteOptions::cell`], frame state omitted under
-    /// [`XyzWriteOptions::frame_metadata`] and
-    /// [`XyzWriteOptions::frame_properties`], geometry state omitted under
-    /// [`XyzWriteOptions::geometry_metadata`], and geometries' occupancies and
-    /// B factors. The writer writes the same text whatever it reports.
+    /// over every frame written: state omitted under
+    /// [`XyzWriteOptions::cell`], [`XyzWriteOptions::geometry_metadata`], and
+    /// [`XyzWriteOptions::properties`], and geometries' occupancies and B
+    /// factors. The writer writes the same text whatever it reports.
     pub fn report(&self) -> &WriteReport {
         &self.report
     }
@@ -1389,74 +1397,17 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        if frame.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
-            return Err(writer_field_error(
-                &self.source_label,
-                self.frame_count,
-                GeometryField::Cell,
-            ));
-        }
-        let (occupancies, b_factors) = site_fields(&frame);
-        let omitted = unrepresentable_frame_state(
-            [
-                (
-                    frame.velocities().is_some(),
-                    GeometryField::Velocities,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.forces().is_some(),
-                    GeometryField::Forces,
-                    self.options.frame_metadata,
-                ),
-                (
-                    occupancies,
-                    GeometryField::Occupancies,
-                    self.options.frame_metadata,
-                ),
-                (
-                    b_factors,
-                    GeometryField::BFactors,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.time().is_some(),
-                    GeometryField::Time,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.step().is_some(),
-                    GeometryField::Step,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.properties().atoms().has_data(),
-                    GeometryField::AtomProperties,
-                    self.options.frame_properties,
-                ),
-                (
-                    frame.properties().bonds().has_data(),
-                    GeometryField::BondProperties,
-                    self.options.frame_properties,
-                ),
-                (
-                    !frame.properties().owner().is_empty(),
-                    GeometryField::Properties,
-                    self.options.frame_properties,
-                ),
-            ],
-            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        let omitted = check_frame_state(
+            TrajectoryFormat::Xyz,
+            &self.source_label,
+            self.frame_count,
+            frame,
+            self.options.state_policies(FIELDS.carries()),
         )?;
         let factor = self.output_factor()?;
         self.check_positions(frame.positions(), factor)?;
         self.write_positions(frame.positions(), factor)?;
-        self.record(
-            [WriteOmission::Cell {
-                structures: usize::from(frame.cell().is_some()),
-            }]
-            .into_iter()
-            .chain(omitted),
-        );
+        self.record(omitted);
         Ok(())
     }
 
@@ -1486,7 +1437,7 @@ impl<W: Write> XyzWriter<W> {
     /// The whole set is checked before its first frame is written. The
     /// geometries' places, velocities, and forces follow
     /// [`XyzWriteOptions::geometry_metadata`], their atom, bond, and own
-    /// properties [`XyzWriteOptions::frame_properties`], and their cells
+    /// properties [`XyzWriteOptions::properties`], and their cells
     /// [`XyzWriteOptions::cell`]; occupancies and B factors are always left
     /// out. [`Self::report`] gains everything left out.
     ///
@@ -1526,6 +1477,7 @@ impl<W: Write> XyzWriter<W> {
         let frame = |geometry: usize| self.frame_count.saturating_add(geometry);
         if !set.properties().is_empty() {
             return Err(writer_field_error(
+                TrajectoryFormat::Xyz,
                 &self.source_label,
                 frame(0),
                 GeometryField::SetProperties,
@@ -1535,40 +1487,32 @@ impl<W: Write> XyzWriter<W> {
         let mut omitted = Vec::new();
         for (index, geometry) in set.iter().enumerate() {
             let view = geometry.as_structure_view();
-            let properties = view.properties();
-            if view.cell().is_some() && self.options.cell == UnrepresentablePolicy::Fail {
-                return Err(writer_field_error(
-                    &self.source_label,
-                    frame(index),
-                    GeometryField::Cell,
-                ));
-            }
-            let state = unrepresentable_frame_state(
-                [
-                    (
-                        properties.atoms().has_data(),
-                        GeometryField::AtomProperties,
-                        self.options.frame_properties,
-                    ),
-                    (
-                        properties.bonds().has_data(),
-                        GeometryField::BondProperties,
-                        self.options.frame_properties,
-                    ),
-                    (
-                        !properties.owner().is_empty(),
-                        GeometryField::Properties,
-                        self.options.frame_properties,
-                    ),
-                ],
-                |field| writer_field_error(&self.source_label, frame(index), field),
-            )?;
+            // The set-level check below decides about the rest.
+            let state = self
+                .options
+                .state_policies(GEOMETRY_CARRIES)
+                .check(view)
+                .map_err(|field| {
+                    writer_field_error(
+                        TrajectoryFormat::Xyz,
+                        &self.source_label,
+                        frame(index),
+                        field,
+                    )
+                })?;
             self.check_positions(view.positions(), factor)?;
             omitted.extend(state);
         }
         let mut state = Omissions::default();
         record_multi_model_structure_set(set, self.options.geometry_metadata, &mut state).map_err(
-            |(geometry, field)| writer_field_error(&self.source_label, frame(geometry - 1), field),
+            |(geometry, field)| {
+                writer_field_error(
+                    TrajectoryFormat::Xyz,
+                    &self.source_label,
+                    frame(geometry - 1),
+                    field,
+                )
+            },
         )?;
         for geometry in set {
             self.write_positions(geometry.as_structure_view().positions(), factor)?;
@@ -1579,9 +1523,6 @@ impl<W: Write> XyzWriter<W> {
                 .count()
         };
         omitted.extend([
-            WriteOmission::Cell {
-                structures: count(|view| view.cell().is_some()),
-            },
             WriteOmission::Occupancies {
                 structures: count(|view| {
                     view.occupancies()
@@ -1930,16 +1871,4 @@ fn frame_codec_error(
         .with_source_label(source_label)
         .with_frame(frame)
         .with_detail(detail)
-}
-
-fn writer_field_error(source_label: &str, frame: usize, field: GeometryField) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::UnsupportedField,
-        TrajectoryIoOperation::WriteFrame,
-        Some(TrajectoryFormat::Xyz),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_field(field)
-    .with_detail(format!("XYZ cannot store the {field}."))
 }

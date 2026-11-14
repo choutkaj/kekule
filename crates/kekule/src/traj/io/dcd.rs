@@ -6,12 +6,13 @@
 //! one step per frame on the `ISTART`/`NSAVC` sequence; time is derived from
 //! the header `DELTA` only under an explicit [`DcdTimePolicy`]. The writer
 //! rejects frame state DCD cannot carry (velocities, forces, occupancies,
-//! B-factors, times under [`DcdTimePolicy::Absent`], and properties) unless
-//! [`DcdWriteOptions::frame_metadata`] and
-//! [`DcdWriteOptions::frame_properties`] omit it, and reports what it leaves
-//! out in [`DcdWriter::report`]. Under [`DcdFrameTimingPolicy::Number`] it
-//! numbers frames whose steps or times are missing or off the header's
-//! sequence, and reports the steps and times it replaced.
+//! B-factors, times under [`DcdTimePolicy::Absent`], cells without
+//! [`DcdWriteOptions::unit_cells`], and properties) unless
+//! [`DcdWriteOptions::geometry_metadata`], [`DcdWriteOptions::cell`], and
+//! [`DcdWriteOptions::properties`] omit it, and reports what it leaves out
+//! in [`DcdWriter::report`]. Under [`FrameTimingPolicy::Number`] it numbers
+//! frames whose steps or times are missing or off the header's sequence, and
+//! reports the steps and times it replaced.
 //!
 //! # Examples
 //!
@@ -65,6 +66,7 @@ use std::sync::Arc;
 use crate::diagnostics::{
     GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
+use crate::io::write_policy::{Carries, StatePolicies};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
@@ -74,12 +76,25 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
-use super::frame_state::{record, site_fields, unrepresentable_frame_state};
+use super::frame_state::{check_frame_state, record};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
+use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
-    FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
+    FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
+};
+
+/// What a DCD frame carries: a cell when the header's unit-cell flag is
+/// set, and a time under [`DcdTimePolicy::HeaderDelta`].
+pub(super) const FIELDS: TrajectoryFieldAvailability = TrajectoryFieldAvailability {
+    positions: FieldAvailability::Required,
+    cell: FieldAvailability::Optional,
+    velocities: FieldAvailability::Absent,
+    forces: FieldAvailability::Absent,
+    time: FieldAvailability::Optional,
+    step: FieldAvailability::Required,
+    properties: FieldAvailability::Absent,
 };
 
 const HEADER_BYTES: usize = 84;
@@ -161,43 +176,6 @@ pub enum DcdTimePolicy {
     },
 }
 
-/// Whether a DCD writer stores periodic cells.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DcdCellPolicy {
-    /// Write no unit-cell records; a frame with a cell is rejected.
-    #[default]
-    Omit,
-    /// Write one unit-cell record per frame; a frame without a cell is rejected.
-    Write,
-}
-
-/// How a DCD writer, whose frames must follow the header's
-/// `ISTART + n·NSAVC` step sequence, treats a frame whose step is missing
-/// or off that sequence, such as a frame read from XYZ or a stride of
-/// another trajectory.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DcdFrameTimingPolicy {
-    /// Frame `n` of the frames written, counted from 0, must carry step
-    /// `start_step + n × step_interval` of
-    /// [`DcdWriteOptions::with_step_sequence`], and under
-    /// [`DcdTimePolicy::HeaderDelta`] a time of that step × `DELTA`;
-    /// any other frame fails to write.
-    #[default]
-    Require,
-    /// Number the frames on the header's sequence: frame `n` is written at
-    /// step `start_step + n × step_interval` and, under
-    /// [`DcdTimePolicy::HeaderDelta`], at that step × `DELTA`. A frame
-    /// without a step or a time is given them. A frame whose own step or
-    /// time disagrees has it replaced, and [`DcdWriter::report`] counts the
-    /// frames whose steps and times were replaced as
-    /// [`WriteOmission::GeometryState`] for [`GeometryField::Step`] and
-    /// [`GeometryField::Time`]. A frame on the sequence writes as it would
-    /// under [`Self::Require`].
-    Number,
-}
-
 /// DCD reader policy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DcdReadOptions {
@@ -262,28 +240,30 @@ impl DcdReadOptions {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DcdWriteOptions {
     endian: DcdEndian,
-    cell_policy: DcdCellPolicy,
+    unit_cells: bool,
     start_step: u64,
     step_interval: u64,
     delta: f32,
     time_policy: DcdTimePolicy,
-    frame_timing: DcdFrameTimingPolicy,
-    frame_metadata: UnrepresentablePolicy,
-    frame_properties: UnrepresentablePolicy,
+    frame_timing: FrameTimingPolicy,
+    geometry_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
+    cell: UnrepresentablePolicy,
 }
 
 impl Default for DcdWriteOptions {
     fn default() -> Self {
         Self {
             endian: DcdEndian::Little,
-            cell_policy: DcdCellPolicy::Omit,
+            unit_cells: false,
             start_step: 0,
             step_interval: 1,
             delta: 1.0,
             time_policy: DcdTimePolicy::Absent,
-            frame_timing: DcdFrameTimingPolicy::Require,
-            frame_metadata: UnrepresentablePolicy::Fail,
-            frame_properties: UnrepresentablePolicy::Fail,
+            frame_timing: FrameTimingPolicy::Require,
+            geometry_metadata: UnrepresentablePolicy::Fail,
+            properties: UnrepresentablePolicy::Fail,
+            cell: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -296,20 +276,23 @@ impl DcdWriteOptions {
         self
     }
 
-    /// Includes cells in the canonical DCD orientation: `a` along positive x,
-    /// `b` in the xy plane with positive y, and `c` with positive z.
-    /// Other orientations are rejected because DCD lengths and angles cannot
-    /// preserve their relation to the stored Cartesian coordinates.
-    /// Angles are written using the unambiguous supported cosine convention.
+    /// Sets [`Self::unit_cells`].
     #[must_use]
-    pub const fn with_cell_policy(mut self, cell_policy: DcdCellPolicy) -> Self {
-        self.cell_policy = cell_policy;
+    pub const fn with_unit_cells(mut self, unit_cells: bool) -> Self {
+        self.unit_cells = unit_cells;
+        self
+    }
+
+    /// Sets [`Self::cell`].
+    #[must_use]
+    pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
+        self.cell = cell;
         self
     }
 
     /// Sets the header step sequence: frame `n` must carry step
     /// `start_step + n * step_interval`, or is numbered with it under
-    /// [`DcdFrameTimingPolicy::Number`]. Both must fit an `i32`, and the
+    /// [`FrameTimingPolicy::Number`]. Both must fit an `i32`, and the
     /// interval must be positive; [`DcdWriter::new`] checks them.
     #[must_use]
     pub const fn with_step_sequence(mut self, start_step: u64, step_interval: u64) -> Self {
@@ -351,46 +334,48 @@ impl DcdWriteOptions {
 
     /// Sets [`Self::frame_timing`].
     #[must_use]
-    pub const fn with_frame_timing(mut self, frame_timing: DcdFrameTimingPolicy) -> Self {
+    pub const fn with_frame_timing(mut self, frame_timing: FrameTimingPolicy) -> Self {
         self.frame_timing = frame_timing;
         self
     }
 
-    /// Sets [`Self::frame_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
-        self.frame_metadata = frame_metadata;
+    pub const fn with_geometry_metadata(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.geometry_metadata = policy;
         self
     }
 
-    /// Sets [`Self::frame_properties`].
+    /// Sets [`Self::properties`].
     #[must_use]
-    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
-        self.frame_properties = frame_properties;
+    pub const fn with_properties(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.properties = policy;
         self
     }
 
-    /// A trajectory frame's velocities, forces, occupancies, and B-factors,
-    /// and its time under [`DcdTimePolicy::Absent`], which DCD cannot carry:
-    /// by default a frame with any of them fails to write;
-    /// [`UnrepresentablePolicy::Omit`] writes the frame without them and
-    /// reports a [`WriteOmission::GeometryState`],
-    /// [`WriteOmission::Occupancies`], or [`WriteOmission::BFactors`] for
-    /// each kind left out (see [`DcdWriter::report`]).
-    pub const fn frame_metadata(&self) -> UnrepresentablePolicy {
-        self.frame_metadata
+    /// A frame's velocities, forces, occupancies, and B-factors, and its
+    /// time under [`DcdTimePolicy::Absent`], which DCD cannot carry; by
+    /// default a frame with any of them fails to write.
+    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// A trajectory frame's atom, bond, and frame properties, which DCD
-    /// cannot carry, under the rules of [`Self::frame_metadata`].
-    pub const fn frame_properties(&self) -> UnrepresentablePolicy {
-        self.frame_properties
+    /// A frame's atom, bond, and own properties, which DCD cannot carry; by
+    /// default a frame with any of them fails to write.
+    pub const fn properties(&self) -> UnrepresentablePolicy {
+        self.properties
+    }
+
+    /// The periodic cell of a frame written without [`Self::unit_cells`];
+    /// by default such a frame fails to write.
+    pub const fn cell(&self) -> UnrepresentablePolicy {
+        self.cell
     }
 
     /// How a frame whose step or time is missing or off the header's
-    /// sequence is written; [`DcdFrameTimingPolicy::Require`], under which
+    /// sequence is written; [`FrameTimingPolicy::Require`], under which
     /// such a frame fails, by default.
-    pub const fn frame_timing(&self) -> DcdFrameTimingPolicy {
+    pub const fn frame_timing(&self) -> FrameTimingPolicy {
         self.frame_timing
     }
 
@@ -399,9 +384,15 @@ impl DcdWriteOptions {
         self.endian
     }
 
-    /// Whether unit cells are written; [`DcdCellPolicy::Omit`] by default.
-    pub const fn cell_policy(&self) -> DcdCellPolicy {
-        self.cell_policy
+    /// Whether the header's unit-cell flag is set, so that every frame
+    /// carries a cell; `false` by default. Cells are written in the
+    /// canonical DCD orientation: `a` along positive x, `b` in the xy plane
+    /// with positive y, and `c` with positive z. Other orientations are
+    /// rejected because DCD lengths and angles cannot preserve their
+    /// relation to the stored Cartesian coordinates. Angles are written
+    /// using the unambiguous supported cosine convention.
+    pub const fn unit_cells(&self) -> bool {
+        self.unit_cells
     }
 
     /// The step of the first frame (`ISTART`); 0 by default.
@@ -420,15 +411,24 @@ impl DcdWriteOptions {
     }
 
     /// How frame times relate to `DELTA`; [`DcdTimePolicy::Absent`] by
-    /// default, under which a frame's time follows [`Self::frame_metadata`].
+    /// default, under which a frame's time follows
+    /// [`Self::geometry_metadata`].
     pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
     }
 
-    const fn writes_cells(&self) -> bool {
-        match self.cell_policy {
-            DcdCellPolicy::Omit => false,
-            DcdCellPolicy::Write => true,
+    /// The policies of the shared check: a frame's cell is carried with
+    /// unit cells, and its time under [`DcdTimePolicy::HeaderDelta`].
+    const fn state_policies(&self) -> StatePolicies {
+        StatePolicies {
+            carries: Carries {
+                cell: self.unit_cells,
+                time: matches!(self.time_policy, DcdTimePolicy::HeaderDelta { .. }),
+                ..FIELDS.carries()
+            },
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
         }
     }
 }
@@ -1839,14 +1839,15 @@ impl<W: Write + Seek> DcdWriter<W> {
             partial: false,
             finalized: false,
             axis,
-            report: WriteReport::default(),
+            report: WriteReport::empty(),
         })
     }
 
     /// The frame state the frames written so far leave out under
-    /// [`DcdWriteOptions::frame_metadata`] and `frame_properties`, and the
-    /// steps and times [`DcdFrameTimingPolicy::Number`] replaced, counted
-    /// over every frame written. DCD stores coordinates for a topology its readers receive
+    /// [`DcdWriteOptions::geometry_metadata`], [`DcdWriteOptions::cell`], and
+    /// [`DcdWriteOptions::properties`], and the steps and times
+    /// [`FrameTimingPolicy::Number`] replaced, counted over every frame
+    /// written. DCD stores coordinates for a topology its readers receive
     /// separately, so nothing else is reported.
     pub fn report(&self) -> &WriteReport {
         &self.report
@@ -2019,51 +2020,12 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let (occupancies, b_factors) = site_fields(&frame);
-        let omitted = unrepresentable_frame_state(
-            [
-                (
-                    frame.velocities().is_some(),
-                    GeometryField::Velocities,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.forces().is_some(),
-                    GeometryField::Forces,
-                    self.options.frame_metadata,
-                ),
-                (
-                    occupancies,
-                    GeometryField::Occupancies,
-                    self.options.frame_metadata,
-                ),
-                (
-                    b_factors,
-                    GeometryField::BFactors,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.properties().atoms().has_data(),
-                    GeometryField::AtomProperties,
-                    self.options.frame_properties,
-                ),
-                (
-                    frame.properties().bonds().has_data(),
-                    GeometryField::BondProperties,
-                    self.options.frame_properties,
-                ),
-                (
-                    !frame.properties().owner().is_empty(),
-                    GeometryField::Properties,
-                    self.options.frame_properties,
-                ),
-                (
-                    self.options.time_policy == DcdTimePolicy::Absent && frame.time().is_some(),
-                    GeometryField::Time,
-                    self.options.frame_metadata,
-                ),
-            ],
-            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        let omitted = check_frame_state(
+            TrajectoryFormat::Dcd,
+            &self.source_label,
+            self.frame_count,
+            frame,
+            self.options.state_policies(),
         )?;
         if self.frame_count >= i32::MAX as usize {
             return Err(writer_overflow(
@@ -2090,7 +2052,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     "The frame's step exceeds the 64-bit step range.",
                 )
             })?;
-        let numbers = self.options.frame_timing == DcdFrameTimingPolicy::Number;
+        let numbers = self.options.frame_timing == FrameTimingPolicy::Number;
         let replaced_step = match frame.step() {
             Some(step) if step == expected_step => false,
             None if numbers => false,
@@ -2153,14 +2115,15 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 ))
             }
         }
-        let cell = frame.cell().copied();
-        if self.options.writes_cells() != cell.is_some() {
+        // Without unit cells, a cell was omitted above or failed there.
+        let cell = frame.cell().copied().filter(|_| self.options.unit_cells);
+        if self.options.unit_cells && cell.is_none() {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
                 Some(TrajectoryFormat::Dcd),
                 &self.source_label,
-                "The frame's periodic cell does not match the unit-cell flag of the header.",
+                "The frame has no periodic cell. The header's unit-cell flag needs one.",
             ));
         }
         let factor = CANONICAL_LENGTH_UNIT
@@ -2396,7 +2359,7 @@ fn encode_header(options: DcdWriteOptions, frames: i32) -> [u8; HEADER_BYTES] {
         0,
         0,
         i32::from_ne_bytes(options.delta.to_bits().to_ne_bytes()),
-        i32::from(options.writes_cells()),
+        i32::from(options.unit_cells),
         0,
         0,
         0,
@@ -2948,16 +2911,4 @@ fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryI
         source_label,
         detail,
     )
-}
-
-fn writer_field_error(source_label: &str, frame: usize, field: GeometryField) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::UnsupportedField,
-        TrajectoryIoOperation::WriteFrame,
-        Some(TrajectoryFormat::Dcd),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_field(field)
-    .with_detail(format!("DCD cannot store the {field}."))
 }

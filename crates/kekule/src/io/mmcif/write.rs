@@ -9,7 +9,7 @@ use crate::io::macromolecular::{
 };
 use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
-    unrepresentable_state, Omissions, StatePolicies,
+    unrepresentable_state, Carries, Omissions, StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 use crate::math::{PeriodicCell, PeriodicCellError};
@@ -32,6 +32,14 @@ use entities::{
 use prepare::{prepare_model, validate_geometry};
 
 const MAX_COORDINATE_PRECISION: usize = 15;
+
+/// mmCIF carries occupancies and B factors, and a cell when
+/// [`block_cell`] can write it.
+const MMCIF_CARRIES: Carries = Carries {
+    cell: true,
+    sites: true,
+    ..Carries::POSITIONS
+};
 
 /// Options of the mmCIF writer.
 ///
@@ -134,7 +142,12 @@ impl MmcifWriteOptions {
 
     /// The policies for the state of a structure block.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.geometry_metadata, self.properties)
+        StatePolicies {
+            carries: MMCIF_CARRIES,
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
+        }
     }
 
     /// A periodic cell mmCIF cannot carry: one not periodic along all three
@@ -943,7 +956,7 @@ fn write_model_block_to(
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
-    check_geometry_state(Format::Mmcif, view, options.state_policies())?;
+    let omitted = check_geometry_state(Format::Mmcif, view, options.state_policies())?;
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
@@ -976,7 +989,7 @@ fn write_model_block_to(
     )?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
-    omissions.record_geometry_state(view, options.state_policies());
+    omissions.extend(omitted);
     if cell.is_none() && view.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }

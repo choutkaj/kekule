@@ -31,7 +31,7 @@ use crate::io::macromolecular::{
 use crate::io::mmcif::write::{bond_order_name, cell_values};
 use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
-    unrepresentable_state, Omissions, StatePolicies,
+    unrepresentable_state, Carries, Omissions, StatePolicies,
 };
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
@@ -44,6 +44,14 @@ use crate::topology::{
     Topology, TopologyAtomIndex,
 };
 use crate::units::{ANGSTROM, SQUARE_ANGSTROM};
+
+/// PDB carries occupancies and B factors, and a cell when [`entry_cell`]
+/// can write it.
+const PDB_CARRIES: Carries = Carries {
+    cell: true,
+    sites: true,
+    ..Carries::POSITIONS
+};
 
 /// The largest atom serial number five hybrid-36 columns hold.
 const MAX_ATOM_SERIAL: i64 = 87_440_031;
@@ -129,7 +137,12 @@ impl PdbWriteOptions {
 
     /// The policies for the state of one structure.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.geometry_metadata, self.properties)
+        StatePolicies {
+            carries: PDB_CARRIES,
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
+        }
     }
 
     /// A periodic cell `CRYST1` cannot carry as the structure's cell: one not
@@ -594,8 +607,11 @@ pub(crate) fn write_pdb_to<'a>(
     let source = source.into();
     let (views, models) = match source.content {
         Content::Structure(view) => {
-            check_geometry_state(Format::Pdb, view, options.state_policies())?;
-            omissions.record_geometry_state(view, options.state_policies());
+            omissions.extend(check_geometry_state(
+                Format::Pdb,
+                view,
+                options.state_policies(),
+            )?);
             (vec![view], false)
         }
         Content::StructureSet(set) => {

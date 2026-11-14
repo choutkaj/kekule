@@ -1,8 +1,9 @@
+use crate::io::write_policy::Carries;
 use crate::units::Quantity;
 
 use crate::traj::TrajectoryFormat;
 
-use super::{dcd, trr, xtc, FormatDetectionEvidence};
+use super::{dcd, trr, xtc, xyz, FormatDetectionEvidence};
 
 /// Per-frame availability of one trajectory field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,23 @@ impl TrajectoryFieldAvailability {
     /// Availability of frame-level properties, such as the TRR lambda.
     pub const fn properties(&self) -> FieldAvailability {
         self.properties
+    }
+
+    /// The frame state a writer of a format with these fields carries: every
+    /// field some frame may carry.
+    pub(crate) const fn carries(self) -> Carries {
+        const fn carried(field: FieldAvailability) -> bool {
+            !matches!(field, FieldAvailability::Absent)
+        }
+        Carries {
+            cell: carried(self.cell),
+            time: carried(self.time),
+            step: carried(self.step),
+            velocities: carried(self.velocities),
+            forces: carried(self.forces),
+            properties: carried(self.properties),
+            ..Carries::POSITIONS
+        }
     }
 }
 
@@ -175,15 +193,7 @@ impl FileTrajectoryMetadata {
             atom_count,
             declared_frame_count: None,
             indexed_frame_count,
-            fields: TrajectoryFieldAvailability {
-                positions: FieldAvailability::Required,
-                cell: FieldAvailability::Absent,
-                velocities: FieldAvailability::Absent,
-                forces: FieldAvailability::Absent,
-                time: FieldAvailability::Absent,
-                step: FieldAvailability::Absent,
-                properties: FieldAvailability::Absent,
-            },
+            fields: xyz::FIELDS,
             coordinate_encoding: CoordinateEncoding::Lossless {
                 precision: ScalarPrecision::DecimalText,
             },
@@ -203,17 +213,12 @@ impl FileTrajectoryMetadata {
             declared_frame_count: Some(header.declared_frames()),
             indexed_frame_count,
             fields: TrajectoryFieldAvailability {
-                positions: FieldAvailability::Required,
                 cell: if header.has_cell() {
                     FieldAvailability::Required
                 } else {
                     FieldAvailability::Absent
                 },
-                velocities: FieldAvailability::Absent,
-                forces: FieldAvailability::Absent,
-                time: FieldAvailability::Optional,
-                step: FieldAvailability::Required,
-                properties: FieldAvailability::Absent,
+                ..dcd::FIELDS
             },
             coordinate_encoding: CoordinateEncoding::Lossless {
                 precision: ScalarPrecision::Float32,
@@ -245,15 +250,7 @@ impl FileTrajectoryMetadata {
             atom_count: header.atom_count(),
             declared_frame_count: None,
             indexed_frame_count,
-            fields: TrajectoryFieldAvailability {
-                positions: FieldAvailability::Required,
-                cell: FieldAvailability::Optional,
-                velocities: FieldAvailability::Optional,
-                forces: FieldAvailability::Optional,
-                time: FieldAvailability::Required,
-                step: FieldAvailability::Required,
-                properties: FieldAvailability::Optional,
-            },
+            fields: trr::FIELDS,
             coordinate_encoding: CoordinateEncoding::Lossless { precision },
             random_access: if indexed_frame_count.is_some() {
                 RandomAccessCapability::Indexed
@@ -323,16 +320,11 @@ impl FileTrajectoryMetadata {
             declared_frame_count: None,
             indexed_frame_count,
             fields: TrajectoryFieldAvailability {
-                positions: FieldAvailability::Required,
                 cell: match cell_policy {
                     xtc::XtcCellPolicy::RequirePeriodic => FieldAvailability::Required,
                     xtc::XtcCellPolicy::ZeroMatrixAsAbsent => FieldAvailability::Optional,
                 },
-                velocities: FieldAvailability::Absent,
-                forces: FieldAvailability::Absent,
-                time: FieldAvailability::Required,
-                step: FieldAvailability::Required,
-                properties: FieldAvailability::Absent,
+                ..xtc::FIELDS
             },
             coordinate_encoding,
             random_access: if indexed_frame_count.is_some() {

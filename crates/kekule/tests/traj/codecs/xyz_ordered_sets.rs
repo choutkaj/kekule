@@ -185,7 +185,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             .unwrap();
     }
     assert_rejects(&history, omit_places(), GeometryField::Properties, 1);
-    let options = omit_places().with_frame_properties(UnrepresentablePolicy::Omit);
+    let options = omit_places().with_properties(UnrepresentablePolicy::Omit);
     let (text, report) = write(&history, options.clone()).unwrap();
     assert_eq!(text, TEXT);
     assert_eq!(
@@ -354,7 +354,7 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         for (places, rest, expected) in policies {
             let options = options()
                 .with_geometry_metadata(places)
-                .with_frame_properties(rest)
+                .with_properties(rest)
                 .with_cell(rest);
             assert_eq!(
                 outcome(write(&set, options)),

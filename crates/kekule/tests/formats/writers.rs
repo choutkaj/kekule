@@ -1022,7 +1022,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let boxed = boxed_structure([true; 3]);
     let mut open = boxed.clone();
     open.geometry_mut().set_cell(None);
-    let message = "A Molfile cannot hold a periodic cell.";
+    let message = "The periodic cell of the structure has no Molfile representation.";
     for version in [
         MolfileWriteVersion::Auto,
         MolfileWriteVersion::V2000,
@@ -1043,7 +1043,8 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        format!("Cannot write the SDF output in record 1. {message}")
+        "Cannot write the SDF output in record 1. \
+         The periodic cell of the structure has no SDF representation."
     );
     let omitted = SdfWriteOptions::from(
         MolfileWriteOptions::default().with_cell(UnrepresentablePolicy::Omit),

@@ -19,7 +19,7 @@ use kekule::structure::{
     Forces, Geometry, Order, Place, Positions, StructureSet, StructureSetRead, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
+use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{open_indexed_structure_set, write_structure_set, TrajectoryWriteOptions};
@@ -186,13 +186,13 @@ impl File {
             )
             .with_dcd_options(
                 DcdWriteOptions::default()
-                    .with_cell_policy(DcdCellPolicy::Write)
-                    .with_frame_metadata(UnrepresentablePolicy::Omit),
+                    .with_unit_cells(true)
+                    .with_geometry_metadata(UnrepresentablePolicy::Omit),
             )
             .with_xyz_options(
                 XyzWriteOptions::default()
                     .with_cell(UnrepresentablePolicy::Omit)
-                    .with_frame_metadata(UnrepresentablePolicy::Omit),
+                    .with_geometry_metadata(UnrepresentablePolicy::Omit),
             );
         // Only TRR stores velocities and forces.
         let with_vectors = format == TrajectoryFormat::Trr;

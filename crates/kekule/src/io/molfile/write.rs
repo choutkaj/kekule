@@ -5,8 +5,8 @@ use crate::molecule::Molecule;
 use crate::structure::{AsStructureView, Structure, StructureView};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
-use crate::io::write_policy::{check_geometry_state, Omissions, StatePolicies, MOLFILE_WRITE};
-use crate::io::{MolfileVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::io::write_policy::{check_geometry_state, Carries, StatePolicies, MOLFILE_WRITE};
+use crate::io::{MolfileVersion, UnrepresentablePolicy, WriteReport};
 
 mod record;
 mod v2000;
@@ -104,6 +104,16 @@ impl MolfileWriteOptions {
         self.properties = properties;
         self
     }
+
+    /// The policies of a record whose format carries `carries`.
+    pub(in crate::io) const fn state_policies(&self, carries: Carries) -> StatePolicies {
+        StatePolicies {
+            carries,
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
+        }
+    }
 }
 
 /// What one Molfile CTAB describes: a coordinate-free molecule written with
@@ -195,20 +205,16 @@ pub(crate) fn write_molfile<'a>(
                 source.title,
                 options.version,
             )?;
-            Ok((text, WriteReport::default()))
+            Ok((text, WriteReport::empty()))
         }
         MolfileContent::Structure(structure) => {
-            let policies =
-                StatePolicies::positions_only(options.geometry_metadata, options.properties);
-            check_cell(structure, options.cell)?;
-            check_geometry_state(Format::Molfile, structure, policies)?;
+            let omitted = check_geometry_state(
+                Format::Molfile,
+                structure,
+                options.state_policies(Carries::POSITIONS),
+            )?;
             let text = render_structure(structure, source.title, options.version)?;
-            let mut omissions = Omissions::default();
-            if structure.cell().is_some() {
-                omissions.record(WriteOmission::Cell { structures: 1 });
-            }
-            omissions.record_geometry_state(structure, policies);
-            Ok((text, omissions.into_report()))
+            Ok((text, omitted.into_iter().collect()))
         }
     }
 }
@@ -238,18 +244,6 @@ fn render_molecule(
             rendered => rendered,
         },
     }
-}
-
-/// Fails for a structure with a periodic cell, which no CTAB can carry, unless
-/// the caller chose to omit it.
-pub(in crate::io) fn check_cell(
-    structure: StructureView<'_>,
-    policy: UnrepresentablePolicy,
-) -> Result<(), FormatError> {
-    if structure.cell().is_some() && policy == UnrepresentablePolicy::Fail {
-        return Err(MOLFILE_WRITE.unsupported("A Molfile cannot hold a periodic cell."));
-    }
-    Ok(())
 }
 
 /// Renders one structure CTAB with an SDF or Molfile title.

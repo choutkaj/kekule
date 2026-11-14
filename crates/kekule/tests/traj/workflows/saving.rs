@@ -9,7 +9,7 @@ use std::{
 
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Forces, GeometryView, Positions, StructureSet, Velocities};
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
+use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule::traj::io::{
     create_trajectory_writer, read_structure_set, write_structure_set, OverwritePolicy,
@@ -165,9 +165,8 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
             "dcd",
             topology(&["C", "H", "O"], &[(0, 1), (0, 2)]),
             Some(
-                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_dcd_options(
-                    DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
-                ),
+                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
+                    .with_dcd_options(DcdWriteOptions::default().with_unit_cells(true)),
             ),
         ),
     ] {
@@ -647,14 +646,14 @@ fn converting_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
 
     TrajectoryWriteOptions::new(format)
         .with_xyz_options(XyzWriteOptions::default().with_cell(UnrepresentablePolicy::Omit))
-        .with_dcd_options(DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write))
+        .with_dcd_options(DcdWriteOptions::default().with_unit_cells(true))
         .with_trr_options(
             TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
         )
-        .with_frame_metadata(UnrepresentablePolicy::Omit)
-        .with_frame_timing(FrameTimingPolicy::Number {
-            interval: Quantity::new(2.0, PICOSECOND),
-        })
+        .with_geometry_metadata(UnrepresentablePolicy::Omit)
+        .with_frame_timing(FrameTimingPolicy::Number)
+        .with_frame_interval(Quantity::new(2.0, PICOSECOND))
+        .unwrap()
 }
 
 fn dcd_fixture() -> StructureSet {

@@ -1,8 +1,8 @@
 //! Frame state a codec cannot carry, occupancies and B-factors among it,
-//! omitted and reported under the `frame_metadata` policies, frames without
+//! omitted and reported under the `geometry_metadata` policies, frames without
 //! a time or step numbered for
 //! XTC and TRR under `FrameTimingPolicy::Number`, and frames numbered on the
-//! DCD step sequence under `DcdFrameTimingPolicy::Number`.
+//! DCD step sequence under `FrameTimingPolicy::Number`.
 
 use std::io::Cursor;
 use std::sync::{Arc, OnceLock};
@@ -12,9 +12,7 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Forces, Order, Place, Positions, StructureSet, TimeAxis, Velocities};
 use kekule::topology::Topology;
-use kekule::traj::io::dcd::{
-    DcdFrameTimingPolicy, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
-};
+use kekule::traj::io::dcd::{DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter};
 use kekule::traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
@@ -212,16 +210,17 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
     let (expected, topology_report) = xyz(XyzWriteOptions::default(), &plain);
     let (bytes, report) = xyz(
         XyzWriteOptions::default()
-            .with_frame_metadata(OMIT)
-            .with_frame_properties(OMIT),
+            .with_geometry_metadata(OMIT)
+            .with_properties(OMIT),
         &rich,
     );
     assert_eq!(bytes, expected);
+    // The order of every writer's check: time and step before velocities.
     let state = [
-        GeometryField::Velocities,
-        GeometryField::Forces,
         GeometryField::Time,
         GeometryField::Step,
+        GeometryField::Velocities,
+        GeometryField::Forces,
         GeometryField::AtomProperties,
         GeometryField::BondProperties,
         GeometryField::Properties,
@@ -250,9 +249,9 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
             TrajectoryFormat::Xyz,
             "state.xyz",
             Some(0),
-            "XYZ cannot store the velocities.",
+            "XYZ cannot store the time.",
         )
-        .with_field(GeometryField::Velocities))
+        .with_field(GeometryField::Time))
     );
 }
 
@@ -272,18 +271,18 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
     assert!(plain_report.is_empty());
     let (bytes, report) = dcd(
         DcdWriteOptions::default()
-            .with_frame_metadata(OMIT)
-            .with_frame_properties(OMIT),
+            .with_geometry_metadata(OMIT)
+            .with_properties(OMIT),
         &rich,
     );
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = [
+        GeometryField::Time,
         GeometryField::Velocities,
         GeometryField::Forces,
         GeometryField::AtomProperties,
         GeometryField::BondProperties,
         GeometryField::Properties,
-        GeometryField::Time,
     ]
     .map(|field| omitted(field, 2))
     .into_iter()
@@ -315,9 +314,77 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
         )
         .with_field(GeometryField::Time))
     );
-    let (bytes, report) = dcd(DcdWriteOptions::default().with_frame_metadata(OMIT), &timed);
+    let (bytes, report) = dcd(
+        DcdWriteOptions::default().with_geometry_metadata(OMIT),
+        &timed,
+    );
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), [omitted(GeometryField::Time, 2)]);
+}
+
+#[test]
+fn dcd_without_unit_cells_omits_and_reports_cells_under_the_cell_policy() {
+    let stepped = |index: usize| {
+        let mut frame = bare_frame(index);
+        frame.set_step(Some(index as u64));
+        frame
+    };
+    let plain = trajectory((0..2).map(stepped));
+    let boxed = trajectory((0..2).map(|index| {
+        let mut frame = stepped(index);
+        frame.set_cell(Some(xtc_cell()));
+        frame
+    }));
+    let (expected, _) = dcd(DcdWriteOptions::default(), &plain);
+
+    // By default a frame with a cell fails without unit cells.
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology(),
+        DcdWriteOptions::default(),
+        "state.dcd",
+    )
+    .unwrap();
+    assert_eq!(
+        writer.write_frame(view(&boxed[0])),
+        Err(codec_error(
+            TrajectoryIoErrorKind::UnsupportedField,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            "state.dcd",
+            Some(0),
+            "DCD cannot store the periodic cell.",
+        )
+        .with_field(GeometryField::Cell))
+    );
+
+    // Omitting it writes the frames as without a cell.
+    let (bytes, report) = dcd(DcdWriteOptions::default().with_cell(OMIT), &boxed);
+    assert_eq!(bytes, expected);
+    assert_eq!(report.omissions(), [WriteOmission::Cell { structures: 2 }]);
+
+    // With unit cells, every frame needs one, whatever the policy.
+    let unit_cells = DcdWriteOptions::default().with_unit_cells(true);
+    let (_, report) = dcd(unit_cells, &boxed);
+    assert!(report.is_empty());
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology(),
+        unit_cells.with_cell(OMIT),
+        "state.dcd",
+    )
+    .unwrap();
+    assert_eq!(
+        writer.write_frame(view(&plain[0])),
+        Err(codec_error(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::WriteFrame,
+            TrajectoryFormat::Dcd,
+            "state.dcd",
+            None,
+            "The frame has no periodic cell. The header's unit-cell flag needs one.",
+        ))
+    );
 }
 
 #[test]
@@ -337,8 +404,8 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
     assert!(plain_report.is_empty());
     let (bytes, report) = xtc(
         XtcWriteOptions::default()
-            .with_frame_metadata(OMIT)
-            .with_frame_properties(OMIT),
+            .with_geometry_metadata(OMIT)
+            .with_properties(OMIT),
         &rich,
     );
     assert_eq!(bytes, expected);
@@ -357,11 +424,11 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
     // Omitting one kind of frame state never omits the other.
     for (options, field) in [
         (
-            XtcWriteOptions::default().with_frame_metadata(OMIT),
+            XtcWriteOptions::default().with_geometry_metadata(OMIT),
             GeometryField::AtomProperties,
         ),
         (
-            XtcWriteOptions::default().with_frame_properties(OMIT),
+            XtcWriteOptions::default().with_properties(OMIT),
             GeometryField::Velocities,
         ),
     ] {
@@ -410,10 +477,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     let (plain, rich) = plain_and_rich(with_lambda, |_| {});
 
     let (expected, _) = trr(TrrWriteOptions::default(), &plain);
-    let (bytes, report) = trr(
-        TrrWriteOptions::default().with_frame_properties(OMIT),
-        &rich,
-    );
+    let (bytes, report) = trr(TrrWriteOptions::default().with_properties(OMIT), &rich);
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = [
         GeometryField::AtomProperties,
@@ -435,7 +499,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     let mut writer = TrrWriter::new(
         Vec::new(),
         topology(),
-        TrrWriteOptions::default().with_frame_properties(OMIT),
+        TrrWriteOptions::default().with_properties(OMIT),
         "state.trr",
     )
     .unwrap();
@@ -452,7 +516,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     );
     let zero = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
     let (expected, _) = trr(zero, &trajectory((0..2).map(timed)));
-    let (bytes, report) = trr(zero.with_frame_properties(OMIT), &rich);
+    let (bytes, report) = trr(zero.with_properties(OMIT), &rich);
     assert_eq!(bytes, expected);
     assert_eq!(report, expected_report);
 }
@@ -460,7 +524,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
 #[test]
 fn xtc_and_trr_number_frames_without_a_time_or_step() {
     let interval = Quantity::new(2.0, PICOSECOND);
-    let numbered = FrameTimingPolicy::Number { interval };
+    let numbered = FrameTimingPolicy::Number;
     // Frames as read from XYZ, and one with a step of its own as read from
     // DCD, which keeps it.
     let unnumbered = trajectory((0..3).map(|index| {
@@ -480,7 +544,11 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
     let xtc_options =
         XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
     let (expected, _) = xtc(xtc_options, &explicit);
-    let (bytes, report) = xtc(xtc_options.with_frame_timing(numbered), &unnumbered);
+    let numbered_xtc = xtc_options
+        .with_frame_timing(numbered)
+        .with_frame_interval(interval)
+        .unwrap();
+    let (bytes, report) = xtc(numbered_xtc, &unnumbered);
     assert_eq!(bytes, expected);
     assert!(report.is_empty());
     let read = read_all(
@@ -504,7 +572,11 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
 
     let trr_options = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
     let (expected, _) = trr(trr_options, &explicit);
-    let (bytes, _) = trr(trr_options.with_frame_timing(numbered), &unnumbered);
+    let numbered_trr = trr_options
+        .with_frame_timing(numbered)
+        .with_frame_interval(interval)
+        .unwrap();
+    let (bytes, _) = trr(numbered_trr, &unnumbered);
     assert_eq!(bytes, expected);
 
     // By default such frames still fail.
@@ -526,7 +598,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
 fn dcd_numbers_frames_on_the_step_sequence() {
     let numbered = DcdWriteOptions::default()
         .with_step_sequence(100, 10)
-        .with_frame_timing(DcdFrameTimingPolicy::Number);
+        .with_frame_timing(FrameTimingPolicy::Number);
     let stepped = |steps: [u64; 3]| {
         trajectory((0..3).map(|index| {
             let mut frame = bare_frame(index);
@@ -536,7 +608,7 @@ fn dcd_numbers_frames_on_the_step_sequence() {
     };
     let on_sequence = stepped([100, 110, 120]);
     let (expected, report) = dcd(
-        numbered.with_frame_timing(DcdFrameTimingPolicy::Require),
+        numbered.with_frame_timing(FrameTimingPolicy::Require),
         &on_sequence,
     );
     assert!(report.is_empty());
@@ -564,7 +636,7 @@ fn dcd_numbers_frames_on_the_step_sequence() {
     assert_eq!(steps, [Some(100), Some(110), Some(120)]);
 
     // By default such frames still fail.
-    let options = numbered.with_frame_timing(DcdFrameTimingPolicy::Require);
+    let options = numbered.with_frame_timing(FrameTimingPolicy::Require);
     for frame in [unstepped[0].clone(), stepped([90, 110, 120])[0].clone()] {
         let mut writer =
             DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
@@ -589,7 +661,7 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
         .with_step_sequence(0, 5)
         .with_header_delta(Quantity::new(0.5, PICOSECOND), time_policy)
         .unwrap();
-    let numbered = options.with_frame_timing(DcdFrameTimingPolicy::Number);
+    let numbered = options.with_frame_timing(FrameTimingPolicy::Number);
     let timed = |times: [Option<f64>; 3], steps: [Option<u64>; 3]| {
         trajectory((0..3).map(|index| {
             let mut frame = bare_frame(index);
@@ -673,34 +745,36 @@ fn frame_numbering_needs_a_finite_nonnegative_time_interval() {
         Quantity::new(f64::NAN, PICOSECOND),
         Quantity::new(f64::INFINITY, PICOSECOND),
     ] {
-        let timing = FrameTimingPolicy::Number { interval };
         let detail = |format| {
             codec_error(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::Open,
                 format,
-                "state",
+                &format!("{format} writer options"),
                 None,
                 &format!("The {format} frame interval is not a finite, nonnegative time."),
             )
         };
-        let xtc = XtcWriteOptions::default().with_frame_timing(timing);
         assert_eq!(
-            XtcWriter::new(Vec::new(), topology(), xtc, "state").map(|_| ()),
+            XtcWriteOptions::default()
+                .with_frame_interval(interval)
+                .map(|_| ()),
             Err(detail(TrajectoryFormat::Xtc)),
             "{interval:?}"
         );
-        let trr = TrrWriteOptions::default().with_frame_timing(timing);
         assert_eq!(
-            TrrWriter::new(Vec::new(), topology(), trr, "state").map(|_| ()),
+            TrrWriteOptions::default()
+                .with_frame_interval(interval)
+                .map(|_| ()),
             Err(detail(TrajectoryFormat::Trr)),
             "{interval:?}"
         );
     }
-    let zero = FrameTimingPolicy::Number {
-        interval: Quantity::new(0.0, PICOSECOND),
-    };
-    let xtc = XtcWriteOptions::default().with_frame_timing(zero);
+    let zero = Quantity::new(0.0, PICOSECOND);
+    let xtc = XtcWriteOptions::default()
+        .with_frame_timing(FrameTimingPolicy::Number)
+        .with_frame_interval(zero)
+        .unwrap();
     assert!(XtcWriter::new(Vec::new(), topology(), xtc, "state").is_ok());
 }
 
@@ -753,7 +827,7 @@ fn refused(format: TrajectoryFormat, label: &str, field: GeometryField) -> Traje
 }
 
 /// Occupancies and B-factors, which no trajectory format stores, follow
-/// each codec's `frame_metadata` policy: a frame with them fails to write
+/// each codec's `geometry_metadata` policy: a frame with them fails to write
 /// by default, and omitting them writes the plain frame's bytes and reports
 /// them. No codec writes them silently.
 #[test]
@@ -767,7 +841,10 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     // XYZ
     let [plain, sited, b_only] = plain_and_sited(bare_frame);
     let (expected, plain_report) = xyz(XyzWriteOptions::default(), &plain);
-    let (bytes, report) = xyz(XyzWriteOptions::default().with_frame_metadata(OMIT), &sited);
+    let (bytes, report) = xyz(
+        XyzWriteOptions::default().with_geometry_metadata(OMIT),
+        &sited,
+    );
     assert_eq!(bytes, expected);
     let expected_report: WriteReport = plain_report
         .omissions()
@@ -801,7 +878,10 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     };
     let [plain, sited, b_only] = plain_and_sited(stepped);
     let (expected, _) = dcd(DcdWriteOptions::default(), &plain);
-    let (bytes, report) = dcd(DcdWriteOptions::default().with_frame_metadata(OMIT), &sited);
+    let (bytes, report) = dcd(
+        DcdWriteOptions::default().with_geometry_metadata(OMIT),
+        &sited,
+    );
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), sites);
     for (frames, field) in [
@@ -830,7 +910,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     let zero = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
     let [plain, sited, b_only] = plain_and_sited(timed);
     let (expected, _) = trr(zero, &plain);
-    let (bytes, report) = trr(zero.with_frame_metadata(OMIT), &sited);
+    let (bytes, report) = trr(zero.with_geometry_metadata(OMIT), &sited);
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), sites);
     for (frames, field) in [
@@ -852,7 +932,10 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     };
     let [plain, sited, b_only] = plain_and_sited(boxed);
     let (expected, _) = xtc(XtcWriteOptions::default(), &plain);
-    let (bytes, report) = xtc(XtcWriteOptions::default().with_frame_metadata(OMIT), &sited);
+    let (bytes, report) = xtc(
+        XtcWriteOptions::default().with_geometry_metadata(OMIT),
+        &sited,
+    );
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), sites);
     for (frames, field) in [
@@ -901,7 +984,7 @@ fn saved_structure_sets_report_occupancies_and_b_factors_once() {
     let report = write_structure_set_to(
         &mut Cursor::new(Vec::new()),
         &set,
-        options.with_frame_metadata(OMIT),
+        options.with_geometry_metadata(OMIT),
     )
     .unwrap();
     assert_eq!(

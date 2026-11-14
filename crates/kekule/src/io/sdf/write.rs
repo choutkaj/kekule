@@ -9,8 +9,8 @@ use crate::units::named_unit;
 
 use super::document::{SdfDataField, SdfRecordInterpretation};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField};
-use crate::io::molfile::write::{check_cell, render_structure};
-use crate::io::write_policy::{check_geometry_state, Omissions, StatePolicies};
+use crate::io::molfile::write::render_structure;
+use crate::io::write_policy::{check_geometry_state, Carries, Omissions};
 use crate::io::{MolfileWriteOptions, UnrepresentablePolicy, WriteOmission, WriteReport};
 
 /// Options of SDF writing: the [`MolfileWriteOptions`] each record's CTAB is
@@ -51,6 +51,13 @@ pub const SDF_COORDINATE_FIELD: &str = "kekule.coordinate";
 /// unit displays itself: its symbol, such as `A` or `deg`, `1` for a
 /// dimensionless coordinate, or its scale and dimension.
 pub const SDF_COORDINATE_UNIT_FIELD: &str = "kekule.coordinate.unit";
+
+/// An SDF record carries a geometry's step or coordinate place as data
+/// fields.
+const SDF_CARRIES: Carries = Carries {
+    place: true,
+    ..Carries::POSITIONS
+};
 
 /// The data fields a geometry's step or coordinate place uses.
 const PLACE_FIELDS: [&str; 3] = [
@@ -178,11 +185,11 @@ fn write_record(
 ) -> Result<(), FormatError> {
     validate_title(record.title)?;
     let options = options.molfile;
-    let policies = StatePolicies {
-        writes_place: true,
-        ..StatePolicies::positions_only(options.geometry_metadata(), options.properties())
-    };
-    check_geometry_state(Format::Sdf, record.structure, policies)?;
+    let omitted = check_geometry_state(
+        Format::Sdf,
+        record.structure,
+        options.state_policies(SDF_CARRIES),
+    )?;
     // A geometry's step or coordinate place, which travels as data fields.
     let place = match record.structure.kind() {
         StructureKind::InSet(context) => context
@@ -239,13 +246,9 @@ fn write_record(
         }
     }
     let molfile = |error: FormatError| error.in_format(Format::Sdf);
-    check_cell(record.structure, options.cell()).map_err(molfile)?;
     let ctab =
         render_structure(record.structure, record.title, options.version()).map_err(molfile)?;
-    if record.structure.cell().is_some() {
-        omissions.record(WriteOmission::Cell { structures: 1 });
-    }
-    omissions.record_geometry_state(record.structure, policies);
+    omissions.extend(omitted);
     let sink = |error| FormatError::sink(Format::Sdf, error);
     writer.write_all(ctab.as_bytes()).map_err(sink)?;
     for field in record.data_fields.iter().chain(&own_fields) {

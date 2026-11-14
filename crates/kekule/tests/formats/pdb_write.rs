@@ -161,10 +161,9 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
     assert_eq!(ters(&written), 2);
     assert_eq!(ters(&written), ters(&named));
     // One-character chains are written as before under the policy.
-    assert_eq!(
-        pdb::write(&structure, options).unwrap(),
-        (named, Default::default())
-    );
+    let (written, report) = pdb::write(&structure, options).unwrap();
+    assert_eq!(written, named);
+    assert!(report.is_empty());
 }
 
 /// Methane solvated in a 1.5 nm padded cube of water at 0.15 M salt.

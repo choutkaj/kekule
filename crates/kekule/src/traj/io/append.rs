@@ -115,8 +115,7 @@ struct Kept {
 /// and the magic and precision of the first XTC frame or the scalar width of
 /// the TRR frames. The returned writer numbers its frames after the kept
 /// ones, as the writer that wrote them would have
-/// ([`super::FrameTimingPolicy::Number`],
-/// [`super::dcd::DcdFrameTimingPolicy`]), and its
+/// ([`super::FrameTimingPolicy::Number`]), and its
 /// [`TrajectoryStreamWriter::report`] covers the frames it appends. The write
 /// options take the format, or the file extension does; their overwrite
 /// policy does not apply.
