@@ -283,6 +283,8 @@ pub enum FormatErrorDetail {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GeometryField {
+    /// A geometry's or frame's periodic cell.
+    Cell,
     /// A structure set's time order without times or steps.
     Order,
     /// A geometry's or frame's time in a time order.
@@ -314,6 +316,7 @@ pub enum GeometryField {
 impl fmt::Display for GeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Cell => "periodic cell",
             Self::Order => "geometry order",
             Self::Time => "time",
             Self::Step => "MD step",

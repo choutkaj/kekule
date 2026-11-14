@@ -22,8 +22,8 @@ use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOp
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::io::{write_structure_set_to, FrameTimingPolicy, TrajectoryWriteOptions};
 use kekule::traj::{
-    FrameView, TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryIoOperation, TrajectoryWriter,
+    FrameView, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    TrajectoryWriter,
 };
 use kekule::units::{
     Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER,
@@ -252,7 +252,7 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
             Some(0),
             "XYZ cannot store the velocities.",
         )
-        .with_field(TrajectoryField::Velocities))
+        .with_field(GeometryField::Velocities))
     );
 }
 
@@ -313,7 +313,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
             Some(0),
             "DCD cannot store the time.",
         )
-        .with_field(TrajectoryField::Time))
+        .with_field(GeometryField::Time))
     );
     let (bytes, report) = dcd(DcdWriteOptions::default().with_frame_metadata(OMIT), &timed);
     assert_eq!(bytes, expected);
@@ -358,11 +358,11 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
     for (options, field) in [
         (
             XtcWriteOptions::default().with_frame_metadata(OMIT),
-            TrajectoryField::AtomProperties,
+            GeometryField::AtomProperties,
         ),
         (
             XtcWriteOptions::default().with_frame_properties(OMIT),
-            TrajectoryField::Velocities,
+            GeometryField::Velocities,
         ),
     ] {
         let mut writer = XtcWriter::new(Vec::new(), topology(), options, "state.xtc").unwrap();
@@ -740,7 +740,7 @@ fn plain_and_sited(base: impl Fn(usize) -> Frame) -> [Vec<Frame>; 3] {
 }
 
 /// The error of a writer refusing `field` in the first frame.
-fn refused(format: TrajectoryFormat, label: &str, field: TrajectoryField) -> TrajectoryIoError {
+fn refused(format: TrajectoryFormat, label: &str, field: GeometryField) -> TrajectoryIoError {
     codec_error(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,
@@ -777,8 +777,8 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         .collect();
     assert_eq!(report, expected_report);
     for (frames, field) in [
-        (&sited, TrajectoryField::Occupancies),
-        (&b_only, TrajectoryField::BFactors),
+        (&sited, GeometryField::Occupancies),
+        (&b_only, GeometryField::BFactors),
     ] {
         let mut writer = XyzWriter::new(
             Vec::new(),
@@ -805,8 +805,8 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), sites);
     for (frames, field) in [
-        (&sited, TrajectoryField::Occupancies),
-        (&b_only, TrajectoryField::BFactors),
+        (&sited, GeometryField::Occupancies),
+        (&b_only, GeometryField::BFactors),
     ] {
         let mut writer = DcdWriter::new(
             Cursor::new(Vec::new()),
@@ -834,8 +834,8 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), sites);
     for (frames, field) in [
-        (&sited, TrajectoryField::Occupancies),
-        (&b_only, TrajectoryField::BFactors),
+        (&sited, GeometryField::Occupancies),
+        (&b_only, GeometryField::BFactors),
     ] {
         let mut writer = TrrWriter::new(Vec::new(), topology(), zero, "state.trr").unwrap();
         assert_eq!(
@@ -856,8 +856,8 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
     assert_eq!(bytes, expected);
     assert_eq!(report.omissions(), sites);
     for (frames, field) in [
-        (&sited, TrajectoryField::Occupancies),
-        (&b_only, TrajectoryField::BFactors),
+        (&sited, GeometryField::Occupancies),
+        (&b_only, GeometryField::BFactors),
     ] {
         let mut writer = XtcWriter::new(
             Vec::new(),
@@ -896,7 +896,7 @@ fn saved_structure_sets_report_occupancies_and_b_factors_once() {
     let error =
         write_structure_set_to(&mut Cursor::new(Vec::new()), &set, options.clone()).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
-    assert_eq!(error.field(), Some(TrajectoryField::Occupancies));
+    assert_eq!(error.field(), Some(GeometryField::Occupancies));
     assert_eq!(error.frame(), Some(0));
     let report = write_structure_set_to(
         &mut Cursor::new(Vec::new()),

@@ -1,6 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
+use kekule::diagnostics::GeometryField;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -10,8 +11,8 @@ use kekule::traj::io::dcd::{
 };
 use kekule::traj::io::TrajectoryIoLimits;
 use kekule::traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
-    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
 use sha2::{Digest, Sha256};
@@ -941,9 +942,9 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
             TrajectoryFormat::Dcd,
             "late-invalid.dcd",
             Some(0),
-            "DCD cannot store the bond properties.",
+            "DCD cannot store the per-bond geometry properties.",
         )
-        .with_field(TrajectoryField::BondProperties))
+        .with_field(GeometryField::BondProperties))
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
 }

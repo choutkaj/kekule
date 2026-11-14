@@ -1,4 +1,4 @@
-use crate::traj::{FrameView, TrajectoryField};
+use crate::traj::FrameView;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Seek, Write};
@@ -8,7 +8,7 @@ use std::sync::{
     Arc,
 };
 
-use crate::diagnostics::{UnrepresentablePolicy, WriteReport};
+use crate::diagnostics::{GeometryField, UnrepresentablePolicy, WriteReport};
 use crate::topology::Topology;
 
 use crate::structure::{Order, StructureSet};
@@ -580,8 +580,8 @@ impl Drop for FileTrajectoryWriter {
 /// and the extension names none, and
 /// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
 /// format stores, which must be cleared first: set properties
-/// ([`TrajectoryField::CollectionProperties`]) and a step or coordinate order
-/// ([`TrajectoryField::OrderStep`], [`TrajectoryField::OrderCoordinate`]).
+/// ([`GeometryField::SetProperties`]) and a step or coordinate order
+/// ([`GeometryField::OrderStep`], [`GeometryField::OrderCoordinate`]).
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
 /// No file is published on error.
@@ -669,11 +669,11 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
 /// and a step or coordinate order.
 fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
     let field = if !set.properties().is_empty() {
-        Some(TrajectoryField::CollectionProperties)
+        Some(GeometryField::SetProperties)
     } else {
         match set.order() {
-            Some(Order::Step(_)) => Some(TrajectoryField::OrderStep),
-            Some(Order::Coordinate { .. }) => Some(TrajectoryField::OrderCoordinate),
+            Some(Order::Step(_)) => Some(GeometryField::OrderStep),
+            Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
             _ => None,
         }
     };

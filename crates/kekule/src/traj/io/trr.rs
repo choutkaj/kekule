@@ -58,12 +58,14 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::{FrameView, TrajectoryField};
+use crate::traj::FrameView;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
+use crate::diagnostics::{
+    GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, WriteReport,
+};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, OwnerProperties, PropertyKey, PropertyValue};
 use crate::structure::DecodedGeometry;
@@ -1457,22 +1459,22 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             [
                 (
                     occupancies,
-                    TrajectoryField::Occupancies,
+                    GeometryField::Occupancies,
                     self.options.frame_metadata,
                 ),
                 (
                     b_factors,
-                    TrajectoryField::BFactors,
+                    GeometryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (
                     properties.atoms().has_data(),
-                    TrajectoryField::AtomProperties,
+                    GeometryField::AtomProperties,
                     self.options.frame_properties,
                 ),
                 (
                     properties.bonds().has_data(),
-                    TrajectoryField::BondProperties,
+                    GeometryField::BondProperties,
                     self.options.frame_properties,
                 ),
                 (
@@ -1481,7 +1483,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                             properties.owner(),
                             self.options.lambda_policy,
                         ),
-                    TrajectoryField::Properties,
+                    GeometryField::Properties,
                     self.options.frame_properties,
                 ),
             ],
@@ -2378,7 +2380,7 @@ fn writer_lambda(
                 return Err(writer_field_error(
                     source_label,
                     frame,
-                    TrajectoryField::Properties,
+                    GeometryField::Properties,
                 ));
             }
             Ok(0.0)
@@ -2625,11 +2627,7 @@ fn writer_unit(
     .with_source(error)
 }
 
-fn writer_field_error(
-    source_label: &str,
-    frame: usize,
-    field: TrajectoryField,
-) -> TrajectoryIoError {
+fn writer_field_error(source_label: &str, frame: usize, field: GeometryField) -> TrajectoryIoError {
     TrajectoryIoError::codec(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

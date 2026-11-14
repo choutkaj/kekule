@@ -7,7 +7,7 @@ use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Order, StructureSet, TimeAxis, Velocities};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
-use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
+use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND};
 
 use crate::support::{self, Frame};
@@ -67,7 +67,7 @@ fn write(
 fn assert_rejects(
     set: &StructureSet,
     options: XyzWriteOptions,
-    field: TrajectoryField,
+    field: GeometryField,
     frame: usize,
 ) -> TrajectoryIoError {
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz").unwrap();
@@ -131,9 +131,9 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
     let mut set = waters();
     set.get_mut(1).unwrap().set_cell(Some(cell()));
     set.get_mut(2).unwrap().set_cell(Some(cell()));
-    assert_rejects(&set, options(), TrajectoryField::PeriodicCell, 1);
+    assert_rejects(&set, options(), GeometryField::Cell, 1);
     // A cell is not geometry metadata.
-    assert_rejects(&set, omit(), TrajectoryField::PeriodicCell, 1);
+    assert_rejects(&set, omit(), GeometryField::Cell, 1);
     let (text, report) = write(&set, options().with_cell(UnrepresentablePolicy::Omit)).unwrap();
     assert_eq!(text, plain());
     assert_eq!(
@@ -149,7 +149,7 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
         .bound(&topology);
     let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options(), "f.xyz").unwrap();
     let error = writer.write_frame(frame.view(&topology)).unwrap_err();
-    assert_eq!(error.field(), Some(TrajectoryField::PeriodicCell));
+    assert_eq!(error.field(), Some(GeometryField::Cell));
     let mut writer = XyzWriter::new(
         Vec::new(),
         Arc::clone(&topology),
@@ -214,7 +214,7 @@ fn properties_are_rejected_at_every_level() {
 
     let mut set = waters();
     set.properties_mut().insert(key(), value()).unwrap();
-    assert_rejects(&set, options(), TrajectoryField::CollectionProperties, 0);
+    assert_rejects(&set, options(), GeometryField::SetProperties, 0);
 
     let mut set = waters();
     set.get_mut(1)
@@ -223,7 +223,7 @@ fn properties_are_rejected_at_every_level() {
         .owner_mut()
         .insert(key(), value())
         .unwrap();
-    assert_rejects(&set, options(), TrajectoryField::Properties, 1);
+    assert_rejects(&set, options(), GeometryField::Properties, 1);
 }
 
 #[test]
@@ -285,11 +285,7 @@ fn geometry_state_rules_match_the_pdb_writer() {
 /// The error's kind, field, and frame.
 fn failure(
     error: TrajectoryIoError,
-) -> (
-    TrajectoryIoErrorKind,
-    Option<TrajectoryField>,
-    Option<usize>,
-) {
+) -> (TrajectoryIoErrorKind, Option<GeometryField>, Option<usize>) {
     (error.kind(), error.field(), error.frame())
 }
 
@@ -337,7 +333,7 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
             failure(write(&labelled, options()).unwrap_err()),
             (
                 TrajectoryIoErrorKind::UnsupportedField,
-                Some(TrajectoryField::Properties),
+                Some(GeometryField::Properties),
                 Some(1)
             )
         );
@@ -349,7 +345,7 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
                 failure(written.unwrap_err()),
                 (
                     TrajectoryIoErrorKind::UnsupportedField,
-                    Some(TrajectoryField::PeriodicCell),
+                    Some(GeometryField::Cell),
                     Some(1)
                 )
             ),
@@ -376,7 +372,7 @@ fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
             TimeAxis::new(Some(Quantity::new(vec![0.0, 1.0, 2.0], PICOSECOND)), None).unwrap(),
         )))
         .unwrap();
-    assert_rejects(&timed, options(), TrajectoryField::Time, 0);
+    assert_rejects(&timed, options(), GeometryField::Time, 0);
     let (text, report) = write(&timed, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
@@ -388,7 +384,7 @@ fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     let mut bare = waters();
     bare.set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
         .unwrap();
-    assert_rejects(&bare, options(), TrajectoryField::Order, 0);
+    assert_rejects(&bare, options(), GeometryField::Order, 0);
     let (text, report) = write(&bare, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
@@ -398,7 +394,7 @@ fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
 
     // Velocities on one geometry.
     let moving = with_velocities(waters(), 1);
-    assert_rejects(&moving, options(), TrajectoryField::Velocities, 1);
+    assert_rejects(&moving, options(), GeometryField::Velocities, 1);
     let (text, report) = write(&moving, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(

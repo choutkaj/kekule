@@ -49,10 +49,10 @@
 //! ```
 
 use crate::diagnostics::{
-    LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
+    GeometryField, LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::io::write_policy::{record_multi_model_structure_set, Omissions};
-use crate::traj::{FrameView, TrajectoryField};
+use crate::traj::FrameView;
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
 use std::sync::Arc;
@@ -67,7 +67,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
-use super::frame_state::{record, site_fields, trajectory_field, unrepresentable_frame_state};
+use super::frame_state::{record, site_fields, unrepresentable_frame_state};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
@@ -1393,7 +1393,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             return Err(writer_field_error(
                 &self.source_label,
                 self.frame_count,
-                TrajectoryField::PeriodicCell,
+                GeometryField::Cell,
             ));
         }
         let (occupancies, b_factors) = site_fields(&frame);
@@ -1401,47 +1401,47 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
             [
                 (
                     frame.velocities().is_some(),
-                    TrajectoryField::Velocities,
+                    GeometryField::Velocities,
                     self.options.frame_metadata,
                 ),
                 (
                     frame.forces().is_some(),
-                    TrajectoryField::Forces,
+                    GeometryField::Forces,
                     self.options.frame_metadata,
                 ),
                 (
                     occupancies,
-                    TrajectoryField::Occupancies,
+                    GeometryField::Occupancies,
                     self.options.frame_metadata,
                 ),
                 (
                     b_factors,
-                    TrajectoryField::BFactors,
+                    GeometryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (
                     frame.time().is_some(),
-                    TrajectoryField::Time,
+                    GeometryField::Time,
                     self.options.frame_metadata,
                 ),
                 (
                     frame.step().is_some(),
-                    TrajectoryField::Step,
+                    GeometryField::Step,
                     self.options.frame_metadata,
                 ),
                 (
                     frame.properties().atoms().has_data(),
-                    TrajectoryField::AtomProperties,
+                    GeometryField::AtomProperties,
                     self.options.frame_properties,
                 ),
                 (
                     frame.properties().bonds().has_data(),
-                    TrajectoryField::BondProperties,
+                    GeometryField::BondProperties,
                     self.options.frame_properties,
                 ),
                 (
                     !frame.properties().owner().is_empty(),
-                    TrajectoryField::Properties,
+                    GeometryField::Properties,
                     self.options.frame_properties,
                 ),
             ],
@@ -1497,7 +1497,7 @@ impl<W: Write> XyzWriter<W> {
     /// [`TrajectoryIoErrorKind::InvalidFrame`] for an empty set, for a
     /// coordinate that is not finite after conversion, or after an earlier
     /// write left a partial frame; [`TrajectoryIoErrorKind::UnsupportedField`]
-    /// naming the [`TrajectoryField`] for set or state properties and for a
+    /// naming the [`GeometryField`] for set or state properties and for a
     /// cell, geometry property, or geometry state the options do not omit, with
     /// [`TrajectoryIoError::frame`] the frame of the first geometry concerned;
     /// and [`TrajectoryIoErrorKind::Io`] when the stream fails.
@@ -1528,7 +1528,7 @@ impl<W: Write> XyzWriter<W> {
             return Err(writer_field_error(
                 &self.source_label,
                 frame(0),
-                TrajectoryField::CollectionProperties,
+                GeometryField::SetProperties,
             ));
         }
         let factor = self.output_factor()?;
@@ -1540,24 +1540,24 @@ impl<W: Write> XyzWriter<W> {
                 return Err(writer_field_error(
                     &self.source_label,
                     frame(index),
-                    TrajectoryField::PeriodicCell,
+                    GeometryField::Cell,
                 ));
             }
             let state = unrepresentable_frame_state(
                 [
                     (
                         properties.atoms().has_data(),
-                        TrajectoryField::AtomProperties,
+                        GeometryField::AtomProperties,
                         self.options.frame_properties,
                     ),
                     (
                         properties.bonds().has_data(),
-                        TrajectoryField::BondProperties,
+                        GeometryField::BondProperties,
                         self.options.frame_properties,
                     ),
                     (
                         !properties.owner().is_empty(),
-                        TrajectoryField::Properties,
+                        GeometryField::Properties,
                         self.options.frame_properties,
                     ),
                 ],
@@ -1568,13 +1568,7 @@ impl<W: Write> XyzWriter<W> {
         }
         let mut state = Omissions::default();
         record_multi_model_structure_set(set, self.options.geometry_metadata, &mut state).map_err(
-            |(geometry, field)| {
-                writer_field_error(
-                    &self.source_label,
-                    frame(geometry - 1),
-                    trajectory_field(field),
-                )
-            },
+            |(geometry, field)| writer_field_error(&self.source_label, frame(geometry - 1), field),
         )?;
         for geometry in set {
             self.write_positions(geometry.as_structure_view().positions(), factor)?;
@@ -1938,11 +1932,7 @@ fn frame_codec_error(
         .with_detail(detail)
 }
 
-fn writer_field_error(
-    source_label: &str,
-    frame: usize,
-    field: TrajectoryField,
-) -> TrajectoryIoError {
+fn writer_field_error(source_label: &str, frame: usize, field: GeometryField) -> TrajectoryIoError {
     TrajectoryIoError::codec(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

@@ -1,5 +1,5 @@
-use kekule::diagnostics::Countable;
 use kekule::diagnostics::LengthMismatch;
+use kekule::diagnostics::{Countable, GeometryField};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -16,8 +16,8 @@ use kekule::traj::io::{
     TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
-    FrameView, TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryIoOperation, TrajectoryWriter,
+    FrameView, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    TrajectoryWriter,
 };
 
 use crate::support::{
@@ -320,11 +320,11 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
                 Some(1),
                 "XYZ cannot store the velocities.",
             )
-            .with_field(TrajectoryField::Velocities),
+            .with_field(GeometryField::Velocities),
         ),
         (
             &annotated,
-            TrajectoryIoError::unsupported_field(TrajectoryField::CollectionProperties),
+            TrajectoryIoError::unsupported_field(GeometryField::SetProperties),
         ),
     ] {
         assert_eq!(
@@ -382,9 +382,9 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
             TrajectoryFormat::Xyz,
             &label(&path),
             Some(1),
-            "XYZ cannot store the step.",
+            "XYZ cannot store the MD step.",
         )
-        .with_field(TrajectoryField::Step))
+        .with_field(GeometryField::Step))
     );
     assert_eq!(
         writer.finish(),
@@ -817,8 +817,8 @@ fn structure_sets_save_and_load_as_every_format() {
         }))
         .unwrap();
     for (refused, field) in [
-        (stepped, TrajectoryField::OrderStep),
-        (scanned, TrajectoryField::OrderCoordinate),
+        (stepped, GeometryField::OrderStep),
+        (scanned, GeometryField::OrderCoordinate),
     ] {
         let path = directory.file("refused.dcd");
         let error = write_structure_set(&path, &refused, Default::default()).unwrap_err();
@@ -860,7 +860,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
     .unwrap();
     assert_eq!(writer.format(), TrajectoryFormat::Xyz);
     let error = writer.write_frame(frame(&source, 0)).unwrap_err();
-    assert_eq!(error.field(), Some(TrajectoryField::PeriodicCell));
+    assert_eq!(error.field(), Some(GeometryField::Cell));
     let poisoned = codec_error(
         TrajectoryIoErrorKind::InvalidFrame,
         TrajectoryIoOperation::WriteFrame,

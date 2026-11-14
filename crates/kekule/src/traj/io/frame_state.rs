@@ -5,8 +5,7 @@ use crate::structure::Geometry;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use crate::traj::{
-    TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryIoOperation,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
 };
 
 use super::codec_context;
@@ -81,8 +80,8 @@ impl FrameTimingPolicy {
 /// `error`; otherwise the returned omissions, zero for absent fields, are for
 /// [`record`] once the frame is written.
 pub(crate) fn unrepresentable_frame_state<const N: usize>(
-    fields: [(bool, TrajectoryField, UnrepresentablePolicy); N],
-    error: impl FnOnce(TrajectoryField) -> TrajectoryIoError,
+    fields: [(bool, GeometryField, UnrepresentablePolicy); N],
+    error: impl FnOnce(GeometryField) -> TrajectoryIoError,
 ) -> Result<[WriteOmission; N], TrajectoryIoError> {
     if let Some((_, field, _)) = fields
         .iter()
@@ -107,49 +106,14 @@ pub(crate) fn site_fields(geometry: &Geometry) -> (bool, bool) {
 }
 
 /// The omission of `field` from `structures` frames.
-fn omission(field: TrajectoryField, structures: usize) -> WriteOmission {
+fn omission(field: GeometryField, structures: usize) -> WriteOmission {
     match field {
-        TrajectoryField::Occupancies => WriteOmission::Occupancies { structures },
-        TrajectoryField::BFactors => WriteOmission::BFactors { structures },
+        GeometryField::Occupancies => WriteOmission::Occupancies { structures },
+        GeometryField::BFactors => WriteOmission::BFactors { structures },
         field => WriteOmission::GeometryState {
-            field: geometry_field(field),
+            field,
             geometries: structures,
         },
-    }
-}
-
-/// The frame state `field` names.
-fn geometry_field(field: TrajectoryField) -> GeometryField {
-    match field {
-        TrajectoryField::Time => GeometryField::Time,
-        TrajectoryField::Step => GeometryField::Step,
-        TrajectoryField::Velocities => GeometryField::Velocities,
-        TrajectoryField::Forces => GeometryField::Forces,
-        TrajectoryField::AtomProperties => GeometryField::AtomProperties,
-        TrajectoryField::BondProperties => GeometryField::BondProperties,
-        TrajectoryField::Properties => GeometryField::Properties,
-        TrajectoryField::OrderStep => GeometryField::OrderStep,
-        TrajectoryField::OrderCoordinate => GeometryField::OrderCoordinate,
-        other => unreachable!("{other} is not frame state a policy omits"),
-    }
-}
-
-/// The trajectory field that names the geometry state `field`.
-pub(crate) fn trajectory_field(field: GeometryField) -> TrajectoryField {
-    match field {
-        GeometryField::Order => TrajectoryField::Order,
-        GeometryField::Time => TrajectoryField::Time,
-        GeometryField::Step => TrajectoryField::Step,
-        GeometryField::OrderStep => TrajectoryField::OrderStep,
-        GeometryField::OrderCoordinate => TrajectoryField::OrderCoordinate,
-        GeometryField::Velocities => TrajectoryField::Velocities,
-        GeometryField::Forces => TrajectoryField::Forces,
-        GeometryField::AtomProperties => TrajectoryField::AtomProperties,
-        GeometryField::BondProperties => TrajectoryField::BondProperties,
-        GeometryField::Properties => TrajectoryField::Properties,
-        GeometryField::SetProperties => TrajectoryField::CollectionProperties,
-        GeometryField::Occupancies => TrajectoryField::Occupancies,
-        GeometryField::BFactors => TrajectoryField::BFactors,
     }
 }
 

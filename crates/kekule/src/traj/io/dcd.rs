@@ -57,7 +57,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::{FrameView, TrajectoryField};
+use crate::traj::FrameView;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
@@ -2024,42 +2024,42 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             [
                 (
                     frame.velocities().is_some(),
-                    TrajectoryField::Velocities,
+                    GeometryField::Velocities,
                     self.options.frame_metadata,
                 ),
                 (
                     frame.forces().is_some(),
-                    TrajectoryField::Forces,
+                    GeometryField::Forces,
                     self.options.frame_metadata,
                 ),
                 (
                     occupancies,
-                    TrajectoryField::Occupancies,
+                    GeometryField::Occupancies,
                     self.options.frame_metadata,
                 ),
                 (
                     b_factors,
-                    TrajectoryField::BFactors,
+                    GeometryField::BFactors,
                     self.options.frame_metadata,
                 ),
                 (
                     frame.properties().atoms().has_data(),
-                    TrajectoryField::AtomProperties,
+                    GeometryField::AtomProperties,
                     self.options.frame_properties,
                 ),
                 (
                     frame.properties().bonds().has_data(),
-                    TrajectoryField::BondProperties,
+                    GeometryField::BondProperties,
                     self.options.frame_properties,
                 ),
                 (
                     !frame.properties().owner().is_empty(),
-                    TrajectoryField::Properties,
+                    GeometryField::Properties,
                     self.options.frame_properties,
                 ),
                 (
                     self.options.time_policy == DcdTimePolicy::Absent && frame.time().is_some(),
-                    TrajectoryField::Time,
+                    GeometryField::Time,
                     self.options.frame_metadata,
                 ),
             ],
@@ -2950,11 +2950,7 @@ fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryI
     )
 }
 
-fn writer_field_error(
-    source_label: &str,
-    frame: usize,
-    field: TrajectoryField,
-) -> TrajectoryIoError {
+fn writer_field_error(source_label: &str, frame: usize, field: GeometryField) -> TrajectoryIoError {
     TrajectoryIoError::codec(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,

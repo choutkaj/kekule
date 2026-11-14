@@ -8,7 +8,7 @@ use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Geometry, Order, Place, StructureSet};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
-use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
+use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
 
 use crate::support::Frame;
@@ -112,7 +112,7 @@ fn write(
 fn assert_rejects(
     set: &StructureSet,
     options: XyzWriteOptions,
-    field: TrajectoryField,
+    field: GeometryField,
     frame: usize,
 ) -> TrajectoryIoError {
     let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "s.xyz").unwrap();
@@ -132,7 +132,7 @@ fn state_omission(field: GeometryField, geometries: usize) -> WriteOmission {
 #[test]
 fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_omitted() {
     let history = history();
-    let error = assert_rejects(&history, options(), TrajectoryField::OrderStep, 0);
+    let error = assert_rejects(&history, options(), GeometryField::OrderStep, 0);
     assert_eq!(error.detail(), Some("XYZ cannot store the order step."));
     let (text, report) = write(&history, omit_places()).unwrap();
     assert_eq!(text, TEXT);
@@ -142,7 +142,7 @@ fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_
     );
 
     let scan = scan();
-    let error = assert_rejects(&scan, options(), TrajectoryField::OrderCoordinate, 0);
+    let error = assert_rejects(&scan, options(), GeometryField::OrderCoordinate, 0);
     assert_eq!(
         error.detail(),
         Some("XYZ cannot store the order coordinate.")
@@ -184,7 +184,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             .insert(key(), energy(-1.0 - index as f64))
             .unwrap();
     }
-    assert_rejects(&history, omit_places(), TrajectoryField::Properties, 1);
+    assert_rejects(&history, omit_places(), GeometryField::Properties, 1);
     let options = omit_places().with_frame_properties(UnrepresentablePolicy::Omit);
     let (text, report) = write(&history, options.clone()).unwrap();
     assert_eq!(text, TEXT);
@@ -205,7 +205,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             PropertyValue::String("GFN2-xTB".into()),
         )
         .unwrap();
-    assert_rejects(&history, options, TrajectoryField::CollectionProperties, 0);
+    assert_rejects(&history, options, GeometryField::SetProperties, 0);
 }
 
 fn cell() -> PeriodicCell {
@@ -221,7 +221,7 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
     let history = history();
     let topology = history.shared_topology();
     let boxed = in_cells(history.clone());
-    assert_rejects(&boxed, omit_places(), TrajectoryField::PeriodicCell, 0);
+    assert_rejects(&boxed, omit_places(), GeometryField::Cell, 0);
     let omitted = omit_places().with_cell(UnrepresentablePolicy::Omit);
     let (text, report) = write(&boxed, omitted.clone()).unwrap();
     assert_eq!(text, TEXT);
@@ -239,7 +239,7 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
     let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options(), "s.xyz").unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
     let error = writer.write_structure_set(&history).unwrap_err();
-    assert_eq!(error.field(), Some(TrajectoryField::OrderStep));
+    assert_eq!(error.field(), Some(GeometryField::OrderStep));
     assert_eq!(error.frame(), Some(1));
     let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), omitted, "s.xyz").unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
@@ -252,14 +252,10 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
 /// and frame.
 type Outcome = Result<
     (String, Vec<WriteOmission>),
-    (
-        TrajectoryIoErrorKind,
-        Option<TrajectoryField>,
-        Option<usize>,
-    ),
+    (TrajectoryIoErrorKind, Option<GeometryField>, Option<usize>),
 >;
 
-fn refused(field: TrajectoryField, frame: usize) -> Outcome {
+fn refused(field: GeometryField, frame: usize) -> Outcome {
     Err((
         TrajectoryIoErrorKind::UnsupportedField,
         Some(field),
@@ -315,14 +311,14 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             history,
             vec![
-                (fail, fail, refused(TrajectoryField::OrderStep, 0)),
+                (fail, fail, refused(GeometryField::OrderStep, 0)),
                 (omit, fail, written(&[BONDS, steps])),
             ],
         ),
         (
             scan,
             vec![
-                (fail, fail, refused(TrajectoryField::OrderCoordinate, 0)),
+                (fail, fail, refused(GeometryField::OrderCoordinate, 0)),
                 (
                     omit,
                     fail,
@@ -333,7 +329,7 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             valued,
             vec![
-                (omit, fail, refused(TrajectoryField::Properties, 1)),
+                (omit, fail, refused(GeometryField::Properties, 1)),
                 (
                     omit,
                     omit,
@@ -344,8 +340,8 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             boxed,
             vec![
-                (fail, fail, refused(TrajectoryField::PeriodicCell, 0)),
-                (omit, fail, refused(TrajectoryField::PeriodicCell, 0)),
+                (fail, fail, refused(GeometryField::Cell, 0)),
+                (omit, fail, refused(GeometryField::Cell, 0)),
                 (
                     omit,
                     omit,
