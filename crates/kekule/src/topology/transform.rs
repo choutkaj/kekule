@@ -186,7 +186,7 @@ impl Topology {
                 .expect("validated atom selection references a live dense atom")]
         }))?;
         let hierarchy_projection =
-            copy_filtered_hierarchy(this, builder.hierarchy_mut().storage_mut(), &atom_targets)?;
+            copy_filtered_hierarchy(this, builder.hierarchy_mut(), &atom_targets)?;
         for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {
             let residue = this
                 .residue(ResidueId::new(source_index as u32))
@@ -263,7 +263,7 @@ struct HierarchyProjection {
 
 fn copy_filtered_hierarchy(
     source: &Topology,
-    target: &mut super::Hierarchy,
+    target: &mut super::HierarchyBuilder,
     atom_targets: &BTreeMap<InstanceAtomId, InstanceAtomId>,
 ) -> Result<HierarchyProjection, HierarchyError> {
     let mut projection = HierarchyProjection::default();

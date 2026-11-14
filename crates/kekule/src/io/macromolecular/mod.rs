@@ -20,7 +20,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::math::PeriodicCell;
 use crate::structure::StructureBuilder;
-use crate::topology::HierarchyBuilder;
 use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
 use super::definition_reuse::DefinitionReuse;
@@ -434,11 +433,8 @@ fn publish_structure(
         .set_atom_order(rows.into_iter().map(|(_, atom)| atom))
         .map_err(graph_error)?;
     poll(cancellation)?;
-    *builder.hierarchy_mut() = HierarchyBuilder::from_storage(build_topology_hierarchy(
-        &report.instances,
-        polymer_asym_order,
-        cancellation,
-    )?);
+    *builder.hierarchy_mut() =
+        build_topology_hierarchy(&report.instances, polymer_asym_order, cancellation)?;
     poll(cancellation)?;
     let mut structure = builder.build().map_err(graph_error)?;
     poll(cancellation)?;

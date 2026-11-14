@@ -59,7 +59,7 @@ pub struct TopologyBuilder {
     // The class each definition keeps unless new evidence arrives, by ID.
     preserved_molecule_classes: Vec<Option<MoleculeClass>>,
     preserved_residue_classes: BTreeMap<ResidueId, ResidueClass>,
-    source_hierarchy: Option<Hierarchy>,
+    source_hierarchy: Option<HierarchyBuilder>,
     source_instance_count: usize,
     extending_topology: bool,
 }
@@ -255,8 +255,7 @@ impl TopologyBuilder {
         // Perceived snapshots may still share static state.
         let atoms = Arc::unwrap_or_clone(atoms);
         let bonds = Arc::unwrap_or_clone(bonds);
-        let mut hierarchy = Arc::unwrap_or_clone(hierarchy);
-        hierarchy.index_atoms();
+        let hierarchy = HierarchyBuilder::from_published(Arc::unwrap_or_clone(hierarchy));
         let properties = Arc::unwrap_or_clone(properties);
         // Explicit classes stay explicit; clearing one returns it to inference
         // rather than to its retained value.
@@ -264,10 +263,11 @@ impl TopologyBuilder {
             .iter()
             .map(|d| (!molecule_class_overrides.contains_key(&d.id())).then(|| d.class()))
             .collect();
-        let preserved_residue_classes = hierarchy
+        let published = hierarchy.storage();
+        let preserved_residue_classes = published
             .residue_ids()
-            .filter(|&id| hierarchy.explicit_residue_class(id).is_none())
-            .map(|id| (id, hierarchy.residue_class(id)))
+            .filter(|&id| published.explicit_residue_class(id).is_none())
+            .map(|id| (id, published.residue_class(id)))
             .collect();
         let source_hierarchy = Some(hierarchy.clone());
         let source_instance_count = instances.len();
@@ -276,7 +276,7 @@ impl TopologyBuilder {
             instances,
             atoms,
             bonds,
-            hierarchy: HierarchyBuilder::from_storage(hierarchy),
+            hierarchy,
             properties,
             molecule_class_overrides,
             preserved_molecule_classes,
@@ -414,8 +414,7 @@ impl TopologyBuilder {
     ) -> Result<(), TopologyBuildError> {
         if explicit {
             self.hierarchy
-                .storage_mut()
-                .set_explicit_residue_class(residue, Some(class))
+                .set_residue_class(residue, class)
                 .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         } else {
             self.hierarchy
@@ -558,14 +557,13 @@ impl TopologyBuilder {
 
         let hierarchy = if classify {
             self.invalidate_changed_hierarchy_classes();
-            let mut hierarchy = self.hierarchy.into_storage();
+            let (mut hierarchy, lookup) = self.hierarchy.into_parts();
             self.preserved_residue_classes
                 .extend(hierarchy.residue_ids().filter_map(|id| {
                     hierarchy
                         .explicit_residue_class(id)
                         .map(|class| (id, class))
                 }));
-            let lookup = hierarchy.take_atom_lookup();
             super::classification::finalize(
                 &mut self.definitions,
                 &mut hierarchy,
@@ -585,10 +583,8 @@ impl TopologyBuilder {
             );
             hierarchy
         } else {
-            self.hierarchy.into_storage()
+            self.hierarchy.into_parts().0
         };
-        let mut hierarchy = hierarchy;
-        hierarchy.freeze();
 
         let dimensions = [
             self.instances.len(),
@@ -737,10 +733,10 @@ impl TopologyBuilder {
     }
 
     fn invalidate_changed_hierarchy_classes(&mut self) {
-        let Some(source) = &self.source_hierarchy else {
+        let Some(source_builder) = &self.source_hierarchy else {
             return;
         };
-        let staged = self.hierarchy.storage();
+        let (source, staged) = (source_builder.storage(), self.hierarchy.storage());
         let unchanged_residues = source
             .residue_ids()
             .filter(|&id| {
@@ -772,8 +768,8 @@ impl TopologyBuilder {
             let unchanged = definition.molecule().atom_ids().all(|atom| {
                 let atom = instance.qualify_atom(atom);
                 match (
-                    source.atom_site_for_atom(atom),
-                    staged.atom_site_for_atom(atom),
+                    source_builder.atom_site_for_atom(atom),
+                    self.hierarchy.atom_site_for_atom(atom),
                 ) {
                     (None, None) => true,
                     (Some(before), Some(after)) => {

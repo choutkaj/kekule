@@ -351,20 +351,17 @@ impl TopologyEditor {
     ) -> Result<EditResidueId, TopologyEditError> {
         self.require_chain(chain)?;
         let id = EditResidueId::new();
-        let name = Arc::<str>::from(name.into());
         let slot = self.properties.residues().len();
         self.hierarchy.residues.insert(
             id,
             EditResidue {
                 chain,
-                labels: SharedRow::new(ResidueLabels {
-                    label_comp_id: Some(Arc::clone(&name)),
-                    name,
-                    author_comp_id: None,
-                    label_seq_id: label_seq,
-                    author_seq_id: author_seq.map(Arc::from),
-                    insertion_code: insertion.map(Arc::from),
-                }),
+                labels: SharedRow::new(ResidueLabels::new(
+                    name.into(),
+                    label_seq,
+                    author_seq,
+                    insertion,
+                )),
                 class: None,
                 class_explicit: false,
                 slot,
@@ -495,11 +492,8 @@ impl TopologyEditor {
         {
             return Ok(());
         }
-        self.residue_mut(id).labels = SharedRow::new(ResidueLabels {
-            label_comp_id: label.map(Arc::from),
-            author_comp_id: author.map(Arc::from),
-            ..(*residue.labels).clone()
-        });
+        self.residue_mut(id).labels =
+            SharedRow::new(residue.labels.with_component_ids(label, author));
         self.invalidate_residue_class(id, false);
         self.changed();
         Ok(())

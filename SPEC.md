@@ -180,9 +180,11 @@ keeps source atom-row order, builders default to instance order or accept an
 explicit permutation, and editors and subsets keep surviving atoms in source
 order. Dense bond order is instance order, then local bond ID.
 
-`Hierarchy` is owned exactly once by `Topology`. Its storage is private: chain,
-residue, and atom-site views are the only read path, and builders stage it
-through one `HierarchyBuilder`. Atom sites refer to live `InstanceAtomId`
+`Hierarchy` is owned exactly once by `Topology`. Its storage is private and
+columnar: chain, residue, and atom-site views read the columns directly and are
+the only read path. Builders stage it by ID through one `HierarchyBuilder`; the
+topology editor stages edits by handle over its source, and both publish the
+same columns. Atom sites refer to live `InstanceAtomId`
 values and do not copy atoms. One chain or residue may span molecules, and one
 molecule may span chains. Source labels and author identifiers remain typed
 metadata with their namespaces and insertion codes. Hierarchy membership never

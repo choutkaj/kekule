@@ -10,7 +10,7 @@ use crate::molecule::Molecule;
 use crate::properties::TopologyProperties;
 
 use super::{
-    Hierarchy, HierarchyBuilder, InstanceAtomId, MoleculeClass, MoleculeDefinitionId, Topology,
+    HierarchyBuilder, InstanceAtomId, MoleculeClass, MoleculeDefinitionId, Topology,
     TopologyBuildError, TopologyBuilder,
 };
 
@@ -31,7 +31,7 @@ pub(crate) struct TopologyParts {
     /// `None` keeps the builder's instance order.
     pub(crate) atom_order: Option<Vec<InstanceAtomId>>,
     /// Residue classes, explicit or inferred, are stored on its residues.
-    pub(crate) hierarchy: Hierarchy,
+    pub(crate) hierarchy: HierarchyBuilder,
     pub(crate) properties: TopologyProperties,
 }
 
@@ -59,9 +59,9 @@ impl Topology {
         if let Some(order) = atom_order {
             builder.set_atom_order(order)?;
         }
-        // `Hierarchy::from_raw_parts` already guarantees consistent storage;
-        // publication checks that every site names a staged atom.
-        *builder.hierarchy_mut() = HierarchyBuilder::from_storage(hierarchy);
+        // `HierarchyBuilder::from_raw_parts` already guarantees consistent
+        // storage; publication checks that every site names a staged atom.
+        *builder.hierarchy_mut() = hierarchy;
         builder.install_properties(properties);
         builder.build_restored()
     }

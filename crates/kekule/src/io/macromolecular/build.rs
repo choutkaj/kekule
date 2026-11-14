@@ -8,7 +8,7 @@ use crate::io::canonicalize_molecule_for_publication;
 use crate::math::{bounding_box, Point3, PointGrid};
 use crate::molecule::{Atom, AtomId, Element, Graph, Molecule, MoleculeEditor, SlotLiveness};
 use crate::structure::Positions;
-use crate::topology::{AtomSiteMetadata, Hierarchy};
+use crate::topology::{AtomSiteMetadata, HierarchyBuilder};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
 use crate::units::{Quantity, ANGSTROM};
 
@@ -798,7 +798,7 @@ pub(super) fn build_topology_hierarchy(
     instances: &[InstanceProvenance],
     polymer_asym_order: &BTreeMap<String, usize>,
     cancellation: Option<&Cancellation>,
-) -> Result<Hierarchy, FormatError> {
+) -> Result<HierarchyBuilder, FormatError> {
     #[derive(Clone)]
     struct ResidueMetadata {
         component_id: String,
@@ -810,7 +810,7 @@ pub(super) fn build_topology_hierarchy(
         occurrence: Option<usize>,
     }
 
-    let mut hierarchy = Hierarchy::new();
+    let mut hierarchy = HierarchyBuilder::new();
     let mut atoms = instances
         .iter()
         .flat_map(|instance| instance.atoms.iter())
