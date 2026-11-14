@@ -49,7 +49,7 @@
 
 pub use crate::io::mmcif::entry_points::{parse_reader, parse_str, write, write_to};
 pub use crate::io::{
-    MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
-    MmcifEntityClassifications, MmcifEntry, MmcifGeometryField, MmcifItem, MmcifLoopTable,
-    MmcifParseOptions, MmcifValue, MmcifWriteErrorKind, MmcifWriteOptions,
+    MmcifBlock, MmcifBlockSource, MmcifDocument, MmcifEntityClassifications, MmcifEntry, MmcifItem,
+    MmcifLoopTable, MmcifParseOptions, MmcifSharedCategory, MmcifValue, MmcifWriteErrorKind,
+    MmcifWriteOptions,
 };

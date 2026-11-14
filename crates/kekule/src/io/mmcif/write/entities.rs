@@ -1,9 +1,7 @@
 //! Entity classification and source-provenance planning before row preparation.
 use super::one_based_serial;
-use super::{
-    fail, invalid_structure, MmcifAtomField, MmcifEntityClassifications, MmcifWriteErrorKind,
-};
-use crate::diagnostics::FormatError;
+use super::{fail, invalid_structure, MmcifEntityClassifications, MmcifWriteErrorKind};
+use crate::diagnostics::{AtomField, FormatError};
 use crate::io::macromolecular::{EntityKind, StructureInterpretationReport};
 use crate::structure::StructureView;
 use crate::topology::{
@@ -352,7 +350,7 @@ fn report_entity_plan(
                 if atom.asym_id() != chain.label_id() {
                     return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                         atom: atom.atom(),
-                        field: MmcifAtomField::SourceAsymId,
+                        field: AtomField::SourceAsymId,
                     }));
                 }
             }

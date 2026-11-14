@@ -101,9 +101,7 @@ pub fn parse_reader(
 /// [`WriteReport`](crate::diagnostics::WriteReport) of what they left
 /// out under [`UnrepresentablePolicy::Omit`](crate::diagnostics::UnrepresentablePolicy::Omit):
 /// structures' cells, geometry state, occupancies, B factors, and
-/// properties ([`SdfWriteOptions::cell`],
-/// [`SdfWriteOptions::geometry_metadata`], [`SdfWriteOptions::properties`]),
-/// counted over all records.
+/// properties ([`SdfWriteOptions::molfile`]), counted over all records.
 ///
 /// Records convert from structures, geometries of a structure set, and
 /// trajectory frames (`sdf::write(&set, options)` writes one record per

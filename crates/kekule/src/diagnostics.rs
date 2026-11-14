@@ -42,8 +42,8 @@ mod wording;
 pub use self::cancellation::{Cancellation, Cancelled};
 pub use self::chain::ErrorChain;
 pub use self::format::{
-    DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage, GeometryField,
-    SourceLocation, UnsupportedContent,
+    AtomField, CellReason, DiagnosticKind, Format, FormatError, FormatErrorDetail, FormatStage,
+    GeometryField, SourceLocation, UnsupportedContent,
 };
 pub use self::limits::{LimitExceeded, Resource};
 pub use self::payloads::{

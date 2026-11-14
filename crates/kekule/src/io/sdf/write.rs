@@ -11,85 +11,34 @@ use super::document::{SdfDataField, SdfRecordInterpretation};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField};
 use crate::io::molfile::write::{check_cell, render_structure};
 use crate::io::write_policy::{check_geometry_state, Omissions, StatePolicies};
-use crate::io::{MolfileWriteVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::io::{MolfileWriteOptions, UnrepresentablePolicy, WriteOmission, WriteReport};
 
-/// Options of SDF writing; the default writes
-/// [`MolfileWriteVersion::Auto`] records and fails on content an SDF record
-/// cannot carry.
+/// Options of SDF writing: the [`MolfileWriteOptions`] each record's CTAB is
+/// written with. The policies apply per record, and the report counts the
+/// records written without each kind of state, except that a geometry's step
+/// or coordinate is written as data fields ([`SdfRecordSource`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
-    version: MolfileWriteVersion,
-    cell: UnrepresentablePolicy,
-    geometry_metadata: UnrepresentablePolicy,
-    properties: UnrepresentablePolicy,
+    molfile: MolfileWriteOptions,
 }
 
 impl SdfWriteOptions {
-    /// Connection-table version of each record's CTAB; `Auto` chooses per
-    /// record.
-    pub const fn version(&self) -> MolfileWriteVersion {
-        self.version
+    /// The options of each record's CTAB.
+    pub const fn molfile(&self) -> MolfileWriteOptions {
+        self.molfile
     }
 
-    /// Sets [`Self::version`].
+    /// Sets [`Self::molfile`].
     #[must_use]
-    pub const fn with_version(mut self, version: MolfileWriteVersion) -> Self {
-        self.version = version;
+    pub const fn with_molfile(mut self, molfile: MolfileWriteOptions) -> Self {
+        self.molfile = molfile;
         self
     }
+}
 
-    /// A structure's periodic cell, which an SDF record cannot carry: by
-    /// default a record whose structure has a cell fails to write, and under
-    /// [`UnrepresentablePolicy::Omit`] the report counts the records written
-    /// without one ([`WriteOmission::Cell`]).
-    pub const fn cell(&self) -> UnrepresentablePolicy {
-        self.cell
-    }
-
-    /// Sets [`Self::cell`].
-    #[must_use]
-    pub const fn with_cell(mut self, cell: UnrepresentablePolicy) -> Self {
-        self.cell = cell;
-        self
-    }
-
-    /// The state that an SDF record cannot carry: a geometry's time and MD
-    /// step in a time order and a coordinate unit that is not a unit
-    /// constant, and the velocities, forces, occupancies, and B factors of a
-    /// geometry or structure. By default writing a structure with any of
-    /// them fails. Under [`UnrepresentablePolicy::Omit`] the report counts
-    /// the records written without each ([`WriteOmission::GeometryState`],
-    /// [`WriteOmission::Occupancies`], [`WriteOmission::BFactors`]). A
-    /// geometry's step or coordinate is written as data fields.
-    pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
-        self.geometry_metadata
-    }
-
-    /// Sets [`Self::geometry_metadata`].
-    #[must_use]
-    pub const fn with_geometry_metadata(
-        mut self,
-        geometry_metadata: UnrepresentablePolicy,
-    ) -> Self {
-        self.geometry_metadata = geometry_metadata;
-        self
-    }
-
-    /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a geometry's set, which an SDF record cannot carry: by
-    /// default a record of a structure with any fails to write, and under
-    /// [`UnrepresentablePolicy::Omit`] the report counts the records written
-    /// without each ([`WriteOmission::GeometryState`]). A caller writes the
-    /// values a record should carry as data fields.
-    pub const fn properties(&self) -> UnrepresentablePolicy {
-        self.properties
-    }
-
-    /// Sets [`Self::properties`].
-    #[must_use]
-    pub const fn with_properties(mut self, properties: UnrepresentablePolicy) -> Self {
-        self.properties = properties;
-        self
+impl From<MolfileWriteOptions> for SdfWriteOptions {
+    fn from(molfile: MolfileWriteOptions) -> Self {
+        Self { molfile }
     }
 }
 
@@ -120,11 +69,11 @@ const PLACE_FIELDS: [&str; 3] = [
 /// [`SDF_COORDINATE_UNIT_FIELD`]. A coordinate
 /// unit must be one of the unit constants of [`crate::units`], which the
 /// reader knows by symbol; another fails to write unless
-/// [`SdfWriteOptions::geometry_metadata`] omits the coordinate. A geometry's
+/// [`MolfileWriteOptions::geometry_metadata`] omits the coordinate. A geometry's
 /// time and MD step, and the velocities, forces, occupancies, and B factors
 /// of a geometry or structure, fail to write unless
-/// [`SdfWriteOptions::geometry_metadata`] omits them; structure and set
-/// properties fail unless [`SdfWriteOptions::properties`] omits them. Add
+/// [`MolfileWriteOptions::geometry_metadata`] omits them; structure and set
+/// properties fail unless [`MolfileWriteOptions::properties`] omits them. Add
 /// the values a record should carry, such as a geometry's energy, as data
 /// fields.
 #[derive(Debug, Clone, Copy)]
@@ -228,9 +177,10 @@ fn write_record(
     omissions: &mut Omissions,
 ) -> Result<(), FormatError> {
     validate_title(record.title)?;
+    let options = options.molfile;
     let policies = StatePolicies {
         writes_place: true,
-        ..StatePolicies::positions_only(options.geometry_metadata, options.properties)
+        ..StatePolicies::positions_only(options.geometry_metadata(), options.properties())
     };
     check_geometry_state(Format::Sdf, record.structure, policies)?;
     // A geometry's step or coordinate place, which travels as data fields.
@@ -248,7 +198,7 @@ fn write_record(
         Some(Place::Coordinate(coordinate))
             if named_unit(&coordinate.unit().to_string()) != Some(coordinate.unit()) =>
         {
-            if options.geometry_metadata == UnrepresentablePolicy::Fail {
+            if options.geometry_metadata() == UnrepresentablePolicy::Fail {
                 return Err(FormatError::write(
                     Format::Sdf,
                     DiagnosticKind::Unsupported,
@@ -289,9 +239,9 @@ fn write_record(
         }
     }
     let molfile = |error: FormatError| error.in_format(Format::Sdf);
-    check_cell(record.structure, options.cell).map_err(molfile)?;
+    check_cell(record.structure, options.cell()).map_err(molfile)?;
     let ctab =
-        render_structure(record.structure, record.title, options.version).map_err(molfile)?;
+        render_structure(record.structure, record.title, options.version()).map_err(molfile)?;
     if record.structure.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }

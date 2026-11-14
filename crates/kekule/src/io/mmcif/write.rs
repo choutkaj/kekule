@@ -1,6 +1,7 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::diagnostics::{
-    Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
+    AtomField, Capitalized, CellReason, DiagnosticKind, Format, FormatError, FormatErrorDetail,
+    GeometryField,
 };
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::io::macromolecular::{
@@ -259,7 +260,7 @@ pub enum MmcifWriteErrorKind {
         /// The atom.
         atom: InstanceAtomId,
         /// The inconsistent field.
-        field: MmcifAtomField,
+        field: AtomField,
     },
     /// An atom duplicates another atom's identity within one residue.
     DuplicateAtomIdentity(InstanceAtomId),
@@ -275,7 +276,7 @@ pub enum MmcifWriteErrorKind {
         /// The atom.
         atom: InstanceAtomId,
         /// The unsupported field.
-        field: MmcifAtomField,
+        field: AtomField,
     },
     /// An atom's formal charge is outside the PDBx/mmCIF range -8..=8.
     FormalChargeOutOfRange {
@@ -306,19 +307,19 @@ pub enum MmcifWriteErrorKind {
     /// The number of interpretation reports does not match the number of
     /// structures written.
     ReportCountMismatch(LengthMismatch),
-    /// The 1-based geometry `geometry` differs from the first geometry in state
-    /// one mmCIF block shares between models.
+    /// The 1-based geometry `geometry` differs from the first geometry in a
+    /// part one mmCIF block shares between models.
     IncompatibleGeometry {
         /// The 1-based geometry number.
         geometry: usize,
-        /// The differing state.
-        field: MmcifGeometryField,
+        /// The differing part.
+        category: MmcifSharedCategory,
     },
     /// A periodic cell mmCIF cannot represent, with
     /// [`UnrepresentablePolicy::Fail`].
     UnrepresentableCell {
         /// Why the cell cannot be written.
-        reason: MmcifCellReason,
+        reason: CellReason,
     },
     /// The structure set has no geometries.
     EmptyStructureSet,
@@ -333,55 +334,11 @@ pub enum MmcifWriteErrorKind {
     },
 }
 
-/// Atom state named by an [`MmcifWriteErrorKind`].
+/// The part of an mmCIF block that its coordinate models share, named by
+/// [`MmcifWriteErrorKind::IncompatibleGeometry`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MmcifAtomField {
-    /// The atom's isotope.
-    Isotope,
-    /// The atom's radical electrons.
-    Radical,
-    /// The atom's implicit hydrogens.
-    Hydrogens,
-    /// The atom's atom-map number.
-    AtomMap,
-    /// `_atom_site.label_asym_id`.
-    LabelAsymId,
-    /// The source `asym_id` recorded in provenance.
-    SourceAsymId,
-    /// `_atom_site.type_symbol`.
-    TypeSymbol,
-}
-
-impl MmcifAtomField {
-    /// The verb for the field as the subject: "have" for a plural field,
-    /// "has" otherwise.
-    const fn verb(self) -> &'static str {
-        match self {
-            Self::Radical | Self::Hydrogens => "have",
-            _ => "has",
-        }
-    }
-}
-
-impl fmt::Display for MmcifAtomField {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Isotope => "isotope",
-            Self::Radical => "radical electrons",
-            Self::Hydrogens => "implicit hydrogens",
-            Self::AtomMap => "atom-map number",
-            Self::LabelAsymId => "label_asym_id",
-            Self::SourceAsymId => "source asym_id",
-            Self::TypeSymbol => "type_symbol",
-        })
-    }
-}
-
-/// Geometry state named by [`MmcifWriteErrorKind::IncompatibleGeometry`].
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MmcifGeometryField {
+pub enum MmcifSharedCategory {
     /// The `_entity` representation.
     Entities,
     /// The `_struct_asym` representation.
@@ -392,40 +349,13 @@ pub enum MmcifGeometryField {
     AtomSites,
 }
 
-impl fmt::Display for MmcifGeometryField {
+impl fmt::Display for MmcifSharedCategory {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Entities => "entity representation",
             Self::StructuralAsymmetry => "structural asymmetry representation",
             Self::Connectivity => "connectivity representation",
             Self::AtomSites => "atom-site representation",
-        })
-    }
-}
-
-/// Why mmCIF cannot represent a periodic cell.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MmcifCellReason {
-    /// The geometries have different cells; one block has one `_cell`.
-    GeometryCellsDiffer,
-    /// The cell is not periodic along all three axes.
-    PartiallyPeriodic,
-    /// The cell does not have `a` along x and `b` in the xy plane, as mmCIF
-    /// coordinates assume.
-    NonstandardOrientation,
-}
-
-/// Writes the reason as a sentence, such as `The cell is not periodic along
-/// all three axes.`
-impl fmt::Display for MmcifCellReason {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::GeometryCellsDiffer => "The geometries have different cells.",
-            Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
-            Self::NonstandardOrientation => {
-                "Cell vector a is not along x, or b is not in the xy plane."
-            }
         })
     }
 }
@@ -600,9 +530,9 @@ impl fmt::Display for MmcifWriteErrorKind {
                 write!(f, "A value of {item} does not fit one mmCIF token.")
             }
             Self::ReportCountMismatch(error) => error.fmt(f),
-            Self::IncompatibleGeometry { geometry, field } => write!(
+            Self::IncompatibleGeometry { geometry, category } => write!(
                 f,
-                "Geometry {geometry} has a different {field} from the first geometry."
+                "Geometry {geometry} has a different {category} from the first geometry."
             ),
             Self::UnrepresentableCell { reason } => reason.fmt(f),
             Self::EmptyStructureSet => f.write_str("The structure set has no geometries."),
@@ -1079,12 +1009,12 @@ fn block_cell<'a>(
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err(MmcifCellReason::GeometryCellsDiffer)
+        Err(CellReason::GeometryCellsDiffer)
     } else {
         match first.map(|cell| cell_values(*cell)).transpose() {
             Ok(parameters) => return Ok(parameters),
-            Err(PeriodicCellError::PartiallyPeriodic) => Err(MmcifCellReason::PartiallyPeriodic),
-            Err(_) => Err(MmcifCellReason::NonstandardOrientation),
+            Err(PeriodicCellError::PartiallyPeriodic) => Err(CellReason::PartiallyPeriodic),
+            Err(_) => Err(CellReason::NonstandardOrientation),
         }
     };
     match (parameters, policy) {

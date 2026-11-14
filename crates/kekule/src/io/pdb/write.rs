@@ -21,7 +21,8 @@ use std::fmt;
 use std::io::Write;
 
 use crate::diagnostics::{
-    Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
+    AtomField, Capitalized, CellReason, Count, DiagnosticKind, Format, FormatError,
+    FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::macromolecular::{
@@ -201,77 +202,6 @@ impl PdbWriteOptions {
     }
 }
 
-/// Atom state named by [`PdbWriteErrorKind::UnsupportedAtomField`].
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PdbAtomField {
-    /// An isotope other than deuterium (`D`) or tritium (`T`).
-    Isotope,
-    /// Radical electrons.
-    Radical,
-    /// A fixed implicit hydrogen count; PDB readers infer implicit
-    /// hydrogens from valence.
-    Hydrogens,
-    /// An atom-map number.
-    AtomMap,
-}
-
-impl PdbAtomField {
-    /// The verb for the field as the subject: "have" for a plural field,
-    /// "has" otherwise.
-    const fn verb(self) -> &'static str {
-        match self {
-            Self::Radical => "have",
-            _ => "has",
-        }
-    }
-}
-
-impl fmt::Display for PdbAtomField {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Isotope => "isotope",
-            Self::Radical => "radical electrons",
-            Self::Hydrogens => "fixed implicit hydrogen count",
-            Self::AtomMap => "atom-map number",
-        })
-    }
-}
-
-/// Why `CRYST1` cannot carry a periodic cell as the structure's cell.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PdbCellReason {
-    /// The geometries have different cells; an entry has one `CRYST1`.
-    GeometryCellsDiffer,
-    /// The cell is not periodic along all three axes.
-    PartiallyPeriodic,
-    /// The cell does not have `a` along x and `b` in the xy plane, as PDB
-    /// coordinates assume.
-    NonstandardOrientation,
-    /// The written parameters are PDB's 1 Å placeholder cube, which readers
-    /// take to mean no crystal lattice.
-    Placeholder,
-    /// A length or angle does not fit its `CRYST1` columns.
-    ParametersOutOfRange,
-}
-
-/// Writes the reason as a sentence, such as `The cell is not periodic along
-/// all three axes.`
-impl fmt::Display for PdbCellReason {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::GeometryCellsDiffer => "The geometries have different cells.",
-            Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
-            Self::NonstandardOrientation => {
-                "Cell vector a is not along x, or b is not in the xy plane."
-            }
-            Self::Placeholder => "The cell is PDB's 1 Å placeholder cube.",
-            Self::ParametersOutOfRange => "A cell parameter does not fit its CRYST1 columns.",
-        })
-    }
-}
-
 /// A failure specific to the PDB writer: the typed
 /// [`detail`](crate::diagnostics::FormatError::detail) of a write-stage
 /// [`FormatError`], as
@@ -362,13 +292,13 @@ pub enum PdbWriteErrorKind {
     },
     /// An atom has state PDB cannot carry, with
     /// [`PdbWriteOptions::implicit_hydrogens`] (for
-    /// [`PdbAtomField::Hydrogens`]) or [`PdbWriteOptions::chemistry`] set to
+    /// [`AtomField::Hydrogens`]) or [`PdbWriteOptions::chemistry`] set to
     /// fail.
     UnsupportedAtomField {
         /// The atom.
         atom: InstanceAtomId,
         /// The field.
-        field: PdbAtomField,
+        field: AtomField,
     },
     /// A molecule instance carries represented stereo, with
     /// [`PdbWriteOptions::chemistry`] set to fail.
@@ -389,7 +319,7 @@ pub enum PdbWriteErrorKind {
     /// [`PdbWriteOptions::cell`] set to fail.
     UnrepresentableCell {
         /// Why the cell cannot be written.
-        reason: PdbCellReason,
+        reason: CellReason,
     },
     /// The bonds between two named heavy atoms of a residue the bundled
     /// [`ComponentLibrary`] covers differ from its template, which a reader
@@ -742,11 +672,11 @@ fn entry_cell<'a>(
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err(PdbCellReason::GeometryCellsDiffer)
+        Err(CellReason::GeometryCellsDiffer)
     } else {
         match first.map(|cell| cell_values(*cell)).transpose() {
             Ok(Some(parameters)) if is_written_placeholder(parameters) => {
-                Err(PdbCellReason::Placeholder)
+                Err(CellReason::Placeholder)
             }
             Ok(Some(parameters))
                 if parameters[..3]
@@ -756,11 +686,11 @@ fn entry_cell<'a>(
                         .iter()
                         .any(|&angle| rounded(angle, 2) > 9_999.99) =>
             {
-                Err(PdbCellReason::ParametersOutOfRange)
+                Err(CellReason::ParametersOutOfRange)
             }
             Ok(parameters) => return Ok(parameters),
-            Err(PeriodicCellError::PartiallyPeriodic) => Err(PdbCellReason::PartiallyPeriodic),
-            Err(_) => Err(PdbCellReason::NonstandardOrientation),
+            Err(PeriodicCellError::PartiallyPeriodic) => Err(CellReason::PartiallyPeriodic),
+            Err(_) => Err(CellReason::NonstandardOrientation),
         }
     };
     match (parameters, policy) {
@@ -943,10 +873,10 @@ impl Plan {
             let fields = [
                 (
                     structure_element_symbol(atom.element, isotope).is_none(),
-                    PdbAtomField::Isotope,
+                    AtomField::Isotope,
                 ),
-                (atom.radical.is_some(), PdbAtomField::Radical),
-                (atom.atom_map.is_some(), PdbAtomField::AtomMap),
+                (atom.radical.is_some(), AtomField::Radical),
+                (atom.atom_map.is_some(), AtomField::AtomMap),
             ];
             for (present, field) in fields {
                 if !present {
@@ -959,8 +889,8 @@ impl Plan {
                     }));
                 }
                 match field {
-                    PdbAtomField::Isotope => isotopes += 1,
-                    PdbAtomField::Radical => radicals += 1,
+                    AtomField::Isotope => isotopes += 1,
+                    AtomField::Radical => radicals += 1,
                     _ => atom_maps += 1,
                 }
             }
@@ -968,7 +898,7 @@ impl Plan {
                 if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
                     return Err(fail(PdbWriteErrorKind::UnsupportedAtomField {
                         atom: atom_id,
-                        field: PdbAtomField::Hydrogens,
+                        field: AtomField::Hydrogens,
                     }));
                 }
                 omitted_hydrogens += 1;

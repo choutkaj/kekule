@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use kekule::diagnostics::{
-    DiagnosticKind, FormatErrorDetail, GeometryField, UnrepresentablePolicy, WriteOmission,
+    AtomField, CellReason, DiagnosticKind, FormatErrorDetail, GeometryField, UnrepresentablePolicy,
+    WriteOmission,
 };
 use kekule::macromolecular::{
     ModelSelection, StructureInterpretOptions, StructureInterpretation,
@@ -12,10 +13,7 @@ use kekule::macromolecular::{
 };
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{AtomId, BondOrder};
-use kekule::pdb::{
-    self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteErrorKind,
-    PdbWriteOptions,
-};
+use kekule::pdb::{self, PdbChainIdPolicy, PdbSource, PdbWriteErrorKind, PdbWriteOptions};
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
     Geometry, Order, Positions, Structure, StructureBuilder, StructureSet, Velocities,
@@ -408,7 +406,7 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     assert!(matches!(
         issue(&error),
         PdbWriteErrorKind::UnsupportedAtomField {
-            field: PdbAtomField::Hydrogens,
+            field: AtomField::Hydrogens,
             ..
         }
     ));
@@ -665,12 +663,12 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
         (
             Vector3::new(10.0, 20.0, 30.0),
             [true, true, false],
-            PdbCellReason::PartiallyPeriodic,
+            CellReason::PartiallyPeriodic,
         ),
         (
             Vector3::new(1.0, 1.0, 1.0),
             [true; 3],
-            PdbCellReason::Placeholder,
+            CellReason::Placeholder,
         ),
     ] {
         let source = structure(cell(lengths, periodic));
