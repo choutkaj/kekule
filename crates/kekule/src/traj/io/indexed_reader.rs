@@ -8,6 +8,7 @@
 //! afterwards, whether it succeeds or not, and a failed scan leaves the index
 //! as it was.
 
+use crate::traj::trajectory::reason::Part;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
@@ -111,9 +112,9 @@ pub(crate) trait IndexedCodec: TrajectoryReader {
             TrajectoryIoOperation::ReadFrame,
             &self.source().label,
             Some(indexed),
-            "",
+            None,
         )
-        .exceeding("The frame index", limit))
+        .exceeding(Part::FrameIndex, limit))
     }
 
     /// Where the next frame starts.

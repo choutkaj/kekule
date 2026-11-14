@@ -3,6 +3,7 @@ use std::{fmt, io};
 use crate::diagnostics::GeometryField;
 use crate::structure::GeometryError;
 
+use super::reason::{Part, Reason};
 use super::TrajectoryFormat;
 
 /// File or stream operation active when trajectory I/O failed.
@@ -124,7 +125,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
             Self::CorruptCompressedData => "corrupt compressed trajectory data",
             Self::TopologyMismatch => "trajectory object belongs to a different topology",
             Self::FrameIndexOutOfRange => "trajectory frame index is out of range",
-            Self::InvalidGeometry => "invalid trajectory frame",
+            Self::InvalidGeometry => "trajectory frame is invalid for its topology",
             Self::Cancelled => "trajectory operation cancelled",
             Self::InvalidIndex => "invalid trajectory frame index",
             Self::IndexMismatch => "trajectory frame index does not match the file",
@@ -161,7 +162,7 @@ impl PartialEq for TrajectoryIoError {
             && left.actual == right.actual
             && left.limit == right.limit
             && left.field == right.field
-            && left.detail == right.detail
+            && left.reason == right.reason
             && left.source.as_ref().map(ToString::to_string)
                 == right.source.as_ref().map(ToString::to_string)
     }
@@ -177,11 +178,11 @@ struct TrajectoryIoErrorData {
     byte_offset: Option<u64>,
     expected: Option<u64>,
     actual: Option<u64>,
-    /// Whether the detail or the source already writes the counts.
+    /// Whether the reason or the source already writes the counts.
     counts_written: bool,
     limit: Option<crate::diagnostics::LimitExceeded>,
     field: Option<GeometryField>,
-    detail: Option<String>,
+    reason: Option<Reason>,
     source: Option<std::sync::Arc<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -200,7 +201,7 @@ impl TrajectoryIoError {
             counts_written: false,
             limit: None,
             field: None,
-            detail: None,
+            reason: None,
             source: None,
         }))
     }
@@ -270,7 +271,7 @@ impl TrajectoryIoError {
         self
     }
 
-    /// Records the expected and actual count of a mismatch that the detail
+    /// Records the expected and actual count of a mismatch that the reason
     /// or the source already writes, so `Display` does not repeat them.
     #[must_use]
     pub(crate) fn with_written_counts(mut self, expected: u64, actual: u64) -> Self {
@@ -278,10 +279,10 @@ impl TrajectoryIoError {
         self.with_counts(expected, actual)
     }
 
+    /// States what went wrong beyond the kind.
     #[must_use]
-    /// Adds human-readable detail.
-    pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
-        self.0.detail = Some(detail.into());
+    pub(crate) fn with_reason(mut self, reason: impl Into<Option<Reason>>) -> Self {
+        self.0.reason = reason.into();
         self
     }
 
@@ -292,12 +293,11 @@ impl TrajectoryIoError {
         self
     }
 
+    /// Records the bound `part` exceeds: `The trajectory exceeds its frame
+    /// limit: 1,001 frames of 1,000.`
     #[must_use]
-    /// Records the exceeded bound, with a detail naming what exceeded it:
-    /// `{subject} exceeds its frame limit: 1,001 frames of 1,000.`
-    pub(crate) fn exceeding(self, subject: &str, limit: crate::diagnostics::LimitExceeded) -> Self {
-        self.with_detail(format!("{subject} exceeds its {}.", limit.describe()))
-            .with_limit(limit)
+    pub(crate) fn exceeding(self, part: Part, limit: crate::diagnostics::LimitExceeded) -> Self {
+        self.with_reason(Reason::Exceeds(part)).with_limit(limit)
     }
 
     #[must_use]
@@ -378,11 +378,6 @@ impl TrajectoryIoError {
         self.0.field
     }
 
-    /// Human-readable detail of the failure, without its context or source.
-    pub fn detail(&self) -> Option<&str> {
-        self.0.detail.as_deref()
-    }
-
     /// The kind of the underlying [`std::io::Error`] of an
     /// [`TrajectoryIoErrorKind::Io`] failure.
     pub fn io_error_kind(&self) -> Option<io::ErrorKind> {
@@ -396,7 +391,7 @@ impl TrajectoryIoError {
 
 /// Writes the operation that failed and its place, such as `Cannot read frame
 /// 3 of the XTC trajectory "run.xtc" at byte 1200.`, then what went wrong:
-/// the detail, the exceeded limit, or a sentence for the kind.
+/// what exceeded its limit, the reason, the limit, or a sentence for the kind.
 impl fmt::Display for TrajectoryIoError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         use TrajectoryIoErrorKind as Kind;
@@ -443,8 +438,14 @@ impl fmt::Display for TrajectoryIoError {
         let counts = (data.expected, data.actual);
         let mut counted = data.counts_written;
         let frame = data.frame.filter(|_| !frame_named);
-        let body = match (&data.detail, data.limit, data.kind) {
-            (Some(detail), _, _) => detail.clone(),
+        let body = match (&data.reason, data.limit, data.kind) {
+            (Some(Reason::Exceeds(part)), Some(limit), _) => format!(
+                "{} {} its {}.",
+                crate::diagnostics::Capitalized(part),
+                part.verb("exceeds", "exceed"),
+                limit.describe()
+            ),
+            (Some(reason), _, _) => reason.to_string(),
             (None, Some(limit), _) => limit.to_string(),
             (None, None, kind) => match kind {
                 Kind::Io | Kind::Cancelled if head => return Ok(()),

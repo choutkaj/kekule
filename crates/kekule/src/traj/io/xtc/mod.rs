@@ -57,6 +57,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use crate::traj::trajectory::reason::{Datum, Part, Reason};
 use crate::traj::FrameView;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -252,7 +253,7 @@ impl XtcWriteOptions {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 "XTC writer options",
-                "The XTC precision is not an inverse length.",
+                Reason::PrecisionNotInverseLength,
             )
         };
         let precision = precision.value_in(PER_NANOMETER).map_err(|_| invalid())? as f32;
@@ -397,7 +398,7 @@ impl XtcFrameInfo {
 
 fn nonnegative_xdr_count(
     value: i32,
-    field: &str,
+    field: Part,
     source_label: &str,
     frame: usize,
     byte_offset: u64,
@@ -411,7 +412,7 @@ fn nonnegative_xdr_count(
         .with_source_label(source_label)
         .with_frame(frame)
         .with_byte_offset(byte_offset)
-        .with_detail(format!("The {field} is negative."))
+        .with_reason(Reason::Negative(field))
     })
 }
 
@@ -422,13 +423,13 @@ fn validate_precision(precision: f32, source_label: &str) -> Result<(), Trajecto
             TrajectoryIoOperation::Open,
             Some(FORMAT),
             source_label,
-            "The precision is not a finite, positive number.",
+            Reason::PrecisionNotPositive,
         ));
     }
     Ok(())
 }
 
-fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, TrajectoryIoError> {
+fn finite_f32(value: f64, source_label: &str, field: Datum) -> Result<f32, TrajectoryIoError> {
     let narrowed = value as f32;
     if !value.is_finite() || !narrowed.is_finite() {
         return Err(codec_context(
@@ -436,7 +437,7 @@ fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, Trajec
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            format!("A {field} value does not fit single precision."),
+            Reason::DoesNotFitSingle(Part::ValueOf(field)),
         ));
     }
     Ok(narrowed)

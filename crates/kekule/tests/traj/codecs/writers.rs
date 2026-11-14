@@ -20,7 +20,7 @@ use kekule::traj::{
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
 
 use crate::support;
-use support::{codec_error, ByteBudgetSink};
+use support::{codec_error, seen, ByteBudgetSink};
 
 const CODECS: [TrajectoryFormat; 4] = [
     TrajectoryFormat::Xyz,
@@ -167,7 +167,7 @@ fn cell(vectors: [[f64; 3]; 3], unit: kekule::units::Unit) -> PeriodicCell {
 fn rejected_frame(
     format: TrajectoryFormat,
     topology: &Arc<Topology>,
-) -> (FrameBuffer, TrajectoryIoError) {
+) -> (FrameBuffer, support::SeenError) {
     let mut frame = valid_frame(format, topology, 1);
     let (kind, detail, frame_index, field) = match format {
         TrajectoryFormat::Xyz => {
@@ -230,7 +230,7 @@ fn rejected_frame(
 fn partial_stream_error(
     format: TrajectoryFormat,
     operation: TrajectoryIoOperation,
-) -> TrajectoryIoError {
+) -> support::SeenError {
     codec_error(
         TrajectoryIoErrorKind::InvalidFrame,
         operation,
@@ -247,7 +247,7 @@ fn every_codec_writer_refuses_to_finish_without_frames() {
     for format in CODECS {
         let writer = open(format, Cursor::new(Vec::new()), &topology);
         assert_eq!(
-            writer.finish_stream().map(Cursor::into_inner),
+            writer.finish_stream().map(Cursor::into_inner).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
@@ -274,7 +274,7 @@ fn every_codec_writer_rejects_a_frame_without_writing_any_of_it() {
             subject.write_frame(frame.frame_view()).unwrap();
             if index == 0 {
                 assert_eq!(
-                    subject.write_frame(rejected.frame_view()),
+                    subject.write_frame(rejected.frame_view()).map_err(seen),
                     Err(expected.clone()),
                     "{format}"
                 );
@@ -314,7 +314,9 @@ fn every_codec_writer_refuses_to_continue_after_a_write_cut_off_partway() {
         );
         assert_eq!(writer.sink().bytes().len(), budget, "{format}");
         assert_eq!(
-            writer.write_frame(valid_frame(format, &topology, 1).frame_view()),
+            writer
+                .write_frame(valid_frame(format, &topology, 1).frame_view())
+                .map_err(seen),
             Err(partial_stream_error(
                 format,
                 TrajectoryIoOperation::WriteFrame
@@ -323,7 +325,10 @@ fn every_codec_writer_refuses_to_continue_after_a_write_cut_off_partway() {
         );
         assert_eq!(writer.sink().bytes().len(), budget, "{format}");
         assert_eq!(
-            writer.finish_stream().map(|sink| sink.bytes().len()),
+            writer
+                .finish_stream()
+                .map(|sink| sink.bytes().len())
+                .map_err(seen),
             Err(partial_stream_error(format, TrajectoryIoOperation::Finish)),
             "{format}"
         );

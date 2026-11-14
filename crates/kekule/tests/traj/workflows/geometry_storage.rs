@@ -21,7 +21,6 @@ use kekule::structure::{
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdEndian, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
-use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
     append_trajectory, open_indexed_structure_set, open_indexed_structure_set_from_index,
     open_indexed_trajectory, read_structure_set, write_structure_set, IndexedFile, KeepFrames,
@@ -32,6 +31,7 @@ use kekule::traj::{
     TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support::{
     fixed_atom_fixture, frames_of, linear_carbon_topology, time_ordered, topology, Frame,
@@ -516,9 +516,9 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
             assert_eq!(*geometry, index);
             assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
             assert_eq!(error.frame(), Some(index));
-            let detail = error.detail().unwrap();
-            assert!(detail.ends_with("Open the file again."), "{detail}");
-            assert!(detail.contains(&format!("it is {cut} bytes")), "{detail}");
+            let message = error.to_string();
+            assert!(message.ends_with("Open the file again."), "{message}");
+            assert!(message.contains(&format!("it is {cut} bytes")), "{message}");
         }
         for reads in read_at_once(&set, 12) {
             for (index, read) in reads.into_iter().enumerate() {
@@ -533,7 +533,7 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
         }
         let refused = set.refresh().unwrap_err();
         assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
-        assert!(refused.detail().unwrap().ends_with("Open the file again."));
+        assert!(refused.to_string().ends_with("Open the file again."));
         assert_eq!(set.len(), expected.len());
     }
 }
@@ -564,7 +564,7 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
     }
     let refused = set.refresh().unwrap_err();
     assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
-    assert!(refused.detail().unwrap().ends_with("Open the file again."));
+    assert!(refused.to_string().ends_with("Open the file again."));
     assert_eq!(set.len(), expected.len());
     // Opened again, the set reads the new file.
     let reopened = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
@@ -704,7 +704,7 @@ fn a_failed_refresh_changes_nothing() {
     fs::write(&path, &bytes).unwrap();
     let refused = set.refresh().unwrap_err();
     assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
-    assert!(refused.detail().unwrap().ends_with("Open the file again."));
+    assert!(refused.to_string().ends_with("Open the file again."));
     assert_eq!(set.len(), len);
     assert_eq!(set.order(), order.as_ref());
 }
@@ -786,7 +786,7 @@ fn a_frame_rewritten_in_place_reads_as_it_now_is() {
     }
     let refused = set.refresh().unwrap_err();
     assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
-    assert!(refused.detail().unwrap().ends_with("Open the file again."));
+    assert!(refused.to_string().ends_with("Open the file again."));
 }
 
 /// A file replaced by one that begins with the indexed frames is taken by

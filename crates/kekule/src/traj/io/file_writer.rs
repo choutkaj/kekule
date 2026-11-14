@@ -1,3 +1,4 @@
+use crate::traj::trajectory::reason::Reason;
 use crate::traj::FrameView;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -405,7 +406,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
                 TrajectoryIoOperation::Finish,
                 Some(self.format),
                 &self.source_label,
-                "An earlier frame failed to write. The trajectory is incomplete.",
+                Reason::EarlierFrameFailed,
             ));
         }
         self.inner.finish()
@@ -435,7 +436,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
             operation,
             Some(self.format),
             &self.source_label,
-            "An earlier frame failed to write. The trajectory is incomplete.",
+            Reason::EarlierFrameFailed,
         )
     }
 }
@@ -520,7 +521,7 @@ impl FileTrajectoryWriter {
                 TrajectoryIoOperation::Finish,
                 Some(self.format),
                 &label,
-                "An earlier frame failed to write. The trajectory is incomplete.",
+                Reason::EarlierFrameFailed,
             ));
         }
         if let Some(inner) = self.inner.take() {
@@ -771,7 +772,7 @@ pub fn create_trajectory_stream_writer<W: Write + Seek>(
             TrajectoryIoOperation::Open,
             None,
             options.source_label().unwrap_or("trajectory stream"),
-            "A stream has no extension. Choose the format explicitly.",
+            Reason::StreamNeedsFormat,
         )
     })?;
     let source_label = options.stream_label(format);
@@ -844,10 +845,15 @@ pub(super) fn resolve_format(
 ) -> Result<TrajectoryFormat, TrajectoryIoError> {
     match options.format {
         Some(format) => Ok(format),
-        None => detect::extension_format(path).ok_or_else(|| codec_context(
-            TrajectoryIoErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
-            &options.path_label(path), "The destination's extension names no supported format. Choose the format explicitly.",
-        )),
+        None => detect::extension_format(path).ok_or_else(|| {
+            codec_context(
+                TrajectoryIoErrorKind::UnknownFormat,
+                TrajectoryIoOperation::Open,
+                None,
+                &options.path_label(path),
+                Reason::UnknownExtension,
+            )
+        }),
     }
 }
 
@@ -900,7 +906,7 @@ pub fn create_trajectory_writer(
                 TrajectoryIoOperation::Open,
                 Some(format),
                 &label,
-                "The destination's file system has no hard links. Writing without overwriting needs them.",
+                Reason::NoHardLinks,
             )
             .with_source(error));
         }
@@ -952,7 +958,7 @@ fn create_temporary_sibling(
         TrajectoryIoOperation::Open,
         Some(format),
         label,
-        "Cannot find a free name for the temporary file.",
+        Reason::NoTemporaryName,
     ))
 }
 

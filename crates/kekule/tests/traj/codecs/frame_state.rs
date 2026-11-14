@@ -17,19 +17,19 @@ use kekule::traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
 use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
-use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::{write_structure_set_to, FrameTimingPolicy, TrajectoryWriteOptions};
 use kekule::traj::{
-    FrameView, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
-    TrajectoryWriter,
+    FrameView, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryWriter,
 };
 use kekule::units::{
     Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER,
     PICOSECOND, SQUARE_ANGSTROM,
 };
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support;
-use support::{codec_error, read_all, Frame};
+use support::{codec_error, read_all, seen, Frame};
 
 const OMIT: UnrepresentablePolicy = UnrepresentablePolicy::Omit;
 
@@ -261,7 +261,7 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
         TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label("state.xyz"),
     );
     assert_eq!(
-        writer.unwrap().write_frame(view(&rich[0])),
+        writer.unwrap().write_frame(view(&rich[0])).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -321,7 +321,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(view(&timed[0])),
+        writer.write_frame(view(&timed[0])).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -363,7 +363,7 @@ fn dcd_without_unit_cells_omits_and_reports_cells_under_the_cell_policy() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(view(&boxed[0])),
+        writer.write_frame(view(&boxed[0])).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -391,7 +391,7 @@ fn dcd_without_unit_cells_omits_and_reports_cells_under_the_cell_policy() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(view(&plain[0])),
+        writer.write_frame(view(&plain[0])).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -455,7 +455,7 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(view(&rich[0])),
+            writer.write_frame(view(&rich[0])).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::UnsupportedField,
                 TrajectoryIoOperation::WriteFrame,
@@ -525,7 +525,7 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(view(&without_lambda[0])),
+        writer.write_frame(view(&without_lambda[0])).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -608,7 +608,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(view(&unnumbered[0])),
+        writer.write_frame(view(&unnumbered[0])).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -672,7 +672,7 @@ fn dcd_numbers_frames_on_the_step_sequence() {
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(view(&frame)),
+            writer.write_frame(view(&frame)).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
@@ -763,7 +763,9 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(view(&timed([None; 3], [Some(0), Some(5), Some(10)])[0])),
+        writer
+            .write_frame(view(&timed([None; 3], [Some(0), Some(5), Some(10)])[0]))
+            .map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -796,14 +798,16 @@ fn frame_numbering_needs_a_finite_nonnegative_time_interval() {
         assert_eq!(
             XtcWriteOptions::default()
                 .with_frame_interval(interval)
-                .map(|_| ()),
+                .map(|_| ())
+                .map_err(seen),
             Err(detail(TrajectoryFormat::Xtc)),
             "{interval:?}"
         );
         assert_eq!(
             TrrWriteOptions::default()
                 .with_frame_interval(interval)
-                .map(|_| ()),
+                .map(|_| ())
+                .map_err(seen),
             Err(detail(TrajectoryFormat::Trr)),
             "{interval:?}"
         );
@@ -857,7 +861,7 @@ fn plain_and_sited(base: impl Fn(usize) -> Frame) -> [Vec<Frame>; 3] {
 }
 
 /// The error of a writer refusing `field` in the first frame.
-fn refused(format: TrajectoryFormat, label: &str, field: GeometryField) -> TrajectoryIoError {
+fn refused(format: TrajectoryFormat, label: &str, field: GeometryField) -> support::SeenError {
     codec_error(
         TrajectoryIoErrorKind::UnsupportedField,
         TrajectoryIoOperation::WriteFrame,
@@ -907,7 +911,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(view(&first(frames))),
+            writer.write_frame(view(&first(frames))).map_err(seen),
             Err(refused(TrajectoryFormat::Xyz, "state.xyz", field))
         );
     }
@@ -937,7 +941,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(view(&first(frames))),
+            writer.write_frame(view(&first(frames))).map_err(seen),
             Err(refused(TrajectoryFormat::Dcd, "state.dcd", field))
         );
     }
@@ -965,7 +969,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(view(&first(frames))),
+            writer.write_frame(view(&first(frames))).map_err(seen),
             Err(refused(TrajectoryFormat::Trr, "state.trr", field))
         );
     }
@@ -995,7 +999,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(view(&first(frames))),
+            writer.write_frame(view(&first(frames))).map_err(seen),
             Err(refused(TrajectoryFormat::Xtc, "state.xtc", field))
         );
     }

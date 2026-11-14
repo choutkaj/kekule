@@ -28,8 +28,8 @@ use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_error, codec_kind, topology as build_topology, x_coordinates as xs,
-    Frame, GuardedCursor, RestoreSeekFailure,
+    buffer_snapshot, codec_error, codec_kind, seen, topology as build_topology,
+    x_coordinates as xs, Frame, GuardedCursor, RestoreSeekFailure,
 };
 
 fn topology() -> Arc<Topology> {
@@ -149,7 +149,7 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
         let before = writer.writer().clone();
         if precision == TrrScalarPrecision::Float32 {
             assert_eq!(
-                writer.write_frame(frame.frame_view()),
+                writer.write_frame(frame.frame_view()).map_err(seen),
                 Err(codec_error(
                     TrajectoryIoErrorKind::InvalidFrame,
                     TrajectoryIoOperation::WriteFrame,
@@ -158,10 +158,7 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
                     None,
                     "The cell does not fit the selected precision.",
                 )
-                .with_source(
-                    kekule::traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
-                        .with_detail("The periodic cell is invalid."),
-                ))
+                .with_source("The periodic cell is invalid."))
             );
             assert_eq!(writer.writer(), &before);
             frame.geometry_mut().set_cell(ordinary_cell);
@@ -568,7 +565,7 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     )
     .unwrap();
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -737,7 +734,7 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
         )
         .unwrap();
         assert_eq!(
-            writer.write_frame(frame.frame_view()),
+            writer.write_frame(frame.frame_view()).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
@@ -773,7 +770,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
         ))
         .unwrap();
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
@@ -799,7 +796,9 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
         )
         .unwrap();
     assert_eq!(
-        writer.write_frame(bond_annotated.frame_view()),
+        writer
+            .write_frame(bond_annotated.frame_view())
+            .map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,

@@ -1,6 +1,7 @@
 //! Continuing a trajectory file after a restart: keep the frames a
 //! checkpoint covers, remove the rest, and append after them.
 
+use crate::traj::trajectory::reason::Reason;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Cursor, Seek, SeekFrom};
 use std::path::Path;
@@ -229,7 +230,7 @@ pub fn append_trajectory_with(
             TrajectoryIoOperation::Open,
             Some(format),
             &label,
-            "XYZ frames have no step. Keep frames by count.",
+            Reason::XyzFramesHaveNoStep,
         ));
     }
     // The scan reads frames as the writer writes them: an XTC zero box is no
@@ -276,7 +277,7 @@ pub fn append_trajectory_with(
                 TrajectoryIoOperation::Open,
                 format,
                 &label,
-                "The file changed before it was cut.",
+                Reason::FileChangedBeforeCut,
             ));
         }
     }
@@ -393,7 +394,10 @@ fn too_few_frames(
         TrajectoryIoOperation::Open,
         Some(format),
         label,
-        format!("Cannot keep {frames} frames. The file holds {count} complete frames."),
+        Reason::KeepFrames {
+            requested: frames,
+            available: count,
+        },
     )
     .with_written_counts(frames as u64, count as u64)
 }

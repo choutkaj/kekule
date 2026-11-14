@@ -514,6 +514,11 @@ not prove atom identity. Structure writers emit dense order, so a coordinate
 file written in a structure file's row order addresses the same atoms through
 that file's topology.
 
+A trajectory failure is one `TrajectoryIoError`: its kind classifies it, its
+accessors give typed payloads, and its message is written from a typed reason,
+never stored text. An opened reader's report notes the conventions it applied
+as typed `TrajectoryOpenNote`s.
+
 An indexed reader never returns a frame it has not verified. A file that only
 grew by appending is the same file with more frames, and refreshing verifies
 and indexes only the appended frames; a file whose existing bytes changed is
@@ -670,6 +675,8 @@ Coordinate-only trajectory formats are the deliberate exception: they carry no
 chemistry, so codecs decode frames against a caller-supplied topology. XYZ is
 read both ways: `kekule::xyz` interprets its frames into structures through
 this pipeline, and `kekule::traj` streams its coordinates against a topology.
+`kekule::xyz::write` writes a structure or a structure set, and the
+`kekule::traj` codec streams frames in the same text.
 
 | Format scope | Interpretation and projection |
 | --- | --- |

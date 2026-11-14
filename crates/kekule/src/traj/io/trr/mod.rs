@@ -61,6 +61,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use crate::traj::trajectory::reason::{Reason, UnitOf};
 use crate::traj::FrameView;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -372,7 +373,7 @@ fn trr_lambda_key() -> PropertyKey {
 
 fn writer_unit(
     source_label: &str,
-    field: &str,
+    unit: UnitOf,
     error: impl std::error::Error + Send + Sync + 'static,
 ) -> TrajectoryIoError {
     codec_context(
@@ -380,7 +381,7 @@ fn writer_unit(
         TrajectoryIoOperation::WriteFrame,
         Some(FORMAT),
         source_label,
-        format!("The {field} unit is incompatible."),
+        Reason::IncompatibleUnit(None, unit),
     )
     .with_source(error)
 }

@@ -2,6 +2,7 @@
 
 use crate::diagnostics::{GeometryField, WriteOmission, WriteReport};
 use crate::io::write_policy::StatePolicies;
+use crate::traj::trajectory::reason::Reason;
 use crate::traj::{
     FrameView, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
 };
@@ -72,7 +73,7 @@ pub(crate) fn frame_interval(
             TrajectoryIoOperation::Open,
             Some(format),
             &format!("{format} writer options"),
-            format!("The {format} frame interval is not a finite, nonnegative time."),
+            Reason::FrameIntervalInvalid(format),
         )),
     }
 }
@@ -107,7 +108,6 @@ pub(crate) fn writer_field_error(
     .with_source_label(source_label)
     .with_frame(frame)
     .with_field(field)
-    .with_detail(format!("{format} cannot store the {field}."))
 }
 
 /// Adds `omissions` to `report`, summing counts of a kind it already has.

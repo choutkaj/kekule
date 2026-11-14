@@ -221,22 +221,79 @@ pub(crate) fn codec_kind(error: &TrajectoryIoError) -> Option<TrajectoryIoErrorK
     Some(error.kind())
 }
 
-/// The exact codec error a reader or writer reports, for whole-value assertions.
+/// A trajectory error as its accessors and message show it, for whole-value
+/// assertions: `assert_eq!(result.map_err(seen), Err(codec_error(..)))`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SeenError {
+    kind: TrajectoryIoErrorKind,
+    operation: Option<TrajectoryIoOperation>,
+    format: Option<TrajectoryFormat>,
+    source_label: Option<String>,
+    frame: Option<usize>,
+    byte_offset: Option<u64>,
+    counts: (Option<u64>, Option<u64>),
+    limit: Option<kekule::diagnostics::LimitExceeded>,
+    field: Option<kekule::diagnostics::GeometryField>,
+    source: Option<String>,
+    message: String,
+}
+
+impl SeenError {
+    pub(crate) fn with_field(mut self, field: kekule::diagnostics::GeometryField) -> Self {
+        self.field = Some(field);
+        self
+    }
+
+    pub(crate) fn with_limit(mut self, limit: kekule::diagnostics::LimitExceeded) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    /// Sets the message the source error displays.
+    pub(crate) fn with_source(mut self, source: impl std::fmt::Display) -> Self {
+        self.source = Some(source.to_string());
+        self
+    }
+}
+
+pub(crate) fn seen(error: TrajectoryIoError) -> SeenError {
+    use std::error::Error as _;
+    SeenError {
+        kind: error.kind(),
+        operation: error.operation(),
+        format: error.format(),
+        source_label: error.source_label().map(str::to_owned),
+        frame: error.frame(),
+        byte_offset: error.byte_offset(),
+        counts: (error.expected(), error.actual()),
+        limit: error.limit_exceeded(),
+        field: error.field(),
+        source: error.source().map(ToString::to_string),
+        message: error.to_string(),
+    }
+}
+
+/// The exact codec error a reader or writer reports, whose message is its
+/// context followed by `detail`.
 pub(crate) fn codec_error(
     kind: TrajectoryIoErrorKind,
     operation: TrajectoryIoOperation,
-    format: TrajectoryFormat,
+    format: impl Into<Option<TrajectoryFormat>>,
     source_label: &str,
     frame: Option<usize>,
     detail: &str,
-) -> TrajectoryIoError {
-    let mut error = TrajectoryIoError::codec(kind, operation, Some(format))
-        .with_source_label(source_label)
-        .with_detail(detail);
+) -> SeenError {
+    // An I/O error without a source displays its context alone.
+    let mut context = TrajectoryIoError::codec(TrajectoryIoErrorKind::Io, operation, format.into())
+        .with_source_label(source_label);
     if let Some(frame) = frame {
-        error = error.with_frame(frame);
+        context = context.with_frame(frame);
     }
-    error
+    SeenError {
+        kind,
+        message: format!("{context} {detail}"),
+        ..seen(context)
+    }
 }
 
 pub(crate) fn x_coordinates(buffer: &FrameBuffer) -> Vec<f64> {

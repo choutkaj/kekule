@@ -16,6 +16,8 @@ pub enum Resource {
     RecordBytes,
     /// Bytes of one value or token.
     ValueBytes,
+    /// Bytes of a reader's or writer's reusable buffers.
+    BufferBytes,
     /// Input records.
     Records,
     /// Data blocks of a CIF document.
@@ -94,6 +96,7 @@ impl fmt::Display for Resource {
             Self::InputBytes => "input bytes",
             Self::RecordBytes => "record bytes",
             Self::ValueBytes => "value bytes",
+            Self::BufferBytes => "buffer bytes",
             Self::Records => "records",
             Self::Blocks => "data blocks",
             Self::Rows => "rows",
@@ -141,6 +144,7 @@ impl Resource {
             Self::InputBytes => "input size",
             Self::RecordBytes => "record size",
             Self::ValueBytes => "value size",
+            Self::BufferBytes => "buffer size",
             Self::Records => "record",
             Self::Blocks => "data block",
             Self::Rows => "row",
@@ -182,7 +186,7 @@ impl Resource {
     /// The unit a count of this resource is given in.
     const fn unit(self) -> &'static str {
         match self {
-            Self::InputBytes | Self::RecordBytes | Self::ValueBytes => "bytes",
+            Self::InputBytes | Self::RecordBytes | Self::ValueBytes | Self::BufferBytes => "bytes",
             Self::Records => "records",
             Self::Blocks => "data blocks",
             Self::Rows => "rows",

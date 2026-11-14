@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{Part, Reason};
 
 /// Fully verified DCD indexed reader. Random reads leave the fixed-atom
 /// reference coordinates as they are.
@@ -77,7 +78,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 TrajectoryIoOperation::Open,
                 TrajectoryFormat::Dcd,
                 &label,
-                "The index counts more frames than the frame count NSET in the header.",
+                Reason::IndexBeyondNset,
             )
             .with_counts(inner.header.declared_frames as u64, offsets.len() as u64));
         }
@@ -216,7 +217,7 @@ impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
         )
         .with_source_label(&self.source.label)
         .with_counts(declared as u64, (indexed as u64).saturating_add(1))
-        .with_detail("The file holds more frames than the frame count NSET in its header."))
+        .with_reason(Reason::FramesBeyondNset))
     }
 
     fn index_full(
@@ -241,9 +242,9 @@ impl<R: Read + Seek> IndexedCodec for DcdReader<R> {
             TrajectoryIoOperation::Index,
             &self.source.label,
             Some(indexed),
-            "",
+            None,
         )
-        .exceeding("The frame index", limit))
+        .exceeding(Part::FrameIndex, limit))
     }
 
     fn index_next(
@@ -306,6 +307,6 @@ impl<R> DcdReader<R> {
         )
         .with_source_label(&self.source.label)
         .with_counts(self.header.declared_frames as u64, indexed as u64)
-        .with_detail("The file ends before the frame count NSET in its header.")
+        .with_reason(Reason::EndsBeforeNset)
     }
 }

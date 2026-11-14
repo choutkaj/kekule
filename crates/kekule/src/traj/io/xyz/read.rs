@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{Part, Reason};
 
 /// Sequential XYZ reader over a caller-supplied buffered stream.
 pub struct XyzReader<R> {
@@ -66,7 +67,7 @@ impl<R: BufRead> XyzReader<R> {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 source_label,
-                "Cannot allocate the position buffer.",
+                Reason::Allocation(Part::PositionBuffer),
             )
         })?;
         Ok(Self {
@@ -107,10 +108,10 @@ impl<R: BufRead> XyzReader<R> {
                 operation,
                 &self.source.label,
                 self.frame_cursor,
-                "",
+                None,
             )
             .exceeding(
-                "The trajectory",
+                Part::Trajectory,
                 LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
@@ -154,7 +155,7 @@ impl<R: BufRead> XyzReader<R> {
                 operation,
                 &self.source.label,
                 self.frame_cursor,
-                "The atom-count line is not one nonnegative whole number.",
+                Reason::AtomCountLine,
             )
         })?;
         if atom_count == 0 {
@@ -164,7 +165,7 @@ impl<R: BufRead> XyzReader<R> {
                 operation,
                 &self.source.label,
                 self.frame_cursor,
-                "The frame has zero atoms.",
+                Reason::ZeroAtoms,
             ));
         }
         validate_atom_limit(atom_count, &self.source.limits, &self.source.label)?;
@@ -196,7 +197,7 @@ impl<R: BufRead> XyzReader<R> {
                 operation,
                 &self.source.label,
                 self.frame_cursor,
-                "The frame has no comment line.",
+                Reason::NoCommentLine,
             ));
         };
         frame_bytes = checked_frame_add(
@@ -243,7 +244,7 @@ impl<R: BufRead> XyzReader<R> {
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    format!("The frame ends before atom line {atom_index}."),
+                    Reason::EndsBeforeAtomLine(atom_index),
                 ));
             };
             frame_bytes = checked_frame_add(
@@ -274,7 +275,7 @@ impl<R: BufRead> XyzReader<R> {
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    format!("Atom line {atom_index} does not have four fields."),
+                    Reason::AtomLineFields(atom_index),
                 ));
             };
             let element = Element::from_symbol(symbol).ok_or_else(|| {
@@ -284,7 +285,10 @@ impl<R: BufRead> XyzReader<R> {
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    format!("Atom line {atom_index} has the unknown element symbol {symbol:?}."),
+                    Reason::UnknownElement {
+                        line: atom_index,
+                        symbol: symbol.into(),
+                    },
                 )
             })?;
             if element != expected_element {
@@ -294,11 +298,11 @@ impl<R: BufRead> XyzReader<R> {
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    format!(
-                        "Atom {atom_index} is {}. The topology has {} there.",
-                        element.symbol(),
-                        expected_element.symbol()
-                    ),
+                    Reason::ElementMismatch {
+                        atom: atom_index,
+                        found: element,
+                        expected: expected_element,
+                    },
                 ));
             }
             let parse_coordinate = |value: &str| {
@@ -309,7 +313,7 @@ impl<R: BufRead> XyzReader<R> {
                         operation,
                         &self.source.label,
                         self.frame_cursor,
-                        format!("Atom line {atom_index} has a coordinate that is not a number."),
+                        Reason::CoordinateNotNumber(atom_index),
                     )
                 })
             };
@@ -323,7 +327,7 @@ impl<R: BufRead> XyzReader<R> {
                     operation,
                     &self.source.label,
                     self.frame_cursor,
-                    format!("Atom line {atom_index} has a coordinate that is not finite."),
+                    Reason::CoordinateNotFiniteOnLine(atom_index),
                 ));
             }
             if retain_positions {
@@ -369,7 +373,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 self.frame_cursor,
-                "The frame number exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameNumber),
             )
         })?;
         Ok(true)
@@ -411,7 +415,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
                 &self.source.label,
-                "The file holds no frame.",
+                Reason::FileHoldsNoFrame,
             ));
         }
         Ok(())
@@ -439,10 +443,10 @@ pub(super) fn validate_atom_limit(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "",
+            None,
         )
         .exceeding(
-            "The atom count",
+            Part::AtomCount,
             LimitExceeded::new(Resource::Atoms, limits.max_atoms(), atom_count),
         ));
     }
@@ -454,7 +458,7 @@ pub(super) fn validate_atom_limit(
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
                 source_label,
-                "The position buffer exceeds this platform's address range.",
+                Reason::AddressRange(Part::PositionBuffer),
             )
         })?;
     if scratch_bytes > limits.max_scratch_bytes() {
@@ -463,16 +467,16 @@ pub(super) fn validate_atom_limit(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            format!(
-                "The position buffer needs {scratch_bytes} bytes, more than the buffer limit of {} bytes.",
-                limits.max_scratch_bytes()
-            ),
+            None,
         )
-        .with_limit(LimitExceeded::new(
-            Resource::RecordBytes,
-            limits.max_scratch_bytes(),
-            scratch_bytes,
-        )));
+        .exceeding(
+            Part::PositionBuffer,
+            LimitExceeded::new(
+                Resource::BufferBytes,
+                limits.max_scratch_bytes(),
+                scratch_bytes,
+            ),
+        ));
     }
     Ok(())
 }
@@ -491,10 +495,10 @@ pub(super) fn validate_frame_bytes(
             operation,
             source_label,
             frame,
-            "",
+            None,
         )
         .exceeding(
-            "The frame",
+            Part::Frame,
             exceeded_bytes(limits.max_frame_bytes(), frame_bytes),
         ));
     }
@@ -519,7 +523,7 @@ pub(super) fn checked_frame_add(
                 operation,
                 source_label,
                 frame,
-                "The frame's size exceeds the 64-bit range.",
+                Reason::Range64(Part::FrameSize),
             )
         })
 }
@@ -567,10 +571,10 @@ pub(super) fn read_line<'a, R: BufRead>(
                 operation,
                 Some(FORMAT),
                 source_label,
-                "",
+                None,
             )
             .exceeding(
-                "A line",
+                Part::Line,
                 LimitExceeded::new(Resource::RecordBytes, limit, needed),
             ));
         }
@@ -591,14 +595,14 @@ pub(super) fn read_line<'a, R: BufRead>(
                 target,
                 other_scratch_bytes,
                 limits.max_scratch_bytes(),
-                |detail| {
+                |reason| {
                     frame_error(
                         FORMAT,
                         TrajectoryIoErrorKind::LimitExceeded,
                         operation,
                         source_label,
                         frame,
-                        format!("The line buffer cannot grow. {detail}"),
+                        Reason::LineBufferGrowth(Box::new(reason)),
                     )
                 },
             )?;
@@ -621,7 +625,7 @@ pub(super) fn read_line<'a, R: BufRead>(
             operation,
             source_label,
             frame,
-            "The last line has no line break yet.",
+            Reason::NoLineBreak,
         ));
     }
     let mut content = line.as_slice();

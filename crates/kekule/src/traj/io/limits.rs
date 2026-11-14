@@ -1,4 +1,5 @@
 use crate::diagnostics::{LimitExceeded, Resource};
+use crate::traj::trajectory::reason::{Part, Reason};
 use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
 };
@@ -174,7 +175,7 @@ pub(super) fn reserve_scratch<T>(
     required_capacity: usize,
     other_bytes: Option<usize>,
     limit: usize,
-    error: impl Fn(&str) -> TrajectoryIoError,
+    error: impl Fn(Reason) -> TrajectoryIoError,
 ) -> Result<(), TrajectoryIoError> {
     let fits = |capacity: usize| {
         capacity
@@ -183,20 +184,16 @@ pub(super) fn reserve_scratch<T>(
             .is_some_and(|bytes| bytes <= limit)
     };
     if !fits(values.capacity().max(required_capacity)) {
-        return Err(error(&format!(
-            "The buffers would exceed their limit of {limit} bytes."
-        )));
+        return Err(error(Reason::BuffersWouldExceed(limit)));
     }
     if values.capacity() < required_capacity {
         values
             .try_reserve_exact(required_capacity - values.len())
-            .map_err(|_| error("Cannot allocate the buffers."))?;
+            .map_err(|_| error(Reason::Allocation(Part::Buffers)))?;
         // Vec permits an allocator to provide more capacity than requested.
         if !fits(values.capacity()) {
             *values = Vec::new();
-            return Err(error(&format!(
-                "The allocated buffers exceed their limit of {limit} bytes."
-            )));
+            return Err(error(Reason::AllocatedBuffersExceed(limit)));
         }
     }
     Ok(())
@@ -307,9 +304,7 @@ pub(crate) fn reserve_index_for_push(
         )
         .with_source_label(source_label)
         .with_frame(frame)
-        .with_detail(format!(
-            "The frame index is full at {hard_capacity} frames."
-        )));
+        .with_reason(Reason::IndexFull(hard_capacity)));
     };
     offsets
         .try_reserve_exact(target_capacity.saturating_sub(offsets.len()))
@@ -321,7 +316,7 @@ pub(crate) fn reserve_index_for_push(
             )
             .with_source_label(source_label)
             .with_frame(frame)
-            .with_detail("Cannot allocate the frame index.")
+            .with_reason(Reason::Allocation(Part::FrameIndex))
         })
 }
 
@@ -329,13 +324,13 @@ pub(crate) fn reserve_index_for_push(
 mod scratch_tests {
     use super::*;
 
-    fn error(detail: &str) -> TrajectoryIoError {
+    fn error(reason: Reason) -> TrajectoryIoError {
         TrajectoryIoError::codec(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::ReadFrame,
             Some(TrajectoryFormat::Xtc),
         )
-        .with_detail(detail)
+        .with_reason(reason)
     }
 
     #[test]

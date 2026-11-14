@@ -7,10 +7,10 @@ use std::sync::Arc;
 use kekule::math::Point3;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::topology::TopologyBuilder;
-use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{create_trajectory_writer, OverwritePolicy, TrajectoryWriteOptions};
 use kekule::traj::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM};
+use kekule::xyz::XyzWriteOptions;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let output = std::env::args_os()

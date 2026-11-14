@@ -210,7 +210,7 @@ pub use indexed_file::{
 pub use limits::TrajectoryIoLimits;
 pub use metadata::{
     CoordinateEncoding, FieldAvailability, FileTrajectoryMetadata, RandomAccessCapability,
-    ScalarPrecision, TrajectoryFieldAvailability, TrajectoryOpenReport,
+    ScalarPrecision, TrajectoryFieldAvailability, TrajectoryOpenNote, TrajectoryOpenReport,
 };
 pub use options::TrajectoryOpenOptions;
 
