@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use crate::diagnostics::Cancellation;
 use crate::math::RigidTransform;
+use crate::parallel::Run;
 use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
@@ -185,20 +185,14 @@ impl<S: GeometryStorage> StructureSet<S> {
         Ok(())
     }
 
-    /// [`Self::perceive`], stopping partway once `cancellation` is requested.
-    ///
-    /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
-    /// leaves the set unchanged; a completed one installs exactly what
-    /// [`Self::perceive`] would.
+    /// [`Self::perceive`] under a [`Run`], through
+    /// [`Topology::perceived_with`].
     ///
     /// # Errors
     ///
-    /// As [`Topology::perceived_cancellable`].
-    pub fn perceive_cancellable(
-        &mut self,
-        cancellation: &Cancellation,
-    ) -> Result<(), TopologyPerceptionError> {
-        self.topology = Arc::new(self.topology.perceived_cancellable(cancellation)?);
+    /// As [`Topology::perceived_with`].
+    pub fn perceive_with(&mut self, run: Run<'_>) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived_with(run)?);
         Ok(())
     }
 

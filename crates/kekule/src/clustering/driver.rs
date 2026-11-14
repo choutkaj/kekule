@@ -4,12 +4,12 @@
 use std::fmt;
 
 use super::run::{FirstFailure, Stop, Tracker};
-use super::ClusteringRun;
 use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentError, AlignmentOptions, FitAtoms, NormalizedWeights,
 };
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
+use crate::parallel::Run;
 use crate::structure::{
     Distribution, Ensemble, GeometryError, Members, Partition, Requirement, StructureSet,
     StructureSetError, StructureSetReadError, StructureView,
@@ -168,7 +168,7 @@ impl<'a> Clustered<'a> {
         radius: Quantity<f64>,
         atoms: FitAtoms<'_>,
         options: ClusteringOptions<'_>,
-        run: ClusteringRun<'_>,
+        run: Run<'_>,
     ) -> Result<Partition, ClusteringError> {
         let atoms = undirected(atoms)?;
         let radius = radius.value_in(CANONICAL_LENGTH_UNIT)?;
@@ -336,28 +336,22 @@ impl StructureSet {
         atoms: impl Into<FitAtoms<'a>>,
         options: ClusteringOptions<'_>,
     ) -> Result<Partition, ClusteringError> {
-        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+        self.cluster_by_radius_with(radius, atoms, options, Run::default())
     }
 
-    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
-    /// as `run` says, as in [`Ensemble::cluster_by_radius_with`].
+    /// [`Self::cluster_by_radius`] under a [`Run`], as
+    /// [`Ensemble::cluster_by_radius_with`] runs.
     ///
     /// # Errors
     ///
     /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
     /// once `run`'s cancellation is requested.
-    ///
-    /// # Panics
-    ///
-    /// When a work item panics, which
-    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-    /// the executor skips or repeats a work item.
     pub fn cluster_by_radius_with<'a>(
         &self,
         radius: Quantity<f64>,
         atoms: impl Into<FitAtoms<'a>>,
         options: ClusteringOptions<'_>,
-        run: ClusteringRun<'_>,
+        run: Run<'_>,
     ) -> Result<Partition, ClusteringError> {
         Clustered::new(self, None).cluster_by_radius(radius, atoms.into(), options, run)
     }
@@ -393,9 +387,7 @@ impl Ensemble {
     /// is rejected. Each member is fitted to at most every representative,
     /// so the cost grows with members times clusters (times symmetry
     /// permutations). A distribution without samples gives an empty
-    /// partition. Fits run on the calling thread;
-    /// [`Self::cluster_by_radius_with`] spreads them over threads, reports
-    /// progress, and can be cancelled.
+    /// partition.
     ///
     /// # Errors
     ///
@@ -417,11 +409,10 @@ impl Ensemble {
         atoms: impl Into<FitAtoms<'a>>,
         options: ClusteringOptions<'_>,
     ) -> Result<Partition, ClusteringError> {
-        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+        self.cluster_by_radius_with(radius, atoms, options, Run::default())
     }
 
-    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
-    /// as `run` says.
+    /// [`Self::cluster_by_radius`] under a [`Run`].
     ///
     /// Each member joins or founds a cluster depending on those placed
     /// before it, so members are still placed one at a time in visiting
@@ -437,18 +428,12 @@ impl Ensemble {
     ///
     /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
     /// once `run`'s cancellation is requested.
-    ///
-    /// # Panics
-    ///
-    /// When a work item panics, which
-    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-    /// the executor skips or repeats a work item.
     pub fn cluster_by_radius_with<'a>(
         &self,
         radius: Quantity<f64>,
         atoms: impl Into<FitAtoms<'a>>,
         options: ClusteringOptions<'_>,
-        run: ClusteringRun<'_>,
+        run: Run<'_>,
     ) -> Result<Partition, ClusteringError> {
         Clustered::new(self.set(), Some(self.distribution())).cluster_by_radius(
             radius,

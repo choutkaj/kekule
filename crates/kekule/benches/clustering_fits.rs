@@ -11,10 +11,10 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
-use kekule::clustering::{ClusteringOptions, ClusteringRun, Cut, Linkage};
+use kekule::clustering::{ClusteringOptions, Cut, Linkage};
 use kekule::math::Point3;
 use kekule::mmcif;
-use kekule::parallel::ScopedThreads;
+use kekule::parallel::{Run, ScopedThreads};
 use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, ANGSTROM};
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let executor = ScopedThreads::new(threads);
-    let run = || ClusteringRun::default().with_executor(&executor);
+    let run = || Run::default().with_executor(&executor);
     let radius = Quantity::new(1.0, ANGSTROM);
     let mut checksum = DefaultHasher::new();
 

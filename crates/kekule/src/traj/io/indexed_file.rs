@@ -179,8 +179,10 @@ impl GeometryStorage for IndexedFile {}
 ///
 /// The set's order is a time order of the frames' times and steps; read it
 /// as draws from a distribution with an [`Ensemble`].
-/// `options` set the codec, its limits, and the indexing's cancellation and
-/// progress.
+/// `options` set the codec and its limits. To follow or cancel the scan,
+/// open the reader with
+/// [`open_indexed_trajectory_with`](super::open_indexed_trajectory_with) and
+/// take [`IndexedFileTrajectoryReader::into_structure_set`].
 ///
 /// ```no_run
 /// use kekule::structure::StructureSetRead;

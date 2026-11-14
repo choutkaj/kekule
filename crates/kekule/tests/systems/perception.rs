@@ -4,6 +4,7 @@ use crate::support::hierarchy_record;
 use std::sync::{Arc, Weak};
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
+use kekule::parallel::Run;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{Geometry, Positions, Structure, StructureSet};
 use kekule::topology::{
@@ -528,7 +529,9 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     // A check that never turns true changes nothing.
     let (never, polls) = requested_after(usize::MAX);
     let mut perceived = structure.clone();
-    perceived.perceive_cancellable(&never).unwrap();
+    perceived
+        .perceive_with(Run::new().with_cancellation(&never))
+        .unwrap();
     assert!(perceived.topology().shares_layout(structure.topology()));
     for (left, right) in perceived
         .topology()
@@ -547,7 +550,9 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     for after in [1, polls / 2, polls] {
         let (cancellation, _) = requested_after(after);
         let mut cancelled = structure.clone();
-        let error = cancelled.perceive_cancellable(&cancellation).unwrap_err();
+        let error = cancelled
+            .perceive_with(Run::new().with_cancellation(&cancellation))
+            .unwrap_err();
         assert!(
             matches!(error.source, perception::PerceptionError::Cancelled(_)),
             "poll {after}: {error}"
@@ -560,7 +565,9 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
 
         let (cancellation, _) = requested_after(after);
         let mut cancelled = ensemble.clone();
-        let error = cancelled.perceive_cancellable(&cancellation).unwrap_err();
+        let error = cancelled
+            .perceive_with(Run::new().with_cancellation(&cancellation))
+            .unwrap_err();
         assert!(matches!(
             error.source,
             perception::PerceptionError::Cancelled(_)
@@ -569,6 +576,8 @@ fn cancellable_perception_stops_once_cancellation_is_requested() {
     }
     let (never, _) = requested_after(usize::MAX);
     let mut perceived = ensemble.clone();
-    perceived.perceive_cancellable(&never).unwrap();
+    perceived
+        .perceive_with(Run::new().with_cancellation(&never))
+        .unwrap();
     assert_default_perception(perceived.topology());
 }

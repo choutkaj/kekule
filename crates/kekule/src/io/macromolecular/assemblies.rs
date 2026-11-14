@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled, FormatError};
 use crate::math::{Matrix3, Vector3};
+use crate::parallel::Run;
 use crate::structure::{Structure, StructureEditError, StructureEditor, StructureError};
 use crate::topology::{AtomSelection, ChainId, SelectionError, Topology};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
@@ -157,14 +158,24 @@ impl Assembly {
     ///
     /// [`AssemblyError::NoAtoms`] when no listed chain has atoms in `structure`,
     /// [`AssemblyError::RepeatedCopy`] when two copies of one chain would take
-    /// the same identifiers, [`AssemblyError::Cancelled`] when `cancellation`
-    /// stops it, and the structure errors of taking the chains and publishing
-    /// the copies.
-    pub fn to_structure(
+    /// the same identifiers, and the structure errors of taking the chains
+    /// and publishing the copies.
+    pub fn to_structure(&self, structure: &Structure) -> Result<Structure, AssemblyError> {
+        self.to_structure_with(structure, Run::default())
+    }
+
+    /// [`Self::to_structure`] under a [`Run`], on the calling thread.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::to_structure`], and [`AssemblyError::Cancelled`] once
+    /// `run`'s cancellation is requested.
+    pub fn to_structure_with(
         &self,
         structure: &Structure,
-        cancellation: Option<&Cancellation>,
+        run: Run<'_>,
     ) -> Result<Structure, AssemblyError> {
+        let cancellation = run.cancellation();
         let cancelled = |source| AssemblyError::Cancelled {
             assembly: self.id.clone(),
             source,

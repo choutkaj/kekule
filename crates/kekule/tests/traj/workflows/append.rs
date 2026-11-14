@@ -5,11 +5,12 @@
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use kekule::diagnostics::{Cancellation, UnrepresentablePolicy};
 use kekule::math::{PeriodicCell, Point3, Vector3};
+use kekule::parallel::{Progress, Run};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::topology::Topology;
@@ -18,8 +19,8 @@ use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions
 use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
-    append_trajectory, create_trajectory_stream_writer, open_indexed_trajectory, KeepFrames,
-    TrajectoryAppendOptions, TrajectoryAppendReport, TrajectoryFileFingerprint,
+    append_trajectory, append_trajectory_with, create_trajectory_stream_writer,
+    open_indexed_trajectory, KeepFrames, TrajectoryAppendReport, TrajectoryFileFingerprint,
     TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
@@ -344,12 +345,13 @@ fn the_scan_of_the_file_to_continue_can_be_cancelled_and_reports_progress() {
     // A cancelled scan returns before the file changes, as it does for a
     // file without a complete frame or DCD header to keep.
     let cancel = Arc::new(AtomicBool::new(true));
-    let cancelled = TrajectoryAppendOptions::new(options(format))
-        .with_cancellation(Cancellation::from_flag(Arc::clone(&cancel)));
-    assert_refused(
+    let cancellation = Cancellation::from_flag(Arc::clone(&cancel));
+    let cancelled = Run::new().with_cancellation(&cancellation);
+    assert_refused_with(
         &path,
         KeepFrames::First(2),
-        cancelled.clone(),
+        options(format),
+        cancelled,
         TrajectoryIoErrorKind::Cancelled,
         "cancelled",
     );
@@ -357,26 +359,33 @@ fn the_scan_of_the_file_to_continue_can_be_cancelled_and_reports_progress() {
         let other = directory.file(unfinished);
         let bytes = straight_through(unfinished, &other, 1);
         fs::write(&other, &bytes[..40]).unwrap();
-        let options = TrajectoryAppendOptions::new(options(unfinished))
-            .with_cancellation(Cancellation::from_flag(Arc::clone(&cancel)));
-        assert_refused(
+        assert_refused_with(
             &other,
             KeepFrames::First(0),
-            options,
+            options(unfinished),
+            cancelled,
             TrajectoryIoErrorKind::Cancelled,
             &format!("cancelled unfinished {unfinished}"),
         );
     }
-    // Progress reaches every frame of the file, kept or not.
+    // Progress reaches every frame of the file, kept or not: one report
+    // before the first frame and one after each, through the whole file.
     cancel.store(false, Ordering::Relaxed);
-    let frames = Arc::new(AtomicUsize::new(0));
-    let seen = Arc::clone(&frames);
-    let followed = cancelled.with_progress(move |step| {
-        seen.store(step.frame_count(), Ordering::Relaxed);
-    });
-    let (mut writer, report) =
-        append_trajectory(&path, topology(), KeepFrames::First(2), followed).unwrap();
-    assert_eq!(frames.load(Ordering::Relaxed), 4);
+    let size = fs::metadata(&path).unwrap().len();
+    let steps = Mutex::new(Vec::new());
+    let progress = |step: Progress| steps.lock().unwrap().push(step);
+    let followed = cancelled.with_progress(&progress);
+    let (mut writer, report) = append_trajectory_with(
+        &path,
+        topology(),
+        KeepFrames::First(2),
+        options(format),
+        followed,
+    )
+    .unwrap();
+    let steps = steps.into_inner().unwrap();
+    assert_eq!(steps.len(), 4 + 1);
+    assert_eq!(steps.last(), Some(&Progress::new(size, size)));
     assert_eq!(report.dropped_frames(), 2);
     write_frames(&mut writer, (2..4).map(frame));
     drop(writer.finish().unwrap());
@@ -434,12 +443,24 @@ fn a_reader_following_the_file_sees_the_cut_and_then_the_appended_frames() {
 fn assert_refused(
     path: &Path,
     keep: KeepFrames,
-    options: impl Into<TrajectoryAppendOptions>,
+    options: TrajectoryWriteOptions,
+    kind: TrajectoryIoErrorKind,
+    context: &str,
+) {
+    assert_refused_with(path, keep, options, Run::default(), kind, context);
+}
+
+/// [`assert_refused`] under `run`.
+fn assert_refused_with(
+    path: &Path,
+    keep: KeepFrames,
+    options: TrajectoryWriteOptions,
+    run: Run<'_>,
     kind: TrajectoryIoErrorKind,
     context: &str,
 ) {
     let before = fs::read(path).unwrap();
-    let error = append_trajectory(path, topology(), keep, options).unwrap_err();
+    let error = append_trajectory_with(path, topology(), keep, options, run).unwrap_err();
     assert_eq!(error.kind(), kind, "{context}: {error}");
     assert!(fs::read(path).unwrap() == before, "{context}: file changed");
 }

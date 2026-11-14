@@ -11,7 +11,11 @@ use crate::topology::{
 use crate::units::ANGSTROM;
 
 use super::*;
-use crate::parallel::{map_ranges, map_weighted_ranges, Executor};
+use crate::parallel::{map_ranges, map_weighted_ranges, Executor, Progress, Run};
+
+/// The stages [`assign`] reports as progress: backbone extraction,
+/// hydrogen bonds, beta sheets, classification, and publication.
+const STAGES: usize = 5;
 
 /// Fewest residues a stage gives one thread.
 const MIN_CHUNK: usize = 256;
@@ -202,16 +206,25 @@ pub(super) fn assign(
     prepared: &Prepared,
     structure: StructureView<'_>,
     options: DsspOptions,
-    executor: &dyn Executor,
+    run: Run<'_>,
 ) -> Result<DsspResult, DsspError> {
+    let executor = run.executor();
+    // Reports `done` stages and polls the cancellation.
+    let stage = |done: usize| {
+        run.report(Progress::of(done, STAGES));
+        run.check().map_err(DsspError::Cancelled)
+    };
+    stage(0)?;
     let (mut residues, mut report, chain_segments) =
         extract_backbones(prepared, structure, options.limits, executor)?;
     if residues.is_empty() {
         return Err(DsspError::NoAnalyzableProteinResidues);
     }
+    stage(1)?;
 
     let candidates = analyze_backbone(&mut residues, options.limits.max_candidate_pairs, executor)?;
     report.candidate_hydrogen_bond_pairs = candidates.len();
+    stage(2)?;
     let hierarchy = structure.topology().hierarchy();
     let sheets = calculate_beta_sheets(
         hierarchy,
@@ -222,6 +235,7 @@ pub(super) fn assign(
     )?;
     drop(candidates);
     report.generated_ladders = sheets.counts.ladders;
+    stage(3)?;
 
     // Each range classifies its residues and publishes them.
     let published = map_ranges(executor, residues.len(), MIN_CHUNK, |range| {
@@ -256,6 +270,7 @@ pub(super) fn assign(
             .collect::<Vec<_>>();
         (published, counts, hydrogen_bonds)
     });
+    stage(4)?;
     let mut public_residues = Vec::with_capacity(residues.len());
     let mut counts = [0; DsspSecondaryStructure::ALL.len()];
     let mut hydrogen_bonds = 0;
@@ -280,6 +295,7 @@ pub(super) fn assign(
             .zip(counts)
             .collect(),
     };
+    run.report(Progress::of(STAGES, STAGES));
     Ok(DsspResult {
         residues: public_residues,
         lookup,

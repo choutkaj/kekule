@@ -14,6 +14,7 @@ use super::{
 };
 use crate::math::Point3;
 use crate::molecule::{Element, Molecule};
+use crate::parallel::Run;
 use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::StructureView;
 use crate::topology::{
@@ -147,6 +148,7 @@ pub(crate) struct Evaluator<'a> {
     topology: &'a Arc<Topology>,
     structure: Option<StructureView<'a>>,
     options: &'a SelectEvaluateOptions<'a>,
+    run: Run<'a>,
 }
 
 impl<'a> Evaluator<'a> {
@@ -155,12 +157,14 @@ impl<'a> Evaluator<'a> {
         topology: &'a Arc<Topology>,
         structure: Option<StructureView<'a>>,
         options: &'a SelectEvaluateOptions<'a>,
+        run: Run<'a>,
     ) -> Self {
         Self {
             expression,
             topology,
             structure,
             options,
+            run,
         }
     }
 
@@ -221,6 +225,10 @@ impl<'a> Evaluator<'a> {
     }
 
     fn node(&mut self, node: &Node) -> Result<Bits> {
+        if let Err(source) = self.run.check() {
+            let (term, span) = self.term(node);
+            return Err(SelectEvaluateError::Cancelled { term, span, source });
+        }
         let len = self.len();
         Ok(match &node.kind {
             NodeKind::All => Bits::full(len),
@@ -430,17 +438,16 @@ impl<'a> Evaluator<'a> {
     fn marked(&self, mark: &MarkRange<'_>) -> Bits {
         let len = self.len();
         let mut bits = Bits::empty(len);
-        let items = self.options.executor().map_or(1, |executor| {
-            executor
-                .parallelism()
-                .get()
-                .min(len / ATOMS_PER_WORK_ITEM)
-                .max(1)
-        });
-        let Some(executor) = self.options.executor().filter(|_| items > 1) else {
+        let executor = self.run.executor();
+        let items = executor
+            .parallelism()
+            .get()
+            .min(len / ATOMS_PER_WORK_ITEM)
+            .max(1);
+        if items == 1 {
             mark(0..len, &mut |index| bits.set(index));
             return bits;
-        };
+        }
         let start = |item: usize| (item * len / items / 64 * 64).min(len);
         let marked = (0..items).map(|_| Mutex::new(None)).collect::<Vec<_>>();
         executor.run(items, &|item| {

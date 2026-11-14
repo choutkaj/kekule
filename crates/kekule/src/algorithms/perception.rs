@@ -8,9 +8,10 @@ use crate::algorithms::{
     perceive_conjugation, perceive_resonance_cancellable, ConjugationError,
     ResonancePerceptionError,
 };
-use crate::diagnostics::{Cancellation, Cancelled};
+use crate::diagnostics::Cancelled;
 use crate::molecule::{AromaticityModel, Molecule, ValenceModel};
 use crate::molecule::{ConjugationModel, ResonanceModel};
+use crate::parallel::{Progress, Run};
 
 /// Failure from the default discrete chemical perception profile.
 #[non_exhaustive]
@@ -26,10 +27,9 @@ pub enum PerceptionError {
     Rings(RingPerceptionError),
     /// Aromaticity perception failed; see the source.
     Aromaticity(AromaticityError),
-    /// The caller's [`Cancellation`] stopped perception, as cancellable
-    /// perception such as
-    /// [`Structure::perceive_cancellable`](crate::structure::Structure::perceive_cancellable)
-    /// reports.
+    /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
+    /// perception, as a `perceive_with` form such as
+    /// [`Molecule::perceive_with`] reports.
     Cancelled(Cancelled),
 }
 
@@ -66,34 +66,44 @@ impl std::error::Error for PerceptionError {
 /// and charge-move resonance delocalization. The complete
 /// operation is transactional and never rewrites represented chemistry.
 pub(crate) fn perceive_molecule(molecule: &mut Molecule) -> Result<(), PerceptionError> {
-    perceive_molecule_cancellable(molecule, None)
+    perceive_molecule_with(molecule, Run::default())
 }
 
-/// [`perceive_molecule`], polling `cancellation` between stages and during
-/// ring perception, which dominates on large molecules.
-pub(crate) fn perceive_molecule_cancellable(
+/// The stages of [`perceive_molecule_with`]: valence, rings, aromaticity,
+/// conjugation, and resonance.
+const STAGES: usize = 5;
+
+/// [`perceive_molecule`] under `run`, polling its cancellation between
+/// stages and during ring and resonance perception, which dominate on large
+/// molecules, and reporting the stages done.
+pub(crate) fn perceive_molecule_with(
     molecule: &mut Molecule,
-    cancellation: Option<&Cancellation>,
+    run: Run<'_>,
 ) -> Result<(), PerceptionError> {
     let previous = molecule.perception().clone();
-    if let Err(error) = perceive_molecule_in_place(molecule, cancellation) {
+    if let Err(error) = perceive_molecule_in_place(molecule, run) {
         molecule
             .install_perception(previous)
             .expect("previous perception state must remain valid");
         return Err(error);
     }
+    run.report(Progress::of(STAGES, STAGES));
     Ok(())
 }
 
 fn perceive_molecule_in_place(
     molecule: &mut Molecule,
-    cancellation: Option<&Cancellation>,
+    run: Run<'_>,
 ) -> Result<(), PerceptionError> {
-    let poll = || Cancellation::poll(cancellation).map_err(PerceptionError::Cancelled);
-    poll()?;
+    let cancellation = run.cancellation();
+    let stage = |done: usize| {
+        run.report(Progress::of(done, STAGES));
+        run.check().map_err(PerceptionError::Cancelled)
+    };
+    stage(0)?;
     perceive_valence(molecule, ValenceModel::RdkitLike, ValenceOptions::default())
         .map_err(PerceptionError::Valence)?;
-    poll()?;
+    stage(1)?;
     let ring_options = RingPerceptionOptions::for_molecule(molecule);
     perceive_rings_cancellable(molecule, ring_options, cancellation).map_err(
         |error| match error {
@@ -101,13 +111,13 @@ fn perceive_molecule_in_place(
             error => PerceptionError::Rings(error),
         },
     )?;
-    poll()?;
+    stage(2)?;
     perceive_aromaticity_in_place(molecule, AromaticityModel::RdkitLike)
         .map_err(PerceptionError::Aromaticity)?;
-    poll()?;
+    stage(3)?;
     perceive_conjugation(molecule, ConjugationModel::RdkitLike)
         .map_err(PerceptionError::Conjugation)?;
-    poll()?;
+    stage(4)?;
     perceive_resonance_cancellable(molecule, ResonanceModel::ChargeMoves, cancellation).map_err(
         |error| match error {
             ResonancePerceptionError::Cancelled(cancelled) => PerceptionError::Cancelled(cancelled),

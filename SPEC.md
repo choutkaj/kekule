@@ -809,6 +809,13 @@ Every operation has exactly one home.
   module.
 - **Options** are always an explicit parameter, and `Default` reproduces the
   documented default behaviour. There are no `*_with_options` twins.
+- **Long operations** have a plain form, which runs on the calling thread
+  without cancellation or progress, and exactly one `*_with` form that adds a
+  final `run: parallel::Run` carrying an optional executor, cancellation, and
+  progress callback. Options hold no thread counts or executors, and there are
+  no `_cancellable`, `_with_observer`, or `_parallel` names. Interpretation,
+  which has many entry points taking options by value, is the one exception:
+  its options carry the cancellation.
 - **Shortcuts.** The only one-call shortcuts that compose several steps are
   `smiles::to_molecules`, `smiles::to_topology`, and `Molecule::perceive`.
 - **Reusable work** is prepared explicitly: substructure search, for example,
@@ -859,8 +866,8 @@ Every operation has exactly one home.
   `Ring perception exceeded its work limit: 69,400,898 steps of 69,248,000.`
   Default limits are exported as constants.
 - Cancellation is cooperative. A long-running operation accepts an optional
-  `diagnostics::Cancellation`, through its options or a `*_cancellable`
-  lifecycle method when it has none. It polls the cancellation between
+  `diagnostics::Cancellation` through the `parallel::Run` of its `*_with`
+  form, or through interpretation options. It polls the cancellation between
   stages and inside long loops, and fails with `diagnostics::Cancelled`, or
   `DiagnosticKind::Cancelled` in a `FormatError`. The error keeps `Cancelled`
   as its source: `Resonance perception stopped. The operation was

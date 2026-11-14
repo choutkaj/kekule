@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kekule::alignment::{self, AlignmentError, AlignmentGeometry};
-use kekule::clustering::{ClusteringError, ClusteringProgress, ClusteringRun};
+use kekule::clustering::ClusteringError;
 use kekule::diagnostics::Cancellation;
 use kekule::math::Point3;
-use kekule::parallel::{Executor, ScopedThreads};
+use kekule::parallel::{Executor, Progress, Run, ScopedThreads};
 use kekule::structure::{Ensemble, Geometry, Partition, Positions, StructureSet};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
@@ -223,21 +223,18 @@ fn radius() -> Quantity<f64> {
 /// Progress reports of one run, checked to be nondecreasing with a fixed
 /// total.
 #[derive(Default)]
-struct Reports(Mutex<Vec<ClusteringProgress>>);
+struct Reports(Mutex<Vec<Progress>>);
 
 impl Reports {
-    fn record(&self, progress: ClusteringProgress) {
+    fn record(&self, progress: Progress) {
         self.0.lock().unwrap().push(progress);
     }
 
     /// Takes the reports so far.
-    fn checked(&self, total: usize) -> Vec<usize> {
+    fn checked(&self, total: u64) -> Vec<u64> {
         let reports = std::mem::take(&mut *self.0.lock().unwrap());
         assert!(reports.iter().all(|report| report.total() == total));
-        let completed = reports
-            .iter()
-            .map(ClusteringProgress::completed)
-            .collect::<Vec<_>>();
+        let completed = reports.iter().map(Progress::completed).collect::<Vec<_>>();
         assert!(
             completed.windows(2).all(|pair| pair[0] < pair[1]),
             "{completed:?}"
@@ -258,7 +255,7 @@ fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
     for executor in executors() {
         let reports = Reports::default();
         let progress = |progress| reports.record(progress);
-        let run = ClusteringRun::default()
+        let run = Run::default()
             .with_executor(executor.as_ref())
             .with_progress(&progress);
         let matrix = ensemble
@@ -269,7 +266,7 @@ fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
     }
 
     let recording = Recording::new(4);
-    let run = ClusteringRun::default().with_executor(&recording);
+    let run = Run::default().with_executor(&recording);
     assert_eq!(
         ensemble
             .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)
@@ -295,7 +292,7 @@ fn radius_clustering_is_the_serial_partition_on_every_executor() {
     for executor in executors() {
         let reports = Reports::default();
         let progress = |progress| reports.record(progress);
-        let run = ClusteringRun::default()
+        let run = Run::default()
             .with_executor(executor.as_ref())
             .with_progress(&progress);
         let partition = ensemble
@@ -306,7 +303,7 @@ fn radius_clustering_is_the_serial_partition_on_every_executor() {
     }
 
     let recording = Recording::new(2);
-    let run = ClusteringRun::default().with_executor(&recording);
+    let run = Run::default().with_executor(&recording);
     assert_eq!(
         ensemble
             .cluster_by_radius_with(radius(), &atoms, Default::default(), run)
@@ -337,7 +334,7 @@ fn radius_clustering_places_members_as_one_fit_at_a_time_would() {
             "{value} A"
         );
         for executor in executors() {
-            let run = ClusteringRun::default().with_executor(executor.as_ref());
+            let run = Run::default().with_executor(executor.as_ref());
             assert_eq!(
                 ensemble
                     .cluster_by_radius_with(radius, &atoms, Default::default(), run)
@@ -375,7 +372,7 @@ fn failed_fits_report_the_serial_error_on_every_executor() {
     let partition = ensemble.cluster_by_radius(radius(), &atoms, Default::default());
     assert!(matches!(partition, Err(ClusteringError::Alignment(_))));
     for executor in executors() {
-        let run = ClusteringRun::default().with_executor(executor.as_ref());
+        let run = Run::default().with_executor(executor.as_ref());
         assert_eq!(
             ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run),
             matrix
@@ -400,7 +397,7 @@ fn cancelled_runs_return_no_result() {
     let requested = Cancellation::new(|| true);
     let reports = Reports::default();
     let progress = |progress| reports.record(progress);
-    let run = ClusteringRun::default()
+    let run = Run::default()
         .with_cancellation(&requested)
         .with_progress(&progress);
     assert!(cancelled(ensemble.pairwise_fitted_rmsd_with(
@@ -428,13 +425,13 @@ fn cancelled_runs_return_no_result() {
         let flag = Arc::new(AtomicBool::new(false));
         let cancellation = Cancellation::from_flag(Arc::clone(&flag));
         let reports = Reports::default();
-        let progress = |progress: ClusteringProgress| {
+        let progress = |progress: Progress| {
             reports.record(progress);
             if progress.completed() > 0 {
                 flag.store(true, Ordering::Relaxed);
             }
         };
-        let run = ClusteringRun::default()
+        let run = Run::default()
             .with_executor(executor.as_ref())
             .with_cancellation(&cancellation)
             .with_progress(&progress);
@@ -448,7 +445,7 @@ fn cancelled_runs_return_no_result() {
 
         flag.store(false, Ordering::Relaxed);
         let reports = Reports::default();
-        let progress = |progress: ClusteringProgress| {
+        let progress = |progress: Progress| {
             reports.record(progress);
             if progress.completed() > 0 {
                 flag.store(true, Ordering::Relaxed);
@@ -484,7 +481,7 @@ impl Executor for Skipping {
 fn an_executor_that_skips_work_items_panics() {
     let ensemble = ensemble(5, 1, &[]);
     let atoms = AtomSelection::all(ensemble.set().shared_topology());
-    let run = ClusteringRun::default().with_executor(&Skipping);
+    let run = Run::default().with_executor(&Skipping);
     let _ = ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run);
 }
 
@@ -546,7 +543,7 @@ fn clustering_timing_on_a_thousand_geometries_of_352_atoms() {
     );
     for threads in [1, 2, 4, 6, 8, available] {
         let executor = ScopedThreads::new(NonZeroUsize::new(threads).unwrap());
-        let run = ClusteringRun::default().with_executor(&executor);
+        let run = Run::default().with_executor(&executor);
         let start = Instant::now();
         let matrix = ensemble
             .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)

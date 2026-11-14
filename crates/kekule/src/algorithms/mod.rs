@@ -33,7 +33,7 @@ pub use hydrogens::{
     RetainedHydrogen, RetainedHydrogenReason,
 };
 pub use perception::PerceptionError;
-pub(crate) use perception::{perceive_molecule, perceive_molecule_cancellable};
+pub(crate) use perception::{perceive_molecule, perceive_molecule_with};
 pub(crate) use resonance::perceive_resonance_cancellable;
 pub use resonance::{
     enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError, ResonanceFlags,

@@ -80,8 +80,9 @@
 //! state before publication. Clean EOF is accepted only between frames,
 //! including through a bounded probe at exact frame/index limits.
 //!
-//! The path-backed scan reports [`TrajectoryIndexProgress`] and stops on a
-//! cancellation set in [`TrajectoryOpenOptions`]. Its offsets export as a
+//! [`open_indexed_trajectory_with`] runs the path-backed scan under a
+//! [`Run`](crate::parallel::Run) that follows and cancels it. Its offsets
+//! export as a
 //! portable, versioned [`TrajectoryFrameIndex`] bound to a
 //! [`TrajectoryFileFingerprint`] of the bytes it covers, and
 //! [`open_indexed_trajectory_from_index`] reopens the file from it without
@@ -128,9 +129,9 @@
 //! of a growing file does, keeps those [`KeepFrames`] selects, such as the
 //! frames a checkpoint at some step covers, cuts the file after them, and
 //! returns a [`TrajectoryStreamWriter`] that appends after them, with a
-//! [`TrajectoryAppendReport`] of the frames and bytes it removed; its scan of
-//! the file can be cancelled and report progress
-//! ([`TrajectoryAppendOptions`]). Given the
+//! [`TrajectoryAppendReport`] of the frames and bytes it removed;
+//! [`append_trajectory_with`] follows and cancels its scan of the file.
+//! Given the
 //! write options the file was written with, which it checks where the file
 //! records them, the continued file is, byte for byte, the file one
 //! uninterrupted run writes. A process that dies at any point leaves a file
@@ -184,13 +185,14 @@ mod util;
 pub mod xtc;
 pub mod xyz;
 
-pub use append::{append_trajectory, KeepFrames, TrajectoryAppendOptions, TrajectoryAppendReport};
+pub use append::{append_trajectory, append_trajectory_with, KeepFrames, TrajectoryAppendReport};
 pub use detect::{
     detect_trajectory_format, FormatDetectionEvidence, TrajectoryFormatDetection,
     TrajectoryFormatHint,
 };
 pub use file_reader::{
-    open_indexed_trajectory, open_indexed_trajectory_from_index, open_trajectory,
+    open_indexed_trajectory, open_indexed_trajectory_from_index,
+    open_indexed_trajectory_from_index_with, open_indexed_trajectory_with, open_trajectory,
     read_structure_set, IndexedFileTrajectoryReader, SequentialFileTrajectoryReader,
 };
 pub use file_writer::{
@@ -198,7 +200,7 @@ pub use file_writer::{
     write_structure_set_to, FileTrajectoryWriter, OverwritePolicy, TrajectoryStreamWriter,
     TrajectoryWriteOptions,
 };
-pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex, TrajectoryIndexProgress};
+pub use frame_index::{TrajectoryFileFingerprint, TrajectoryFrameIndex};
 pub use frame_state::FrameTimingPolicy;
 pub use indexed_file::{
     open_indexed_structure_set, open_indexed_structure_set_from_index, IndexedFile,
