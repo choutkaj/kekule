@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::diagnostics::TopologyMismatch;
 use crate::math::{Point3, Vector3};
+use crate::statistics::StatisticsError;
 use crate::topology::{SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 
@@ -28,16 +29,13 @@ pub enum InteractionError {
     InvalidCriterion(InteractionCriterion),
     /// An aromatic ring's atoms have no plane.
     DegenerateRing,
-    /// An observation weight is not finite and positive.
-    InvalidWeight {
-        /// The caller's index of the observation.
-        index: usize,
-    },
-    /// The total observed weight left the finite numerical range.
-    WeightOverflow {
-        /// The caller's index of the observation.
-        index: usize,
-    },
+    /// Occupancy failed as a weighted statistic fails: an invalid weight
+    /// ([`StatisticsError::InvalidWeight`]), a total weight that overflows
+    /// ([`StatisticsError::WeightOverflow`],
+    /// [`StatisticsError::MergeWeightOverflow`]), no observations
+    /// ([`StatisticsError::NoObservations`]), or a sample that cannot be
+    /// observed. It displays as the statistics error.
+    Statistics(StatisticsError),
     /// Observed interactions come from other topology layouts, another kind
     /// of search, or other hydrogen-bond criteria than earlier ones.
     ObservationMismatch {
@@ -47,10 +45,6 @@ pub enum InteractionError {
     /// Two accumulators observed other topology layouts, another kind of
     /// search, or other hydrogen-bond criteria, and cannot be merged.
     MergeMismatch,
-    /// The merged total weight would leave the finite numerical range.
-    MergeWeightOverflow,
-    /// The occupancy was finished before any observation.
-    NoObservations,
 }
 
 impl fmt::Display for InteractionError {
@@ -65,20 +59,12 @@ impl fmt::Display for InteractionError {
                 write!(f, "The {criterion} is not a finite, nonnegative length.")
             }
             Self::DegenerateRing => f.write_str("An aromatic ring has no plane."),
-            Self::InvalidWeight { index } => write!(
-                f,
-                "The weight of observation {index} is not finite and positive."
-            ),
-            Self::WeightOverflow { index } => {
-                write!(f, "The total weight overflows at observation {index}.")
-            }
+            Self::Statistics(error) => fmt::Display::fmt(error, f),
             Self::ObservationMismatch { index } => write!(
                 f,
                 "Observation {index} comes from a different search from the earlier ones."
             ),
             Self::MergeMismatch => f.write_str("The accumulators observed different searches."),
-            Self::MergeWeightOverflow => f.write_str("The merged total weight overflows."),
-            Self::NoObservations => f.write_str("The occupancy has no observations."),
         }
     }
 }
@@ -87,6 +73,7 @@ impl std::error::Error for InteractionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Selection(error) => error.source(),
+            Self::Statistics(error) => error.source(),
             _ => None,
         }
     }
@@ -95,6 +82,12 @@ impl std::error::Error for InteractionError {
 impl From<SelectionError> for InteractionError {
     fn from(error: SelectionError) -> Self {
         Self::Selection(error)
+    }
+}
+
+impl From<StatisticsError> for InteractionError {
+    fn from(error: StatisticsError) -> Self {
+        Self::Statistics(error)
     }
 }
 

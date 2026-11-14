@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use super::*;
 use crate::math::{Point3, Vector3};
-use crate::structure::{Positions, Structure};
+use crate::statistics::{SampleObservations, StatisticsError};
+use crate::structure::{Geometry, Positions, Structure, StructureSet, StructureView};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, ANGSTROM, DEGREE, NANOMETER};
 
@@ -790,16 +791,22 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
     let found = observe(2.9);
     assert_eq!(
         accumulator.observe(7, &found, 0.0),
-        Err(InteractionError::InvalidWeight { index: 7 })
+        Err(InteractionError::Statistics(
+            StatisticsError::InvalidWeight { index: 7 }
+        ))
     );
     assert_eq!(
         accumulator.observe(8, &found, f64::INFINITY),
-        Err(InteractionError::InvalidWeight { index: 8 })
+        Err(InteractionError::Statistics(
+            StatisticsError::InvalidWeight { index: 8 }
+        ))
     );
     accumulator.observe(0, &found, f64::MAX).unwrap();
     assert_eq!(
         accumulator.observe(1, &found, f64::MAX),
-        Err(InteractionError::WeightOverflow { index: 1 })
+        Err(InteractionError::Statistics(
+            StatisticsError::WeightOverflow { index: 1 }
+        ))
     );
     assert_eq!(accumulator.observation_count(), 1);
     let other_criteria = InteractionCriteria::default().with_hydrogen_bond(
@@ -842,7 +849,75 @@ fn hydrogen_bond_occupancy_accumulates_and_merges() {
         HydrogenBondOccupancyAccumulator::new()
             .finish()
             .unwrap_err(),
-        InteractionError::NoObservations
+        InteractionError::Statistics(StatisticsError::NoObservations)
+    );
+}
+
+#[test]
+fn hydrogen_bond_occupancy_observes_samples_as_one_observation_each() {
+    let (topology, _) = structure("O.O", &[Point3::origin(); 2]);
+    let features = InteractionFeatures::new(Arc::clone(&topology));
+    let all = AtomSelection::all(Arc::clone(&topology));
+    let criteria = InteractionCriteria::default();
+    let mut set = StructureSet::new(Arc::clone(&topology));
+    for x in [2.9, 5.0, 3.0, 6.0, 2.8] {
+        let points = vec![p(0.0, 0.0, 0.0), p(x, 0.0, 0.0)];
+        let positions = Positions::new(Quantity::new(points, ANGSTROM)).unwrap();
+        set.push(Geometry::new(positions), None).unwrap();
+    }
+    let search = |structure: StructureView<'_>| {
+        find_interactions_within(&features, &structure, &all, &all, &criteria)
+    };
+    let observations = SampleObservations::of(&set, [4, 0, 1, 3]).unwrap();
+
+    let mut sampled = HydrogenBondOccupancyAccumulator::new();
+    sampled
+        .observe_samples(&set, &observations, 0..2, search)
+        .unwrap();
+    let mut rest = HydrogenBondOccupancyAccumulator::new();
+    rest.observe_samples(&set, &observations, 2..4, search)
+        .unwrap();
+    sampled.merge(&rest).unwrap();
+    let mut observed = HydrogenBondOccupancyAccumulator::new();
+    for (&sample, &weight) in observations.samples().iter().zip(observations.weights()) {
+        let structure = set.get(sample).unwrap().as_structure_view();
+        observed
+            .observe(sample, &search(structure).unwrap(), weight)
+            .unwrap();
+    }
+    let (sampled, observed) = (sampled.finish().unwrap(), observed.finish().unwrap());
+    assert_eq!(sampled.keys(), observed.keys());
+    assert_eq!(sampled.weights(), observed.weights());
+    assert_eq!(sampled.total_weight(), observed.total_weight());
+    assert_eq!(sampled.observation_count(), 4);
+
+    // Failure changes nothing, and errors keep their statistics payload.
+    let mut accumulator = HydrogenBondOccupancyAccumulator::new();
+    assert_eq!(
+        accumulator.observe_samples(&set, &observations, 3..5, search),
+        Err(InteractionError::Statistics(
+            StatisticsError::ObservationsOutOfRange {
+                positions: 3..5,
+                len: 4
+            }
+        ))
+    );
+    let failing = |structure: StructureView<'_>| {
+        let found = search(structure)?;
+        if found.interactions().is_empty() {
+            return Err(InteractionError::DegenerateRing);
+        }
+        Ok(found)
+    };
+    assert_eq!(
+        accumulator.observe_samples(&set, &observations, 0..4, failing),
+        Err(InteractionError::DegenerateRing)
+    );
+    assert_eq!(accumulator.observation_count(), 0);
+    let error = InteractionError::Statistics(StatisticsError::InvalidWeight { index: 2 });
+    assert_eq!(
+        error.to_string(),
+        StatisticsError::InvalidWeight { index: 2 }.to_string()
     );
 }
 

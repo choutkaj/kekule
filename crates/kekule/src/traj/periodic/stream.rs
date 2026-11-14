@@ -6,7 +6,7 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::{AsStructureView, Positions, StructureSetError, StructureView};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
-use super::imaging::{checked_image, positions, Lattice, MoleculePlan};
+use super::imaging::{cell_error, checked_image, frame_lattice, positions, MoleculePlan};
 use super::PeriodicError;
 use crate::traj::{FrameBuffer, FrameView};
 
@@ -151,12 +151,12 @@ impl MoleculeImager {
                 frame_index,
             )));
         }
-        let lattice = Lattice::new(source.cell().copied(), frame_index)?;
+        let lattice = frame_lattice(source.cell().copied(), frame_index)?;
         let source = source.positions().values();
         let reference = reference.positions().values();
         let mut points = source.value().to_vec();
         self.plan
-            .image_onto(&mut points, reference.value(), &lattice)?;
+            .image_onto(&mut points, reference.value(), &lattice, frame_index)?;
         positions(points, frame_index)
     }
 
@@ -188,12 +188,13 @@ impl MoleculeImager {
                 frame_index,
             )));
         }
-        let lattice = Lattice::new(source.cell().copied(), frame_index)?;
-        let mut points = self
-            .plan
-            .make_whole(source.positions().values().value(), &lattice)?;
+        let lattice = frame_lattice(source.cell().copied(), frame_index)?;
+        let mut points =
+            self.plan
+                .make_whole(source.positions().values().value(), &lattice, frame_index)?;
         if let Some(anchors) = anchors {
-            self.plan.image(&mut points, &lattice, anchors)?;
+            self.plan
+                .image(&mut points, &lattice, frame_index, anchors)?;
         }
         positions(points, frame_index)
     }
@@ -210,10 +211,11 @@ impl MoleculeImager {
         points: &mut [Point3],
         anchors: Option<&[bool]>,
     ) -> Result<(), PeriodicError> {
-        let lattice = Lattice::new(Some(cell), frame_index)?;
-        self.plan.make_whole_in_place(points, &lattice)?;
+        let lattice = frame_lattice(Some(cell), frame_index)?;
+        self.plan
+            .make_whole_in_place(points, &lattice, frame_index)?;
         if let Some(anchors) = anchors {
-            self.plan.image(points, &lattice, anchors)?;
+            self.plan.image(points, &lattice, frame_index, anchors)?;
         }
         check_finite(points, frame_index)
     }
@@ -229,8 +231,9 @@ impl MoleculeImager {
         reference: &[Point3],
         sum: &mut [Vector3],
     ) -> Result<(), PeriodicError> {
-        let lattice = Lattice::new(Some(cell), frame_index)?;
-        self.plan.add_imaged_onto(points, reference, &lattice, sum)
+        let lattice = frame_lattice(Some(cell), frame_index)?;
+        self.plan
+            .add_imaged_onto(points, reference, &lattice, frame_index, sum)
     }
 }
 
@@ -359,11 +362,11 @@ impl TrajectoryUnwrapper {
                 });
             }
         }
-        let lattice = Lattice::new(source.cell().copied(), frame_index)?;
+        let lattice = frame_lattice(source.cell().copied(), frame_index)?;
         let time = source.time().map(|time| time.into_value());
         let mut last_time = time;
         if let Some(previous) = &self.previous {
-            if previous.periodic != lattice.periodic {
+            if previous.periodic != lattice.periodic_axes() {
                 return Err(PeriodicError::PeriodicAxesChanged { frame: frame_index });
             }
             if let (Some(before), Some(now)) = (previous.last_time, time) {
@@ -383,11 +386,13 @@ impl TrajectoryUnwrapper {
             .copied()
             .enumerate()
         {
-            let mut current = lattice.fractional(point - Point3::origin())?;
+            let mut current = lattice
+                .fractional_canonical(point - Point3::origin())
+                .map_err(|error| cell_error(error, frame_index))?;
             let mut images = [0.0; 3];
             if let Some(previous) = &self.previous {
                 for axis in 0..3 {
-                    if lattice.periodic[axis] {
+                    if lattice.periodic_axes()[axis] {
                         let delta = current[axis] - previous.fractional[atom][axis];
                         let image = checked_image(delta, frame_index)?;
                         if ((delta - image).abs() - 0.5).abs() <= 32.0 * f64::EPSILON {
@@ -403,7 +408,7 @@ impl TrajectoryUnwrapper {
                 }
             }
             // Preserve the first frame without an inverse/forward round trip.
-            points.push(point - lattice.cartesian(images));
+            points.push(point - lattice.cartesian_canonical(images));
             fractional.push(current);
         }
         Ok(UnwrapStep {
@@ -411,7 +416,7 @@ impl TrajectoryUnwrapper {
             previous: PreviousFrame {
                 index: frame_index,
                 fractional,
-                periodic: lattice.periodic,
+                periodic: lattice.periodic_axes(),
                 last_time,
             },
         })

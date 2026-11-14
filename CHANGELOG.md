@@ -164,7 +164,8 @@ through the workspace.
   cation–π, halogen bonds, metal coordination, and hydrophobic contacts.
 - `InteractionFeatures` classifies atoms once per layout, `InteractionCriteria`
   holds every threshold, and `HydrogenBondOccupancyAccumulator` gives
-  hydrogen-bond occupancies.
+  hydrogen-bond occupancies; it observes samples (`observe_samples(_with)`)
+  and fails on weights as the statistics do (`InteractionError::Statistics`).
 - One-letter codes in `kekule::sequence`: `residue_code`, `component_code`,
   `chain_sequences`, and `ResidueCode` (`CodeOrigin`, `parents`,
   `is_modified`), for monomers of a polymer.

@@ -229,6 +229,11 @@ fn checked_image(value: f64) -> Result<f64, PeriodicCellError> {
 }
 
 impl Lattice {
+    /// Which cell vectors are periodic.
+    pub(crate) fn periodic_axes(&self) -> [bool; 3] {
+        self.periodic
+    }
+
     /// Reciprocal basis lengths, for conservative fractional neighbor bounds.
     pub(crate) fn reciprocal_norms(&self) -> [f64; 3] {
         self.reciprocal.map(|v| v.norm())
