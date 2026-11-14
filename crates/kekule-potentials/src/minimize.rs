@@ -21,13 +21,20 @@
 //! If a line search cannot reduce the energy, the curvature history is discarded
 //! and a steepest-descent step is tried before reporting
 //! [`MinimizationStatus::LineSearchFailed`].
+//!
+//! [`minimize_with`] and [`minimize_scoped_with`] run under a
+//! [`Run`](kekule::parallel::Run), which cancels the minimization with no
+//! result and reports accepted steps as progress, and call an observer
+//! after every accepted step, which may stop it with the result so far.
 
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
+use kekule::diagnostics::Cancelled;
 use kekule::math::{Point3, Vector3};
+use kekule::parallel::{Progress, Run};
 use kekule::structure::{DenseArrayError, GeometryError, Positions, Structure, StructureView};
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
@@ -311,7 +318,7 @@ pub enum MinimizationStatus {
     Stopped,
 }
 
-/// State after one accepted step, passed to a [`minimize_with_observer`] callback.
+/// State after one accepted step, passed to the observer of [`minimize_with`].
 #[derive(Debug, Clone, Copy)]
 pub struct MinimizationStep<'a> {
     pub(crate) iteration: usize,
@@ -459,26 +466,34 @@ pub fn minimize<P: Potential + ?Sized>(
     structure: StructureView<'_>,
     options: &MinimizeOptions,
 ) -> Result<Minimization, MinimizationError> {
-    minimize_with_observer(potential, structure, options, |_| ControlFlow::Continue(()))
+    let scope = MinimizationScope::all(structure.shared_topology());
+    minimize_scoped(potential, structure, &scope, options)
 }
 
-/// Minimizes like [`minimize`], calling `observer` after every accepted step.
+/// [`minimize`] under a [`Run`], calling `observer` after every accepted
+/// step.
 ///
-/// Returning [`ControlFlow::Break`] stops with [`MinimizationStatus::Stopped`]
-/// at the step just observed. Recording the observed positions, for example
-/// into a trajectory, is the caller's choice.
+/// Returning [`ControlFlow::Break`] from `observer` stops with
+/// [`MinimizationStatus::Stopped`] and the result at the step just
+/// observed. Recording the observed positions, for example into a
+/// trajectory, is the caller's choice. The run's cancellation is polled
+/// before every potential evaluation and fails with no result; progress
+/// counts accepted steps, of [`MinimizeOptions::max_iterations`], which a
+/// converged run ends below. Minimization runs on the calling thread.
 ///
 /// # Errors
 ///
-/// As [`minimize`].
-pub fn minimize_with_observer<P: Potential + ?Sized>(
+/// As [`minimize`], and [`MinimizationError::Cancelled`] once `run`'s
+/// cancellation is requested.
+pub fn minimize_with<P: Potential + ?Sized>(
     potential: &P,
     structure: StructureView<'_>,
     options: &MinimizeOptions,
     observer: impl FnMut(&MinimizationStep<'_>) -> ControlFlow<()>,
+    run: Run<'_>,
 ) -> Result<Minimization, MinimizationError> {
     let scope = MinimizationScope::all(structure.shared_topology());
-    minimize_scoped_with_observer(potential, structure, &scope, options, observer)
+    minimize_scoped_with(potential, structure, &scope, options, observer, run)
 }
 
 /// Minimizes the energy of `structure` under `potential` plus the scope's position
@@ -498,35 +513,45 @@ pub fn minimize_scoped<P: Potential + ?Sized>(
     scope: &MinimizationScope,
     options: &MinimizeOptions,
 ) -> Result<Minimization, MinimizationError> {
-    minimize_scoped_with_observer(potential, structure, scope, options, |_| {
-        ControlFlow::Continue(())
-    })
+    minimize_scoped_with(
+        potential,
+        structure,
+        scope,
+        options,
+        |_| ControlFlow::Continue(()),
+        Run::default(),
+    )
 }
 
-/// Minimizes like [`minimize_scoped`], calling `observer` after every accepted
-/// step as [`minimize_with_observer`] does.
+/// [`minimize_scoped`] under a [`Run`], calling `observer` after every
+/// accepted step, as [`minimize_with`] does.
 ///
 /// # Errors
 ///
-/// As [`minimize_scoped`].
-pub fn minimize_scoped_with_observer<P: Potential + ?Sized>(
+/// As [`minimize_scoped`], and [`MinimizationError::Cancelled`] once `run`'s
+/// cancellation is requested.
+pub fn minimize_scoped_with<P: Potential + ?Sized>(
     potential: &P,
     structure: StructureView<'_>,
     scope: &MinimizationScope,
     options: &MinimizeOptions,
     mut observer: impl FnMut(&MinimizationStep<'_>) -> ControlFlow<()>,
+    run: Run<'_>,
 ) -> Result<Minimization, MinimizationError> {
     let limits = validate(options)?;
     if !scope.moving.topology().shares_layout(structure.topology()) {
         return Err(MinimizationError::IncompatibleTopology);
     }
     let objective = Objective::new(scope, structure.positions().values().into_value());
+    run.report(Progress::new(0, steps(options.max_iterations)));
+    run.check()?;
     let initial = potential.evaluate(structure)?;
     let mut search = Search {
         potential,
         objective: &objective,
         trial: structure.to_structure(),
         evaluations: 1,
+        run,
     };
     let mut current = objective.point(structure.positions().clone(), initial)?;
     let initial_energy = current.evaluation.energy().clone();
@@ -610,6 +635,10 @@ pub fn minimize_scoped_with_observer<P: Potential + ?Sized>(
         }
         current = next;
         iterations += 1;
+        run.report(Progress::new(
+            steps(iterations),
+            steps(options.max_iterations),
+        ));
         let step = MinimizationStep {
             iteration: iterations,
             energy: current.evaluation.energy(),
@@ -632,6 +661,11 @@ pub fn minimize_scoped_with_observer<P: Potential + ?Sized>(
         evaluations: search.evaluations,
         status,
     })
+}
+
+/// A step count as progress units.
+fn steps(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
 
 struct Limits {
@@ -806,6 +840,8 @@ struct Search<'a, P: ?Sized> {
     /// Scratch structure carrying the topology, cell, and annotations of the input.
     trial: Structure,
     evaluations: usize,
+    /// Polled before every trial evaluation.
+    run: Run<'a>,
 }
 
 /// A line-search sample: `phi = E(x + alpha d)` and `dphi = g . d`.
@@ -842,6 +878,7 @@ impl<P: Potential + ?Sized> Search<'_, P> {
             .geometry_mut()
             .set_positions(positions.values())?;
         let view = self.trial.as_structure_view();
+        self.run.check()?;
         self.evaluations += 1;
         match self
             .potential
@@ -1078,6 +1115,9 @@ pub enum MinimizationError {
     /// An option could not be converted to the canonical unit; see the
     /// source.
     Unit(UnitError),
+    /// The run's [`Cancellation`](kekule::diagnostics::Cancellation) stopped
+    /// [`minimize_with`] or [`minimize_scoped_with`].
+    Cancelled(Cancelled),
 }
 
 impl fmt::Display for MinimizationError {
@@ -1099,6 +1139,7 @@ impl fmt::Display for MinimizationError {
             Self::Unit(_) => {
                 f.write_str("Cannot convert a minimization quantity to its canonical unit.")
             }
+            Self::Cancelled(_) => f.write_str("The minimization stopped."),
         }
     }
 }
@@ -1110,6 +1151,7 @@ impl std::error::Error for MinimizationError {
             Self::Geometry(error) => Some(error),
             Self::Position(error) => Some(error),
             Self::Unit(error) => Some(error),
+            Self::Cancelled(cancelled) => Some(cancelled),
             Self::InvalidOptions(_)
             | Self::InvalidRestraint { .. }
             | Self::NumericalFailure(_)
@@ -1139,5 +1181,11 @@ impl From<DenseArrayError> for MinimizationError {
 impl From<UnitError> for MinimizationError {
     fn from(error: UnitError) -> Self {
         Self::Unit(error)
+    }
+}
+
+impl From<Cancelled> for MinimizationError {
+    fn from(cancelled: Cancelled) -> Self {
+        Self::Cancelled(cancelled)
     }
 }

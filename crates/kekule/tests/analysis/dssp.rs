@@ -4,6 +4,7 @@ use kekule::dssp::{
 };
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
+use kekule::parallel::Run;
 use kekule::topology::ResidueId;
 use kekule::units::{DEGREE, KILOCALORIE_PER_MOLE};
 
@@ -409,8 +410,16 @@ fn tiled(structure: &kekule::structure::Structure, copies: usize) -> kekule::str
     editor.finish().expect("appended copies form a structure")
 }
 
-fn with_threads(options: DsspOptions, threads: usize) -> DsspOptions {
-    options.with_threads(std::num::NonZeroUsize::new(threads).expect("nonzero thread count"))
+/// Assigns `structure` on `threads` scoped threads.
+fn assign_on_threads(
+    structure: &kekule::structure::Structure,
+    options: DsspOptions,
+    threads: usize,
+) -> Result<kekule::dssp::DsspResult, DsspError> {
+    let executor = kekule::parallel::ScopedThreads::new(
+        std::num::NonZeroUsize::new(threads).expect("nonzero thread count"),
+    );
+    dssp::assign_with(structure, options, Run::new().with_executor(&executor))
 }
 
 /// One backbone atom of the analyzed residue at `index`.
@@ -447,7 +456,7 @@ fn dssp_threads_return_the_serial_result() {
         // Enough residues for every stage to split across the threads.
         assert!(serial.residues().len() > 1000);
         for threads in [2, 3, 5, 8, 16] {
-            let parallel = dssp::assign(&structure, with_threads(DsspOptions::default(), threads))
+            let parallel = assign_on_threads(&structure, DsspOptions::default(), threads)
                 .expect("tiled structure analyzes");
             assert_eq!(parallel, serial, "{threads} threads");
         }
@@ -476,10 +485,7 @@ fn dssp_threads_report_the_serial_error() {
         let options = DsspOptions::default().with_limits(limits);
         let expected = dssp::assign(&structure, options);
         for threads in [2, 7] {
-            assert_eq!(
-                dssp::assign(&structure, with_threads(options, threads)),
-                expected
-            );
+            assert_eq!(assign_on_threads(&structure, options, threads), expected);
         }
     }
 
@@ -509,7 +515,7 @@ fn dssp_threads_report_the_serial_error() {
         }
         for threads in [2, 7] {
             assert_eq!(
-                dssp::assign(structure, with_threads(DsspOptions::default(), threads)),
+                assign_on_threads(structure, DsspOptions::default(), threads),
                 serial
             );
         }
@@ -563,7 +569,6 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
         DsspOptions::default()
             .with_min_polyproline_stretch(2)
             .unwrap(),
-        with_threads(DsspOptions::default(), 3),
         DsspOptions::default().with_limits(
             DsspLimits::default()
                 .with_max_candidate_pairs(serial.report().candidate_hydrogen_bond_pairs() / 2),
@@ -572,6 +577,7 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
             DsspLimits::default().with_max_residues(serial.statistics().analyzed_residues() / 2),
         ),
     ];
+    let threads = kekule::parallel::ScopedThreads::new(std::num::NonZeroUsize::new(3).unwrap());
     for options in options {
         let plan = DsspPlan::new(structure.shared_topology(), options);
         assert_eq!(plan.options(), options);
@@ -580,23 +586,109 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
             let expected = dssp::assign(frame, options);
             assert_eq!(plan.assign(frame), expected, "frame {index}, {options:?}");
             assert_eq!(
-                plan.assign_with(frame, &Reversed(4)),
+                plan.assign_with(frame, Run::new().with_executor(&Reversed(4))),
                 expected,
                 "frame {index}, {options:?}"
+            );
+            assert_eq!(
+                plan.assign_with(frame, Run::new().with_executor(&threads)),
+                expected,
+                "frame {index}, {options:?}, 3 threads"
             );
         }
     }
     assert_ne!(dssp::assign(&frames[1], DsspOptions::default()), Ok(serial));
 
-    let reversed = DsspPlan::new_with(
-        structure.shared_topology(),
-        DsspOptions::default(),
-        &Reversed(5),
-    );
+    let reversed = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
     assert_eq!(
-        reversed.assign(&structure),
+        reversed.assign_with(&structure, Run::new().with_executor(&Reversed(5))),
         dssp::assign(&structure, DsspOptions::default())
     );
+}
+
+#[test]
+fn dssp_runs_report_their_stages_and_stop_when_cancelled() {
+    use kekule::diagnostics::{Cancellation, Cancelled};
+    use kekule::dssp::DsspPlan;
+    use kekule::parallel::Progress;
+    use std::sync::Mutex;
+
+    let structure = adenylate_kinase_structure();
+    let serial = dssp::assign(&structure, DsspOptions::default());
+    let reports = Mutex::new(Vec::new());
+    let progress = |progress: Progress| reports.lock().unwrap().push(progress);
+    let run = Run::new()
+        .with_executor(&Reversed(3))
+        .with_progress(&progress);
+    assert_eq!(
+        dssp::assign_with(&structure, DsspOptions::default(), run),
+        serial
+    );
+    let stages = std::mem::take(&mut *reports.lock().unwrap());
+    assert_eq!(
+        stages,
+        (0..=5)
+            .map(|done| Progress::new(done, 5))
+            .collect::<Vec<_>>()
+    );
+
+    let cancellation = Cancellation::new(|| true);
+    let cancelled = Run::new().with_cancellation(&cancellation);
+    let error = dssp::assign_with(&structure, DsspOptions::default(), cancelled).unwrap_err();
+    assert!(matches!(error, DsspError::Cancelled(_)), "{error:?}");
+    assert_eq!(error.to_string(), "DSSP assignment stopped.");
+    assert!(std::error::Error::source(&error).is_some_and(|source| source.is::<Cancelled>()));
+    let plan = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
+    assert!(matches!(
+        plan.assign_with(&structure, cancelled),
+        Err(DsspError::Cancelled(_))
+    ));
+}
+
+#[test]
+fn dssp_stops_inside_the_bond_and_sheet_stages_once_cancelled() {
+    use kekule::diagnostics::Cancellation;
+    use kekule::parallel::{Progress, ScopedThreads};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let structure = tiled(&adenylate_kinase_structure(), 8);
+    let threads = ScopedThreads::new(std::num::NonZeroUsize::new(4).unwrap());
+    let executors: [&dyn kekule::parallel::Executor; 3] = [
+        &ScopedThreads::new(std::num::NonZeroUsize::MIN),
+        &Reversed(3),
+        &threads,
+    ];
+    // Stage 1 done starts the hydrogen bonds; stage 2 done, the sheets.
+    for stage in [1, 2] {
+        for executor in executors {
+            let done = Arc::new(AtomicU64::new(0));
+            let progress = {
+                let done = Arc::clone(&done);
+                move |progress: Progress| done.store(progress.completed(), Ordering::Relaxed)
+            };
+            // Requested at the second poll after `stage` is reported: the
+            // stage's own poll passes, so only a poll inside the next stage's
+            // kernel stops it, before it reports.
+            let polls = Arc::new(AtomicUsize::new(0));
+            let cancellation = {
+                let done = Arc::clone(&done);
+                Cancellation::new(move || {
+                    done.load(Ordering::Relaxed) == stage
+                        && polls.fetch_add(1, Ordering::Relaxed) >= 1
+                })
+            };
+            let run = Run::new()
+                .with_executor(executor)
+                .with_cancellation(&cancellation)
+                .with_progress(&progress);
+            assert!(matches!(
+                dssp::assign_with(&structure, DsspOptions::default(), run),
+                Err(DsspError::Cancelled(_))
+            ));
+            assert_eq!(done.load(Ordering::Relaxed), stage);
+        }
+    }
 }
 
 #[test]
@@ -631,14 +723,18 @@ fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
             serial.residues().len()
         );
         for threads in [1, 2, 4, 6, 8, available] {
-            let options = with_threads(DsspOptions::default(), threads);
+            let options = DsspOptions::default();
+            let executor = kekule::parallel::ScopedThreads::new(
+                std::num::NonZeroUsize::new(threads).expect("nonzero thread count"),
+            );
+            let run = Run::new().with_executor(&executor);
             let plan = kekule::dssp::DsspPlan::new(structure.shared_topology(), options);
             for (name, assign) in [
                 (
                     "",
-                    &(|| dssp::assign(&structure, options)) as &dyn Fn() -> _,
+                    &(|| dssp::assign_with(&structure, options, run)) as &dyn Fn() -> _,
                 ),
-                (" plan", &|| plan.assign(&structure)),
+                (" plan", &|| plan.assign_with(&structure, run)),
             ] {
                 let mut times = (0..runs)
                     .map(|_| {
@@ -672,12 +768,13 @@ fn dssp_executors_return_the_serial_result_in_any_work_order() {
     let executors: [&dyn kekule::parallel::Executor; 3] =
         [&Reversed(3), &Reversed(16), &Interleaved];
     for executor in executors {
+        let run = Run::new().with_executor(executor);
         assert_eq!(
-            dssp::assign_with(&structure, DsspOptions::default(), executor).unwrap(),
+            dssp::assign_with(&structure, DsspOptions::default(), run).unwrap(),
             serial
         );
         assert_eq!(
-            dssp::assign_with(&structure, limited, executor),
+            dssp::assign_with(&structure, limited, run),
             dssp::assign(&structure, limited)
         );
     }

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use kekule::dssp::{self, DsspOptions, DsspPlan};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
+use kekule::parallel::{Run, ScopedThreads};
 
 const THREADS: [usize; 3] = [2, 3, 8];
 
@@ -43,16 +44,16 @@ fn check(path: &Path, text: &str) -> bool {
     let plan = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
     assert_eq!(plan.assign(&structure), serial, "{}: plan", path.display());
     for threads in THREADS {
-        let options =
-            DsspOptions::default().with_threads(NonZeroUsize::new(threads).expect("nonzero"));
+        let executor = ScopedThreads::new(NonZeroUsize::new(threads).expect("nonzero"));
+        let run = Run::new().with_executor(&executor);
         assert_eq!(
-            dssp::assign(&structure, options),
+            dssp::assign_with(&structure, DsspOptions::default(), run),
             serial,
             "{}: {threads} threads",
             path.display()
         );
         assert_eq!(
-            DsspPlan::new(structure.shared_topology(), options).assign(&structure),
+            plan.assign_with(&structure, run),
             serial,
             "{}: plan on {threads} threads",
             path.display()

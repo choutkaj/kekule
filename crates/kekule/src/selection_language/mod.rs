@@ -12,9 +12,9 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::diagnostics::{DiagnosticKind, Format, FormatError};
+use crate::diagnostics::{Cancelled, DiagnosticKind, Format, FormatError};
 use crate::math::Point3;
-use crate::parallel::Executor;
+use crate::parallel::Run;
 use crate::properties::PropertyKey;
 use crate::structure::{AsStructureView, Positions, StructureView};
 use crate::substructure::{SubstructureMatchError, SubstructureMatchOptions};
@@ -91,8 +91,24 @@ impl SelectionExpr {
         topology: impl Into<Arc<Topology>>,
         options: SelectEvaluateOptions<'_>,
     ) -> Result<AtomSelection, SelectEvaluateError> {
+        self.evaluate_with(topology, options, Run::default())
+    }
+
+    /// [`Self::evaluate`] under a [`Run`], polling its cancellation before
+    /// each term and periodically while a term matches SMARTS.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate`], and [`SelectEvaluateError::Cancelled`] once
+    /// `run`'s cancellation is requested.
+    pub fn evaluate_with(
+        &self,
+        topology: impl Into<Arc<Topology>>,
+        options: SelectEvaluateOptions<'_>,
+        run: Run<'_>,
+    ) -> Result<AtomSelection, SelectEvaluateError> {
         let topology = topology.into();
-        eval::Evaluator::new(self, &topology, None, &options).run()
+        eval::Evaluator::new(self, &topology, None, &options, run).run()
     }
 
     /// Evaluates the expression against one structure view: a structure, a geometry of
@@ -108,9 +124,28 @@ impl SelectionExpr {
         structure: &impl AsStructureView,
         options: SelectEvaluateOptions<'_>,
     ) -> Result<AtomSelection, SelectEvaluateError> {
+        self.evaluate_structure_with(structure, options, Run::default())
+    }
+
+    /// [`Self::evaluate_structure`] under a [`Run`]: `within` over many
+    /// atoms measures ranges of them as work items on its executor, and its
+    /// cancellation is polled before each term and periodically inside
+    /// `within` and SMARTS matching. Every executor selects the same atoms.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_structure`], and
+    /// [`SelectEvaluateError::Cancelled`] once `run`'s cancellation is
+    /// requested.
+    pub fn evaluate_structure_with(
+        &self,
+        structure: &impl AsStructureView,
+        options: SelectEvaluateOptions<'_>,
+        run: Run<'_>,
+    ) -> Result<AtomSelection, SelectEvaluateError> {
         let view = structure.as_structure_view();
         let topology = view.shared_topology();
-        eval::Evaluator::new(self, &topology, Some(view), &options).run()
+        eval::Evaluator::new(self, &topology, Some(view), &options, run).run()
     }
 
     /// The host terms of the expression in text order, for applications that
@@ -243,7 +278,6 @@ impl SelectParseOptions {
 pub struct SelectEvaluateOptions<'a> {
     resolver: Option<&'a dyn SelectionResolver>,
     smarts: SubstructureMatchOptions,
-    executor: Option<&'a dyn Executor>,
 }
 
 impl fmt::Debug for SelectEvaluateOptions<'_> {
@@ -252,10 +286,6 @@ impl fmt::Debug for SelectEvaluateOptions<'_> {
             .debug_struct("SelectEvaluateOptions")
             .field("resolver", &self.resolver.is_some())
             .field("smarts", &self.smarts)
-            .field(
-                "executor",
-                &self.executor.map(|executor| executor.parallelism()),
-            )
             .finish()
     }
 }
@@ -267,7 +297,6 @@ impl Default for SelectEvaluateOptions<'_> {
             smarts: SubstructureMatchOptions::default()
                 .with_max_matches(DEFAULT_SELECT_MAX_SMARTS_MATCHES)
                 .expect("the default SMARTS match bound is positive"),
-            executor: None,
         }
     }
 }
@@ -296,23 +325,6 @@ impl<'a> SelectEvaluateOptions<'a> {
     #[must_use]
     pub const fn with_smarts(mut self, smarts: SubstructureMatchOptions) -> Self {
         self.smarts = smarts;
-        self
-    }
-
-    /// The executor that runs the work items of `within`, if any; without
-    /// one, evaluation runs on the calling thread.
-    pub fn executor(&self) -> Option<&'a dyn Executor> {
-        self.executor
-    }
-
-    /// Sets [`Self::executor`]: `within` over many atoms measures ranges of
-    /// them as separate work items, on a host's thread pool or on
-    /// [`ScopedThreads`](crate::parallel::ScopedThreads). Every executor
-    /// selects the same atoms. An executor that breaks the
-    /// [contract](Executor#contract) makes evaluation panic.
-    #[must_use]
-    pub fn with_executor(mut self, executor: &'a dyn Executor) -> Self {
-        self.executor = Some(executor);
         self
     }
 }
@@ -698,6 +710,18 @@ pub enum SelectEvaluateError {
         /// Its span.
         span: Range<usize>,
     },
+    /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
+    /// [`SelectionExpr::evaluate_with`] or
+    /// [`SelectionExpr::evaluate_structure_with`] before or while it
+    /// evaluated this term.
+    Cancelled {
+        /// The term.
+        term: String,
+        /// Its span.
+        span: Range<usize>,
+        /// The cancellation.
+        source: Cancelled,
+    },
 }
 
 impl SelectEvaluateError {
@@ -715,7 +739,8 @@ impl SelectEvaluateError {
             | Self::NoResolver { span, .. }
             | Self::Host { span, .. }
             | Self::HostTopologyMismatch { span, .. }
-            | Self::HostPoints { span, .. } => span.clone(),
+            | Self::HostPoints { span, .. }
+            | Self::Cancelled { span, .. } => span.clone(),
         }
     }
 }
@@ -762,6 +787,9 @@ impl fmt::Display for SelectEvaluateError {
                 formatter,
                 "The term {term:?} resolved to points. Use points only as a \"within\" reference."
             ),
+            Self::Cancelled { term, .. } => {
+                write!(formatter, "Evaluation stopped at the term {term:?}.")
+            }
         }
     }
 }
@@ -773,6 +801,7 @@ impl std::error::Error for SelectEvaluateError {
             Self::InvalidSmarts { source, .. } => Some(source),
             Self::Smarts { source, .. } => Some(source.as_ref()),
             Self::Host { source, .. } => Some(source),
+            Self::Cancelled { source, .. } => Some(source),
             _ => None,
         }
     }

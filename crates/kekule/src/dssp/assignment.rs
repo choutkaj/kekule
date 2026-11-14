@@ -1,12 +1,11 @@
 //! Secondary-structure assignment: the entry points, the reusable plan, its
 //! options and limits, and the per-residue result, report, and error types.
 
-use crate::diagnostics::LimitExceeded;
+use crate::diagnostics::{Cancelled, LimitExceeded};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::num::NonZeroUsize;
 
-use crate::parallel::{Executor, ScopedThreads};
+use crate::parallel::Run;
 use std::sync::Arc;
 
 use crate::structure::AsStructureView;
@@ -41,18 +40,18 @@ pub fn assign(
     structure: &(impl AsStructureView + ?Sized),
     options: DsspOptions,
 ) -> Result<DsspResult, DsspError> {
-    assign_with(structure, options, &ScopedThreads::new(options.threads()))
+    assign_with(structure, options, Run::default())
 }
 
-/// [`assign`], with its work items run by `executor` instead of
-/// [`ScopedThreads`] of [`DsspOptions::threads`], which this ignores.
-///
-/// The result, including any error, is the one [`assign`] returns: the
-/// executor decides only where and when each work item runs.
+/// [`assign`] under a [`Run`]. Each stage splits its atom sites or residues
+/// into contiguous ranges on the run's executor; only the short steps
+/// between stages, placing residues in chain segments and assembling beta
+/// ladders and sheets, run on the calling thread. Progress counts the
+/// stages done, of five.
 ///
 /// ```
 /// use kekule::dssp::{self, DsspOptions};
-/// use kekule::parallel::Executor;
+/// use kekule::parallel::{Executor, Run};
 /// use std::num::NonZeroUsize;
 ///
 /// /// Runs every work item on the calling thread, last first.
@@ -77,7 +76,7 @@ pub fn assign(
 ///     .into_structure();
 /// let options = DsspOptions::default();
 /// assert_eq!(
-///     dssp::assign_with(&structure, options, &Reversed),
+///     dssp::assign_with(&structure, options, Run::new().with_executor(&Reversed)),
 ///     dssp::assign(&structure, options)
 /// );
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -85,20 +84,17 @@ pub fn assign(
 ///
 /// # Errors
 ///
-/// As [`assign`].
-///
-/// # Panics
-///
-/// When a work item panics, which [`Executor::run`] passes on, or when
-/// `executor` skips or repeats a work item.
+/// As [`assign`], and [`DsspError::Cancelled`] once `run`'s cancellation is
+/// requested.
 pub fn assign_with(
     structure: &(impl AsStructureView + ?Sized),
     options: DsspOptions,
-    executor: &dyn Executor,
+    run: Run<'_>,
 ) -> Result<DsspResult, DsspError> {
     let structure = structure.as_structure_view();
-    let prepared = super::kernel::Prepared::new(structure.topology(), executor);
-    super::kernel::assign(&prepared, structure, options, executor)
+    run.check().map_err(DsspError::Cancelled)?;
+    let prepared = super::kernel::Prepared::new(structure.topology(), run.executor());
+    super::kernel::assign(&prepared, structure, options, run)
 }
 
 /// DSSP assignment prepared once for every structure of one topology
@@ -148,23 +144,10 @@ impl fmt::Debug for DsspPlan {
 
 impl DsspPlan {
     /// Prepares assignment of `topology`'s structures with `options`, on
-    /// [`ScopedThreads`] of [`DsspOptions::threads`].
+    /// the calling thread.
     pub fn new(topology: impl Into<Arc<Topology>>, options: DsspOptions) -> Self {
-        Self::new_with(topology, options, &ScopedThreads::new(options.threads()))
-    }
-
-    /// [`Self::new`], with its work items run by `executor`.
-    ///
-    /// # Panics
-    ///
-    /// As [`assign_with`].
-    pub fn new_with(
-        topology: impl Into<Arc<Topology>>,
-        options: DsspOptions,
-        executor: &dyn Executor,
-    ) -> Self {
         let topology = topology.into();
-        let prepared = super::kernel::Prepared::new(&topology, executor);
+        let prepared = super::kernel::Prepared::new(&topology, Run::new().executor());
         Self {
             topology,
             options,
@@ -182,8 +165,7 @@ impl DsspPlan {
         self.options
     }
 
-    /// Assigns `structure` on [`ScopedThreads`] of [`DsspOptions::threads`],
-    /// as [`assign`] does.
+    /// Assigns `structure`, as [`assign`] does.
     ///
     /// # Errors
     ///
@@ -193,29 +175,26 @@ impl DsspPlan {
         &self,
         structure: &(impl AsStructureView + ?Sized),
     ) -> Result<DsspResult, DsspError> {
-        self.assign_with(structure, &ScopedThreads::new(self.options.threads()))
+        self.assign_with(structure, Run::default())
     }
 
-    /// Assigns `structure` with its work items run by `executor`, as
-    /// [`assign_with`] does.
+    /// [`Self::assign`] under a [`Run`], as [`assign_with`] runs.
     ///
     /// # Errors
     ///
-    /// As [`Self::assign`].
-    ///
-    /// # Panics
-    ///
-    /// As [`assign_with`].
+    /// As [`Self::assign`], and [`DsspError::Cancelled`] once `run`'s
+    /// cancellation is requested.
     pub fn assign_with(
         &self,
         structure: &(impl AsStructureView + ?Sized),
-        executor: &dyn Executor,
+        run: Run<'_>,
     ) -> Result<DsspResult, DsspError> {
         let structure = structure.as_structure_view();
         if !structure.topology().shares_layout(&self.topology) {
             return Err(DsspError::TopologyMismatch);
         }
-        super::kernel::assign(&self.prepared, structure, self.options, executor)
+        run.check().map_err(DsspError::Cancelled)?;
+        super::kernel::assign(&self.prepared, structure, self.options, run)
     }
 }
 
@@ -840,7 +819,6 @@ impl Default for DsspLimits {
 pub struct DsspOptions {
     pub(super) min_polyproline_stretch: usize,
     pub(super) limits: DsspLimits,
-    threads: NonZeroUsize,
 }
 
 impl DsspOptions {
@@ -878,41 +856,6 @@ impl DsspOptions {
         self.limits = limits;
         self
     }
-
-    /// Most threads [`assign`] uses, as [`ScopedThreads`], the calling
-    /// thread included; the default, one, runs on the calling thread alone.
-    /// [`assign_with`] uses its executor instead.
-    pub const fn threads(&self) -> NonZeroUsize {
-        self.threads
-    }
-
-    /// Sets [`Self::threads`].
-    ///
-    /// Each stage splits its atom sites or residues into contiguous ranges,
-    /// one per thread, and combines their results in DSSP order, so the
-    /// result is identical for every thread count. Only the short steps
-    /// between stages run on one thread: placing residues in chain segments
-    /// and assembling beta ladders and sheets. Threads are scoped to
-    /// the call; a stage with too little work for two ranges, or whose thread
-    /// cannot be spawned, runs on the calling thread. Starting threads costs
-    /// a fraction of a millisecond per stage, so a caller that already runs
-    /// many small assignments in parallel gains nothing from more threads,
-    /// and a host with its own thread pool can run assignment on it with
-    /// [`assign_with`] instead.
-    ///
-    /// ```
-    /// use kekule::dssp::DsspOptions;
-    /// use std::num::NonZeroUsize;
-    ///
-    /// let threads = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
-    /// let options = DsspOptions::default().with_threads(threads);
-    /// assert_eq!(options.threads(), threads);
-    /// ```
-    #[must_use]
-    pub const fn with_threads(mut self, threads: NonZeroUsize) -> Self {
-        self.threads = threads;
-        self
-    }
 }
 
 impl Default for DsspOptions {
@@ -920,7 +863,6 @@ impl Default for DsspOptions {
         Self {
             min_polyproline_stretch: 3,
             limits: DsspLimits::default(),
-            threads: NonZeroUsize::MIN,
         }
     }
 }
@@ -964,6 +906,9 @@ pub enum DsspError {
     /// The structure does not share the layout of the topology a
     /// [`DsspPlan`] was prepared for.
     TopologyMismatch,
+    /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
+    /// [`assign_with`] or [`DsspPlan::assign_with`].
+    Cancelled(Cancelled),
 }
 
 impl fmt::Display for DsspError {
@@ -999,11 +944,19 @@ impl fmt::Display for DsspError {
             Self::TopologyMismatch => {
                 f.write_str("The structure's topology layout differs from the DSSP plan's.")
             }
+            Self::Cancelled(_) => f.write_str("DSSP assignment stopped."),
         }
     }
 }
 
-impl std::error::Error for DsspError {}
+impl std::error::Error for DsspError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Cancelled(cancelled) => Some(cancelled),
+            _ => None,
+        }
+    }
+}
 
 /// Complete read-only DSSP result for one coordinate snapshot.
 #[derive(Debug, Clone, PartialEq)]

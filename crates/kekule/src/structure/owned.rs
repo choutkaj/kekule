@@ -1,9 +1,9 @@
-use crate::diagnostics::Cancellation;
 use std::fmt;
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::Molecule;
+use crate::parallel::Run;
 use crate::properties::TopologyPropertiesMut;
 use crate::topology::TopologySubsetError;
 use crate::topology::{
@@ -197,34 +197,30 @@ impl Structure {
         Ok(())
     }
 
-    /// [`Self::perceive`], stopping partway once `cancellation` is requested.
-    ///
-    /// Delegates to [`Topology::perceived_cancellable`]. A cancelled call
-    /// leaves the structure unchanged; a completed one installs exactly what
-    /// [`Self::perceive`] would.
+    /// [`Self::perceive`] under a [`Run`], through
+    /// [`Topology::perceived_with`].
     ///
     /// ```
-    /// use kekule::{diagnostics::Cancellation, perception::PerceptionError};
+    /// use kekule::{diagnostics::Cancellation, parallel::Run, perception::PerceptionError};
     /// use kekule::{smiles, structure::{Structure, Positions}};
     ///
     /// let topology = smiles::to_topology("c1ccccc1")?;
     /// let mut structure = Structure::new(topology, Positions::zeros(6))?;
-    /// let error = structure.perceive_cancellable(&Cancellation::new(|| true)).unwrap_err();
+    /// let cancelled = Cancellation::new(|| true);
+    /// let error = structure.perceive_with(Run::new().with_cancellation(&cancelled)).unwrap_err();
     /// assert!(matches!(error.source, PerceptionError::Cancelled(_)));
     /// assert!(structure.topology().instances().all(|m| m.molecule().perception().rings().is_none()));
-    /// structure.perceive_cancellable(&Cancellation::new(|| false))?;
+    /// let never = Cancellation::new(|| false);
+    /// structure.perceive_with(Run::new().with_cancellation(&never))?;
     /// assert!(structure.topology().instances().all(|m| m.molecule().perception().rings().is_some()));
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// As [`Topology::perceived_cancellable`].
-    pub fn perceive_cancellable(
-        &mut self,
-        cancellation: &Cancellation,
-    ) -> Result<(), TopologyPerceptionError> {
-        self.topology = Arc::new(self.topology.perceived_cancellable(cancellation)?);
+    /// As [`Topology::perceived_with`].
+    pub fn perceive_with(&mut self, run: Run<'_>) -> Result<(), TopologyPerceptionError> {
+        self.topology = Arc::new(self.topology.perceived_with(run)?);
         Ok(())
     }
 

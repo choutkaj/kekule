@@ -1,18 +1,12 @@
-//! Executor, cancellation and progress of a clustering run, and their
-//! bookkeeping across work items.
+//! The bookkeeping of a clustering run's cancellation and progress across
+//! work items.
 
-use std::fmt;
-use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use crate::diagnostics::Cancellation;
-use crate::parallel::{Executor, ScopedThreads};
+use crate::parallel::{Executor, Progress, Run};
 
 use super::ClusteringError;
-
-/// The calling thread alone, the executor of a default run.
-static CALLING_THREAD: ScopedThreads = ScopedThreads::new(NonZeroUsize::MIN);
 
 /// Atom pairs fitted between two checkpoints: under a millisecond of work.
 const CHECKPOINT_WORK: usize = 1 << 14;
@@ -21,135 +15,9 @@ const CHECKPOINT_WORK: usize = 1 << 14;
 /// splitting pays for starting threads.
 const WORK_ITEM_WORK: usize = 1 << 16;
 
-/// Where clustering fits run, and how a host follows and stops them, for
-/// [`StructureSet::pairwise_fitted_rmsd_with`](crate::structure::StructureSet::pairwise_fitted_rmsd_with)
-/// and
-/// [`StructureSet::cluster_by_radius_with`](crate::structure::StructureSet::cluster_by_radius_with).
-///
-/// By default fits run on the calling thread, without cancellation or
-/// progress. The executor decides only where and when fits run: the result,
-/// including any error, is the same for every executor and thread count.
-///
-/// ```
-/// use std::num::NonZeroUsize;
-/// use std::sync::atomic::{AtomicUsize, Ordering};
-/// use kekule::clustering::{ClusteringProgress, ClusteringRun};
-/// use kekule::diagnostics::Cancellation;
-/// use kekule::parallel::ScopedThreads;
-///
-/// let threads = ScopedThreads::new(NonZeroUsize::new(4).unwrap());
-/// let cancellation = Cancellation::new(|| false);
-/// let completed = AtomicUsize::new(0);
-/// let progress = |progress: ClusteringProgress| {
-///     completed.store(progress.completed(), Ordering::Relaxed);
-/// };
-/// let run = ClusteringRun::default()
-///     .with_executor(&threads)
-///     .with_cancellation(&cancellation)
-///     .with_progress(&progress);
-/// assert_eq!(run.cancellation(), Some(&cancellation));
-/// ```
-#[derive(Clone, Copy)]
-pub struct ClusteringRun<'a> {
-    executor: &'a dyn Executor,
-    cancellation: Option<&'a Cancellation>,
-    progress: Option<&'a (dyn Fn(ClusteringProgress) + Sync)>,
-}
-
-impl Default for ClusteringRun<'_> {
-    fn default() -> Self {
-        Self {
-            executor: &CALLING_THREAD,
-            cancellation: None,
-            progress: None,
-        }
-    }
-}
-
-impl fmt::Debug for ClusteringRun<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("ClusteringRun")
-            .field("parallelism", &self.executor.parallelism())
-            .field("cancellation", &self.cancellation)
-            .field("progress", &self.progress.map(|_| "callback"))
-            .finish()
-    }
-}
-
-impl<'a> ClusteringRun<'a> {
-    /// The executor that runs the fits; by default the calling thread
-    /// alone.
-    pub fn executor(&self) -> &'a dyn Executor {
-        self.executor
-    }
-
-    /// Sets [`Self::executor`].
-    ///
-    /// Fits split into at most [`Executor::parallelism`] contiguous ranges,
-    /// each one work item, whose results combine in order. Too few fits for
-    /// two ranges of a few milliseconds each run on the calling thread
-    /// without the executor.
-    #[must_use]
-    pub fn with_executor(mut self, executor: &'a dyn Executor) -> Self {
-        self.executor = executor;
-        self
-    }
-
-    /// The cancellation polled before the first fit and about once per
-    /// millisecond of fits on every thread; once requested, the run fails
-    /// with [`ClusteringError::Cancelled`] and returns no partial result.
-    /// None by default.
-    pub fn cancellation(&self) -> Option<&'a Cancellation> {
-        self.cancellation
-    }
-
-    /// Sets [`Self::cancellation`].
-    #[must_use]
-    pub fn with_cancellation(mut self, cancellation: &'a Cancellation) -> Self {
-        self.cancellation = Some(cancellation);
-        self
-    }
-
-    /// Sets the callback called with a [`ClusteringProgress`] before the
-    /// first fit, about once per millisecond of fits, and once all are done.
-    ///
-    /// It runs on the threads doing the fits, one call at a time, with
-    /// counts that never decrease. It should be cheap, such as storing
-    /// atomics a progress bar reads. None by default.
-    #[must_use]
-    pub fn with_progress(mut self, progress: &'a (dyn Fn(ClusteringProgress) + Sync)) -> Self {
-        self.progress = Some(progress);
-        self
-    }
-}
-
-/// Progress of a clustering run: pairs fitted for
-/// [`StructureSet::pairwise_fitted_rmsd_with`](crate::structure::StructureSet::pairwise_fitted_rmsd_with),
-/// and members placed for
-/// [`StructureSet::cluster_by_radius_with`](crate::structure::StructureSet::cluster_by_radius_with).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ClusteringProgress {
-    completed: usize,
-    total: usize,
-}
-
-impl ClusteringProgress {
-    /// Pairs fitted or members placed so far.
-    pub const fn completed(&self) -> usize {
-        self.completed
-    }
-
-    /// Pairs or members in all, which [`Self::completed`] reaches when the
-    /// run succeeds.
-    pub const fn total(&self) -> usize {
-        self.total
-    }
-}
-
 /// Progress and cancellation shared by the work items of one run.
 pub(super) struct Tracker<'r> {
-    run: ClusteringRun<'r>,
+    run: Run<'r>,
     total: usize,
     completed: Mutex<usize>,
     fits_per_checkpoint: usize,
@@ -159,7 +27,7 @@ impl<'r> Tracker<'r> {
     /// Reports that nothing of `total` is done yet and polls cancellation.
     /// Each fit pairs `pair_count` atoms.
     pub(super) fn start(
-        run: ClusteringRun<'r>,
+        run: Run<'r>,
         total: usize,
         pair_count: usize,
     ) -> Result<Self, ClusteringError> {
@@ -175,7 +43,7 @@ impl<'r> Tracker<'r> {
     }
 
     pub(super) fn executor(&self) -> &'r dyn Executor {
-        self.run.executor
+        self.run.executor()
     }
 
     /// Fits between two checkpoints.
@@ -190,7 +58,7 @@ impl<'r> Tracker<'r> {
 
     /// Fails once cancellation has been requested.
     pub(super) fn poll(&self) -> Result<(), ClusteringError> {
-        Cancellation::poll(self.run.cancellation).map_err(ClusteringError::Cancelled)
+        self.run.check().map_err(ClusteringError::Cancelled)
     }
 
     /// Counts `completed` more units done, reports the new count, and polls
@@ -209,9 +77,9 @@ impl<'r> Tracker<'r> {
     }
 
     fn report(&self, completed: usize) {
-        let Some(progress) = self.run.progress else {
+        if !self.run.reports_progress() {
             return;
-        };
+        }
         // Counting and reporting under one lock keeps calls one at a time and
         // their counts nondecreasing.
         let mut done = self
@@ -219,10 +87,7 @@ impl<'r> Tracker<'r> {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         *done += completed;
-        progress(ClusteringProgress {
-            completed: *done,
-            total: self.total,
-        });
+        self.run.report(Progress::of(*done, self.total));
     }
 }
 

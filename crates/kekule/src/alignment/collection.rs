@@ -3,6 +3,7 @@
 
 use crate::diagnostics::Cancellation;
 use crate::math::RigidTransform;
+use crate::parallel::{Progress, Run};
 use crate::structure::{
     visit_geometry, AsStructureView, Geometry, GeometryView, StructureSet, StructureSetRead,
     StructureView,
@@ -296,14 +297,17 @@ fn item_aligned_rmsd<'a>(
 }
 
 /// The RMSD of each of `geometries` of `reader` to the reference, each lent
-/// or read in turn, polling `cancellation` before each.
+/// or read in turn, polling `run`'s cancellation before starting, while
+/// listing the geometries, and before each, and reporting the geometries
+/// measured.
 fn geometry_values(
     reader: &dyn StructureSetRead,
     geometries: impl IntoIterator<Item = usize>,
     reference: Reference<'_>,
     measured: Measured<'_, '_>,
-    cancellation: Option<&Cancellation>,
+    run: Run<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
+    run.check().map_err(AlignmentError::Cancelled)?;
     let read_error = |error| AlignmentError::Read(Box::new(error));
     let held: Geometry;
     let reference = match reference {
@@ -325,15 +329,25 @@ fn geometry_values(
         }
     };
     let topology = reader.topology();
-    let mut geometries = geometries.into_iter().peekable();
-    if geometries.peek().is_none() {
+    // The list is counted for progress; a long or endless one stops when
+    // cancelled.
+    let cancellation = run.cancellation();
+    let geometries = geometries
+        .into_iter()
+        .enumerate()
+        .map(|(step, index)| Cancellation::poll_every(cancellation, step).map(|()| index))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(AlignmentError::Cancelled)?;
+    if geometries.is_empty() {
         Measurement::new(topology, None, reference, measured)?;
+        run.report(Progress::of(0, 0));
         return Ok(Quantity::new(Vec::new(), CANONICAL_LENGTH_UNIT));
     }
     let mut measurement = None;
-    let mut values = Vec::with_capacity(geometries.size_hint().0);
-    for index in geometries {
-        Cancellation::poll(cancellation).map_err(AlignmentError::Cancelled)?;
+    let mut values = Vec::with_capacity(geometries.len());
+    for (done, &index) in geometries.iter().enumerate() {
+        run.report(Progress::of(done, geometries.len()));
+        run.check().map_err(AlignmentError::Cancelled)?;
         let value = visit_geometry(reader, index, read_error, |moving| {
             let measurement = match &measurement {
                 Some(measurement) => measurement,
@@ -350,6 +364,7 @@ fn geometry_values(
         })?;
         values.push(value);
     }
+    run.report(Progress::of(values.len(), values.len()));
     Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
 }
 
@@ -398,32 +413,33 @@ pub fn geometry_rmsd<'a>(
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    let measured = Measured::Direct(atoms.into(), options);
-    geometry_values(reader, geometries, reference.into(), measured, None)
+    geometry_rmsd_with(
+        reader,
+        geometries,
+        reference,
+        atoms,
+        options,
+        Run::default(),
+    )
 }
 
-/// [`geometry_rmsd`], stopping when `cancellation` is requested.
+/// [`geometry_rmsd`] under a [`Run`], measuring on the calling thread.
+/// Progress counts the geometries measured.
 ///
 /// # Errors
 ///
-/// [`AlignmentError::Cancelled`] when cancelled, without partial values,
-/// and the errors of [`geometry_rmsd`].
-pub fn geometry_rmsd_cancellable<'a>(
+/// As [`geometry_rmsd`], and [`AlignmentError::Cancelled`] once `run`'s
+/// cancellation is requested.
+pub fn geometry_rmsd_with<'a>(
     reader: &dyn StructureSetRead,
     geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
-    cancellation: &Cancellation,
+    run: Run<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let measured = Measured::Direct(atoms.into(), options);
-    geometry_values(
-        reader,
-        geometries,
-        reference.into(),
-        measured,
-        Some(cancellation),
-    )
+    geometry_values(reader, geometries, reference.into(), measured, run)
 }
 
 /// RMSD over `measurement` pairs of each of `geometries` of `reader`, in the
@@ -443,33 +459,35 @@ pub fn geometry_aligned_rmsd<'a>(
     measurement: impl Into<FitAtoms<'a>>,
     options: AlignedRmsdOptions<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    let measured = Measured::Aligned(fit.into(), measurement.into(), options);
-    geometry_values(reader, geometries, reference.into(), measured, None)
+    geometry_aligned_rmsd_with(
+        reader,
+        geometries,
+        reference,
+        fit,
+        measurement,
+        options,
+        Run::default(),
+    )
 }
 
-/// [`geometry_aligned_rmsd`], stopping when `cancellation` is requested.
+/// [`geometry_aligned_rmsd`] under a [`Run`], measuring on the calling
+/// thread. Progress counts the geometries measured.
 ///
 /// # Errors
 ///
-/// [`AlignmentError::Cancelled`] when cancelled, without partial values,
-/// and the errors of [`geometry_aligned_rmsd`].
-pub fn geometry_aligned_rmsd_cancellable<'a>(
+/// As [`geometry_aligned_rmsd`], and [`AlignmentError::Cancelled`] once
+/// `run`'s cancellation is requested.
+pub fn geometry_aligned_rmsd_with<'a>(
     reader: &dyn StructureSetRead,
     geometries: impl IntoIterator<Item = usize>,
     reference: impl Into<Reference<'a>>,
     fit: impl Into<FitAtoms<'a>>,
     measurement: impl Into<FitAtoms<'a>>,
     options: AlignedRmsdOptions<'_>,
-    cancellation: &Cancellation,
+    run: Run<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     let measured = Measured::Aligned(fit.into(), measurement.into(), options);
-    geometry_values(
-        reader,
-        geometries,
-        reference.into(),
-        measured,
-        Some(cancellation),
-    )
+    geometry_values(reader, geometries, reference.into(), measured, run)
 }
 
 fn reference_view<'a>(

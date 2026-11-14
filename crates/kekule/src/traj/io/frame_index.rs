@@ -16,7 +16,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::diagnostics::{Cancellation, LimitExceeded, Resource};
+use crate::diagnostics::{LimitExceeded, Resource};
+use crate::parallel::{Progress, Run};
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
 use crate::traj::{
@@ -529,77 +530,24 @@ impl Fnv1a {
     }
 }
 
-/// Progress of building a frame index, reported after each verified frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TrajectoryIndexProgress {
-    frame_count: usize,
-    byte_count: u64,
-    total_byte_count: u64,
-}
-
-impl TrajectoryIndexProgress {
-    /// Frames verified and indexed so far.
-    pub const fn frame_count(&self) -> usize {
-        self.frame_count
-    }
-
-    /// Bytes of the file verified so far, from its start through the last
-    /// verified frame, headers included.
-    pub const fn byte_count(&self) -> u64 {
-        self.byte_count
-    }
-
-    /// The file's size in bytes, which [`Self::byte_count`] reaches when the
-    /// index is complete.
-    pub const fn total_byte_count(&self) -> u64 {
-        self.total_byte_count
-    }
-}
-
-/// A host's observer of index-building progress; clones share one callback.
-#[derive(Clone)]
-pub(crate) struct IndexProgressCallback(Arc<dyn Fn(TrajectoryIndexProgress) + Send + Sync>);
-
-impl IndexProgressCallback {
-    pub(crate) fn new(report: impl Fn(TrajectoryIndexProgress) + Send + Sync + 'static) -> Self {
-        Self(Arc::new(report))
-    }
-}
-
-impl fmt::Debug for IndexProgressCallback {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("IndexProgressCallback")
-    }
-}
-
-// As for `Cancellation`: Kekule only calls the callback, so a panic inside it
-// cannot leave Kekule state broken, and options holding one stay unwind safe.
-impl std::panic::UnwindSafe for IndexProgressCallback {}
-impl std::panic::RefUnwindSafe for IndexProgressCallback {}
-
-/// Cancellation and progress reporting for one index build.
+/// The run of one index build: bytes verified are its progress, of the
+/// file's size.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct IndexBuildControl<'a> {
-    cancellation: Option<&'a Cancellation>,
-    progress: Option<&'a IndexProgressCallback>,
+    run: Run<'a>,
     total_byte_count: u64,
 }
 
 impl<'a> IndexBuildControl<'a> {
-    pub(crate) const fn new(
-        cancellation: Option<&'a Cancellation>,
-        progress: Option<&'a IndexProgressCallback>,
-        total_byte_count: u64,
-    ) -> Self {
+    pub(crate) const fn new(run: Run<'a>, total_byte_count: u64) -> Self {
         Self {
-            cancellation,
-            progress,
+            run,
             total_byte_count,
         }
     }
 
-    /// Reports `frame_count` frames verified through byte `byte_count`, then
-    /// polls the cancellation.
+    /// Reports the file verified through byte `byte_count`, `frame_count`
+    /// frames, then polls the cancellation.
     pub(crate) fn checkpoint(
         &self,
         frame_count: usize,
@@ -607,26 +555,18 @@ impl<'a> IndexBuildControl<'a> {
         format: TrajectoryFormat,
         source_label: &str,
     ) -> Result<(), TrajectoryIoError> {
-        if let Some(progress) = self.progress {
-            (progress.0)(TrajectoryIndexProgress {
-                frame_count,
-                byte_count,
-                total_byte_count: self.total_byte_count.max(byte_count),
-            });
-        }
-        if let Some(cancellation) = self.cancellation {
-            cancellation.check().map_err(|cancelled| {
-                TrajectoryIoError::codec(
-                    TrajectoryIoErrorKind::Cancelled,
-                    TrajectoryIoOperation::Index,
-                    Some(format),
-                )
-                .with_source_label(source_label)
-                .with_frame(frame_count)
-                .with_source(cancelled)
-            })?;
-        }
-        Ok(())
+        self.run
+            .report(Progress::new(byte_count, self.total_byte_count));
+        self.run.check().map_err(|cancelled| {
+            TrajectoryIoError::codec(
+                TrajectoryIoErrorKind::Cancelled,
+                TrajectoryIoOperation::Index,
+                Some(format),
+            )
+            .with_source_label(source_label)
+            .with_frame(frame_count)
+            .with_source(cancelled)
+        })
     }
 }
 

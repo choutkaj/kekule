@@ -6,14 +6,16 @@ use std::sync::{Arc, Mutex};
 
 use kekule::diagnostics::{Cancellation, Cancelled};
 use kekule::math::Point3;
+use kekule::parallel::{Progress, Run};
 use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdReadOptions, DcdTimePolicy};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions, TrrWriter};
 use kekule::traj::io::{
-    open_indexed_trajectory, open_indexed_trajectory_from_index, CoordinateEncoding,
+    open_indexed_trajectory, open_indexed_trajectory_from_index,
+    open_indexed_trajectory_from_index_with, open_indexed_trajectory_with, CoordinateEncoding,
     IndexedFileTrajectoryReader, ScalarPrecision, TrajectoryFileFingerprint, TrajectoryFrameIndex,
-    TrajectoryIndexProgress, TrajectoryIoLimits, TrajectoryOpenOptions,
+    TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule::traj::{
     SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
@@ -182,26 +184,33 @@ fn exported_indexes_reopen_every_format_with_identical_frames_and_metadata() {
     for (name, topology) in fixtures() {
         let path = directory.fixture(name);
         let size = fs::metadata(&path).unwrap().len();
-        let steps = Arc::new(Mutex::new(Vec::<TrajectoryIndexProgress>::new()));
-        let recorded = Arc::clone(&steps);
-        let options = TrajectoryOpenOptions::default()
-            .with_index_progress(move |step| recorded.lock().unwrap().push(step));
-        let mut built = open_indexed_trajectory(&path, Arc::clone(&topology), options).unwrap();
+        let steps = Mutex::new(Vec::<Progress>::new());
+        let record = |step| steps.lock().unwrap().push(step);
+        let run = Run::new().with_progress(&record);
+        let mut built =
+            open_indexed_trajectory_with(&path, Arc::clone(&topology), Default::default(), run)
+                .unwrap();
         let expected = frames(&mut built);
         assert!(expected.len() >= 2, "{name}");
 
         // Progress starts before the first frame, then advances one verified
-        // frame at a time to the whole file.
+        // frame at a time to the whole file: report `count` ends where frame
+        // `count` starts.
         let steps = steps.lock().unwrap().clone();
         assert_eq!(steps.len(), expected.len() + 1, "{name}");
+        let starts = built.to_frame_index().frame_offsets().to_vec();
         for (count, step) in steps.iter().enumerate() {
-            assert_eq!(step.frame_count(), count);
-            assert_eq!(step.total_byte_count(), size);
+            assert_eq!(
+                step.completed(),
+                starts.get(count).copied().unwrap_or(size),
+                "{name}: report {count}"
+            );
+            assert_eq!(step.total(), size);
         }
         assert!(steps
             .windows(2)
-            .all(|pair| pair[0].byte_count() < pair[1].byte_count()));
-        assert_eq!(steps.last().unwrap().byte_count(), size);
+            .all(|pair| pair[0].completed() < pair[1].completed()));
+        assert_eq!(steps.last().unwrap().completed(), size);
 
         let index = built.to_frame_index();
         assert_eq!(index.format(), built.metadata().format());
@@ -323,25 +332,28 @@ fn an_index_opens_the_file_grown_by_appending_and_indexes_only_the_new_frames() 
         );
         assert_eq!(expected.len(), starts.len() + 1, "{name}");
 
-        let steps = Arc::new(Mutex::new(Vec::<TrajectoryIndexProgress>::new()));
-        let recorded = Arc::clone(&steps);
-        let options = TrajectoryOpenOptions::default()
-            .with_index_progress(move |step| recorded.lock().unwrap().push(step));
-        let result = open_indexed_trajectory_from_index(
+        let steps = Mutex::new(Vec::<Progress>::new());
+        let record = |step| steps.lock().unwrap().push(step);
+        let result = open_indexed_trajectory_from_index_with(
             &path,
             Arc::clone(&topology),
             index.clone(),
-            options,
+            Default::default(),
+            Run::new().with_progress(&record),
         );
         let mut reopened = result.unwrap();
-        // Only the appended frame was scanned.
+        // Only the appended frame was scanned: from the end of the indexed
+        // frames to the end of the file.
         let steps = steps.lock().unwrap().clone();
         assert_eq!(
             steps
                 .iter()
-                .map(|step| step.frame_count())
+                .map(|step| step.completed())
                 .collect::<Vec<_>>(),
-            [starts.len(), starts.len() + 1],
+            [
+                index.fingerprint().byte_count(),
+                fs::metadata(&path).unwrap().len()
+            ],
             "{name}"
         );
         assert_eq!(frames(&mut reopened), expected, "{name}");
@@ -664,20 +676,25 @@ fn cancellation_stops_the_index_build_without_a_reader() {
     for (name, topology) in fixtures() {
         let path = directory.fixture(name);
         for after_frames in [0, 1] {
-            let verified = Arc::new(AtomicUsize::new(0));
-            let progress = Arc::clone(&verified);
-            let observed = Arc::clone(&verified);
+            // Progress is reported before the first frame and after each
+            // verified frame, so the frames verified are one fewer.
+            let reports = Arc::new(AtomicUsize::new(0));
+            let observed = Arc::clone(&reports);
             let polls = Arc::new(AtomicUsize::new(0));
             let counted = Arc::clone(&polls);
-            let options = TrajectoryOpenOptions::default()
-                .with_index_progress(move |step| {
-                    progress.store(step.frame_count(), Ordering::Relaxed);
-                })
-                .with_index_cancellation(Cancellation::new(move || {
-                    counted.fetch_add(1, Ordering::Relaxed);
-                    observed.load(Ordering::Relaxed) >= after_frames
-                }));
-            let error = open_indexed_trajectory(&path, Arc::clone(&topology), options).unwrap_err();
+            let progress = |_| {
+                reports.fetch_add(1, Ordering::Relaxed);
+            };
+            let cancellation = Cancellation::new(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+                observed.load(Ordering::Relaxed) > after_frames
+            });
+            let run = Run::new()
+                .with_progress(&progress)
+                .with_cancellation(&cancellation);
+            let error =
+                open_indexed_trajectory_with(&path, Arc::clone(&topology), Default::default(), run)
+                    .unwrap_err();
             assert_eq!(error.kind(), TrajectoryIoErrorKind::Cancelled, "{name}");
             assert_eq!(error.operation(), Some(TrajectoryIoOperation::Index));
             assert_eq!(error.frame(), Some(after_frames));
@@ -688,9 +705,10 @@ fn cancellation_stops_the_index_build_without_a_reader() {
             assert_eq!(polls.load(Ordering::Relaxed), after_frames + 1);
         }
         // A cancellation that is never requested lets the build finish.
-        let options =
-            TrajectoryOpenOptions::default().with_index_cancellation(Cancellation::new(|| false));
-        open_indexed_trajectory(&path, Arc::clone(&topology), options).unwrap();
+        let never = Cancellation::new(|| false);
+        let run = Run::new().with_cancellation(&never);
+        open_indexed_trajectory_with(&path, Arc::clone(&topology), Default::default(), run)
+            .unwrap();
     }
 }
 
@@ -770,20 +788,21 @@ fn a_file_that_grows_while_indexed_keeps_the_frames_appended_meanwhile() {
     let path = directory.fixture("mdanalysis-2.9.0-twelve-atoms.xtc");
     let topology = linear_carbon_topology(12);
     let original = fs::read(&path).unwrap();
-    let appended = Arc::new(AtomicUsize::new(0));
-    let target = path.clone();
-    let once = Arc::clone(&appended);
-    let options = TrajectoryOpenOptions::default().with_index_progress(move |step| {
-        if step.frame_count() == 1 && once.fetch_add(1, Ordering::Relaxed) == 0 {
+    let reports = AtomicUsize::new(0);
+    let progress = |step: Progress| {
+        // The second report follows the first verified frame.
+        if reports.fetch_add(1, Ordering::Relaxed) == 1 {
             // Append one more copy of the first frame's bytes after the scan
             // has passed the start, as a running simulation would.
-            let mut file = OpenOptions::new().write(true).open(&target).unwrap();
+            let mut file = OpenOptions::new().write(true).open(&path).unwrap();
             file.seek(SeekFrom::End(0)).unwrap();
-            file.write_all(&original[..usize::try_from(step.byte_count()).unwrap()])
+            file.write_all(&original[..usize::try_from(step.completed()).unwrap()])
                 .unwrap();
         }
-    });
-    let mut reader = open_indexed_trajectory(&path, topology, options).unwrap();
+    };
+    let run = Run::new().with_progress(&progress);
+    let mut reader =
+        open_indexed_trajectory_with(&path, topology, Default::default(), run).unwrap();
     let frames = frames(&mut reader);
     assert_eq!(frames.first(), frames.last());
     let index = reader.to_frame_index();
@@ -798,17 +817,18 @@ fn a_file_whose_bytes_change_while_indexed_is_rejected() {
     let directory = Directory::new();
     let path = directory.fixture("mdanalysis-2.9.0-twelve-atoms.xtc");
     let topology = linear_carbon_topology(12);
-    let target = path.clone();
-    let once = Arc::new(AtomicUsize::new(0));
-    let options = TrajectoryOpenOptions::default().with_index_progress(move |step| {
-        if step.frame_count() == 1 && once.fetch_add(1, Ordering::Relaxed) == 0 {
+    let reports = AtomicUsize::new(0);
+    let progress = |step: Progress| {
+        // The second report follows the first verified frame.
+        if reports.fetch_add(1, Ordering::Relaxed) == 1 {
             // Rewrite a byte the scan has already verified.
-            let mut file = OpenOptions::new().write(true).open(&target).unwrap();
-            file.seek(SeekFrom::Start(step.byte_count() - 1)).unwrap();
+            let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+            file.seek(SeekFrom::Start(step.completed() - 1)).unwrap();
             file.write_all(&[0x5a]).unwrap();
         }
-    });
-    let error = open_indexed_trajectory(&path, topology, options).unwrap_err();
+    };
+    let run = Run::new().with_progress(&progress);
+    let error = open_indexed_trajectory_with(&path, topology, Default::default(), run).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
     assert_eq!(error.operation(), Some(TrajectoryIoOperation::Index));
 }
