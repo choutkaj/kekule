@@ -1,5 +1,5 @@
-use kekule::diagnostics::Countable;
 use kekule::diagnostics::LengthMismatch;
+use kekule::diagnostics::{Countable, GeometryField};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -9,15 +9,15 @@ use std::{
 
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Forces, GeometryView, Positions, StructureSet, Velocities};
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
+use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule::traj::io::{
     create_trajectory_writer, read_structure_set, write_structure_set, OverwritePolicy,
     TrajectoryFormatHint, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{
-    FrameView, TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryIoOperation, TrajectoryWriter,
+    FrameView, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    TrajectoryWriter,
 };
 
 use crate::support::{
@@ -165,9 +165,8 @@ fn saving_round_trips_all_codecs_using_defaults_or_explicit_native_options() {
             "dcd",
             topology(&["C", "H", "O"], &[(0, 1), (0, 2)]),
             Some(
-                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_dcd_options(
-                    DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
-                ),
+                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
+                    .with_dcd_options(DcdWriteOptions::default().with_unit_cells(true)),
             ),
         ),
     ] {
@@ -320,11 +319,11 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
                 Some(1),
                 "XYZ cannot store the velocities.",
             )
-            .with_field(TrajectoryField::Velocities),
+            .with_field(GeometryField::Velocities),
         ),
         (
             &annotated,
-            TrajectoryIoError::unsupported_field(TrajectoryField::CollectionProperties),
+            TrajectoryIoError::unsupported_field(GeometryField::SetProperties),
         ),
     ] {
         assert_eq!(
@@ -382,9 +381,9 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
             TrajectoryFormat::Xyz,
             &label(&path),
             Some(1),
-            "XYZ cannot store the step.",
+            "XYZ cannot store the MD step.",
         )
-        .with_field(TrajectoryField::Step))
+        .with_field(GeometryField::Step))
     );
     assert_eq!(
         writer.finish(),
@@ -647,14 +646,14 @@ fn converting_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
 
     TrajectoryWriteOptions::new(format)
         .with_xyz_options(XyzWriteOptions::default().with_cell(UnrepresentablePolicy::Omit))
-        .with_dcd_options(DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write))
+        .with_dcd_options(DcdWriteOptions::default().with_unit_cells(true))
         .with_trr_options(
             TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
         )
-        .with_frame_metadata(UnrepresentablePolicy::Omit)
-        .with_frame_timing(FrameTimingPolicy::Number {
-            interval: Quantity::new(2.0, PICOSECOND),
-        })
+        .with_geometry_metadata(UnrepresentablePolicy::Omit)
+        .with_frame_timing(FrameTimingPolicy::Number)
+        .with_frame_interval(Quantity::new(2.0, PICOSECOND))
+        .unwrap()
 }
 
 fn dcd_fixture() -> StructureSet {
@@ -817,8 +816,8 @@ fn structure_sets_save_and_load_as_every_format() {
         }))
         .unwrap();
     for (refused, field) in [
-        (stepped, TrajectoryField::OrderStep),
-        (scanned, TrajectoryField::OrderCoordinate),
+        (stepped, GeometryField::OrderStep),
+        (scanned, GeometryField::OrderCoordinate),
     ] {
         let path = directory.file("refused.dcd");
         let error = write_structure_set(&path, &refused, Default::default()).unwrap_err();
@@ -860,7 +859,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
     .unwrap();
     assert_eq!(writer.format(), TrajectoryFormat::Xyz);
     let error = writer.write_frame(frame(&source, 0)).unwrap_err();
-    assert_eq!(error.field(), Some(TrajectoryField::PeriodicCell));
+    assert_eq!(error.field(), Some(GeometryField::Cell));
     let poisoned = codec_error(
         TrajectoryIoErrorKind::InvalidFrame,
         TrajectoryIoOperation::WriteFrame,

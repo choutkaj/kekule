@@ -72,12 +72,19 @@ pub enum UnrepresentablePolicy {
 ///
 /// Collecting omissions into a report merges repeated kinds by summing their
 /// counts and drops zero counts, as writers do.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteReport {
     omissions: Vec<WriteOmission>,
 }
 
 impl WriteReport {
+    /// The report of a writer that omitted nothing.
+    pub(crate) const fn empty() -> Self {
+        Self {
+            omissions: Vec::new(),
+        }
+    }
+
     /// The omissions, in the order the writer first made each kind.
     pub fn omissions(&self) -> &[WriteOmission] {
         &self.omissions
@@ -203,57 +210,132 @@ pub enum WriteOmission {
     },
 }
 
-/// What a structure writer does with the state of a structure that its
-/// format cannot carry: a geometry's, a structure set's, or a trajectory frame's
-/// state, a structure's occupancies and B factors, and properties.
+/// The geometry state a format carries beyond positions; every writer has
+/// one constant for its format. Per-atom, per-bond, and set properties are
+/// never carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Carries {
+    pub(crate) cell: bool,
+    /// A geometry's step or coordinate place.
+    pub(crate) place: bool,
+    pub(crate) time: bool,
+    pub(crate) step: bool,
+    pub(crate) velocities: bool,
+    pub(crate) forces: bool,
+    /// Occupancies and B factors.
+    pub(crate) sites: bool,
+    /// A geometry's or frame's own properties.
+    pub(crate) properties: bool,
+}
+
+impl Carries {
+    /// A format of positions alone.
+    pub(crate) const POSITIONS: Self = Self {
+        cell: false,
+        place: false,
+        time: false,
+        step: false,
+        velocities: false,
+        forces: false,
+        sites: false,
+        properties: false,
+    };
+}
+
+/// What a writer does with the state its format cannot carry: the format's
+/// [`Carries`] and the caller's policies, named as the writers' options name
+/// them.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StatePolicies {
-    /// The policy for geometry state, and for occupancies and B factors.
-    pub(crate) policy: UnrepresentablePolicy,
-    /// The policy for per-atom, per-bond, and own structure properties and
-    /// for the properties of a geometry's set.
+    pub(crate) carries: Carries,
+    /// Places, times, MD steps, velocities, forces, occupancies, and B
+    /// factors.
+    pub(crate) geometry_metadata: UnrepresentablePolicy,
+    /// Per-atom, per-bond, own, and set properties.
     pub(crate) properties: UnrepresentablePolicy,
-    /// Whether the format writes a geometry's step or coordinate place itself.
-    pub(crate) writes_place: bool,
-    /// Whether the format writes occupancies and B factors.
-    pub(crate) writes_sites: bool,
+    pub(crate) cell: UnrepresentablePolicy,
 }
 
 impl StatePolicies {
-    /// The policies of a format that writes coordinates and nothing else of
-    /// a structure's state.
-    pub(crate) const fn positions_only(
-        policy: UnrepresentablePolicy,
-        properties: UnrepresentablePolicy,
-    ) -> Self {
-        Self {
-            policy,
-            properties,
-            writes_place: false,
-            writes_sites: false,
-        }
-    }
-
-    /// The policies of a format that also writes occupancies and B factors.
-    pub(crate) const fn with_sites(
-        policy: UnrepresentablePolicy,
-        properties: UnrepresentablePolicy,
-    ) -> Self {
-        Self {
-            writes_sites: true,
-            ..Self::positions_only(policy, properties)
-        }
-    }
-
     /// The policy that decides about `field`.
     const fn of(self, field: GeometryField) -> UnrepresentablePolicy {
         match field {
+            GeometryField::Cell => self.cell,
             GeometryField::AtomProperties
             | GeometryField::BondProperties
             | GeometryField::Properties
             | GeometryField::SetProperties => self.properties,
-            _ => self.policy,
+            _ => self.geometry_metadata,
         }
+    }
+
+    /// The state of the structure, geometry, or frame `view` that the format
+    /// cannot carry, whatever the policies decide about it, in checking
+    /// order: its cell; its step or coordinate place; its time and MD step;
+    /// its velocities and forces; its occupancies and B factors; and its
+    /// per-atom, per-bond, and own properties and those of its set.
+    fn lost(self, view: StructureView<'_>) -> Vec<GeometryField> {
+        let carries = self.carries;
+        let context = set_context(view);
+        let mut fields = Vec::new();
+        if !carries.cell && view.cell().is_some() {
+            fields.push(GeometryField::Cell);
+        }
+        if !carries.place {
+            fields.extend(context.and_then(place_field));
+        }
+        let (time, step) = time_fields(view);
+        for (lost, field) in [
+            (time && !carries.time, GeometryField::Time),
+            (step && !carries.step, GeometryField::Step),
+            (
+                view.velocities().is_some() && !carries.velocities,
+                GeometryField::Velocities,
+            ),
+            (
+                view.forces().is_some() && !carries.forces,
+                GeometryField::Forces,
+            ),
+        ] {
+            if lost {
+                fields.push(field);
+            }
+        }
+        if !carries.sites {
+            fields.extend(site_fields(view));
+        }
+        fields.extend(
+            property_fields(view)
+                .filter(|&field| field != GeometryField::Properties || !carries.properties),
+        );
+        if context
+            .and_then(SetContext::set_properties)
+            .is_some_and(|properties| !properties.is_empty())
+        {
+            fields.push(GeometryField::SetProperties);
+        }
+        fields
+    }
+
+    /// Checks the state `view` has that the format cannot carry, in the order
+    /// of [`Self::lost`]: the first such field under
+    /// [`UnrepresentablePolicy::Fail`] is the error, and otherwise the
+    /// omissions are for the report once `view` is written.
+    pub(crate) fn check(
+        self,
+        view: StructureView<'_>,
+    ) -> Result<Vec<WriteOmission>, GeometryField> {
+        let lost = self.lost(view);
+        if let Some(&field) = lost
+            .iter()
+            .find(|&&field| self.of(field) == UnrepresentablePolicy::Fail)
+        {
+            return Err(field);
+        }
+        Ok(lost
+            .into_iter()
+            .map(|field| structure_omission(field, 1))
+            .collect())
     }
 }
 
@@ -281,22 +363,6 @@ pub(crate) fn unrepresentable_state(
     }
 }
 
-/// The sentence for the `field` of a lone structure that `format` cannot
-/// carry: of the geometry for a geometry or a frame, of the structure otherwise.
-fn unrepresentable_geometry_state(
-    format: Format,
-    field: GeometryField,
-    kind: StructureKind<'_>,
-) -> String {
-    match kind {
-        StructureKind::InSet(_) => unrepresentable_state(format, field, None),
-        StructureKind::Standalone => {
-            let verb = verb(field);
-            format!("The {field} of the structure {verb} no {format} representation.")
-        }
-    }
-}
-
 /// The verb for `field` as the subject: "have" for a plural field, "has"
 /// otherwise.
 const fn verb(field: GeometryField) -> &'static str {
@@ -311,6 +377,27 @@ const fn verb(field: GeometryField) -> &'static str {
         | GeometryField::BFactors => "have",
         _ => "has",
     }
+}
+
+/// Checks the state of the lone structure `view` that `format` cannot carry
+/// ([`StatePolicies::check`]), failing with a sentence about the geometry
+/// for a geometry or a frame and about the structure otherwise.
+pub(crate) fn check_geometry_state(
+    format: Format,
+    view: StructureView<'_>,
+    policies: StatePolicies,
+) -> Result<Vec<WriteOmission>, FormatError> {
+    policies.check(view).map_err(|field| {
+        let message = match view.kind() {
+            StructureKind::InSet(_) => unrepresentable_state(format, field, None),
+            StructureKind::Standalone => {
+                let verb = verb(field);
+                format!("The {field} of the structure {verb} no {format} representation.")
+            }
+        };
+        FormatError::write(format, DiagnosticKind::Unsupported, message)
+            .with_detail(FormatErrorDetail::UnrepresentableState(field))
+    })
 }
 
 /// Collects a writer's omissions, merging repeated kinds by summing counts.
@@ -378,18 +465,10 @@ impl Omissions {
         }
     }
 
-    /// Records the state of the lone structure `view` that the policies
-    /// omit, in the order of [`lost_geometry_state`]. Call it after
-    /// [`check_geometry_state`] has passed.
-    pub(crate) fn record_geometry_state(
-        &mut self,
-        view: StructureView<'_>,
-        policies: StatePolicies,
-    ) {
-        for field in lost_geometry_state(view, policies) {
-            if policies.of(field) == UnrepresentablePolicy::Omit {
-                self.record(structure_omission(field, 1));
-            }
+    /// Records each of `omissions` in turn.
+    pub(crate) fn extend(&mut self, omissions: impl IntoIterator<Item = WriteOmission>) {
+        for omission in omissions {
+            self.record(omission);
         }
     }
 
@@ -398,10 +477,11 @@ impl Omissions {
     }
 }
 
-/// The omission of `field` from `structures` structures: occupancies and B
-/// factors have omissions of their own.
+/// The omission of `field` from `structures` structures: cells, occupancies,
+/// and B factors have omissions of their own.
 fn structure_omission(field: GeometryField, structures: usize) -> WriteOmission {
     match field {
+        GeometryField::Cell => WriteOmission::Cell { structures },
         GeometryField::Occupancies => WriteOmission::Occupancies { structures },
         GeometryField::BFactors => WriteOmission::BFactors { structures },
         field => WriteOmission::GeometryState {
@@ -409,32 +489,6 @@ fn structure_omission(field: GeometryField, structures: usize) -> WriteOmission 
             geometries: structures,
         },
     }
-}
-
-/// The state of the lone structure `view` that a format with `policies`
-/// cannot carry, whatever the policies decide about it, in checking order:
-/// its step or coordinate place, unless the format writes places; its time,
-/// MD step, velocities, and forces; the structure's occupancies and B
-/// factors, unless the format writes them; and its per-atom, per-bond, and
-/// own properties and those of its set.
-fn lost_geometry_state(view: StructureView<'_>, policies: StatePolicies) -> Vec<GeometryField> {
-    let mut fields = Vec::new();
-    let context = set_context(view);
-    if !policies.writes_place {
-        fields.extend(context.and_then(place_field));
-    }
-    fields.extend(frame_fields(view));
-    if !policies.writes_sites {
-        fields.extend(site_fields(view));
-    }
-    fields.extend(property_fields(view));
-    if context
-        .and_then(SetContext::set_properties)
-        .is_some_and(|properties| !properties.is_empty())
-    {
-        fields.push(GeometryField::SetProperties);
-    }
-    fields
 }
 
 /// The occupancies and B factors `view` records.
@@ -486,13 +540,18 @@ fn place_field(context: SetContext<'_>) -> Option<GeometryField> {
     }
 }
 
+/// Whether the geometry or frame `view` has a time and an MD step.
+fn time_fields(view: StructureView<'_>) -> (bool, bool) {
+    match set_context(view).and_then(SetContext::place) {
+        Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
+        _ => (false, false),
+    }
+}
+
 /// The time, MD step, velocities, and forces of the geometry or structure
 /// `view` that are present, in that order.
 fn frame_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> {
-    let (time, step) = match set_context(view).and_then(SetContext::place) {
-        Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
-        _ => (false, false),
-    };
+    let (time, step) = time_fields(view);
     [
         (time, GeometryField::Time),
         (step, GeometryField::Step),
@@ -501,30 +560,6 @@ fn frame_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> 
     ]
     .into_iter()
     .filter_map(|(present, field)| present.then_some(field))
-}
-
-/// Fails for the first state of the lone structure `view` that `format`
-/// cannot carry and the policies do not omit, in the order of
-/// [`lost_geometry_state`].
-pub(crate) fn check_geometry_state(
-    format: Format,
-    view: StructureView<'_>,
-    policies: StatePolicies,
-) -> Result<(), FormatError> {
-    let lost = lost_geometry_state(view, policies);
-    let field = lost
-        .iter()
-        .copied()
-        .find(|&field| policies.of(field) == UnrepresentablePolicy::Fail);
-    match field {
-        None => Ok(()),
-        Some(field) => Err(FormatError::write(
-            format,
-            DiagnosticKind::Unsupported,
-            unrepresentable_geometry_state(format, field, view.kind()),
-        )
-        .with_detail(FormatErrorDetail::UnrepresentableState(field))),
-    }
 }
 
 /// Records or rejects the properties of `set` and of its geometries that a

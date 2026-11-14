@@ -13,7 +13,6 @@ use super::atom_site::{
     coordinate_model_ids, optional, optional_i32, read_asym_entities, read_atom_rows,
     read_entity_types, required, row_error,
 };
-use super::cell::stated_cell;
 use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, LabelConnectionSelector, PartnerSpec,
@@ -27,7 +26,7 @@ use super::types::{
     StructureInterpretation, StructureInterpretationReport, StructureSetInterpretOptions,
     StructureSetInterpretation,
 };
-use super::{interpret_source, AltLocResidue, StructureSource};
+use super::{interpret_source, stated_cell, AltLocResidue, StructureSource};
 use crate::io::mmcif::category::MmcifCategory;
 
 pub(crate) fn interpret_mmcif(

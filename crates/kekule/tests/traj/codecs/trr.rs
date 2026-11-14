@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kekule::diagnostics::GeometryField;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -16,8 +17,8 @@ use kekule::traj::io::{
     TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 use kekule::traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
-    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{
     Quantity, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER, PICOSECOND,
@@ -575,9 +576,9 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
             TrajectoryFormat::Trr,
             "zero.trr",
             Some(0),
-            "TRR cannot store the frame properties.",
+            "TRR cannot store the geometry properties.",
         )
-        .with_field(TrajectoryField::Properties))
+        .with_field(GeometryField::Properties))
     );
     frame.geometry_mut().properties_mut().owner_mut().clear();
     writer.write_frame(frame.frame_view()).unwrap();
@@ -805,9 +806,9 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
             TrajectoryFormat::Trr,
             "late-invalid.trr",
             Some(0),
-            "TRR cannot store the bond properties.",
+            "TRR cannot store the per-bond geometry properties.",
         )
-        .with_field(TrajectoryField::BondProperties))
+        .with_field(GeometryField::BondProperties))
     );
     assert!(writer.writer().get_ref().is_empty());
 }

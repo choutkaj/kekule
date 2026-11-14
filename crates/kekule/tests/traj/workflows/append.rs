@@ -14,7 +14,7 @@ use kekule::parallel::{Progress, Run};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::Positions;
 use kekule::topology::Topology;
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
+use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions};
 use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
@@ -113,9 +113,9 @@ fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
     TrajectoryWriteOptions::new(format)
         .with_dcd_options(
             DcdWriteOptions::default()
-                .with_cell_policy(DcdCellPolicy::Write)
+                .with_unit_cells(true)
                 .with_step_sequence(0, INTERVAL)
-                .with_frame_metadata(UnrepresentablePolicy::Omit),
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
         .with_trr_options(
             TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
@@ -123,7 +123,7 @@ fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
         .with_xyz_options(
             XyzWriteOptions::default()
                 .with_cell(UnrepresentablePolicy::Omit)
-                .with_frame_metadata(UnrepresentablePolicy::Omit),
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
 }
 
@@ -530,14 +530,13 @@ fn appending_with_settings_other_than_the_file_records_is_refused() {
     let path = directory.file(TrajectoryFormat::Dcd);
     straight_through(TrajectoryFormat::Dcd, &path, 3);
     let dcd = DcdWriteOptions::default()
-        .with_cell_policy(DcdCellPolicy::Write)
-        .with_frame_metadata(UnrepresentablePolicy::Omit);
+        .with_unit_cells(true)
+        .with_geometry_metadata(UnrepresentablePolicy::Omit);
     for (other, setting) in [
         (dcd.with_step_sequence(0, 5), "step interval"),
         (dcd.with_step_sequence(10, INTERVAL), "first step"),
         (
-            dcd.with_step_sequence(0, INTERVAL)
-                .with_cell_policy(DcdCellPolicy::Omit),
+            dcd.with_step_sequence(0, INTERVAL).with_unit_cells(false),
             "unit-cell flag",
         ),
     ] {

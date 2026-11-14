@@ -1,4 +1,4 @@
-use crate::traj::{FrameView, TrajectoryField};
+use crate::traj::FrameView;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Seek, Write};
@@ -8,8 +8,9 @@ use std::sync::{
     Arc,
 };
 
-use crate::diagnostics::{UnrepresentablePolicy, WriteReport};
+use crate::diagnostics::{GeometryField, UnrepresentablePolicy, WriteReport};
 use crate::topology::Topology;
+use crate::units::Quantity;
 
 use crate::structure::{Order, StructureSet};
 use crate::traj::{
@@ -115,54 +116,67 @@ impl TrajectoryWriteOptions {
         self
     }
 
-    /// Sets the `frame_metadata` policy of every codec's options, for the
-    /// frame state its format cannot carry, so that whichever is written
-    /// leaves it out, or fails on it: occupancies and B-factors, which no
-    /// format carries, and the velocities, forces, times, or steps some
-    /// formats do not
-    /// ([`xyz::XyzWriteOptions::frame_metadata`],
-    /// [`dcd::DcdWriteOptions::frame_metadata`],
-    /// [`trr::TrrWriteOptions::frame_metadata`], and
-    /// [`xtc::XtcWriteOptions::frame_metadata`]). The writer's report names
-    /// what was left out. A later `with_*_options` call replaces the policy
-    /// this sets for its codec.
+    /// Sets the `geometry_metadata` policy of every codec's options, for the
+    /// frame state its format cannot carry: occupancies and B-factors, which
+    /// no format carries, and the velocities, forces, times, or steps some
+    /// formats do not. The writer's report names what was left out. Like the
+    /// other setters for every codec, a later `with_*_options` call replaces
+    /// the policy this sets for its codec.
     #[must_use]
-    pub fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
-        self.xyz = self.xyz.with_frame_metadata(frame_metadata);
-        self.dcd = self.dcd.with_frame_metadata(frame_metadata);
-        self.trr = self.trr.with_frame_metadata(frame_metadata);
-        self.xtc = self.xtc.with_frame_metadata(frame_metadata);
+    pub fn with_geometry_metadata(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.xyz = self.xyz.with_geometry_metadata(policy);
+        self.dcd = self.dcd.with_geometry_metadata(policy);
+        self.trr = self.trr.with_geometry_metadata(policy);
+        self.xtc = self.xtc.with_geometry_metadata(policy);
         self
     }
 
-    /// Sets the `frame_properties` policy of every codec's options, for the
-    /// atom, bond, and frame properties none of the formats carry:
-    /// [`xyz::XyzWriteOptions::frame_properties`],
-    /// [`dcd::DcdWriteOptions::frame_properties`],
-    /// [`trr::TrrWriteOptions::frame_properties`], and
-    /// [`xtc::XtcWriteOptions::frame_properties`]. A later `with_*_options`
-    /// call replaces the policy this sets for its codec.
+    /// Sets the `properties` policy of every codec's options, for the atom,
+    /// bond, and frame properties its format cannot carry.
     #[must_use]
-    pub fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
-        self.xyz = self.xyz.with_frame_properties(frame_properties);
-        self.dcd = self.dcd.with_frame_properties(frame_properties);
-        self.trr = self.trr.with_frame_properties(frame_properties);
-        self.xtc = self.xtc.with_frame_properties(frame_properties);
+    pub fn with_properties(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.xyz = self.xyz.with_properties(policy);
+        self.dcd = self.dcd.with_properties(policy);
+        self.trr = self.trr.with_properties(policy);
+        self.xtc = self.xtc.with_properties(policy);
         self
     }
 
-    /// Sets the `frame_timing` policy of the TRR and XTC options, the
-    /// formats that record a time and a step for every frame:
-    /// [`trr::TrrWriteOptions::frame_timing`] and
-    /// [`xtc::XtcWriteOptions::frame_timing`]. A later `with_*_options` call
-    /// replaces the policy this sets for its codec. DCD numbers frames on its
-    /// header's step sequence instead, under its own
-    /// [`dcd::DcdWriteOptions::frame_timing`].
+    /// Sets the `cell` policy of the XYZ and DCD options, for the cells XYZ,
+    /// and DCD without unit cells, cannot carry. TRR carries cells, and XTC
+    /// follows its [`xtc::XtcCellPolicy`].
+    #[must_use]
+    pub fn with_cell(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.xyz = self.xyz.with_cell(policy);
+        self.dcd = self.dcd.with_cell(policy);
+        self
+    }
+
+    /// Sets the `frame_timing` policy of the DCD, TRR, and XTC options, the
+    /// formats that record a step for every frame.
     #[must_use]
     pub fn with_frame_timing(mut self, frame_timing: FrameTimingPolicy) -> Self {
+        self.dcd = self.dcd.with_frame_timing(frame_timing);
         self.trr = self.trr.with_frame_timing(frame_timing);
         self.xtc = self.xtc.with_frame_timing(frame_timing);
         self
+    }
+
+    /// Sets the `frame_interval` of the TRR and XTC options, the time
+    /// between the frames [`FrameTimingPolicy::Number`] numbers. DCD numbers
+    /// frames on its header's step sequence and `DELTA` instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when
+    /// `interval` is not a finite, nonnegative time.
+    pub fn with_frame_interval(
+        mut self,
+        interval: Quantity<f64>,
+    ) -> Result<Self, TrajectoryIoError> {
+        self.trr = self.trr.with_frame_interval(interval)?;
+        self.xtc = self.xtc.with_frame_interval(interval)?;
+        Ok(self)
     }
 
     /// The explicit format, or `None` to take it from the destination extension.
@@ -356,7 +370,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
 
     /// The content the frames written so far leave out: for XYZ,
     /// [`xyz::XyzWriter::report`]; for DCD, TRR, and XTC, the frame state
-    /// their `frame_metadata` options omit ([`dcd::DcdWriter::report`],
+    /// their options omit ([`dcd::DcdWriter::report`],
     /// [`trr::TrrWriter::report`], [`xtc::XtcWriter::report`]).
     pub fn report(&self) -> &WriteReport {
         self.inner.report()
@@ -547,8 +561,8 @@ impl Drop for FileTrajectoryWriter {
 /// positions, cell, properties, velocities, and forces are its frame's. A
 /// set without an order is written too; reading the file back gives a time
 /// order. Occupancies and B-factors, which no trajectory format stores,
-/// follow the codec's `frame_metadata` policy like the other frame state it
-/// cannot store ([`TrajectoryWriteOptions::with_frame_metadata`]). Each
+/// follow the codec's `geometry_metadata` policy like the other frame state
+/// it cannot store ([`TrajectoryWriteOptions::with_geometry_metadata`]). Each
 /// frame borrows its geometry; nothing is copied.
 ///
 /// The codec is the format of `options` or, by default, the one its
@@ -580,8 +594,8 @@ impl Drop for FileTrajectoryWriter {
 /// and the extension names none, and
 /// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
 /// format stores, which must be cleared first: set properties
-/// ([`TrajectoryField::CollectionProperties`]) and a step or coordinate order
-/// ([`TrajectoryField::OrderStep`], [`TrajectoryField::OrderCoordinate`]).
+/// ([`GeometryField::SetProperties`]) and a step or coordinate order
+/// ([`GeometryField::OrderStep`], [`GeometryField::OrderCoordinate`]).
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
 /// No file is published on error.
@@ -630,7 +644,7 @@ pub fn write_structure_set(
 /// // A frame with a time, as read from XTC, written as DCD without it.
 /// let mut stream = Cursor::new(Vec::new());
 /// let options = TrajectoryWriteOptions::new(TrajectoryFormat::Dcd)
-///     .with_frame_metadata(UnrepresentablePolicy::Omit);
+///     .with_geometry_metadata(UnrepresentablePolicy::Omit);
 /// let report = write_structure_set_to(&mut stream, &set, options)?;
 /// let omitted = WriteOmission::GeometryState { field: GeometryField::Time, geometries: 1 };
 /// assert!(report.omissions().contains(&omitted));
@@ -669,11 +683,11 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
 /// and a step or coordinate order.
 fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
     let field = if !set.properties().is_empty() {
-        Some(TrajectoryField::CollectionProperties)
+        Some(GeometryField::SetProperties)
     } else {
         match set.order() {
-            Some(Order::Step(_)) => Some(TrajectoryField::OrderStep),
-            Some(Order::Coordinate { .. }) => Some(TrajectoryField::OrderCoordinate),
+            Some(Order::Step(_)) => Some(GeometryField::OrderStep),
+            Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
             _ => None,
         }
     };

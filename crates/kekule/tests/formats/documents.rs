@@ -438,7 +438,10 @@ fn sdf_parsed_records_remain_independent_conversion_boundaries() {
 
     let written = sdf::write(
         &[interpretations[1].clone()],
-        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
+        sdf::SdfWriteOptions::from(
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
+        ),
     )
     .expect("single-component rich record writes")
     .0;

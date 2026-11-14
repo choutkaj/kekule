@@ -102,7 +102,9 @@ fn v3000_structure_writers_preserve_free_format_coordinate_precision() {
         check(parsed.interpret(Default::default()).unwrap().structure());
         let text = sdf::write(
             [structure],
-            sdf::SdfWriteOptions::default().with_version(version),
+            sdf::SdfWriteOptions::from(
+                molfile::MolfileWriteOptions::default().with_version(version),
+            ),
         )
         .unwrap()
         .0;

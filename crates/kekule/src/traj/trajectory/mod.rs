@@ -14,7 +14,7 @@ mod frame;
 mod stream;
 
 pub use buffer::{FrameBuffer, FrameData};
-pub use error::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
+pub use error::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
 pub use format::TrajectoryFormat;
 pub use frame::FrameView;
 pub(crate) use stream::COLUMN_MISMATCH;

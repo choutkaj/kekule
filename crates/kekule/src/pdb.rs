@@ -44,7 +44,7 @@
 
 pub use crate::io::pdb::entry_points::{parse_reader, parse_str, write, write_to};
 pub use crate::io::{
-    PdbAtom, PdbAtomField, PdbAtomKind, PdbCellReason, PdbChainIdPolicy, PdbConect, PdbCryst1,
-    PdbDocument, PdbLink, PdbModel, PdbParseOptions, PdbPartner, PdbRecord, PdbSource, PdbSsbond,
-    PdbTer, PdbWriteErrorKind, PdbWriteOptions,
+    PdbAtom, PdbAtomKind, PdbChainIdPolicy, PdbConect, PdbCryst1, PdbDocument, PdbLink, PdbModel,
+    PdbParseOptions, PdbPartner, PdbRecord, PdbSource, PdbSsbond, PdbTer, PdbWriteErrorKind,
+    PdbWriteOptions,
 };

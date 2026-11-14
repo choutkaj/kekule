@@ -5,15 +5,16 @@
 use std::io::{Cursor, Seek, Write};
 use std::sync::Arc;
 
+use kekule::diagnostics::GeometryField;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions, DcdWriter};
+use kekule::traj::io::dcd::{DcdWriteOptions, DcdWriter};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions, TrrWriter};
 use kekule::traj::io::xtc::{XtcWriteOptions, XtcWriter};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{
-    FrameBuffer, TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryIoOperation, TrajectoryWriter,
+    FrameBuffer, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
 
@@ -75,7 +76,7 @@ fn open<W: Write + Seek + 'static>(
             DcdWriter::new(
                 sink,
                 topology,
-                DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
+                DcdWriteOptions::default().with_unit_cells(true),
                 label,
             )
             .unwrap(),
@@ -164,7 +165,7 @@ fn rejected_frame(
                 TrajectoryIoErrorKind::UnsupportedField,
                 "XYZ cannot store the time.",
                 Some(1),
-                Some(TrajectoryField::Time),
+                Some(GeometryField::Time),
             )
         }
         TrajectoryFormat::Dcd => {

@@ -8,9 +8,9 @@
 //! [`XtcCellPolicy`]. A frame without a time or step can be numbered under
 //! [`XtcWriteOptions::frame_timing`]; the velocities, forces, occupancies,
 //! B-factors, and properties XTC cannot carry are rejected unless
-//! [`XtcWriteOptions::frame_metadata`] and
-//! [`XtcWriteOptions::frame_properties`] omit them, as
-//! [`XtcWriter::report`] then reports.
+//! [`XtcWriteOptions::geometry_metadata`] and
+//! [`XtcWriteOptions::properties`] omit them, as [`XtcWriter::report`] then
+//! reports.
 //!
 //! # Examples
 //!
@@ -54,12 +54,13 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::traj::{FrameView, TrajectoryField};
+use crate::traj::FrameView;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use crate::diagnostics::{LimitExceeded, Resource, UnrepresentablePolicy, WriteReport};
+use crate::io::write_policy::StatePolicies;
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
@@ -69,12 +70,25 @@ use crate::traj::{
 };
 use crate::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
-use super::frame_state::{record, site_fields, unrepresentable_frame_state};
+use super::frame_state::{check_frame_state, frame_interval, record};
 use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
+use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
     FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
+};
+
+/// What an XTC frame carries: a cell, which a zero box makes absent
+/// under [`XtcCellPolicy::ZeroMatrixAsAbsent`].
+pub(super) const FIELDS: TrajectoryFieldAvailability = TrajectoryFieldAvailability {
+    positions: FieldAvailability::Required,
+    cell: FieldAvailability::Required,
+    velocities: FieldAvailability::Absent,
+    forces: FieldAvailability::Absent,
+    time: FieldAvailability::Required,
+    step: FieldAvailability::Required,
+    properties: FieldAvailability::Absent,
 };
 
 const XTC_HEADER_BYTES: usize = 56;
@@ -204,9 +218,10 @@ pub struct XtcWriteOptions {
     magic: XtcMagic,
     precision: f32,
     cell_policy: XtcCellPolicy,
-    frame_metadata: UnrepresentablePolicy,
-    frame_properties: UnrepresentablePolicy,
+    geometry_metadata: UnrepresentablePolicy,
+    properties: UnrepresentablePolicy,
     frame_timing: FrameTimingPolicy,
+    frame_interval: Quantity<f64>,
 }
 
 impl Default for XtcWriteOptions {
@@ -215,9 +230,10 @@ impl Default for XtcWriteOptions {
             magic: XtcMagic::Xtc1995,
             precision: 1000.0,
             cell_policy: XtcCellPolicy::RequirePeriodic,
-            frame_metadata: UnrepresentablePolicy::Fail,
-            frame_properties: UnrepresentablePolicy::Fail,
+            geometry_metadata: UnrepresentablePolicy::Fail,
+            properties: UnrepresentablePolicy::Fail,
             frame_timing: FrameTimingPolicy::Require,
+            frame_interval: Quantity::new(1.0, PICOSECOND),
         }
     }
 }
@@ -265,25 +281,39 @@ impl XtcWriteOptions {
         self
     }
 
-    /// Sets [`Self::frame_metadata`].
+    /// Sets [`Self::geometry_metadata`].
     #[must_use]
-    pub const fn with_frame_metadata(mut self, frame_metadata: UnrepresentablePolicy) -> Self {
-        self.frame_metadata = frame_metadata;
+    pub const fn with_geometry_metadata(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.geometry_metadata = policy;
         self
     }
 
-    /// Sets [`Self::frame_properties`].
+    /// Sets [`Self::properties`].
     #[must_use]
-    pub const fn with_frame_properties(mut self, frame_properties: UnrepresentablePolicy) -> Self {
-        self.frame_properties = frame_properties;
+    pub const fn with_properties(mut self, policy: UnrepresentablePolicy) -> Self {
+        self.properties = policy;
         self
     }
 
-    /// Sets [`Self::frame_timing`]; [`XtcWriter::new`] checks its interval.
+    /// Sets [`Self::frame_timing`].
     #[must_use]
     pub const fn with_frame_timing(mut self, frame_timing: FrameTimingPolicy) -> Self {
         self.frame_timing = frame_timing;
         self
+    }
+
+    /// Sets [`Self::frame_interval`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when
+    /// `interval` is not a finite, nonnegative time.
+    pub fn with_frame_interval(
+        mut self,
+        interval: Quantity<f64>,
+    ) -> Result<Self, TrajectoryIoError> {
+        self.frame_interval = frame_interval(TrajectoryFormat::Xtc, interval)?;
+        Ok(self)
     }
 
     /// The magic written; [`XtcMagic::Xtc1995`] by default.
@@ -302,29 +332,37 @@ impl XtcWriteOptions {
         self.cell_policy
     }
 
-    /// A trajectory frame's velocities, forces, occupancies, and B-factors,
-    /// which XTC cannot carry: by default a frame with any of them fails to
-    /// write; [`UnrepresentablePolicy::Omit`] writes the frame without them
-    /// and reports a
-    /// [`WriteOmission::GeometryState`](crate::diagnostics::WriteOmission::GeometryState),
-    /// [`WriteOmission::Occupancies`](crate::diagnostics::WriteOmission::Occupancies),
-    /// or [`WriteOmission::BFactors`](crate::diagnostics::WriteOmission::BFactors)
-    /// for each kind left out (see [`XtcWriter::report`]).
-    pub const fn frame_metadata(self) -> UnrepresentablePolicy {
-        self.frame_metadata
+    /// A frame's velocities, forces, occupancies, and B-factors, which XTC
+    /// cannot carry; by default a frame with any of them fails to write.
+    pub const fn geometry_metadata(self) -> UnrepresentablePolicy {
+        self.geometry_metadata
     }
 
-    /// A trajectory frame's atom, bond, and frame properties, which XTC
-    /// cannot carry, under the rules of [`Self::frame_metadata`].
-    pub const fn frame_properties(self) -> UnrepresentablePolicy {
-        self.frame_properties
+    /// A frame's atom, bond, and own properties, which XTC cannot carry; by
+    /// default a frame with any of them fails to write.
+    pub const fn properties(self) -> UnrepresentablePolicy {
+        self.properties
     }
 
     /// The time and step of a frame without them, which XTC records for
-    /// every frame; [`FrameTimingPolicy::Require`], under which such a frame
-    /// fails to write, by default.
+    /// every frame; [`FrameTimingPolicy::Require`] by default.
     pub const fn frame_timing(self) -> FrameTimingPolicy {
         self.frame_timing
+    }
+
+    /// The time between frames [`FrameTimingPolicy::Number`] gives; 1 ps by
+    /// default.
+    pub const fn frame_interval(self) -> Quantity<f64> {
+        self.frame_interval
+    }
+
+    const fn state_policies(self) -> StatePolicies {
+        StatePolicies {
+            carries: FIELDS.carries(),
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: UnrepresentablePolicy::Fail,
+        }
     }
 }
 
@@ -1662,10 +1700,9 @@ impl<W: Write> XtcWriter<W> {
     /// # Errors
     ///
     /// Returns [`TrajectoryIoErrorKind::InvalidPrecision`] for a precision that
-    /// is not finite and positive, [`TrajectoryIoErrorKind::InconsistentMetadata`]
-    /// for a [`FrameTimingPolicy::Number`] interval that is not a finite,
-    /// nonnegative time, and [`TrajectoryIoErrorKind::LimitExceeded`] when
-    /// the topology has no atoms or more than the magic's byte count allows.
+    /// is not finite and positive, and [`TrajectoryIoErrorKind::LimitExceeded`]
+    /// when the topology has no atoms or more than the magic's byte count
+    /// allows.
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -1675,9 +1712,6 @@ impl<W: Write> XtcWriter<W> {
         let topology = topology.into();
         let source_label = source_label.into();
         validate_precision(options.precision, &source_label)?;
-        options
-            .frame_timing
-            .validate(TrajectoryFormat::Xtc, &source_label)?;
         if topology.atom_count() == 0 || topology.atom_count() > i32::MAX as usize {
             return Err(resource_error(
                 &source_label,
@@ -1709,13 +1743,13 @@ impl<W: Write> XtcWriter<W> {
             scaled: Vec::new(),
             stream: Vec::new(),
             bytes: Vec::new(),
-            report: WriteReport::default(),
+            report: WriteReport::empty(),
         })
     }
 
     /// The frame state the frames written so far leave out under
-    /// [`XtcWriteOptions::frame_metadata`] and `frame_properties`, counted over every frame
-    /// written. XTC stores coordinates for a topology its readers receive
+    /// [`XtcWriteOptions::geometry_metadata`] and
+    /// [`XtcWriteOptions::properties`], counted over every frame written. XTC stores coordinates for a topology its readers receive
     /// separately, so nothing else is reported.
     pub fn report(&self) -> &WriteReport {
         &self.report
@@ -1790,51 +1824,19 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        let (occupancies, b_factors) = site_fields(&frame);
-        let omitted = unrepresentable_frame_state(
-            [
-                (
-                    frame.velocities().is_some(),
-                    TrajectoryField::Velocities,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.forces().is_some(),
-                    TrajectoryField::Forces,
-                    self.options.frame_metadata,
-                ),
-                (
-                    occupancies,
-                    TrajectoryField::Occupancies,
-                    self.options.frame_metadata,
-                ),
-                (
-                    b_factors,
-                    TrajectoryField::BFactors,
-                    self.options.frame_metadata,
-                ),
-                (
-                    frame.properties().atoms().has_data(),
-                    TrajectoryField::AtomProperties,
-                    self.options.frame_properties,
-                ),
-                (
-                    frame.properties().bonds().has_data(),
-                    TrajectoryField::BondProperties,
-                    self.options.frame_properties,
-                ),
-                (
-                    !frame.properties().owner().is_empty(),
-                    TrajectoryField::Properties,
-                    self.options.frame_properties,
-                ),
-            ],
-            |field| writer_field_error(&self.source_label, self.frame_count, field),
+        let omitted = check_frame_state(
+            TrajectoryFormat::Xtc,
+            &self.source_label,
+            self.frame_count,
+            frame,
+            self.options.state_policies(),
         )?;
-        let (step, time) =
-            self.options
-                .frame_timing
-                .timing(self.frame_count, frame.step(), frame.time());
+        let (step, time) = self.options.frame_timing.timing(
+            self.frame_count,
+            self.options.frame_interval,
+            frame.step(),
+            frame.time(),
+        );
         let step = step.ok_or_else(|| {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
@@ -2759,22 +2761,6 @@ fn resource_error(
         context = context.with_frame(frame);
     }
     context
-}
-
-fn writer_field_error(
-    source_label: &str,
-    frame: usize,
-    field: TrajectoryField,
-) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::UnsupportedField,
-        TrajectoryIoOperation::WriteFrame,
-        Some(TrajectoryFormat::Xtc),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_field(field)
-    .with_detail(format!("XTC cannot store the {field}."))
 }
 
 #[cfg(test)]

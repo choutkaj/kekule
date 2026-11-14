@@ -1,5 +1,6 @@
 use std::{fmt, io};
 
+use crate::diagnostics::GeometryField;
 use crate::structure::GeometryError;
 
 use super::TrajectoryFormat;
@@ -133,61 +134,6 @@ impl fmt::Display for TrajectoryIoErrorKind {
     }
 }
 
-/// Frame or structure set state a trajectory format cannot store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum TrajectoryField {
-    /// The periodic cell.
-    PeriodicCell,
-    /// Atom velocities.
-    Velocities,
-    /// Atom forces.
-    Forces,
-    /// Crystallographic occupancies.
-    Occupancies,
-    /// Crystallographic B-factors.
-    BFactors,
-    /// The frame time.
-    Time,
-    /// The integration step.
-    Step,
-    /// Per-atom properties.
-    AtomProperties,
-    /// Per-bond properties.
-    BondProperties,
-    /// Properties of the frame itself.
-    Properties,
-    /// Properties of the structure set.
-    CollectionProperties,
-    /// A geometry's step on a step order.
-    OrderStep,
-    /// A geometry's coordinate on a coordinate order.
-    OrderCoordinate,
-    /// A structure set's time order without times or steps.
-    Order,
-}
-
-impl fmt::Display for TrajectoryField {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::PeriodicCell => "periodic cell",
-            Self::Velocities => "velocities",
-            Self::Forces => "forces",
-            Self::Occupancies => "occupancies",
-            Self::BFactors => "B-factors",
-            Self::Time => "time",
-            Self::Step => "step",
-            Self::AtomProperties => "atom properties",
-            Self::BondProperties => "bond properties",
-            Self::Properties => "frame properties",
-            Self::CollectionProperties => "collection properties",
-            Self::OrderStep => "order step",
-            Self::OrderCoordinate => "order coordinate",
-            Self::Order => "geometry order",
-        })
-    }
-}
-
 /// A trajectory read, write, or detection failure.
 ///
 /// [`kind`](Self::kind) classifies it; the accessors give the operation,
@@ -234,7 +180,7 @@ struct TrajectoryIoErrorData {
     /// Whether the detail or the source already writes the counts.
     counts_written: bool,
     limit: Option<crate::diagnostics::LimitExceeded>,
-    field: Option<TrajectoryField>,
+    field: Option<GeometryField>,
     detail: Option<String>,
     source: Option<std::sync::Arc<dyn std::error::Error + Send + Sync>>,
 }
@@ -284,7 +230,7 @@ impl TrajectoryIoError {
     }
 
     /// The format cannot store `field`.
-    pub fn unsupported_field(field: TrajectoryField) -> Self {
+    pub fn unsupported_field(field: GeometryField) -> Self {
         Self::new(TrajectoryIoErrorKind::UnsupportedField).with_field(field)
     }
 
@@ -356,7 +302,7 @@ impl TrajectoryIoError {
 
     #[must_use]
     /// Names the unsupported field.
-    pub fn with_field(mut self, field: TrajectoryField) -> Self {
+    pub fn with_field(mut self, field: GeometryField) -> Self {
         self.0.field = Some(field);
         self
     }
@@ -428,7 +374,7 @@ impl TrajectoryIoError {
     }
 
     /// The field of a [`TrajectoryIoErrorKind::UnsupportedField`] failure.
-    pub fn field(&self) -> Option<TrajectoryField> {
+    pub fn field(&self) -> Option<GeometryField> {
         self.0.field
     }
 
