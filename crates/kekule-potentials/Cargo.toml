@@ -23,8 +23,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 workspace = true
 
 [features]
-default = ["openff"]
+default = ["openff", "ash"]
+# OpenFF energies and gradients from a `kekule-openff` parameterization.
 openff = ["dep:kekule-openff"]
+# Bundles the Ash charge model required by the Rosemary preset (about 10 MB).
+ash = ["openff", "kekule-openff/ash"]
 
 [dependencies]
 kekule.workspace = true
@@ -32,8 +35,8 @@ kekule-openff = { workspace = true, optional = true }
 
 [[example]]
 name = "openff_workflow"
-required-features = ["openff"]
+required-features = ["ash"]
 
 [[example]]
 name = "clean_up"
-required-features = ["openff"]
+required-features = ["ash"]

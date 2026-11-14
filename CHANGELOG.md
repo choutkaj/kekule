@@ -349,6 +349,8 @@ through the workspace.
 - **Breaking:** `kekule-potentials`' `minimize_with_observer` is
   `minimize_with(potential, structure, options, observer, run)`, whose
   `parallel::Run` can cancel (`MinimizationError::Cancelled`).
+- **Breaking:** `kekule-potentials`' `openff` feature no longer bundles the
+  Ash charge model; its new default `ash` feature does.
 - **Breaking:** Facts that several errors report are shared payloads in
   `diagnostics`, with one message each: `IndexOutOfRange`, `LengthMismatch`,
   `TopologyMismatch`, `CapacityExceeded`, and `UnknownHydrogenCount`, counted

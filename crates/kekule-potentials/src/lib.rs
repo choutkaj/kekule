@@ -38,8 +38,11 @@
 //!
 //! # Typical workflow
 //!
+//! The Rosemary preset needs the bundled Ash charge model of the default `ash`
+//! feature.
+//!
 //! ```no_run
-//! # #[cfg(feature = "openff")]
+//! # #[cfg(feature = "ash")]
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use kekule::structure::Structure;
 //! use kekule_openff::{ForceField, NaglModel};
@@ -59,7 +62,7 @@
 //! # let _ = minimized;
 //! # Ok(())
 //! # }
-//! # #[cfg(not(feature = "openff"))]
+//! # #[cfg(not(feature = "ash"))]
 //! # fn main() {}
 //! ```
 

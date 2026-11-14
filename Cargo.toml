@@ -19,13 +19,18 @@ readme = "README.md"
 keywords = ["chemistry", "cheminformatics", "bioinformatics", "molecular-modeling"]
 categories = ["science", "data-structures", "parser-implementations"]
 
-# Inter-crate requirements, declared once. Every published crate shares the
-# workspace version except `kekule-openff-ash`, which is versioned on its own
-# and released only when its model data changes (see RELEASING.md).
+# Requirements that several members share, declared once. Every published
+# crate shares the workspace version except `kekule-openff-ash`, which is
+# versioned on its own and released only when its model data changes (see
+# RELEASING.md). `kekule-openff`'s default features are off, so a dependent
+# bundles the Ash model only by enabling `ash` itself.
 [workspace.dependencies]
 kekule = { version = "0.5.0", path = "crates/kekule" }
-kekule-openff = { version = "0.5.0", path = "crates/kekule-openff" }
+kekule-openff = { version = "0.5.0", path = "crates/kekule-openff", default-features = false }
 kekule-openff-ash = { version = "0.3", path = "crates/kekule-openff-ash" }
+flate2 = "1"
+serde_json = "1"
+sha2 = "0.10"
 
 [workspace.lints.rust]
 missing_debug_implementations = "warn"
