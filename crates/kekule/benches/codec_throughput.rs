@@ -15,9 +15,7 @@ use kekule::traj::io::trr::{
 };
 use kekule::traj::io::xtc::{IndexedXtcReader, XtcReader, XtcWriter};
 use kekule::traj::io::xyz::{IndexedXyzReader, XyzReader, XyzWriter};
-use kekule::traj::io::TrajectoryIoLimits;
-use kekule::traj::io::TrajectoryOpenOptions;
-use kekule::traj::io::TrajectoryWriteOptions;
+use kekule::traj::io::{TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions};
 use kekule::traj::TrajectoryFormat;
 use kekule::traj::{FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};

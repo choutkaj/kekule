@@ -9,9 +9,7 @@ use kekule::traj::io::dcd::{
     DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
     IndexedDcdReader,
 };
-use kekule::traj::io::TrajectoryIoLimits;
-use kekule::traj::io::TrajectoryOpenOptions;
-use kekule::traj::io::TrajectoryWriteOptions;
+use kekule::traj::io::{TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions};
 use kekule::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
