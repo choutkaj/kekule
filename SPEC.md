@@ -875,7 +875,8 @@ Every operation has exactly one home.
   the 128-byte `clippy::result_large_err` threshold, in Kekule and in
   callers. An error keeps at most one large payload inline and boxes the
   others; a variant whose fields would pass the limit boxes its payload;
-  recursive payloads are boxed. Nothing else is boxed.
+  recursive payloads are boxed. Nothing else is boxed. `clippy.toml`
+  sets `large-error-threshold` so clippy enforces the bound.
 - "Issue" names only a non-fatal entry of a report. The entries of a failure
   that lists several problems are violations or failures, and a writer's
   fatal problems are its `*WriteErrorKind`.
