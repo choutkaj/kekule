@@ -410,11 +410,19 @@ impl PeriodicCell {
     /// # Errors
     ///
     /// [`PeriodicCellError::Unit`] when the lengths are not lengths or the
-    /// angles not angles, and the errors of [`Self::new`] for parameters that
-    /// describe no cell.
+    /// angles not angles, [`PeriodicCellError::InvalidParameters`] when a
+    /// length is not positive or an angle not strictly between 0° and 180°,
+    /// and the errors of [`Self::new`] for parameters that describe no cell.
     pub fn from_parameters(parameters: CellParameters) -> Result<Self, PeriodicCellError> {
         let [a, b, c] = parameters.lengths.value_in(ANGSTROM)?;
         let [alpha, beta, gamma] = parameters.angles.value_in(DEGREE)?;
+        if ![a, b, c].into_iter().all(|length| length > 0.0)
+            || ![alpha, beta, gamma]
+                .into_iter()
+                .all(|angle| angle > 0.0 && angle < 180.0)
+        {
+            return Err(PeriodicCellError::InvalidParameters);
+        }
         let (cos_alpha, cos_beta, cos_gamma) =
             (cos_degrees(alpha), cos_degrees(beta), cos_degrees(gamma));
         let sin_gamma = if gamma == 90.0 {
@@ -616,6 +624,9 @@ pub enum PeriodicCellError {
     DegenerateVectors,
     /// An orthorhombic length is not finite and strictly positive.
     InvalidOrthorhombicLengths,
+    /// A [`CellParameters`] length is not positive, or an angle is not
+    /// strictly between 0° and 180°.
+    InvalidParameters,
     /// A lattice calculation exceeds numerical precision or range, such as
     /// the reciprocal basis of a nearly degenerate cell.
     NumericalFailure,
@@ -641,6 +652,9 @@ impl fmt::Display for PeriodicCellError {
             Self::InvalidOrthorhombicLengths => {
                 formatter.write_str("An orthorhombic cell length is not finite and positive.")
             }
+            Self::InvalidParameters => formatter.write_str(
+                "A cell length is not positive, or a cell angle is not between 0 and 180 degrees.",
+            ),
             Self::NumericalFailure => formatter
                 .write_str("The periodic calculation exceeds the numerical precision or range."),
             Self::LimitExceeded(limit) => write!(
@@ -798,6 +812,20 @@ mod tests {
             rotated.to_parameters(),
             Err(PeriodicCellError::NonstandardOrientation)
         );
+        for invalid in [
+            [-20.0, 30.0, 40.0, 90.0, 90.0, 90.0],
+            [20.0, 0.0, 40.0, 90.0, 90.0, 90.0],
+            [20.0, 30.0, f64::NAN, 90.0, 90.0, 90.0],
+            [20.0, 30.0, 40.0, 0.0, 90.0, 90.0],
+            [20.0, 30.0, 40.0, 90.0, 180.0, 90.0],
+            [20.0, 30.0, 40.0, 90.0, 90.0, 270.0],
+        ] {
+            assert_eq!(
+                PeriodicCell::from_parameters(parameters(invalid)),
+                Err(PeriodicCellError::InvalidParameters),
+                "{invalid:?}"
+            );
+        }
     }
 
     #[test]
