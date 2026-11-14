@@ -325,7 +325,7 @@ impl IndexedFileTrajectoryReader {
     /// verifies it, moving the decoded arrays into the geometry.
     pub(crate) fn read_geometry(&mut self, index: usize) -> Result<Geometry, TrajectoryIoError> {
         let decoded = self.inner.source_mut().read_decoded(index)?;
-        Ok(Geometry::from_decoded(decoded, self.topology())?)
+        Ok(decoded.into_geometry(self.topology())?)
     }
 
     /// The error for a read of frame `index` that failed with `error`: one

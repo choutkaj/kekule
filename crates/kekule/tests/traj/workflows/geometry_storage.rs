@@ -28,7 +28,7 @@ use kekule::traj::io::{
 };
 use kekule::traj::{
     FrameView, Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat,
-    TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
+    TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 use kekule::xyz::XyzWriteOptions;
@@ -207,7 +207,7 @@ fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distributi
     for (path, topology) in fixtures() {
         let set =
             open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
-        let loaded = set.load(0..set.len()).unwrap();
+        let loaded = StructureSet::from_reader(&set, 0..set.len()).unwrap();
         let read = read_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
         assert_eq!(loaded.len(), read.len(), "{path:?}");
         assert_eq!(loaded.order(), read.order(), "{path:?}");
@@ -464,19 +464,26 @@ fn a_failed_read_leaves_the_reader_reading() {
     drop(file);
 
     let failed = set.read(3).unwrap_err();
-    assert!(
-        matches!(
-            failed,
-            StructureSetReadError::Trajectory { geometry: 3, .. }
-        ),
-        "{failed:?}"
-    );
+    assert_eq!(trajectory_failure(&failed).0, 3, "{failed:?}");
     assert_eq!(failed.to_string(), "Cannot read geometry 3.");
     // The same reader, back in the pool, reads the other frames.
     for index in [2, 4, 0, 5, 1] {
         assert_frame(&set, index, &set.read(index).unwrap(), &frames[index]);
     }
-    assert_eq!(set.read(3).unwrap_err(), failed);
+    assert_eq!(
+        trajectory_failure(&set.read(3).unwrap_err()),
+        trajectory_failure(&failed)
+    );
+}
+
+/// The geometry and the trajectory failure a read of a set over a file
+/// reports.
+fn trajectory_failure(error: &StructureSetReadError) -> (usize, &TrajectoryIoError) {
+    let StructureSetReadError::Reader { geometry, source } = error else {
+        panic!("{error:?}");
+    };
+    let source = source.downcast_ref::<TrajectoryIoError>();
+    (*geometry, source.unwrap_or_else(|| panic!("{error:?}")))
 }
 
 /// The lost frames of a truncated file fail with one error, whether a kept
@@ -506,14 +513,8 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
             .map(|index| set.read(index).unwrap_err())
             .collect::<Vec<_>>();
         for (index, error) in (first_lost..).zip(&lost) {
-            let StructureSetReadError::Trajectory {
-                geometry,
-                source: error,
-            } = error
-            else {
-                panic!("frame {index}: {error:?}");
-            };
-            assert_eq!(*geometry, index);
+            let (geometry, error) = trajectory_failure(error);
+            assert_eq!(geometry, index);
             assert_eq!(error.kind(), TrajectoryIoErrorKind::IndexMismatch);
             assert_eq!(error.frame(), Some(index));
             let message = error.to_string();
@@ -527,7 +528,11 @@ fn a_truncated_file_fails_the_frames_it_lost_alike() {
                         assert!(index < first_lost, "frame {index}");
                         assert_eq!(geometry, expected[index]);
                     }
-                    Err(error) => assert_eq!(error, lost[index - first_lost], "frame {index}"),
+                    Err(error) => assert_eq!(
+                        trajectory_failure(&error),
+                        trajectory_failure(&lost[index - first_lost]),
+                        "frame {index}"
+                    ),
                 }
             }
         }
@@ -714,7 +719,7 @@ fn a_failed_refresh_changes_nothing() {
 fn a_set_in_memory_lends_what_a_file_reads() {
     let (path, topology) = fixtures()[3].clone();
     let file = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
-    let memory: StructureSet = file.load(0..file.len()).unwrap();
+    let memory = StructureSet::from_reader(&file, 0..file.len()).unwrap();
     let readers: [&dyn StructureSetRead; 2] = [&file, &memory];
     for index in 0..file.len() {
         let [file_geometry, memory_geometry] = readers.map(|reader| reader.read(index).unwrap());
@@ -917,7 +922,7 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
         }
     }
 
-    let memory = set.load(0..set.len()).unwrap();
+    let memory = StructureSet::from_reader(&set, 0..set.len()).unwrap();
     let steps = ProcessingSteps::default().with_center(AtomSelection::all(Arc::clone(&topology)));
     let from_file = Processed::new(&set, steps.clone()).unwrap();
     let from_memory = Processed::new(&memory, steps).unwrap();
@@ -1226,9 +1231,7 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
             rewrite.write_all(&file.read).unwrap();
             drop(rewrite);
             let error = set.read(1).unwrap_err();
-            let StructureSetReadError::Trajectory { geometry, source } = error else {
-                panic!("{format}: {error:?}");
-            };
+            let (geometry, source) = trajectory_failure(&error);
             assert_eq!(geometry, 1);
             assert_eq!(
                 source.kind(),

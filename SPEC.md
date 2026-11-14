@@ -20,7 +20,7 @@ cross-module rule.
 | `Hierarchy` | Chains, residues, and atom sites over live instance atoms, with source labels and author identifiers | Atoms, bonds, or molecule boundaries |
 | `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight |
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
-| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, and an optional `Order` with one value per geometry | An order value on a geometry; a weight, a state, or a distribution |
+| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, and an optional `Order` with one value per geometry | An order value on a geometry; a weight, a state, or a distribution; a codec's frame state or a reader's failure types |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
 | `Distribution` | `Samples` (every geometry of the set or a sorted subset), one log weight per sample, one `Partition` of the samples into states, one `StateData` per state, and a temperature | Geometries; per-geometry energies |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
@@ -479,12 +479,15 @@ fail. Both share the topology, properties, order, and the operations on them;
 only a set in memory edits geometries or its order. A set of either storage
 reads through the object-safe `StructureSetRead` trait, which is open to hosts.
 Everything in Kekule that reads many geometries takes a `&dyn StructureSetRead`.
+A read fails with `StructureSetReadError`; a reader's own failure, such as a
+trajectory file's `TrajectoryIoError` or a processing step's
+`ProcessingStepError`, is the source of its `Reader` variant.
 Kekule keeps no geometries a reader read and starts no threads: caching,
 read-ahead, and parallel observation belong to the host.
 
 A reader describes geometries and their order and never a distribution.
 `StructureSet::from_reader` loads chosen geometries of any reader, in any
-order, as a faithful copy with the reader's order values; a repeated index is
+order, as a faithful copy with the reader's order values and set properties; a repeated index is
 read once and shared. The host changes what geometries mean with `set_order`
 and by building an `Ensemble`; `Ensemble::select` restricts a distribution to
 the geometries it keeps. See
@@ -498,7 +501,11 @@ the geometries it keeps. See
 reusable `FrameBuffer`, the `IndexedFile` storage of structure sets, periodic
 preprocessing, streaming superposition, and lazy processing (`Processed`). It
 owns no second in-memory trajectory type. A trajectory writer takes a
-`FrameView`: a borrowed `Geometry` with its time and step.
+`FrameView`: a borrowed `Geometry` with its topology, time, and step, the one
+view of a geometry outside any reader, because a `FrameBuffer` streams frames
+that no set holds. `StructureSetRead` is the random access to geometries;
+`SeekableTrajectoryReader` reads a codec's frame by index into a reused
+`FrameBuffer`.
 `read_structure_set` reads a file as a structure set of a time order, and
 `write_structure_set` writes a set of a time order or of none.
 
@@ -540,9 +547,9 @@ from any number of threads at once, and reads whatever bytes the file holds at
 the indexed offsets; `refresh` takes appended frames and fails without change
 when the indexed bytes changed. A clone shares the set's reader and index and
 refreshes independently. An `Ensemble` over the set refreshes through
-`Ensemble::refresh`, and appended frames are not samples. `load` reads listed
-geometries into a set in memory; an ensemble's `load` also restricts the
-distribution. See
+`Ensemble::refresh`, and appended frames are not samples.
+`StructureSet::from_reader` reads listed geometries into a set in memory; an
+ensemble's `load` also restricts the distribution. See
 [structure sets read from files](crates/kekule/src/traj/io/indexed_file.rs).
 
 `Processed` reads another `StructureSetRead` and runs `ProcessingSteps` on each
@@ -813,7 +820,9 @@ its perception step, represented stereo in `stereo`, derived per-molecule
 results in `descriptors`, interpretation types shared by mmCIF and PDB in
 `macromolecular`, and the shared failure vocabulary in `diagnostics`. Format
 modules stay at the crate root, except the trajectory codecs, which live in
-`traj::io` beside the streaming contracts they implement. The foundational
+`traj::io` beside the streaming contracts they implement. `structure` depends
+on neither `traj` nor `alignment`: codec frame state stays in `traj`, and a
+reader's own failure reaches `structure` only as an error source. The foundational
 crate has no optional features.
 
 ### Names, conversions, and identifiers
