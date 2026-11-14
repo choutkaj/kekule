@@ -8,6 +8,7 @@ use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Geometry, Order, Place, StructureSet};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
 
@@ -89,7 +90,9 @@ const TEXT: &str = "3\nitem\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 
 fn options() -> XyzWriteOptions {
     XyzWriteOptions::default()
         .with_decimal_places(3)
+        .unwrap()
         .with_comment("item")
+        .unwrap()
 }
 
 fn omit_places() -> XyzWriteOptions {
@@ -101,7 +104,11 @@ fn write(
     set: &StructureSet,
     options: XyzWriteOptions,
 ) -> Result<(String, WriteReport), TrajectoryIoError> {
-    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "s.xyz")?;
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        set.shared_topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("s.xyz"),
+    )?;
     writer.write_structure_set(set)?;
     let report = writer.report().clone();
     Ok((String::from_utf8(writer.finish()?).unwrap(), report))
@@ -115,7 +122,12 @@ fn assert_rejects(
     field: GeometryField,
     frame: usize,
 ) -> TrajectoryIoError {
-    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "s.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        set.shared_topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("s.xyz"),
+    )
+    .unwrap();
     let error = writer.write_structure_set(set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(field));
@@ -236,12 +248,22 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
 
     // After a frame, errors name the frame a geometry would have become.
     let frame = Frame::new(history.get(0).unwrap().positions().clone()).bound(&topology);
-    let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options(), "s.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        Arc::clone(&topology),
+        TrajectoryWriteOptions::from(options()).with_source_label("s.xyz"),
+    )
+    .unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
     let error = writer.write_structure_set(&history).unwrap_err();
     assert_eq!(error.field(), Some(GeometryField::OrderStep));
     assert_eq!(error.frame(), Some(1));
-    let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), omitted, "s.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        Arc::clone(&topology),
+        TrajectoryWriteOptions::from(omitted).with_source_label("s.xyz"),
+    )
+    .unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
     writer.write_structure_set(&boxed).unwrap();
     let written = String::from_utf8(writer.finish().unwrap()).unwrap();
@@ -369,7 +391,12 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
 fn foreign_and_empty_ordered_sets_are_rejected() {
     let history = history();
     let other = kekule::smiles::to_topology("O").unwrap();
-    let mut writer = XyzWriter::new(Vec::new(), other, omit_places(), "s.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        other,
+        TrajectoryWriteOptions::from(omit_places()).with_source_label("s.xyz"),
+    )
+    .unwrap();
     let error = writer.write_structure_set(&history).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
 
@@ -378,8 +405,7 @@ fn foreign_and_empty_ordered_sets_are_rejected() {
     let mut writer = XyzWriter::new(
         Vec::new(),
         history.shared_topology(),
-        omit_places(),
-        "s.xyz",
+        TrajectoryWriteOptions::from(omit_places()).with_source_label("s.xyz"),
     )
     .unwrap();
     let error = writer.write_structure_set(&empty).unwrap_err();

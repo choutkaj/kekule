@@ -7,6 +7,7 @@ use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Order, StructureSet, TimeAxis, Velocities};
 use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND};
 
@@ -44,7 +45,9 @@ const BONDS: WriteOmission = WriteOmission::Bonds { bonds: 2 };
 fn options() -> XyzWriteOptions {
     XyzWriteOptions::default()
         .with_decimal_places(3)
+        .unwrap()
         .with_comment("sample")
+        .unwrap()
 }
 
 fn omit() -> XyzWriteOptions {
@@ -56,7 +59,11 @@ fn write(
     set: &StructureSet,
     options: XyzWriteOptions,
 ) -> Result<(String, WriteReport), TrajectoryIoError> {
-    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz")?;
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        set.shared_topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("e.xyz"),
+    )?;
     writer.write_structure_set(set)?;
     let report = writer.report().clone();
     Ok((String::from_utf8(writer.finish()?).unwrap(), report))
@@ -70,7 +77,12 @@ fn assert_rejects(
     field: GeometryField,
     frame: usize,
 ) -> TrajectoryIoError {
-    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options, "e.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        set.shared_topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("e.xyz"),
+    )
+    .unwrap();
     let error = writer.write_structure_set(set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(field));
@@ -147,14 +159,19 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
     let frame = Frame::new(set.get(0).unwrap().positions().clone())
         .with_cell(cell())
         .bound(&topology);
-    let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options(), "f.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        Arc::clone(&topology),
+        TrajectoryWriteOptions::from(options()).with_source_label("f.xyz"),
+    )
+    .unwrap();
     let error = writer.write_frame(frame.view(&topology)).unwrap_err();
     assert_eq!(error.field(), Some(GeometryField::Cell));
     let mut writer = XyzWriter::new(
         Vec::new(),
         Arc::clone(&topology),
-        options().with_cell(UnrepresentablePolicy::Omit),
-        "f.xyz",
+        TrajectoryWriteOptions::from(options().with_cell(UnrepresentablePolicy::Omit))
+            .with_source_label("f.xyz"),
     )
     .unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
@@ -230,12 +247,22 @@ fn properties_are_rejected_at_every_level() {
 fn foreign_and_empty_sets_are_rejected() {
     let set = waters();
     let other = kekule::smiles::to_topology("O").unwrap();
-    let mut writer = XyzWriter::new(Vec::new(), other, options(), "e.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        other,
+        TrajectoryWriteOptions::from(options()).with_source_label("e.xyz"),
+    )
+    .unwrap();
     let error = writer.write_structure_set(&set).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
 
     let empty = StructureSet::new(set.shared_topology());
-    let mut writer = XyzWriter::new(Vec::new(), set.shared_topology(), options(), "e.xyz").unwrap();
+    let mut writer = XyzWriter::new(
+        Vec::new(),
+        set.shared_topology(),
+        TrajectoryWriteOptions::from(options()).with_source_label("e.xyz"),
+    )
+    .unwrap();
     let error = writer.write_structure_set(&empty).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
     assert!(writer.writer().is_empty());

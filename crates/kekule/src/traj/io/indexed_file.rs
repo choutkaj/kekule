@@ -21,23 +21,20 @@ use super::{
 /// The storage of a [`StructureSet`] read from an indexed trajectory file: the
 /// open file, its frame index, and a pool of readers.
 ///
-/// The set holds no geometry in memory. [`StructureSetRead::read`] decodes frame
-/// `i` into the returned [`Geometry`]: positions, cell, velocities, forces,
-/// and properties, written once into the arrays the geometry keeps. XTC
-/// decodes coordinates to single precision first, and a DCD with fixed atoms
-/// fills each frame's array with the fixed atoms before its free ones.
-/// [`StructureSetRead::peek`] lends none. Reads from several threads run at once:
-/// each takes a reader of the pool, or opens one when all are busy, so the
-/// pool grows to the most reads that ran at once, and no lock is held while
-/// a frame decodes.
+/// The set holds no geometry in memory. [`StructureSetRead::read`] decodes
+/// frame `i` once into the arrays of the returned [`Geometry`], allocated on
+/// the reading thread: positions, cell, velocities, forces, and properties.
+/// XTC decodes coordinates to single precision first, and a DCD with fixed
+/// atoms fills each frame's array with the fixed atoms before its free ones.
+/// [`StructureSetRead::peek`] lends none.
 ///
-/// Every reader reads the file object the set opened, through positional
-/// reads, and shares the set's
-/// frame index, so opening one reads the start of the file alone and a read
-/// gives the same geometry whichever reader serves it. The readers share one
-/// file handle. On Windows, reads of one handle run one after another, so
-/// reads from several threads take turns reading the file and decode at
-/// once.
+/// Reads from several threads run at once: each takes a reader of the pool,
+/// or forks one when all are busy, so the pool grows to the most reads that
+/// ran at once, and no lock is held while a frame decodes. Every reader
+/// shares the set's frame index and its one file handle, read positionally,
+/// so forking one reads the start of the file alone and every reader gives
+/// the same geometry. On Windows, reads of one handle take turns, and the
+/// decoding still runs at once.
 ///
 /// A read decodes whatever bytes the file holds at the indexed offsets;
 /// kekule does not watch the file.
@@ -56,35 +53,25 @@ use super::{
 /// After a failed refresh, opening the file again is the way back. A host
 /// that must know of changes between refreshes compares
 /// [`Self::fingerprint`] with [`TrajectoryFileFingerprint::is_prefix_of_path`],
-/// or keeps the
-/// [`TrajectoryFrameIndex::prefix_fingerprint`](super::TrajectoryFrameIndex::prefix_fingerprint)
-/// of the frames it used, which samples the indexed bytes of those frames
-/// alone.
+/// or keeps the [`TrajectoryFrameIndex::prefix_fingerprint`] of the frames it
+/// used, which samples the indexed bytes of those frames alone.
 ///
 /// The order is a time order of the index's times and steps, as
-/// [`read_structure_set`](super::read_structure_set) gives them.
+/// [`read_structure_set`](super::read_structure_set) gives them. Open a set
+/// with [`open_indexed_structure_set`] or
+/// [`open_indexed_structure_set_from_index`], or from an open reader with
+/// [`IndexedFileTrajectoryReader::into_structure_set`]. Follow a growing file
+/// with [`StructureSet::refresh`], and load geometries into memory with
+/// [`StructureSet::load`].
 ///
-/// Open one with [`open_indexed_structure_set`] or
-/// [`open_indexed_structure_set_from_index`], or make one from a reader already
-/// open with [`IndexedFileTrajectoryReader::into_structure_set`]. Follow a
-/// growing file with [`StructureSet::refresh`], and load geometries into memory
-/// with [`StructureSet::load`].
-///
-/// Cloning a set over a file reads nothing: the clone reads the file
-/// object this set reads, shares its frame index, and keeps the set
-/// properties and the order, so a host that changes only the properties, or
-/// pairs the set with a distribution in an [`Ensemble`], copies it as cheaply
-/// as one in memory. Its pool starts empty. The clone keeps its geometries while the
-/// set follows the file: refreshing either adds frames to it alone. A
-/// host hands a clone to an analysis and refreshes the set meanwhile. While
-/// both share the index, a refresh that finds new frames copies its whole
-/// offset table first, one offset per frame, and the first refresh of
-/// either reads the start of the file once more, as opening a reader of
-/// the pool does.
-///
-/// A read allocates the geometry's arrays on the thread that reads it, and
-/// the pool's readers keep none for their next read, so that the arrays are
-/// allocated and freed on one thread wherever the readers move.
+/// Cloning a set reads nothing: the clone shares the file object, the frame
+/// index, the set properties, and the order, with an empty pool, so a host
+/// that changes only the properties, or pairs the set with a distribution in
+/// an [`Ensemble`], copies it as cheaply as one in memory. Refreshing either
+/// adds frames to it alone, so a host can hand a clone to an analysis and
+/// refresh the set meanwhile. While both share the index, a refresh that
+/// finds new frames first copies the offset table, one offset per frame,
+/// and the first refresh of either reads the start of the file once more.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
 pub struct IndexedFile {
@@ -95,8 +82,6 @@ pub struct IndexedFile {
     idle: Mutex<Vec<IndexedFileTrajectoryReader>>,
 }
 
-/// A storage of the same file object and frame index, with an empty pool;
-/// it reads nothing.
 impl Clone for IndexedFile {
     fn clone(&self) -> Self {
         Self {
@@ -138,7 +123,6 @@ impl IndexedFile {
         self.reader.fingerprint()
     }
 
-    /// The pool's readers waiting for a read.
     fn idle(&self) -> std::sync::MutexGuard<'_, Vec<IndexedFileTrajectoryReader>> {
         self.idle.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -151,7 +135,6 @@ impl IndexedFile {
         self.reader.fork()
     }
 
-    /// Returns a reader to the pool.
     fn give_back(&self, reader: IndexedFileTrajectoryReader) {
         self.idle().push(reader);
     }
@@ -258,7 +241,6 @@ impl IndexedFileTrajectoryReader {
     }
 }
 
-/// The time order of an index's frames.
 fn time_order(index: &TrajectoryFrameIndex) -> Order {
     Order::Time(TimeAxis::from_columns(
         index.times().map(|times| times.value().to_vec()),

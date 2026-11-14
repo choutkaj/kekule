@@ -81,8 +81,7 @@ impl FingerprintSource for SharedFile {
 /// remain the guard against frames that are not where the index says.
 ///
 /// A file that only grew by appending is the same file with more bytes:
-/// [`Self::is_prefix_of_path`] and [`Self::is_prefix_of_file`] check whether
-/// a file still begins with the content a fingerprint describes, as a
+/// [`Self::is_prefix_of_path`] checks whether a file still begins with the content a fingerprint describes, as a
 /// trajectory that a running simulation keeps writing does. A file whose
 /// existing bytes changed does not. The frame-count fields `NSET` and
 /// `NSTEP` of a DCD header, which DCD writers rewrite as they append frames,
@@ -91,16 +90,15 @@ impl FingerprintSource for SharedFile {
 /// fingerprint.
 ///
 /// Every [`TrajectoryFrameIndex`] carries the fingerprint of the bytes it
-/// covers. A host can also compute one with [`Self::of_path`] or
-/// [`Self::of_file`], check a file against one with [`Self::matches_path`] or
-/// [`Self::matches_file`], and keep one, for example in a project file or a
+/// covers. A host can also compute one with [`Self::of_path`], check a file
+/// against one with [`Self::matches_path`], and keep one, for example in a project file or a
 /// cache key, through its stable encoding.
 ///
 /// Equality compares all three fields, so a file that is touched, or copied
 /// without its modification time, no longer matches. [`Self::same_content`]
 /// ignores the modification time, for a host asking whether a moved or copied
 /// file is the one it recorded, and opening from an index compares content
-/// alone, as [`Self::is_prefix_of_file`] does.
+/// alone, as [`Self::is_prefix_of_path`] does.
 ///
 /// # Encoding
 ///
@@ -159,23 +157,12 @@ impl TrajectoryFileFingerprint {
         let label = path.display().to_string();
         let mut file = File::open(path)
             .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
-        Self::of_labelled_file(&mut file, &label)
+        Self::of_file(&mut file, &label)
     }
 
     /// Fingerprints an open file from its start and leaves it positioned at
-    /// its start.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be read or
-    /// repositioned.
-    pub fn of_file(file: &mut File) -> Result<Self, TrajectoryIoError> {
-        Self::fingerprint(file)
-            .map_err(|error| TrajectoryIoError::io(TrajectoryIoOperation::Open, error))
-    }
-
-    /// As [`Self::of_file`], labelling errors with `source_label`.
-    pub(crate) fn of_labelled_file(
+    /// its start, labelling errors with `source_label`.
+    pub(crate) fn of_file(
         file: &mut impl FingerprintSource,
         source_label: &str,
     ) -> Result<Self, TrajectoryIoError> {
@@ -238,7 +225,7 @@ impl TrajectoryFileFingerprint {
 
     /// The fingerprint of the first `byte_count` bytes of `file`, labelling
     /// errors with `source_label`; see [`Self::fingerprint_prefix`].
-    pub(crate) fn of_labelled_file_prefix(
+    pub(crate) fn of_file_prefix(
         file: &mut impl FingerprintSource,
         byte_count: u64,
         source_label: &str,
@@ -271,24 +258,13 @@ impl TrajectoryFileFingerprint {
         let label = path.display().to_string();
         let mut file = File::open(path)
             .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
-        self.is_prefix_of_labelled_file(&mut file, &label)
+        self.is_prefix_of_file(&mut file, &label)
     }
 
     /// Whether an open file begins with the content this fingerprint
-    /// describes, as [`Self::is_prefix_of_path`] checks; the file is left
-    /// positioned at its start.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrajectoryIoErrorKind::Io`] when the file cannot be read or
-    /// repositioned.
-    pub fn is_prefix_of_file(&self, file: &mut File) -> Result<bool, TrajectoryIoError> {
-        self.is_prefix(file)
-            .map_err(|error| TrajectoryIoError::io(TrajectoryIoOperation::Open, error))
-    }
-
-    /// As [`Self::is_prefix_of_file`], labelling errors with `source_label`.
-    pub(crate) fn is_prefix_of_labelled_file(
+    /// describes, as [`Self::is_prefix_of_path`] checks, labelling errors
+    /// with `source_label`; the file is left positioned at its start.
+    pub(crate) fn is_prefix_of_file(
         &self,
         file: &mut impl FingerprintSource,
         source_label: &str,
@@ -320,16 +296,6 @@ impl TrajectoryFileFingerprint {
     /// As [`Self::of_path`].
     pub fn matches_path(&self, path: impl AsRef<Path>) -> Result<bool, TrajectoryIoError> {
         Ok(Self::of_path(path)? == *self)
-    }
-
-    /// Whether an open file has this fingerprint; the file is left
-    /// positioned at its start.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::of_file`].
-    pub fn matches_file(&self, file: &mut File) -> Result<bool, TrajectoryIoError> {
-        Ok(Self::of_file(file)? == *self)
     }
 
     /// Whether both fingerprints have the same size and content hash,
@@ -1131,7 +1097,7 @@ impl TrajectoryFrameIndex {
                 ),
             ));
         }
-        TrajectoryFileFingerprint::of_labelled_file_prefix(&mut file, end, &label)
+        TrajectoryFileFingerprint::of_file_prefix(&mut file, end, &label)
     }
 
     /// Encodes the index in the versioned layout described on the type.

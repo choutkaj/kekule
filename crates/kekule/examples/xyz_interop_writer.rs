@@ -35,8 +35,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_overwrite_policy(OverwritePolicy::Replace)
         .with_xyz_options(
             XyzWriteOptions::default()
-                .with_decimal_places(8)
-                .with_comment("Kekule XYZ interoperability fixture"),
+                .with_decimal_places(8)?
+                .with_comment("Kekule XYZ interoperability fixture")?,
         );
     let mut writer = create_trajectory_writer(&output, Arc::clone(&topology), options)?;
     let mut frame = FrameBuffer::new(topology);

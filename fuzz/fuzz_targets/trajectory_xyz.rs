@@ -3,9 +3,10 @@
 use std::io::{BufReader, Cursor};
 use std::sync::{Arc, OnceLock};
 
+use kekule::traj::io::TrajectoryOpenOptions;
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::traj::io::xyz::{XyzReadOptions, XyzReader};
+use kekule::traj::io::xyz::XyzReader;
 use kekule::traj::io::TrajectoryIoLimits;
 use kekule::traj::{FrameBuffer, TrajectoryReader};
 use libfuzzer_sys::fuzz_target;
@@ -46,13 +47,7 @@ fuzz_target!(|data: &[u8]| {
         .with_max_text_line_bytes(512)
         .with_max_comment_bytes(512);
 
-    if let Ok(mut reader) = XyzReader::new(
-        BufReader::new(Cursor::new(data)),
-        Arc::clone(topology),
-        XyzReadOptions::default()
-            .with_limits(limits)
-            .with_source_label("fuzz-input.xyz"),
-    ) {
+    if let Ok(mut reader) = XyzReader::new(BufReader::new(Cursor::new(data)), Arc::clone(topology), TrajectoryOpenOptions::default().with_limits(limits).with_source_label("fuzz-input.xyz")) {
         let mut buffer = FrameBuffer::new(Arc::clone(topology));
         for _ in 0..8 {
             match reader.read_next(&mut buffer) {
