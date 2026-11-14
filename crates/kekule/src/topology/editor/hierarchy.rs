@@ -86,6 +86,17 @@ impl EditAtomSite {
     }
 }
 
+macro_rules! slotted {
+    ($($row:ty),*) => {$(
+        impl super::overlay::Slotted for $row {
+            fn slot(&self) -> usize {
+                self.slot
+            }
+        }
+    )*};
+}
+slotted!(EditChain, EditResidue, EditAtomSite);
+
 /// The draft hierarchy: source chains, residues and atom sites are read from
 /// the source until an edit changes them.
 #[derive(Debug, Clone, Default)]
@@ -126,19 +137,6 @@ pub(super) struct SourceHierarchy<'a> {
 }
 
 impl<'a> SourceHierarchy<'a> {
-    pub(super) fn new(
-        source: Option<&'a Topology>,
-        atoms: HandleBlock,
-        hierarchy: &EditHierarchy,
-    ) -> Self {
-        Self {
-            source,
-            atoms,
-            chains: hierarchy.chains.block(),
-            residues: hierarchy.residues.block(),
-        }
-    }
-
     fn source(self) -> &'a Topology {
         self.source.expect("source nodes have a source")
     }

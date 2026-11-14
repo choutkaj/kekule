@@ -11,7 +11,10 @@
 //!
 //! Owners hand out read access through `properties()` and length-preserving
 //! mutable access through `properties_mut()`. Row counts are fixed by the
-//! owner and can never be changed through a property guard.
+//! owner and can never be changed through a property guard. Every table,
+//! published or draft, is written through one guard, [`PropertyTableMut`],
+//! addressed by a [`TableRow`]: an identifier, or the editing handle of a
+//! topology or structure draft.
 //!
 //! Properties are annotations, not represented graph chemistry. Changing a
 //! generic property does not change molecular identity or trigger chemical
@@ -428,22 +431,116 @@ impl PropertyColumn {
     }
 }
 
-mod sealed {
-    pub trait Sealed {}
+/// Row addressing shared by [`PropertyTableMut`] and the draft tables beside
+/// it. The items are nominally public so the sealed [`TableRow`] can name them.
+pub(crate) mod rows {
+    use super::{PropertyError, TableRow};
+
+    /// How a row key reaches its storage row.
+    pub trait RowKey: Copy {
+        /// The row type of the table that stores these rows.
+        type Storage;
+
+        /// The storage row of `self` among `rows`.
+        fn slot(self, rows: LiveRows<'_>) -> Result<usize, <Self as TableRow>::Error>
+        where
+            Self: TableRow;
+    }
+
+    /// The row-liveness policy of a table: every row of a published owner,
+    /// the live slots of a molecule draft, whose removed rows accept missing
+    /// values alone, or the live handles of a topology or structure draft.
+    #[derive(Clone, Copy)]
+    pub enum LiveRows<'a> {
+        All,
+        Slots(&'a dyn RowLiveness),
+        Handles(&'a dyn HandleSlots),
+    }
+
+    /// Which slots of a draft identifier space are live.
+    pub trait RowLiveness {
+        fn is_live(&self, row: usize) -> bool;
+    }
+
+    /// The storage slots of a draft's editing handles.
+    pub trait HandleSlots {
+        /// The slot of the live handle at `position`, or `None`.
+        fn slot(&self, position: u64) -> Option<usize>;
+        /// Live slots in handle order, which is publication order.
+        fn live_slots(&self) -> Vec<usize>;
+    }
+
+    impl std::fmt::Debug for LiveRows<'_> {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str(match self {
+                Self::All => "All",
+                Self::Slots(_) => "Slots",
+                Self::Handles(_) => "Handles",
+            })
+        }
+    }
+
+    impl LiveRows<'_> {
+        pub(crate) fn handle_slot(self, position: u64) -> Option<usize> {
+            match self {
+                Self::Handles(handles) => handles.slot(position),
+                Self::All | Self::Slots(_) => None,
+            }
+        }
+
+        pub(super) fn check(self, row: usize) -> Result<(), PropertyError> {
+            match self {
+                Self::Slots(slots) if !slots.is_live(row) => {
+                    Err(PropertyError::RemovedRow { index: row })
+                }
+                _ => Ok(()),
+            }
+        }
+
+        pub(super) fn check_column(
+            self,
+            column: &super::PropertyColumn,
+        ) -> Result<(), PropertyError> {
+            if !matches!(self, Self::Slots(_)) {
+                return Ok(());
+            }
+            (0..column.len())
+                .filter(|row| column.is_populated_at(*row))
+                .try_for_each(|row| self.check(row))
+        }
+    }
+}
+pub(crate) use rows::{HandleSlots, LiveRows, RowLiveness};
+
+/// The row key of a [`PropertyTableMut`]: a [`PropertyRow`] identifier, or an
+/// editing handle of a topology or structure draft (`EditAtomId`, ...).
+pub trait TableRow: rows::RowKey {
+    /// What a write or a read of one row fails with: [`PropertyError`] for
+    /// identifiers, the editor's error for editing handles.
+    type Error: std::error::Error + From<PropertyError>;
 }
 
 /// Typed row address of one property table.
 ///
 /// Each table is indexed by the identifier of the domain it annotates, so a
 /// molecule atom table cannot be read with a topology index by accident.
-pub trait PropertyRow: Copy + sealed::Sealed {
+pub trait PropertyRow: TableRow<Error = PropertyError> + rows::RowKey<Storage = Self> {
     /// Zero-based row in the owning table.
     fn row(self) -> usize;
 }
 
 macro_rules! property_rows {
     ($($row:ty),* $(,)?) => {$(
-        impl sealed::Sealed for $row {}
+        impl rows::RowKey for $row {
+            type Storage = Self;
+
+            fn slot(self, _: LiveRows<'_>) -> Result<usize, PropertyError> {
+                Ok(self.index())
+            }
+        }
+        impl TableRow for $row {
+            type Error = PropertyError;
+        }
         impl PropertyRow for $row {
             fn row(self) -> usize {
                 self.index()
@@ -582,9 +679,18 @@ impl<R: PropertyRow> PropertyTable<R> {
     }
 }
 
-/// Mutable columns of an owner-sized table. The row count cannot change.
+/// Mutable columns of an owner-sized table, addressed by row key `R`. The row
+/// count cannot change.
 ///
-/// Reads are available through `Deref`. Every mutation is transactional.
+/// With a [`PropertyRow`] identifier, columns are in row order and reads are
+/// available through `Deref`; rows of atoms and bonds removed from a molecule
+/// draft accept missing values alone and fail with
+/// [`PropertyError::RemovedRow`]. With an editing handle of a topology or
+/// structure draft, columns are read and inserted in live-handle order, which
+/// is the dense order of the published result, and a deleted or foreign handle
+/// fails with the editor's matching error (`InvalidAtom`, `InvalidBond`, ...).
+///
+/// Every mutation is transactional: on error the table is unchanged.
 ///
 /// ```compile_fail
 /// use kekule::{properties::PropertyTable, topology::TopologyBuilder};
@@ -592,61 +698,22 @@ impl<R: PropertyRow> PropertyTable<R> {
 /// let mut properties = builder.properties_mut();
 /// *properties.atoms_mut() = PropertyTable::default();
 /// ```
-pub struct PropertyTableMut<'a, R> {
-    table: &'a mut PropertyTable<R>,
+pub struct PropertyTableMut<'a, R: TableRow> {
+    table: &'a mut PropertyTable<R::Storage>,
     live: LiveRows<'a>,
+    // A draft's edit counter, advanced only when a write changes the table, so
+    // an unchanged draft still publishes its source.
+    revision: Option<&'a mut u64>,
+    row: PhantomData<fn() -> R>,
 }
 
-/// The row-liveness policy of a table: every row of a published owner, or
-/// only the live slots of an editor draft, whose removed rows accept missing
-/// values alone.
-#[derive(Clone, Copy)]
-pub(crate) enum LiveRows<'a> {
-    All,
-    Slots(&'a dyn RowLiveness),
-}
-
-/// Which slots of a draft identifier space are live.
-pub(crate) trait RowLiveness {
-    fn is_live(&self, row: usize) -> bool;
-}
-
-impl fmt::Debug for LiveRows<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::All => "All",
-            Self::Slots(_) => "Slots",
-        })
-    }
-}
-
-impl LiveRows<'_> {
-    fn check(self, row: usize) -> Result<(), PropertyError> {
-        match self {
-            Self::Slots(slots) if !slots.is_live(row) => {
-                Err(PropertyError::RemovedRow { index: row })
-            }
-            _ => Ok(()),
-        }
-    }
-
-    fn check_column(self, column: &PropertyColumn) -> Result<(), PropertyError> {
-        if matches!(self, Self::All) {
-            return Ok(());
-        }
-        (0..column.len())
-            .filter(|row| column.is_populated_at(*row))
-            .try_for_each(|row| self.check(row))
-    }
-}
-
-impl<R> fmt::Debug for PropertyTableMut<'_, R> {
+impl<R: TableRow> fmt::Debug for PropertyTableMut<'_, R> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.table.fmt(formatter)
     }
 }
 
-impl<R> std::ops::Deref for PropertyTableMut<'_, R> {
+impl<R: PropertyRow> std::ops::Deref for PropertyTableMut<'_, R> {
     type Target = PropertyTable<R>;
 
     fn deref(&self) -> &Self::Target {
@@ -654,56 +721,105 @@ impl<R> std::ops::Deref for PropertyTableMut<'_, R> {
     }
 }
 
-impl<'a, R> PropertyTableMut<'a, R> {
-    pub(crate) fn new(table: &'a mut PropertyTable<R>) -> Self {
+impl<'a, R: TableRow> PropertyTableMut<'a, R> {
+    pub(crate) fn new(
+        table: &'a mut PropertyTable<R::Storage>,
+        live: LiveRows<'a>,
+        revision: Option<&'a mut u64>,
+    ) -> Self {
         Self {
             table,
-            live: LiveRows::All,
+            live,
+            revision,
+            row: PhantomData,
         }
     }
 
-    pub(crate) fn with_live_rows(table: &'a mut PropertyTable<R>, live: LiveRows<'a>) -> Self {
-        Self { table, live }
+    /// The raw table and its row policy, for the draft reads beside this guard.
+    pub(crate) fn parts(&self) -> (&RawPropertyTable, LiveRows<'_>) {
+        (&self.table.raw, self.live)
     }
 
-    /// Inserts or replaces a complete column in row order.
+    fn changed(&mut self) {
+        if let Some(revision) = self.revision.as_deref_mut() {
+            *revision += 1;
+        }
+    }
+
+    fn slot(&self, row: R) -> Result<usize, R::Error> {
+        let slot = row.slot(self.live)?;
+        if slot < self.table.len() {
+            self.live.check(slot)?;
+        }
+        Ok(slot)
+    }
+
+    /// Inserts or replaces a complete column, returning the replaced one.
     ///
     /// Replacing a real column preserves its storage unit and converts
     /// compatible input values. An all-missing input removes the key.
-    /// Returns the replaced column, if any.
     ///
     /// # Errors
     ///
     /// [`PropertyError::LengthMismatch`] when the column length differs from
-    /// the table's, [`PropertyError::NonFiniteValue`] for a NaN or infinite
-    /// real value, [`PropertyError::TypeMismatch`] when an existing column
-    /// under `key` has another type, [`PropertyError::Unit`] when real values
-    /// cannot be converted to the existing column's unit, and
-    /// [`PropertyError::RemovedRow`] when a value lands in the row of an atom or
-    /// bond removed from an editing draft. On error the table is unchanged.
+    /// the number of rows (live rows, for editing handles),
+    /// [`PropertyError::NonFiniteValue`] for a NaN or
+    /// infinite real value, [`PropertyError::TypeMismatch`] when an existing
+    /// column under `key` has another type, [`PropertyError::Unit`] when real
+    /// values cannot be converted to the existing column's unit, and
+    /// [`PropertyError::RemovedRow`] when a value lands in a removed row.
     pub fn insert(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, PropertyError> {
-        if column.len() == self.table.len() {
-            self.live.check_column(&column)?;
+    ) -> Result<Option<PropertyColumn>, R::Error> {
+        let LiveRows::Handles(handles) = self.live else {
+            if column.len() == self.table.len() {
+                self.live.check_column(&column)?;
+            }
+            let previous = self.table.raw.insert(key.clone(), column)?;
+            if self.revision.is_some() && previous.as_ref() != self.table.raw.get(&key) {
+                self.changed();
+            }
+            return Ok(previous);
+        };
+        let previous = live_column(&self.table.raw, handles, &key);
+        install_column(
+            &mut self.table.raw,
+            &handles.live_slots(),
+            key.clone(),
+            column,
+        )?;
+        if previous != live_column(&self.table.raw, handles, &key) {
+            self.changed();
         }
-        self.table.raw.insert(key, column)
+        Ok(previous)
     }
 
     /// Removes and returns the column under `key`, if present.
     pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.table.raw.remove(key)
+        let previous = match self.live {
+            LiveRows::Handles(handles) => {
+                let previous = live_column(&self.table.raw, handles, key);
+                self.table.raw.remove(key);
+                previous
+            }
+            LiveRows::All | LiveRows::Slots(_) => self.table.raw.remove(key),
+        };
+        if previous.is_some() {
+            self.changed();
+        }
+        previous
     }
 
     /// Removes every column, keeping the row count.
     pub fn clear(&mut self) {
-        self.table.raw.clear_columns();
+        if self.table.raw.has_data() {
+            self.table.raw.clear_columns();
+            self.changed();
+        }
     }
-}
 
-impl<R: PropertyRow> PropertyTableMut<'_, R> {
     /// Sets or clears one cell, removing a column that becomes all-missing.
     ///
     /// Setting a cell of an absent key creates a column of the value's type
@@ -713,40 +829,38 @@ impl<R: PropertyRow> PropertyTableMut<'_, R> {
     /// # Errors
     ///
     /// [`PropertyError::InvalidIndex`] when `row` is outside the table,
-    /// [`PropertyError::RemovedRow`] when it belongs to an atom or bond removed
-    /// from an editing draft, [`PropertyError::NonFiniteValue`] for a NaN or
-    /// infinite real value, before or after conversion,
-    /// [`PropertyError::TypeMismatch`] when the existing column has another
-    /// type, and [`PropertyError::Unit`] when the value's unit is incompatible
-    /// with the column's. On error the table is unchanged.
+    /// [`PropertyError::RemovedRow`] when it is a removed row,
+    /// [`PropertyError::NonFiniteValue`] for a NaN or infinite real value,
+    /// before or after conversion, [`PropertyError::TypeMismatch`] when the
+    /// existing column has another type, and [`PropertyError::Unit`] when the
+    /// value's unit is incompatible with the column's.
     pub fn set_value(
         &mut self,
         key: PropertyKey,
         row: R,
         value: Option<PropertyValue>,
-    ) -> Result<(), PropertyError> {
-        self.check_row(row.row())?;
-        self.table.raw.set_value(key, row.row(), value)
+    ) -> Result<(), R::Error> {
+        let slot = self.slot(row)?;
+        let tracked = self.revision.is_some();
+        let previous = tracked
+            .then(|| self.table.raw.value(&key, slot))
+            .transpose()?;
+        self.table.raw.set_value(key.clone(), slot, value)?;
+        if tracked && previous != Some(self.table.raw.value(&key, slot)?) {
+            self.changed();
+        }
+        Ok(())
     }
 
-    /// Clears one cell, removing a column that becomes all-missing. Clearing a
-    /// cell of an absent key is a no-op.
+    /// Clears one cell; the same as [`Self::set_value`] with `None`. Clearing
+    /// a cell of an absent key is a no-op.
     ///
     /// # Errors
     ///
     /// [`PropertyError::InvalidIndex`] when `row` is outside the table, and
-    /// [`PropertyError::RemovedRow`] when it belongs to an atom or bond removed
-    /// from an editing draft.
-    pub fn clear_value(&mut self, key: PropertyKey, row: R) -> Result<(), PropertyError> {
-        self.check_row(row.row())?;
-        self.table.raw.set_value(key, row.row(), None)
-    }
-
-    fn check_row(&self, row: usize) -> Result<(), PropertyError> {
-        if row < self.table.len() {
-            self.live.check(row)?;
-        }
-        Ok(())
+    /// [`PropertyError::RemovedRow`] when it is a removed row.
+    pub fn clear_value(&mut self, key: PropertyKey, row: R) -> Result<(), R::Error> {
+        self.set_value(key, row, None)
     }
 
     /// Applies several cell updates to one column transactionally: either
@@ -760,15 +874,57 @@ impl<R: PropertyRow> PropertyTableMut<'_, R> {
         &mut self,
         key: PropertyKey,
         values: impl IntoIterator<Item = (R, Option<PropertyValue>)>,
-    ) -> Result<(), PropertyError> {
+    ) -> Result<(), R::Error> {
         let mut staged = self.table.raw.stage_column(&key);
         for (row, value) in values {
-            self.check_row(row.row())?;
-            staged.set_value(key.clone(), row.row(), value)?;
+            staged.set_value(key.clone(), self.slot(row)?, value)?;
         }
-        self.table.raw.commit_column(key, staged);
+        // An equal column may still differ in signed zeros or unit symbols;
+        // only a draft that tracks publication keeps its stored column then.
+        let changed = staged.get(&key) != self.table.raw.get(&key);
+        if changed || self.revision.is_none() {
+            self.table.raw.commit_column(key, staged);
+        }
+        if changed {
+            self.changed();
+        }
         Ok(())
     }
+}
+
+/// One column of a draft's live rows, in handle order.
+pub(crate) fn live_column(
+    table: &RawPropertyTable,
+    handles: &dyn HandleSlots,
+    key: &PropertyKey,
+) -> Option<PropertyColumn> {
+    table.get(key)?;
+    table
+        .select_indices(&handles.live_slots())
+        .expect("live slots are allocated rows")
+        .remove(key)
+}
+
+/// Stores a column given in live-handle order at the live slots `live`.
+fn install_column(
+    table: &mut RawPropertyTable,
+    live: &[usize],
+    key: PropertyKey,
+    column: PropertyColumn,
+) -> Result<(), PropertyError> {
+    let mut dense = RawPropertyTable::new(live.len());
+    dense.insert(key.clone(), column)?;
+    let mut slots = vec![None; table.len()];
+    for (index, &slot) in live.iter().enumerate() {
+        slots[slot] = Some(index);
+    }
+    let mut projected = dense.select_optional_indices(&slots)?;
+    if let Some(column) = projected.remove(&key) {
+        table.insert(key, column)?;
+    } else {
+        table.remove(&key);
+    }
+    Ok(())
 }
 
 /// Untyped row storage shared by every typed [`PropertyTable`].
@@ -1277,13 +1433,13 @@ impl<'a> MoleculePropertiesMut<'a> {
     /// Mutable atom columns; rows of removed draft atoms accept only missing
     /// values.
     pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, AtomId> {
-        PropertyTableMut::with_live_rows(&mut self.properties.atoms, self.atoms_live)
+        PropertyTableMut::new(&mut self.properties.atoms, self.atoms_live, None)
     }
 
     /// Mutable bond columns; rows of removed draft bonds accept only missing
     /// values.
     pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, BondId> {
-        PropertyTableMut::with_live_rows(&mut self.properties.bonds, self.bonds_live)
+        PropertyTableMut::new(&mut self.properties.bonds, self.bonds_live, None)
     }
 
     /// Removes every owner value and column, keeping row counts.
@@ -1362,6 +1518,23 @@ impl TopologyProperties {
     }
     pub(crate) fn atom_sites_mut(&mut self) -> &mut RawPropertyTable {
         &mut self.atom_sites.raw
+    }
+
+    // Typed tables, for the guards of an editing draft.
+    pub(crate) fn atom_table_mut(&mut self) -> &mut PropertyTable<TopologyAtomIndex> {
+        &mut self.atoms
+    }
+    pub(crate) fn bond_table_mut(&mut self) -> &mut PropertyTable<TopologyBondIndex> {
+        &mut self.bonds
+    }
+    pub(crate) fn chain_table_mut(&mut self) -> &mut PropertyTable<ChainId> {
+        &mut self.chains
+    }
+    pub(crate) fn residue_table_mut(&mut self) -> &mut PropertyTable<ResidueId> {
+        &mut self.residues
+    }
+    pub(crate) fn atom_site_table_mut(&mut self) -> &mut PropertyTable<AtomSiteId> {
+        &mut self.atom_sites
     }
 
     pub(crate) fn resize_atoms(&mut self, len: usize) {
@@ -1468,27 +1641,27 @@ impl<'a> TopologyPropertiesMut<'a> {
     }
     /// Mutable molecule-instance columns.
     pub fn molecule_instances_mut(&mut self) -> PropertyTableMut<'_, MoleculeInstanceId> {
-        PropertyTableMut::new(&mut self.properties.molecule_instances)
+        PropertyTableMut::new(&mut self.properties.molecule_instances, LiveRows::All, None)
     }
     /// Mutable topology-atom columns.
     pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
-        PropertyTableMut::new(&mut self.properties.atoms)
+        PropertyTableMut::new(&mut self.properties.atoms, LiveRows::All, None)
     }
     /// Mutable topology-bond columns.
     pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
-        PropertyTableMut::new(&mut self.properties.bonds)
+        PropertyTableMut::new(&mut self.properties.bonds, LiveRows::All, None)
     }
     /// Mutable chain columns.
     pub fn chains_mut(&mut self) -> PropertyTableMut<'_, ChainId> {
-        PropertyTableMut::new(&mut self.properties.chains)
+        PropertyTableMut::new(&mut self.properties.chains, LiveRows::All, None)
     }
     /// Mutable residue columns.
     pub fn residues_mut(&mut self) -> PropertyTableMut<'_, ResidueId> {
-        PropertyTableMut::new(&mut self.properties.residues)
+        PropertyTableMut::new(&mut self.properties.residues, LiveRows::All, None)
     }
     /// Mutable atom-site columns.
     pub fn atom_sites_mut(&mut self) -> PropertyTableMut<'_, AtomSiteId> {
-        PropertyTableMut::new(&mut self.properties.atom_sites)
+        PropertyTableMut::new(&mut self.properties.atom_sites, LiveRows::All, None)
     }
 
     /// Removes every owner value and column, keeping row counts.
@@ -1574,6 +1747,14 @@ impl GeometryProperties {
         &mut self.bonds.raw
     }
 
+    // Typed tables, for the guards of an editing draft.
+    pub(crate) fn atom_table_mut(&mut self) -> &mut PropertyTable<TopologyAtomIndex> {
+        &mut self.atoms
+    }
+    pub(crate) fn bond_table_mut(&mut self) -> &mut PropertyTable<TopologyBondIndex> {
+        &mut self.bonds
+    }
+
     /// Grows staged rows with missing values.
     pub(crate) fn resize(&mut self, atoms: usize, bonds: usize) {
         self.atoms.raw.resize_missing(atoms);
@@ -1628,12 +1809,12 @@ impl<'a> GeometryPropertiesMut<'a> {
 
     /// Mutable topology-atom columns.
     pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
-        PropertyTableMut::new(&mut self.properties.atoms)
+        PropertyTableMut::new(&mut self.properties.atoms, LiveRows::All, None)
     }
 
     /// Mutable topology-bond columns.
     pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
-        PropertyTableMut::new(&mut self.properties.bonds)
+        PropertyTableMut::new(&mut self.properties.bonds, LiveRows::All, None)
     }
 
     /// Removes every owner value and column, keeping row counts.

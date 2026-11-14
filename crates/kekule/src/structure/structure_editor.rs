@@ -10,12 +10,12 @@ use super::{
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
-use crate::properties::{OwnerProperties, PropertyError};
+use crate::properties::{LiveRows, OwnerProperties, PropertyError, PropertyTableMut};
 use crate::topology::{
     edit::{
         EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId, EditChain, EditChainId,
-        EditMolecule, EditPropertiesMut, EditPropertyTable, EditPropertyTableMut, EditResidue,
-        EditResidueId, TopologyEditError, TopologyEditor,
+        EditMolecule, EditPropertiesMut, EditPropertyTable, EditResidue, EditResidueId,
+        TopologyEditError, TopologyEditor,
     },
     AtomSiteMetadata, MoleculeClass, MoleculeInstanceId, ResidueClass, TopologyAtomIndex,
 };
@@ -657,14 +657,14 @@ impl<'a> StructureEditorProperties<'a> {
     pub fn owner(&self) -> &'a OwnerProperties {
         self.editor.slots.properties.owner()
     }
-    /// Atom annotations, addressed by editing handle.
+    /// Atom annotations.
     pub fn atoms(&self) -> EditPropertyTable<'a, EditAtomId> {
         EditPropertyTable::new(
             self.editor.slots.properties.atoms().raw(),
             self.editor.topology.atom_rows(),
         )
     }
-    /// Bond annotations, addressed by editing handle.
+    /// Bond annotations.
     pub fn bonds(&self) -> EditPropertyTable<'a, EditBondId> {
         EditPropertyTable::new(
             self.editor.slots.properties.bonds().raw(),
@@ -674,7 +674,7 @@ impl<'a> StructureEditorProperties<'a> {
 }
 
 /// Mutable structure annotations of a [`StructureEditor`], addressed by editing
-/// handle; see [`EditPropertyTableMut`] for the table methods.
+/// handle; see [`PropertyTableMut`] for the table methods.
 #[derive(Debug)]
 pub struct StructureEditorPropertiesMut<'a> {
     editor: &'a mut StructureEditor,
@@ -689,21 +689,21 @@ impl StructureEditorPropertiesMut<'_> {
     pub fn owner_mut(&mut self) -> &mut OwnerProperties {
         self.editor.slots.properties.owner_mut()
     }
-    /// Atom annotations, addressed by editing handle.
-    pub fn atoms_mut(&mut self) -> EditPropertyTableMut<'_, EditAtomId> {
+    /// Atom annotations.
+    pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, EditAtomId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.slots.properties.atoms_raw_mut(),
-            editor.topology.atom_rows(),
+        PropertyTableMut::new(
+            editor.slots.properties.atom_table_mut(),
+            LiveRows::Handles(editor.topology.atom_rows()),
             None,
         )
     }
-    /// Bond annotations, addressed by editing handle.
-    pub fn bonds_mut(&mut self) -> EditPropertyTableMut<'_, EditBondId> {
+    /// Bond annotations.
+    pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, EditBondId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.slots.properties.bonds_raw_mut(),
-            editor.topology.bond_rows(),
+        PropertyTableMut::new(
+            editor.slots.properties.bond_table_mut(),
+            LiveRows::Handles(editor.topology.bond_rows()),
             None,
         )
     }
