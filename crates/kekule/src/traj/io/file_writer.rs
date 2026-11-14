@@ -304,24 +304,6 @@ impl<W: Write + Seek> CodecWriter<W> {
         }
     }
 
-    fn report(&self) -> &WriteReport {
-        match self {
-            Self::Xyz(writer) => writer.report(),
-            Self::Dcd(writer) => writer.report(),
-            Self::Trr(writer) => writer.report(),
-            Self::Xtc(writer) => writer.report(),
-        }
-    }
-
-    fn writer(&self) -> &W {
-        match self {
-            Self::Xyz(writer) => writer.writer(),
-            Self::Dcd(writer) => writer.writer(),
-            Self::Trr(writer) => writer.writer(),
-            Self::Xtc(writer) => writer.writer(),
-        }
-    }
-
     fn finish(self) -> Result<W, TrajectoryIoError> {
         match self {
             Self::Xyz(writer) => writer.finish(),
@@ -331,42 +313,52 @@ impl<W: Write + Seek> CodecWriter<W> {
         }
     }
 
-    fn topology(&self) -> &Topology {
+    /// The codec writer, which writes every format alike.
+    fn codec(&self) -> &dyn CodecStream<W> {
         match self {
-            Self::Xyz(writer) => writer.topology(),
-            Self::Dcd(writer) => writer.topology(),
-            Self::Trr(writer) => writer.topology(),
-            Self::Xtc(writer) => writer.topology(),
+            Self::Xyz(writer) => writer,
+            Self::Dcd(writer) => writer,
+            Self::Trr(writer) => writer,
+            Self::Xtc(writer) => writer,
         }
     }
 
-    fn shared_topology(&self) -> Arc<Topology> {
+    fn codec_mut(&mut self) -> &mut dyn CodecStream<W> {
         match self {
-            Self::Xyz(writer) => writer.shared_topology(),
-            Self::Dcd(writer) => writer.shared_topology(),
-            Self::Trr(writer) => writer.shared_topology(),
-            Self::Xtc(writer) => writer.shared_topology(),
-        }
-    }
-
-    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
-        match self {
-            Self::Xyz(writer) => writer.write_frame(frame),
-            Self::Dcd(writer) => writer.write_frame(frame),
-            Self::Trr(writer) => writer.write_frame(frame),
-            Self::Xtc(writer) => writer.write_frame(frame),
-        }
-    }
-
-    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
-        match self {
-            Self::Xyz(writer) => writer.flush(),
-            Self::Dcd(writer) => writer.flush(),
-            Self::Trr(writer) => writer.flush(),
-            Self::Xtc(writer) => writer.flush(),
+            Self::Xyz(writer) => writer,
+            Self::Dcd(writer) => writer,
+            Self::Trr(writer) => writer,
+            Self::Xtc(writer) => writer,
         }
     }
 }
+
+/// What a stream writer uses of a codec writer, beyond writing frames.
+trait CodecStream<W>: TrajectoryWriter {
+    fn report(&self) -> &WriteReport;
+    fn writer(&self) -> &W;
+}
+
+macro_rules! codec_stream {
+    ($($codec:ident::$writer:ident),+) => {$(
+        impl<W: Write + Seek> CodecStream<W> for $codec::$writer<W> {
+            fn report(&self) -> &WriteReport {
+                $codec::$writer::report(self)
+            }
+
+            fn writer(&self) -> &W {
+                $codec::$writer::writer(self)
+            }
+        }
+    )+};
+}
+
+codec_stream!(
+    xyz::XyzWriter,
+    dcd::DcdWriter,
+    trr::TrrWriter,
+    xtc::XtcWriter
+);
 
 /// Strict writer of one format over a host's stream, from
 /// [`create_trajectory_stream_writer`].
@@ -426,7 +418,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
 
     /// The stream being written.
     pub fn writer(&self) -> &W {
-        self.inner.writer()
+        self.inner.codec().writer()
     }
 
     /// The content the frames written so far leave out: for XYZ,
@@ -434,7 +426,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
     /// their options omit ([`dcd::DcdWriter::report`],
     /// [`trr::TrrWriter::report`], [`xtc::XtcWriter::report`]).
     pub fn report(&self) -> &WriteReport {
-        self.inner.report()
+        self.inner.codec().report()
     }
 
     fn poisoned(&self, operation: TrajectoryIoOperation) -> TrajectoryIoError {
@@ -450,18 +442,18 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
 
 impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
     fn topology(&self) -> &Topology {
-        self.inner.topology()
+        self.inner.codec().topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.inner.shared_topology()
+        self.inner.codec().shared_topology()
     }
 
     fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if self.failed {
             return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
         }
-        let result = self.inner.write_frame(frame);
+        let result = self.inner.codec_mut().write_frame(frame);
         self.failed = result.is_err();
         result
     }
@@ -473,7 +465,7 @@ impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
         if self.failed {
             return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
         }
-        self.inner.flush()
+        self.inner.codec_mut().flush()
     }
 }
 
