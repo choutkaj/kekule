@@ -404,8 +404,8 @@ fn kabsch_pairs(
     let mut moments = AlignmentMoments::default();
     for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
         moments.add(
-            point_components(moving_positions[moving_index.index()]),
-            point_components(reference_positions[reference_index.index()]),
+            moving_positions[moving_index.index()] - Point3::origin(),
+            reference_positions[reference_index.index()] - Point3::origin(),
             weights.at(pair_index),
         );
     }
@@ -415,20 +415,18 @@ fn kabsch_pairs(
     ensure_rank_two(moments.reference_scatter, AlignmentGeometry::Reference)?;
 
     let rotation = proper_rotation(moments.cross_covariance)?;
-    let moving_centroid = components_vector(moments.moving_centroid);
-    let reference_centroid = components_vector(moments.reference_centroid);
-    let translation = reference_centroid - rotation.transform_vector(moving_centroid);
+    let translation =
+        moments.reference_centroid - rotation.transform_vector(moments.moving_centroid);
     let transform = RigidTransform::from_canonical(rotation, translation)
         .map_err(AlignmentError::InvalidRigidTransform)?;
 
     let mut weighted_squared_residual = CompensatedSum::default();
     for (pair_index, (moving_index, reference_index)) in pairs.iter().enumerate() {
-        let moving_centered = point_components(moving_positions[moving_index.index()]);
-        let reference_centered = point_components(reference_positions[reference_index.index()]);
-        let moving_centered = subtract(moving_centered, moments.moving_centroid);
-        let reference_centered = subtract(reference_centered, moments.reference_centroid);
-        let residual = rotation.transform_vector(components_vector(moving_centered))
-            - components_vector(reference_centered);
+        let moving_centered =
+            (moving_positions[moving_index.index()] - Point3::origin()) - moments.moving_centroid;
+        let reference_centered = (reference_positions[reference_index.index()] - Point3::origin())
+            - moments.reference_centroid;
+        let residual = rotation.transform_vector(moving_centered) - reference_centered;
         weighted_squared_residual.add(weights.at(pair_index) * residual.norm_squared());
     }
     let mean_squared_residual = weighted_squared_residual.value() / moments.weight_sum;
@@ -842,14 +840,15 @@ struct CompensatedVector {
 }
 
 impl CompensatedVector {
-    fn add(&mut self, value: [f64; 3]) {
-        for (sum, value) in self.values.iter_mut().zip(value) {
+    fn add(&mut self, value: Vector3) {
+        for (sum, value) in self.values.iter_mut().zip(components(value)) {
             sum.add(value);
         }
     }
 
-    fn value(self) -> [f64; 3] {
-        self.values.map(CompensatedSum::value)
+    fn value(self) -> Vector3 {
+        let [x, y, z] = self.values.map(CompensatedSum::value);
+        Vector3::new(x, y, z)
     }
 }
 
@@ -859,9 +858,9 @@ struct CompensatedMatrix {
 }
 
 impl CompensatedMatrix {
-    fn add_outer(&mut self, left: [f64; 3], right: [f64; 3], scale: f64) {
-        for (row, left_value) in left.into_iter().enumerate() {
-            for (column, right_value) in right.into_iter().enumerate() {
+    fn add_outer(&mut self, left: Vector3, right: Vector3, scale: f64) {
+        for (row, left_value) in components(left).into_iter().enumerate() {
+            for (column, right_value) in components(right).into_iter().enumerate() {
                 self.values[row][column].add(scale * left_value * right_value);
             }
         }
@@ -883,17 +882,17 @@ struct AlignmentMoments {
 }
 
 impl AlignmentMoments {
-    fn add(&mut self, moving: [f64; 3], reference: [f64; 3], weight: f64) {
+    fn add(&mut self, moving: Vector3, reference: Vector3, weight: f64) {
         let old_weight_sum = self.weight_sum.value();
         self.weight_sum.add(weight);
         let weight_sum = self.weight_sum.value();
         let moving_centroid = self.moving_centroid.value();
         let reference_centroid = self.reference_centroid.value();
-        let moving_delta = subtract(moving, moving_centroid);
-        let reference_delta = subtract(reference, reference_centroid);
+        let moving_delta = moving - moving_centroid;
+        let reference_delta = reference - reference_centroid;
         let ratio = weight / weight_sum;
-        self.moving_centroid.add(scale(moving_delta, ratio));
-        self.reference_centroid.add(scale(reference_delta, ratio));
+        self.moving_centroid.add(moving_delta * ratio);
+        self.reference_centroid.add(reference_delta * ratio);
 
         let scatter_scale = weight * old_weight_sum / weight_sum;
         self.moving_scatter
@@ -915,8 +914,8 @@ impl AlignmentMoments {
         };
         if !result.weight_sum.is_finite()
             || result.weight_sum <= 0.0
-            || !vector_is_finite(result.moving_centroid)
-            || !vector_is_finite(result.reference_centroid)
+            || !result.moving_centroid.is_finite()
+            || !result.reference_centroid.is_finite()
             || !matrix_is_finite(result.moving_scatter)
             || !matrix_is_finite(result.reference_scatter)
             || !matrix_is_finite(result.cross_covariance)
@@ -930,15 +929,15 @@ impl AlignmentMoments {
 #[derive(Debug, Clone, Copy)]
 struct FinishedMoments {
     weight_sum: f64,
-    moving_centroid: [f64; 3],
-    reference_centroid: [f64; 3],
+    moving_centroid: Vector3,
+    reference_centroid: Vector3,
     moving_scatter: Matrix,
     reference_scatter: Matrix,
     cross_covariance: Matrix,
 }
 
 type Matrix = [[f64; 3]; 3];
-type DominantSingularBases = ([[f64; 3]; 2], [[f64; 3]; 2], [f64; 3]);
+type DominantSingularBases = ([Vector3; 2], [Vector3; 2], [f64; 3]);
 
 fn ensure_rank_two(scatter: Matrix, geometry: AlignmentGeometry) -> Result<(), AlignmentError> {
     let eigenvalues = symmetric_eigenvalues(scatter)?;
@@ -1018,18 +1017,9 @@ fn proper_rotation(cross_covariance: Matrix) -> Result<Matrix3, AlignmentError> 
 
     let (left_first, left_second) = orthonormal_pair(left[0], left[1])?;
     let (right_first, right_second) = orthonormal_pair(right[0], right[1])?;
-    let left_third = cross(left_first, left_second);
-    let right_third = cross(right_first, right_second);
-    let left_basis = Matrix3::from_columns(
-        components_vector(left_first),
-        components_vector(left_second),
-        components_vector(left_third),
-    );
-    let right_basis = Matrix3::from_columns(
-        components_vector(right_first),
-        components_vector(right_second),
-        components_vector(right_third),
-    );
+    let left_basis = Matrix3::from_columns(left_first, left_second, left_first.cross(left_second));
+    let right_basis =
+        Matrix3::from_columns(right_first, right_second, right_first.cross(right_second));
     Ok(right_basis.multiply(left_basis.transpose()))
 }
 
@@ -1049,9 +1039,9 @@ fn dominant_singular_bases(
         for (p, q) in [(0, 1), (0, 2), (1, 2)] {
             let first = matrix_column(work, p);
             let second = matrix_column(work, q);
-            let alpha = dot(first, first);
-            let beta = dot(second, second);
-            let coupling = dot(first, second);
+            let alpha = fused_dot(first, first);
+            let beta = fused_dot(second, second);
+            let coupling = fused_dot(first, second);
             if !alpha.is_finite() || !beta.is_finite() || !coupling.is_finite() {
                 return Err(AlignmentError::NumericalFailure);
             }
@@ -1095,8 +1085,8 @@ fn dominant_singular_bases(
         });
     }
     let left = [
-        scale(matrix_column(work, order[0]), 1.0 / singular_values[0]),
-        scale(matrix_column(work, order[1]), 1.0 / singular_values[1]),
+        matrix_column(work, order[0]) * (1.0 / singular_values[0]),
+        matrix_column(work, order[1]) * (1.0 / singular_values[1]),
     ];
     let right = [
         matrix_column(right_vectors, order[0]),
@@ -1114,7 +1104,7 @@ fn one_sided_svd_converged(matrix: Matrix) -> bool {
     let first = matrix_column(matrix, order[0]);
     let second = matrix_column(matrix, order[1]);
     let scale = norm_squared(first).sqrt() * norm_squared(second).sqrt();
-    dot(first, second).abs() <= 8.0 * JACOBI_RELATIVE_TOLERANCE * scale
+    fused_dot(first, second).abs() <= 8.0 * JACOBI_RELATIVE_TOLERANCE * scale
 }
 
 fn rotate_matrix_columns(matrix: &mut Matrix, p: usize, q: usize, cosine: f64, sine: f64) {
@@ -1126,22 +1116,19 @@ fn rotate_matrix_columns(matrix: &mut Matrix, p: usize, q: usize, cosine: f64, s
     }
 }
 
-fn orthonormal_pair(
-    first: [f64; 3],
-    second: [f64; 3],
-) -> Result<([f64; 3], [f64; 3]), AlignmentError> {
+fn orthonormal_pair(first: Vector3, second: Vector3) -> Result<(Vector3, Vector3), AlignmentError> {
     let first = normalize(first).ok_or(AlignmentError::NumericalFailure)?;
-    let second = subtract(second, scale(first, dot(first, second)));
+    let second = second - first * fused_dot(first, second);
     let second = normalize(second).ok_or(AlignmentError::NumericalFailure)?;
     Ok((first, second))
 }
 
-fn normalize(value: [f64; 3]) -> Option<[f64; 3]> {
+fn normalize(value: Vector3) -> Option<Vector3> {
     let norm = norm_squared(value).sqrt();
     if !norm.is_finite() || norm == 0.0 {
         return None;
     }
-    Some(scale(value, 1.0 / norm))
+    Some(value * (1.0 / norm))
 }
 
 fn largest_off_diagonal(matrix: Matrix) -> (usize, usize, f64) {
@@ -1160,48 +1147,27 @@ fn matrix_scale(matrix: Matrix) -> f64 {
         .fold(0.0, f64::max)
 }
 
-fn matrix_column(matrix: Matrix, column: usize) -> [f64; 3] {
-    [matrix[0][column], matrix[1][column], matrix[2][column]]
+fn matrix_column(matrix: Matrix, column: usize) -> Vector3 {
+    Vector3::new(matrix[0][column], matrix[1][column], matrix[2][column])
 }
 
 const fn identity_matrix() -> Matrix {
     [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
 }
 
-fn point_components(point: Point3) -> [f64; 3] {
-    [point.x, point.y, point.z]
+const fn components(value: Vector3) -> [f64; 3] {
+    [value.x, value.y, value.z]
 }
 
-fn components_vector(components: [f64; 3]) -> Vector3 {
-    Vector3::new(components[0], components[1], components[2])
+/// The dot product with fused multiply-adds, which the singular value
+/// decomposition keeps; [`Vector3::dot`] rounds each product.
+fn fused_dot(left: Vector3, right: Vector3) -> f64 {
+    left.x
+        .mul_add(right.x, left.y.mul_add(right.y, left.z * right.z))
 }
 
-fn subtract(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
-    [left[0] - right[0], left[1] - right[1], left[2] - right[2]]
-}
-
-fn scale(value: [f64; 3], factor: f64) -> [f64; 3] {
-    [value[0] * factor, value[1] * factor, value[2] * factor]
-}
-
-fn dot(left: [f64; 3], right: [f64; 3]) -> f64 {
-    left[0].mul_add(right[0], left[1].mul_add(right[1], left[2] * right[2]))
-}
-
-fn norm_squared(value: [f64; 3]) -> f64 {
-    dot(value, value)
-}
-
-fn cross(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
-    [
-        left[1] * right[2] - left[2] * right[1],
-        left[2] * right[0] - left[0] * right[2],
-        left[0] * right[1] - left[1] * right[0],
-    ]
-}
-
-fn vector_is_finite(value: [f64; 3]) -> bool {
-    value.into_iter().all(f64::is_finite)
+fn norm_squared(value: Vector3) -> f64 {
+    fused_dot(value, value)
 }
 
 fn matrix_is_finite(matrix: Matrix) -> bool {

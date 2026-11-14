@@ -1,12 +1,13 @@
-//! Superposition and RMSD over every geometry of a [`StructureSet`], and RMSD
-//! over listed geometries of any [`StructureSetRead`], through one implementation.
+//! Superposition of the geometries of a [`StructureSet`] or [`Ensemble`] in
+//! memory, and RMSD over the geometries of any [`StructureSetRead`] through
+//! one loop.
 
 use crate::diagnostics::{Cancellation, Countable, IndexOutOfRange, TopologyMismatch};
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
 use crate::structure::{
-    visit_geometry, AsStructureView, Geometry, GeometryView, StructureSet, StructureSetRead,
-    StructureView,
+    visit_geometry, AsStructureView, Ensemble, Geometry, GeometryStorage, GeometryView,
+    StructureSet, StructureSetRead, StructureView,
 };
 use crate::topology::{AtomSelection, Topology};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -247,55 +248,6 @@ impl<'r, 'w> Measurement<'r, 'w> {
     }
 }
 
-/// The RMSD of every item to the reference.
-fn item_values<'a>(
-    topology: &Topology,
-    items: &[StructureView<'a>],
-    reference: Reference<'a>,
-    measured: Measured<'_, '_>,
-) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    let reference = reference_view(items, reference)?;
-    let measurement = Measurement::new(topology, items.first().copied(), reference, measured)?;
-    let values = items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            measurement
-                .measure(*item)
-                .map_err(|source| item_error(index, source))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Quantity::new(values, CANONICAL_LENGTH_UNIT))
-}
-
-/// Direct RMSD from every item to the reference.
-fn item_rmsd<'a>(
-    topology: &Topology,
-    items: &[StructureView<'a>],
-    reference: Reference<'a>,
-    atoms: FitAtoms<'a>,
-    options: AlignmentOptions<'_>,
-) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    item_values(topology, items, reference, Measured::Direct(atoms, options))
-}
-
-/// RMSD over `measurement` pairs of every item after fitting it on `fit`.
-fn item_aligned_rmsd<'a>(
-    topology: &Topology,
-    items: &[StructureView<'a>],
-    reference: Reference<'a>,
-    fit: FitAtoms<'a>,
-    measurement: FitAtoms<'a>,
-    options: AlignedRmsdOptions<'_>,
-) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-    item_values(
-        topology,
-        items,
-        reference,
-        Measured::Aligned(fit, measurement, options),
-    )
-}
-
 /// The RMSD of each of `geometries` of `reader` to the reference, each lent
 /// or read in turn, polling `run`'s cancellation before starting, while
 /// listing the geometries, and before each, and reporting the geometries
@@ -374,7 +326,7 @@ fn geometry_values(
 
 /// Direct RMSD from each of `geometries` of `reader`, in the listed order, to
 /// `reference`, measured as stored, as [`StructureSet::rmsd`] measures every
-/// geometry of a set in memory.
+/// geometry of a set.
 ///
 /// `reference` is a geometry index of `reader` or any borrowed view. Each
 /// geometry is lent when the reader lends it and read otherwise, one at a
@@ -448,7 +400,7 @@ pub fn geometry_rmsd_with<'a>(
 
 /// RMSD over `measurement` pairs of each of `geometries` of `reader`, in the
 /// listed order, after fitting it onto `reference` over `fit` pairs, as
-/// [`StructureSet::aligned_rmsd`] measures every geometry of a set in memory;
+/// [`StructureSet::aligned_rmsd`] measures every geometry of a set;
 /// geometries are reached as [`geometry_rmsd`] reaches them.
 ///
 /// # Errors
@@ -624,54 +576,67 @@ impl StructureSet {
             .map_err(AlignmentError::Transform)?;
         Ok(report)
     }
+}
 
-    /// Direct RMSD from every geometry to `reference`, measured as stored.
-    ///
-    /// Never fits or changes the set. Values are in [`CANONICAL_LENGTH_UNIT`],
-    /// one per geometry in set order: plot them against the order's values,
-    /// or weight an ensemble's samples by
-    /// [`Distribution::sample_probabilities`](crate::structure::Distribution::sample_probabilities). `options` selects the pair
-    /// weights and the periodic policy.
+impl Ensemble {
+    /// Fits every geometry of the set onto `reference` and applies each
+    /// transform in place, as [`StructureSet::superpose`] does; the
+    /// distribution is unchanged. `reference` is a geometry index of the set
+    /// or any borrowed view.
     ///
     /// # Errors
     ///
-    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
-    /// the set, [`AlignmentError::Item`] wrapping the failure of the first
-    /// failing geometry, and otherwise the errors of [`rmsd`](super::rmsd) for
-    /// the pairing and weights.
+    /// As [`StructureSet::superpose`]; on failure nothing changes.
+    pub fn superpose<'a>(
+        &mut self,
+        reference: impl Into<Reference<'a>>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: AlignmentOptions<'_>,
+    ) -> Result<SuperpositionReport, AlignmentError> {
+        self.parts_mut().0.superpose(reference, atoms, options)
+    }
+}
+
+impl<S: GeometryStorage> StructureSet<S>
+where
+    Self: StructureSetRead,
+{
+    /// Direct RMSD from every geometry to `reference`, measured as stored.
+    ///
+    /// Never fits or changes the set. A set of any storage is measured by
+    /// [`geometry_rmsd`] over all its geometries, so a set read from a file
+    /// reads one geometry at a time; [`geometry_rmsd_with`] runs it under a
+    /// [`Run`]. Values are in [`CANONICAL_LENGTH_UNIT`], one per geometry in
+    /// set order: plot them against the order's values, or weight an
+    /// ensemble's samples by
+    /// [`Distribution::sample_probabilities`](crate::structure::Distribution::sample_probabilities).
+    /// `options` selects the pair weights and the periodic policy.
+    ///
+    /// # Errors
+    ///
+    /// As [`geometry_rmsd`].
     pub fn rmsd<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        let items = self
-            .iter()
-            .map(|s| s.as_structure_view())
-            .collect::<Vec<_>>();
-        item_rmsd(
-            self.topology(),
-            &items,
-            reference.into(),
-            atoms.into(),
-            options,
-        )
+        geometry_rmsd(self, 0..self.len(), reference, atoms, options)
     }
 
     /// Fits every geometry on `fit` pairs and measures RMSD over `measurement`
-    /// pairs, without changing the set or copying coordinates.
+    /// pairs, without changing the set.
     ///
     /// For example, fit a protein backbone and measure ligand motion, or fit
     /// the atoms a scan holds fixed and measure the ones it moves. `options`
-    /// holds the fit options and the measurement weights. Values are in
-    /// [`CANONICAL_LENGTH_UNIT`], one per geometry in set order.
+    /// holds the fit options and the measurement weights. A set of any
+    /// storage is measured by [`geometry_aligned_rmsd`] over all its
+    /// geometries. Values are in [`CANONICAL_LENGTH_UNIT`], one per geometry
+    /// in set order.
     ///
     /// # Errors
     ///
-    /// [`AlignmentError::ReferenceOutOfRange`] for a reference index beyond
-    /// the set, [`AlignmentError::Item`] wrapping the failure of the first
-    /// failing geometry, and otherwise the errors of
-    /// [`aligned_rmsd`](super::aligned_rmsd) for the pairing and weights.
+    /// As [`geometry_aligned_rmsd`].
     pub fn aligned_rmsd<'a>(
         &self,
         reference: impl Into<Reference<'a>>,
@@ -679,17 +644,6 @@ impl StructureSet {
         measurement: impl Into<FitAtoms<'a>>,
         options: AlignedRmsdOptions<'_>,
     ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
-        let items = self
-            .iter()
-            .map(|s| s.as_structure_view())
-            .collect::<Vec<_>>();
-        item_aligned_rmsd(
-            self.topology(),
-            &items,
-            reference.into(),
-            fit.into(),
-            measurement.into(),
-            options,
-        )
+        geometry_aligned_rmsd(self, 0..self.len(), reference, fit, measurement, options)
     }
 }

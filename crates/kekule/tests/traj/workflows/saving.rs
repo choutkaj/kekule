@@ -486,10 +486,9 @@ fn replace_policy_atomically_replaces_an_existing_destination() {
 
 #[test]
 fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
-    use kekule::traj::analysis::FrameSuperposer;
     use kekule::traj::io::{create_trajectory_writer, open_trajectory, trr::TRR_LAMBDA_PROPERTY};
     use kekule::traj::periodic::{self, MoleculeImager, TrajectoryUnwrapper};
-    use kekule::traj::{TrajectoryReader, TrajectoryWriter};
+    use kekule::traj::{FrameSuperposer, TrajectoryReader, TrajectoryWriter};
     use kekule::{
         math::{PeriodicCell, Vector3},
         structure::{Order, TimeAxis},

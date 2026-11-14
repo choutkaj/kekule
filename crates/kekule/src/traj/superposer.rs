@@ -1,36 +1,4 @@
-//! Streaming superposition.
-//!
-//! In-memory superposition and RMSD are structure set methods in
-//! [`crate::alignment`] (`set.superpose(0, &selection, options)`,
-//! `set.rmsd(&reference, &correspondence, options)`, ...). This module
-//! adds the streaming counterpart, [`FrameSuperposer`].
-//!
-//! Weighted RMSF and contact occupancy live in [`crate::statistics`]. Their
-//! accumulators observe a streamed frame through its buffer's
-//! `as_structure_view()` with an explicit weight: one for equally weighted
-//! equilibrium frames, or a reweighting factor. Frames read and fitted in
-//! parallel can be observed in parallel too: observe each range of frames
-//! into its own accumulator and merge the accumulators in range order.
-//!
-//! # Examples
-//!
-//! ```
-//! use kekule::statistics::{RmsfAccumulator, RmsfResult};
-//! use kekule::topology::AtomSelection;
-//! use kekule::traj::TrajectoryReader;
-//! # fn reduce(reader: &mut impl TrajectoryReader, atoms: &AtomSelection)
-//! # -> Result<RmsfResult, Box<dyn std::error::Error>> {
-//! let mut rmsf = RmsfAccumulator::new(atoms)?;
-//! let mut buffer = reader.frame_buffer();
-//! let mut index = 0;
-//! while reader.read_next(&mut buffer)? {
-//!     // Apply any intended periodic preprocessing and fitting here.
-//!     rmsf.observe(index, &buffer.as_structure_view(), 1.0)?;
-//!     index += 1;
-//! }
-//! Ok(rmsf.finish()?)
-//! # }
-//! ```
+//! Streaming superposition of buffered frames.
 
 use crate::alignment::{self, AlignmentError, AlignmentOptions, FitAtoms, RigidAlignment};
 use crate::structure::{AsStructureView, StructureView};
@@ -46,7 +14,7 @@ use crate::traj::FrameBuffer;
 ///
 /// ```no_run
 /// use kekule::topology::AtomSelection;
-/// use kekule::traj::{analysis::FrameSuperposer, TrajectoryReader};
+/// use kekule::traj::{FrameSuperposer, TrajectoryReader};
 /// # fn fit(reader: &mut impl TrajectoryReader) -> Result<(), Box<dyn std::error::Error>> {
 /// let mut buffer = reader.frame_buffer();
 /// reader.read_next(&mut buffer)?;

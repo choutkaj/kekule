@@ -8,13 +8,12 @@
 use std::{error::Error, fs};
 
 use kekule::traj::{
-    analysis::FrameSuperposer,
     io::{
         create_trajectory_writer, open_trajectory,
         trr::{TrrScalarPrecision, TrrWriteOptions},
         TrajectoryWriteOptions,
     },
-    TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
+    FrameSuperposer, TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::{mmcif, topology::AtomSelection};
 

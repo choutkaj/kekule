@@ -73,14 +73,6 @@ impl Gradients {
     }
 }
 
-fn delta(a: Point3, b: Point3) -> Vector3 {
-    Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z)
-}
-
-fn scaled(v: Vector3, s: f64) -> Vector3 {
-    Vector3::new(v.x * s, v.y * s, v.z * s)
-}
-
 /// `k / 2 * (r - length)^2`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct HarmonicBond {
@@ -119,7 +111,7 @@ pub(crate) fn bonds(
     let mut energy = 0.0;
     for term in terms {
         let [a, b] = term.atoms;
-        let r = delta(x[a], x[b]);
+        let r = x[a] - x[b];
         let r2 = r.norm_squared();
         let distance = r2.sqrt();
         let stretch = distance - term.length;
@@ -148,8 +140,8 @@ pub(crate) fn angles(
     let mut energy = 0.0;
     for term in terms {
         let [a, b, c] = term.atoms;
-        let u = delta(x[a], x[b]);
-        let v = delta(x[c], x[b]);
+        let u = x[a] - x[b];
+        let v = x[c] - x[b];
         let r1 = u.norm_squared();
         let r2 = v.norm_squared();
         let normal = u.cross(v);
@@ -181,9 +173,9 @@ pub(crate) fn angles(
             }
             continue;
         }
-        let normal = scaled(normal, 1.0 / norm);
-        let da = scaled(u.cross(normal), term.k * offset / r1);
-        let dc = scaled(normal.cross(v), term.k * offset / r2);
+        let normal = normal * (1.0 / norm);
+        let da = u.cross(normal) * (term.k * offset / r1);
+        let dc = normal.cross(v) * (term.k * offset / r2);
         gradients.add(ANGLES, a, da, 1.0);
         gradients.add(ANGLES, c, dc, 1.0);
         gradients.add(ANGLES, b, da, -1.0);
@@ -230,14 +222,18 @@ pub(crate) fn torsions(
 }
 
 /// Signed IUPAC dihedral angle in `(-pi, pi]`, or `None` when undefined.
+///
+/// Not `kekule::structure::measure::dihedral`: that measurement normalizes
+/// each bond first and fails on other quartets, so it can differ in the last
+/// bits and in which geometries are singular; energies keep this kernel.
 fn dihedral([a, b, c, d]: [Point3; 4]) -> Option<f64> {
-    let axis = delta(c, b);
+    let axis = c - b;
     let norm = axis.norm_squared().sqrt();
     if norm < 1e-12 {
         return None;
     }
-    let v = axis.cross(delta(a, b));
-    let w = axis.cross(delta(d, c));
+    let v = axis.cross(a - b);
+    let w = axis.cross(d - c);
     let scale = (v.norm_squared() * w.norm_squared()).sqrt();
     if scale < 1e-18 * norm * norm {
         return None;
@@ -249,15 +245,15 @@ fn dihedral([a, b, c, d]: [Point3; 4]) -> Option<f64> {
 
 /// Cartesian derivative of [`dihedral`] for each of the four atoms.
 fn dihedral_gradient([a, b, c, d]: [Point3; 4]) -> [Vector3; 4] {
-    let left = delta(a, b);
-    let axis = delta(c, b);
-    let right = delta(d, c);
+    let left = a - b;
+    let axis = c - b;
+    let right = d - c;
     let axis_sq = axis.norm_squared();
     let axis_norm = axis_sq.sqrt();
     let n0 = left.cross(axis);
     let n3 = axis.cross(right);
-    let g0 = scaled(n0, axis_norm / n0.norm_squared());
-    let g3 = scaled(n3, axis_norm / n3.norm_squared());
+    let g0 = n0 * (axis_norm / n0.norm_squared());
+    let g3 = n3 * (axis_norm / n3.norm_squared());
     let alpha = left.dot(axis) / axis_sq;
     let beta = right.dot(axis) / axis_sq;
     let combine = |p: f64, q: f64| {
@@ -311,7 +307,7 @@ impl Nonbonded {
                 if !lj && !coulomb {
                     continue;
                 }
-                let r = delta(x[i], x[j]);
+                let r = x[i] - x[j];
                 let r2 = r.norm_squared();
                 if r2 < MIN_DISTANCE_SQUARED {
                     return Err(singular(

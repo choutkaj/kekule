@@ -13,15 +13,14 @@ use super::{
     SelectEvaluateOptions, SelectionExpr,
 };
 use crate::diagnostics::{Cancellation, Cancelled};
-use crate::fixed_u32_id::FixedId;
 use crate::math::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::parallel::Run;
 use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::StructureView;
 use crate::topology::{
-    AtomSelection, InstanceAtomId, MoleculeClass, ResidueClass, ResidueView, Topology,
-    TopologyAtomIndex,
+    expand_mask, AtomSelection, Expansion, InstanceAtomId, MoleculeClass, ResidueClass,
+    ResidueView, Topology, TopologyAtomIndex,
 };
 use crate::units::{self, Quantity, Unit, CANONICAL_LENGTH_UNIT};
 
@@ -310,8 +309,14 @@ impl<'a> Evaluator<'a> {
                 reference,
             } => self.within(node, *distance, *unit, reference)?,
             NodeKind::Expand { level, inner } => {
-                let inner = self.node(inner)?;
-                self.expand(*level, &inner)
+                let mut bits = self.node(inner)?;
+                let level = match level {
+                    Level::Residue => Expansion::Residues,
+                    Level::Chain => Expansion::Chains,
+                    Level::Molecule => Expansion::Instances,
+                };
+                expand_mask(self.topology, &mut bits.words, level);
+                bits
             }
             NodeKind::Bonded(inner) => {
                 let inner = self.node(inner)?;
@@ -547,49 +552,6 @@ impl<'a> Evaluator<'a> {
             bits.words[first..first + words.words.len()].copy_from_slice(&words.words);
         }
         Ok(bits)
-    }
-
-    fn expand(&mut self, level: Level, inner: &Bits) -> Bits {
-        let topology: &'a Topology = self.topology;
-        let mut bits = inner.clone();
-        match level {
-            Level::Molecule => {
-                let mut instances = vec![false; topology.instance_count()];
-                for index in inner.ones() {
-                    let (id, _) = self.atom(index);
-                    instances[id.instance().index()] = true;
-                }
-                for instance in topology.instances() {
-                    if instances[instance.id().index()] {
-                        for atom in instance.atoms() {
-                            bits.set(atom.index().index());
-                        }
-                    }
-                }
-            }
-            Level::Residue | Level::Chain => {
-                let mut residues = vec![false; topology.residues().len()];
-                let mut chains = vec![false; topology.chains().len()];
-                for index in inner.ones() {
-                    let index = TopologyAtomIndex::from_index(index);
-                    if let Some(site) = topology.atom_site_at(index) {
-                        let residue = site.residue();
-                        residues[residue.id().index()] = true;
-                        chains[residue.chain().id().index()] = true;
-                    }
-                }
-                for residue in topology.residues() {
-                    let selected = match level {
-                        Level::Residue => residues[residue.id().index()],
-                        _ => chains[residue.chain().id().index()],
-                    };
-                    if selected {
-                        self.residue_atoms(residue, &mut bits);
-                    }
-                }
-            }
-        }
-        bits
     }
 
     fn bonded(&self, inner: &Bits) -> Bits {
