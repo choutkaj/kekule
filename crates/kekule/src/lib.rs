@@ -39,7 +39,7 @@
 //! | Systems and structures | [`topology`] ([`topology::edit`]), [`structure`] ([`structure::measure`], [`structure::placement`]), [`solvation`] |
 //! | Analysis | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`interactions`] |
 //! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
-//! | Trajectories | [`traj`] ([`traj::io`], [`traj::periodic`], [`traj::analysis`]) |
+//! | Trajectories | [`traj`] ([`traj::io`], [`traj::periodic`]) |
 //!
 //! [`prelude`] re-exports the most used items.
 //!

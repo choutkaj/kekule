@@ -43,7 +43,7 @@ use super::periodic::{MoleculeImager, PeriodicError};
 ///    cell, the two kinds are centered on different targets.
 /// 3. Fit ([`Self::with_fit`]): the geometry superposed onto a reference
 ///    through the fitted atoms, as
-///    [`FrameSuperposer`](super::analysis::FrameSuperposer) does with
+///    [`FrameSuperposer`](super::FrameSuperposer) does with
 ///    default options; positions move, and the cell, velocities, and forces
 ///    rotate.
 /// 4. Smooth ([`Self::with_smoothing`]): positions averaged over a window of
@@ -59,7 +59,7 @@ use super::periodic::{MoleculeImager, PeriodicError};
 ///
 /// Making whole and wrapping call the kernels of the in-memory periodic
 /// functions and [`MoleculeImager`], and fitting the kernel of
-/// [`FrameSuperposer`](super::analysis::FrameSuperposer), so each step gives
+/// [`FrameSuperposer`](super::FrameSuperposer), so each step gives
 /// the same bits as the operation it names.
 ///
 /// Analyses read geometries without smoothing, which is for display: they read

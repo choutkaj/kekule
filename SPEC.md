@@ -813,7 +813,7 @@ The public modules of `kekule`, by domain:
 | Systems and structures | `topology` (`edit`), `structure` (`measure`, `placement`), `solvation` |
 | Analysis | `alignment`, `clustering`, `statistics`, `dssp`, `interactions` |
 | Formats | `smiles`, `molfile`, `sdf`, `mmcif`, `pdb`, `xyz`, `macromolecular`, `components`, `native` |
-| Trajectories | `traj` (`io` with `xyz`, `dcd`, `trr`, `xtc`; `periodic`; `analysis`) |
+| Trajectories | `traj` (`io` with `xyz`, `dcd`, `trr`, `xtc`; `periodic`) |
 
 A type lives in the module of the domain that owns it: perception state with
 its perception step, represented stereo in `stereo`, derived per-molecule

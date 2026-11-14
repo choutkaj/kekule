@@ -18,13 +18,12 @@ use kekule::structure::{
     StructureSetReadError, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
-use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{open_indexed_structure_set, write_structure_set, TrajectoryWriteOptions};
 use kekule::traj::periodic::{self, MoleculeImager};
 use kekule::traj::{
-    FitReference, FrameBuffer, FrameView, Processed, ProcessingError, ProcessingStep,
-    ProcessingStepError, ProcessingSteps, TrajectoryFormat,
+    FitReference, FrameBuffer, FrameSuperposer, FrameView, Processed, ProcessingError,
+    ProcessingStep, ProcessingStepError, ProcessingSteps, TrajectoryFormat,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
