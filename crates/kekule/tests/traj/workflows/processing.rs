@@ -717,7 +717,7 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
     .unwrap();
     let file =
         open_indexed_structure_set(&path, set.shared_topology(), Default::default()).unwrap();
-    let memory = file.load(0..file.len()).unwrap();
+    let memory = StructureSet::from_reader(&file, 0..file.len()).unwrap();
     // The file holds the frames: their times, steps, cells, and positions to
     // TRR's single precision.
     assert_eq!(memory.order(), set.order());

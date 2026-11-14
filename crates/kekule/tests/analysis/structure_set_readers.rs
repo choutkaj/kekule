@@ -102,7 +102,7 @@ fn file_and_memory(scratch: &str) -> (Scratch, StructureSet<IndexedFile>, Struct
     write_structure_set(&path, &trajectory, options).unwrap();
     let file = open_indexed_structure_set(&path, trajectory.shared_topology(), Default::default())
         .unwrap();
-    let memory = file.load(0..file.len()).unwrap();
+    let memory = StructureSet::from_reader(&file, 0..file.len()).unwrap();
     (Scratch(directory), file, memory)
 }
 

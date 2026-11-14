@@ -207,7 +207,7 @@ fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distributi
     for (path, topology) in fixtures() {
         let set =
             open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
-        let loaded = set.load(0..set.len()).unwrap();
+        let loaded = StructureSet::from_reader(&set, 0..set.len()).unwrap();
         let read = read_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
         assert_eq!(loaded.len(), read.len(), "{path:?}");
         assert_eq!(loaded.order(), read.order(), "{path:?}");
@@ -719,7 +719,7 @@ fn a_failed_refresh_changes_nothing() {
 fn a_set_in_memory_lends_what_a_file_reads() {
     let (path, topology) = fixtures()[3].clone();
     let file = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
-    let memory: StructureSet = file.load(0..file.len()).unwrap();
+    let memory = StructureSet::from_reader(&file, 0..file.len()).unwrap();
     let readers: [&dyn StructureSetRead; 2] = [&file, &memory];
     for index in 0..file.len() {
         let [file_geometry, memory_geometry] = readers.map(|reader| reader.read(index).unwrap());
@@ -922,7 +922,7 @@ fn a_dcd_with_fixed_atoms_reads_whole_frames_through_a_set() {
         }
     }
 
-    let memory = set.load(0..set.len()).unwrap();
+    let memory = StructureSet::from_reader(&set, 0..set.len()).unwrap();
     let steps = ProcessingSteps::default().with_center(AtomSelection::all(Arc::clone(&topology)));
     let from_file = Processed::new(&set, steps.clone()).unwrap();
     let from_memory = Processed::new(&memory, steps).unwrap();
