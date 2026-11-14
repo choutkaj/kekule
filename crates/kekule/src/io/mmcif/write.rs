@@ -3,7 +3,6 @@ use crate::diagnostics::{
     Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
 use crate::diagnostics::{Countable, LengthMismatch};
-use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::macromolecular::{
     EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
@@ -12,7 +11,7 @@ use crate::io::write_policy::{
     unrepresentable_state, Omissions, StatePolicies,
 };
 use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
-use crate::math::PeriodicCell;
+use crate::math::{PeriodicCell, PeriodicCellError};
 use crate::molecule::BondOrder;
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId};
@@ -1063,23 +1062,29 @@ fn write_model_block_to(
     Ok(())
 }
 
+/// The lengths in angstroms and angles in degrees of `cell`.
+pub(in crate::io) fn cell_values(cell: PeriodicCell) -> Result<[f64; 6], PeriodicCellError> {
+    let parameters = cell.to_parameters()?;
+    let [a, b, c] = *parameters.lengths.value();
+    let [alpha, beta, gamma] = *parameters.angles.value();
+    Ok([a, b, c, alpha, beta, gamma])
+}
+
 /// The `_cell` parameters of a block whose models have these cells, or none
 /// when they have none or the caller omits a cell mmCIF cannot represent.
 fn block_cell<'a>(
     cells: impl IntoIterator<Item = Option<&'a PeriodicCell>>,
     policy: UnrepresentablePolicy,
-) -> Result<Option<CellParameters>, FormatError> {
+) -> Result<Option<[f64; 6]>, FormatError> {
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
         Err(MmcifCellReason::GeometryCellsDiffer)
     } else {
-        match first.map(cell_parameters).transpose() {
+        match first.map(|cell| cell_values(*cell)).transpose() {
             Ok(parameters) => return Ok(parameters),
-            Err(CellParameterError::PartiallyPeriodic) => Err(MmcifCellReason::PartiallyPeriodic),
-            Err(CellParameterError::NonstandardOrientation) => {
-                Err(MmcifCellReason::NonstandardOrientation)
-            }
+            Err(PeriodicCellError::PartiallyPeriodic) => Err(MmcifCellReason::PartiallyPeriodic),
+            Err(_) => Err(MmcifCellReason::NonstandardOrientation),
         }
     };
     match (parameters, policy) {

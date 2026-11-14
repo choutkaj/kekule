@@ -5,7 +5,6 @@ mod altloc;
 mod assemblies;
 mod atom_site;
 mod build;
-pub(super) mod cell;
 mod connections;
 pub(super) mod connectivity;
 pub(crate) use connections::is_metal;
@@ -18,10 +17,10 @@ mod types;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
-use crate::math::PeriodicCell;
+use crate::math::{CellParameters, PeriodicCell, PeriodicCellError};
 use crate::structure::StructureBuilder;
 use crate::topology::HierarchyBuilder;
-use crate::units::{SQUARE_ANGSTROM, SQUARE_NANOMETER};
+use crate::units::{Quantity, ANGSTROM, DEGREE, SQUARE_ANGSTROM, SQUARE_NANOMETER};
 
 use super::definition_reuse::DefinitionReuse;
 use altloc::select_alt_locations;
@@ -58,6 +57,45 @@ pub use types::{
     StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
     StructureSetInterpretOptions, StructureSetInterpretation,
 };
+
+/// The cell PDB records for structures without a crystal lattice, such as
+/// NMR and EM models.
+const PLACEHOLDER_CELL: [f64; 6] = [1.0, 1.0, 1.0, 90.0, 90.0, 90.0];
+
+/// The structure's periodic cell from stated lengths in angstroms, angles in
+/// degrees, and the space groups the source names, or why they are not one.
+///
+/// The coordinates are a whole unit cell only in space group P 1 or when no
+/// space group is declared. Under another space group they are an asymmetric
+/// unit, whose translates alone are not the crystal. PDB's 1 Å placeholder
+/// cube is no cell, and neither are incomplete parameters. mmCIF `_cell` and
+/// PDB `CRYST1` follow this one rule.
+fn stated_cell(
+    parameters: [Option<f64>; 6],
+    space_groups: &[&str],
+) -> Result<Result<PeriodicCell, CellOmissionReason>, PeriodicCellError> {
+    let [Some(a), Some(b), Some(c), Some(alpha), Some(beta), Some(gamma)] = parameters else {
+        return Ok(Err(CellOmissionReason::Incomplete));
+    };
+    if let Some(name) = space_groups.iter().find(|name| {
+        !name
+            .split_whitespace()
+            .collect::<String>()
+            .eq_ignore_ascii_case("P1")
+    }) {
+        return Ok(Err(CellOmissionReason::SpaceGroup {
+            name: (*name).to_owned(),
+        }));
+    }
+    if [a, b, c, alpha, beta, gamma] == PLACEHOLDER_CELL {
+        return Ok(Err(CellOmissionReason::Placeholder));
+    }
+    PeriodicCell::from_parameters(CellParameters {
+        lengths: Quantity::new([a, b, c], ANGSTROM),
+        angles: Quantity::new([alpha, beta, gamma], DEGREE),
+    })
+    .map(Ok)
+}
 
 /// Everything interpretation reads from one source, an mmCIF data block or a
 /// PDB entry, typed once before any coordinate model or alternative is chosen.
@@ -482,4 +520,74 @@ fn publish_structure(
         .filter(|instance| instance.entity_kinds().contains(&EntityKind::Water))
         .count();
     Ok(StructureInterpretation { structure, report })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_whole_p1_unit_cells_are_stated_cells() {
+        let box_ = [
+            Some(20.0),
+            Some(30.0),
+            Some(40.0),
+            Some(90.0),
+            Some(90.0),
+            Some(90.0),
+        ];
+        let placeholder = PLACEHOLDER_CELL.map(Some);
+        let mut incomplete = box_;
+        incomplete[2] = None;
+        let space_group = |name: &str| CellOmissionReason::SpaceGroup {
+            name: name.to_owned(),
+        };
+        for (parameters, space_groups, expected) in [
+            (box_, &[][..], Ok(())),
+            (box_, &["P 1"][..], Ok(())),
+            (box_, &["p1", "P 1"][..], Ok(())),
+            (
+                box_,
+                &["P 1", "P 21 21 21"][..],
+                Err(space_group("P 21 21 21")),
+            ),
+            (box_, &["C 1 2 1"][..], Err(space_group("C 1 2 1"))),
+            (
+                placeholder,
+                &["P 1"][..],
+                Err(CellOmissionReason::Placeholder),
+            ),
+            (placeholder, &[][..], Err(CellOmissionReason::Placeholder)),
+            (
+                incomplete,
+                &["P 1"][..],
+                Err(CellOmissionReason::Incomplete),
+            ),
+        ] {
+            let actual = stated_cell(parameters, space_groups)
+                .unwrap()
+                // Lengths pass through the canonical nanometre unit.
+                .map(|cell| {
+                    cell.to_parameters()
+                        .unwrap()
+                        .lengths
+                        .into_value()
+                        .map(|value| (value * 1e9).round() / 1e9)
+                });
+            assert_eq!(
+                actual,
+                expected.map(|()| [20.0, 30.0, 40.0]),
+                "{space_groups:?}"
+            );
+        }
+        let flat = [
+            Some(20.0),
+            Some(30.0),
+            Some(0.0),
+            Some(90.0),
+            Some(90.0),
+            Some(90.0),
+        ];
+        assert!(stated_cell(flat, &[]).is_err());
+    }
 }

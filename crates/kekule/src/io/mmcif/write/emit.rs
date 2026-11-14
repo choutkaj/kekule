@@ -2,7 +2,6 @@
 use super::prepare::{AtomRow, PreparedModel};
 use super::{fail, sink, MmcifWriteErrorKind, MmcifWriteOptions};
 use crate::diagnostics::FormatError;
-use crate::io::macromolecular::cell::CellParameters;
 use crate::molecule::BondOrder;
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -14,7 +13,7 @@ fn mmcif_io(error: std::io::Error) -> FormatError {
 pub(super) fn render_model_to(
     writer: &mut impl Write,
     model: &PreparedModel,
-    cell: Option<CellParameters>,
+    cell: Option<[f64; 6]>,
     options: &MmcifWriteOptions,
 ) -> Result<(), FormatError> {
     write_block_start(writer, model, cell, options)?;
@@ -26,7 +25,7 @@ pub(super) fn render_model_to(
 pub(super) fn write_block_start(
     writer: &mut impl Write,
     model: &PreparedModel,
-    cell: Option<CellParameters>,
+    cell: Option<[f64; 6]>,
     options: &MmcifWriteOptions,
 ) -> Result<(), FormatError> {
     writer

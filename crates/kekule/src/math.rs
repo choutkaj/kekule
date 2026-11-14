@@ -38,7 +38,9 @@ use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
 use crate::diagnostics::LimitExceeded;
-use crate::units::{Quantity, ScaleValue, UnitError, CANONICAL_LENGTH_UNIT, CUBIC_NANOMETER};
+use crate::units::{
+    Quantity, ScaleValue, UnitError, ANGSTROM, CANONICAL_LENGTH_UNIT, CUBIC_NANOMETER, DEGREE,
+};
 
 /// A Cartesian point.
 ///
@@ -399,6 +401,99 @@ impl PeriodicCell {
         let [a, b, c] = self.vectors.columns();
         a.y == 0.0 && a.z == 0.0 && b.x == 0.0 && b.z == 0.0 && c.x == 0.0 && c.y == 0.0
     }
+
+    /// The fully periodic cell with these parameters in the standard
+    /// crystallographic orientation: a along x, b in the xy plane, and c
+    /// completing a right-handed basis. A right angle stays exact, so a
+    /// rectangular cell is orthorhombic.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicCellError::Unit`] when the lengths are not lengths or the
+    /// angles not angles, and the errors of [`Self::new`] for parameters that
+    /// describe no cell.
+    pub fn from_parameters(parameters: CellParameters) -> Result<Self, PeriodicCellError> {
+        let [a, b, c] = parameters.lengths.value_in(ANGSTROM)?;
+        let [alpha, beta, gamma] = parameters.angles.value_in(DEGREE)?;
+        let (cos_alpha, cos_beta, cos_gamma) =
+            (cos_degrees(alpha), cos_degrees(beta), cos_degrees(gamma));
+        let sin_gamma = if gamma == 90.0 {
+            1.0
+        } else {
+            gamma.to_radians().sin()
+        };
+        let cy = (cos_alpha - cos_beta * cos_gamma) / sin_gamma;
+        let cz = (1.0 - cos_beta * cos_beta - cy * cy).sqrt();
+        Self::new(
+            Quantity::new(
+                [
+                    Vector3::new(a, 0.0, 0.0),
+                    Vector3::new(b * cos_gamma, b * sin_gamma, 0.0),
+                    Vector3::new(c * cos_beta, c * cy, c * cz),
+                ],
+                ANGSTROM,
+            ),
+            [true; 3],
+        )
+    }
+
+    /// The parameters of the cell, lengths in angstroms and angles in
+    /// degrees; a right angle is exact.
+    ///
+    /// # Errors
+    ///
+    /// [`PeriodicCellError::PartiallyPeriodic`] for a cell not periodic along
+    /// all three vectors, and [`PeriodicCellError::NonstandardOrientation`]
+    /// for one not in the orientation of [`Self::from_parameters`], whose
+    /// lengths and angles would not place it relative to coordinates.
+    pub fn to_parameters(self) -> Result<CellParameters, PeriodicCellError> {
+        if self.periodic_axes != [true; 3] {
+            return Err(PeriodicCellError::PartiallyPeriodic);
+        }
+        let [a, b, c] = self
+            .vectors()
+            .into_unit(ANGSTROM)
+            .expect("cell vectors are lengths")
+            .into_value();
+        if a.y != 0.0 || a.z != 0.0 || b.z != 0.0 || a.x <= 0.0 || b.y <= 0.0 || c.z <= 0.0 {
+            return Err(PeriodicCellError::NonstandardOrientation);
+        }
+        let angle = |u: Vector3, v: Vector3| {
+            let dot = u.dot(v);
+            if dot == 0.0 {
+                90.0
+            } else {
+                (dot / (u.norm() * v.norm()))
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees()
+            }
+        };
+        Ok(CellParameters {
+            lengths: Quantity::new([a.norm(), b.norm(), c.norm()], ANGSTROM),
+            angles: Quantity::new([angle(b, c), angle(a, c), angle(a, b)], DEGREE),
+        })
+    }
+}
+
+/// The cosine of `angle` in degrees, exact for a right angle.
+fn cos_degrees(angle: f64) -> f64 {
+    if angle == 90.0 {
+        0.0
+    } else {
+        angle.to_radians().cos()
+    }
+}
+
+/// A cell as crystallographic formats state it: the lengths of its vectors
+/// a, b and c, and the angles α between b and c, β between a and c, and γ
+/// between a and b.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CellParameters {
+    /// The lengths of a, b and c.
+    pub lengths: Quantity<[f64; 3]>,
+    /// The angles α, β and γ.
+    pub angles: Quantity<[f64; 3]>,
 }
 
 /// A validated rotation and translation.
@@ -526,6 +621,12 @@ pub enum PeriodicCellError {
     NumericalFailure,
     /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
     LimitExceeded(LimitExceeded),
+    /// The cell is not periodic along all three vectors, so it has no
+    /// [`CellParameters`].
+    PartiallyPeriodic,
+    /// The cell is not in the orientation of [`PeriodicCell::from_parameters`],
+    /// so its [`CellParameters`] would not place it relative to coordinates.
+    NonstandardOrientation,
 }
 
 impl fmt::Display for PeriodicCellError {
@@ -547,6 +648,12 @@ impl fmt::Display for PeriodicCellError {
                 "The nearest-image search exceeded its {}.",
                 limit.describe()
             ),
+            Self::PartiallyPeriodic => {
+                formatter.write_str("The cell is not periodic along all three axes.")
+            }
+            Self::NonstandardOrientation => {
+                formatter.write_str("Cell vector a is not along x, or b is not in the xy plane.")
+            }
         }
     }
 }
@@ -644,6 +751,52 @@ mod tests {
                 [true; 3]
             ),
             Err(PeriodicCellError::DegenerateVectors)
+        );
+    }
+
+    #[test]
+    fn cell_parameters_round_trip_through_the_standard_orientation() {
+        let parameters = |values: [f64; 6]| CellParameters {
+            lengths: Quantity::new([values[0], values[1], values[2]], ANGSTROM),
+            angles: Quantity::new([values[3], values[4], values[5]], DEGREE),
+        };
+        for expected in [
+            [20.0, 30.0, 40.0, 90.0, 90.0, 90.0],
+            [30.0, 30.0, 30.0, 60.0, 60.0, 90.0],
+        ] {
+            let cell = PeriodicCell::from_parameters(parameters(expected)).unwrap();
+            assert_eq!(cell.is_orthorhombic(), expected[3..] == [90.0; 3]);
+            let actual = cell.to_parameters().unwrap();
+            assert_eq!(actual.angles.unit(), DEGREE);
+            let lengths = actual.lengths.into_value();
+            let angles = actual.angles.into_value();
+            // Lengths pass through the canonical nanometre unit.
+            for (actual, expected) in lengths.into_iter().chain(angles).zip(expected) {
+                assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+            }
+        }
+        let box_ = PeriodicCell::from_parameters(parameters([20.0, 30.0, 40.0, 90.0, 90.0, 90.0]))
+            .unwrap();
+        let partial = PeriodicCell::new(box_.vectors(), [true, true, false]).unwrap();
+        assert_eq!(
+            partial.to_parameters(),
+            Err(PeriodicCellError::PartiallyPeriodic)
+        );
+        let rotated = PeriodicCell::new(
+            Quantity::new(
+                [
+                    Vector3::new(0.0, 2.0, 0.0),
+                    Vector3::new(-2.0, 0.0, 0.0),
+                    Vector3::new(0.0, 0.0, 2.0),
+                ],
+                ANGSTROM,
+            ),
+            [true; 3],
+        )
+        .unwrap();
+        assert_eq!(
+            rotated.to_parameters(),
+            Err(PeriodicCellError::NonstandardOrientation)
         );
     }
 

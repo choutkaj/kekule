@@ -24,11 +24,10 @@ use crate::diagnostics::{
     Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
-use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
-use crate::io::mmcif::write::bond_order_name;
+use crate::io::mmcif::write::{bond_order_name, cell_values};
 use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Omissions, StatePolicies,
@@ -36,7 +35,7 @@ use crate::io::write_policy::{
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
-use crate::math::{PeriodicCell, Point3};
+use crate::math::{PeriodicCell, PeriodicCellError, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
@@ -739,13 +738,13 @@ pub(crate) fn write_pdb_to<'a>(
 fn entry_cell<'a>(
     cells: impl IntoIterator<Item = Option<&'a PeriodicCell>>,
     policy: UnrepresentablePolicy,
-) -> Result<Option<CellParameters>, FormatError> {
+) -> Result<Option<[f64; 6]>, FormatError> {
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
         Err(PdbCellReason::GeometryCellsDiffer)
     } else {
-        match first.map(cell_parameters).transpose() {
+        match first.map(|cell| cell_values(*cell)).transpose() {
             Ok(Some(parameters)) if is_written_placeholder(parameters) => {
                 Err(PdbCellReason::Placeholder)
             }
@@ -760,10 +759,8 @@ fn entry_cell<'a>(
                 Err(PdbCellReason::ParametersOutOfRange)
             }
             Ok(parameters) => return Ok(parameters),
-            Err(CellParameterError::PartiallyPeriodic) => Err(PdbCellReason::PartiallyPeriodic),
-            Err(CellParameterError::NonstandardOrientation) => {
-                Err(PdbCellReason::NonstandardOrientation)
-            }
+            Err(PeriodicCellError::PartiallyPeriodic) => Err(PdbCellReason::PartiallyPeriodic),
+            Err(_) => Err(PdbCellReason::NonstandardOrientation),
         }
     };
     match (parameters, policy) {
@@ -780,7 +777,7 @@ fn rounded(value: f64, places: i32) -> f64 {
     (value * scale).round() / scale
 }
 
-fn is_written_placeholder(parameters: CellParameters) -> bool {
+fn is_written_placeholder(parameters: [f64; 6]) -> bool {
     parameters[..3]
         .iter()
         .all(|&length| rounded(length, 3) == 1.0)
