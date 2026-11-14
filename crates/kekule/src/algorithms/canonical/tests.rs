@@ -73,3 +73,5 @@ fn ring_topology_refines_regular_graphs_without_breaking_true_ties() {
     }
     assert_eq!(class_sizes.into_values().collect::<Vec<_>>(), vec![4, 4]);
 }
+
+mod ranking;

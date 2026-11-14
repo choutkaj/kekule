@@ -4,7 +4,7 @@ fn singleton_polymer_scheme_retains_declared_chain_order() {
         "data_x\nloop_\n_pdbx_poly_seq_scheme.asym_id\n_pdbx_poly_seq_scheme.seq_id\nZ 1\n";
     for input in [
         looped.to_owned(),
-        crate::tests::mmcif_syntax::singleton_loops_as_scalars(looped),
+        crate::test_fixtures::singleton_loops_as_scalars(looped),
     ] {
         let doc = crate::mmcif::parse_str(&input, Default::default()).unwrap();
         let order = super::polymer_asym_order(&doc.blocks()[0]).unwrap();

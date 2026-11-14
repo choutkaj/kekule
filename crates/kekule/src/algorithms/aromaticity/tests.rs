@@ -68,7 +68,7 @@ fn fused_ten_electron_system_marks_its_explicit_single_fusion_bond_aromatic() {
 #[test]
 fn canonical_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
     let input = "N2c1c(Nc3c2c6c(OS(=O)(=O)[O-])c7c(cccc7)c(OS(=O)(=O)[O-])c6cc3Cl)c4c(OS(=O)(=O)[O-])c5c(cccc5)c(OS(=O)(=O)[O-])c4cc1Cl";
-    let mut molecule = crate::tests::read_smiles(input).expect("dye parses");
+    let mut molecule = crate::test_fixtures::read_smiles(input).expect("dye parses");
     assert!(molecule.perception().aromaticity().is_none());
     let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
     assert!(valence.is_ok(), "{valence:#?}");
@@ -108,8 +108,8 @@ fn canonical_localized_dye_assigns_nitrogen_hydrogens_before_aromaticity() {
 #[test]
 fn neutral_carbon_radical_can_complete_an_aromatic_sextet() {
     let mut molecule =
-        crate::tests::read_smiles("C1=CC(=CC=[C]1)N").expect("aminophenyl radical parses");
-    crate::tests::edit(&mut molecule, |editor| {
+        crate::test_fixtures::read_smiles("C1=CC(=CC=[C]1)N").expect("aminophenyl radical parses");
+    crate::test_fixtures::edit(&mut molecule, |editor| {
         editor
             .atom_mut(AtomId::new(5))
             .expect("source-selected radical carbon")
@@ -158,7 +158,7 @@ fn neutral_carbon_radical_can_complete_an_aromatic_sextet() {
 #[test]
 fn charge_adjusted_candidate_valence_does_not_change_carbocation_electron_count() {
     for smiles in ["C1=C[C+]=CC(=C1)N", "C1=C[C+]=CC(=C1)C=O"] {
-        let mut molecule = crate::tests::read_smiles(smiles).expect("carbocation parses");
+        let mut molecule = crate::test_fixtures::read_smiles(smiles).expect("carbocation parses");
         molecule.perceive().expect("carbocation perceives");
         assert!(
             molecule.atom_ids().all(|atom_id| {
@@ -188,7 +188,7 @@ fn rdkit_candidate_elements_include_light_main_group_and_heavy_chalcogens() {
         ("[GeH]1=CC=CC=C1", false),
         ("[AsH]1C=CC=C1", false),
     ] {
-        let mut molecule = crate::tests::read_smiles(source).expect(source);
+        let mut molecule = crate::test_fixtures::read_smiles(source).expect(source);
         molecule.perceive().expect(source);
         assert!(
             molecule.atom_ids().all(|atom| {
@@ -228,7 +228,7 @@ fn exocyclic_electron_withdrawal_uses_all_neighbor_elements() {
         ("C1(=C)C=CC=CC=C1", false),
         ("C1(=[SiH2])C=CC=CC=C1", false),
     ] {
-        let mut molecule = crate::tests::read_smiles(source).expect(source);
+        let mut molecule = crate::test_fixtures::read_smiles(source).expect(source);
         molecule.perceive().expect(source);
         for atom in molecule.atom_ids() {
             assert_eq!(
@@ -256,8 +256,8 @@ fn exocyclic_electron_withdrawal_uses_all_neighbor_elements() {
 
 #[test]
 fn zero_electron_carbon_with_exocyclic_multiple_bond_is_vacant() {
-    let mut molecule = crate::tests::read_smiles("C1(=O)C=CC=CC=C1").expect("tropone");
-    crate::tests::edit(&mut molecule, |editor| {
+    let mut molecule = crate::test_fixtures::read_smiles("C1(=O)C=CC=CC=C1").expect("tropone");
+    crate::test_fixtures::edit(&mut molecule, |editor| {
         editor.atom_mut(AtomId::new(0)).unwrap().radical = AtomRadical::new(1, Some(2));
     });
     perceive_rings(&mut molecule, RingPerceptionOptions::default()).expect("rings");
@@ -302,8 +302,8 @@ fn zero_electron_carbon_with_exocyclic_multiple_bond_is_vacant() {
 
 #[test]
 fn zero_bond_contributes_to_rdkit_unsaturation_degree() {
-    let mut molecule = crate::tests::read_smiles("C1=C=CC=C1").expect("cyclic allene");
-    let (helium, zero) = crate::tests::edit(&mut molecule, |editor| {
+    let mut molecule = crate::test_fixtures::read_smiles("C1=C=CC=C1").expect("cyclic allene");
+    let (helium, zero) = crate::test_fixtures::edit(&mut molecule, |editor| {
         let helium = editor
             .add_atom(Atom::new(Element::from_symbol("He").unwrap()))
             .unwrap();

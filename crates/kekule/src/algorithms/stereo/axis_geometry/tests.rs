@@ -1,5 +1,5 @@
 use super::*;
-use crate::tests::read_smiles;
+use crate::test_fixtures::read_smiles;
 
 #[test]
 fn trigonal_axis_endpoints_use_ligand_and_lone_pair_geometry() {

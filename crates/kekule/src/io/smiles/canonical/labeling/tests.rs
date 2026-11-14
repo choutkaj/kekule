@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn incomplete_search_never_publishes_a_candidate() {
-    let molecule = crate::tests::read_smiles("C1CCCCC1").expect("cyclohexane");
+    let molecule = crate::test_fixtures::read_smiles("C1CCCCC1").expect("cyclohexane");
     let error = CanonicalOrder::with_limits(
         &molecule,
         CanonicalAtomStyle::Aromatic,

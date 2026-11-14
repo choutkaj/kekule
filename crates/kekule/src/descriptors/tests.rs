@@ -11,7 +11,7 @@ fn mass_value(value: Quantity<f64>) -> f64 {
 
 #[test]
 fn stored_and_perceived_hydrogens_are_explicit_policies() {
-    let mut molecule = crate::tests::read_smiles("C").expect("methane parses");
+    let mut molecule = crate::test_fixtures::read_smiles("C").expect("methane parses");
     assert_eq!(
         molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
             .expect("stored formula")
@@ -125,7 +125,7 @@ fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
         .collect::<Vec<_>>();
     assert_eq!(formulas, vec!["H4N+", "Cl-"]);
 
-    let ammonium = crate::tests::read_smiles("[NH4+]").expect("ammonium parses");
+    let ammonium = crate::test_fixtures::read_smiles("[NH4+]").expect("ammonium parses");
     assert_eq!(
         molecular_formula(&ammonium, HydrogenCountPolicy::StoredOnly)
             .expect("formula")
@@ -133,7 +133,7 @@ fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
         "H4N+"
     );
 
-    let chloride = crate::tests::read_smiles("[Cl-]").expect("chloride parses");
+    let chloride = crate::test_fixtures::read_smiles("[Cl-]").expect("chloride parses");
     assert_eq!(
         molecular_formula(&chloride, HydrogenCountPolicy::StoredOnly)
             .expect("formula")
@@ -141,7 +141,7 @@ fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
         "Cl-"
     );
 
-    let iron = crate::tests::read_smiles("[Fe+2]").expect("iron ion parses");
+    let iron = crate::test_fixtures::read_smiles("[Fe+2]").expect("iron ion parses");
     assert_eq!(
         molecular_formula(&iron, HydrogenCountPolicy::StoredOnly)
             .expect("formula")
@@ -160,7 +160,7 @@ fn atomic_masses_are_neutral_and_do_not_require_a_molecule() {
 
 #[test]
 fn average_and_monoisotopic_mass_use_pinned_tables() {
-    let mut water = crate::tests::read_smiles("O").expect("water parses");
+    let mut water = crate::test_fixtures::read_smiles("O").expect("water parses");
     water.perceive().expect("water perceives");
     let average = mass_value(
         average_mass(&water, HydrogenCountPolicy::IncludePerceived).expect("average mass"),
@@ -172,7 +172,7 @@ fn average_and_monoisotopic_mass_use_pinned_tables() {
     assert!((average - 18.015).abs() < 1.0e-12);
     assert!((monoisotopic - 18.010_564_683_056).abs() < 1.0e-12);
 
-    let carbon_13 = crate::tests::read_smiles("[13C]").expect("isotope parses");
+    let carbon_13 = crate::test_fixtures::read_smiles("[13C]").expect("isotope parses");
     assert!(
         (mass_value(
             monoisotopic_mass(&carbon_13, HydrogenCountPolicy::StoredOnly).expect("isotope mass")
@@ -184,8 +184,8 @@ fn average_and_monoisotopic_mass_use_pinned_tables() {
 
 #[test]
 fn formal_charge_applies_electron_mass_correction() {
-    let sodium = crate::tests::read_smiles("[Na+]").expect("sodium parses");
-    let chloride = crate::tests::read_smiles("[Cl-]").expect("chloride parses");
+    let sodium = crate::test_fixtures::read_smiles("[Na+]").expect("sodium parses");
+    let chloride = crate::test_fixtures::read_smiles("[Cl-]").expect("chloride parses");
     let sodium_mass =
         mass_value(average_mass(&sodium, HydrogenCountPolicy::StoredOnly).expect("sodium mass"));
     let chloride_mass = mass_value(
@@ -219,7 +219,7 @@ fn radicals_need_no_mass_correction_beyond_charge() {
 
 #[test]
 fn unavailable_weights_and_isotopes_are_structured_errors() {
-    let technetium = crate::tests::read_smiles("[Tc]").expect("technetium parses");
+    let technetium = crate::test_fixtures::read_smiles("[Tc]").expect("technetium parses");
     assert!(matches!(
         average_mass(&technetium, HydrogenCountPolicy::StoredOnly),
         Err(MolecularDescriptorError::MissingStandardAtomicWeight {
@@ -235,7 +235,8 @@ fn unavailable_weights_and_isotopes_are_structured_errors() {
         }) if actual_element == element("Tc")
     ));
 
-    let technetium_99 = crate::tests::read_smiles("[99Tc]").expect("technetium isotope parses");
+    let technetium_99 =
+        crate::test_fixtures::read_smiles("[99Tc]").expect("technetium isotope parses");
     let average = mass_value(
         average_mass(&technetium_99, HydrogenCountPolicy::StoredOnly)
             .expect("labeled isotope has an AME mass"),

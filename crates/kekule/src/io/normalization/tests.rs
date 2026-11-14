@@ -36,3 +36,5 @@ fn aromatic_localization_limit_is_structured_and_transactional() {
     ));
     assert_eq!(molecule, before);
 }
+
+mod rewrites;

@@ -283,3 +283,6 @@ pub fn assign_cip_descriptors(
 ) -> Result<CipAssignmentReport, CipAssignmentError> {
     ranking::assign_cip_descriptors(mol, options)
 }
+
+#[cfg(test)]
+mod tests;

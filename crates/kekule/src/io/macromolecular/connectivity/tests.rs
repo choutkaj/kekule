@@ -118,7 +118,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
 #[test]
 fn singleton_connectivity_categories_are_syntax_independent() {
     for (input, bonds) in [(PEPTIDE, 7), (BRANCH, 3)] {
-        let scalar = crate::tests::mmcif_syntax::singleton_loops_as_scalars(input);
+        let scalar = crate::test_fixtures::singleton_loops_as_scalars(input);
         let a = crate::mmcif::parse_str(input, Default::default())
             .unwrap()
             .interpret(Default::default())
@@ -139,7 +139,7 @@ fn singleton_component_bond_and_branch_site_are_read_as_scalars() {
     let source = "data_x\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nGLY C O doub\nloop_\n_pdbx_branch_scheme.entity_id\n_pdbx_branch_scheme.asym_id\n_pdbx_branch_scheme.num\n_pdbx_branch_scheme.mon_id\n_pdbx_branch_scheme.auth_seq_num\n2 B 1 NAG 10\n";
     for input in [
         source.to_owned(),
-        crate::tests::mmcif_syntax::singleton_loops_as_scalars(source),
+        crate::test_fixtures::singleton_loops_as_scalars(source),
     ] {
         let doc = crate::mmcif::parse_str(&input, Default::default()).unwrap();
         let catalog =

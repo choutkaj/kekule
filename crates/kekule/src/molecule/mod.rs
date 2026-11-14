@@ -83,3 +83,6 @@ pub(crate) use stereo::{
     StereoDescriptor, StereoElement, StereoElementKind, StereoGroup, StereoGroupKind,
     TetrahedralOrientation, TetrahedralStereo,
 };
+
+#[cfg(test)]
+mod tests;

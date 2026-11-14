@@ -1051,3 +1051,6 @@ impl fmt::Display for HierarchyError {
 }
 
 impl std::error::Error for HierarchyError {}
+
+#[cfg(test)]
+mod tests;

@@ -18,7 +18,7 @@ fn instance_subset(
 }
 
 fn perceived_molecule(smiles: &str) -> Molecule {
-    let mut molecule = crate::tests::read_smiles(smiles).expect("SMILES should parse");
+    let mut molecule = crate::test_fixtures::read_smiles(smiles).expect("SMILES should parse");
     molecule.perceive().expect("molecule should perceive");
     molecule
 }
@@ -188,8 +188,9 @@ fn builder_rejects_empty_topologies_and_unused_definitions() {
 
 #[test]
 fn canonical_molecule_constructors_preserve_order_without_interning_or_perception() {
-    let carbon = crate::tests::read_smiles("C").expect("carbon interprets");
-    let carbon_oxygen = crate::tests::read_smiles("CO").expect("methanol fragment interprets");
+    let carbon = crate::test_fixtures::read_smiles("C").expect("carbon interprets");
+    let carbon_oxygen =
+        crate::test_fixtures::read_smiles("CO").expect("methanol fragment interprets");
 
     let single = Topology::from_molecule(carbon_oxygen.clone()).expect("single topology builds");
     assert_eq!(single.definition_count(), 1);

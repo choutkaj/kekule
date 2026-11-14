@@ -753,3 +753,6 @@ fn parse_finite_f64(value: &str) -> Option<f64> {
     let parsed: f64 = value.parse().ok()?;
     parsed.is_finite().then_some(parsed)
 }
+
+#[cfg(test)]
+mod tests;

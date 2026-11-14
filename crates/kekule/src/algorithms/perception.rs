@@ -125,3 +125,6 @@ fn perceive_molecule_in_place(
         },
     )
 }
+
+#[cfg(test)]
+mod tests;

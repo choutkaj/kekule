@@ -1,0 +1,805 @@
+use crate::io::{
+    NormalizationError, NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
+    SourceStereoNormalizationError, SourceStereoNormalizationIssue,
+};
+use crate::math::Point3;
+use crate::molecule::{
+    AromaticityModel, Atom, AtomId, BondId, BondOrder, Element, ImplicitHydrogens, Perception,
+    RingBasisModel, RingMembership, StereoElementKind, ValenceModel, ValenceValidation,
+};
+use crate::perception::{
+    aromaticity as aromaticity_api, rings as rings_api,
+    rings::RingPerceptionOptions,
+    valence as valence_api,
+    valence::{ValenceError, ValenceOptions, ValenceViolation},
+};
+use crate::test_fixtures::{
+    assert_all_stale, carbon, chain_text, charged_atom, element_atom, mark_all_fresh, oxygen,
+    read_smiles, read_smiles_with_report, CanonicalizeFixture,
+};
+use crate::{perception as perception_api, stereo as stereo_api};
+
+#[test]
+fn interpretation_and_default_perception_are_separate() {
+    let mut small = read_smiles("CCO").expect("smiles should parse");
+    assert!(small.perception().valence().is_none());
+
+    small.perceive().expect("ethanol perception");
+
+    assert!(small.perception().valence().is_some());
+    assert!(small.perception().rings().is_some());
+    assert!(small.perception().aromaticity().is_some());
+    assert_eq!(
+        small
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(AtomId::new(2))),
+        Some(1)
+    );
+}
+
+#[test]
+fn default_perception_installs_one_ring_basis_for_aromaticity() {
+    let mut molecule = read_smiles("c1ccccc1").expect("benzene should parse");
+    molecule.perceive().expect("benzene perception");
+
+    let ring_set = molecule
+        .perception()
+        .rings()
+        .and_then(|rings| rings.ring_set())
+        .expect("installed ring basis");
+    assert_eq!(ring_set.len(), 1);
+    assert_eq!(
+        molecule
+            .perception()
+            .rings()
+            .and_then(|rings| rings.basis())
+            .map(|basis| basis.model()),
+        Some(RingBasisModel::FiguerasSssrLike)
+    );
+    assert!(molecule.perception().aromaticity().is_some());
+    assert_eq!(
+        molecule
+            .atoms()
+            .filter(|(atom, _)| molecule
+                .perception()
+                .aromaticity()
+                .map(|aromaticity| aromaticity.atom_is_aromatic(*atom))
+                == Some(true))
+            .count(),
+        6
+    );
+}
+
+#[test]
+fn interpretation_owns_source_stereo_before_default_perception() {
+    let (mut molecule, report) =
+        read_smiles_with_report("C/C=C\\F").expect("directional smiles should interpret");
+
+    assert_eq!(report.created_stereo_elements().len(), 1);
+    assert_eq!(molecule.stereo_elements().count(), 1);
+
+    molecule.perceive().expect("directional perception");
+
+    assert_eq!(molecule.stereo_elements().count(), 1);
+    assert!(molecule.perception().cip().is_none());
+    assert!(molecule.perception().cip().is_none());
+}
+
+#[test]
+fn normalization_preserves_unknown_double_bond_stereo() {
+    let mut molecule = read_smiles("CC=CC").expect("alkene should parse");
+    let double_bond = molecule
+        .bonds()
+        .find_map(|(bond_id, bond)| (bond.order == BondOrder::Double).then_some(bond_id))
+        .expect("double bond");
+    let source_stereo = [SourceStereoBondMark {
+        bond: double_bond,
+        from: molecule.bond(double_bond).expect("double bond").a(),
+        kind: SourceStereoBondMarkKind::DoubleBondEither,
+    }];
+
+    let report = molecule
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
+        .expect("unknown double-bond stereo should normalize");
+
+    assert_eq!(report.created_stereo_elements.len(), 1);
+    let (_, element) = molecule
+        .stereo_elements()
+        .next()
+        .expect("unknown stereo element");
+    assert!(matches!(
+        &element.kind,
+        StereoElementKind::DoubleBond(stereo)
+            if stereo.bond == double_bond && stereo.orientation.is_none()
+    ));
+}
+
+#[test]
+fn default_perception_does_not_assign_coordinate_only_stereo() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let left = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let right = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let left_carrier = mol
+        .add_atom(element_atom("F"))
+        .expect("atom identifier capacity");
+    let right_carrier = mol
+        .add_atom(element_atom("Cl"))
+        .expect("atom identifier capacity");
+    mol.add_bond(left, right, BondOrder::Double).expect("bond");
+    mol.add_bond(left, left_carrier, BondOrder::Single)
+        .expect("left carrier");
+    mol.add_bond(right, right_carrier, BondOrder::Single)
+        .expect("right carrier");
+    let positions = crate::structure::Positions::new(crate::units::Quantity::new(
+        vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, -1.0, 0.0),
+        ],
+        crate::units::ANGSTROM,
+    ))
+    .unwrap();
+    let mut molecule = mol.finish().expect("valid molecule");
+
+    molecule
+        .perceive()
+        .expect("coordinate-only molecule should perceive discrete chemistry");
+
+    assert_eq!(molecule.stereo_elements().count(), 0);
+
+    let inferred =
+        stereo_api::coordinates::infer_coordinate_stereo(&molecule, &positions, Default::default())
+            .expect("direct coordinate inference should succeed");
+    assert_eq!(inferred.elements.len(), 1);
+    assert_eq!(molecule.stereo_elements().count(), 0);
+
+    let mut editor = molecule.to_editor();
+    let materialized = stereo_api::coordinates::materialize_coordinate_stereo(
+        &mut editor,
+        &positions,
+        Default::default(),
+    )
+    .expect("explicit coordinate materialization should succeed");
+    assert_eq!(materialized.created_elements.len(), 1);
+    let molecule = editor.finish().expect("materialized molecule publishes");
+    assert_eq!(molecule.stereo_elements().count(), 1);
+}
+
+#[test]
+fn failed_source_stereo_normalization_is_transactional() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+    let source_stereo = [SourceStereoBondMark {
+        bond,
+        from: a,
+        kind: SourceStereoBondMarkKind::WedgeEither,
+    }];
+    let mut molecule = mol;
+    let before = molecule.clone();
+
+    let error = molecule
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
+        .expect_err("unassembled stereo mark should fail normalization");
+
+    assert!(matches!(
+        error,
+        NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
+            if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
+            bond,
+            kind: SourceStereoBondMarkKind::WedgeEither,
+        })
+    ));
+    assert_eq!(molecule, before);
+}
+
+#[test]
+fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let center = mol.add_atom(carbon()).expect("atom identifier capacity");
+    let mut marked_bonds = Vec::new();
+    for symbol in ["F", "Cl", "Br", "I"] {
+        let carrier = mol
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
+        marked_bonds.push(
+            mol.add_bond(center, carrier, BondOrder::Single)
+                .expect("carrier bond"),
+        );
+    }
+    let source_stereo = marked_bonds
+        .into_iter()
+        .enumerate()
+        .map(|(index, bond)| SourceStereoBondMark {
+            bond,
+            from: center,
+            kind: if index % 2 == 0 {
+                SourceStereoBondMarkKind::WedgeUp
+            } else {
+                SourceStereoBondMarkKind::WedgeDown
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut molecule = mol;
+
+    let report = molecule
+        .canonicalize_fixture_with_source_stereo(&source_stereo)
+        .expect("ambiguous drawing wedges should not reject valid chemistry");
+    assert!(report
+        .warnings
+        .contains(&NormalizationWarning::AmbiguousTetrahedralWedgeMarks {
+            center,
+            mark_count: 4,
+        }));
+    assert_eq!(report.warnings.len(), 1);
+    assert!(molecule.stereo_elements().next().is_none());
+}
+
+#[test]
+fn failed_default_valence_perception_is_transactional() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let carbon = mol.add_atom(carbon()).expect("atom identifier capacity");
+    for _ in 0..5 {
+        let hydrogen = mol
+            .add_atom(Atom::new(Element::from_symbol("H").expect("hydrogen")))
+            .expect("atom identifier capacity");
+        mol.add_bond(carbon, hydrogen, BondOrder::Single)
+            .expect("bond");
+    }
+    let mut mol = mol.into_unchecked();
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::default())
+        .expect("ring perception should succeed");
+    let mut molecule = mol;
+    let before = molecule.clone();
+
+    let error = molecule
+        .perceive()
+        .expect_err("pentavalent carbon should fail valence");
+
+    assert!(matches!(
+        error,
+        perception_api::PerceptionError::Valence(ValenceError { violations: issues })
+            if matches!(issues.as_slice(), [ValenceViolation::ValenceExceeded { atom, .. }] if *atom == carbon)
+    ));
+    assert_eq!(molecule, before);
+}
+
+#[test]
+fn invalid_aromatic_source_is_rejected_before_publication() {
+    let error = read_smiles("c1cccc1")
+        .expect_err("unmatchable aromatic representation must fail interpretation");
+
+    assert!(chain_text(&*error).contains("cannot be localized"));
+}
+
+#[test]
+fn direct_aromaticity_perception_accepts_localized_aromatic_input() {
+    let mut molecule = read_smiles("c1ccccc1").expect("aromatic representation localizes");
+
+    aromaticity_api::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .expect("localized aromatic representation should be perceived");
+
+    assert!(molecule.bond_ids().all(|bond| molecule
+        .perception()
+        .aromaticity()
+        .map(|aromaticity| aromaticity.bond_is_aromatic(bond))
+        == Some(true)));
+}
+
+#[test]
+fn successful_default_perception_is_idempotent() {
+    let mut molecule = read_smiles("CCO").expect("ethanol should parse");
+    molecule
+        .canonicalize_fixture()
+        .expect("ethanol normalization");
+    molecule
+        .perceive()
+        .expect("first perception should succeed");
+    let once = molecule.clone();
+
+    molecule
+        .perceive()
+        .expect("second perception should succeed");
+
+    assert_eq!(molecule, once);
+}
+
+#[test]
+fn normalization_cleanup_invalidates_preexisting_perception() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let chlorine = mol
+        .add_atom(Atom::new(Element::from_symbol("Cl").expect("chlorine")))
+        .expect("atom identifier capacity");
+    let oxo = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    let hydroxyl = mol.add_atom(oxygen()).expect("atom identifier capacity");
+    mol.add_bond(chlorine, oxo, BondOrder::Double)
+        .expect("bond");
+    mol.add_bond(chlorine, hydroxyl, BondOrder::Single)
+        .expect("hydroxyl bond");
+    let mut mol = mol.into_unchecked();
+    mark_all_fresh(&mut mol);
+    let mut molecule = mol;
+
+    molecule
+        .canonicalize_fixture()
+        .expect("representation cleanup");
+
+    assert_all_stale(&molecule);
+    assert_eq!(molecule.atom(chlorine).expect("chlorine").formal_charge, 1);
+    assert_eq!(molecule.atom(oxo).expect("oxygen").formal_charge, -1);
+    assert_eq!(
+        molecule
+            .atom(hydroxyl)
+            .expect("hydroxyl oxygen")
+            .formal_charge,
+        0
+    );
+    assert_eq!(
+        molecule.bond(BondId::new(0)).expect("bond").order,
+        BondOrder::Single
+    );
+}
+
+#[test]
+fn valence_reports_excess_common_valence() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let c = mol
+        .add_atom(Atom::new(Element::from_symbol("C").expect("C")))
+        .expect("atom identifier capacity");
+    for _ in 0..5 {
+        let h = mol
+            .add_atom(Atom::new(Element::from_symbol("H").expect("H")))
+            .expect("atom identifier capacity");
+        mol.add_bond(c, h, BondOrder::Single).expect("bond");
+    }
+
+    let mut mol = mol.into_unchecked();
+    let error =
+        valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default())
+            .expect_err("pentavalent carbon should fail strict perception");
+
+    assert_eq!(error.violations.len(), 1);
+
+    valence_api::perceive_valence(
+        &mut mol,
+        ValenceModel::RdkitLike,
+        ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
+    )
+    .expect("permissive valence inspection should succeed");
+    assert_eq!(
+        mol.perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(c)),
+        Some(0)
+    );
+}
+
+#[test]
+fn failed_strict_valence_perception_preserves_complete_previous_perception_state() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let carbon = mol
+        .add_atom(element_atom("C"))
+        .expect("atom identifier capacity");
+    for _ in 0..5 {
+        let hydrogen = mol
+            .add_atom(element_atom("H"))
+            .expect("atom identifier capacity");
+        mol.add_bond(carbon, hydrogen, BondOrder::Single)
+            .expect("bond");
+    }
+    let previous = Perception::builder()
+        .with_valence(
+            ValenceModel::RdkitLike,
+            ValenceValidation::Strict,
+            mol.atom_ids()
+                .map(|atom| (atom, if atom == carbon { 2 } else { 0 }))
+                .collect(),
+        )
+        .expect("previous valence")
+        .with_rings(
+            RingMembership::from_flags(
+                vec![false; mol.atom_count()],
+                vec![false; mol.bond_count()],
+            ),
+            None,
+        )
+        .with_aromaticity(AromaticityModel::RdkitLike, Vec::new(), Vec::new())
+        .expect("previous aromaticity")
+        .build();
+    let mut mol = mol.into_unchecked();
+    mol.install_perception(previous.clone())
+        .expect("previous perception");
+
+    let error =
+        valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default())
+            .expect_err("pentavalent carbon should fail strict perception");
+
+    assert!(matches!(
+        error.violations.as_slice(),
+        [ValenceViolation::ValenceExceeded { atom, .. }] if *atom == carbon
+    ));
+    assert_eq!(mol.perception(), &previous);
+    assert_eq!(
+        mol.perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        Some(2)
+    );
+}
+
+#[test]
+fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
+    let mut molecule = crate::molecule::MoleculeEditor::new();
+    let carbon = molecule
+        .add_atom(charged_atom("C", 7))
+        .expect("atom identifier capacity");
+
+    let mut molecule = molecule.into_unchecked();
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
+        .expect("RDKit UpdatePropertyCache clamps the effective atomic number even when strict");
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        Some(0)
+    );
+
+    valence_api::perceive_valence(
+        &mut molecule,
+        ValenceModel::RdkitLike,
+        ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
+    )
+    .expect("permissive inspection should install");
+    assert!(molecule.perception().valence().is_some());
+    assert_eq!(
+        molecule
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        Some(0)
+    );
+}
+
+#[test]
+fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
+    let mut mol = crate::molecule::MoleculeEditor::new();
+    let carbon = mol
+        .add_atom(element_atom("C"))
+        .expect("atom identifier capacity");
+    for _ in 0..300 {
+        let hydrogen = mol
+            .add_atom(element_atom("H"))
+            .expect("atom identifier capacity");
+        mol.add_bond(carbon, hydrogen, BondOrder::Single)
+            .expect("bond");
+    }
+
+    let mut mol = mol.into_unchecked();
+    let error =
+        valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default())
+            .expect_err("high-degree carbon should fail strict perception");
+
+    assert_eq!(
+        error.violations,
+        vec![ValenceViolation::ValenceExceeded {
+            atom: carbon,
+            explicit_valence: 300,
+            max_allowed: 4,
+        }]
+    );
+    assert_eq!(
+        mol.perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
+        None
+    );
+}
+
+#[test]
+fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
+    for (symbol, expected_inferred_hydrogens) in [
+        ("Li", 1),
+        ("Be", 2),
+        ("Na", 1),
+        ("Mg", 2),
+        ("K", 1),
+        ("Ca", 2),
+        ("Rb", 1),
+        ("Sr", 2),
+        ("Cs", 1),
+        ("Ba", 2),
+        ("Fr", 1),
+        ("Ra", 2),
+    ] {
+        let mut mol = crate::molecule::MoleculeEditor::new();
+        let atom_id = mol
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
+
+        let mut mol = mol.into_unchecked();
+        let report =
+            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
+
+        assert!(report.is_ok(), "neutral {symbol} should be supported");
+        assert_eq!(
+            mol.perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
+            Some(expected_inferred_hydrogens),
+            "neutral {symbol} implicit hydrogens"
+        );
+    }
+}
+
+#[test]
+fn valence_keeps_rdkit_hypervalent_anion_limits() {
+    for (symbol, charge, accepted, rejected) in [
+        ("P", -2, 3, 4),
+        ("S", -1, 5, 6),
+        ("As", -2, 3, 4),
+        ("Se", -1, 5, 6),
+    ] {
+        let mut accepted_mol = crate::molecule::MoleculeEditor::new();
+        let accepted_center = accepted_mol
+            .add_atom(charged_atom(symbol, charge))
+            .expect("atom identifier capacity");
+        for _ in 0..accepted {
+            let hydrogen = accepted_mol
+                .add_atom(element_atom("H"))
+                .expect("atom identifier capacity");
+            accepted_mol
+                .add_bond(accepted_center, hydrogen, BondOrder::Single)
+                .expect("bond");
+        }
+        let mut accepted_mol = accepted_mol.into_unchecked();
+        let accepted_report = valence_api::perceive_valence(
+            &mut accepted_mol,
+            ValenceModel::RdkitLike,
+            Default::default(),
+        );
+        assert!(
+            accepted_report.is_ok(),
+            "{symbol}{charge:+} valence {accepted}"
+        );
+
+        let mut rejected_mol = crate::molecule::MoleculeEditor::new();
+        let rejected_center = rejected_mol
+            .add_atom(charged_atom(symbol, charge))
+            .expect("atom identifier capacity");
+        for _ in 0..rejected {
+            let hydrogen = rejected_mol
+                .add_atom(element_atom("H"))
+                .expect("atom identifier capacity");
+            rejected_mol
+                .add_bond(rejected_center, hydrogen, BondOrder::Single)
+                .expect("bond");
+        }
+        let mut rejected_mol = rejected_mol.into_unchecked();
+        let rejected_error = valence_api::perceive_valence(
+            &mut rejected_mol,
+            ValenceModel::RdkitLike,
+            Default::default(),
+        )
+        .expect_err("excess hypervalent anion valence should fail");
+        assert!(
+            matches!(
+                rejected_error.violations.as_slice(),
+                [ValenceViolation::ValenceOccupancyExceeded { atom, .. }] if *atom == rejected_center
+            ),
+            "{symbol}{charge:+} valence {rejected}"
+        );
+    }
+}
+
+#[test]
+fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() {
+    let mut hexafluorophosphate = crate::molecule::MoleculeEditor::new();
+    let phosphorus = hexafluorophosphate
+        .add_atom(charged_atom("P", -1))
+        .expect("atom identifier capacity");
+    for _ in 0..6 {
+        let fluorine = hexafluorophosphate
+            .add_atom(Atom::new(Element::from_symbol("F").expect("fluorine")))
+            .expect("atom identifier capacity");
+        hexafluorophosphate
+            .add_bond(phosphorus, fluorine, BondOrder::Single)
+            .expect("P-F bond");
+    }
+    let mut hexafluorophosphate = hexafluorophosphate.into_unchecked();
+    assert!(valence_api::perceive_valence(
+        &mut hexafluorophosphate,
+        ValenceModel::RdkitLike,
+        Default::default()
+    )
+    .is_ok());
+
+    let mut bridged_hydride = crate::molecule::MoleculeEditor::new();
+    let mut hydride = charged_atom("H", -1);
+    hydride.hydrogens = ImplicitHydrogens::Fixed(0);
+    let hydrogen = bridged_hydride
+        .add_atom(hydride)
+        .expect("atom identifier capacity");
+    let boron_a = bridged_hydride
+        .add_atom(Atom::new(Element::from_symbol("B").expect("boron")))
+        .expect("atom identifier capacity");
+    let boron_b = bridged_hydride
+        .add_atom(Atom::new(Element::from_symbol("B").expect("boron")))
+        .expect("atom identifier capacity");
+    bridged_hydride
+        .add_bond(hydrogen, boron_a, BondOrder::Single)
+        .expect("first hydride bond");
+    bridged_hydride
+        .add_bond(hydrogen, boron_b, BondOrder::Single)
+        .expect("second hydride bond");
+    let mut bridged_hydride = bridged_hydride.into_unchecked();
+    assert!(valence_api::perceive_valence(
+        &mut bridged_hydride,
+        ValenceModel::RdkitLike,
+        Default::default()
+    )
+    .is_ok());
+}
+
+#[test]
+fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
+    for (symbol, charge, expected_inferred_hydrogens) in [
+        ("H", 1, 0),
+        ("H", -1, 0),
+        ("Rb", 1, 0),
+        ("Cs", 1, 0),
+        ("Be", 2, 0),
+        ("Al", 3, 0),
+        ("Ga", 3, 0),
+        ("Tl", 1, 0),
+        ("U", 2, 0),
+        ("Pb", 2, 0),
+        ("S", -2, 0),
+        ("Se", -2, 0),
+    ] {
+        let mut mol = crate::molecule::MoleculeEditor::new();
+        let atom_id = mol
+            .add_atom(charged_atom(symbol, charge))
+            .expect("atom identifier capacity");
+
+        let mut mol = mol.into_unchecked();
+        let report =
+            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
+
+        assert!(report.is_ok(), "{symbol}{charge:+} should be supported");
+        assert_eq!(
+            mol.perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
+            Some(expected_inferred_hydrogens),
+            "{symbol}{charge:+} implicit hydrogens"
+        );
+    }
+
+    for symbol in ["Ac", "Cf"] {
+        let mut mol = crate::molecule::MoleculeEditor::new();
+        let atom_id = mol
+            .add_atom(element_atom(symbol))
+            .expect("atom identifier capacity");
+
+        let mut mol = mol.into_unchecked();
+        let report =
+            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
+
+        assert!(
+            report.is_ok(),
+            "isolated unsupported spectator {symbol} should be accepted"
+        );
+        assert_eq!(
+            mol.perception()
+                .valence()
+                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
+            Some(0),
+            "{symbol} implicit hydrogens"
+        );
+    }
+
+    let mut mercury_cyanide = crate::molecule::MoleculeEditor::new();
+    let mercury = mercury_cyanide
+        .add_atom(charged_atom("Hg", -2))
+        .expect("atom identifier capacity");
+    for _ in 0..4 {
+        let carbon = mercury_cyanide
+            .add_atom(element_atom("C"))
+            .expect("atom identifier capacity");
+        let nitrogen = mercury_cyanide
+            .add_atom(element_atom("N"))
+            .expect("atom identifier capacity");
+        mercury_cyanide
+            .add_bond(mercury, carbon, BondOrder::Single)
+            .expect("mercury-carbon bond");
+        mercury_cyanide
+            .add_bond(carbon, nitrogen, BondOrder::Triple)
+            .expect("cyanide bond");
+    }
+    let mut mercury_cyanide = mercury_cyanide.into_unchecked();
+    let report = valence_api::perceive_valence(
+        &mut mercury_cyanide,
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
+    assert!(report.is_ok(), "tetracyanomercurate should be supported");
+    assert_eq!(
+        mercury_cyanide
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(mercury)),
+        Some(0)
+    );
+
+    let mut covalent_aluminum = crate::molecule::MoleculeEditor::new();
+    let aluminum = covalent_aluminum
+        .add_atom(element_atom("Al"))
+        .expect("atom identifier capacity");
+    for _ in 0..3 {
+        let chlorine = covalent_aluminum
+            .add_atom(element_atom("Cl"))
+            .expect("atom identifier capacity");
+        covalent_aluminum
+            .add_bond(aluminum, chlorine, BondOrder::Single)
+            .expect("bond");
+    }
+
+    let mut covalent_aluminum = covalent_aluminum.into_unchecked();
+    let report = valence_api::perceive_valence(
+        &mut covalent_aluminum,
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
+
+    assert!(
+        report.is_ok(),
+        "neutral trivalent aluminum should be supported"
+    );
+    assert_eq!(
+        covalent_aluminum
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(aluminum)),
+        Some(0)
+    );
+
+    let mut neutral_magnesium = crate::molecule::MoleculeEditor::new();
+    let magnesium = neutral_magnesium
+        .add_atom(element_atom("Mg"))
+        .expect("atom identifier capacity");
+    for _ in 0..2 {
+        let chlorine = neutral_magnesium
+            .add_atom(element_atom("Cl"))
+            .expect("atom identifier capacity");
+        neutral_magnesium
+            .add_bond(magnesium, chlorine, BondOrder::Single)
+            .expect("bond");
+    }
+
+    let mut neutral_magnesium = neutral_magnesium.into_unchecked();
+    let report = valence_api::perceive_valence(
+        &mut neutral_magnesium,
+        ValenceModel::RdkitLike,
+        Default::default(),
+    );
+
+    assert!(
+        report.is_ok(),
+        "neutral divalent magnesium should be supported"
+    );
+    assert_eq!(
+        neutral_magnesium
+            .perception()
+            .valence()
+            .and_then(|valence| valence.inferred_hydrogen_count(magnesium)),
+        Some(0)
+    );
+}
