@@ -40,6 +40,10 @@ pub(crate) struct PointGrid<T> {
     /// A build's points with their cells, kept for its storage.
     keyed: Vec<(Cell, Point3, T)>,
     len: usize,
+    /// How many cells along each axis a search reaches: 1, or 2 where
+    /// rounding of cell coordinates far from the box's corner can move a
+    /// point by up to a cell.
+    reach: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +109,7 @@ impl<T> Default for PointGrid<T> {
             entries: Vec::new(),
             keyed: Vec::new(),
             len: 0,
+            reach: 1,
         }
     }
 }
@@ -138,14 +143,24 @@ impl<T: Copy> PointGrid<T> {
         cutoff: f64,
         queries: usize,
     ) {
-        // Cells slightly wider than the cutoff keep every contact within the
-        // adjacent cells despite rounding, and at least a millionth of the
-        // box, so cell coordinates stay small enough to round alike. Any
-        // positive edge finds coincident points.
+        // Cells are slightly wider than the cutoff, so a contact lies in an
+        // adjacent cell, and never narrower than a 2^50th of the box or
+        // the smallest normal width, so cell coordinates and the reciprocal
+        // stay finite. Placing a point rounds its cell coordinate by at
+        // most `keys * 2^-51` cells; where that can carry a contact past
+        // an adjacent cell, searches reach two cells. Any positive edge
+        // finds coincident points.
         let extent = (high.x - low.x).max(high.y - low.y).max(high.z - low.z);
-        let edge = (cutoff * (1.0 + 1e-6)).max(extent * 1e-6);
-        let edge = if edge > 0.0 { edge } else { 1.0 };
+        let edge = (cutoff * (1.0 + 1e-6))
+            .max(extent * 2.0_f64.powi(-50))
+            .max(4.0 * f64::MIN_POSITIVE);
         let scale = edge.recip();
+        let keys = extent * scale;
+        self.reach = if keys * 2.0_f64.powi(-51) < 4e-7 {
+            1
+        } else {
+            2
+        };
         self.space = Space::Open {
             low,
             high,
@@ -346,14 +361,15 @@ impl<T: Copy> PointGrid<T> {
         }
     }
 
-    /// Passes the points of the 27 cells around `cell` to `each`, a run of
-    /// cells at a time, stopping at the first run for which `each` returns
+    /// Passes the points of the cells around `cell`, within [`Self::reach`]
+    /// along each axis, to `each`, a run of cells at a time, stopping at the first run for which `each` returns
     /// true; returns whether one did.
     fn around(&self, cell: Cell, mut each: impl FnMut(&[(Point3, T)]) -> bool) -> bool {
         if self.len == 0 {
             return false;
         }
         let (x, y, z) = cell;
+        let reach = self.reach;
         match &self.index {
             Index::Dense {
                 origin,
@@ -362,7 +378,7 @@ impl<T: Copy> PointGrid<T> {
                 ranks,
                 starts,
             } => {
-                let Some((x, y, z)) = relative(cell, *origin, *dims) else {
+                let Some((x, y, z)) = relative(cell, *origin, *dims, reach) else {
                     return false;
                 };
                 // The occupied cells before `slot`.
@@ -372,14 +388,14 @@ impl<T: Copy> PointGrid<T> {
                     ranks.get(word).map_or(starts.len() - 1, |&rank| rank)
                         + below.count_ones() as usize
                 };
-                let (low, high) = ((z - 1).max(0), (z + 1).min(dims.2 - 1));
+                let (low, high) = ((z - reach).max(0), (z + reach).min(dims.2 - 1));
                 if low > high {
                     return false;
                 }
-                // Cells sort x-major, so the three cells along z around each
-                // (x, y) column are one run.
-                for x in (x - 1).max(0)..=(x + 1).min(dims.0 - 1) {
-                    for y in (y - 1).max(0)..=(y + 1).min(dims.1 - 1) {
+                // Cells sort x-major, so the cells along z around each (x, y)
+                // column are one run.
+                for x in (x - reach).max(0)..=(x + reach).min(dims.0 - 1) {
+                    for y in (y - reach).max(0)..=(y + reach).min(dims.1 - 1) {
                         let first = rank(dense_slot(*dims, (x, y, low)));
                         let end = rank(dense_slot(*dims, (x, y, high)) + 1);
                         if first < end && each(&self.entries[starts[first]..starts[end]]) {
@@ -396,7 +412,7 @@ impl<T: Copy> PointGrid<T> {
                 filter,
             } => {
                 let reaches = |value: i64, origin: i64, last: i64| {
-                    value >= origin.saturating_sub(1) && value <= last.saturating_add(1)
+                    value >= origin.saturating_sub(reach) && value <= last.saturating_add(reach)
                 };
                 if !(reaches(x, origin.0, last.0)
                     && reaches(y, origin.1, last.1)
@@ -404,11 +420,8 @@ impl<T: Copy> PointGrid<T> {
                 {
                     return false;
                 }
-                let around = |value: i64| {
-                    [value.checked_sub(1), Some(value), value.checked_add(1)]
-                        .into_iter()
-                        .flatten()
-                };
+                let around =
+                    |value: i64| (-reach..=reach).filter_map(move |step| value.checked_add(step));
                 for x in around(x) {
                     for y in around(y) {
                         for z in around(z) {
@@ -579,11 +592,11 @@ fn open_cell(low: Point3, scale: f64, point: &Point3) -> Cell {
 }
 
 /// `cell` relative to the box of `dims` cells from `origin`, when the cells
-/// around it can meet the box.
-fn relative(cell: Cell, origin: Cell, dims: Cell) -> Option<Cell> {
+/// within `reach` of it can meet the box.
+fn relative(cell: Cell, origin: Cell, dims: Cell, reach: i64) -> Option<Cell> {
     let axis = |value: i64, origin: i64, side: i64| {
         let offset = value.checked_sub(origin)?;
-        (-1..=side).contains(&offset).then_some(offset)
+        (-reach..side + reach).contains(&offset).then_some(offset)
     };
     Some((
         axis(cell.0, origin.0, dims.0)?,
@@ -757,8 +770,8 @@ mod tests {
             let within = within(cutoff);
             let mut dense = PointGrid::default();
             dense.build(points.iter().copied().zip(0..), bounds, cutoff, 1 << 24);
-            // A zero cutoff bins by a millionth of the box, too fine to
-            // index densely.
+            // A zero cutoff bins by a 2^50th of the box, too fine to index
+            // densely.
             assert_eq!(dense.is_dense(), cutoff > 0.0, "{round}");
             // A far point makes the box too large to index densely.
             let mut sparse_points = points.clone();
@@ -791,6 +804,76 @@ mod tests {
                 assert_eq!(found, expected, "{round} {candidate:?}");
             }
         }
+    }
+
+    /// A distant point keeps cells cutoff-sized: a candidate meets only its
+    /// neighbours, not every point the outlier's box would share a cell
+    /// with.
+    #[test]
+    fn a_distant_point_keeps_the_search_local() {
+        let mut points = (0..10_000)
+            .map(|i| Point3::new(f64::from(i) * 10.0, 0.0, 0.0))
+            .collect::<Vec<_>>();
+        points.push(Point3::new(1.0e15, 0.0, 0.0));
+        let mut grid = PointGrid::default();
+        grid.build(
+            points.iter().copied().zip(0usize..),
+            bounding_box(points.iter().copied()),
+            5.0,
+            points.len(),
+        );
+        for candidate in &points[..100] {
+            let mut visited = 0;
+            grid.for_each_near(candidate, |_, _| visited += 1);
+            assert!(visited <= 5, "{visited}");
+        }
+    }
+
+    /// Far from the box's corner, rounding of cell coordinates can carry a
+    /// contact past an adjacent cell; searches reach far enough to find it.
+    #[test]
+    fn far_contacts_are_found_despite_rounding() {
+        let mut random = Lcg(11);
+        for offset in [1.0e9, 1.0e12, 1.0e14] {
+            let mut points = vec![Point3::origin()];
+            for _ in 0..200 {
+                let x = offset + (random.unit() * 64.0).floor() * 1.000_001;
+                points.push(Point3::new(x, random.unit(), 0.0));
+                points.push(Point3::new(x + 1.0, random.unit(), 0.0));
+            }
+            let within = within(1.0);
+            let mut grid = PointGrid::default();
+            grid.build(
+                points.iter().copied().zip(0usize..),
+                bounding_box(points.iter().copied()),
+                1.0,
+                0,
+            );
+            for candidate in &points {
+                let mut found = near(&grid, candidate, &within);
+                found.sort_unstable();
+                let expected = (0..points.len())
+                    .filter(|&index| within(candidate, &points[index]))
+                    .collect::<Vec<_>>();
+                assert_eq!(found, expected, "{offset} {candidate:?}");
+            }
+        }
+    }
+
+    /// A subnormal cutoff still bins every point at a finite cell.
+    #[test]
+    fn subnormal_cutoffs_find_their_contacts() {
+        let points = [Point3::origin(), Point3::new(5.0e-321, 0.0, 0.0)];
+        let mut grid = PointGrid::default();
+        grid.build(
+            points.iter().copied().zip(0usize..),
+            bounding_box(points.iter().copied()),
+            1.0e-320,
+            0,
+        );
+        let within = within(1.0e-320);
+        assert_eq!(near(&grid, &points[0], &within), [0, 1]);
+        assert_eq!(near(&grid, &points[1], &within), [0, 1]);
     }
 
     #[test]
