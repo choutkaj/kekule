@@ -220,12 +220,12 @@ impl Search<'_> {
                                 .query
                                 .bond(q)
                                 .expect("bond IDs come from this molecule")
-                                .order
+                                .order()
                                 != self
                                     .entry
                                     .bond(e)
                                     .expect("bond IDs come from this molecule")
-                                    .order
+                                    .order()
                         {
                             compatible = false;
                             break;

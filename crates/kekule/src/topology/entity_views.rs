@@ -10,7 +10,7 @@ use super::{
 
 /// One topology atom: its instance-qualified identity, dense index, and
 /// chemistry, with perception, connectivity, hierarchy, and static
-/// annotations of this occurrence.
+/// annotations of this instance.
 ///
 /// Atom accessors read through `Deref` (`atom.element()`, `atom.formal_charge()`).
 #[derive(Clone, Copy)]
@@ -70,7 +70,7 @@ impl<'a> AtomView<'a> {
         self.atom
     }
 
-    /// The molecule occurrence containing this atom.
+    /// The molecule instance containing this atom.
     pub fn instance(self) -> InstanceView<'a> {
         InstanceView::new(self.topology, self.id.instance())
     }
@@ -170,7 +170,7 @@ impl<'a> AtomView<'a> {
 /// One topology bond: its instance-qualified identity, dense index, and
 /// chemistry, with endpoint atoms, perception, and static annotations.
 ///
-/// Bond fields read through `Deref` (`bond.order`).
+/// Bond accessors read through `Deref` (`bond.order()`).
 #[derive(Clone, Copy)]
 pub struct BondView<'a> {
     topology: &'a Topology,
@@ -228,7 +228,7 @@ impl<'a> BondView<'a> {
         self.bond
     }
 
-    /// The molecule occurrence containing this bond.
+    /// The molecule instance containing this bond.
     pub fn instance(self) -> InstanceView<'a> {
         InstanceView::new(self.topology, self.id.instance())
     }

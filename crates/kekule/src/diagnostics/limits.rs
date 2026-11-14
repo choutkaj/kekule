@@ -36,7 +36,7 @@ pub enum Resource {
     Bonds,
     /// Hydrogen atoms an operation would add.
     Hydrogens,
-    /// Molecule components or instances.
+    /// Molecule definitions or instances.
     Components,
     /// Nodes of a query expression or of all expressions of a query.
     ExpressionNodes,

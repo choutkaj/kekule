@@ -203,7 +203,7 @@ entities keep their classifications through subsets and appends; changed
 chemistry or informative new context reclassifies the affected entities. See
 [classification](crates/kekule/src/topology/classification.rs),
 [builder publication](crates/kekule/src/topology/builder.rs), and
-[component editing](crates/kekule/src/topology/editor.rs).
+[topology editing](crates/kekule/src/topology/editor.rs).
 
 One-letter codes and sequences are derived, not hierarchy state. A residue's
 code follows from its component identity, and only a monomer of a polymer has
@@ -234,7 +234,7 @@ that need no coordinates.
 | `MoleculeEditor` | One molecular graph, possibly disconnected while editing | Exactly one nonempty connected molecule |
 | `TopologyBuilder` | Complete definitions, instances, hierarchy, classification, properties | Immutable topology |
 | `StructureBuilder` | Complete composition with explicit coordinates | Valid structure |
-| `TopologyEditor` | Instance-local atom, bond, component, and hierarchy changes | Repartitioned topology |
+| `TopologyEditor` | Instance-local atom and bond changes, whole instances, and hierarchy | Repartitioned topology |
 | `StructureEditor` | Structural edits coordinated with one structure | Topology and coordinates together |
 
 `MoleculeEditor` is a draft, not a molecule view: it owns its draft graph,
@@ -245,7 +245,7 @@ moves, or deletes an entity, publication shares every untouched definition and
 its perception with the source, and the source snapshot is never written, so an
 edit costs what it changes and undo histories keep every snapshot intact.
 Stable draft handles reject deleted or foreign entities. Joining or splitting
-components follows asserted connectivity. Surviving coordinates are preserved;
+instances follows asserted connectivity. Surviving coordinates are preserved;
 new atoms require supplied coordinates, unless the host asks a placement
 operation on a `StructureEditor` draft (`structure::placement`) to derive them
 from ideal local geometry. Placement is part of the host's edit and its one

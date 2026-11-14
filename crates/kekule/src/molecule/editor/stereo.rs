@@ -46,7 +46,7 @@ impl MoleculeEditor {
         .map_err(MoleculeError::CapacityExceeded)?;
         let id = self.graph.push_stereo_element(element);
         self.properties.owner_mut().clear();
-        self.invalidate_stereo();
+        self.invalidate_cip();
         Ok(id)
     }
 
@@ -82,7 +82,7 @@ impl MoleculeEditor {
             replacement,
         );
         self.properties.owner_mut().clear();
-        self.invalidate_stereo();
+        self.invalidate_cip();
         Ok(previous)
     }
 
@@ -98,7 +98,7 @@ impl MoleculeEditor {
             .graph
             .stereo_element_mut(id)
             .expect("live stereo element") = element;
-        self.invalidate_stereo();
+        self.invalidate_cip();
     }
 
     /// Removes a stereo element, drops it from its group, and returns it with
@@ -117,7 +117,7 @@ impl MoleculeEditor {
             .take_stereo_element(id)
             .ok_or(MoleculeError::InvalidStereoElementId(id))?;
         self.properties.owner_mut().clear();
-        self.invalidate_stereo();
+        self.invalidate_cip();
         element.group = None;
         Ok(element)
     }
@@ -160,7 +160,7 @@ impl MoleculeEditor {
                 .group = Some(id);
         }
         self.properties.owner_mut().clear();
-        self.invalidate_stereo();
+        self.invalidate_cip();
         Ok(id)
     }
 
@@ -183,7 +183,7 @@ impl MoleculeEditor {
             }
         }
         self.properties.owner_mut().clear();
-        self.invalidate_stereo();
+        self.invalidate_cip();
         Ok(group)
     }
 
@@ -231,7 +231,7 @@ impl MoleculeEditor {
             .stereo_group_mut(id)
             .expect("validated stereo group") = replacement;
         self.properties.owner_mut().clear();
-        self.invalidate_stereo();
+        self.invalidate_cip();
         Ok(previous)
     }
 
@@ -271,7 +271,7 @@ impl MoleculeEditor {
         for (id, element) in replacements {
             *self.graph.stereo_element_mut(id).expect("live element") = element;
         }
-        self.invalidate_stereo();
+        self.invalidate_cip();
         true
     }
 
@@ -326,7 +326,7 @@ impl MoleculeEditor {
         for &id in &removed {
             self.graph.take_stereo_element(id);
         }
-        self.invalidate_stereo();
+        self.invalidate_cip();
         self.pruned_stereo.extend(removed);
     }
 }

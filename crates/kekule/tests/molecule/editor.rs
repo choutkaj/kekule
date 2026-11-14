@@ -44,7 +44,7 @@ fn public_editor_builds_inspects_and_edits_without_a_molecule_view() {
         1
     );
     editor.bond_mut(bond).unwrap().set_order(BondOrder::Double);
-    assert_eq!(editor.bond(bond).unwrap().order, BondOrder::Double);
+    assert_eq!(editor.bond(bond).unwrap().order(), BondOrder::Double);
     editor
         .properties_mut()
         .owner_mut()

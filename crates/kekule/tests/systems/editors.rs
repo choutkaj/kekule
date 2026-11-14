@@ -799,7 +799,7 @@ fn rewiring_preserves_bond_identity_and_all_three_annotation_scopes() {
         Some(PropertyValue::Int(30))
     );
     assert_eq!(result.topology().bond_ids().len(), 1);
-    assert_eq!(actual.order, BondOrder::Single);
+    assert_eq!(actual.order(), BondOrder::Single);
     // Rewiring CC.O to C-O + C repartitions instances without reordering atoms.
     assert_eq!(result.positions(), &positions(&[0.0, 1.0, 2.0]));
     assert_eq!(
@@ -847,7 +847,7 @@ fn bond_replacement_rolls_back_failed_group_merges_and_preserves_the_handle() {
     let result = editor.finish().unwrap();
     assert_eq!(result.instance_count(), 2);
     assert_eq!(result.bond_count(), 1);
-    assert_eq!(result.bonds().next().unwrap().order, BondOrder::Double);
+    assert_eq!(result.bonds().next().unwrap().order(), BondOrder::Double);
 }
 
 #[test]

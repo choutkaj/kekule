@@ -85,7 +85,7 @@ pub(super) fn assign_cip_descriptors(
         }
     }
     if issues.is_empty() {
-        mol.replace_stereo_perception(Some(CipPerception::default()));
+        mol.replace_cip_perception(Some(CipPerception::default()));
         for assignment in &report.assigned {
             set_stereo_descriptor(mol, assignment.element, assignment.descriptor);
         }

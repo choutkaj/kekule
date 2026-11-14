@@ -138,7 +138,7 @@ pub(crate) fn renumbered(molecule: &Molecule, seed: u64) -> (Molecule, Vec<AtomI
     let mut bonds = BTreeMap::new();
     for (old, bond) in molecule.bonds().collect::<Vec<_>>().into_iter().rev() {
         let new = editor
-            .add_bond(atoms[&bond.b()], atoms[&bond.a()], bond.order)
+            .add_bond(atoms[&bond.b()], atoms[&bond.a()], bond.order())
             .unwrap();
         bonds.insert(old, new);
     }

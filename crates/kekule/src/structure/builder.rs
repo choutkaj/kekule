@@ -19,7 +19,7 @@ use super::{
 
 /// Convenience builder that assembles topology and one complete structure.
 ///
-/// Each call to [`Self::add_molecule`] adds one molecule occurrence and its
+/// Each call to [`Self::add_molecule`] adds one molecule instance and its
 /// dense positions. [`Self::build`] publishes the coordinate-free topology and
 /// the matching structure transactionally. The staged [`Geometry`] follows
 /// staged dense atom order: [`Self::geometry`] reads it and

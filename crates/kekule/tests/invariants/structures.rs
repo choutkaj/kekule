@@ -14,7 +14,7 @@ fn bonds(structure: &Structure) -> Vec<(usize, usize, String)> {
         .bonds()
         .map(|bond| {
             let [a, b] = bond.atoms().map(|atom| atom.index().index());
-            (a.min(b), a.max(b), format!("{:?}", bond.bond().order))
+            (a.min(b), a.max(b), format!("{:?}", bond.bond().order()))
         })
         .collect::<Vec<_>>();
     bonds.sort();

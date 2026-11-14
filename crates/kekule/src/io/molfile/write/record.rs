@@ -127,7 +127,7 @@ impl<'a> MolfileRecord<'a> {
         for (serial, view) in (1u64..).zip(topology.atoms()) {
             let qualified = view.id();
             let atom = view.atom();
-            let occurrence = view.instance();
+            let instance = view.instance();
             let position = structure
                 .position(qualified)
                 .ok_or_else(|| {
@@ -160,7 +160,7 @@ impl<'a> MolfileRecord<'a> {
                 serial,
             );
             atoms.push(MolfileAtom {
-                molecule: occurrence.molecule(),
+                molecule: instance.molecule(),
                 id: qualified.atom(),
                 atom,
                 position,
@@ -168,14 +168,14 @@ impl<'a> MolfileRecord<'a> {
         }
 
         let mut projections = BTreeMap::new();
-        for occurrence in topology.instances() {
+        for instance in topology.instances() {
             let geometry = StructureStereoPositions {
                 positions: &positions,
-                instance: occurrence.id(),
+                instance: instance.id(),
             };
             projections.insert(
-                occurrence.id(),
-                stereo_projections(occurrence.molecule(), Some(&geometry))?,
+                instance.id(),
+                stereo_projections(instance.molecule(), Some(&geometry))?,
             );
         }
         let mut bonds = Vec::with_capacity(topology.bond_count());
@@ -210,9 +210,9 @@ impl<'a> MolfileRecord<'a> {
             }
         }
         let mut stereo_groups = Vec::new();
-        for occurrence in topology.instances() {
-            stereo_groups.extend(project_stereo_groups(occurrence.molecule(), |atom| {
-                indexes[&(ComponentKey::Instance(occurrence.id()), atom)]
+        for instance in topology.instances() {
+            stereo_groups.extend(project_stereo_groups(instance.molecule(), |atom| {
+                indexes[&(ComponentKey::Instance(instance.id()), atom)]
             })?);
         }
         Ok(Self {
@@ -221,7 +221,7 @@ impl<'a> MolfileRecord<'a> {
             stereo_groups,
             chiral: topology
                 .instances()
-                .any(|occurrence| asserts_absolute_stereo(occurrence.molecule())),
+                .any(|instance| asserts_absolute_stereo(instance.molecule())),
         })
     }
 }

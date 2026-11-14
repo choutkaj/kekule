@@ -31,7 +31,7 @@ fn chemistry(molecule: &Molecule) -> String {
         .bonds()
         .map(|(_, bond)| {
             let (a, b) = (bond.a().index(), bond.b().index());
-            format!("{}-{}:{:?}", a.min(b), a.max(b), bond.order)
+            format!("{}-{}:{:?}", a.min(b), a.max(b), bond.order())
         })
         .collect::<Vec<_>>();
     bonds.sort();

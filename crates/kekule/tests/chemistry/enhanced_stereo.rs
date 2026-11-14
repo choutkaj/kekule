@@ -297,7 +297,7 @@ fn topology_matching_does_not_correlate_reused_definitions() {
     builder.add_instance(definition).unwrap();
     builder.add_instance(definition).unwrap();
     let topology = Arc::new(builder.build().unwrap());
-    // Each occurrence can choose its own orientation even though the definition
+    // Each instance can choose its own orientation even though the definition
     // and its local group ID are shared.
     let query = smarts::parse_str("F[C@H](Cl)Br.F[C@@H](Cl)Br", Default::default()).unwrap();
     let matches = PreparedTopologyTarget::new(&topology)
@@ -323,7 +323,7 @@ fn renumber(source: &Molecule, shift: usize) -> Molecule {
         .map(|a| (a, edit.add_atom(source.atom(a).unwrap().clone()).unwrap()))
         .collect::<BTreeMap<_, _>>();
     for (_, bond) in source.bonds().collect::<Vec<_>>().into_iter().rev() {
-        edit.add_bond(atoms[&bond.b()], atoms[&bond.a()], bond.order)
+        edit.add_bond(atoms[&bond.b()], atoms[&bond.a()], bond.order())
             .unwrap();
     }
     let mut elements = BTreeMap::new();

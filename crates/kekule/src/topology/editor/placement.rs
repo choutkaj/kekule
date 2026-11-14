@@ -1,4 +1,4 @@
-//! Placement edits inside the draft of the occurrence that holds the parent:
+//! Placement edits inside the draft of the instance that holds the parent:
 //! hydrogen materialization and collapse, attached atoms, and the atoms of an
 //! attached fragment, so represented stereo follows the hydrogens and the work
 //! scales with the edited atoms rather than the system.
@@ -58,9 +58,9 @@ pub(crate) struct CollapsedHydrogenSet {
     pub(crate) dead_bond_slots: Vec<usize>,
 }
 
-/// The atom [`TopologyEditor::attach_in_occurrence`] added.
+/// The atom [`TopologyEditor::attach_in_instance`] added.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AttachedInOccurrence {
+pub(crate) struct AttachedInInstance {
     pub(crate) atom: EditAtomId,
     pub(crate) bond: EditBondId,
     /// The deleted hydrogen's atom slot and bond slots.
@@ -169,7 +169,7 @@ impl TopologyEditor {
         Ok(())
     }
 
-    /// Adds `count` hydrogens bonded to `parent` inside its occurrence's
+    /// Adds `count` hydrogens bonded to `parent` inside its instance's
     /// draft, naming them in its implicit-hydrogen stereo carriers, and zeroes
     /// a fixed count. The caller has checked [`Self::check_hydrogen_stereo`].
     pub(crate) fn materialize_hydrogens(
@@ -203,19 +203,19 @@ impl TopologyEditor {
             .collect())
     }
 
-    /// Bonds a new atom to `parent` inside its occurrence's draft, as
+    /// Bonds a new atom to `parent` inside its instance's draft, as
     /// [`Self::add_atom`] and [`Self::add_bond`] would without copying the
-    /// occurrence. With `replaced`, an explicit hydrogen of the parent, the new
+    /// instance. With `replaced`, an explicit hydrogen of the parent, the new
     /// atom takes that hydrogen's place in represented stereo and the
     /// hydrogen is deleted; otherwise a single bond takes the place of an
     /// implicit hydrogen there.
-    pub(crate) fn attach_in_occurrence(
+    pub(crate) fn attach_in_instance(
         &mut self,
         parent: EditAtomId,
         atom: Atom,
         order: BondOrder,
         replaced: Option<EditAtomId>,
-    ) -> Result<AttachedInOccurrence, TopologyEditError> {
+    ) -> Result<AttachedInInstance, TopologyEditError> {
         let loc = self.atom_location(parent)?;
         let replaced_local = replaced
             .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
@@ -273,7 +273,7 @@ impl TopologyEditor {
             self.delete_atom(hydrogen)?;
             dead = Some((atom_slot, bond_slots));
         }
-        Ok(AttachedInOccurrence { atom, bond, dead })
+        Ok(AttachedInInstance { atom, bond, dead })
     }
 
     /// Whether `atom`'s represented valence breaks the valence model's
@@ -286,8 +286,8 @@ impl TopologyEditor {
         }))
     }
 
-    /// Adds an unbonded atom to the occurrence draft that holds `anchor`, as
-    /// [`Self::add_atom`] would without starting an occurrence of its own; bond
+    /// Adds an unbonded atom to the instance draft that holds `anchor`, as
+    /// [`Self::add_atom`] would without starting an instance of its own; bond
     /// it with [`Self::add_bond`], which then merges nothing.
     pub(crate) fn add_atom_beside(
         &mut self,

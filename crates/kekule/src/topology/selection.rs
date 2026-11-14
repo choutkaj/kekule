@@ -34,7 +34,7 @@ pub use bonds::{BondSelection, BondSelectionMode};
 /// | Picking | [`Self::from_atoms`], [`Self::from_indices`] |
 /// | Dense order, such as a host's indices or bit mask | [`Self::from_sorted_indices`], [`Self::from_mask`] |
 /// | All/none | [`Self::all`], [`Self::empty`] |
-/// | Molecule occurrences or reused definitions | [`Self::for_instances`], [`Self::for_definitions`] |
+/// | Molecule instances or reused definitions | [`Self::for_instances`], [`Self::for_definitions`] |
 /// | Chemistry or custom properties | [`Self::for_elements`], [`Self::for_molecule_classes`], [`Self::from_predicate`] |
 /// | Hierarchy | [`Self::for_chains`], [`Self::for_chain_label`], [`Self::for_residues`], [`Self::for_residue_classes`], [`Self::for_atom_sites`] |
 /// | Exact names in separate namespaces | [`Self::for_label_atom_names`], [`Self::for_author_atom_names`] |
@@ -117,11 +117,11 @@ impl AtomSelection {
     pub fn contains(&self, atom: InstanceAtomId) -> bool {
         self.topology
             .atom_index(atom)
-            .is_some_and(|index| self.contains_index(index))
+            .is_some_and(|index| self.contains_at(index))
     }
 
     /// Tests dense-index membership. Out-of-range indices return false.
-    pub fn contains_index(&self, index: TopologyAtomIndex) -> bool {
+    pub fn contains_at(&self, index: TopologyAtomIndex) -> bool {
         self.indices.binary_search(&index).is_ok()
     }
 
@@ -208,19 +208,13 @@ impl AtomSelection {
     /// Snapshot compatibility is checked even for empty selections.
     pub fn is_subset(&self, other: &Self) -> Result<bool, SelectionError> {
         self.ensure_compatible(&other.topology)?;
-        Ok(self
-            .indices
-            .iter()
-            .all(|index| other.contains_index(*index)))
+        Ok(self.indices.iter().all(|index| other.contains_at(*index)))
     }
 
     /// Tests whether the selections share no atoms, after checking snapshots.
     pub fn is_disjoint(&self, other: &Self) -> Result<bool, SelectionError> {
         self.ensure_compatible(&other.topology)?;
-        Ok(self
-            .indices
-            .iter()
-            .all(|index| !other.contains_index(*index)))
+        Ok(self.indices.iter().all(|index| !other.contains_at(*index)))
     }
 
     /// Combines two selections from the exact same topology snapshot.
