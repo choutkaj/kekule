@@ -53,10 +53,8 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// A structure's periodic cell, which a Molfile cannot carry: by default a
-    /// structure with a cell fails to write, and under
-    /// [`UnrepresentablePolicy::Omit`] the report names it
-    /// ([`WriteOmission::Cell`]).
+    /// A structure's periodic cell, which a Molfile cannot carry; by default a
+    /// structure with a cell fails to write.
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
     }
@@ -70,11 +68,8 @@ impl MolfileWriteOptions {
 
     /// The state that a Molfile cannot carry: a geometry's place in its set's
     /// order (a frame's time and MD step among them), and the velocities,
-    /// forces, occupancies, and B factors of a geometry or structure. By default writing a
-    /// structure with any of them fails, and under
-    /// [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::GeometryState`], [`WriteOmission::Occupancies`],
-    /// [`WriteOmission::BFactors`]).
+    /// forces, occupancies, and B factors of a geometry or structure. By
+    /// default writing a structure with any of them fails.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
         self.geometry_metadata
     }
@@ -90,10 +85,8 @@ impl MolfileWriteOptions {
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a geometry's set, which a Molfile cannot carry: by
-    /// default a structure with any fails to write, and under
-    /// [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::GeometryState`]).
+    /// properties of a geometry's set, which a Molfile cannot carry; by
+    /// default a structure with any fails to write.
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
