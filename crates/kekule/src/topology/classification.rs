@@ -63,7 +63,7 @@ pub(super) fn finalize(
 
     // Only definitions that may be inferred need evidence: explicit classes
     // win, and a preserved class is reconsidered only when an appended
-    // occurrence brings evidence. Unchanged definitions of a large system
+    // instance brings evidence. Unchanged definitions of a large system
     // cost nothing.
     let inferable =
         |definition: MoleculeDefinitionId| !molecule_overrides.contains_key(&definition);
@@ -107,7 +107,7 @@ pub(super) fn finalize(
             .get(&id)
             .copied()
             .or_else(|| {
-                // A resumed builder's new informative occurrence can change or
+                // A resumed builder's new informative instance can change or
                 // conflict with the evidence for a reused definition. Explicit
                 // assignments still win; ordinary appends preserve cached classes.
                 preserved(id).filter(|_| !has_new_evidence[id.index()])

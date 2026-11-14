@@ -25,7 +25,7 @@ use super::*;
 ///   to this molecular definition.
 ///
 /// Coordinates, periodic cells, velocities, and biological hierarchy do not
-/// belong to a molecule. Put explicit molecule occurrences and hierarchy in a
+/// belong to a molecule. Put explicit molecule instances and hierarchy in a
 /// [`crate::topology::Topology`], then attach geometry with
 /// [`crate::structure::Structure`].
 ///
@@ -168,15 +168,15 @@ impl Molecule {
         self.perception = Perception::default();
     }
 
-    pub(crate) fn invalidate_stereo(&mut self) {
-        self.perception.stereo = None;
+    pub(crate) fn invalidate_cip(&mut self) {
+        self.perception.cip = None;
     }
 
     fn invalidate_aromaticity(&mut self) {
         self.perception.aromaticity = None;
         self.perception.conjugation = None;
         self.perception.resonance = None;
-        self.invalidate_stereo();
+        self.invalidate_cip();
     }
 
     pub(crate) fn install_valence(
@@ -233,7 +233,7 @@ impl Molecule {
             atoms: BTreeSet::new(),
             bonds: BTreeSet::new(),
         });
-        self.perception.stereo = None;
+        self.perception.cip = None;
     }
 
     pub(crate) fn set_atom_aromatic(&mut self, atom: AtomId, aromatic: bool) {
@@ -264,17 +264,17 @@ impl Molecule {
         descriptor: StereoDescriptor,
     ) {
         self.perception
-            .stereo
+            .cip
             .get_or_insert_default()
             .cip_descriptors
             .insert(element, descriptor);
     }
 
-    pub(crate) fn replace_stereo_perception(
+    pub(crate) fn replace_cip_perception(
         &mut self,
         state: Option<CipPerception>,
     ) -> Option<CipPerception> {
-        std::mem::replace(&mut self.perception.stereo, state)
+        std::mem::replace(&mut self.perception.cip, state)
     }
 
     /// Install default valence, rings, aromaticity, conjugation and resonance

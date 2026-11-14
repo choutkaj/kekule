@@ -240,7 +240,7 @@ impl MoleculeEditor {
         if atoms_changed || bonds_changed {
             perception = Perception::default();
         } else if elements_changed {
-            perception.stereo = None;
+            perception.cip = None;
         }
         let molecule = Molecule {
             graph,

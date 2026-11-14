@@ -251,7 +251,7 @@ pub struct Perception {
     pub(super) aromaticity: Option<AromaticityPerception>,
     pub(crate) conjugation: Option<ConjugationPerception>,
     pub(crate) resonance: Option<ResonancePerception>,
-    pub(super) stereo: Option<CipPerception>,
+    pub(super) cip: Option<CipPerception>,
 }
 
 impl ValencePerception {
@@ -420,7 +420,9 @@ impl Perception {
         self.conjugation.as_ref()
     }
 
-    /// The explicitly prepared conjugated-group partition.
+    /// Installed resonance delocalization, or `None` before resonance
+    /// perception: the bonds whose order differs between contributors, in
+    /// connected groups. Default perception installs it.
     pub const fn resonance(&self) -> Option<&ResonancePerception> {
         self.resonance.as_ref()
     }
@@ -428,7 +430,7 @@ impl Perception {
     /// Installed CIP state, including a successful derivation that assigned
     /// no descriptors.
     pub const fn cip(&self) -> Option<&CipPerception> {
-        self.stereo.as_ref()
+        self.cip.as_ref()
     }
 }
 
@@ -587,7 +589,7 @@ impl PerceptionBuilder {
                 return Err(PerceptionBuildError::DuplicateCipDescriptor(element));
             }
         }
-        self.state.stereo = Some(CipPerception {
+        self.state.cip = Some(CipPerception {
             cip_descriptors: descriptors,
         });
         Ok(self)
@@ -975,8 +977,8 @@ pub(super) fn validate_perception(
         }
     }
 
-    if let Some(stereo) = &state.stereo {
-        for (&element, &descriptor) in &stereo.cip_descriptors {
+    if let Some(cip) = &state.cip {
+        for (&element, &descriptor) in &cip.cip_descriptors {
             let represented = molecule
                 .stereo_element(element)
                 .ok_or(PerceptionInstallError::InvalidStereoElementId(element))?;

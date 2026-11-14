@@ -1,4 +1,4 @@
-//! Transactional system edits, with molecular chemistry staged per affected occurrence.
+//! Transactional system edits, with molecular chemistry staged per affected instance.
 
 /// Evaluates `$body` with `$graph` bound to a group's graph, published or
 /// draft, so generic graph reads serve both.
@@ -51,7 +51,7 @@ pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 use overlay::{HandleBlock, Overlay};
 pub use placement::RemovedHydrogens;
-pub(crate) use placement::{AttachedInOccurrence, DraftHydrogenError};
+pub(crate) use placement::{AttachedInInstance, DraftHydrogenError};
 pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -189,11 +189,11 @@ impl<'a> GroupGraph<'a> {
     }
 }
 
-/// One staging group: an untouched source occurrence read from the source,
+/// One staging group: an untouched source instance read from the source,
 /// a stored group, or a group merged into another.
 #[derive(Debug, Clone)]
 enum GroupSlot {
-    /// The occurrence of the source instance with this group's index, which
+    /// The source instance with this group's index, which
     /// no edit has touched.
     Source,
     Live(Box<Group>),
@@ -293,7 +293,7 @@ impl GroupIdentity {
 
 /// Detached coordinate-free structural editing state.
 ///
-/// Chemical edits affect individual occurrences, even when definitions are reused.
+/// Chemical edits affect individual instances, even when definitions are reused.
 /// Deleting bonds can split molecules; adding bonds can merge them. Publication
 /// constructs valid connected definitions and one immutable topology snapshot.
 /// Its dense atom order keeps surviving atoms in source order, followed by added
@@ -606,7 +606,7 @@ impl TopologyEditor {
             .collect()
     }
 
-    /// Adds an isolated atom. Bond it to an existing atom or publish a new occurrence.
+    /// Adds an isolated atom. Bond it to an existing atom or publish a new instance.
     ///
     /// # Errors
     ///
@@ -632,7 +632,7 @@ impl TopologyEditor {
         Ok(id)
     }
 
-    /// Adds a complete occurrence, retaining represented stereo and definition properties.
+    /// Adds a complete instance, retaining represented stereo and definition properties.
     ///
     /// The returned [`EditMolecule`] maps the molecule's local IDs to new handles.
     ///
@@ -758,8 +758,8 @@ impl TopologyEditor {
             .collect::<Vec<_>>();
         self.delete_atoms(removed)
     }
-    /// Deletes surviving atoms that belonged to this source occurrence.
-    /// After merges, atoms from other source occurrences remain. To delete a
+    /// Deletes surviving atoms that belonged to this source instance.
+    /// After merges, atoms from other source instances remain. To delete a
     /// current component, pass its handles from [`Self::connected_components`]
     /// to [`Self::delete_atoms`].
     ///
@@ -781,7 +781,7 @@ impl TopologyEditor {
         self.delete_atoms(ids)
     }
 
-    /// Adds an asserted bond. Different occurrences are merged transactionally.
+    /// Adds an asserted bond. Different instances are merged transactionally.
     ///
     /// # Errors
     ///
@@ -1027,7 +1027,7 @@ impl TopologyEditor {
         {
             return Ok(());
         }
-        // Class overrides are occurrence-local too: detach a reused definition.
+        // Class overrides are instance-local too: detach a reused definition.
         self.draft_mut(loc.group);
         self.molecule_classes
             .retain(|id, _| !component.contains(id));
@@ -1036,15 +1036,15 @@ impl TopologyEditor {
         Ok(())
     }
 
-    /// Replaces stereo on one intact source occurrence. Elements use that
-    /// occurrence's molecule-local IDs. Call on a fresh editor before structural
-    /// edits to this occurrence; other occurrences may still be edited normally.
+    /// Replaces stereo on one intact source instance. Elements use that
+    /// instance's molecule-local IDs. Call on a fresh editor before structural
+    /// edits to this instance; other instances may still be edited normally.
     /// Existing enhanced stereo groups are deliberately removed. Atomic on error.
     ///
     /// # Errors
     ///
     /// [`TopologyEditError::InvalidSourceInstance`] when the draft has no source,
-    /// `instance` is not a source instance, or the occurrence was already
+    /// `instance` is not a source instance, or it was already
     /// edited; [`TopologyEditError::InvalidSourceAtom`] when its atoms were
     /// deleted; [`TopologyEditError::Molecule`] or
     /// [`TopologyEditError::Publication`] when the stereo elements are invalid.
@@ -1149,7 +1149,7 @@ impl TopologyEditor {
     fn group_is_live(&self, group: usize) -> bool {
         !matches!(self.groups[group], GroupSlot::Merged)
     }
-    /// The stored group, copying an untouched source occurrence's handles
+    /// The stored group, copying an untouched source instance's handles
     /// into storage first.
     fn group_mut(&mut self, group: usize) -> &mut Group {
         if matches!(self.groups[group], GroupSlot::Source) {
@@ -1161,7 +1161,7 @@ impl TopologyEditor {
             _ => unreachable!("live groups are stored"),
         }
     }
-    /// The stored form of an untouched source occurrence.
+    /// The stored form of an untouched source instance.
     fn source_group(&self, group: usize) -> Group {
         let (class, class_explicit) = self.group_class(group);
         Group {
@@ -1174,7 +1174,7 @@ impl TopologyEditor {
             class_explicit,
         }
     }
-    /// The source definition of an untouched source occurrence.
+    /// The source definition of an untouched source instance.
     fn source_definition(&self, group: usize) -> MoleculeDefinitionId {
         self.source_ref()
             .instance_record(MoleculeInstanceId::from_index(group))
@@ -1449,7 +1449,7 @@ impl EditBond {
     }
 }
 
-/// Definition-local IDs translated to newly allocated occurrence editing handles.
+/// Definition-local IDs translated to newly allocated instance editing handles.
 #[derive(Debug, Clone, Default)]
 pub struct EditMolecule {
     atoms: BTreeMap<AtomId, EditAtomId>,

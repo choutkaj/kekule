@@ -100,7 +100,7 @@ fn prepare(component: &mut Component) -> Result<(), Failure> {
 /// Bond endpoints as source indices; dative bonds keep their direction.
 fn ends(component: &Component, bond: &kekule::molecule::Bond) -> [usize; 2] {
     let mut ends = [component.atom(bond.a()), component.atom(bond.b())];
-    if bond.order != BondOrder::Dative {
+    if bond.order() != BondOrder::Dative {
         ends.sort_unstable();
     }
     ends
@@ -138,7 +138,7 @@ fn parse(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
         }
         for (_, bond) in molecule.bonds() {
             let [a, b] = ends(component, bond);
-            facts.push(json!(["bond", a, b, "order", order(bond.order)]));
+            facts.push(json!(["bond", a, b, "order", order(bond.order())]));
         }
         let mut atoms = component.source.clone();
         atoms.sort_unstable();

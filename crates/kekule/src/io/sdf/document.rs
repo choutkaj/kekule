@@ -270,22 +270,22 @@ impl SdfRecordInterpretation {
         &self.title
     }
 
-    /// Borrows molecule definitions once per occurrence in authoritative
+    /// Borrows molecule definitions once per instance in authoritative
     /// topology instance order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.structure
             .topology()
             .instances()
-            .map(|occurrence| occurrence.molecule())
+            .map(|instance| instance.molecule())
     }
 
     /// Clones one molecule per topology instance, in instance order, so a
-    /// reused definition appears once per occurrence.
+    /// reused definition appears once per instance.
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.structure
             .topology()
             .instances()
-            .map(|occurrence| occurrence.molecule().clone())
+            .map(|instance| instance.molecule().clone())
             .collect()
     }
 

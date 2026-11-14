@@ -51,7 +51,7 @@ impl TopologyQueryMatch {
 }
 
 /// Prepared system target. Per-atom chemistry facts are shared by reusable
-/// molecule definition; occurrence identities and connectivity remain distinct.
+/// molecule definition; instance identities and connectivity remain distinct.
 #[derive(Debug)]
 pub struct PreparedTopologyTarget<'a> {
     topology: &'a Arc<Topology>,

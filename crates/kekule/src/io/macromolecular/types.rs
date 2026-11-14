@@ -1466,22 +1466,22 @@ impl StructureInterpretation {
         self.structure.topology()
     }
 
-    /// Borrows molecule definitions once per occurrence in authoritative
+    /// Borrows molecule definitions once per instance in authoritative
     /// topology instance order.
     pub fn molecules(&self) -> impl ExactSizeIterator<Item = &Molecule> + DoubleEndedIterator {
         self.structure
             .topology()
             .instances()
-            .map(|occurrence| occurrence.molecule())
+            .map(|instance| instance.molecule())
     }
 
-    /// Clones each molecule definition once per occurrence, in topology instance
+    /// Clones each molecule definition once per instance, in topology instance
     /// order.
     pub fn into_molecules(self) -> Vec<Molecule> {
         self.structure
             .topology()
             .instances()
-            .map(|occurrence| occurrence.molecule().clone())
+            .map(|instance| instance.molecule().clone())
             .collect()
     }
 

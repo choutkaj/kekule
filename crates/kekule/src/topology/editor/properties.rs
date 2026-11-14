@@ -250,8 +250,8 @@ impl EditPropertiesMut<'_> {
         )
     }
 
-    /// Sets a definition-scoped atom annotation for this occurrence, distinct
-    /// from static topology atom properties. Other occurrences of the
+    /// Sets a definition-scoped atom annotation for this instance, distinct
+    /// from static topology atom properties. Other instances of the
     /// definition are unchanged.
     pub fn set_definition_atom_value(
         &mut self,
@@ -281,7 +281,7 @@ impl EditPropertiesMut<'_> {
         Ok(())
     }
 
-    /// Sets a definition-scoped bond annotation for this occurrence; see
+    /// Sets a definition-scoped bond annotation for this instance; see
     /// [`Self::set_definition_atom_value`].
     pub fn set_definition_bond_value(
         &mut self,

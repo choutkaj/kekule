@@ -101,7 +101,7 @@ fn signature(structure: &Structure) -> Signature {
         .filter_map(|bond| {
             let [a, b] = bond.atoms();
             let (a, b) = (rank.get(&a.index())?, rank.get(&b.index())?);
-            Some((*a.min(b), *a.max(b), format!("{:?}", bond.order)))
+            Some((*a.min(b), *a.max(b), format!("{:?}", bond.order())))
         })
         .collect();
     let stereo = topology

@@ -31,7 +31,7 @@
 //! let mut phenol = kekule::smiles::to_molecules("Oc1ccccc1")?.pop().unwrap();
 //! assert_eq!(phenol.atom_count(), 7);
 //! assert_eq!(phenol.atom(AtomId::new(0)).unwrap().element(), Element::O);
-//! assert_eq!(phenol.bond(BondId::new(0)).unwrap().order, BondOrder::Single);
+//! assert_eq!(phenol.bond(BondId::new(0)).unwrap().order(), BondOrder::Single);
 //! // Aromaticity is perceived state, not a represented bond order.
 //! assert!(phenol.perception().aromaticity().is_none());
 //! phenol.perceive()?;

@@ -62,7 +62,7 @@ pub(crate) fn record_evidence(
     evidence.entry((a.min(b), a.max(b))).or_insert(source);
 }
 
-/// Resolves the bonds of one staged molecule group in place. Bonds already
+/// Resolves the bonds of one staged instance in place. Bonds already
 /// present, from connection records, must agree with every other source.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn complete_editor_connectivity<'a>(

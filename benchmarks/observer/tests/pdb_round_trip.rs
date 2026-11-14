@@ -90,7 +90,7 @@ fn bonds(topology: &Topology) -> BTreeSet<(usize, usize, String)> {
             (
                 left.min(right),
                 left.max(right),
-                format!("{:?}", bond.order),
+                format!("{:?}", bond.order()),
             )
         })
         .collect()
