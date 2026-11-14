@@ -48,7 +48,7 @@ impl<W: Write> TrrWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &source_label,
                 format!(
                     "The topology has {} atoms. TRR holds 1 to 715,827,882.",
@@ -116,7 +116,7 @@ impl<W: Write> TrrWriter<W> {
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -164,6 +164,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         }
         if self.frame_count == usize::MAX {
             return Err(writer_limit(
+                FORMAT,
                 &self.source_label,
                 "The frame count exceeds this platform's address range.",
             ));
@@ -178,7 +179,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame has no step. TRR frames need one.",
             )
@@ -187,7 +188,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame's step exceeds the 32-bit step field.",
             )
@@ -196,7 +197,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame has no time. TRR frames need one.",
             )
@@ -205,7 +206,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.source_label,
                 "The TRR time unit is incompatible.",
             )
@@ -223,12 +224,14 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         validate_representable(lambda, self.options.precision, &self.source_label, "lambda")?;
         let atom_scalars = self.topology.atom_count().checked_mul(3).ok_or_else(|| {
             writer_limit(
+                FORMAT,
                 &self.source_label,
                 "The frame's values exceed this platform's address range.",
             )
         })?;
         let vector_bytes = atom_scalars.checked_mul(scalar_bytes).ok_or_else(|| {
             writer_limit(
+                FORMAT,
                 &self.source_label,
                 "The frame's vectors exceed this platform's address range.",
             )
@@ -254,7 +257,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::UnsupportedVariant,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Trr),
+                    Some(FORMAT),
                     &self.source_label,
                     "The cell is not periodic along all three axes. TRR stores only fully periodic cells.",
                 ));
@@ -310,7 +313,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 codec_context(
                     TrajectoryIoErrorKind::InvalidFrame,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Trr),
+                    Some(FORMAT),
                     &self.source_label,
                     "The cell does not fit the selected precision.",
                 )
@@ -357,7 +360,11 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 .zip([0, 0, box_size, 0, 0, 0, 0, vector_bytes, v_size, f_size])
         {
             *target = i32::try_from(size).map_err(|_| {
-                writer_limit(&self.source_label, "A block exceeds the 32-bit block size.")
+                writer_limit(
+                    FORMAT,
+                    &self.source_label,
+                    "A block exceeds the 32-bit block size.",
+                )
             })?;
         }
         // Every scalar and size was checked above, so a rejected frame leaves
@@ -441,6 +448,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         self.partial = false;
         self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
             writer_limit(
+                FORMAT,
                 &self.source_label,
                 "The frame count exceeds this platform's address range.",
             )
@@ -460,7 +468,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -496,7 +504,7 @@ pub(crate) fn check_append_frames(
     Err(codec_context(
         TrajectoryIoErrorKind::InconsistentMetadata,
         TrajectoryIoOperation::Open,
-        Some(TrajectoryFormat::Trr),
+        Some(FORMAT),
         source_label,
         detail,
     ))
@@ -552,9 +560,15 @@ pub(super) fn encode_triplets_to_raw(
     let bytes = values
         .len()
         .checked_mul(3 * precision.bytes())
-        .ok_or_else(|| writer_limit(source_label, overflow_message))?;
+        .ok_or_else(|| writer_limit(FORMAT, source_label, overflow_message))?;
     raw.try_reserve(bytes.saturating_sub(raw.len()))
-        .map_err(|_| writer_limit(source_label, "Cannot allocate the writer's buffers."))?;
+        .map_err(|_| {
+            writer_limit(
+                FORMAT,
+                source_label,
+                "Cannot allocate the writer's buffers.",
+            )
+        })?;
     for triplet in values {
         for value in triplet {
             push_scalar(raw, value * factor, precision, source_label, field)?;
@@ -590,7 +604,7 @@ pub(super) fn validate_representable(
         return Err(codec_context(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
-            Some(TrajectoryFormat::Trr),
+            Some(FORMAT),
             source_label,
             format!("A {field} value does not fit the selected precision."),
         ));
@@ -638,7 +652,7 @@ pub(super) fn writer_lambda(
                 return Err(codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Trr),
+                    Some(FORMAT),
                     source_label,
                     "The lambda policy names a property other than gromacs.trr.lambda.",
                 ));
@@ -652,7 +666,7 @@ pub(super) fn writer_lambda(
                 _ => Err(codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Trr),
+                    Some(FORMAT),
                     source_label,
                     "The lambda property is not one finite, dimensionless number.",
                 )),
@@ -689,6 +703,7 @@ pub(super) fn write_xdr_string<W: Write>(
         writer,
         i32::try_from(value.len()).map_err(|_| {
             writer_limit(
+                FORMAT,
                 source_label,
                 "The version string exceeds the 32-bit length field.",
             )
@@ -722,7 +737,7 @@ pub(super) fn write_bytes<W: Write>(
     writer.write_all(bytes).map_err(|error| {
         io_context(
             TrajectoryIoOperation::WriteFrame,
-            Some(TrajectoryFormat::Trr),
+            Some(FORMAT),
             source_label,
             error,
         )

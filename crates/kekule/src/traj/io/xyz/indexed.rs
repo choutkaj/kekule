@@ -60,7 +60,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         let stream_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &options.source_label,
                 error,
             )
@@ -82,7 +82,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         let stream_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &options.source_label,
                 error,
             )
@@ -243,12 +243,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                     .reader
                     .fill_buf()
                     .map_err(|error| {
-                        io_context(
-                            TrajectoryIoOperation::Index,
-                            Some(TrajectoryFormat::Xyz),
-                            &label,
-                            error,
-                        )
+                        io_context(TrajectoryIoOperation::Index, Some(FORMAT), &label, error)
                     })?
                     .is_empty()
                 {
@@ -257,7 +252,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::LimitExceeded,
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &label,
                     "",
                 )
@@ -290,7 +285,8 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             control.checkpoint(self.offsets.len(), end, TrajectoryFormat::Xyz, &label)?;
             self.reader.frame_cursor =
                 self.reader.frame_cursor.checked_add(1).ok_or_else(|| {
-                    frame_codec_error(
+                    frame_error(
+                        FORMAT,
                         TrajectoryIoErrorKind::LimitExceeded,
                         TrajectoryIoOperation::Index,
                         &label,
@@ -354,7 +350,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         let saved_offset = self.reader.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.reader.options.source_label,
                 error,
             )
@@ -366,7 +362,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &self.reader.options.source_label,
                     error,
                 )
@@ -390,7 +386,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &self.reader.options.source_label,
                     error,
                 )

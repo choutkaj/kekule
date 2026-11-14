@@ -261,8 +261,14 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 if clean_eof {
                     return Ok(0);
                 }
-                return Err(resource_error(&label, Some(self.offsets.len()), "")
-                    .exceeding("The frame index", limit));
+                return Err(limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
+                    &label,
+                    Some(self.offsets.len()),
+                    "",
+                )
+                .exceeding("The frame index", limit));
             }
             let offset = if self.inner.pending_header.is_some() {
                 self.inner.current_header_offset
@@ -371,7 +377,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Trr),
+                Some(FORMAT),
                 &self.inner.options.source_label,
                 error,
             )
@@ -386,7 +392,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Trr),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )
@@ -433,7 +439,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Trr),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )

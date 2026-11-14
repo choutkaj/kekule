@@ -112,12 +112,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 .reader
                 .seek(SeekFrom::Start(data_start))
                 .map_err(|error| {
-                    io_context(
-                        TrajectoryIoOperation::Open,
-                        Some(TrajectoryFormat::Dcd),
-                        &label,
-                        error,
-                    )
+                    io_context(TrajectoryIoOperation::Open, Some(FORMAT), &label, error)
                 })?;
             inner.frame_cursor = 0;
         }
@@ -286,7 +281,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
             )
             .with_source_label(&label)
             .with_counts(declared as u64, indexed as u64)
@@ -305,7 +300,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 return Err(TrajectoryIoError::codec(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
+                    Some(FORMAT),
                 )
                 .with_source_label(&label)
                 .with_counts(
@@ -330,7 +325,8 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                     }
                     return Err(ended_early(self.offsets.len()));
                 }
-                return Err(resource_error(
+                return Err(limit_error(
+                    FORMAT,
                     TrajectoryIoOperation::Index,
                     &label,
                     Some(self.offsets.len()),
@@ -435,7 +431,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         let saved_offset = self.inner.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 &self.inner.options.source_label,
                 error,
             )
@@ -447,7 +443,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )
@@ -474,7 +470,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Dcd),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )

@@ -231,8 +231,14 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 if clean_eof {
                     return Ok(0);
                 }
-                return Err(resource_error(&label, Some(self.offsets.len()), "")
-                    .exceeding("The frame index", limit));
+                return Err(limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
+                    &label,
+                    Some(self.offsets.len()),
+                    "",
+                )
+                .exceeding("The frame index", limit));
             }
             let offset = match &self.inner.pending_info {
                 Some(info) => info.start,
@@ -332,7 +338,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )
@@ -346,7 +352,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )
@@ -383,7 +389,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::Index,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     &self.inner.options.source_label,
                     error,
                 )

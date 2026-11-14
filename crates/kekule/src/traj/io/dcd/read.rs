@@ -62,12 +62,13 @@ impl<R: Read + Seek> DcdReader<R> {
         let limits = &options.limits;
         validate_time_policy(options.time_policy, source_label)?;
         let atom_count = topology.atom_count();
-        validate_atom_count(atom_count, limits, source_label)?;
+        validate_atom_count(FORMAT, atom_count, i32::MAX as usize, limits, source_label)?;
         let start = reader
             .stream_position()
             .map_err(|error| io_context(TrajectoryIoOperation::Open, None, source_label, error))?;
         let mut marker = [0_u8; 4];
-        read_exact_required(
+        read_exact(
+            FORMAT,
             &mut reader,
             &mut marker,
             TrajectoryIoOperation::ReadHeader,
@@ -83,7 +84,7 @@ impl<R: Read + Seek> DcdReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 source_label,
                 "The first record marker is not 84 in either byte order.",
             ));
@@ -109,7 +110,7 @@ impl<R: Read + Seek> DcdReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 source_label,
                 "The header is not an 84-byte CORD record.",
             ));
@@ -119,7 +120,7 @@ impl<R: Read + Seek> DcdReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 source_label,
                 "Four-dimensional and charge coordinate records are not supported.",
             ));
@@ -133,7 +134,7 @@ impl<R: Read + Seek> DcdReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 source_label,
                 format!("The time step DELTA is {delta}. It is not a finite, nonnegative number."),
             ));
@@ -144,7 +145,7 @@ impl<R: Read + Seek> DcdReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 source_label,
                 "The header is not in the CHARMM, NAMD or OpenMM layout. Other DCD layouts are not supported.",
             ));
@@ -177,6 +178,7 @@ impl<R: Read + Seek> DcdReader<R> {
         )?;
         if record.len() != 4 {
             return Err(header_error(
+                FORMAT,
                 source_label,
                 format!("The atom-count record has {} bytes, not 4.", record.len()),
             ));
@@ -186,18 +188,19 @@ impl<R: Read + Seek> DcdReader<R> {
             "NATOM",
             source_label,
         )?;
-        validate_atom_count(file_atoms, limits, source_label)?;
+        validate_atom_count(FORMAT, file_atoms, i32::MAX as usize, limits, source_label)?;
         if file_atoms != atom_count {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
             )
             .with_source_label(source_label)
             .with_counts(atom_count as u64, file_atoms as u64));
         }
         if fixed_count > atom_count {
             return Err(header_error(
+                FORMAT,
                 source_label,
                 format!(
                     "The header declares {fixed_count} fixed atoms but only {atom_count} atoms."
@@ -207,8 +210,15 @@ impl<R: Read + Seek> DcdReader<R> {
         let free_count = atom_count - fixed_count;
         let mut free_indices = Vec::new();
         let mut fixed_indices = Vec::new();
-        let reserve_error =
-            |detail: &str| resource_error(TrajectoryIoOperation::Open, source_label, None, detail);
+        let reserve_error = |detail: &str| {
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::Open,
+                source_label,
+                None,
+                detail,
+            )
+        };
         if fixed_count > 0 {
             read_record(
                 &mut reader,
@@ -225,6 +235,7 @@ impl<R: Read + Seek> DcdReader<R> {
             let expected = checked_coordinate_bytes(free_count, source_label)?;
             if record.len() != expected {
                 return Err(header_error(
+                    FORMAT,
                     source_label,
                     format!(
                         "The free-atom index record has {} bytes, not {expected}.",
@@ -253,21 +264,20 @@ impl<R: Read + Seek> DcdReader<R> {
                 let one_based = endian.i32(*chunk);
                 if one_based <= 0 {
                     return Err(header_error(
+                        FORMAT,
                         source_label,
                         format!("The free-atom index {one_based} is not positive."),
                     ));
                 }
                 let index = usize::try_from(one_based - 1).map_err(|_| {
                     header_error(
+                        FORMAT,
                         source_label,
                         "A free-atom index is outside this platform's address range.",
                     )
                 })?;
                 if index >= atom_count || seen[index] {
-                    return Err(header_error(
-                        source_label,
-                        format!("The free-atom index {one_based} is outside the {atom_count} atoms or repeated."),
-                    ));
+                    return Err(header_error(FORMAT, source_label, format!("The free-atom index {one_based} is outside the {atom_count} atoms or repeated.")));
                 }
                 seen[index] = true;
                 free_indices.push(index);
@@ -310,7 +320,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let data_start = reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 source_label,
                 error,
             )
@@ -356,7 +366,7 @@ impl<R: Read + Seek> DcdReader<R> {
         TrajectoryIoError::codec(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::ReadFrame,
-            Some(TrajectoryFormat::Dcd),
+            Some(FORMAT),
         )
         .with_source_label(&self.options.source_label)
         .with_frame(self.frame_cursor)
@@ -378,7 +388,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let frame_start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 &self.options.source_label,
                 error,
             )
@@ -405,7 +415,7 @@ impl<R: Read + Seek> DcdReader<R> {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
             )
             .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
@@ -425,7 +435,8 @@ impl<R: Read + Seek> DcdReader<R> {
             )? {
                 return Err(self.early_eof_error(frame_start));
             }
-            return Err(resource_error(
+            return Err(limit_error(
+                FORMAT,
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
                 Some(self.frame_cursor),
@@ -485,7 +496,8 @@ impl<R: Read + Seek> DcdReader<R> {
         let coordinate_bytes =
             checked_coordinate_bytes(coordinate_count, &self.options.source_label)?;
         if coordinate_bytes as u64 > self.options.limits.max_frame_bytes() {
-            return Err(resource_error(
+            return Err(limit_error(
+                FORMAT,
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
                 Some(self.frame_cursor),
@@ -519,7 +531,9 @@ impl<R: Read + Seek> DcdReader<R> {
                 let value = f64::from(self.header.endian.f32(*chunk));
                 if !value.is_finite() {
                     return Err(frame_error(
+                        FORMAT,
                         TrajectoryIoErrorKind::InvalidFrame,
+                        TrajectoryIoOperation::ReadFrame,
                         &self.options.source_label,
                         self.frame_cursor,
                         "A coordinate is not finite.",
@@ -540,21 +554,24 @@ impl<R: Read + Seek> DcdReader<R> {
         let frame_end = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 &self.options.source_label,
                 error,
             )
         })?;
         let frame_bytes = frame_end.checked_sub(frame_start).ok_or_else(|| {
             frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
                 self.frame_cursor,
                 "The frame ends before it starts.",
             )
         })?;
         if frame_bytes > self.options.limits.max_frame_bytes() {
-            return Err(resource_error(
+            return Err(limit_error(
+                FORMAT,
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
                 Some(self.frame_cursor),
@@ -575,7 +592,8 @@ impl<R: Read + Seek> DcdReader<R> {
         }
         let (step, time) = self.step_and_time(self.frame_cursor)?;
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
-            resource_error(
+            limit_error(
+                FORMAT,
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
                 Some(self.frame_cursor),
@@ -599,7 +617,9 @@ impl<R: Read + Seek> DcdReader<R> {
                     .checked_mul(self.header.step_interval)
                     .ok_or_else(|| {
                         frame_error(
+                            FORMAT,
                             TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
+                            TrajectoryIoOperation::ReadFrame,
                             &self.options.source_label,
                             frame,
                             "The frame's step exceeds the 64-bit step range.",
@@ -608,7 +628,9 @@ impl<R: Read + Seek> DcdReader<R> {
             )
             .ok_or_else(|| {
                 frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
+                    TrajectoryIoOperation::ReadFrame,
                     &self.options.source_label,
                     frame,
                     "The frame's step exceeds the 64-bit step range.",
@@ -621,7 +643,9 @@ impl<R: Read + Seek> DcdReader<R> {
                 .is_ok_and(f64::is_finite)
             {
                 return Err(frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
+                    TrajectoryIoOperation::ReadFrame,
                     &self.options.source_label,
                     frame,
                     "The frame's time is not finite.",
@@ -682,14 +706,9 @@ impl<R: Read + Seek> DcdReader<R> {
         &mut self,
         operation: TrajectoryIoOperation,
     ) -> Result<u64, TrajectoryIoError> {
-        self.reader.stream_position().map_err(|error| {
-            io_context(
-                operation,
-                Some(TrajectoryFormat::Dcd),
-                &self.options.source_label,
-                error,
-            )
-        })
+        self.reader
+            .stream_position()
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
     }
 
     pub(super) fn seek_to(
@@ -697,14 +716,9 @@ impl<R: Read + Seek> DcdReader<R> {
         offset: SeekFrom,
         operation: TrajectoryIoOperation,
     ) -> Result<u64, TrajectoryIoError> {
-        self.reader.seek(offset).map_err(|error| {
-            io_context(
-                operation,
-                Some(TrajectoryFormat::Dcd),
-                &self.options.source_label,
-                error,
-            )
-        })
+        self.reader
+            .seek(offset)
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
     }
 
     /// Reads the header's `NSET` again, which a writer appending frames may
@@ -713,6 +727,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let position = self.position(TrajectoryIoOperation::ReadHeader)?;
         let count_offset = self.header.header_start.checked_add(8).ok_or_else(|| {
             header_error(
+                FORMAT,
                 &self.options.source_label,
                 "The header's byte offset exceeds the 64-bit range.",
             )
@@ -722,7 +737,8 @@ impl<R: Read + Seek> DcdReader<R> {
             TrajectoryIoOperation::ReadHeader,
         )?;
         let mut count = [0_u8; 4];
-        let read = read_exact_required(
+        let read = read_exact(
+            FORMAT,
             &mut self.reader,
             &mut count,
             TrajectoryIoOperation::ReadHeader,
@@ -759,7 +775,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
         let offset = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 &self.options.source_label,
                 error,
             )
@@ -782,6 +798,7 @@ pub(super) fn parse_controls(
 ) -> Result<[i32; 20], TrajectoryIoError> {
     if bytes.len() != 80 {
         return Err(header_error(
+            FORMAT,
             source_label,
             format!("The control block has {} bytes, not 80.", bytes.len()),
         ));
@@ -800,6 +817,7 @@ pub(super) fn validate_title_record(
 ) -> Result<(), TrajectoryIoError> {
     if record.len() < 4 {
         return Err(header_error(
+            FORMAT,
             source_label,
             format!("The title record has {} bytes, fewer than 4.", record.len()),
         ));
@@ -814,12 +832,14 @@ pub(super) fn validate_title_record(
         .and_then(|bytes| bytes.checked_add(4))
         .ok_or_else(|| {
             header_error(
+                FORMAT,
                 source_label,
                 "The title count NTITLE exceeds this platform's address range.",
             )
         })?;
     if record.len() != expected {
         return Err(header_error(
+            FORMAT,
             source_label,
             format!(
                 "The title record has {} bytes. Its {count} titles need {expected}.",
@@ -842,7 +862,9 @@ pub(super) fn decode_cell(
     }
     if values.iter().any(|value| !value.is_finite()) {
         return Err(frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
             "The cell holds a value that is not finite.",
@@ -851,7 +873,9 @@ pub(super) fn decode_cell(
     let [a, gamma_raw, b, beta_raw, alpha_raw, c] = values;
     if a <= 0.0 || b <= 0.0 || c <= 0.0 {
         return Err(frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
             format!("The cell lengths {a} Å, {b} Å and {c} Å are not all positive."),
@@ -877,7 +901,9 @@ pub(super) fn decode_cell(
         || sin_gamma.abs() <= f64::EPSILON
     {
         return Err(frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
             "The cell angles are degenerate.",
@@ -890,7 +916,9 @@ pub(super) fn decode_cell(
     let cz_squared = c * c - cx * cx - cy * cy;
     if !cz_squared.is_finite() || cz_squared <= 0.0 {
         return Err(frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
             "The cell vectors are degenerate.",
@@ -902,7 +930,9 @@ pub(super) fn decode_cell(
     )
     .map_err(|error| {
         frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
             "The DCD cell is invalid.",
@@ -928,24 +958,20 @@ pub(super) fn read_record<R: Read>(
     match reader.read(&mut marker[..1]) {
         Ok(0) if clean_eof => return Ok(false),
         Ok(0) => {
-            return Err(record_error(
-                source_label,
+            return Err(stream_error(
+                FORMAT,
+                TrajectoryIoErrorKind::TruncatedRecord,
                 operation,
+                source_label,
                 frame,
                 "The DCD record marker is missing.",
             ))
         }
         Ok(_) => {}
-        Err(error) => {
-            return Err(io_context(
-                operation,
-                Some(TrajectoryFormat::Dcd),
-                source_label,
-                error,
-            ))
-        }
+        Err(error) => return Err(io_context(operation, Some(FORMAT), source_label, error)),
     }
-    read_exact_required(
+    read_exact(
+        FORMAT,
         reader,
         &mut marker[1..],
         operation,
@@ -954,7 +980,8 @@ pub(super) fn read_record<R: Read>(
         "The DCD record marker is incomplete.",
     )?;
     let size = usize::try_from(endian.u32(marker)).map_err(|_| {
-        resource_error(
+        limit_error(
+            FORMAT,
             operation,
             source_label,
             frame,
@@ -965,14 +992,11 @@ pub(super) fn read_record<R: Read>(
     // read, so that a corrupt marker is never taken for a record still being
     // written.
     if let Some((expected, detail)) = expected.filter(|&(expected, _)| expected != size) {
-        let mut context = TrajectoryIoError::codec(
-            TrajectoryIoErrorKind::InvalidFrame,
-            operation,
-            Some(TrajectoryFormat::Dcd),
-        )
-        .with_source_label(source_label)
-        .with_counts(expected as u64, size as u64)
-        .with_detail(detail);
+        let mut context =
+            TrajectoryIoError::codec(TrajectoryIoErrorKind::InvalidFrame, operation, Some(FORMAT))
+                .with_source_label(source_label)
+                .with_counts(expected as u64, size as u64)
+                .with_detail(detail);
         if let Some(frame) = frame {
             context = context.with_frame(frame);
         }
@@ -980,14 +1004,15 @@ pub(super) fn read_record<R: Read>(
     }
     if size as u64 > limits.max_record_bytes() {
         return Err(
-            resource_error(operation, source_label, frame, "").exceeding(
+            limit_error(FORMAT, operation, source_label, frame, "").exceeding(
                 "A record",
                 exceeded_bytes(limits.max_record_bytes(), size as u64),
             ),
         );
     }
     if size > limits.max_scratch_bytes() {
-        return Err(resource_error(
+        return Err(limit_error(
+            FORMAT,
             operation,
             source_label,
             frame,
@@ -1002,10 +1027,11 @@ pub(super) fn read_record<R: Read>(
         size,
         other_scratch_bytes,
         limits.max_scratch_bytes(),
-        |detail| resource_error(operation, source_label, frame, detail),
+        |detail| limit_error(FORMAT, operation, source_label, frame, detail),
     )?;
     scratch.resize(size, 0);
-    read_exact_required(
+    read_exact(
+        FORMAT,
         reader,
         scratch,
         operation,
@@ -1014,7 +1040,8 @@ pub(super) fn read_record<R: Read>(
         "The DCD record payload is truncated.",
     )?;
     let mut trailing = [0_u8; 4];
-    read_exact_required(
+    read_exact(
+        FORMAT,
         reader,
         &mut trailing,
         operation,
@@ -1026,7 +1053,7 @@ pub(super) fn read_record<R: Read>(
         let mut context = TrajectoryIoError::codec(
             TrajectoryIoErrorKind::RecordMarkerMismatch,
             operation,
-            Some(TrajectoryFormat::Dcd),
+            Some(FORMAT),
         )
         .with_source_label(source_label)
         .with_counts(size as u64, u64::from(endian.u32(trailing)))
@@ -1037,21 +1064,4 @@ pub(super) fn read_record<R: Read>(
         return Err(context);
     }
     Ok(true)
-}
-
-pub(super) fn read_exact_required<R: Read>(
-    reader: &mut R,
-    bytes: &mut [u8],
-    operation: TrajectoryIoOperation,
-    source_label: &str,
-    frame: Option<usize>,
-    detail: &str,
-) -> Result<(), TrajectoryIoError> {
-    reader.read_exact(bytes).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::UnexpectedEof {
-            record_error(source_label, operation, frame, detail)
-        } else {
-            io_context(operation, Some(TrajectoryFormat::Dcd), source_label, error)
-        }
-    })
 }

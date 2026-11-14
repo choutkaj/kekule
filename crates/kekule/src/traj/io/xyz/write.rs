@@ -96,7 +96,7 @@ impl<W: Write> XyzWriter<W> {
                 codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Open,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &source_label,
                     "The XYZ length unit is not a length.",
                 )
@@ -106,7 +106,7 @@ impl<W: Write> XyzWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidPrecision,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &source_label,
                 format!(
                     "The decimal precision is {} places, more than 17.",
@@ -118,7 +118,7 @@ impl<W: Write> XyzWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &source_label,
                 "The comment contains a line break.",
             ));
@@ -127,7 +127,7 @@ impl<W: Write> XyzWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &source_label,
                 format!(
                     "The comment has {} bytes, more than {MAX_WRITER_COMMENT_BYTES}.",
@@ -139,7 +139,7 @@ impl<W: Write> XyzWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &source_label,
                 "The topology has no atoms.",
             ));
@@ -216,7 +216,7 @@ impl<W: Write> XyzWriter<W> {
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -271,7 +271,7 @@ impl<W: Write> TrajectoryWriter for XyzWriter<W> {
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -317,7 +317,7 @@ impl<W: Write> XyzWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.source_label,
                 "The structure set has no geometries.",
             ));
@@ -409,7 +409,7 @@ impl<W: Write> XyzWriter<W> {
                 codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &self.source_label,
                     "The XYZ output unit is not a length.",
                 )
@@ -428,7 +428,7 @@ impl<W: Write> XyzWriter<W> {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::InvalidFrame,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &self.source_label,
                     "A coordinate is not finite in the output unit.",
                 ));
@@ -448,7 +448,7 @@ impl<W: Write> XyzWriter<W> {
         writeln!(self.writer, "{}", self.topology.atom_count()).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -456,7 +456,7 @@ impl<W: Write> XyzWriter<W> {
         writeln!(self.writer, "{}", self.options.comment).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -479,7 +479,7 @@ impl<W: Write> XyzWriter<W> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     &self.source_label,
                     error,
                 )
@@ -490,7 +490,7 @@ impl<W: Write> XyzWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame count exceeds this platform's address range.",
             )

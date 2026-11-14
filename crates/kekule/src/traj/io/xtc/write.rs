@@ -55,7 +55,9 @@ impl<W: Write> XtcWriter<W> {
         let source_label = source_label.into();
         validate_precision(options.precision, &source_label)?;
         if topology.atom_count() == 0 || topology.atom_count() > i32::MAX as usize {
-            return Err(resource_error(
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadHeader,
                 &source_label,
                 None,
                 format!(
@@ -65,7 +67,9 @@ impl<W: Write> XtcWriter<W> {
             ));
         }
         if options.magic == XtcMagic::Xtc1995 && topology.atom_count() > XTC_1995_MAX_ATOMS {
-            return Err(resource_error(
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadHeader,
                 &source_label,
                 None,
                 format!(
@@ -136,7 +140,7 @@ impl<W: Write> XtcWriter<W> {
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -183,7 +187,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame has no step. XTC frames need one.",
             )
@@ -192,7 +196,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame's step exceeds the 32-bit step field.",
             )
@@ -201,7 +205,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 "The frame has no time. XTC frames need one.",
             )
@@ -210,7 +214,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 "The XTC time unit is incompatible.",
             )
@@ -224,7 +228,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 return Err(codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     &self.source_label,
                     "The frame has no periodic cell. XTC frames need one.",
                 ))
@@ -234,7 +238,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     return Err(codec_context(
                         TrajectoryIoErrorKind::UnsupportedVariant,
                         TrajectoryIoOperation::WriteFrame,
-                        Some(TrajectoryFormat::Xtc),
+                        Some(FORMAT),
                         &self.source_label,
                         "The cell is not periodic along all three axes. XTC stores only fully periodic cells.",
                     ));
@@ -243,7 +247,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     codec_context(
                         TrajectoryIoErrorKind::InconsistentMetadata,
                         TrajectoryIoOperation::WriteFrame,
-                        Some(TrajectoryFormat::Xtc),
+                        Some(FORMAT),
                         &self.source_label,
                         "The XTC cell unit is incompatible.",
                     )
@@ -268,7 +272,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     codec_context(
                         TrajectoryIoErrorKind::InvalidFrame,
                         TrajectoryIoOperation::WriteFrame,
-                        Some(TrajectoryFormat::Xtc),
+                        Some(FORMAT),
                         &self.source_label,
                         "The cell does not fit single precision.",
                     )
@@ -284,7 +288,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::WriteFrame,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     &self.source_label,
                     "The XTC position unit is incompatible.",
                 )
@@ -296,7 +300,9 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         // must stay within GROMACS's range.
         let compressed = self.topology.atom_count() > 9;
         let reserve_error = |_| {
-            resource_error(
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
                 &self.source_label,
                 Some(self.frame_count),
                 "Cannot allocate the coordinate buffer.",
@@ -306,7 +312,9 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         self.scaled.clear();
         self.positions
             .try_reserve(atom_count.checked_mul(3).ok_or_else(|| {
-                resource_error(
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
                     &self.source_label,
                     Some(self.frame_count),
                     "The coordinate count exceeds this platform's address range.",
@@ -331,7 +339,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         return Err(codec_context(
                             TrajectoryIoErrorKind::InvalidFrame,
                             TrajectoryIoOperation::WriteFrame,
-                            Some(TrajectoryFormat::Xtc),
+                            Some(FORMAT),
                             &self.source_label,
                             "A coordinate exceeds the integer range of the selected precision.",
                         ));
@@ -352,13 +360,15 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 "The coordinates span more along one axis than the integer range of the selected precision holds.",
             ));
         }
         let atom_count = i32::try_from(atom_count).map_err(|_| {
-            resource_error(
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
                 &self.source_label,
                 Some(self.frame_count),
                 "The atom count exceeds the 32-bit atom-count field.",
@@ -381,7 +391,15 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 &mut self.stream,
                 &mut self.bytes,
             )
-            .map_err(|detail| resource_error(&self.source_label, Some(self.frame_count), detail))?;
+            .map_err(|detail| {
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
+                    &self.source_label,
+                    Some(self.frame_count),
+                    detail,
+                )
+            })?;
         } else {
             for value in &self.positions {
                 self.bytes.extend_from_slice(&value.to_be_bytes());
@@ -393,14 +411,16 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         self.writer.write_all(&self.bytes).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
         })?;
         self.partial = false;
         self.frame_count = self.frame_count.checked_add(1).ok_or_else(|| {
-            resource_error(
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadHeader,
                 &self.source_label,
                 None,
                 "The frame count exceeds this platform's address range.",
@@ -421,7 +441,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.source_label,
                 error,
             )
@@ -446,7 +466,7 @@ pub(crate) fn check_append_frames(
         codec_context(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::Open,
-            Some(TrajectoryFormat::Xtc),
+            Some(FORMAT),
             source_label,
             format!("{detail} Append with the options the file was written with."),
         )

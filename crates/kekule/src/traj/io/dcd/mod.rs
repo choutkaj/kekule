@@ -76,6 +76,10 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT, CANONICAL_TIME_UNIT};
 
+use super::codec::{
+    frame_error, header_error, limit_error, read_exact, stream_error, validate_atom_count,
+    writer_limit,
+};
 use super::frame_state::{check_frame_state, record};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
@@ -84,6 +88,9 @@ use super::{
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
     FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
 };
+
+/// The format of this codec's streams.
+const FORMAT: TrajectoryFormat = TrajectoryFormat::Dcd;
 
 mod indexed;
 mod read;
@@ -331,7 +338,7 @@ impl DcdWriteOptions {
             codec_context(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Dcd),
+                Some(FORMAT),
                 "DCD writer options",
                 "The DCD DELTA is not a time.",
             )
@@ -505,7 +512,7 @@ fn validate_time_policy(
                 codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Open,
-                    Some(TrajectoryFormat::Dcd),
+                    Some(FORMAT),
                     source_label,
                     "The DCD time-policy unit is incompatible.",
                 )
@@ -515,34 +522,10 @@ fn validate_time_policy(
     Ok(())
 }
 
-fn validate_atom_count(
-    count: usize,
-    limits: &TrajectoryIoLimits,
-    source_label: &str,
-) -> Result<(), TrajectoryIoError> {
-    if count == 0 {
-        return Err(resource_error(
-            TrajectoryIoOperation::ReadHeader,
-            source_label,
-            None,
-            "The header declares no atoms.",
-        ));
-    }
-    let limit = limits.max_atoms().min(i32::MAX as usize);
-    if count > limit {
-        return Err(
-            resource_error(TrajectoryIoOperation::ReadHeader, source_label, None, "").exceeding(
-                "The atom count",
-                LimitExceeded::new(Resource::Atoms, limit, count),
-            ),
-        );
-    }
-    Ok(())
-}
-
 fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, TrajectoryIoError> {
     count.checked_mul(4).ok_or_else(|| {
-        resource_error(
+        limit_error(
+            FORMAT,
             TrajectoryIoOperation::ReadFrame,
             source_label,
             None,
@@ -554,6 +537,7 @@ fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, T
 fn nonnegative_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
     u64::try_from(value).map_err(|_| {
         header_error(
+            FORMAT,
             source_label,
             format!("The header field {field} is {value}. It is negative."),
         )
@@ -563,6 +547,7 @@ fn nonnegative_u64(value: i32, field: &str, source_label: &str) -> Result<u64, T
 fn positive_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
     if value <= 0 {
         return Err(header_error(
+            FORMAT,
             source_label,
             format!("The header field {field} is {value}. It is not positive."),
         ));
@@ -577,82 +562,9 @@ fn nonnegative_usize(
 ) -> Result<usize, TrajectoryIoError> {
     usize::try_from(value).map_err(|_| {
         header_error(
+            FORMAT,
             source_label,
             format!("The header field {field} is {value}. It is negative."),
         )
     })
-}
-
-fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
-    codec_context(
-        TrajectoryIoErrorKind::InvalidHeader,
-        TrajectoryIoOperation::ReadHeader,
-        Some(TrajectoryFormat::Dcd),
-        source_label,
-        detail,
-    )
-}
-
-fn record_error(
-    source_label: &str,
-    operation: TrajectoryIoOperation,
-    frame: Option<usize>,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    let mut context = TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::TruncatedRecord,
-        operation,
-        Some(TrajectoryFormat::Dcd),
-    )
-    .with_source_label(source_label)
-    .with_detail(detail);
-    if let Some(frame) = frame {
-        context = context.with_frame(frame);
-    }
-    context
-}
-
-fn frame_error(
-    kind: TrajectoryIoErrorKind,
-    source_label: &str,
-    frame: usize,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        kind,
-        TrajectoryIoOperation::ReadFrame,
-        Some(TrajectoryFormat::Dcd),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_detail(detail)
-}
-
-fn resource_error(
-    operation: TrajectoryIoOperation,
-    source_label: &str,
-    frame: Option<usize>,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    let mut context = TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::LimitExceeded,
-        operation,
-        Some(TrajectoryFormat::Dcd),
-    )
-    .with_source_label(source_label)
-    .with_detail(detail);
-    if let Some(frame) = frame {
-        context = context.with_frame(frame);
-    }
-    context
-}
-
-fn writer_overflow(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
-    codec_context(
-        TrajectoryIoErrorKind::LimitExceeded,
-        TrajectoryIoOperation::WriteFrame,
-        Some(TrajectoryFormat::Dcd),
-        source_label,
-        detail,
-    )
 }

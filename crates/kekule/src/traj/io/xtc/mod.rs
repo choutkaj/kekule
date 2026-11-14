@@ -70,6 +70,9 @@ use crate::traj::{
 };
 use crate::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 
+use super::codec::{
+    frame_error, header_error, limit_error, read_exact, stream_error, validate_atom_count,
+};
 use super::frame_state::{check_frame_state, frame_interval, record};
 use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
@@ -78,6 +81,9 @@ use super::{
     require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
     FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
 };
+
+/// The format of this codec's streams.
+const FORMAT: TrajectoryFormat = TrajectoryFormat::Xtc;
 
 mod indexed;
 mod read;
@@ -270,7 +276,7 @@ impl XtcWriteOptions {
             codec_context(
                 TrajectoryIoErrorKind::InvalidPrecision,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 "XTC writer options",
                 "The XTC precision is not an inverse length.",
             )
@@ -415,28 +421,6 @@ impl XtcFrameInfo {
     }
 }
 
-fn validate_atom_count(
-    atom_count: usize,
-    limits: &TrajectoryIoLimits,
-    source_label: &str,
-) -> Result<(), TrajectoryIoError> {
-    if atom_count == 0 {
-        return Err(resource_error(
-            source_label,
-            None,
-            "The header declares no atoms.",
-        ));
-    }
-    let limit = limits.max_atoms().min(u32::MAX as usize);
-    if atom_count > limit {
-        return Err(resource_error(source_label, None, "").exceeding(
-            "The atom count",
-            LimitExceeded::new(Resource::Atoms, limit, atom_count),
-        ));
-    }
-    Ok(())
-}
-
 fn nonnegative_xdr_count(
     value: i32,
     field: &str,
@@ -448,7 +432,7 @@ fn nonnegative_xdr_count(
         TrajectoryIoError::codec(
             TrajectoryIoErrorKind::InvalidHeader,
             TrajectoryIoOperation::ReadHeader,
-            Some(TrajectoryFormat::Xtc),
+            Some(FORMAT),
         )
         .with_source_label(source_label)
         .with_frame(frame)
@@ -462,7 +446,7 @@ fn validate_precision(precision: f32, source_label: &str) -> Result<(), Trajecto
         return Err(codec_context(
             TrajectoryIoErrorKind::InvalidPrecision,
             TrajectoryIoOperation::Open,
-            Some(TrajectoryFormat::Xtc),
+            Some(FORMAT),
             source_label,
             "The precision is not a finite, positive number.",
         ));
@@ -476,86 +460,10 @@ fn finite_f32(value: f64, source_label: &str, field: &str) -> Result<f32, Trajec
         return Err(codec_context(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
-            Some(TrajectoryFormat::Xtc),
+            Some(FORMAT),
             source_label,
             format!("A {field} value does not fit single precision."),
         ));
     }
     Ok(narrowed)
-}
-
-fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
-    codec_context(
-        TrajectoryIoErrorKind::InvalidHeader,
-        TrajectoryIoOperation::ReadHeader,
-        Some(TrajectoryFormat::Xtc),
-        source_label,
-        detail,
-    )
-}
-
-fn frame_error(source_label: &str, frame: usize, detail: impl Into<String>) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::InvalidFrame,
-        TrajectoryIoOperation::ReadFrame,
-        Some(TrajectoryFormat::Xtc),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_detail(detail)
-}
-
-fn corrupt_error(source_label: &str, frame: usize, detail: impl Into<String>) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::CorruptCompressedData,
-        TrajectoryIoOperation::ReadFrame,
-        Some(TrajectoryFormat::Xtc),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_detail(detail)
-}
-
-fn truncated_error(
-    source_label: &str,
-    frame: Option<usize>,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    let mut context = TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::TruncatedRecord,
-        if frame.is_some() {
-            TrajectoryIoOperation::ReadFrame
-        } else {
-            TrajectoryIoOperation::ReadHeader
-        },
-        Some(TrajectoryFormat::Xtc),
-    )
-    .with_source_label(source_label)
-    .with_detail(detail);
-    if let Some(frame) = frame {
-        context = context.with_frame(frame);
-    }
-    context
-}
-
-fn resource_error(
-    source_label: &str,
-    frame: Option<usize>,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    let mut context = TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::LimitExceeded,
-        if frame.is_some() {
-            TrajectoryIoOperation::ReadFrame
-        } else {
-            TrajectoryIoOperation::ReadHeader
-        },
-        Some(TrajectoryFormat::Xtc),
-    )
-    .with_source_label(source_label)
-    .with_detail(detail);
-    if let Some(frame) = frame {
-        context = context.with_frame(frame);
-    }
-    context
 }

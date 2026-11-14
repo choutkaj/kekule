@@ -52,7 +52,7 @@ impl<R: BufRead> XyzReader<R> {
                 codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     TrajectoryIoOperation::Open,
-                    Some(TrajectoryFormat::Xyz),
+                    Some(FORMAT),
                     source_label,
                     "The XYZ length unit is not a length.",
                 )
@@ -65,7 +65,7 @@ impl<R: BufRead> XyzReader<R> {
             codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 source_label,
                 "Cannot allocate the position buffer.",
             )
@@ -97,18 +97,14 @@ impl<R: BufRead> XyzReader<R> {
                 .reader
                 .fill_buf()
                 .map_err(|error| {
-                    io_context(
-                        operation,
-                        Some(TrajectoryFormat::Xyz),
-                        &self.options.source_label,
-                        error,
-                    )
+                    io_context(operation, Some(FORMAT), &self.options.source_label, error)
                 })?
                 .is_empty()
             {
                 return Ok(false);
             }
-            return Err(frame_codec_error(
+            return Err(frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::LimitExceeded,
                 operation,
                 &self.options.source_label,
@@ -154,7 +150,8 @@ impl<R: BufRead> XyzReader<R> {
             operation,
         )?;
         let atom_count = count_line.trim().parse::<usize>().map_err(|_| {
-            frame_codec_error(
+            frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::InvalidFrame,
                 operation,
                 &self.options.source_label,
@@ -163,7 +160,8 @@ impl<R: BufRead> XyzReader<R> {
             )
         })?;
         if atom_count == 0 {
-            return Err(frame_codec_error(
+            return Err(frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::InvalidFrame,
                 operation,
                 &self.options.source_label,
@@ -176,7 +174,7 @@ impl<R: BufRead> XyzReader<R> {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentAtomCount,
                 operation,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
             )
             .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
@@ -194,7 +192,8 @@ impl<R: BufRead> XyzReader<R> {
             growing,
         )?
         else {
-            return Err(frame_codec_error(
+            return Err(frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::TruncatedRecord,
                 operation,
                 &self.options.source_label,
@@ -240,7 +239,8 @@ impl<R: BufRead> XyzReader<R> {
                 growing,
             )?
             else {
-                return Err(frame_codec_error(
+                return Err(frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::TruncatedRecord,
                     operation,
                     &self.options.source_label,
@@ -270,7 +270,8 @@ impl<R: BufRead> XyzReader<R> {
                 fields.next(),
                 fields.next(),
             ) else {
-                return Err(frame_codec_error(
+                return Err(frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
                     &self.options.source_label,
@@ -279,7 +280,8 @@ impl<R: BufRead> XyzReader<R> {
                 ));
             };
             let element = Element::from_symbol(symbol).ok_or_else(|| {
-                frame_codec_error(
+                frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
                     &self.options.source_label,
@@ -288,7 +290,8 @@ impl<R: BufRead> XyzReader<R> {
                 )
             })?;
             if element != expected_element {
-                return Err(frame_codec_error(
+                return Err(frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     operation,
                     &self.options.source_label,
@@ -302,7 +305,8 @@ impl<R: BufRead> XyzReader<R> {
             }
             let parse_coordinate = |value: &str| {
                 value.parse::<f64>().map_err(|_| {
-                    frame_codec_error(
+                    frame_error(
+                        FORMAT,
                         TrajectoryIoErrorKind::InvalidFrame,
                         operation,
                         &self.options.source_label,
@@ -315,7 +319,8 @@ impl<R: BufRead> XyzReader<R> {
             let y = parse_coordinate(y)?;
             let z = parse_coordinate(z)?;
             if ![x, y, z].into_iter().all(f64::is_finite) {
-                return Err(frame_codec_error(
+                return Err(frame_error(
+                    FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
                     &self.options.source_label,
@@ -360,7 +365,8 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
         }
         self.publish(destination)?;
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
-            frame_codec_error(
+            frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
@@ -386,7 +392,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
         let start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.options.source_label,
                 error,
             )
@@ -395,7 +401,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
         self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.options.source_label,
                 error,
             )
@@ -405,7 +411,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &self.options.source_label,
                 "The file holds no frame.",
             ));
@@ -432,7 +438,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::Index,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 &indexed.reader.options.source_label,
                 "The file holds no frame.",
             ));
@@ -444,14 +450,9 @@ impl<R: BufRead + Seek> XyzReader<R> {
         &mut self,
         operation: TrajectoryIoOperation,
     ) -> Result<u64, TrajectoryIoError> {
-        self.reader.stream_position().map_err(|error| {
-            io_context(
-                operation,
-                Some(TrajectoryFormat::Xyz),
-                &self.options.source_label,
-                error,
-            )
-        })
+        self.reader
+            .stream_position()
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
     }
 
     pub(super) fn seek_to(
@@ -459,14 +460,9 @@ impl<R: BufRead + Seek> XyzReader<R> {
         offset: SeekFrom,
         operation: TrajectoryIoOperation,
     ) -> Result<u64, TrajectoryIoError> {
-        self.reader.seek(offset).map_err(|error| {
-            io_context(
-                operation,
-                Some(TrajectoryFormat::Xyz),
-                &self.options.source_label,
-                error,
-            )
-        })
+        self.reader
+            .seek(offset)
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
     }
 }
 
@@ -479,7 +475,7 @@ pub(super) fn validate_atom_limit(
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::ReadHeader,
-            Some(TrajectoryFormat::Xyz),
+            Some(FORMAT),
             source_label,
             "",
         )
@@ -494,7 +490,7 @@ pub(super) fn validate_atom_limit(
             codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 source_label,
                 "The position buffer exceeds this platform's address range.",
             )
@@ -503,7 +499,7 @@ pub(super) fn validate_atom_limit(
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
             TrajectoryIoOperation::ReadHeader,
-            Some(TrajectoryFormat::Xyz),
+            Some(FORMAT),
             source_label,
             format!(
                 "The position buffer needs {scratch_bytes} bytes, more than the buffer limit of {} bytes.",
@@ -527,7 +523,8 @@ pub(super) fn validate_frame_bytes(
     operation: TrajectoryIoOperation,
 ) -> Result<(), TrajectoryIoError> {
     if frame_bytes > limits.max_frame_bytes() {
-        return Err(frame_codec_error(
+        return Err(frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::LimitExceeded,
             operation,
             source_label,
@@ -554,7 +551,8 @@ pub(super) fn checked_frame_add(
         .ok()
         .and_then(|bytes| frame_bytes.checked_add(bytes))
         .ok_or_else(|| {
-            frame_codec_error(
+            frame_error(
+                FORMAT,
                 TrajectoryIoErrorKind::LimitExceeded,
                 operation,
                 source_label,
@@ -589,14 +587,7 @@ pub(super) fn read_line<'a, R: BufRead>(
         let available = match reader.fill_buf() {
             Ok(available) => available,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => {
-                return Err(io_context(
-                    operation,
-                    Some(TrajectoryFormat::Xyz),
-                    source_label,
-                    error,
-                ))
-            }
+            Err(error) => return Err(io_context(operation, Some(FORMAT), source_label, error)),
         };
         if available.is_empty() {
             break;
@@ -612,7 +603,7 @@ pub(super) fn read_line<'a, R: BufRead>(
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,
                 operation,
-                Some(TrajectoryFormat::Xyz),
+                Some(FORMAT),
                 source_label,
                 "",
             )
@@ -639,7 +630,8 @@ pub(super) fn read_line<'a, R: BufRead>(
                 other_scratch_bytes,
                 limits.max_scratch_bytes(),
                 |detail| {
-                    frame_codec_error(
+                    frame_error(
+                        FORMAT,
                         TrajectoryIoErrorKind::LimitExceeded,
                         operation,
                         source_label,
@@ -661,7 +653,8 @@ pub(super) fn read_line<'a, R: BufRead>(
         return Ok(None);
     }
     if terminated && !line.ends_with(b"\n") {
-        return Err(frame_codec_error(
+        return Err(frame_error(
+            FORMAT,
             TrajectoryIoErrorKind::TruncatedRecord,
             operation,
             source_label,
@@ -676,23 +669,10 @@ pub(super) fn read_line<'a, R: BufRead>(
     let content = std::str::from_utf8(content).map_err(|_| {
         io_context(
             operation,
-            Some(TrajectoryFormat::Xyz),
+            Some(FORMAT),
             source_label,
             io::Error::new(io::ErrorKind::InvalidData, "The stream is not valid UTF-8."),
         )
     })?;
     Ok(Some((content, read)))
-}
-
-pub(super) fn frame_codec_error(
-    kind: TrajectoryIoErrorKind,
-    operation: TrajectoryIoOperation,
-    source_label: &str,
-    frame: usize,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    TrajectoryIoError::codec(kind, operation, Some(TrajectoryFormat::Xyz))
-        .with_source_label(source_label)
-        .with_frame(frame)
-        .with_detail(detail)
 }

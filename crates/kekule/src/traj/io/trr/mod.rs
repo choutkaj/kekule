@@ -80,6 +80,10 @@ use crate::units::{
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
 
+use super::codec::{
+    frame_error, header_error, limit_error, read_exact, read_operation, validate_atom_count,
+    writer_limit,
+};
 use super::frame_state::{check_frame_state, frame_interval, record, writer_field_error};
 use super::limits::{exceeded_bytes, filled_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
@@ -88,6 +92,9 @@ use super::{
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
     FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
 };
+
+/// The format of this codec's streams.
+const FORMAT: TrajectoryFormat = TrajectoryFormat::Trr;
 
 mod indexed;
 mod read;
@@ -386,81 +393,6 @@ fn trr_lambda_key() -> PropertyKey {
     PropertyKey::new(TRR_LAMBDA_PROPERTY).expect("TRR lambda property key is valid")
 }
 
-fn validate_atom_count(
-    atom_count: usize,
-    limits: &TrajectoryIoLimits,
-    source_label: &str,
-) -> Result<(), TrajectoryIoError> {
-    if atom_count == 0 {
-        return Err(resource_error(
-            source_label,
-            None,
-            "The header declares no atoms.",
-        ));
-    }
-    let limit = limits.max_atoms().min(i32::MAX as usize / 3);
-    if atom_count > limit {
-        return Err(resource_error(source_label, None, "").exceeding(
-            "The atom count",
-            LimitExceeded::new(Resource::Atoms, limit, atom_count),
-        ));
-    }
-    Ok(())
-}
-
-fn header_error(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
-    codec_context(
-        TrajectoryIoErrorKind::InvalidHeader,
-        TrajectoryIoOperation::ReadHeader,
-        Some(TrajectoryFormat::Trr),
-        source_label,
-        detail,
-    )
-}
-
-fn frame_error(source_label: &str, frame: usize, detail: impl Into<String>) -> TrajectoryIoError {
-    TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::InvalidFrame,
-        TrajectoryIoOperation::ReadFrame,
-        Some(TrajectoryFormat::Trr),
-    )
-    .with_source_label(source_label)
-    .with_frame(frame)
-    .with_detail(detail)
-}
-
-fn resource_error(
-    source_label: &str,
-    frame: Option<usize>,
-    detail: impl Into<String>,
-) -> TrajectoryIoError {
-    let mut context = TrajectoryIoError::codec(
-        TrajectoryIoErrorKind::LimitExceeded,
-        if frame.is_some() {
-            TrajectoryIoOperation::ReadFrame
-        } else {
-            TrajectoryIoOperation::ReadHeader
-        },
-        Some(TrajectoryFormat::Trr),
-    )
-    .with_source_label(source_label)
-    .with_detail(detail);
-    if let Some(frame) = frame {
-        context = context.with_frame(frame);
-    }
-    context
-}
-
-fn writer_limit(source_label: &str, detail: impl Into<String>) -> TrajectoryIoError {
-    codec_context(
-        TrajectoryIoErrorKind::LimitExceeded,
-        TrajectoryIoOperation::WriteFrame,
-        Some(TrajectoryFormat::Trr),
-        source_label,
-        detail,
-    )
-}
-
 fn writer_unit(
     source_label: &str,
     field: &str,
@@ -469,7 +401,7 @@ fn writer_unit(
     codec_context(
         TrajectoryIoErrorKind::InconsistentMetadata,
         TrajectoryIoOperation::WriteFrame,
-        Some(TrajectoryFormat::Trr),
+        Some(FORMAT),
         source_label,
         format!("The {field} unit is incompatible."),
     )

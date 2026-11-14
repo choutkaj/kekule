@@ -69,6 +69,7 @@ use crate::traj::{
 };
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
+use super::codec::frame_error;
 use super::frame_state::{check_frame_state, record, writer_field_error};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
@@ -77,13 +78,15 @@ use super::{
     require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
 };
 
+/// The format of this codec's streams.
+const FORMAT: TrajectoryFormat = TrajectoryFormat::Xyz;
+
 mod indexed;
 mod read;
 mod write;
 
 pub use indexed::IndexedXyzReader;
 pub use read::XyzReader;
-use read::*;
 pub use write::XyzWriter;
 
 /// What an XYZ frame carries: positions alone.

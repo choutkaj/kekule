@@ -31,7 +31,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let start = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 source_label,
                 error,
             )
@@ -39,12 +39,18 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let mut header = [0_u8; XTC_HEADER_BYTES];
         match self.reader.read(&mut header[..1]) {
             Ok(0) if clean_eof => return Ok(None),
-            Ok(0) => return Err(header_error(source_label, "The frame header is missing.")),
+            Ok(0) => {
+                return Err(header_error(
+                    FORMAT,
+                    source_label,
+                    "The frame header is missing.",
+                ))
+            }
             Ok(_) => {}
             Err(error) => {
                 return Err(io_context(
                     TrajectoryIoOperation::ReadHeader,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     source_label,
                     error,
                 ))
@@ -53,8 +59,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         // The magic is checked as soon as it is read, so a frame that a
         // stream ends inside is rejected when what it holds is already wrong.
         read_exact(
+            FORMAT,
             &mut self.reader,
             &mut header[1..4],
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             Some(frame_index),
             "The frame header is truncated.",
@@ -64,14 +72,17 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             2023 => XtcMagic::Xtc2023,
             _ => {
                 return Err(header_error(
+                    FORMAT,
                     source_label,
                     "The magic number is not 1995 or 2023.",
                 ))
             }
         };
         read_exact(
+            FORMAT,
             &mut self.reader,
             &mut header[4..],
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             Some(frame_index),
             "The frame header is truncated.",
@@ -84,13 +95,13 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             frame_index,
             start + 4,
         )?;
-        validate_atom_count(atom_count, limits, source_label)?;
+        validate_atom_count(FORMAT, atom_count, u32::MAX as usize, limits, source_label)?;
         let expected_atoms = topology.atom_count();
         if atom_count != expected_atoms {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
             )
             .with_source_label(source_label)
             .with_frame(frame_index)
@@ -108,7 +119,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentAtomCount,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
             )
             .with_source_label(source_label)
             .with_frame(frame_index)
@@ -120,7 +131,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
             )
             .with_source_label(source_label)
             .with_frame(frame_index)
@@ -130,6 +141,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let time = f64::from(f32::from_be_bytes(header[12..16].try_into().expect("time")));
         if !time.is_finite() {
             return Err(frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "The frame's time is not finite.",
@@ -144,7 +158,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         }
         let cell = decode_cell(box_values, options.cell_policy, source_label, frame_index)?;
         let coordinate_scalars = atom_count.checked_mul(3).ok_or_else(|| {
-            resource_error(
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
                 "The coordinate count exceeds this platform's address range.",
@@ -152,7 +168,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         })?;
         let (precision, compressed_bytes, end) = if atom_count <= 9 {
             let coordinate_bytes = atom_count.checked_mul(12).ok_or_else(|| {
-                resource_error(
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadHeader,
                     source_label,
                     None,
                     "The frame's size exceeds this platform's address range.",
@@ -168,8 +186,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             )?;
             self.scratch.resize(coordinate_bytes, 0);
             read_exact(
+                FORMAT,
                 &mut self.reader,
                 &mut self.scratch,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
                 "The coordinates are truncated.",
@@ -177,7 +197,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             for chunk in self.scratch.as_chunks::<4>().0 {
                 let value = f32::from_be_bytes(*chunk);
                 if !value.is_finite() {
-                    return Err(corrupt_error(
+                    return Err(frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "A coordinate is not finite.",
@@ -189,7 +212,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 .checked_add(XTC_HEADER_BYTES as u64)
                 .and_then(|offset| offset.checked_add(coordinate_bytes as u64))
                 .ok_or_else(|| {
-                    resource_error(
+                    limit_error(
+                        FORMAT,
+                        TrajectoryIoOperation::ReadHeader,
                         source_label,
                         None,
                         "The frame's end exceeds the 64-bit range.",
@@ -199,8 +224,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         } else {
             let mut prelude = [0_u8; XTC_COMPRESSED_PRELUDE_BYTES];
             read_exact(
+                FORMAT,
                 &mut self.reader,
                 &mut prelude,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
                 "The compressed-coordinate header is truncated.",
@@ -222,7 +249,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 minimum[axis] = min;
                 maximum[axis] = max;
                 if min > max {
-                    return Err(corrupt_error(
+                    return Err(frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "The compressed coordinates' lower bound exceeds the upper bound.",
@@ -233,14 +263,19 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 prelude[28..32].try_into().expect("small index"),
             ))
             .map_err(|_| {
-                resource_error(
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
                     "The compressed coordinates' small index is negative or too large.",
                 )
             })?;
             if !(XTC_FIRST_SMALL_INDEX..XTC_MAGIC_INTS.len()).contains(&small_index) {
-                return Err(corrupt_error(
+                return Err(frame_error(
+                    FORMAT,
+                    TrajectoryIoErrorKind::CorruptCompressedData,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
                     "The compressed coordinates' small index is outside the table.",
@@ -248,29 +283,32 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             }
             let compressed_bytes = read_nbytes(&mut self.reader, magic, source_label, frame_index)?;
             if compressed_bytes == 0 {
-                return Err(resource_error(
+                return Err(limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
                     "The compressed coordinates have no bytes.",
                 ));
             }
             if compressed_bytes as u64 > limits.max_record_bytes() {
-                return Err(
-                    resource_error(source_label, Some(frame_index), "").exceeding(
-                        "The compressed coordinates",
-                        exceeded_bytes(limits.max_record_bytes(), compressed_bytes as u64),
-                    ),
-                );
-            }
-            if compressed_bytes > limits.max_scratch_bytes() {
-                return Err(resource_error(
+                return Err(limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
-                    format!(
+                    "",
+                )
+                .exceeding(
+                    "The compressed coordinates",
+                    exceeded_bytes(limits.max_record_bytes(), compressed_bytes as u64),
+                ));
+            }
+            if compressed_bytes > limits.max_scratch_bytes() {
+                return Err(limit_error(FORMAT, TrajectoryIoOperation::ReadFrame, source_label, Some(frame_index), format!(
                         "The compressed coordinates have {compressed_bytes} bytes, more than the buffer limit of {} bytes.",
                         limits.max_scratch_bytes()
-                    ),
-                ));
+                    )));
             }
             self.reserve_decode_scratch(
                 coordinate_scalars,
@@ -282,8 +320,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             )?;
             self.scratch.resize(compressed_bytes, 0);
             read_exact(
+                FORMAT,
                 &mut self.reader,
                 &mut self.scratch,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
                 "The compressed coordinates are truncated.",
@@ -304,7 +344,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             let padded = compressed_bytes
                 .checked_add((4 - compressed_bytes % 4) % 4)
                 .ok_or_else(|| {
-                    resource_error(
+                    limit_error(
+                        FORMAT,
+                        TrajectoryIoOperation::ReadHeader,
                         source_label,
                         None,
                         "The padding exceeds this platform's address range.",
@@ -316,7 +358,9 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 .and_then(|offset| offset.checked_add(magic.nbytes_width() as u64))
                 .and_then(|offset| offset.checked_add(padded as u64))
                 .ok_or_else(|| {
-                    resource_error(
+                    limit_error(
+                        FORMAT,
+                        TrajectoryIoOperation::ReadHeader,
                         source_label,
                         None,
                         "The frame's end exceeds the 64-bit range.",
@@ -325,20 +369,31 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             (Some(precision), compressed_bytes, end)
         };
         let frame_bytes = end.checked_sub(start).ok_or_else(|| {
-            resource_error(source_label, None, "The frame ends before it starts.")
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadHeader,
+                source_label,
+                None,
+                "The frame ends before it starts.",
+            )
         })?;
         if frame_bytes > limits.max_frame_bytes() {
-            return Err(
-                resource_error(source_label, Some(frame_index), "").exceeding(
-                    "The frame",
-                    exceeded_bytes(limits.max_frame_bytes(), frame_bytes),
-                ),
-            );
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
+                source_label,
+                Some(frame_index),
+                "",
+            )
+            .exceeding(
+                "The frame",
+                exceeded_bytes(limits.max_frame_bytes(), frame_bytes),
+            ));
         }
         let file_end = self.reader.seek(SeekFrom::End(0)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 source_label,
                 error,
             )
@@ -347,12 +402,15 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::ReadHeader,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     source_label,
                     error,
                 )
             })?;
-            return Err(truncated_error(
+            return Err(stream_error(
+                FORMAT,
+                TrajectoryIoErrorKind::TruncatedRecord,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
                 "The frame ends after the end of the file.",
@@ -366,21 +424,26 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     .map_err(|error| {
                         io_context(
                             TrajectoryIoOperation::ReadHeader,
-                            Some(TrajectoryFormat::Xtc),
+                            Some(FORMAT),
                             source_label,
                             error,
                         )
                     })?;
                 let mut pad = [0_u8; 3];
                 read_exact(
+                    FORMAT,
                     &mut self.reader,
                     &mut pad[..padding],
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
                     "The padding is truncated.",
                 )?;
                 if pad[..padding].iter().any(|byte| *byte != 0) {
-                    return Err(corrupt_error(
+                    return Err(frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "The padding is not zero.",
@@ -392,7 +455,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         self.reader.seek(SeekFrom::Start(start)).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 source_label,
                 error,
             )
@@ -425,7 +488,15 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let position_bytes = positions_capacity
             .max(coordinate_scalars / 3)
             .checked_mul(std::mem::size_of::<Point3>());
-        let error = |detail: &str| resource_error(source_label, Some(frame), detail);
+        let error = |detail: &str| {
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
+                source_label,
+                Some(frame),
+                detail,
+            )
+        };
         // Include the forthcoming byte buffer before reserving scalar storage;
         // neither allocation may temporarily escape the aggregate limit.
         reserve_scratch(
@@ -456,7 +527,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         frame_index: usize,
     ) -> Result<(), TrajectoryIoError> {
         if self.decoded_start != Some(info.start) {
-            return Err(corrupt_error(
+            return Err(frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "The frame changed between its first and second reading.",
@@ -467,7 +541,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .map_err(|error| {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
-                    Some(TrajectoryFormat::Xtc),
+                    Some(FORMAT),
                     source_label,
                     error,
                 )
@@ -475,14 +549,17 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let position = self.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 source_label,
                 error,
             )
         })?;
         if position != info.end || self.decoded_positions.len() != info.atom_count.saturating_mul(3)
         {
-            return Err(corrupt_error(
+            return Err(frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "The decoded frame differs from its header.",
@@ -493,7 +570,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .iter()
             .any(|value| !value.is_finite())
         {
-            return Err(corrupt_error(
+            return Err(frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "A decoded coordinate is not finite.",
@@ -552,7 +632,13 @@ impl<R: Read + Seek> XtcReader<R> {
         let topology = topology.into();
         let source_label = &options.source_label;
         let limits = &options.limits;
-        validate_atom_count(topology.atom_count(), limits, source_label)?;
+        validate_atom_count(
+            FORMAT,
+            topology.atom_count(),
+            u32::MAX as usize,
+            limits,
+            source_label,
+        )?;
         let atom_count = topology.atom_count();
         let mut positions = Vec::new();
         reserve_scratch(
@@ -560,13 +646,21 @@ impl<R: Read + Seek> XtcReader<R> {
             atom_count,
             Some(0),
             limits.max_scratch_bytes(),
-            |detail| resource_error(source_label, None, detail),
+            |detail| {
+                limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadHeader,
+                    source_label,
+                    None,
+                    detail,
+                )
+            },
         )?;
         let mut adapter = CheckedXtcReaderAdapter::new(reader);
         let stream_start = adapter.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Open,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 source_label,
                 error,
             )
@@ -574,7 +668,7 @@ impl<R: Read + Seek> XtcReader<R> {
         let first_info = adapter
             .preflight(&topology, &options, 0, false, positions.capacity())
             .map_err(|error| frame_offset_context(error, 0, stream_start))?
-            .ok_or_else(|| header_error(source_label, "The stream is empty."))?;
+            .ok_or_else(|| header_error(FORMAT, source_label, "The stream is empty."))?;
         Ok(Self {
             adapter,
             topology,
@@ -603,7 +697,7 @@ impl<R: Read + Seek> XtcReader<R> {
         let offset = self.adapter.reader.stream_position().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 &self.options.source_label,
                 error,
             )
@@ -634,12 +728,17 @@ impl<R: Read + Seek> XtcReader<R> {
             if clean_eof {
                 return Ok(None);
             }
-            return Err(
-                resource_error(&self.options.source_label, Some(self.frame_cursor), "").exceeding(
-                    "The trajectory",
-                    LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
-                ),
-            );
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
+                &self.options.source_label,
+                Some(self.frame_cursor),
+                "",
+            )
+            .exceeding(
+                "The trajectory",
+                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+            ));
         }
         let Some(info) = self.next_info()? else {
             return Ok(None);
@@ -648,7 +747,7 @@ impl<R: Read + Seek> XtcReader<R> {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
             )
             .with_source_label(&self.options.source_label)
             .with_frame(self.frame_cursor)
@@ -662,7 +761,7 @@ impl<R: Read + Seek> XtcReader<R> {
                 .map_err(|error| {
                     io_context(
                         TrajectoryIoOperation::ReadFrame,
-                        Some(TrajectoryFormat::Xtc),
+                        Some(FORMAT),
                         &self.options.source_label,
                         error,
                     )
@@ -677,14 +776,20 @@ impl<R: Read + Seek> XtcReader<R> {
                     self.positions.capacity(),
                 )?
                 .ok_or_else(|| {
-                    truncated_error(
+                    stream_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::TruncatedRecord,
+                        TrajectoryIoOperation::ReadFrame,
                         &self.options.source_label,
                         Some(self.frame_cursor),
                         "An indexed frame is no longer in the file.",
                     )
                 })?;
             if refreshed != info {
-                return Err(corrupt_error(
+                return Err(frame_error(
+                    FORMAT,
+                    TrajectoryIoErrorKind::CorruptCompressedData,
+                    TrajectoryIoOperation::ReadFrame,
                     &self.options.source_label,
                     self.frame_cursor,
                     "The frame changed between its first and second reading.",
@@ -713,7 +818,9 @@ impl<R: Read + Seek> XtcReader<R> {
                 }),
         );
         self.frame_cursor = self.frame_cursor.checked_add(1).ok_or_else(|| {
-            resource_error(
+            limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadFrame,
                 &self.options.source_label,
                 Some(self.frame_cursor),
                 "The frame number exceeds this platform's address range.",
@@ -756,14 +863,10 @@ impl<R: Read + Seek> XtcReader<R> {
         &mut self,
         operation: TrajectoryIoOperation,
     ) -> Result<u64, TrajectoryIoError> {
-        self.adapter.reader.stream_position().map_err(|error| {
-            io_context(
-                operation,
-                Some(TrajectoryFormat::Xtc),
-                &self.options.source_label,
-                error,
-            )
-        })
+        self.adapter
+            .reader
+            .stream_position()
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
     }
 
     pub(super) fn seek_to(
@@ -771,14 +874,10 @@ impl<R: Read + Seek> XtcReader<R> {
         offset: SeekFrom,
         operation: TrajectoryIoOperation,
     ) -> Result<u64, TrajectoryIoError> {
-        self.adapter.reader.seek(offset).map_err(|error| {
-            io_context(
-                operation,
-                Some(TrajectoryFormat::Xtc),
-                &self.options.source_label,
-                error,
-            )
-        })
+        self.adapter
+            .reader
+            .seek(offset)
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
     }
 }
 
@@ -802,7 +901,7 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
                 self.adapter.reader.stream_position().map_err(|error| {
                     io_context(
                         TrajectoryIoOperation::ReadFrame,
-                        Some(TrajectoryFormat::Xtc),
+                        Some(FORMAT),
                         &self.options.source_label,
                         error,
                     )
@@ -837,7 +936,10 @@ impl<'a> CheckedByteBuffer<'a> {
         frame_index: usize,
     ) -> Result<u8, TrajectoryIoError> {
         let value = self.bytes.get(self.index).copied().ok_or_else(|| {
-            corrupt_error(
+            frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "The compressed coordinates end before the last atom.",
@@ -880,7 +982,10 @@ pub(super) fn decode_compressed_payload(
     let mut axis_bits = [0_u32; 3];
     for axis in 0..3 {
         let span = maximum[axis].checked_sub(minimum[axis]).ok_or_else(|| {
-            corrupt_error(
+            frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "The compressed coordinates span more than the decoder supports.",
@@ -890,7 +995,10 @@ pub(super) fn decode_compressed_payload(
             .ok()
             .and_then(|span| span.checked_add(1))
             .ok_or_else(|| {
-                corrupt_error(
+                frame_error(
+                    FORMAT,
+                    TrajectoryIoErrorKind::CorruptCompressedData,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
                     "The compressed coordinates' size exceeds this platform's address range.",
@@ -901,7 +1009,10 @@ pub(super) fn decode_compressed_payload(
         for (target, size) in axis_bits.iter_mut().zip(sizes) {
             *target = 32 - size.leading_zeros();
             if *target == 32 {
-                return Err(corrupt_error(
+                return Err(frame_error(
+                    FORMAT,
+                    TrajectoryIoErrorKind::CorruptCompressedData,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
                     "A compressed axis needs 32-bit values. The decoder does not support them.",
@@ -935,7 +1046,10 @@ pub(super) fn decode_compressed_payload(
                     frame_index,
                 )?;
                 if value >= sizes[axis] || value > i32::MAX as u32 {
-                    return Err(corrupt_error(
+                    return Err(frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "A compressed coordinate is outside the declared bounds.",
@@ -959,7 +1073,10 @@ pub(super) fn decode_compressed_payload(
                 .checked_add(coordinate[axis])
                 .filter(|value| *value <= maximum[axis])
                 .ok_or_else(|| {
-                    corrupt_error(
+                    frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "A compressed coordinate exceeds the declared bounds.",
@@ -989,14 +1106,20 @@ pub(super) fn decode_compressed_payload(
                 .ok()
                 .and_then(|count| count.checked_add(1))
                 .ok_or_else(|| {
-                    corrupt_error(
+                    frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "A compressed run's atom count exceeds this platform's address range.",
                     )
                 })?;
             if emitted_atoms > atom_count - read_atoms {
-                return Err(corrupt_error(
+                return Err(frame_error(
+                    FORMAT,
+                    TrajectoryIoErrorKind::CorruptCompressedData,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
                     "A compressed run extends past the declared atom count.",
@@ -1020,7 +1143,10 @@ pub(super) fn decode_compressed_payload(
                         .and_then(|base| base.checked_add(delta[axis]))
                         .filter(|value| *value >= minimum[axis] && *value <= maximum[axis])
                         .ok_or_else(|| {
-                            corrupt_error(
+                            frame_error(
+                                FORMAT,
+                                TrajectoryIoErrorKind::CorruptCompressedData,
+                                TrajectoryIoOperation::ReadFrame,
                                 source_label,
                                 frame_index,
                                 "A compressed run's coordinate exceeds the declared bounds.",
@@ -1054,7 +1180,10 @@ pub(super) fn decode_compressed_payload(
         match smaller_change.cmp(&0) {
             std::cmp::Ordering::Less => {
                 if small_index <= XTC_FIRST_SMALL_INDEX {
-                    return Err(corrupt_error(
+                    return Err(frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "The compressed coordinates' small index drops below the table.",
@@ -1070,7 +1199,10 @@ pub(super) fn decode_compressed_payload(
             }
             std::cmp::Ordering::Greater => {
                 if small_index + 1 >= XTC_MAGIC_INTS.len() {
-                    return Err(corrupt_error(
+                    return Err(frame_error(
+                        FORMAT,
+                        TrajectoryIoErrorKind::CorruptCompressedData,
+                        TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
                         "The compressed coordinates' small index rises above the table.",
@@ -1085,7 +1217,10 @@ pub(super) fn decode_compressed_payload(
     }
     validate_decoded_count(output, atom_count, source_label, frame_index)?;
     if buffer.index != payload.len() {
-        return Err(corrupt_error(
+        return Err(frame_error(
+            FORMAT,
+            TrajectoryIoErrorKind::CorruptCompressedData,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
             "The compressed coordinates have unused trailing bytes.",
@@ -1097,7 +1232,10 @@ pub(super) fn decode_compressed_payload(
         (1_u16 << state.last_bits) - 1
     };
     if u16::from(state.last_byte) & trailing_mask != 0 {
-        return Err(corrupt_error(
+        return Err(frame_error(
+            FORMAT,
+            TrajectoryIoErrorKind::CorruptCompressedData,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
             "The compressed coordinates have nonzero trailing bits.",
@@ -1114,7 +1252,10 @@ pub(super) fn decode_checked_bits(
     frame_index: usize,
 ) -> Result<u32, TrajectoryIoError> {
     if count > 32 {
-        return Err(corrupt_error(
+        return Err(frame_error(
+            FORMAT,
+            TrajectoryIoErrorKind::CorruptCompressedData,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
             "A compressed value needs more than 32 bits.",
@@ -1158,7 +1299,10 @@ pub(super) fn push_checked_coordinate(
     for value in coordinate {
         let value = value as f32 * inverse_precision;
         if !value.is_finite() {
-            return Err(corrupt_error(
+            return Err(frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "A decoded coordinate is not finite.",
@@ -1176,7 +1320,10 @@ pub(super) fn validate_decoded_count(
     frame_index: usize,
 ) -> Result<(), TrajectoryIoError> {
     if output.len() != atom_count.saturating_mul(3) {
-        return Err(corrupt_error(
+        return Err(frame_error(
+            FORMAT,
+            TrajectoryIoErrorKind::CorruptCompressedData,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
             "The compressed coordinates decode to fewer or more atoms than declared.",
@@ -1233,7 +1380,10 @@ pub(super) fn decode_checked_triplet(
             remainder = (remainder << 8) | u64::from(encoded[index]);
             let quotient = remainder / u64::from(sizes[axis]);
             if quotient > u64::from(u8::MAX) {
-                return Err(corrupt_error(
+                return Err(frame_error(
+                    FORMAT,
+                    TrajectoryIoErrorKind::CorruptCompressedData,
+                    TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
                     "A compressed coordinate triple exceeds its bounds.",
@@ -1245,7 +1395,10 @@ pub(super) fn decode_checked_triplet(
         decoded[axis] = remainder as u32;
     }
     if bytes > 4 && encoded[4..bytes].iter().any(|byte| *byte != 0) {
-        return Err(corrupt_error(
+        return Err(frame_error(
+            FORMAT,
+            TrajectoryIoErrorKind::CorruptCompressedData,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
             "A compressed x coordinate exceeds its bounds.",
@@ -1257,7 +1410,10 @@ pub(super) fn decode_checked_triplet(
     decoded[0] = u32::from_le_bytes(x);
     for axis in 0..3 {
         if decoded[axis] >= sizes[axis] || decoded[axis] > i32::MAX as u32 {
-            return Err(corrupt_error(
+            return Err(frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::CorruptCompressedData,
+                TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
                 "A compressed coordinate is outside its bounds.",
@@ -1275,6 +1431,9 @@ pub(super) fn decode_cell(
 ) -> Result<Option<PeriodicCell>, TrajectoryIoError> {
     if values.iter().any(|value| !value.is_finite()) {
         return Err(frame_error(
+            FORMAT,
+            TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
             "The box holds a value that is not finite.",
@@ -1286,7 +1445,7 @@ pub(super) fn decode_cell(
             XtcCellPolicy::RequirePeriodic => Err(codec_context(
                 TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::ReadFrame,
-                Some(TrajectoryFormat::Xtc),
+                Some(FORMAT),
                 source_label,
                 "The box is a zero matrix.",
             )),
@@ -1300,7 +1459,15 @@ pub(super) fn decode_cell(
     PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3])
         .map(Some)
         .map_err(|error| {
-            frame_error(source_label, frame, "The periodic cell is invalid.").with_source(error)
+            frame_error(
+                FORMAT,
+                TrajectoryIoErrorKind::InvalidFrame,
+                TrajectoryIoOperation::ReadFrame,
+                source_label,
+                frame,
+                "The periodic cell is invalid.",
+            )
+            .with_source(error)
         })
 }
 
@@ -1312,8 +1479,10 @@ pub(super) fn read_nbytes<R: Read>(
 ) -> Result<usize, TrajectoryIoError> {
     let mut bytes = [0_u8; 8];
     read_exact(
+        FORMAT,
         reader,
         &mut bytes[..magic.nbytes_width()],
+        TrajectoryIoOperation::ReadFrame,
         source_label,
         Some(frame),
         "The compressed-byte count is truncated.",
@@ -1323,36 +1492,13 @@ pub(super) fn read_nbytes<R: Read>(
         XtcMagic::Xtc2023 => u64::from_be_bytes(bytes),
     };
     usize::try_from(value).map_err(|_| {
-        resource_error(
+        limit_error(
+            FORMAT,
+            TrajectoryIoOperation::ReadFrame,
             source_label,
             Some(frame),
             "The compressed-byte count exceeds this platform's address range.",
         )
-    })
-}
-
-pub(super) fn read_exact<R: Read>(
-    reader: &mut R,
-    bytes: &mut [u8],
-    source_label: &str,
-    frame: Option<usize>,
-    detail: &str,
-) -> Result<(), TrajectoryIoError> {
-    reader.read_exact(bytes).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::UnexpectedEof {
-            truncated_error(source_label, frame, detail)
-        } else {
-            io_context(
-                if frame.is_some() {
-                    TrajectoryIoOperation::ReadFrame
-                } else {
-                    TrajectoryIoOperation::ReadHeader
-                },
-                Some(TrajectoryFormat::Xtc),
-                source_label,
-                error,
-            )
-        }
     })
 }
 
