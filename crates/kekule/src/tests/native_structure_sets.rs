@@ -274,7 +274,7 @@ fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
         NativeWriteOptions::default(),
     )
     .unwrap();
-    assert_eq!(bytes[8..12], 6u32.to_le_bytes(), "format version 6");
+    assert_eq!(bytes[8..12], 7u32.to_le_bytes(), "format version 7");
     assert_eq!(bytes[12], 10);
     let plain = native::write(&set, NativeWriteOptions::default()).unwrap();
     assert_eq!(plain[12], 9);

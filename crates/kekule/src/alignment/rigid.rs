@@ -259,7 +259,7 @@ pub(crate) struct Coordinates<'a> {
 impl<'a> From<StructureView<'a>> for Coordinates<'a> {
     fn from(view: StructureView<'a>) -> Self {
         Self {
-            points: *view.positions().values().value(),
+            points: *view.payload().positions().values().value(),
             periodic: view.cell().is_some(),
         }
     }
@@ -1849,8 +1849,8 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        moving.set_cell(Some(cell));
-        reference.set_cell(Some(cell));
+        moving.geometry_mut().set_cell(Some(cell));
+        reference.geometry_mut().set_cell(Some(cell));
         let selection = all(&topology);
         let moving_before = moving.positions().values().value().to_vec();
 

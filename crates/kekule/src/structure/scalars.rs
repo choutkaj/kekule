@@ -4,7 +4,7 @@ use crate::structure::DenseArrayError;
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, SQUARE_NANOMETER};
 
-use super::state::atom_row;
+use super::geometry_validation::atom_row;
 use super::GeometryError;
 
 /// One optional per-atom scalar column in dense atom order, such as the

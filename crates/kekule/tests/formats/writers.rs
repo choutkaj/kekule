@@ -691,6 +691,17 @@ impl StatefulFrames {
     }
 }
 
+/// The structure `view` borrows, without the velocities and forces that
+/// `to_structure` keeps: what a writer gives once a geometry's state is
+/// omitted.
+fn bare_structure(view: StructureView<'_>) -> Structure {
+    let mut structure = view.to_structure();
+    let mut geometry = structure.geometry_mut();
+    geometry.take_velocities();
+    geometry.take_forces();
+    structure
+}
+
 /// Writes one structure view as a Molfile, an SDF record and an mmCIF
 /// block, each with geometry state set to `policy`.
 fn write_structure(
@@ -731,10 +742,17 @@ fn structure_writers_fail_on_geometry_and_frame_state_unless_told_to_omit_it() {
     ];
     let formats = [Format::Molfile, Format::Sdf, Format::Mmcif];
     for (row, (view, expected)) in rows.into_iter().enumerate() {
-        let structure = view.to_structure();
-        let plain = write_structure(structure.as_structure_view(), UnrepresentablePolicy::Fail);
+        let bare = bare_structure(view);
+        let plain = write_structure(bare.as_structure_view(), UnrepresentablePolicy::Fail);
         let failed = write_structure(view, UnrepresentablePolicy::Fail);
         let omitted = write_structure(view, UnrepresentablePolicy::Omit);
+        // A standalone structure keeps the frame's velocities and forces,
+        // and the writers hold them to the same policy.
+        let structure = view.to_structure();
+        let standalone_failed =
+            write_structure(structure.as_structure_view(), UnrepresentablePolicy::Fail);
+        let standalone_omitted =
+            write_structure(structure.as_structure_view(), UnrepresentablePolicy::Omit);
         for (writer, field) in expected.into_iter().enumerate() {
             let format = formats[writer];
             match field {
@@ -752,6 +770,28 @@ fn structure_writers_fail_on_geometry_and_frame_state_unless_told_to_omit_it() {
                     // Omitting the state writes exactly the bare structure.
                     assert_eq!(
                         omitted[writer].as_ref().unwrap(),
+                        plain[writer].as_ref().unwrap(),
+                        "row {row}, {format}"
+                    );
+                    if matches!(field, VelocityField | ForceField) {
+                        let error = standalone_failed[writer].as_ref().unwrap_err();
+                        assert_eq!(
+                            (error.kind(), error.detail()),
+                            (
+                                DiagnosticKind::Unsupported,
+                                Some(&FormatErrorDetail::UnrepresentableState(field)),
+                            ),
+                            "row {row}, {format}"
+                        );
+                    } else {
+                        assert_eq!(
+                            standalone_failed[writer].as_ref().unwrap(),
+                            plain[writer].as_ref().unwrap(),
+                            "row {row}, {format}"
+                        );
+                    }
+                    assert_eq!(
+                        standalone_omitted[writer].as_ref().unwrap(),
                         plain[writer].as_ref().unwrap(),
                         "row {row}, {format}"
                     );
@@ -965,7 +1005,7 @@ fn single_structure_writers_fail_on_a_geometry_place_unless_told_to_omit_it() {
 /// One methane carbon in a 2 x 3 x 4 nm box periodic along `periodic`.
 fn boxed_structure(periodic: [bool; 3]) -> Structure {
     let mut structure = structure("C", &[[1.0, 2.0, 3.0]]);
-    structure.set_cell(Some(
+    structure.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(2.0, 3.0, 4.0), NANOMETER),
             periodic,
@@ -979,7 +1019,7 @@ fn boxed_structure(periodic: [bool; 3]) -> Structure {
 fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let boxed = boxed_structure([true; 3]);
     let mut open = boxed.clone();
-    open.set_cell(None);
+    open.geometry_mut().set_cell(None);
     let message = "A Molfile cannot hold a periodic cell.";
     for version in [
         MolfileWriteVersion::Auto,
@@ -1501,6 +1541,7 @@ fn mmcif_export_writes_dense_order_with_reused_atoms_and_unassigned_instances() 
             .atom_index(structure.topology().atom_ids()[index])
             .unwrap();
         structure
+            .geometry_mut()
             .set_occupancy(row, Some((index + 1) as f64 / 10.0))
             .unwrap();
     }
@@ -2135,7 +2176,7 @@ fn geometry_and_frame_views_write_their_state_or_fail_on_it() {
     let formats = ["Molfile", "SDF", "mmCIF", "PDB"];
     for (index, (view, field, sdf_fields)) in cases.into_iter().enumerate() {
         // What each writer gives for the bare structure, without state.
-        let structure = view.to_structure();
+        let structure = bare_structure(view);
         let bare = view_outcomes(structure.as_structure_view(), UnrepresentablePolicy::Fail).map(
             |outcome| {
                 let (text, omissions) = outcome.unwrap();
@@ -2426,7 +2467,7 @@ fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
     // The positions are the geometries' positions.
     let structures = set
         .iter()
-        .map(|geometry| geometry.to_structure())
+        .map(|geometry| bare_structure(geometry.as_structure_view()))
         .collect::<Vec<_>>();
     let bare = StructureSet::from_structures(structures).unwrap();
     assert_eq!(text, pdb::write(&bare, pdb_options).unwrap().0);
@@ -2767,14 +2808,17 @@ fn structures_with_unwritable_state() -> Vec<(Structure, GeometryField, WriteOmi
     };
     let mut occupied = base.clone();
     occupied
+        .geometry_mut()
         .set_occupancies(Some(vec![Some(0.5), None]))
         .unwrap();
     let mut b_factors = base.clone();
     b_factors
+        .geometry_mut()
         .set_b_factors(Some(Quantity::new(vec![None, Some(0.2)], SQUARE_NANOMETER)))
         .unwrap();
     let mut atoms = base.clone();
     atoms
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(
@@ -2785,6 +2829,7 @@ fn structures_with_unwritable_state() -> Vec<(Structure, GeometryField, WriteOmi
         .unwrap();
     let mut bonds = base.clone();
     bonds
+        .geometry_mut()
         .properties_mut()
         .bonds_mut()
         .set_value(
@@ -2795,6 +2840,7 @@ fn structures_with_unwritable_state() -> Vec<(Structure, GeometryField, WriteOmi
         .unwrap();
     let mut owner = base.clone();
     owner
+        .geometry_mut()
         .properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(3))
@@ -2962,6 +3008,7 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     let plain = structure("C", &[[0.0; 3]]);
     let mut noted = plain.clone();
     noted
+        .geometry_mut()
         .properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(1))

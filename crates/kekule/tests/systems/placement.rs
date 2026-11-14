@@ -670,7 +670,7 @@ fn large_structure(single: &Structure) -> Structure {
             Quantity::new(Vector3::new(offset, 0.0, 0.0), NANOMETER),
         )
         .unwrap();
-        copy.apply_rigid_transform(&shift).unwrap();
+        copy.geometry_mut().apply_rigid_transform(&shift).unwrap();
         large.append_structure(&copy).unwrap();
         offset += 10.0;
     }

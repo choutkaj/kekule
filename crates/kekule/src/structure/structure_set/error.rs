@@ -103,6 +103,10 @@ pub enum StructureSetError {
         /// The index of the geometry the value belongs to.
         geometry: usize,
     },
+    /// The time of a frame, which places it on a time order, is not finite
+    /// ([`FrameView::new`](crate::traj::FrameView::new),
+    /// [`FrameBuffer::set_time`](crate::traj::FrameBuffer::set_time)).
+    NonFiniteTime,
     /// A place is of another kind than the set's order, or a place was
     /// given to an unordered set, or none to an ordered one.
     PlaceMismatch {
@@ -186,6 +190,8 @@ pub enum StructureSetError {
         /// Its state.
         state: usize,
     },
+    /// A state energy is not finite ([`State::set_energy`](crate::structure::State::set_energy)).
+    NonFiniteEnergy,
     /// A temperature is not finite and positive.
     InvalidTemperature,
     /// A Boltzmann population is too small for a finite log weight: the
@@ -257,6 +263,7 @@ impl fmt::Display for StructureSetError {
                     "The order value of geometry {geometry} is not finite."
                 )
             }
+            Self::NonFiniteTime => formatter.write_str("The time is not finite."),
             Self::PlaceMismatch { geometry } => write!(
                 formatter,
                 "The place of geometry {geometry} is not on the order of the structure set."
@@ -318,6 +325,7 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "Geometry {geometry} represents state {state}. Remove the state's other samples first."
             ),
+            Self::NonFiniteEnergy => formatter.write_str("The state energy is not finite."),
             Self::InvalidTemperature => {
                 formatter.write_str("The temperature is not finite and positive.")
             }

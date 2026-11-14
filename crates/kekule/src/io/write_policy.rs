@@ -419,16 +419,11 @@ fn structure_omission(field: GeometryField, structures: usize) -> WriteOmission 
 /// own properties and those of its set.
 fn lost_geometry_state(view: StructureView<'_>, policies: StatePolicies) -> Vec<GeometryField> {
     let mut fields = Vec::new();
-    let context = match view.kind() {
-        StructureKind::InSet(context) => Some(context),
-        StructureKind::Standalone => None,
-    };
-    if let Some(context) = context {
-        if !policies.writes_place {
-            fields.extend(place_field(context));
-        }
-        fields.extend(frame_fields(context));
+    let context = set_context(view);
+    if !policies.writes_place {
+        fields.extend(context.and_then(place_field));
     }
+    fields.extend(frame_fields(view));
     if !policies.writes_sites {
         fields.extend(site_fields(view));
     }
@@ -472,6 +467,15 @@ fn property_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryFiel
     .filter_map(|(present, field)| present.then_some(field))
 }
 
+/// What the set of the geometry `view` borrows records about it, if `view`
+/// borrows one.
+const fn set_context(view: StructureView<'_>) -> Option<SetContext<'_>> {
+    match view.kind() {
+        StructureKind::InSet(context) => Some(context),
+        StructureKind::Standalone => None,
+    }
+}
+
 /// The field a geometry's step or coordinate place is written as, if it has
 /// one.
 fn place_field(context: SetContext<'_>) -> Option<GeometryField> {
@@ -482,18 +486,18 @@ fn place_field(context: SetContext<'_>) -> Option<GeometryField> {
     }
 }
 
-/// A geometry's time, MD step, velocities, and forces that are present, in
-/// that order.
-fn frame_fields(context: SetContext<'_>) -> impl Iterator<Item = GeometryField> {
-    let (time, step) = match context.place() {
+/// The time, MD step, velocities, and forces of the geometry or structure
+/// `view` that are present, in that order.
+fn frame_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> {
+    let (time, step) = match set_context(view).and_then(SetContext::place) {
         Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
         _ => (false, false),
     };
     [
         (time, GeometryField::Time),
         (step, GeometryField::Step),
-        (context.velocities().is_some(), GeometryField::Velocities),
-        (context.forces().is_some(), GeometryField::Forces),
+        (view.velocities().is_some(), GeometryField::Velocities),
+        (view.forces().is_some(), GeometryField::Forces),
     ]
     .into_iter()
     .filter_map(|(present, field)| present.then_some(field))
@@ -575,12 +579,12 @@ pub(crate) fn record_multi_model_structure_set(
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
 ) -> Result<(), (usize, GeometryField)> {
-    let contexts = set.iter().map(|view| SetContext::of_view(view.as_dyn()));
+    let views = set.iter().map(|geometry| geometry.as_structure_view());
     // The state of one geometry that is lost, in checking order.
-    let lost = |context: SetContext<'_>| {
+    let lost = |view: StructureView<'_>| {
         let mut fields = Vec::new();
-        fields.extend(place_field(context));
-        fields.extend(frame_fields(context));
+        fields.extend(set_context(view).and_then(place_field));
+        fields.extend(frame_fields(view));
         fields
     };
     let bare_order = matches!(
@@ -588,8 +592,8 @@ pub(crate) fn record_multi_model_structure_set(
         Some(Order::Time(axis)) if axis.times().is_none() && axis.steps().is_none()
     );
     if policy == UnrepresentablePolicy::Fail {
-        for (index, context) in contexts.enumerate() {
-            if let Some(&field) = lost(context).first() {
+        for (index, view) in views.enumerate() {
+            if let Some(&field) = lost(view).first() {
                 return Err((index + 1, field));
             }
         }
@@ -599,9 +603,9 @@ pub(crate) fn record_multi_model_structure_set(
         return Ok(());
     }
     let count = |field: GeometryField| {
-        contexts
+        views
             .clone()
-            .filter(|context| lost(*context).contains(&field))
+            .filter(|view| lost(*view).contains(&field))
             .count()
     };
     for (field, geometries) in [

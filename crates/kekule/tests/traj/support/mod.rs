@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::{
-    Geometry, GeometryError, GeometryView, Order, Place, Positions, StructureSet, TimeAxis,
+    Geometry, GeometryView, Order, Place, Positions, StructureSet, StructureSetError, TimeAxis,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::DcdEndian;
@@ -77,17 +77,22 @@ impl Frame {
 
     /// Sets the time in the canonical time unit, as frames hold it; a time
     /// that is not a finite time fails, as for a frame buffer.
-    pub(crate) fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), GeometryError> {
-        self.time = time
-            .map(|time| {
-                let time = time.into_unit(CANONICAL_TIME_UNIT)?;
-                if time.value().is_finite() {
-                    Ok(time)
-                } else {
-                    Err(GeometryError::NonFiniteTime)
+    pub(crate) fn set_time(
+        &mut self,
+        time: Option<Quantity<f64>>,
+    ) -> Result<(), Box<StructureSetError>> {
+        self.time = match time {
+            None => None,
+            Some(time) => {
+                let time = time
+                    .into_unit(CANONICAL_TIME_UNIT)
+                    .map_err(|error| Box::new(StructureSetError::from(error)))?;
+                if !time.value().is_finite() {
+                    return Err(Box::new(StructureSetError::NonFiniteTime));
                 }
-            })
-            .transpose()?;
+                Some(time)
+            }
+        };
         Ok(())
     }
 

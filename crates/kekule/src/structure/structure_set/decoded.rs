@@ -1,14 +1,12 @@
 //! A codec's decoded frame state as a [`Geometry`].
 
-use std::sync::Arc;
-
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, OwnerProperties};
 use crate::structure::{DenseArrayError, Forces, GeometryError, Positions, Velocities};
 use crate::topology::Topology;
 use crate::units::Quantity;
 
-use super::{Geometry, GeometryState};
+use crate::structure::{Geometry, GeometryData};
 
 /// The state of a frame a codec decoded, in the units it decoded them in:
 /// positions, cell, velocities, forces, and frame properties.
@@ -59,9 +57,9 @@ impl Geometry {
         if let Some(owner) = frame.owner {
             *properties.owner_mut() = owner;
         }
-        let mut state = GeometryState::from_frame_state(positions, frame.cell, properties);
-        state.velocities = velocities;
-        state.forces = forces;
-        Ok(Self::from_state(Arc::new(state)))
+        let mut data = GeometryData::from_frame_state(positions, frame.cell, properties);
+        data.velocities = velocities;
+        data.forces = forces;
+        Ok(Self::from_data(data))
     }
 }

@@ -3,8 +3,10 @@ mod append;
 mod placement;
 pub use append::{StructureAppend, StructureAppendReport};
 
-use super::draft_geometry::DraftGeometry;
-use super::{DenseArrayError, GeometryError, Positions, Structure, StructureError};
+use super::scalars::{b_factor_quantity, canonical_b_factor};
+use super::{
+    DenseArrayError, Geometry, GeometryData, GeometryError, Positions, Structure, StructureError,
+};
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{OwnerProperties, PropertyError};
@@ -30,7 +32,9 @@ use std::fmt;
 /// coordination: static annotations and class assignments. Structure
 /// annotations are addressed by editing handle through [`Self::properties_mut`].
 /// Generic coordinate changes preserve stored annotations without asserting
-/// that arbitrary derived values remain valid.
+/// that arbitrary derived values remain valid. Velocities and forces follow
+/// surviving atoms; an edit that adds atoms clears them, since they cover the
+/// earlier atoms only.
 ///
 /// ```
 /// use kekule::{molecule::{Atom, Element, BondOrder}, math::Point3,
@@ -50,7 +54,7 @@ use std::fmt;
 pub struct StructureEditor {
     topology: TopologyEditor,
     /// Geometry state in private editor slot order.
-    slots: DraftGeometry,
+    slots: GeometryData,
 }
 
 impl Structure {
@@ -60,12 +64,13 @@ impl Structure {
     }
     /// Moves the geometry state into a draft while retaining the shared
     /// topology. Source slots are source dense indices. The draft shares the
-    /// source's positions, occupancies, and B factors until one is written.
+    /// source's positions, occupancies, B factors, velocities, and forces
+    /// until one is written.
     pub fn into_editor(self) -> StructureEditor {
-        let (topology, slots) = self.into_state();
+        let (topology, geometry) = self.into_parts();
         StructureEditor {
             topology: TopologyEditor::from_topology(topology),
-            slots,
+            slots: geometry.into_data(),
         }
     }
 }
@@ -78,7 +83,7 @@ impl StructureEditor {
     /// Clears structure, geometry, hierarchy, cell and annotations in the draft.
     pub fn clear(&mut self) {
         self.topology.clear();
-        self.slots = DraftGeometry::default();
+        self.slots = GeometryData::default();
     }
     /// The coordinate-free structural draft.
     pub fn topology(&self) -> &TopologyEditor {
@@ -131,7 +136,8 @@ impl StructureEditor {
         let id = self.structural(|topology| topology.add_atom(atom))?;
         let slot = self.topology.atom_slot(id)?;
         self.slots
-            .set_position(atom_row(slot), Quantity::new(point, CANONICAL_LENGTH_UNIT))?;
+            .positions
+            .set(slot, Quantity::new(point, CANONICAL_LENGTH_UNIT))?;
         Ok(id)
     }
     /// Adds a complete molecule occurrence with positions in the molecule's atom
@@ -157,12 +163,10 @@ impl StructureEditor {
         self.slots.try_reserve_atoms(positions.len())?;
         let first = self.topology.atom_slot_count();
         let added = self.structural(|topology| topology.add_molecule(molecule))?;
-        for (offset, point) in positions.values().value().iter().enumerate() {
-            self.slots.set_position(
-                atom_row(first + offset),
-                Quantity::new(*point, CANONICAL_LENGTH_UNIT),
-            )?;
-        }
+        let staged = (first..)
+            .zip(positions.values().value().iter().copied())
+            .collect::<Vec<_>>();
+        self.slots.positions.set_canonical_batch(&staged)?;
         Ok(added)
     }
     /// Replaces the chemistry of one atom, keeping its position and annotations,
@@ -320,7 +324,7 @@ impl StructureEditor {
         position: Quantity<Point3>,
     ) -> Result<(), StructureEditError> {
         let slot = self.topology.atom_slot(id)?;
-        Ok(self.slots.set_position(atom_row(slot), position)?)
+        Ok(self.slots.positions.set(slot, position)?)
     }
     /// Replaces all live positions transactionally in [`TopologyEditor::atom_ids`] order.
     pub fn set_positions<T: AsRef<[Point3]>>(
@@ -370,7 +374,8 @@ impl StructureEditor {
     /// no live atom.
     pub fn occupancy(&self, id: EditAtomId) -> Option<f64> {
         self.slots
-            .occupancy(atom_row(self.topology.atom_slot(id).ok()?))
+            .occupancies
+            .get(atom_row(self.topology.atom_slot(id).ok()?))
     }
     /// Sets or, with `None`, clears the draft occupancy of one atom.
     ///
@@ -384,13 +389,17 @@ impl StructureEditor {
         value: Option<f64>,
     ) -> Result<(), StructureEditError> {
         let slot = self.topology.atom_slot(id)?;
-        Ok(self.slots.set_occupancy(atom_row(slot), value)?)
+        let len = self.slots.positions.len();
+        Ok(self.slots.occupancies.set(atom_row(slot), len, value)?)
     }
     /// The draft B-factor of one atom; `None` when it is unset or `id` names
     /// no live atom.
     pub fn b_factor(&self, id: EditAtomId) -> Option<Quantity<f64>> {
-        self.slots
-            .b_factor(atom_row(self.topology.atom_slot(id).ok()?))
+        b_factor_quantity(
+            self.slots
+                .b_factors
+                .get(atom_row(self.topology.atom_slot(id).ok()?)),
+        )
     }
     /// Sets or, with `None`, clears the draft isotropic B-factor of one atom,
     /// accepting any area unit.
@@ -406,7 +415,9 @@ impl StructureEditor {
         value: Option<Quantity<f64>>,
     ) -> Result<(), StructureEditError> {
         let slot = self.topology.atom_slot(id)?;
-        Ok(self.slots.set_b_factor(atom_row(slot), value)?)
+        let value = canonical_b_factor(value)?;
+        let len = self.slots.positions.len();
+        Ok(self.slots.b_factors.set(atom_row(slot), len, value)?)
     }
 
     /// Adds a hierarchy chain with a label and optional author identifier; see
@@ -550,12 +561,12 @@ impl StructureEditor {
         self,
     ) -> Result<(Structure, crate::topology::edit::EditCorrespondence), StructureEditError> {
         let (published, correspondence) = self.topology.into_mapped_publication()?;
-        let mut state = self
+        let mut data = self
             .slots
             .project(&published.atom_slots, &published.bond_slots)?;
-        *state.properties.owner_mut() = self.slots.properties.owner().clone();
+        *data.properties.owner_mut() = self.slots.properties.owner().clone();
         Ok((
-            Structure::from_state(published.topology, state)?,
+            Structure::from_parts(published.topology, Geometry::from_data(data))?,
             correspondence,
         ))
     }

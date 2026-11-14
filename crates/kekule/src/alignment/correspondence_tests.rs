@@ -315,7 +315,7 @@ fn correspondence_retains_alignment_geometry_and_periodic_rejections() {
         ),
         Err(AlignmentError::InsufficientSelectedAtoms { selected: 0, .. })
     ));
-    moving.set_cell(Some(
+    moving.geometry_mut().set_cell(Some(
         crate::math::PeriodicCell::new(
             Quantity::new(
                 [

@@ -141,11 +141,13 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let ethane = Arc::new(Topology::from_molecule(molecule("C=C")).unwrap());
     let mut source = Structure::new(Arc::clone(&ethane), Positions::zeros(2)).unwrap();
     source
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(1), Some(2)]))
         .unwrap();
     source
+        .geometry_mut()
         .properties_mut()
         .bonds_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(3)]))
@@ -155,7 +157,7 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let mut structure = Structure::new(Arc::clone(&methane), Positions::zeros(1)).unwrap();
     let original = structure.properties().clone();
     assert_eq!(
-        structure.set_properties(bound.clone()),
+        structure.geometry_mut().set_properties(bound.clone()),
         Err(GeometryError::Array(
             kekule::structure::DenseArrayError::CountMismatch {
                 expected: 1,

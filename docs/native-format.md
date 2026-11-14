@@ -20,8 +20,8 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   insertion codes, component IDs, atom-site metadata, and child order), and
   classifications together with whether each was assigned explicitly. It also
   preserves properties at every scope with their units, molecular adjacency
-  order, positions, cells, occupancies, B factors, and a structure set's geometries
-  with their velocities and forces, its order (times and steps, steps, or
+  order, every geometry of a structure or structure set with its positions,
+  cell, occupancies, B factors, velocities, and forces, a set's order (times and steps, steps, or
   coordinates with their unit), and its owner properties, and an ensemble's
   distribution (samples, log weights, each sample's state, each state's
   representative, energy, and owner properties, and the temperature). Interpretation reports
@@ -56,7 +56,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **6**. A reader accepts only
+The header carries one format version, currently **7**. A reader accepts only
 the versions it implements and rejects any other with
 `FormatErrorDetail::NativeVersion { found, supported }` of kind
 `DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
@@ -64,9 +64,11 @@ incompatibly, but every incompatible change increments the version. Unknown
 header flags are rejected the same way, so a newer optional section is never
 silently ignored.
 
-The current version is 6 and reads no earlier version. Version 6 keeps the
-distribution in the ensemble record, kind 11, apart from the structure set
-record, and stores natural logarithms of weights.
+The current version is 7 and reads no earlier version. Version 7 stores a
+structure's geometry exactly as a structure set stores each of its
+geometries, velocities and forces included. Version 6 kept the distribution in
+the ensemble record, kind 11, apart from the structure set record, and stored
+natural logarithms of weights.
 
 ## Layout
 
@@ -249,7 +251,7 @@ reclassification.
 ### Structures
 
 ```text
-structure      := topology geometry_state
+structure      := topology geometry
 structure_set  := set_head geometries
 ensemble       := set_head distribution geometries
 set_head       := topology owner geometry_count:count order
@@ -284,7 +286,9 @@ kJ/mol, temperatures in K, and time in ps. Cell vectors are the columns a, b, c;
 the topology's atom count; geometry property tables have one row per
 topology atom and bond.
 
-A structure set stores its geometries in set order, after what describes them. A
+A structure is a topology and one geometry; a structure set stores its
+geometries in set order, after what describes them, each laid out as a
+structure's geometry is. A
 time order stores times, steps, or both, each for every geometry; a step order
 a step per geometry; a coordinate order a coordinate per geometry in its unit,
 stored as property units are. Times and coordinates are finite.

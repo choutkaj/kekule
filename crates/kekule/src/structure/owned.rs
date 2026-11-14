@@ -1,10 +1,10 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::math::{PeriodicCell, Point3, RigidTransform};
+use crate::math::{PeriodicCell, Point3};
 use crate::molecule::Molecule;
 use crate::parallel::Run;
-use crate::properties::{GeometryProperties, TopologyPropertiesMut};
+use crate::properties::TopologyPropertiesMut;
 use crate::topology::TopologySubsetError;
 use crate::topology::{
     AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex, TopologyPerceptionError,
@@ -12,117 +12,124 @@ use crate::topology::{
 use crate::units::Quantity;
 
 use super::builder::{StructureBuildError, StructureBuilder};
-use super::draft_geometry::DraftGeometry;
-use super::scalars::AtomScalars;
-use super::state::{
-    geometry_mutators, geometry_readers, site_mutators, site_readers, subset_rows, transform_cell,
-    transform_positions, validate_binding,
-};
+use super::geometry_validation::is_bound;
 use super::view::{StructureAtomView, StructureKind, StructureView};
-use super::{DenseArrayError, GeometryError, Positions};
+use super::{subset_rows, DenseArrayError, Geometry, GeometryError, GeometryMut, Positions};
 
 /// One concrete structure of one topology.
 ///
-/// A structure owns a shared [`Topology`] and one geometry of it, in the
+/// A structure is a shared [`Topology`] and one [`Geometry`] of it, in the
 /// topology's dense atom order: a position for every atom, an optional
-/// [`PeriodicCell`], optional crystallographic occupancies and B-factors, and
-/// geometry properties. The topology stays coordinate-free and may be
-/// shared with other structures, geometries, trajectory frames, selections,
-/// and prepared potentials.
+/// [`PeriodicCell`], optional crystallographic occupancies and B-factors,
+/// velocities, forces, and geometry properties. The topology stays
+/// coordinate-free and may be shared with other structures, structure sets,
+/// trajectory frames, selections, and prepared potentials.
 ///
-/// Read and change geometry state through the structure's own
-/// dimension-preserving methods (`structure.positions()`, `structure.set_cell(..)`,
-/// `structure.properties_mut()`, ...). Static annotations live on
+/// Geometry state reads through `Deref` (`structure.positions()`,
+/// `structure.cell()`, ...) and changes through the guard
+/// [`Self::geometry_mut`] (`structure.geometry_mut().set_cell(..)`), the same
+/// [`GeometryMut`] a structure set lends, which keeps the geometry bound to
+/// the topology. [`Self::into_parts`] and [`Self::from_parts`] move the
+/// topology and the geometry out and back in. Static annotations live on
 /// [`Self::topology`].
 ///
 /// Use [`Self::from_molecule`] for a single connected molecule,
 /// [`Self::builder`] to assemble several molecules and their positions, or
 /// [`Self::new`] when a topology and correctly ordered positions exist.
+///
+/// ```
+/// use kekule::{smiles, math::{Matrix3, PeriodicCell, RigidTransform, Vector3},
+///     structure::{Structure, Positions}, units::{Quantity, NANOMETER}};
+/// let mut structure = Structure::new(smiles::to_topology("O")?, Positions::zeros(1))?;
+/// let cell = PeriodicCell::orthorhombic(
+///     Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER), [true; 3])?;
+/// structure.geometry_mut().set_cell(Some(cell));
+/// // A quarter turn about z moves the positions and rotates the cell.
+/// let turn = Matrix3::from_columns(
+///     Vector3::new(0.0, 1.0, 0.0), Vector3::new(-1.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
+/// let still = Quantity::new(Vector3::zero(), NANOMETER);
+/// structure.geometry_mut().apply_rigid_transform(&RigidTransform::new(turn, still)?)?;
+/// let [a, b, _] = structure.cell().unwrap().vectors().into_value();
+/// assert_eq!((a, b), (Vector3::new(0.0, 1.0, 0.0), Vector3::new(-2.0, 0.0, 0.0)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct Structure {
     pub(super) topology: Arc<Topology>,
-    pub(super) positions: Positions,
-    pub(super) cell: Option<PeriodicCell>,
-    pub(super) occupancies: AtomScalars,
-    pub(super) b_factors: AtomScalars,
-    pub(super) properties: GeometryProperties,
+    pub(super) geometry: Geometry,
 }
 
+/// Structures are equal when their topologies share a layout and their
+/// geometries are equal.
 impl PartialEq for Structure {
     fn eq(&self, other: &Self) -> bool {
-        self.topology.shares_layout(&other.topology)
-            && self.positions == other.positions
-            && self.cell == other.cell
-            && self.occupancies == other.occupancies
-            && self.b_factors == other.b_factors
-            && self.properties == other.properties
+        self.topology.shares_layout(&other.topology) && self.geometry == other.geometry
+    }
+}
+
+impl std::ops::Deref for Structure {
+    type Target = Geometry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.geometry
     }
 }
 
 impl Structure {
     /// Binds dense positions to a topology, without a cell, occupancies,
-    /// B-factors, or properties.
+    /// B-factors, velocities, forces, or properties.
     ///
     /// Positions must follow the topology's dense atom order.
     pub fn new(
         topology: impl Into<Arc<Topology>>,
         positions: Positions,
     ) -> Result<Self, StructureError> {
-        let properties = GeometryProperties::new(positions.len());
-        Self::from_state(
-            topology.into(),
-            DraftGeometry {
-                positions,
-                cell: None,
-                occupancies: AtomScalars::default(),
-                b_factors: AtomScalars::default(),
-                properties,
-            },
-        )
+        Self::from_parts(topology, Geometry::new(positions))
     }
 
-    /// Validates staged state against `topology` and binds its bond rows.
-    pub(super) fn from_state(
-        topology: Arc<Topology>,
-        state: DraftGeometry,
+    /// A structure of `topology` and `geometry`, binding the geometry as a
+    /// structure set binds the geometries it takes ([`Geometry::bind`]).
+    ///
+    /// # Errors
+    ///
+    /// [`StructureError::Geometry`] when the geometry does not have a
+    /// position per atom of `topology`, or has bond rows of another topology.
+    pub fn from_parts(
+        topology: impl Into<Arc<Topology>>,
+        mut geometry: Geometry,
     ) -> Result<Self, StructureError> {
-        validate_binding(state.positions.len(), &state.properties, &topology)?;
-        let DraftGeometry {
-            positions,
-            cell,
-            occupancies,
-            b_factors,
-            mut properties,
-        } = state;
-        properties.bind_bond_rows(topology.bond_count());
-        Ok(Self {
-            topology,
-            positions,
-            cell,
-            occupancies,
-            b_factors,
-            properties,
-        })
+        let topology = topology.into();
+        geometry.bind(&topology)?;
+        Ok(Self::bound(topology, geometry))
     }
 
-    /// Moves the geometry state out as draft state, keeping the topology.
-    pub(super) fn into_state(self) -> (Arc<Topology>, DraftGeometry) {
-        (
-            self.topology,
-            DraftGeometry {
-                positions: self.positions,
-                cell: self.cell,
-                occupancies: self.occupancies,
-                b_factors: self.b_factors,
-                properties: self.properties,
-            },
-        )
+    /// A structure of a geometry already bound to `topology`.
+    pub(crate) fn bound(topology: Arc<Topology>, geometry: Geometry) -> Self {
+        debug_assert!(is_bound(
+            geometry.atom_count(),
+            geometry.properties(),
+            &topology
+        ));
+        Self { topology, geometry }
+    }
+
+    /// Moves the topology and the geometry out without copying. The
+    /// geometry stays bound to the topology, so [`Self::from_parts`] takes
+    /// them back.
+    pub fn into_parts(self) -> (Arc<Topology>, Geometry) {
+        (self.topology, self.geometry)
+    }
+
+    /// Dimension-preserving mutable access to the geometry. A geometry whose
+    /// storage is shared with a clone is copied when it is first written.
+    pub fn geometry_mut(&mut self) -> GeometryMut<'_> {
+        GeometryMut::new(&mut self.geometry)
     }
 
     /// Returns this structure with a periodic cell.
     #[must_use]
     pub fn with_cell(mut self, cell: PeriodicCell) -> Self {
-        self.cell = Some(cell);
+        self.geometry.set_cell(Some(cell));
         self
     }
 
@@ -133,8 +140,7 @@ impl Structure {
 
     /// Moves a structure into coordinated append-oriented construction state.
     pub fn into_builder(self) -> StructureBuilder {
-        let (topology, state) = self.into_state();
-        StructureBuilder::extending(topology, state)
+        StructureBuilder::extending(self.topology, self.geometry)
     }
 
     /// Copies this structure into append-oriented construction state; see
@@ -164,54 +170,10 @@ impl Structure {
         Arc::clone(&self.topology)
     }
 
-    /// Number of atoms, equal to the topology's atom count.
-    pub fn atom_count(&self) -> usize {
-        self.positions.len()
-    }
-
-    /// Applies a rigid transform to the whole structure transactionally:
-    /// positions move and the cell rotates, as for geometries and
-    /// trajectory frames. Use [`Self::transform_atoms`] to move a selection
-    /// while keeping the cell.
-    ///
-    /// ```
-    /// use kekule::{smiles, math::{Matrix3, PeriodicCell, RigidTransform, Vector3},
-    ///     structure::{Structure, Positions}, units::{Quantity, NANOMETER}};
-    /// let mut structure = Structure::new(smiles::to_topology("O")?, Positions::zeros(1))?;
-    /// let cell = PeriodicCell::orthorhombic(
-    ///     Quantity::new(Vector3::new(1.0, 2.0, 3.0), NANOMETER), [true; 3])?;
-    /// structure.set_cell(Some(cell));
-    /// // A quarter turn about z.
-    /// let turn = Matrix3::from_columns(
-    ///     Vector3::new(0.0, 1.0, 0.0), Vector3::new(-1.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0));
-    /// let still = Quantity::new(Vector3::zero(), NANOMETER);
-    /// structure.apply_rigid_transform(&RigidTransform::new(turn, still)?)?;
-    /// let [a, b, _] = structure.cell().unwrap().vectors().into_value();
-    /// assert_eq!((a, b), (Vector3::new(0.0, 1.0, 0.0), Vector3::new(-2.0, 0.0, 0.0)));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn apply_rigid_transform(
-        &mut self,
-        transform: &RigidTransform,
-    ) -> Result<(), GeometryError> {
-        let cell = transform_cell(self.cell, *transform)?;
-        let positions = transform_positions(&self.positions, *transform)?;
-        self.cell = cell;
-        self.positions = positions;
-        Ok(())
-    }
-
     /// Borrows this structure as the common kernel input without copying.
     pub fn as_structure_view(&self) -> StructureView<'_> {
-        StructureView::bound(
-            &self.topology,
-            &self.positions,
-            self.cell.as_ref(),
-            &self.occupancies,
-            &self.b_factors,
-            &self.properties,
-            StructureKind::Standalone,
-        )
+        self.geometry
+            .structure_view(&self.topology, StructureKind::Standalone)
     }
 
     /// Installs default perception through a new topology snapshot.
@@ -277,17 +239,8 @@ impl Structure {
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureError> {
         let subset = crate::topology::Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
-        let state = DraftGeometry {
-            positions: self.positions.select_indices(&atoms)?,
-            cell: self.cell,
-            occupancies: self.occupancies.select(&atoms),
-            b_factors: self.b_factors.select(&atoms),
-            properties: self
-                .properties
-                .project(&atoms, &bonds)
-                .map_err(GeometryError::from)?,
-        };
-        Self::from_state(subset.shared_topology(), state)
+        let geometry = self.geometry.projected(&atoms, &bonds)?;
+        Self::from_parts(subset.shared_topology(), geometry)
     }
 
     /// The position of one atom, or `None` when `atom` is not in the topology.
@@ -326,7 +279,7 @@ impl Structure {
         position: Quantity<Point3>,
     ) -> Result<(), StructureError> {
         let index = atom_index(&self.topology, atom)?;
-        Ok(self.set_position_at(index, position)?)
+        Ok(self.geometry.set_position_at(index, position)?)
     }
 
     /// Applies a sparse coordinate batch atomically; repeated atoms use the
@@ -349,21 +302,15 @@ impl Structure {
                 Ok((index, point))
             })
             .collect::<Result<Vec<_>, StructureError>>()?;
-        Ok(self.positions.set_canonical_batch(&staged)?)
+        if staged.is_empty() {
+            return Ok(());
+        }
+        Ok(self
+            .geometry
+            .data_in_place()
+            .positions
+            .set_canonical_batch(&staged)?)
     }
-
-    fn storage_ref(&self) -> &Self {
-        self
-    }
-
-    fn storage(&mut self) -> &mut Self {
-        self
-    }
-
-    geometry_readers!();
-    site_readers!();
-    geometry_mutators!();
-    site_mutators!();
 }
 
 pub(super) fn atom_index(

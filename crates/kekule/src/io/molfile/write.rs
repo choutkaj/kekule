@@ -68,10 +68,9 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// The state that a Molfile cannot carry of a geometry, whether of a
-    /// structure set or a trajectory frame: its place in the set's order (a
-    /// frame's time and MD step among them) and its velocities and forces;
-    /// and the occupancies and B factors of any structure. By default writing a
+    /// The state that a Molfile cannot carry: a geometry's place in its set's
+    /// order (a frame's time and MD step among them), and the velocities,
+    /// forces, occupancies, and B factors of a geometry or structure. By default writing a
     /// structure with any of them fails, and under
     /// [`UnrepresentablePolicy::Omit`] the report names each
     /// ([`WriteOmission::GeometryState`], [`WriteOmission::Occupancies`],

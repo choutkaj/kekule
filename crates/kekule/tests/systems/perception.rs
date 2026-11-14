@@ -198,7 +198,8 @@ fn structure_perception_changes_snapshot_preserving_geometry_and_existing_bindin
     ))
     .unwrap();
     let mut structure = Structure::new(Arc::clone(&topology), positions).unwrap();
-    let mut properties = structure.properties_mut();
+    let mut geometry = structure.geometry_mut();
+    let mut properties = geometry.properties_mut();
     properties
         .owner_mut()
         .insert(key(), PropertyValue::Int(7))
@@ -219,7 +220,7 @@ fn structure_perception_changes_snapshot_preserving_geometry_and_existing_bindin
             Some(PropertyValue::Int(9)),
         )
         .unwrap();
-    structure.set_cell(Some(
+    structure.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],
@@ -371,6 +372,7 @@ fn topology_structure_and_structure_set_failure_preserve_complete_previous_state
     )
     .unwrap();
     structure
+        .geometry_mut()
         .properties_mut()
         .owner_mut()
         .insert(key(), PropertyValue::Int(14))

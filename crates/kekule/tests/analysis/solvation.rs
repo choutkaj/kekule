@@ -361,7 +361,7 @@ fn errors_leave_every_part_of_structure_unchanged() {
         assert!(solvation::solvate(&mut m, &opts).is_err());
         assert_eq!(m, before);
     }
-    m.set_cell(Some(
+    m.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(3.0, 3.0, 3.0), NANOMETER),
             [true, true, false],
@@ -374,7 +374,7 @@ fn errors_leave_every_part_of_structure_unchanged() {
         Err(SolvationError::NotFullyPeriodic)
     ));
     assert_eq!(m, before);
-    m.set_cell(Some(
+    m.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(0.1, 3.0, 3.0), NANOMETER),
             [true; 3],
@@ -415,12 +415,14 @@ fn original_entities_properties_and_existing_water_survive() {
         .insert(key("topology_note"), PropertyValue::Int(1))
         .unwrap();
     let mut m = builder.build().unwrap();
-    m.properties_mut()
+    m.geometry_mut()
+        .properties_mut()
         .owner_mut()
         .insert(key("model_note"), PropertyValue::Int(2))
         .unwrap();
     let row = m.topology().atom_index(ids[0]).unwrap();
-    m.properties_mut()
+    m.geometry_mut()
+        .properties_mut()
         .atoms_mut()
         .set_value(key("atom_note"), row, Some(PropertyValue::Int(3)))
         .unwrap();

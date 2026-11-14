@@ -395,6 +395,7 @@ fn tiled(structure: &kekule::structure::Structure, copies: usize) -> kekule::str
             [copy % side, copy / side % side, copy / side / side].map(|step| step as f64 * spacing);
         let mut moved = structure.clone();
         moved
+            .geometry_mut()
             .set_positions(positions.map(|points| {
                 points
                     .iter()

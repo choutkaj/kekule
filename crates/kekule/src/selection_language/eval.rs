@@ -940,7 +940,7 @@ impl<'a> Evaluator<'a> {
         let topology: &'a Topology = self.topology;
         let structure_column = self
             .structure
-            .and_then(|view| view.properties().atoms().get(key));
+            .and_then(|view| view.payload().properties().atoms().get(key));
         let topology_column = topology.properties().atoms().get(key);
         let molecule_scope = topology.definitions().any(|definition| {
             definition

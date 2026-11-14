@@ -246,8 +246,12 @@ fn sets_from_structures_take_a_step_order_and_require_one_layout() {
         .map(|index| {
             let mut structure =
                 Structure::new(Arc::clone(&topology), positions(0.01 * index as f64)).unwrap();
-            structure.set_occupancies(Some(vec![Some(1.0); 3])).unwrap();
             structure
+                .geometry_mut()
+                .set_occupancies(Some(vec![Some(1.0); 3]))
+                .unwrap();
+            structure
+                .geometry_mut()
                 .set_b_factors(Some(Quantity::new(vec![Some(0.1); 3], SQUARE_NANOMETER)))
                 .unwrap();
             structure
