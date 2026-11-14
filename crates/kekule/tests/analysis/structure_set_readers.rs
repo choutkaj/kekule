@@ -527,7 +527,7 @@ fn rmsd_of_listed_geometries_equals_the_set_in_memory() {
     assert!(matches!(
         alignment::geometry_rmsd(&file, [0, 10], 3, &fit, options),
         Err(AlignmentError::Read(error))
-            if *error == StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 10, 10))
+            if error == StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 10, 10))
     ));
 }
 

@@ -434,7 +434,7 @@ impl RigidTransform {
     ) -> Result<Self, RigidTransformError> {
         let translation = translation
             .value_in(CANONICAL_LENGTH_UNIT)
-            .map_err(|error| RigidTransformError::Unit(Box::new(error)))?;
+            .map_err(RigidTransformError::Unit)?;
         Self::from_canonical(rotation, translation)
     }
 
@@ -571,7 +571,7 @@ impl From<UnitError> for PeriodicCellError {
 #[non_exhaustive]
 pub enum RigidTransformError {
     /// The translation is not a length; see the source.
-    Unit(Box<UnitError>),
+    Unit(UnitError),
     /// A rotation or translation component is not finite.
     NonFinite,
     /// The rotation matrix is not orthonormal with determinant +1.
@@ -593,7 +593,7 @@ impl fmt::Display for RigidTransformError {
 impl std::error::Error for RigidTransformError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Unit(error) => Some(error.as_ref()),
+            Self::Unit(error) => Some(error),
             Self::NonFinite | Self::NonRigidRotation => None,
         }
     }

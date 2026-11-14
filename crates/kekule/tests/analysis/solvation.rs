@@ -635,7 +635,7 @@ fn translation_that_loses_water_geometry_is_rejected_atomically() {
     let before = m.clone();
     assert!(matches!(
         solvation::solvate(&mut m, &options()),
-        Err(SolvationError::Cell(PeriodicCellError::NumericalFailure))
+        Err(SolvationError::Cell(error)) if *error == PeriodicCellError::NumericalFailure
     ));
     assert_eq!(m, before);
 }

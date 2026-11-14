@@ -85,7 +85,7 @@ pub enum PeriodicError {
         source: Box<DenseArrayError>,
     },
     /// Valid positions could not be published into the destination.
-    Publication(Box<StructureSetError>),
+    Publication(StructureSetError),
 }
 
 impl fmt::Display for PeriodicError {
@@ -132,7 +132,7 @@ impl std::error::Error for PeriodicError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Position { source, .. } => Some(source.as_ref()),
-            Self::Publication(source) => Some(source.as_ref()),
+            Self::Publication(source) => Some(source),
             _ => None,
         }
     }
@@ -300,7 +300,7 @@ fn whole_positions(
 fn publish(trajectory: &mut StructureSet, positions: Vec<Positions>) -> Result<(), PeriodicError> {
     trajectory
         .replace_positions(positions)
-        .map_err(|error| PeriodicError::Publication(Box::new(error)))
+        .map_err(PeriodicError::Publication)
 }
 
 pub(super) fn positions(points: Vec<Point3>, frame: usize) -> Result<Positions, PeriodicError> {

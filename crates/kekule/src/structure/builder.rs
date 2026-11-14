@@ -328,7 +328,7 @@ pub enum StructureBuildError {
     /// A chain, residue or atom-site edit failed; see the source.
     Hierarchy(crate::topology::HierarchyError),
     /// Final structure validation failed after topology publication.
-    Structure(Box<StructureError>),
+    Structure(StructureError),
 }
 
 impl fmt::Display for StructureBuildError {
@@ -382,7 +382,7 @@ impl<'a> StructureTopologyMut<'a> {
 
 impl From<StructureError> for StructureBuildError {
     fn from(error: StructureError) -> Self {
-        Self::Structure(Box::new(error))
+        Self::Structure(error)
     }
 }
 

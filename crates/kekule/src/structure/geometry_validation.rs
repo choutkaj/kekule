@@ -11,8 +11,8 @@ use super::{DenseArrayError, GeometryError};
 pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, GeometryError> {
     let index = atom.index();
     if index >= len {
-        return Err(GeometryError::Array(DenseArrayError::IndexOutOfRange(
-            IndexOutOfRange::new(Countable::Row, index, len),
+        return Err(GeometryError::Array(Box::new(
+            DenseArrayError::IndexOutOfRange(IndexOutOfRange::new(Countable::Row, index, len)),
         )));
     }
     Ok(index)
@@ -27,8 +27,12 @@ pub(crate) fn validate_binding(
     topology: &Topology,
 ) -> Result<(), GeometryError> {
     if atoms != topology.atom_count() {
-        return Err(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, topology.atom_count(), atoms),
+        return Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                topology.atom_count(),
+                atoms,
+            )),
         )));
     }
     properties
@@ -54,8 +58,12 @@ pub(crate) fn check_property_rows(
     replacement: &GeometryProperties,
 ) -> Result<(), GeometryError> {
     if replacement.atoms().len() != atoms {
-        return Err(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, atoms, replacement.atoms().len()),
+        return Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                atoms,
+                replacement.atoms().len(),
+            )),
         )));
     }
     if replacement.bonds().len() != current.bonds().len() {

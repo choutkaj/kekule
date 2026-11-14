@@ -184,7 +184,7 @@ pub enum StructureSetReadError {
         /// The geometry index.
         geometry: usize,
         /// The failure.
-        source: Box<GeometryError>,
+        source: GeometryError,
     },
     /// A host's reader cannot provide the geometry, for its own reason, such
     /// as a cache whose source is gone; see the source. Made with
@@ -289,7 +289,7 @@ impl std::error::Error for StructureSetReadError {
             Self::Trajectory { source, .. } => Some(source),
             Self::Periodic { source, .. } => Some(source.as_ref()),
             Self::Alignment { source, .. } => Some(source.as_ref()),
-            Self::Geometry { source, .. } => Some(source.as_ref()),
+            Self::Geometry { source, .. } => Some(source),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }
     }

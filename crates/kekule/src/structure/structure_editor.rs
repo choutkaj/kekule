@@ -732,7 +732,7 @@ pub enum StructureEditError {
     /// Editing the topology failed; see the source.
     Topology(TopologyEditError),
     /// Dense per-atom state is invalid; see the source.
-    Position(DenseArrayError),
+    Position(Box<DenseArrayError>),
     /// A position is not finite: of editor atom `atom`, or of the atom being
     /// added when `atom` is `None`.
     NonFinitePosition {
@@ -740,11 +740,11 @@ pub enum StructureEditError {
         atom: Option<EditAtomId>,
     },
     /// A property edit failed; see the source.
-    Property(PropertyError),
+    Property(Box<PropertyError>),
     /// Geometry state is invalid; see the source.
     Geometry(GeometryError),
     /// The edited structure is invalid; see the source.
-    Structure(Box<StructureError>),
+    Structure(StructureError),
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
     /// An imported geometry property cannot be combined with its destination table.
@@ -798,12 +798,12 @@ impl From<TopologyEditError> for StructureEditError {
 }
 impl From<DenseArrayError> for StructureEditError {
     fn from(error: DenseArrayError) -> Self {
-        Self::Position(error)
+        Self::Position(Box::new(error))
     }
 }
 impl From<PropertyError> for StructureEditError {
     fn from(error: PropertyError) -> Self {
-        Self::Property(error)
+        Self::Property(Box::new(error))
     }
 }
 impl From<GeometryError> for StructureEditError {
@@ -813,7 +813,7 @@ impl From<GeometryError> for StructureEditError {
 }
 impl From<StructureError> for StructureEditError {
     fn from(error: StructureError) -> Self {
-        Self::Structure(Box::new(error))
+        Self::Structure(error)
     }
 }
 

@@ -31,8 +31,12 @@ impl Geometry {
             if actual == atoms {
                 Ok(())
             } else {
-                Err(GeometryError::Array(DenseArrayError::CountMismatch(
-                    LengthMismatch::new(Countable::Row, atoms, actual),
+                Err(GeometryError::Array(Box::new(
+                    DenseArrayError::CountMismatch(LengthMismatch::new(
+                        Countable::Row,
+                        atoms,
+                        actual,
+                    )),
                 )))
             }
         };

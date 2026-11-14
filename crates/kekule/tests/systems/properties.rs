@@ -77,7 +77,7 @@ fn replacing_hierarchy_cannot_silently_truncate_populated_columns() {
     );
     assert!(matches!(
         builder.build(),
-        Err(TopologyBuildError::Property(error)) if matches!(*error, PropertyError::LengthMismatch(payload) if payload == LengthMismatch::new(Countable::Value, 0, 1))
+        Err(TopologyBuildError::Property(error)) if matches!(error, PropertyError::LengthMismatch(payload) if payload == LengthMismatch::new(Countable::Value, 0, 1))
     ));
 }
 
@@ -157,13 +157,13 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let original = structure.properties().clone();
     assert_eq!(
         structure.geometry_mut().set_properties(bound.clone()),
-        Err(GeometryError::Array(
+        Err(GeometryError::Array(Box::new(
             kekule::structure::DenseArrayError::CountMismatch(LengthMismatch::new(
                 Countable::Row,
                 1,
                 2
             ))
-        ))
+        )))
     );
     assert_eq!(structure.properties(), &original);
 

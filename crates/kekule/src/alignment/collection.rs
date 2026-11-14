@@ -308,7 +308,7 @@ fn geometry_values(
     run: Run<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     run.check().map_err(AlignmentError::Cancelled)?;
-    let read_error = |error| AlignmentError::Read(Box::new(error));
+    let read_error = |error| AlignmentError::Read(error);
     let held: Geometry;
     let reference = match reference {
         Reference::View(view) => view,

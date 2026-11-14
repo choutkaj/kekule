@@ -217,8 +217,8 @@ fn buffers_from_geometries_validate_them_against_the_topology() {
     assert_eq!(buffer.properties().bonds().len(), 1);
     assert_eq!(
         FrameBuffer::from_geometry(topology, Geometry::new(Positions::zeros(3))).unwrap_err(),
-        TrajectoryIoError::from(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, 2, 3)
+        TrajectoryIoError::from(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 3))
         )))
     );
 }

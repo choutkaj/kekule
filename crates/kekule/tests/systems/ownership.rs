@@ -72,9 +72,8 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
             },
             CANONICAL_LENGTH_UNIT
         )),
-        Err(GeometryError::Array(DenseArrayError::NonFinite {
-            index: 0
-        }))
+        Err(GeometryError::Array(error))
+            if matches!(*error, DenseArrayError::NonFinite { index: 0 })
     ));
     assert_eq!(calls.get(), 1);
     assert_eq!(structure.positions(), &before);

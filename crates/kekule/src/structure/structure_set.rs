@@ -301,7 +301,7 @@ impl StructureSet {
             check_bound(reader.topology(), &geometry).map_err(|source| {
                 StructureSetReadError::Geometry {
                     geometry: index,
-                    source: Box::new(source),
+                    source,
                 }
             })?;
             Ok(geometry)
@@ -503,10 +503,16 @@ impl StructureSet {
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(GeometryError::Array(DenseArrayError::CountMismatch(
-                    LengthMismatch::new(Countable::Row, self.topology.atom_count(), values.len()),
-                ))
-                .into());
+                return Err(
+                    GeometryError::Array(Box::new(DenseArrayError::CountMismatch(
+                        LengthMismatch::new(
+                            Countable::Row,
+                            self.topology.atom_count(),
+                            values.len(),
+                        ),
+                    )))
+                    .into(),
+                );
             }
         }
         for (geometry, positions) in self.storage.geometries.iter_mut().zip(positions) {

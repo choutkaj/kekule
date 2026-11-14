@@ -181,7 +181,7 @@ pub enum StructureSetError {
     Subset(TopologySubsetError),
     /// A quantity could not be converted to the required unit; see the
     /// source.
-    Unit(Box<UnitError>),
+    Unit(UnitError),
 }
 
 impl fmt::Display for StructureSetError {
@@ -310,6 +310,6 @@ impl From<TopologySubsetError> for StructureSetError {
 
 impl From<UnitError> for StructureSetError {
     fn from(error: UnitError) -> Self {
-        Self::Unit(Box::new(error))
+        Self::Unit(error)
     }
 }

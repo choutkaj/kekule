@@ -202,7 +202,8 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
     let error = minimize(&bowl, structure.as_structure_view(), &options).unwrap_err();
     assert!(matches!(
         error,
-        MinimizationError::Evaluation(EvaluationError::InvalidGeometry { .. })
+        MinimizationError::Evaluation(error)
+            if matches!(*error, EvaluationError::InvalidGeometry { .. })
     ));
 
     let unrelated = start();
@@ -214,7 +215,7 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
     .unwrap_err();
     assert_eq!(
         error,
-        MinimizationError::Evaluation(EvaluationError::IncompatibleTopology)
+        MinimizationError::Evaluation(Box::new(EvaluationError::IncompatibleTopology))
     );
 }
 

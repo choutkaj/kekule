@@ -82,7 +82,7 @@ impl<'a> GeometryView<'a, dyn StructureSetRead> {
         check_bound(reader.topology(), geometry).map_err(|source| {
             StructureSetReadError::Geometry {
                 geometry: index,
-                source: Box::new(source),
+                source,
             }
         })?;
         Ok(Self::of_reader(reader, index, geometry))

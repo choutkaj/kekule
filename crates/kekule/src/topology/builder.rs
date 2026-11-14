@@ -212,7 +212,7 @@ impl TopologyBuilder {
             .atoms()
             .raw()
             .select_indices(&previous)
-            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+            .map_err(TopologyBuildError::Property)?;
         self.atoms = atoms;
         *self.properties.atoms_mut() = rows;
         Ok(previous)
@@ -600,7 +600,7 @@ impl TopologyBuilder {
         self.properties.resize_domains(dimensions);
         self.properties
             .validate_dimensions(dimensions)
-            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+            .map_err(TopologyBuildError::Property)?;
 
         let hierarchy_index = HierarchyIndex::new(&hierarchy, &self.atoms, self.instances.len());
         Ok(Topology {
@@ -664,7 +664,7 @@ impl TopologyBuilder {
         self.properties.resize_domains(dimensions);
         self.properties
             .validate_dimensions(dimensions)
-            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+            .map_err(TopologyBuildError::Property)?;
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
@@ -1116,7 +1116,7 @@ pub enum TopologyBuildError {
     /// The builder has no molecule instances to publish.
     NoMoleculeInstances,
     /// Reordering or validating topology property rows failed; see the source.
-    Property(Box<PropertyError>),
+    Property(PropertyError),
     /// A molecule definition reference is not staged.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     /// A residue reference is not in the staged hierarchy.

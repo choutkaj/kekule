@@ -645,7 +645,7 @@ pub enum AlignmentError {
     /// A fitted transform could not be applied to one item's state.
     Transform(GeometryError),
     /// A geometry cannot be read; see the source.
-    Read(Box<StructureSetReadError>),
+    Read(StructureSetReadError),
     /// The measurement was cancelled.
     Cancelled(Cancelled),
 }
@@ -764,7 +764,7 @@ impl std::error::Error for AlignmentError {
             Self::InvalidRigidTransform(error) => Some(error),
             Self::Item { source, .. } => Some(source.as_ref()),
             Self::Transform(error) => Some(error),
-            Self::Read(error) => std::error::Error::source(error.as_ref()),
+            Self::Read(error) => std::error::Error::source(error),
             _ => None,
         }
     }

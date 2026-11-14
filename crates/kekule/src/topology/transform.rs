@@ -383,15 +383,15 @@ pub enum TopologySubsetError {
     /// The selection does not match the topology; see the source.
     Selection(SelectionError),
     /// Extracting a selected molecule fragment failed; see the source.
-    Molecule(MoleculeError),
+    Molecule(Box<MoleculeError>),
     /// A selected molecule fragment could not be published; see the source.
     Publication(MoleculePublicationError),
     /// Building the subset hierarchy failed; see the source.
     Hierarchy(HierarchyError),
     /// Publishing the subset topology failed; see the source.
-    TopologyBuild(TopologyBuildError),
+    TopologyBuild(Box<TopologyBuildError>),
     /// Projecting property rows onto the subset failed; see the source.
-    Property(PropertyError),
+    Property(Box<PropertyError>),
 }
 
 impl fmt::Display for TopologySubsetError {
@@ -412,11 +412,11 @@ impl std::error::Error for TopologySubsetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Selection(error) => error.source(),
-            Self::Molecule(error) => Some(error),
+            Self::Molecule(error) => Some(error.as_ref()),
             Self::Publication(error) => Some(error),
             Self::Hierarchy(error) => Some(error),
-            Self::TopologyBuild(error) => Some(error),
-            Self::Property(error) => Some(error),
+            Self::TopologyBuild(error) => Some(error.as_ref()),
+            Self::Property(error) => Some(error.as_ref()),
             Self::EmptySelection => None,
         }
     }
@@ -429,7 +429,7 @@ impl From<SelectionError> for TopologySubsetError {
 }
 impl From<MoleculeError> for TopologySubsetError {
     fn from(error: MoleculeError) -> Self {
-        Self::Molecule(error)
+        Self::Molecule(Box::new(error))
     }
 }
 impl From<MoleculePublicationError> for TopologySubsetError {
@@ -444,12 +444,12 @@ impl From<HierarchyError> for TopologySubsetError {
 }
 impl From<TopologyBuildError> for TopologySubsetError {
     fn from(error: TopologyBuildError) -> Self {
-        Self::TopologyBuild(error)
+        Self::TopologyBuild(Box::new(error))
     }
 }
 
 impl From<PropertyError> for TopologySubsetError {
     fn from(error: PropertyError) -> Self {
-        Self::Property(error)
+        Self::Property(Box::new(error))
     }
 }

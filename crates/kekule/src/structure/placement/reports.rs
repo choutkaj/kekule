@@ -192,7 +192,7 @@ impl RemovedHydrogensReport {
 pub enum PlacementError {
     /// Editing the draft failed, for example on a deleted handle; see the
     /// source.
-    Edit(Box<StructureEditError>),
+    Edit(StructureEditError),
     /// The atom's represented valence exceeds what its element allows, so its
     /// hydrogens cannot be completed.
     InvalidValence {
@@ -329,12 +329,12 @@ impl std::error::Error for PlacementError {
 
 impl From<StructureEditError> for PlacementError {
     fn from(error: StructureEditError) -> Self {
-        Self::Edit(Box::new(error))
+        Self::Edit(error)
     }
 }
 
 impl From<crate::topology::edit::TopologyEditError> for PlacementError {
     fn from(error: crate::topology::edit::TopologyEditError) -> Self {
-        Self::Edit(Box::new(error.into()))
+        Self::Edit(error.into())
     }
 }

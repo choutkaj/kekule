@@ -337,10 +337,16 @@ impl FrameBuffer {
         let time = canonical_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(GeometryError::Array(DenseArrayError::CountMismatch(
-                    LengthMismatch::new(Countable::Row, self.atom_count(), source.atoms().len()),
-                ))
-                .into());
+                return Err(
+                    GeometryError::Array(Box::new(DenseArrayError::CountMismatch(
+                        LengthMismatch::new(
+                            Countable::Row,
+                            self.atom_count(),
+                            source.atoms().len(),
+                        ),
+                    )))
+                    .into(),
+                );
             }
             if source.bonds().len() != self.properties().bonds().len() {
                 return Err(GeometryError::BondCountMismatch(LengthMismatch::new(

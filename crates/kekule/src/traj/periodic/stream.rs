@@ -422,5 +422,5 @@ fn publish_buffer(frame: &mut FrameBuffer, positions: &Positions) -> Result<(), 
     frame
         .geometry_mut()
         .set_positions(positions.values())
-        .map_err(|error| PeriodicError::Publication(Box::new(StructureSetError::Geometry(error))))
+        .map_err(|error| PeriodicError::Publication(StructureSetError::Geometry(error)))
 }

@@ -13,7 +13,7 @@ use crate::units::UnitError;
 #[non_exhaustive]
 pub enum GeometryError {
     /// Dense per-atom state is invalid.
-    Array(DenseArrayError),
+    Array(Box<DenseArrayError>),
     /// Bound bond property rows have the wrong length.
     BondCountMismatch(LengthMismatch),
     /// The geometry cannot hold more atoms.
@@ -53,7 +53,7 @@ impl std::error::Error for GeometryError {
 
 impl From<DenseArrayError> for GeometryError {
     fn from(error: DenseArrayError) -> Self {
-        Self::Array(error)
+        Self::Array(Box::new(error))
     }
 }
 

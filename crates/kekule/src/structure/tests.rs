@@ -149,8 +149,8 @@ fn structure_builder_rejects_excess_replacement_positions_before_mutation() {
         builder
             .geometry_mut()
             .set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, 1, 2)
+        Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 1, 2))
         )))
     );
     assert_eq!(builder, before);
@@ -162,8 +162,8 @@ fn structures_reject_rows_of_other_dimensions() {
     let (structure, _, _) = structure_fixture();
     assert_eq!(
         Structure::new(structure.shared_topology(), single_position(1.0)).unwrap_err(),
-        StructureError::Geometry(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, 2, 1)
+        StructureError::Geometry(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1))
         )))
     );
     // A geometry bound to a topology with one bond cannot bind to one with no
@@ -213,9 +213,9 @@ fn geometry_position_replacement_checks_the_count_transactionally() {
     );
     assert_eq!(
         set.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
-        Err(StructureSetError::Geometry(GeometryError::Array(
+        Err(StructureSetError::Geometry(GeometryError::Array(Box::new(
             DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 3))
-        )))
+        ))))
     );
     assert!(set
         .iter()
@@ -417,9 +417,9 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
         .unwrap();
 
     let replacement = Geometry::new(Positions::zeros(1));
-    let expected = StructureSetError::Geometry(GeometryError::Array(
+    let expected = StructureSetError::Geometry(GeometryError::Array(Box::new(
         DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1)),
-    ));
+    )));
     assert_eq!(set.replace(0, replacement.clone()), Err(expected.clone()));
     assert_eq!(
         set.push_state(replacement, None, StateData::new(), Some(0.0)),
@@ -553,15 +553,15 @@ fn geometry_editor_preserves_dimensions_and_validated_values() {
         let wrong_atoms = Geometry::new(Positions::zeros(1)).properties().clone();
         assert_eq!(
             member.set_properties(wrong_atoms),
-            Err(GeometryError::Array(DenseArrayError::CountMismatch(
-                LengthMismatch::new(Countable::Row, 2, 1)
+            Err(GeometryError::Array(Box::new(
+                DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1))
             )))
         );
         assert_eq!(member.properties(), &properties);
         assert_eq!(
             member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
-            Err(GeometryError::Array(DenseArrayError::CountMismatch(
-                LengthMismatch::new(Countable::Row, 2, 3)
+            Err(GeometryError::Array(Box::new(
+                DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 3))
             )))
         );
         assert_eq!(member.positions().len(), 2);
@@ -641,9 +641,9 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
         structure
             .geometry_mut()
             .set_occupancy(ATOM0, Some(f64::NAN)),
-        Err(GeometryError::Array(DenseArrayError::NonFinite {
+        Err(GeometryError::Array(Box::new(DenseArrayError::NonFinite {
             index: 0
-        }))
+        })))
     );
     assert!(matches!(
         structure
@@ -655,16 +655,16 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
         structure
             .geometry_mut()
             .set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
-        Err(GeometryError::Array(DenseArrayError::IndexOutOfRange(
-            IndexOutOfRange::new(Countable::Row, 2, 2)
+        Err(GeometryError::Array(Box::new(
+            DenseArrayError::IndexOutOfRange(IndexOutOfRange::new(Countable::Row, 2, 2))
         )))
     );
     assert_eq!(
         structure
             .geometry_mut()
             .set_occupancies(Some(vec![Some(1.0)])),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, 2, 1)
+        Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1))
         )))
     );
     assert_eq!(structure, before);
@@ -788,8 +788,8 @@ fn ordered_geometries_join_a_distribution_without_copying_positions() {
     geometry.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
         geometry.set_forces(Some(Forces::zeros(3))),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, 2, 3)
+        Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 3))
         )))
     );
     let mut set = StructureSet::from_geometries(structure.shared_topology(), [geometry]).unwrap();
@@ -1284,12 +1284,10 @@ fn state_energies_are_canonical_finite_and_never_on_geometries() {
     }
     assert_eq!(
         state.set_energy(Some(Quantity::new(1.0, KELVIN))),
-        Err(StructureSetError::Unit(Box::new(
-            UnitError::IncompatibleUnits {
-                from: KELVIN,
-                to: KILOJOULE_PER_MOLE,
-            }
-        )))
+        Err(StructureSetError::Unit(UnitError::IncompatibleUnits {
+            from: KELVIN,
+            to: KILOJOULE_PER_MOLE,
+        }))
     );
     assert_eq!(state.energy(), kj(4.184));
 
@@ -1478,12 +1476,10 @@ fn boltzmann_populations_follow_relative_state_energies_at_temperature() {
     }
     assert_eq!(
         distribution.assign_boltzmann_populations(Quantity::new(1.0, KILOJOULE_PER_MOLE)),
-        Err(StructureSetError::Unit(Box::new(
-            UnitError::IncompatibleUnits {
-                from: KILOJOULE_PER_MOLE,
-                to: KELVIN,
-            }
-        )))
+        Err(StructureSetError::Unit(UnitError::IncompatibleUnits {
+            from: KILOJOULE_PER_MOLE,
+            to: KELVIN,
+        }))
     );
     distribution.state_mut(2).unwrap().set_energy(None).unwrap();
     assert_eq!(

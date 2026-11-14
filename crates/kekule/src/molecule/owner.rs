@@ -1491,7 +1491,7 @@ pub enum MoleculeError {
     /// fixed-width ID.
     CapacityExceeded(CapacityExceeded),
     /// A property operation failed.
-    Property(Box<PropertyError>),
+    Property(PropertyError),
 }
 
 impl fmt::Display for MoleculeError {
@@ -1515,7 +1515,7 @@ impl fmt::Display for MoleculeError {
 impl std::error::Error for MoleculeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Property(error) => Some(error.as_ref()),
+            Self::Property(error) => Some(error),
             _ => None,
         }
     }

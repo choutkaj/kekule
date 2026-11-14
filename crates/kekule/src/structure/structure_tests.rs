@@ -228,7 +228,7 @@ fn position_updates_are_complete_finite_and_transactional() {
         structure
             .geometry_mut()
             .set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch { .. }))
+        Err(GeometryError::Array(error)) if matches!(*error, DenseArrayError::CountMismatch { .. })
     ));
     assert_eq!(
         structure.positions().values().into_value(),
@@ -240,9 +240,8 @@ fn position_updates_are_complete_finite_and_transactional() {
         structure
             .geometry_mut()
             .set_positions(Quantity::new(&invalid, ANGSTROM)),
-        Err(GeometryError::Array(DenseArrayError::NonFinite {
-            index: 0
-        }))
+        Err(GeometryError::Array(error))
+            if matches!(*error, DenseArrayError::NonFinite { index: 0 })
     ));
     assert_eq!(
         structure.positions().values().into_value(),

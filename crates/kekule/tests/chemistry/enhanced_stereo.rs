@@ -205,11 +205,13 @@ fn topology_edits_reject_separating_correlated_groups() {
         } else {
             assert!(matches!(
                 result.unwrap_err(),
-                kekule::topology::edit::TopologyEditError::Molecule(
-                    kekule::molecule::MoleculeError::InvalidStereoReference(
-                        kekule::stereo::StereoViolation::SplitCorrelatedStereoGroup { .. }
+                kekule::topology::edit::TopologyEditError::Molecule(error)
+                    if matches!(
+                        *error,
+                        kekule::molecule::MoleculeError::InvalidStereoReference(
+                            kekule::stereo::StereoViolation::SplitCorrelatedStereoGroup { .. }
+                        )
                     )
-                )
             ));
         }
         assert_eq!(source.instances().next().unwrap().molecule(), &original);

@@ -31,15 +31,15 @@ pub enum TopologyEditError {
     /// The atom already has a hierarchy site.
     DuplicateAtomPlacement(EditAtomId),
     /// A molecule edit failed; see the source.
-    Molecule(MoleculeError),
+    Molecule(Box<MoleculeError>),
     /// An edited molecule could not be published; see the source.
     Publication(MoleculePublicationError),
     /// The edited topology could not be published; see the source.
-    Topology(TopologyBuildError),
+    Topology(Box<TopologyBuildError>),
     /// A hierarchy edit failed; see the source.
     Hierarchy(HierarchyError),
     /// A property edit failed; see the source.
-    Property(PropertyError),
+    Property(Box<PropertyError>),
     /// Property rows of an appended topology could not be copied into a table.
     AppendProperty {
         /// The table whose rows could not be appended.
@@ -102,9 +102,9 @@ fn no_live_handle(f: &mut fmt::Formatter<'_>, id: &dyn fmt::Display) -> fmt::Res
 impl std::error::Error for TopologyEditError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Molecule(e) => Some(e),
+            Self::Molecule(e) => Some(e.as_ref()),
             Self::Publication(e) => Some(e),
-            Self::Topology(e) => Some(e),
+            Self::Topology(e) => Some(e.as_ref()),
             Self::Hierarchy(e) => Some(e),
             Self::Property(e) => e.source(),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
@@ -114,7 +114,7 @@ impl std::error::Error for TopologyEditError {
 }
 impl From<MoleculeError> for TopologyEditError {
     fn from(error: MoleculeError) -> Self {
-        Self::Molecule(error)
+        Self::Molecule(Box::new(error))
     }
 }
 impl From<MoleculePublicationError> for TopologyEditError {
@@ -124,7 +124,7 @@ impl From<MoleculePublicationError> for TopologyEditError {
 }
 impl From<TopologyBuildError> for TopologyEditError {
     fn from(error: TopologyBuildError) -> Self {
-        Self::Topology(error)
+        Self::Topology(Box::new(error))
     }
 }
 impl From<HierarchyError> for TopologyEditError {
@@ -134,6 +134,6 @@ impl From<HierarchyError> for TopologyEditError {
 }
 impl From<PropertyError> for TopologyEditError {
     fn from(error: PropertyError) -> Self {
-        Self::Property(error)
+        Self::Property(Box::new(error))
     }
 }

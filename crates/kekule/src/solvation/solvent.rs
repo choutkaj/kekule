@@ -399,14 +399,14 @@ pub enum SolvationError {
         placed: usize,
     },
     /// A quantity could not be converted to the required unit; see the source.
-    Unit(UnitError),
+    Unit(Box<UnitError>),
     /// The box vectors form no valid cell, or a calculation on the cell
     /// failed; see the source.
-    Cell(PeriodicCellError),
+    Cell(Box<PeriodicCellError>),
     /// Position data was rejected; see the source.
-    Position(DenseArrayError),
+    Position(Box<DenseArrayError>),
     /// Building the solvated structure failed; see the source.
-    Build(StructureBuildError),
+    Build(Box<StructureBuildError>),
     /// Adding solvent molecules, chains or residues failed; see the source.
     Hierarchy(HierarchyError),
 }
@@ -458,7 +458,7 @@ impl std::error::Error for SolvationError {
             Self::Unit(e) => e.source(),
             Self::Cell(e) => e.source(),
             Self::Position(e) => e.source(),
-            Self::Build(e) => Some(e),
+            Self::Build(e) => Some(e.as_ref()),
             Self::Hierarchy(e) => Some(e),
             _ => None,
         }
@@ -466,22 +466,22 @@ impl std::error::Error for SolvationError {
 }
 impl From<UnitError> for SolvationError {
     fn from(error: UnitError) -> Self {
-        Self::Unit(error)
+        Self::Unit(Box::new(error))
     }
 }
 impl From<PeriodicCellError> for SolvationError {
     fn from(error: PeriodicCellError) -> Self {
-        Self::Cell(error)
+        Self::Cell(Box::new(error))
     }
 }
 impl From<DenseArrayError> for SolvationError {
     fn from(error: DenseArrayError) -> Self {
-        Self::Position(error)
+        Self::Position(Box::new(error))
     }
 }
 impl From<StructureBuildError> for SolvationError {
     fn from(error: StructureBuildError) -> Self {
-        Self::Build(error)
+        Self::Build(Box::new(error))
     }
 }
 impl From<HierarchyError> for SolvationError {

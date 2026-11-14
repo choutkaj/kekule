@@ -203,7 +203,7 @@ impl Assembly {
                 AtomSelection::for_chains(Arc::clone(&topology), chains.iter().map(|(id, _)| *id))
                     .map_err(|source| AssemblyError::Selection {
                         assembly: self.id.clone(),
-                        source: Box::new(source),
+                        source,
                     })?;
             if selection.is_empty() {
                 continue;
@@ -215,7 +215,7 @@ impl Assembly {
                     .subset(&selection)
                     .map_err(|source| AssemblyError::Structure {
                         assembly: self.id.clone(),
-                        source: Box::new(source),
+                        source,
                     })?
             };
             for operation in &generator.operations {
@@ -244,7 +244,7 @@ impl Assembly {
                     )
                     .map_err(|source| AssemblyError::Edit {
                         assembly: self.id.clone(),
-                        source: Box::new(source),
+                        source,
                     })?;
                 copied = true;
             }
@@ -257,7 +257,7 @@ impl Assembly {
         Cancellation::poll(cancellation).map_err(cancelled)?;
         editor.finish().map_err(|source| AssemblyError::Edit {
             assembly: self.id.clone(),
-            source: Box::new(source),
+            source,
         })
     }
 }
@@ -401,21 +401,21 @@ pub enum AssemblyError {
         /// The assembly.
         assembly: String,
         /// The selection failure.
-        source: Box<SelectionError>,
+        source: SelectionError,
     },
     /// The structure's chains could not be taken apart from the rest.
     Structure {
         /// The assembly.
         assembly: String,
         /// The subset failure.
-        source: Box<StructureError>,
+        source: StructureError,
     },
     /// The copies could not be appended or published.
     Edit {
         /// The assembly.
         assembly: String,
         /// The edit failure.
-        source: Box<StructureEditError>,
+        source: StructureEditError,
     },
 }
 
@@ -445,9 +445,9 @@ impl std::error::Error for AssemblyError {
         match self {
             Self::NoAtoms { .. } | Self::RepeatedCopy { .. } => None,
             Self::Cancelled { source, .. } => Some(source),
-            Self::Selection { source, .. } => Some(source.as_ref()),
-            Self::Structure { source, .. } => Some(source.as_ref()),
-            Self::Edit { source, .. } => Some(source.as_ref()),
+            Self::Selection { source, .. } => Some(source),
+            Self::Structure { source, .. } => Some(source),
+            Self::Edit { source, .. } => Some(source),
         }
     }
 }

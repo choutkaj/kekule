@@ -274,8 +274,8 @@ fn any_geometry_may_carry_site_fields_and_dynamics() {
     geometry.set_velocities(Some(velocities(1.0))).unwrap();
     assert_eq!(
         geometry.set_forces(Some(Forces::zeros(2))),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch(
-            LengthMismatch::new(Countable::Row, 1, 2)
+        Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 1, 2))
         )))
     );
     let view = set.get(0).unwrap();
@@ -1260,9 +1260,8 @@ fn constructors_refuse_mismatched_geometries_and_layouts() {
                 Geometry::new(Positions::zeros(2))
             ],
         ),
-        Err(StructureSetError::Geometry(GeometryError::Array(
-            DenseArrayError::CountMismatch(payload)
-        ))) if payload == LengthMismatch::new(Countable::Row, 1, 2)
+        Err(StructureSetError::Geometry(GeometryError::Array(error)))
+            if *error == DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 1, 2))
     ));
     let (structure, _, _) = structure_fixture();
     let other = Structure::new(Arc::new(single_atom_topology()), single_position(0.0)).unwrap();

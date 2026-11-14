@@ -311,7 +311,7 @@ impl MoleculeEditor {
         }
         // Property rows are slots. A source that is another draft's working
         // molecule keeps rows for deleted slots, so copy only live rows.
-        let property_error = |error| MoleculeError::Property(Box::new(error));
+        let property_error = |error| MoleculeError::Property(error);
         let (live, atom_rows): (Vec<_>, Vec<_>) = map
             .atoms
             .iter()

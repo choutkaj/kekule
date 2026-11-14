@@ -120,8 +120,12 @@ impl GeometryData {
     /// Checks that a per-atom array has one row per atom.
     pub(crate) fn check_len(&self, actual: usize) -> Result<(), GeometryError> {
         if actual != self.positions.len() {
-            return Err(GeometryError::Array(DenseArrayError::CountMismatch(
-                LengthMismatch::new(Countable::Row, self.positions.len(), actual),
+            return Err(GeometryError::Array(Box::new(
+                DenseArrayError::CountMismatch(LengthMismatch::new(
+                    Countable::Row,
+                    self.positions.len(),
+                    actual,
+                )),
             )));
         }
         Ok(())
