@@ -85,7 +85,7 @@ pub enum StereoSearchError {
         limit: usize,
     },
     /// Perceiving the analysed molecule failed; see the source.
-    Perception(crate::chemistry::PerceptionError),
+    Perception(crate::algorithms::PerceptionError),
     /// Represented stereo is invalid; see the source.
     InvalidStereo(StereoValidationError),
     /// The search exceeded [`StereoSearchOptions::max_atoms`] or

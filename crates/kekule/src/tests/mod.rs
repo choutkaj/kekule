@@ -1,5 +1,9 @@
-use crate::chemistry::*;
 use crate::diagnostics::{DiagnosticKind, SourceLocation, UnsupportedContent};
+use crate::io::{
+    canonicalize_molecule_for_publication, AtomPositionSource, NormalizationError,
+    NormalizationReport, NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
+    SourceStereoNormalizationError, SourceStereoNormalizationIssue,
+};
 use crate::math::Point3;
 use crate::molecule::*;
 use crate::perception::{

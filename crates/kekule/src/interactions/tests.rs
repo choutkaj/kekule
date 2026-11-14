@@ -863,7 +863,7 @@ fn reperceives_other_installed_models() {
         .unwrap()
         .pop()
         .unwrap();
-    crate::chemistry::perceive_molecule(&mut furan).unwrap();
+    crate::algorithms::perceive_molecule(&mut furan).unwrap();
     crate::algorithms::perceive_aromaticity_in_place(
         &mut furan,
         crate::molecule::AromaticityModel::Mdl,

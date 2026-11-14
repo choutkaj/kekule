@@ -9,6 +9,7 @@ mod crc;
 mod decode;
 mod description;
 mod encode;
+pub(crate) mod entry_points;
 
 use std::fmt;
 

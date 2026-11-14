@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::chemistry::PerceptionError;
+use crate::algorithms::PerceptionError;
 use crate::molecule::{
     AromaticityModel, AtomId, Bond, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
     RingBasisState, RingPerception, ValenceModel, ValenceValidation,

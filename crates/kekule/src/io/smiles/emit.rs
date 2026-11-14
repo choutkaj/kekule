@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::FormatError;
-use crate::io::write_error::SMILES_WRITE;
+use crate::io::write_policy::SMILES_WRITE;
 use crate::molecule::{AtomId, Molecule};
 use crate::stereo::{StereoElementKind, StereoGroupKind};
 

@@ -145,7 +145,7 @@ leaves all definitions and geometry state intact.
 See [graph storage](crates/kekule/src/molecule/graph.rs),
 [represented stereo](crates/kekule/src/molecule/stereo.rs),
 [perception state](crates/kekule/src/molecule/perception.rs),
-[chemical perception](crates/kekule/src/chemistry/perception.rs), and
+[chemical perception](crates/kekule/src/algorithms/perception.rs), and
 [stereo algorithms](crates/kekule/src/algorithms/stereo.rs).
 
 ## Topology, hierarchy, and classification
@@ -675,8 +675,8 @@ Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral
 histidine tautomers; callers supply more as context. See
-[macromolecular connectivity](crates/kekule/src/io/structure_connectivity.rs)
-and [structure interpretation](crates/kekule/src/io/structure_interpret/mod.rs).
+[macromolecular connectivity](crates/kekule/src/io/macromolecular/connectivity.rs)
+and [structure interpretation](crates/kekule/src/io/macromolecular/mod.rs).
 
 Interpretations own format reports, metadata, and source correspondence.
 Borrowed projections reuse canonical owners; consuming projections explicitly
@@ -750,7 +750,10 @@ this.
 
 A public module's file holds only its docs, `mod` declarations, and re-export
 lists. Its implementation, entry-point functions included, lives in private
-child or sibling modules named for what they hold.
+child or sibling modules named for what they hold. Format implementations live
+in the private `io` module, one directory per format holding its parser,
+document types, interpretation, writer, and entry points; plumbing shared by
+several formats stays at the `io` level.
 
 The public modules of `kekule`, by domain:
 

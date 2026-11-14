@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use crate::diagnostics::{DiagnosticKind, SourceLocation};
 
 use super::super::element_symbol::parse_structure_element_symbol;
-use super::super::mmcif_category::MmcifCategory;
+use super::super::mmcif::category::MmcifCategory;
 use super::super::{MmcifBlock, MmcifValue};
 use super::{component_error, Component, ComponentAtom, ComponentBond, ComponentBondOrder};
 use crate::diagnostics::FormatError;

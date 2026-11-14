@@ -50,7 +50,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::xyz_entry_points::{parse_reader, parse_str};
+pub use crate::io::xyz::entry_points::{parse_reader, parse_str};
 pub use crate::io::{
     XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzInferredBond, XyzInterpretIssue,
     XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions,

@@ -1,0 +1,59 @@
+//! Source-declared combinations constrain selection; they do not create members.
+use crate::diagnostics::{DiagnosticKind, FormatError};
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::super::atom_site::{required, row_error, AtomRow};
+use crate::io::MmcifBlock;
+
+pub(in crate::io::macromolecular) fn conformations(
+    block: &MmcifBlock,
+    rows: &[AtomRow],
+) -> Result<BTreeMap<String, BTreeSet<String>>, FormatError> {
+    let mut conformations = BTreeMap::<String, BTreeSet<String>>::new();
+    let Some(table) = block.category("_atom_sites_alt_gen")? else {
+        return Ok(conformations);
+    };
+    let available = rows
+        .iter()
+        .filter_map(|row| row.alt_id.as_deref())
+        .collect::<BTreeSet<_>>();
+    for row in 0..table.row_count() {
+        let id = required(&table, row, "_atom_sites_alt_gen.ens_id")?;
+        let value = table
+            .value(row, "_atom_sites_alt_gen.alt_id")
+            .ok_or_else(|| {
+                row_error(
+                    &table,
+                    row,
+                    DiagnosticKind::InvalidValue,
+                    "missing _atom_sites_alt_gen.alt_id",
+                )
+            })?;
+        // The dictionary examples include '.' for shared sites. Shared rows are
+        // retained for every combination regardless of whether '.' is listed.
+        let label = value.text();
+        if label == "?" || (label != "." && !available.contains(label)) {
+            return Err(row_error(
+                &table,
+                row,
+                DiagnosticKind::InvalidReference,
+                format!(
+                    "Source conformation {id:?} names alternate location {label:?}, which no atom has."
+                ),
+            ));
+        }
+        if !conformations
+            .entry(id.to_owned())
+            .or_default()
+            .insert(label.to_owned())
+        {
+            return Err(row_error(
+                &table,
+                row,
+                DiagnosticKind::Inconsistent,
+                format!("Source conformation {id:?} lists alternate location {label:?} twice."),
+            ));
+        }
+    }
+    Ok(conformations)
+}
