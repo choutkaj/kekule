@@ -28,19 +28,23 @@ through the workspace.
   `Order::Step`, or `Order::Coordinate { unit, values }`;
   `StructureSetError::Missing` names an absent `Requirement`, such as times.
 - `structure::StructureSetRead` (`peek`, `read`, `order`, `properties`) reads
-  geometries from any set or a host's own reader (`StructureSetReadError`;
-  `GeometryView::new` checks a host-lent geometry).
+  geometries from any set or a host's own reader (`StructureSetReadError`,
+  whose `Reader` variant holds a reader's own failure, such as a
+  `TrajectoryIoError`; `GeometryView::new` checks a host-lent geometry).
 - `traj::io::open_indexed_structure_set` (and `_from_index`) and
   `IndexedFileTrajectoryReader::into_structure_set` give a set that decodes
   XYZ, DCD, TRR, or XTC geometries on demand, from many threads at once.
-- `StructureSet<IndexedFile>` and `Ensemble<IndexedFile>` are `Clone`, take
-  appended frames with `refresh`, and `load` geometries into memory; for a
-  growing file, `Distribution` and the native descriptions gain `extended_to`.
+- `StructureSet<IndexedFile>` and `Ensemble<IndexedFile>` are `Clone` and take
+  appended frames with `refresh`, and `Ensemble::load` reads geometries into
+  memory; for a growing file, `Distribution` and the native descriptions gain
+  `extended_to`.
 - `traj::Processed` applies `ProcessingSteps` (make whole or wrap, center, fit
   to a `FitReference`, smooth, atom subset) to each geometry as it is read;
-  `skipped_periodic_steps` and `ProcessingError` report what it skipped.
+  `skipped_periodic_steps` and `ProcessingError` report what it skipped, and
+  a step that fails on a geometry is a `ProcessingStepError`.
 - `StructureSet::from_reader(reader, indices)` copies chosen geometries of any
-  `StructureSetRead`, whole and in the given order, with their order values.
+  `StructureSetRead`, whole and in the given order, with their order values
+  and the reader's set properties.
 - Analyses read any `StructureSetRead`: `statistics::SampleObservations`,
   `observe_samples(_with)`, `alignment::geometry_rmsd` and
   `geometry_aligned_rmsd` (`_with`), `clustering::pairwise_fitted_rmsd`.
@@ -183,6 +187,8 @@ through the workspace.
 - The default XYZ comment and DCD title name `kekule`, not `kekule-traj`.
 - Public modules are thin facades of docs and re-exports over private
   implementation modules; every public path is unchanged.
+- `structure` no longer depends on `traj` or `alignment`: codec frame state
+  and reader failure types live in `traj`.
 - `measure::within` searches large selections through a spatial grid instead
   of comparing every pair.
 - **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
