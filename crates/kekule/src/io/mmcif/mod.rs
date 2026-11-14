@@ -15,3 +15,6 @@ pub use write::{
     MmcifBlockSource, MmcifEntityClassifications, MmcifSharedCategory, MmcifWriteErrorKind,
     MmcifWriteOptions,
 };
+
+#[cfg(test)]
+mod tests;

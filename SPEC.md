@@ -992,6 +992,23 @@ API inventories, algorithms, and per-format policies live in Rustdoc beside the
 implementation, stated once; this document links to them rather than restating
 them.
 
+### Tests
+
+A module's unit tests live in its `tests.rs` beside it (`<module>/tests.rs`),
+declared once as `#[cfg(test)] mod tests;`. A large one splits by topic into
+files under `<module>/tests/`. There are no inline test modules and no
+`*_tests.rs` files. Unit-test fixtures that several modules share live in
+`crate::test_fixtures`, which tests import by name, never by glob.
+
+The integration tests of `kekule` build one binary per public domain of the
+table above: `tests/<domain>/main.rs` (`foundations`, `chemistry`, `queries`,
+`systems`, `analysis`, `formats`, `traj`) with one file per topic, sharing
+`tests/support/`. Two binaries stand apart: `invariants`, which checks
+cross-domain invariants over the external corpus, and `reading_threads`, whose
+counting global allocator must not see other tests' allocations. A test that
+needs only the public API is an integration test, and a topic is tested in one
+tree, not both.
+
 ### Companion packages
 
 The unpublished `kekule-bench` workspace package (`benchmarks/observer`)

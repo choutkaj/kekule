@@ -947,3 +947,6 @@ pub(crate) fn assign_collapsed_hydrogen_counts(
     }
     Ok(adjustments)
 }
+
+#[cfg(test)]
+mod tests;

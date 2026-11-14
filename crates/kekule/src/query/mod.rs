@@ -64,3 +64,6 @@ pub use graph::{
     MAX_QUERY_TOTAL_EXPRESSION_NODES,
 };
 pub use stereo::{QueryStereoConstraint, QueryStereoGroup};
+
+#[cfg(test)]
+mod tests;

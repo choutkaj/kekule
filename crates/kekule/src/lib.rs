@@ -157,7 +157,7 @@ pub mod xyz;
 pub use draft::DraftError;
 
 #[cfg(test)]
-mod tests;
+mod test_fixtures;
 
 // Compile and run the README examples so they cannot drift from the API. The
 // README is the workspace root's in the repository and the package root's once

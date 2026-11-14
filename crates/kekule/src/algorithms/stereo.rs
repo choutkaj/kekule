@@ -1228,3 +1228,6 @@ pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {
     // saturation for oversized expert-supplied perception assignments.
     u8::try_from(count).unwrap_or(u8::MAX)
 }
+
+#[cfg(test)]
+mod tests;

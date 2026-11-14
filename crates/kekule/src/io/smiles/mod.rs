@@ -26,3 +26,6 @@ pub use parse::{
     SmilesDocument, SmilesDocumentToken, SmilesDocumentTokenKind, SmilesParseOptions, SmilesRecords,
 };
 pub use write::{MAX_DIRECTIONAL_COMBINATIONS, MAX_DIRECTIONAL_VISITS};
+
+#[cfg(test)]
+mod tests;

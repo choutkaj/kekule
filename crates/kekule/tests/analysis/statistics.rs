@@ -2,6 +2,7 @@ use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
+use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
 };
@@ -775,4 +776,103 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
     let result = contacts.finish().unwrap();
     assert_eq!(result.contact_weights(), &[3.0]);
     assert_eq!(result.observation_count(), 2);
+}
+
+// Helpers of the sample-observation test below, which joins a set's samples
+// with an ensemble's probabilities.
+
+fn single_atom_topology() -> Topology {
+    let mut editor = MoleculeEditor::new();
+    editor
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    Topology::from_molecule(editor.finish().unwrap()).unwrap()
+}
+
+fn single_position(x: f64) -> Positions {
+    Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap()
+}
+
+fn set_at(xs: &[f64]) -> StructureSet {
+    StructureSet::from_geometries(
+        single_atom_topology(),
+        xs.iter().map(|x| Geometry::new(single_position(*x))),
+    )
+    .unwrap()
+}
+
+fn distribution(
+    samples: Samples,
+    assignments: &[usize],
+    representatives: &[usize],
+) -> Distribution {
+    let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
+    Distribution::new(samples, partition).unwrap()
+}
+
+fn nearly_equal(actual: f64, expected: f64) -> bool {
+    (actual - expected).abs() <= 4.0 * f64::EPSILON * actual.abs().max(expected.abs())
+}
+
+fn assert_close(actual: &[f64], expected: &[f64]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?} != {expected:?}");
+    for (a, e) in actual.iter().zip(expected) {
+        assert!(nearly_equal(*a, *e), "{actual:?} != {expected:?}");
+    }
+}
+
+#[test]
+fn weighted_observations_join_samples_and_probabilities() {
+    use kekule::statistics::SampleObservations;
+    let set = set_at(&[0.0, 1.0, 2.0]);
+    // A set's statistics count every geometry once.
+    let all = SampleObservations::all(&set);
+    assert_eq!(all.samples(), [0, 1, 2]);
+    assert_eq!(all.weights(), [1.0, 1.0, 1.0]);
+    let mut ensemble = Ensemble::new(
+        set,
+        distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[0]),
+    )
+    .unwrap();
+    // An ensemble's observe its samples with their probabilities.
+    let observed = SampleObservations::weighted(&ensemble);
+    assert_eq!(observed.samples(), [0, 2]);
+    assert_close(observed.weights(), &[0.5, 0.5]);
+    assert_eq!(
+        ensemble.distribution().sample_probabilities().unwrap(),
+        [(0, 0.5), (2, 0.5)]
+    );
+    ensemble
+        .distribution_mut()
+        .set_log_weight(2, 4.0_f64.ln())
+        .unwrap();
+    let distribution = ensemble.distribution();
+    let joined = distribution.sample_probabilities().unwrap();
+    assert_eq!(
+        joined
+            .iter()
+            .map(|(geometry, _)| *geometry)
+            .collect::<Vec<_>>(),
+        [0, 2]
+    );
+    // Weights 1 and 4 of 5.
+    let probabilities = joined
+        .iter()
+        .map(|(_, probability)| *probability)
+        .collect::<Vec<_>>();
+    assert_close(&probabilities, &[0.2, 0.8]);
+    let observed = SampleObservations::weighted(&ensemble);
+    assert_eq!(observed.samples(), [0, 2]);
+    assert_close(observed.weights(), &probabilities);
+    // Sample positions index the log weights and probabilities.
+    let by_position = distribution.probabilities().unwrap();
+    for (position, (geometry, probability)) in joined.iter().enumerate() {
+        assert_eq!(distribution.sample_position(*geometry), Some(position));
+        assert_eq!(*probability, by_position[position]);
+        assert_eq!(
+            distribution.log_weight(*geometry),
+            Some(distribution.log_weights().unwrap()[position])
+        );
+    }
+    assert_eq!(distribution.ranked_by_weight(), [2, 0]);
 }

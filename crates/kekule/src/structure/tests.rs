@@ -2154,4 +2154,5 @@ fn rigid_transforms_move_structures_and_geometries_with_their_cells() {
     }
 }
 
+mod construction;
 mod structure_set;

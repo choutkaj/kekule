@@ -166,6 +166,4 @@ pub(crate) use view::sealed::Sealed as StructureViewSealed;
 pub use view::{AsStructureView, StructureAtomView, StructureKind, StructureView};
 
 #[cfg(test)]
-mod structure_tests;
-#[cfg(test)]
 mod tests;

@@ -1,0 +1,353 @@
+//! Rejection of hostile structure set and ensemble records, kinds 9, 10, and
+//! 11: every stored sample, assignment, representative, log weight, order
+//! value, and section tag is checked against the set, and no truncation or
+//! corruption panics.
+
+use super::reports::{find, parts, read, report, resealed};
+use crate::diagnostics::{DiagnosticKind, Format};
+use crate::math::Point3;
+use crate::native::{
+    self, EnsembleDescription, NativeSource, NativeWriteOptions, StructureSetDescription,
+};
+use crate::structure::{
+    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, StateData,
+    StructureSet, TimeAxis,
+};
+use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
+
+/// Steps that mark where the order is stored.
+const STEPS: [u64; 3] = [
+    0x1111_2222_3333_4444,
+    0x1111_2222_3333_4445,
+    0x1111_2222_3333_4446,
+];
+/// Log weights of either sign, as any finite log weight may be.
+const LOG_WEIGHTS: [f64; 2] = [-2.091_864_061, 2.290_163_202];
+const ENERGY: f64 = -12.345_678_9;
+const TEMPERATURE: f64 = 312.345_678;
+const X: [f64; 3] = [0.111_111, 0.222_222, 0.333_333];
+
+/// Three one-atom geometries at [`X`] nm in `order`, without a distribution.
+fn geometries(order: Order) -> StructureSet {
+    let topology = crate::smiles::to_topology("O").unwrap();
+    let geometries = X.map(|x| {
+        Geometry::new(Positions::new(Quantity::new([Point3::new(x, 0.0, 0.0)], NANOMETER)).unwrap())
+    });
+    let mut set = StructureSet::from_geometries(topology, geometries).unwrap();
+    set.set_order(Some(order)).unwrap();
+    set
+}
+
+/// [`geometries`] in a step order of [`STEPS`], with a distribution over
+/// geometries 0 and 2 of [`LOG_WEIGHTS`], in two states: state 0 of geometry
+/// 2 at [`ENERGY`], state 1 of geometry 0, at [`TEMPERATURE`].
+fn ensemble() -> Ensemble {
+    let set = geometries(Order::Step(STEPS.to_vec()));
+    let distribution = Distribution::new(
+        Samples::Subset(vec![0, 2]),
+        Partition::new(vec![1, 0], vec![1, 0]).unwrap(),
+    )
+    .unwrap()
+    .with_log_weights(LOG_WEIGHTS.to_vec())
+    .unwrap()
+    .with_states(vec![
+        StateData::new()
+            .with_energy(Quantity::new(ENERGY, KILOJOULE_PER_MOLE))
+            .unwrap(),
+        StateData::new(),
+    ])
+    .unwrap()
+    .with_temperature(Quantity::new(TEMPERATURE, KELVIN))
+    .unwrap();
+    Ensemble::new(set, distribution).unwrap()
+}
+
+/// Where [`ensemble`]'s encoding stores each part of its distribution.
+struct Layout {
+    listed: usize,
+    samples: usize,
+    weights: usize,
+    assignments: usize,
+    representative: usize,
+    geometries: usize,
+}
+
+impl Layout {
+    fn of(bytes: &[u8]) -> Self {
+        // The steps follow the order kind; the distribution follows them:
+        // the samples tag, the sample count and two samples, the log weights
+        // tag and two log weights, two assignments, the state count, and the
+        // first state's representative.
+        let steps = find(bytes, &STEPS[0].to_le_bytes());
+        assert_eq!(bytes[steps - 1], 2, "a step order");
+        let start = steps + 24;
+        assert_eq!(bytes[start], 1, "a subset distribution");
+        let layout = Self {
+            listed: start + 1,
+            samples: start + 5,
+            weights: start + 14,
+            assignments: start + 30,
+            representative: start + 42,
+            geometries: find(bytes, &TEMPERATURE.to_le_bytes()) + 8,
+        };
+        assert_eq!(bytes[layout.listed..layout.samples], 2u32.to_le_bytes());
+        assert_eq!(bytes[layout.weights - 1], 1, "log weights");
+        assert_eq!(find(bytes, &LOG_WEIGHTS[0].to_le_bytes()), layout.weights);
+        assert_eq!(
+            bytes[layout.representative - 4..layout.representative],
+            2u32.to_le_bytes()
+        );
+        assert_eq!(
+            find(bytes, &ENERGY.to_le_bytes()),
+            layout.representative + 5
+        );
+        assert_eq!(bytes[layout.geometries], 0, "geometries in the record");
+        layout
+    }
+}
+
+/// `bytes` with `patch` at `offset`, resealed.
+fn patched(bytes: &[u8], offset: usize, patch: &[u8]) -> Vec<u8> {
+    let mut corrupted = bytes.to_vec();
+    corrupted[offset..offset + patch.len()].copy_from_slice(patch);
+    resealed(corrupted)
+}
+
+/// `bytes` cut at `offset`, with the trailer, resealed.
+fn cut(bytes: &[u8], offset: usize) -> Vec<u8> {
+    let mut cut = bytes[..offset].to_vec();
+    cut.extend_from_slice(&bytes[bytes.len() - 8..]);
+    resealed(cut)
+}
+
+/// Asserts that `bytes` fail to read as an invalid value whose message
+/// contains `message`.
+fn assert_invalid(bytes: &[u8], message: &str, case: &str) {
+    let error = read(bytes).unwrap_err();
+    assert_eq!(error.format(), Format::Native, "{case}: {error}");
+    assert_eq!(
+        error.kind(),
+        DiagnosticKind::InvalidValue,
+        "{case}: {error}"
+    );
+    assert!(error.to_string().contains(message), "{case}: {error}");
+}
+
+fn u32s(values: &[u32]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+#[test]
+fn stored_distributions_are_checked_against_their_set() {
+    let ensemble = ensemble();
+    let bytes = native::write(&ensemble, NativeWriteOptions::default()).unwrap();
+    assert_eq!(bytes[12], 11, "an ensemble record");
+    let decoded = read(&bytes).unwrap().into_ensemble().unwrap();
+    assert_eq!(decoded.set().order(), ensemble.set().order());
+    assert_eq!(decoded.distribution(), ensemble.distribution());
+    assert_eq!(
+        decoded.distribution().log_weights(),
+        Some(LOG_WEIGHTS.as_slice())
+    );
+    let at = Layout::of(&bytes);
+    let stored = "The stored structure is not valid.";
+    let cases = [
+        // Samples unsorted, duplicated, and out of range.
+        (at.samples, u32s(&[2, 0]), stored, "unsorted samples"),
+        (at.samples, u32s(&[0, 0]), stored, "duplicate samples"),
+        (at.samples, u32s(&[0, 7]), stored, "a sample out of range"),
+        // More samples than geometries.
+        (
+            at.listed,
+            u32s(&[4]),
+            "The distribution lists 4 samples of 3 geometries.",
+            "too many samples",
+        ),
+        // An assignment to a state that does not exist.
+        (at.assignments, u32s(&[2]), stored, "an assignment"),
+        // State 0 represented by sample 0, which is in state 1.
+        (
+            at.representative,
+            u32s(&[0]),
+            stored,
+            "a representative outside its state",
+        ),
+        (
+            at.representative,
+            u32s(&[9]),
+            stored,
+            "a representative out of range",
+        ),
+        // Log weights that are not finite.
+        (at.weights, f64::NAN.to_le_bytes().to_vec(), stored, "NaN"),
+        (
+            at.weights,
+            f64::INFINITY.to_le_bytes().to_vec(),
+            stored,
+            "infinity",
+        ),
+        (
+            at.weights,
+            f64::NEG_INFINITY.to_le_bytes().to_vec(),
+            stored,
+            "negative infinity",
+        ),
+        // An unknown geometries tag.
+        (
+            at.geometries,
+            vec![7],
+            "The geometries section tag 7 is unknown.",
+            "a geometries tag",
+        ),
+    ];
+    for (offset, patch, message, case) in cases {
+        assert_invalid(&patched(&bytes, offset, &patch), message, case);
+    }
+    // Zero and negative log weights are weights of one and below one.
+    for log_weight in [0.0f64, -1.0] {
+        let decoded = read(&patched(&bytes, at.weights, &log_weight.to_le_bytes()))
+            .unwrap()
+            .into_ensemble()
+            .unwrap();
+        assert_eq!(
+            decoded.distribution().log_weights(),
+            Some([log_weight, LOG_WEIGHTS[1]].as_slice())
+        );
+    }
+
+    // Log weights and assignments cut short.
+    for (offset, case) in [
+        (at.weights + 4, "log weights"),
+        (at.weights + 8, "log weights"),
+        (at.assignments + 2, "assignments"),
+        (at.assignments + 4, "assignments"),
+    ] {
+        let error = read(&cut(&bytes, offset)).unwrap_err();
+        assert_eq!(error.format(), Format::Native, "{case}: {error}");
+        let error = read(&bytes[..offset]).unwrap_err();
+        assert_eq!(error.format(), Format::Native, "{case}: {error}");
+    }
+}
+
+#[test]
+fn stored_order_values_and_positions_are_finite() {
+    let times = [0.5, 1.5, 2.5];
+    let timed = geometries(Order::Time(
+        TimeAxis::new(Some(Quantity::new(times.to_vec(), PICOSECOND)), None).unwrap(),
+    ));
+    let scan = geometries(Order::Coordinate {
+        unit: DEGREE,
+        values: times.to_vec(),
+    });
+    for (set, case) in [(timed, "time"), (scan, "coordinate")] {
+        let bytes = native::write(&set, NativeWriteOptions::default()).unwrap();
+        let value = find(&bytes, &times[1].to_le_bytes());
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_invalid(
+                &patched(&bytes, value, &bad.to_le_bytes()),
+                "The stored structure is not valid.",
+                case,
+            );
+        }
+        let position = find(&bytes, &X[1].to_le_bytes());
+        assert_invalid(
+            &patched(&bytes, position, &f64::NAN.to_le_bytes()),
+            "positions are not valid",
+            case,
+        );
+    }
+}
+
+#[test]
+fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
+    let (_, mut set) = parts();
+    set.set_order(Some(Order::Step(STEPS[..2].to_vec())))
+        .unwrap();
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.order(), Some(&Order::Step(STEPS[..2].to_vec())));
+    let reports = vec![report(false), report(false)];
+    let bytes = native::write(
+        NativeSource::interpreted_structure_set(&set, &reports),
+        NativeWriteOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(bytes[8..12], 7u32.to_le_bytes(), "format version 7");
+    assert_eq!(bytes[12], 10);
+    let plain = native::write(&set, NativeWriteOptions::default()).unwrap();
+    assert_eq!(plain[12], 9);
+    assert_eq!(bytes[13..plain.len() - 8], plain[13..plain.len() - 8]);
+
+    // The geometries tag follows the two steps, and the first geometry's
+    // positions follow it: a structure set record holds no distribution.
+    let steps = find(&bytes, &STEPS[0].to_le_bytes());
+    assert_eq!(bytes[steps + 8..steps + 16], STEPS[1].to_le_bytes());
+    let geometries = steps + 16;
+    assert_eq!(bytes[geometries], 0);
+    let first = set.get(0).unwrap().positions().values().value()[0];
+    let stored = [first.x, first.y, first.z]
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect::<Vec<_>>();
+    assert_eq!(bytes[geometries + 1..geometries + 25], stored);
+    assert_invalid(
+        &patched(&bytes, geometries, &[1]),
+        "An interpreted structure set stores its geometries elsewhere.",
+        "external geometries",
+    );
+
+    // A report fewer or more than the geometries.
+    let reported = &bytes[plain.len() - 8..bytes.len() - 8];
+    let one = &reported[..reported.len() / 2];
+    assert_eq!(one, &reported[one.len()..]);
+    let short = cut(&bytes, bytes.len() - 8 - one.len());
+    assert_eq!(read(&short).unwrap_err().format(), Format::Native);
+    let mut extra = bytes[..bytes.len() - 8].to_vec();
+    extra.extend_from_slice(one);
+    extra.extend_from_slice(&bytes[bytes.len() - 8..]);
+    assert_eq!(read(&resealed(extra)).unwrap_err().format(), Format::Native);
+}
+
+/// Every prefix of `bytes` fails, and no single-byte corruption panics,
+/// with or without a valid checksum.
+fn sweep(bytes: &[u8]) {
+    for len in 0..bytes.len() {
+        let error = read(&bytes[..len]).unwrap_err();
+        assert_eq!(error.format(), Format::Native);
+    }
+    for index in 0..bytes.len() {
+        for flip in [0x01, 0x80, 0xFF] {
+            let mut corrupted = bytes.to_vec();
+            corrupted[index] ^= flip;
+            assert!(
+                read(&corrupted).is_err(),
+                "corrupting byte {index} with {flip:#04x} went unnoticed"
+            );
+            let _ = read(&resealed(corrupted));
+        }
+    }
+}
+
+#[test]
+fn every_truncation_and_corruption_of_a_structure_set_fails_cleanly() {
+    let ensemble = ensemble();
+    sweep(&native::write(&ensemble, NativeWriteOptions::default()).unwrap());
+    sweep(
+        &native::write(
+            &EnsembleDescription::of(&ensemble),
+            NativeWriteOptions::default(),
+        )
+        .unwrap(),
+    );
+    let set = ensemble.set();
+    sweep(&native::write(set, NativeWriteOptions::default()).unwrap());
+    sweep(
+        &native::write(
+            &StructureSetDescription::of(set),
+            NativeWriteOptions::default(),
+        )
+        .unwrap(),
+    );
+}

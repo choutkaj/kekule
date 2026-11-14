@@ -1,0 +1,445 @@
+use crate::descriptors;
+use crate::molecule::{
+    AromaticityModel, AtomId, BondId, BondOrder, ValenceModel, ValenceValidation,
+};
+use crate::perception::rings::RingPerceptionOptions;
+use crate::test_fixtures::{carbon, element_atom, read_smiles};
+
+use crate::descriptors::RotatableBondOptions;
+
+fn detected(smiles: &str) -> Vec<BondId> {
+    detected_with_options(smiles, RotatableBondOptions::STRICT)
+}
+
+fn detected_with_options(smiles: &str, options: RotatableBondOptions) -> Vec<BondId> {
+    let molecule = read_smiles(smiles).expect("rotatable-bond test SMILES should interpret");
+    descriptors::rotatable_bonds(&molecule, options)
+        .unwrap()
+        .bond_ids()
+        .to_vec()
+}
+
+#[test]
+fn rdkit_strict_handles_empty_single_and_linear_molecules() {
+    let empty = crate::molecule::MoleculeEditor::new();
+    let empty = empty.into_unchecked();
+    assert!(
+        descriptors::rotatable_bonds(&empty, RotatableBondOptions::STRICT)
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut builder = crate::molecule::MoleculeEditor::new();
+    builder.add_atom(carbon()).expect("single carbon");
+    let single = builder.finish().expect("single atom is connected");
+    assert!(
+        descriptors::rotatable_bonds(&single, RotatableBondOptions::STRICT)
+            .unwrap()
+            .is_empty()
+    );
+
+    assert!(detected("CC").is_empty());
+    assert!(detected("CCC").is_empty());
+    assert_eq!(detected("CCCC"), vec![BondId::new(1)]);
+}
+
+#[test]
+fn result_is_self_describing_ordered_and_searchable() {
+    let molecule = read_smiles("CCCCCC").expect("hexane should interpret");
+    let result = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
+
+    assert_eq!(result.options(), RotatableBondOptions::STRICT);
+    assert_eq!(
+        result.bond_ids(),
+        &[BondId::new(1), BondId::new(2), BondId::new(3),]
+    );
+    assert_eq!(result.len(), 3);
+    assert!(!result.is_empty());
+    assert!(result.contains(BondId::new(2)));
+    assert!(!result.contains(BondId::new(0)));
+    assert!(!result.contains(BondId::new(999)));
+}
+
+#[test]
+fn rings_are_excluded_but_strict_ring_linkages_are_retained() {
+    assert!(detected("C1CCCCC1").is_empty());
+    assert_eq!(detected("C1CCCCC1-C1CCCCC1").len(), 1);
+    assert_eq!(detected("c1ccccc1-c1ccccc1").len(), 1);
+}
+
+#[test]
+fn strict_resonance_exclusions_keep_only_unrestricted_neighboring_axes() {
+    assert!(detected("CC(=O)NC").is_empty());
+    assert!(detected("CC(=O)OC").is_empty());
+    assert!(detected("CC(=S)SC").is_empty());
+    assert_eq!(detected("CC(=O)OCC"), vec![BondId::new(3)]);
+    assert_eq!(detected("CC(=O)NCC"), vec![BondId::new(3)]);
+    assert!(detected("CC(=[NH2+])NC").is_empty());
+}
+
+#[test]
+fn resonance_restriction_does_not_require_a_neutral_double_bond_partner() {
+    for smiles in [
+        "CC(=N)OC",
+        "CC(=[NH2+])OC",
+        "CC(=[N-])OC",
+        "CC(=[NH2+])SC",
+        "CC(=[NH2+])NC",
+    ] {
+        let mut molecule = read_smiles(smiles).expect("valid imidate or amidine");
+        let axis = molecule
+            .bond_between(AtomId::new(1), AtomId::new(3))
+            .expect("valid atoms");
+        for materialize in [false, true] {
+            if materialize {
+                molecule.perceive().expect("valid valence");
+                molecule
+                    .add_hydrogens(Default::default())
+                    .expect("materialize hydrogens");
+            }
+            assert!(
+                descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)
+                    .unwrap()
+                    .is_empty(),
+                "{smiles}, materialized hydrogens: {materialize}"
+            );
+            assert!(descriptors::rotatable_bonds(
+                &molecule,
+                RotatableBondOptions::STRICT.with_include_resonance_restricted_bonds(true)
+            )
+            .unwrap()
+            .contains(axis));
+        }
+    }
+    // The restriction does not extend to the following alkyl bond.
+    for smiles in ["CC(=[NH2+])OCC", "CC(=[NH2+])SCC"] {
+        assert_eq!(detected(smiles), vec![BondId::new(3)]);
+    }
+}
+
+#[test]
+fn localized_aromatic_ring_bonds_do_not_create_false_resonance_exclusions() {
+    let molecule = read_smiles("CC1=NC(=NC(=N1)NC(C)C)NCC(C)C").expect("valid aminopyrimidine");
+    let graph = molecule;
+    let expected_endpoints = [(3, 11), (5, 7), (7, 8), (11, 12), (12, 13)];
+    let mut expected = expected_endpoints.map(|(left, right)| {
+        graph
+            .bond_between(AtomId::new(left), AtomId::new(right))
+            .expect("valid atom IDs")
+    });
+    expected.sort_unstable();
+
+    assert_eq!(
+        descriptors::rotatable_bonds(&graph, RotatableBondOptions::STRICT)
+            .unwrap()
+            .bond_ids(),
+        &expected
+    );
+}
+
+#[test]
+fn localized_five_member_aromatic_rings_do_not_hide_exocyclic_axes() {
+    let molecule = read_smiles("CCN1C=CN=C1[N+](=O)[O-]").expect("valid nitroimidazole");
+    let graph = molecule;
+    let mut expected = [(1, 2), (6, 7)].map(|(left, right)| {
+        graph
+            .bond_between(AtomId::new(left), AtomId::new(right))
+            .expect("valid atom IDs")
+    });
+    expected.sort_unstable();
+
+    assert_eq!(
+        descriptors::rotatable_bonds(&graph, RotatableBondOptions::STRICT)
+            .unwrap()
+            .bond_ids(),
+        &expected
+    );
+}
+
+#[test]
+fn resonance_exclusions_use_aromaticity_not_local_conjugation() {
+    assert_eq!(detected("CCSC1=NC=C[N+]1(C)C"), vec![BondId::new(1)]);
+    for source in ["CC(=O)Nc1ncc[se]1", "CC(=O)Nc1nccs1"] {
+        assert_eq!(detected(source), vec![BondId::new(3)], "{source}");
+    }
+}
+
+#[test]
+fn strict_terminal_triple_and_symmetric_group_exclusions_are_applied() {
+    assert!(detected("CCC#N").is_empty());
+    assert!(detected("FC(F)(F)CC").is_empty());
+    assert!(detected("ClC(Cl)(Cl)CC").is_empty());
+    assert!(detected("BrC(Br)(Br)CC").is_empty());
+    assert!(detected("CC(C)(C)CC").is_empty());
+    assert_eq!(detected("CC(C)CC").len(), 1);
+}
+
+#[test]
+fn unsupported_focus_bond_orders_are_never_rotatable() {
+    for order in [
+        BondOrder::Zero,
+        BondOrder::Double,
+        BondOrder::Triple,
+        BondOrder::Quadruple,
+        BondOrder::Dative,
+    ] {
+        let mut builder = crate::molecule::MoleculeEditor::new();
+        let atoms = (0..4)
+            .map(|index| {
+                // Sulfur accommodates the high represented valence when the
+                // focus is quadruple; carbon would fail strict perception.
+                let atom = if matches!(index, 1 | 2) {
+                    element_atom("S")
+                } else {
+                    carbon()
+                };
+                builder.add_atom(atom).expect("chain atom")
+            })
+            .collect::<Vec<_>>();
+        builder
+            .add_bond(atoms[0], atoms[1], BondOrder::Single)
+            .expect("left terminal bond");
+        builder
+            .add_bond(atoms[1], atoms[2], order)
+            .expect("focus bond");
+        builder
+            .add_bond(atoms[2], atoms[3], BondOrder::Single)
+            .expect("right terminal bond");
+        let molecule = builder.finish().expect("chain should be connected");
+
+        assert!(
+            descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)
+                .unwrap()
+                .is_empty(),
+            "{order:?} focus bond should not be rotatable"
+        );
+    }
+}
+
+#[test]
+fn detection_is_hydrogen_invariant_and_survives_tombstoned_slots() {
+    let mut molecule = read_smiles("CCOCC").expect("ether should interpret");
+    let expected = detected("CCOCC");
+    assert_eq!(expected, vec![BondId::new(1), BondId::new(2)]);
+
+    molecule.perceive().expect("ether should perceive");
+    molecule
+        .add_hydrogens(Default::default())
+        .expect("ether hydrogens should materialize");
+    assert_eq!(
+        descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)
+            .unwrap()
+            .bond_ids(),
+        expected
+    );
+
+    molecule
+        .perceive()
+        .expect("materialized ether should reperceive");
+    molecule
+        .remove_hydrogens()
+        .expect("ether hydrogens should collapse");
+    assert_eq!(
+        descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT)
+            .unwrap()
+            .bond_ids(),
+        expected
+    );
+}
+
+#[test]
+fn detection_reuses_or_computes_rings_without_mutating_perception() {
+    let mut molecule = read_smiles("c1ccccc1-CCCC").expect("phenylbutane should interpret");
+    let before = molecule.perception().clone();
+    let detached = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
+    assert_eq!(molecule.perception(), &before);
+    assert!(molecule.perception().rings().is_none());
+
+    crate::perception::rings::perceive_rings(
+        &mut molecule,
+        RingPerceptionOptions::membership_only(),
+    )
+    .expect("membership perception cannot fail");
+    assert!(molecule.perception().rings().is_some());
+    let installed = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
+    assert_eq!(installed, detached);
+}
+
+#[test]
+fn resonance_detection_is_independent_of_installed_perception() {
+    for source in ["CCSC1=NC=C[N+]1(C)C", "CC(=O)Nc1ncc[se]1"] {
+        let mut molecule = read_smiles(source).unwrap();
+        let original = molecule.clone();
+        let expected =
+            descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap();
+        assert_eq!(molecule, original);
+        assert_eq!(molecule.perception(), original.perception());
+
+        molecule.perceive().unwrap();
+        let before = molecule.perception().clone();
+        assert_eq!(
+            descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap(),
+            expected
+        );
+        assert_eq!(molecule.perception(), &before);
+
+        // A model-neutral, deliberately different H assignment cannot select
+        // a different aromaticity model or overwrite the caller's state.
+        let assignments = molecule
+            .perception()
+            .valence()
+            .unwrap()
+            .inferred_hydrogens()
+            .map(|(id, count)| (id, if id == AtomId::new(0) { 0 } else { count }))
+            .collect::<Vec<_>>();
+        let neutral = crate::perception::Perception::builder()
+            .with_valence(
+                ValenceModel::RdkitLike,
+                ValenceValidation::Permissive,
+                assignments,
+            )
+            .unwrap()
+            .build();
+        molecule.install_perception(neutral).unwrap();
+        assert_eq!(
+            molecule
+                .perception()
+                .valence()
+                .map(|valence| valence.validation()),
+            Some(ValenceValidation::Permissive)
+        );
+        let before = molecule.perception().clone();
+        assert_eq!(
+            descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap(),
+            expected
+        );
+        assert_eq!(molecule.perception(), &before);
+        assert_eq!(molecule, original);
+    }
+}
+
+#[test]
+fn strict_detection_reports_valence_failures_even_with_permissive_cached_state() {
+    let mut molecule = read_smiles("C(C)(C)(C)(C)C").unwrap();
+    let error = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap_err();
+    assert!(matches!(
+        error,
+        crate::algorithms::PerceptionError::Valence(_)
+    ));
+    crate::algorithms::perceive_valence(
+        &mut molecule,
+        ValenceModel::RdkitLike,
+        crate::algorithms::ValenceOptions::default()
+            .with_validation(crate::molecule::ValenceValidation::Permissive),
+    )
+    .unwrap();
+    crate::algorithms::perceive_rings(&mut molecule, RingPerceptionOptions::default()).unwrap();
+    crate::algorithms::perceive_aromaticity(
+        &mut molecule,
+        AromaticityModel::RdkitLike,
+        Default::default(),
+    )
+    .unwrap();
+    let before = molecule.clone();
+    assert_eq!(
+        descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap_err(),
+        error
+    );
+    assert_eq!(molecule, before);
+    assert_eq!(molecule.perception(), before.perception());
+    // When resonance exclusions are disabled no chemical perception is needed.
+    assert!(descriptors::rotatable_bonds(&molecule, RotatableBondOptions::GENERAL).is_ok());
+}
+
+#[test]
+fn general_enables_every_optional_category() {
+    assert_eq!(
+        RotatableBondOptions::GENERAL,
+        RotatableBondOptions::default()
+            .with_include_terminal_bonds(true)
+            .with_include_resonance_restricted_bonds(true)
+            .with_include_symmetric_bonds(true)
+            .with_include_ring_bonds(true)
+    );
+    assert_eq!(
+        detected_with_options("CC", RotatableBondOptions::GENERAL),
+        vec![BondId::new(0)]
+    );
+    assert_eq!(
+        detected_with_options("CC(=O)NC", RotatableBondOptions::GENERAL),
+        vec![BondId::new(0), BondId::new(2), BondId::new(3)]
+    );
+    assert_eq!(
+        detected_with_options("C1CCCCC1", RotatableBondOptions::GENERAL),
+        (0..6).map(BondId::new).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn each_option_independently_relaxes_strict_detection() {
+    assert_eq!(
+        detected_with_options(
+            "CC",
+            RotatableBondOptions::STRICT.with_include_terminal_bonds(true),
+        ),
+        vec![BondId::new(0)]
+    );
+    assert_eq!(
+        detected_with_options(
+            "CC(=O)NC",
+            RotatableBondOptions::STRICT.with_include_resonance_restricted_bonds(true),
+        ),
+        vec![BondId::new(2)]
+    );
+    assert_eq!(
+        detected_with_options(
+            "FC(F)(F)CC",
+            RotatableBondOptions::STRICT.with_include_symmetric_bonds(true),
+        ),
+        vec![BondId::new(3)]
+    );
+    assert_eq!(
+        detected_with_options(
+            "C1CCCCC1",
+            RotatableBondOptions::STRICT.with_include_ring_bonds(true),
+        ),
+        (0..6).map(BondId::new).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn resonance_filter_also_applies_when_ring_bonds_are_enabled() {
+    let molecule = read_smiles("O=C1NCCC1").expect("lactam should interpret");
+    let amide = molecule
+        .bond_between(AtomId::new(1), AtomId::new(2))
+        .expect("valid atom IDs");
+    let rings_without_restricted = descriptors::rotatable_bonds(
+        &molecule,
+        RotatableBondOptions::STRICT.with_include_ring_bonds(true),
+    )
+    .unwrap();
+
+    assert!(!rings_without_restricted.contains(amide));
+    assert!(
+        descriptors::rotatable_bonds(&molecule, RotatableBondOptions::GENERAL)
+            .unwrap()
+            .contains(amide)
+    );
+}
+
+#[test]
+fn general_still_excludes_hydrogen_axes_and_unsupported_orders() {
+    let molecule = read_smiles("[H]C").expect("methane fragment should interpret");
+    assert!(
+        descriptors::rotatable_bonds(&molecule, RotatableBondOptions::GENERAL)
+            .unwrap()
+            .is_empty()
+    );
+
+    let molecule = read_smiles("CC#N").expect("acetonitrile should interpret");
+    assert!(
+        descriptors::rotatable_bonds(&molecule, RotatableBondOptions::GENERAL)
+            .unwrap()
+            .is_empty()
+    );
+}

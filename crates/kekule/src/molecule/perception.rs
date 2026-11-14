@@ -1268,3 +1268,6 @@ fn validate_installed_ring(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

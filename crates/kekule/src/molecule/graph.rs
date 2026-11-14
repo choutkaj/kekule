@@ -807,3 +807,6 @@ fn live_slots<Id>(slots: &[Option<Id>]) -> Vec<usize> {
         .filter_map(|(slot, id)| id.as_ref().map(|_| slot))
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

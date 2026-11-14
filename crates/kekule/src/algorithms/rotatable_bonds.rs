@@ -504,3 +504,6 @@ fn is_nitrogen_oxygen_or_sulfur(element: Element) -> bool {
 fn is_ordinary_covalent(order: BondOrder) -> bool {
     !matches!(order, BondOrder::Zero | BondOrder::Dative)
 }
+
+#[cfg(test)]
+mod tests;

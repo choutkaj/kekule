@@ -425,3 +425,6 @@ impl AltLocDecision {
         &self.omitted_source_lines
     }
 }
+
+#[cfg(test)]
+mod tests;

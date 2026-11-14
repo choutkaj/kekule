@@ -1476,3 +1476,6 @@ fn planar_cross(a: Vector3, b: Vector3) -> f64 {
 }
 
 const COORDINATE_EPSILON: f64 = 1.0e-8;
+
+#[cfg(test)]
+mod tests;

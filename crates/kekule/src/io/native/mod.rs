@@ -599,3 +599,6 @@ impl NativeReadOptions {
         with_max_string_bytes
     );
 }
+
+#[cfg(test)]
+mod tests;

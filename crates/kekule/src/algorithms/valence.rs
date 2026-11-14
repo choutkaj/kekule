@@ -518,3 +518,6 @@ fn rdkit_neutral_valence_rule(atomic_number: u8) -> Option<AllowedValenceRule> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests;
