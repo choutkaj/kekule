@@ -3,7 +3,9 @@ mod neighbors;
 mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxOptions};
 
-use crate::diagnostics::{CapacityExceeded, LimitExceeded, Resource, TopologyMismatch};
+use crate::diagnostics::{
+    CapacityExceeded, Countable, LengthMismatch, LimitExceeded, Resource, TopologyMismatch,
+};
 use crate::structure::{DenseArrayError, Structure, StructureBuildError};
 use crate::{
     math::{PeriodicCellError, Point3},
@@ -120,7 +122,11 @@ impl SolvationRadii {
         let topology = topology.into();
         let radii = radii.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if radii.len() != topology.atom_count() {
-            return Err(SolvationError::RadiusCountMismatch);
+            return Err(SolvationError::RadiusCountMismatch(LengthMismatch::new(
+                Countable::SoluteRadius,
+                topology.atom_count(),
+                radii.len(),
+            )));
         }
         if radii.iter().any(|r| !r.is_finite() || *r < 0.0) {
             return Err(SolvationError::InvalidRadius);
@@ -375,7 +381,7 @@ pub enum SolvationError {
     /// ([`TopologyMismatch::SoluteRadii`]).
     TopologyMismatch(TopologyMismatch),
     /// The number of radii differs from the topology's atom count.
-    RadiusCountMismatch,
+    RadiusCountMismatch(LengthMismatch),
     /// A radius is negative or not finite.
     InvalidRadius,
     /// No reference van der Waals radius is known for this atom's element.
@@ -419,9 +425,7 @@ impl fmt::Display for SolvationError {
             }
             Self::InvalidPadding => f.write_str("The padding is not finite and positive."),
             Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
-            Self::RadiusCountMismatch => {
-                f.write_str("The number of solute radii differs from the number of atoms.")
-            }
+            Self::RadiusCountMismatch(mismatch) => mismatch.fmt(f),
             Self::InvalidRadius => f.write_str("A solute radius is negative or not finite."),
             Self::MissingElementRadius(atom) => write!(
                 f,
