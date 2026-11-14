@@ -1,7 +1,4 @@
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
-use crate::diagnostics::TopologyMismatch;
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::sync::Arc;
 
 use crate::math::RigidTransform;

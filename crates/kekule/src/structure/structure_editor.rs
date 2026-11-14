@@ -7,8 +7,7 @@ use super::scalars::{b_factor_quantity, canonical_b_factor};
 use super::{
     DenseArrayError, Geometry, GeometryData, GeometryError, Positions, Structure, StructureError,
 };
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{OwnerProperties, PropertyError};
@@ -746,8 +745,6 @@ pub enum StructureEditError {
     Geometry(GeometryError),
     /// The edited structure is invalid; see the source.
     Structure(Box<StructureError>),
-    /// The edit exceeds coordinate capacity.
-    CapacityOverflow,
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
     /// An imported geometry property cannot be combined with its destination table.
@@ -772,9 +769,6 @@ impl fmt::Display for StructureEditError {
             Self::Property(error) => error.fmt(f),
             Self::Geometry(error) => error.fmt(f),
             Self::Structure(error) => error.fmt(f),
-            Self::CapacityOverflow => {
-                f.write_str("The edit exceeds the addressable number of atoms.")
-            }
             Self::IncompatibleAppendCell => f.write_str(
                 "The appended structure has a different periodic cell. Set the destination cell or remove the source cell first.",
             ),
@@ -793,9 +787,7 @@ impl std::error::Error for StructureEditError {
             Self::Geometry(e) => e.source(),
             Self::Structure(e) => e.source(),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
-            Self::CapacityOverflow
-            | Self::IncompatibleAppendCell
-            | Self::NonFinitePosition { .. } => None,
+            Self::IncompatibleAppendCell | Self::NonFinitePosition { .. } => None,
         }
     }
 }

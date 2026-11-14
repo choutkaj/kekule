@@ -1,3 +1,4 @@
+use crate::diagnostics::{CapacityExceeded, Countable};
 use std::fmt;
 use std::sync::Arc;
 
@@ -228,7 +229,7 @@ impl Hierarchy {
         author_id: Option<String>,
     ) -> Result<ChainId, HierarchyError> {
         let label_id = label_id.into();
-        let id = checked_hierarchy_id(self.chains.len(), HierarchyIdKind::Chain, ChainId::new)?;
+        let id = checked_hierarchy_id(self.chains.len(), Countable::Chain, ChainId::new)?;
         self.chains.push(Chain {
             id,
             label_id,
@@ -250,7 +251,7 @@ impl Hierarchy {
         self.require_chain(chain)?;
         let id = checked_hierarchy_id(
             self.residue_chains.len(),
-            HierarchyIdKind::Residue,
+            Countable::Residue,
             ResidueId::new,
         )?;
         let name = Arc::<str>::from(name.into());
@@ -282,11 +283,7 @@ impl Hierarchy {
         if self.lookup().contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
         }
-        let id = checked_hierarchy_id(
-            self.site_atoms.len(),
-            HierarchyIdKind::AtomSite,
-            AtomSiteId::new,
-        )?;
+        let id = checked_hierarchy_id(self.site_atoms.len(), Countable::AtomSite, AtomSiteId::new)?;
         let key = self.metadata.push(metadata);
         self.push_site(id, residue, atom, key);
         Ok(id)
@@ -303,11 +300,7 @@ impl Hierarchy {
         if self.lookup().contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
         }
-        let id = checked_hierarchy_id(
-            self.site_atoms.len(),
-            HierarchyIdKind::AtomSite,
-            AtomSiteId::new,
-        )?;
+        let id = checked_hierarchy_id(self.site_atoms.len(), Countable::AtomSite, AtomSiteId::new)?;
         let key = self.metadata.key(metadata);
         self.push_site(id, residue, atom, key);
         Ok(id)
@@ -359,11 +352,11 @@ impl Hierarchy {
     ) -> Result<Self, RawHierarchyError> {
         let id = |index: usize, kind| {
             crate::molecule::checked_raw_id(index)
-                .map_err(|_| RawHierarchyError::IdentifierCapacityExceeded(kind))
+                .map_err(|_| RawHierarchyError::CapacityExceeded(CapacityExceeded::new(kind)))
         };
-        id(chains.len().saturating_sub(1), HierarchyIdKind::Chain)?;
-        id(residues.len().saturating_sub(1), HierarchyIdKind::Residue)?;
-        id(sites.len().saturating_sub(1), HierarchyIdKind::AtomSite)?;
+        id(chains.len().saturating_sub(1), Countable::Chain)?;
+        id(residues.len().saturating_sub(1), Countable::Residue)?;
+        id(sites.len().saturating_sub(1), Countable::AtomSite)?;
         let mut residue_chain = vec![None; residues.len()];
         for (index, chain) in chains.iter().enumerate() {
             let chain_id = ChainId::new(index as u32);
@@ -804,7 +797,7 @@ pub(crate) struct RawAtomSite {
 /// Why stored hierarchy node lists do not form a hierarchy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RawHierarchyError {
-    IdentifierCapacityExceeded(HierarchyIdKind),
+    CapacityExceeded(CapacityExceeded),
     InvalidResidue(ResidueId),
     InvalidAtomSite(AtomSiteId),
     ResidueListedTwice(ResidueId),
@@ -818,9 +811,7 @@ impl fmt::Display for RawHierarchyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use crate::diagnostics::Capitalized;
         match self {
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "The hierarchy has run out of {kind} identifiers.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(f),
             Self::InvalidResidue(id) => write!(f, "A chain lists {id}, which does not exist."),
             Self::InvalidAtomSite(id) => {
                 write!(f, "A residue lists {id}, which does not exist.")
@@ -1112,8 +1103,8 @@ pub enum HierarchyError {
     InvalidAtomSiteId(AtomSiteId),
     /// The atom already has an atom site.
     DuplicateAtomPlacement(InstanceAtomId),
-    /// A new hierarchy node cannot be represented by the fixed-width ID for `kind`.
-    IdentifierCapacityExceeded(HierarchyIdKind),
+    /// A new hierarchy node cannot be given a fixed-width ID.
+    CapacityExceeded(CapacityExceeded),
     /// A lookup by name or label found no match.
     NotFound {
         /// The kind of node looked up.
@@ -1146,9 +1137,7 @@ impl fmt::Display for HierarchyError {
             Self::DuplicateAtomPlacement(id) => {
                 write!(f, "{} already has an atom site.", Capitalized(id))
             }
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "The hierarchy has run out of {kind} identifiers.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(f),
             Self::NotFound { kind, query } => write!(f, "No {kind} matches {query}."),
             Self::Ambiguous {
                 kind,
@@ -1163,10 +1152,10 @@ impl std::error::Error for HierarchyError {}
 
 fn checked_hierarchy_id<T>(
     length: usize,
-    kind: HierarchyIdKind,
+    kind: Countable,
     construct: impl FnOnce(u32) -> T,
 ) -> Result<T, HierarchyError> {
     crate::molecule::checked_raw_id(length)
         .map(construct)
-        .map_err(|_| HierarchyError::IdentifierCapacityExceeded(kind))
+        .map_err(|_| HierarchyError::CapacityExceeded(CapacityExceeded::new(kind)))
 }

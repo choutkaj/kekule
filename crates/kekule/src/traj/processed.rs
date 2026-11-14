@@ -1,8 +1,7 @@
 //! Geometries processed as they are read: [`Processed`] and its
 //! [`ProcessingSteps`].
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::{Countable, IndexOutOfRange};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 

@@ -1,9 +1,7 @@
 //! The distribution of an [`Ensemble`](super::Ensemble): which geometries
 //! are samples, their log weights, and their grouping into states.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
 use crate::structure::{Partition, Requirement, StructureSetError};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};

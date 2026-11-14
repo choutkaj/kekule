@@ -15,8 +15,7 @@
 //! A chain identifier longer than the one-character chain column, such as
 //! the `SOL1` and `ION1` chains [`crate::solvation::solvate`] adds, is
 //! written as a segment identifier under [`PdbChainIdPolicy::SegmentId`].
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, LengthMismatch};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;

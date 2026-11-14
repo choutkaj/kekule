@@ -1,9 +1,7 @@
 //! Checks shared by the geometry owners: row indices, topology binding, and
 //! property row counts.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::GeometryProperties;
 use crate::topology::{Topology, TopologyAtomIndex};
 

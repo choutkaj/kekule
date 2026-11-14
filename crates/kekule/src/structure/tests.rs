@@ -1,8 +1,5 @@
 use super::*;
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
-use crate::diagnostics::TopologyMismatch;
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};

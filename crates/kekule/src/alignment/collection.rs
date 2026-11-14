@@ -1,10 +1,7 @@
 //! Superposition and RMSD over every geometry of a [`StructureSet`], and RMSD
 //! over listed geometries of any [`StructureSetRead`], through one implementation.
 
-use crate::diagnostics::Cancellation;
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::TopologyMismatch;
+use crate::diagnostics::{Cancellation, Countable, IndexOutOfRange, TopologyMismatch};
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
 use crate::structure::{

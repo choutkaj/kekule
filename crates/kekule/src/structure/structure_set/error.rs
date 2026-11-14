@@ -1,10 +1,8 @@
 //! The failures of [`super::StructureSet`] operations.
 
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::fmt;
 
-use crate::diagnostics::TopologyMismatch;
 use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;

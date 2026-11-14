@@ -77,7 +77,7 @@ use crate::molecule::{AtomId, BondId, Molecule};
 use crate::properties::{
     PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
 };
-pub use builder::{TopologyBuildError, TopologyBuilder, TopologyIdKind};
+pub use builder::{TopologyBuildError, TopologyBuilder};
 use dense_order::DenseOrder;
 pub(crate) use editor::{AppendMapping, AttachedInOccurrence, ChainIds, DraftHydrogenError};
 pub use entity_views::{AtomView, BondView};
@@ -941,7 +941,7 @@ impl Topology {
     /// # Errors
     ///
     /// [`TopologyBuildError::NoMoleculeInstances`] for empty input,
-    /// [`TopologyBuildError::IdentifierCapacityExceeded`] when an ID space
+    /// [`TopologyBuildError::CapacityExceeded`] when an ID space
     /// overflows, or another [`TopologyBuildError`] when publication fails.
     pub fn from_molecules(
         molecules: impl IntoIterator<Item = Molecule>,

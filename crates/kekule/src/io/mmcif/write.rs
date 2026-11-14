@@ -1,9 +1,8 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
 use crate::diagnostics::{
     Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::macromolecular::{
     EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,

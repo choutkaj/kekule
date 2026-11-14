@@ -2,10 +2,9 @@
 //! copy on write.
 
 use super::*;
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
-use crate::diagnostics::TopologyMismatch;
+use crate::diagnostics::{
+    CapacityExceeded, Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch,
+};
 use crate::units::{DEGREE, PICOSECOND};
 
 /// Geometries of a one-atom topology at these x positions, unordered and
@@ -1418,7 +1417,7 @@ fn every_error_reads_as_a_sentence() {
         (E::NonFiniteTime, "The time is not finite."),
         (E::NonFiniteEnergy, "The state energy is not finite."),
         (
-            E::Geometry(GeometryError::CapacityOverflow),
+            E::Geometry(GeometryError::CapacityExceeded(CapacityExceeded::new(Countable::Atom))),
             "A geometry is invalid.",
         ),
         (
@@ -1432,9 +1431,13 @@ fn every_error_reads_as_a_sentence() {
     assert_eq!(E::from(unit).to_string(), unit.to_string());
     // Wrapped causes are the error's source.
     use std::error::Error;
-    assert!(E::Geometry(GeometryError::CapacityOverflow)
+    assert!(
+        E::Geometry(GeometryError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Atom
+        )))
         .source()
-        .is_some());
+        .is_some()
+    );
     assert!(E::EmptySource.source().is_none());
 }
 

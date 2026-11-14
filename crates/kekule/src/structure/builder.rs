@@ -1,5 +1,4 @@
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{CapacityExceeded, Countable, LengthMismatch};
 use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
@@ -293,7 +292,9 @@ impl StructureBuilder {
         self.geometry
             .data_in_place()
             .try_reserve_atoms(additional)
-            .map_err(|_| StructureBuildError::CapacityOverflow)
+            .map_err(|_| {
+                StructureBuildError::CapacityExceeded(CapacityExceeded::new(Countable::Atom))
+            })
     }
 
     fn extend(&mut self, positions: &Positions, added_bonds: usize) {
@@ -320,8 +321,8 @@ fn validate_position_count(expected: usize, actual: usize) -> Result<(), Structu
 pub enum StructureBuildError {
     /// An added instance's positions do not match its molecule's atom count.
     InstancePositionCountMismatch(LengthMismatch),
-    /// Reserving per-atom state exceeded capacity.
-    CapacityOverflow,
+    /// The structure cannot hold more atoms or residues.
+    CapacityExceeded(CapacityExceeded),
     /// A topology edit or the topology build failed; see the source.
     Topology(TopologyBuildError),
     /// A chain, residue or atom-site edit failed; see the source.
@@ -334,9 +335,7 @@ impl fmt::Display for StructureBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InstancePositionCountMismatch(error) => error.fmt(formatter),
-            Self::CapacityOverflow => {
-                formatter.write_str("The structure exceeds the addressable number of atoms.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(formatter),
             Self::Topology(_) => formatter.write_str("Cannot build the topology."),
             Self::Hierarchy(_) => formatter.write_str("Cannot build the hierarchy."),
             Self::Structure(error) => error.fmt(formatter),

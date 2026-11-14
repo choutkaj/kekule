@@ -1,12 +1,11 @@
 //! Rigid superposition of paired atoms: fitting, RMSD, the weighted Kabsch
 //! kernel, and their options and errors.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{
+    Cancelled, Countable, IndexOutOfRange, LengthMismatch, LimitExceeded, TopologyMismatch,
+};
 use std::fmt;
 
-use crate::diagnostics::{Cancelled, LimitExceeded, TopologyMismatch};
 use crate::math::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::{GeometryError, StructureSetReadError, StructureView};
 use crate::topology::{AtomSelection, InstanceAtomId, TopologyAtomIndex, TopologyPerceptionError};

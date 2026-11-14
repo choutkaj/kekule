@@ -1,8 +1,7 @@
 //! [`GeometryData`]: the state a [`super::Geometry`] shares, and the row
 //! operations of drafts that stage it.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{CapacityExceeded, Countable, LengthMismatch};
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, RigidTransform};
@@ -145,7 +144,7 @@ impl GeometryData {
     pub(crate) fn try_reserve_atoms(&mut self, additional: usize) -> Result<(), GeometryError> {
         self.positions
             .try_reserve(additional)
-            .map_err(|_| GeometryError::CapacityOverflow)
+            .map_err(|_| GeometryError::CapacityExceeded(CapacityExceeded::new(Countable::Atom)))
     }
 
     /// Appends atoms and bond rows for staged construction. Owner

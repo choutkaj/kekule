@@ -272,7 +272,7 @@ impl MoleculeEditor {
     ///
     /// # Errors
     ///
-    /// [`MoleculeError::IdentifierCapacityExceeded`] when the draft already
+    /// [`MoleculeError::CapacityExceeded`] when the draft already
     /// holds the maximum number of atom slots.
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MoleculeError> {
         self.working.add_atom(atom)
@@ -342,7 +342,7 @@ impl MoleculeEditor {
     ///   names a group (use [`Self::add_stereo_group`]), its carriers are
     ///   duplicated, non-adjacent or incomplete, its focus bond has the wrong
     ///   order, or another element already describes the same focus.
-    /// - [`MoleculeError::IdentifierCapacityExceeded`] when no stereo element
+    /// - [`MoleculeError::CapacityExceeded`] when no stereo element
     ///   ID is left.
     pub fn add_stereo_element(
         &mut self,
@@ -392,7 +392,7 @@ impl MoleculeEditor {
     ///   lists a member twice, or a member already belongs to a group.
     /// - [`MoleculeError::InvalidStereoElementId`] when a member names no
     ///   element.
-    /// - [`MoleculeError::IdentifierCapacityExceeded`] when no stereo group ID
+    /// - [`MoleculeError::CapacityExceeded`] when no stereo group ID
     ///   is left.
     pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId, MoleculeError> {
         self.working.add_stereo_group(group)

@@ -1,8 +1,7 @@
 //! What the order of a [`super::StructureSet`]'s geometries means, and each
 //! geometry's place in it.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::units::{Quantity, Unit, CANONICAL_TIME_UNIT};
 
 use super::StructureSetError;

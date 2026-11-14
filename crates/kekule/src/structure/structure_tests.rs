@@ -1,7 +1,6 @@
 //! Structure construction, identity, and position-update regressions.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::structure::{DenseArrayError, GeometryError, Positions, Structure, StructureBuildError};

@@ -1,7 +1,6 @@
 //! The in-memory test reader and the in-memory stream contracts.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::{Countable, IndexOutOfRange};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};

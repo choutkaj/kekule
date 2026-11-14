@@ -1,7 +1,6 @@
 //! A structure set over an indexed trajectory file: [`IndexedFile`].
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::{Countable, IndexOutOfRange};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};

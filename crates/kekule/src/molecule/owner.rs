@@ -1,7 +1,7 @@
+use crate::diagnostics::{CapacityExceeded, Capitalized, Countable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::diagnostics::Capitalized;
 use std::ops::{Deref, DerefMut};
 
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut, PropertyError};
@@ -221,7 +221,7 @@ impl Molecule {
     }
 
     fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId, MoleculeError> {
-        let id = checked_molecule_id(slot, MoleculeIdKind::Atom, AtomId::new)?;
+        let id = checked_molecule_id(slot, Countable::Atom, AtomId::new)?;
         debug_assert_eq!(slot, self.graph.atoms.len());
         self.graph.atoms.push(Some(atom));
         self.graph.adjacency.push(Vec::new());
@@ -293,7 +293,7 @@ impl Molecule {
         if self.require_bond_between(a, b)?.is_some() {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
-        let id = checked_molecule_id(self.graph.bonds.len(), MoleculeIdKind::Bond, BondId::new)?;
+        let id = checked_molecule_id(self.graph.bonds.len(), Countable::Bond, BondId::new)?;
         self.graph.bonds.push(Some(Bond::new(a, b, order)));
         self.graph.adjacency[a.index()].push(id);
         self.graph.adjacency[b.index()].push(id);
@@ -490,7 +490,7 @@ impl Molecule {
         self.canonicalize_stereo_element(&mut element);
         let id = checked_molecule_id(
             self.graph.stereo_elements.len(),
-            MoleculeIdKind::StereoElement,
+            Countable::StereoElement,
             StereoElementId::new,
         )?;
         self.graph.stereo_elements.push(Some(element));
@@ -573,7 +573,7 @@ impl Molecule {
         }
         let id = checked_molecule_id(
             self.graph.stereo_groups.len(),
-            MoleculeIdKind::StereoGroup,
+            Countable::StereoGroup,
             StereoGroupId::new,
         )?;
         for member in &group.members {
@@ -1463,31 +1463,6 @@ impl Bond {
     }
 }
 
-/// Fixed-width identifier spaces owned by [`Molecule`].
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MoleculeIdKind {
-    /// Stable atom slots.
-    Atom,
-    /// Stable bond slots.
-    Bond,
-    /// Stable stereo-element slots.
-    StereoElement,
-    /// Stable stereo-group slots.
-    StereoGroup,
-}
-
-impl fmt::Display for MoleculeIdKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Atom => "atom",
-            Self::Bond => "bond",
-            Self::StereoElement => "stereo element",
-            Self::StereoGroup => "stereo group",
-        })
-    }
-}
-
 /// Why a molecule or editor operation was rejected.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
@@ -1512,8 +1487,9 @@ pub enum MoleculeError {
         /// The other endpoint.
         b: AtomId,
     },
-    /// A new value cannot be represented by the fixed-width ID for `kind`.
-    IdentifierCapacityExceeded(MoleculeIdKind),
+    /// A new atom, bond, stereo element or stereo group cannot be given a
+    /// fixed-width ID.
+    CapacityExceeded(CapacityExceeded),
     /// A property operation failed.
     Property(Box<PropertyError>),
 }
@@ -1530,9 +1506,7 @@ impl fmt::Display for MoleculeError {
             Self::DuplicateBond { a, b } => {
                 write!(f, "{} and {b} are already bonded.", Capitalized(a))
             }
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "The molecule has run out of {kind} identifiers.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(f),
             Self::Property(_) => f.write_str("The molecule property is invalid."),
         }
     }
@@ -1573,12 +1547,12 @@ pub(crate) fn validate_group_members(
 
 fn checked_molecule_id<T>(
     length: usize,
-    kind: MoleculeIdKind,
+    kind: Countable,
     construct: impl FnOnce(u32) -> T,
 ) -> Result<T, MoleculeError> {
     checked_raw_id(length)
         .map(construct)
-        .map_err(|_| MoleculeError::IdentifierCapacityExceeded(kind))
+        .map_err(|_| MoleculeError::CapacityExceeded(CapacityExceeded::new(kind)))
 }
 
 #[cfg(test)]
@@ -1636,40 +1610,40 @@ mod capacity_tests {
     #[test]
     fn every_molecule_identifier_space_checks_its_boundary() {
         assert_eq!(
-            checked_molecule_id(max_slot(), MoleculeIdKind::Atom, AtomId::new),
+            checked_molecule_id(max_slot(), Countable::Atom, AtomId::new),
             Ok(AtomId::new(u32::MAX))
         );
         assert_eq!(
-            checked_molecule_id(first_unsupported_slot(), MoleculeIdKind::Atom, AtomId::new,),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Atom
-            ))
+            checked_molecule_id(first_unsupported_slot(), Countable::Atom, AtomId::new,),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom
+            )))
         );
         assert_eq!(
-            checked_molecule_id(first_unsupported_slot(), MoleculeIdKind::Bond, BondId::new,),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Bond
-            ))
+            checked_molecule_id(first_unsupported_slot(), Countable::Bond, BondId::new,),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Bond
+            )))
         );
         assert_eq!(
             checked_molecule_id(
                 first_unsupported_slot(),
-                MoleculeIdKind::StereoElement,
+                Countable::StereoElement,
                 StereoElementId::new,
             ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::StereoElement
-            ))
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::StereoElement
+            )))
         );
         assert_eq!(
             checked_molecule_id(
                 first_unsupported_slot(),
-                MoleculeIdKind::StereoGroup,
+                Countable::StereoGroup,
                 StereoGroupId::new,
             ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::StereoGroup
-            ))
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::StereoGroup
+            )))
         );
     }
 
@@ -1682,9 +1656,9 @@ mod capacity_tests {
                 Atom::new(Element::from_atomic_number(6).expect("carbon")),
                 first_unsupported_slot(),
             ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Atom
-            ))
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom
+            )))
         );
         assert_eq!(molecule, before);
     }

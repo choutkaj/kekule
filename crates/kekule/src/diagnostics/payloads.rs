@@ -22,6 +22,12 @@ pub enum Countable {
     MoleculeDefinition,
     /// Molecule instances of a topology.
     MoleculeInstance,
+    /// Chains of a hierarchy.
+    Chain,
+    /// Residues of a hierarchy.
+    Residue,
+    /// Atom sites of a hierarchy.
+    AtomSite,
     /// Rows of a dense per-atom array or property table.
     Row,
     /// Positions, one per atom.
@@ -46,6 +52,8 @@ pub enum Countable {
     SoluteRadius,
     /// Ions to place.
     Ion,
+    /// Water molecules to place.
+    Water,
     /// Interpretation reports, one per structure written.
     Report,
     /// Values of a property column.
@@ -61,6 +69,9 @@ impl Countable {
             Self::StereoGroup => "stereo group",
             Self::MoleculeDefinition => "molecule definition",
             Self::MoleculeInstance => "molecule instance",
+            Self::Chain => "chain",
+            Self::Residue => "residue",
+            Self::AtomSite => "atom site",
             Self::Row => "row",
             Self::Position => "position",
             Self::Geometry => "geometry",
@@ -73,6 +84,7 @@ impl Countable {
             Self::ResonanceContributor => "resonance contributor",
             Self::SoluteRadius => "solute radius",
             Self::Ion => "ion",
+            Self::Water => "water molecule",
             Self::Report => "interpretation report",
             Self::Value => "value",
         }
@@ -86,6 +98,9 @@ impl Countable {
             Self::StereoGroup => "stereo groups",
             Self::MoleculeDefinition => "molecule definitions",
             Self::MoleculeInstance => "molecule instances",
+            Self::Chain => "chains",
+            Self::Residue => "residues",
+            Self::AtomSite => "atom sites",
             Self::Row => "rows",
             Self::Position => "positions",
             Self::Geometry => "geometries",
@@ -98,6 +113,7 @@ impl Countable {
             Self::ResonanceContributor => "resonance contributors",
             Self::SoluteRadius => "solute radii",
             Self::Ion => "ions",
+            Self::Water => "water molecules",
             Self::Report => "interpretation reports",
             Self::Value => "values",
         }

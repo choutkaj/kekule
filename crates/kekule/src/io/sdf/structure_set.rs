@@ -1,6 +1,7 @@
 //! Explicit assembly of interpreted SDF records into one structure set.
-use crate::diagnostics::TopologyMismatch;
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
+use crate::diagnostics::{
+    DiagnosticKind, Format, FormatError, FormatErrorDetail, TopologyMismatch,
+};
 use crate::structure::{Geometry, Order, StructureSet, StructureSetError};
 use crate::units::named_unit;
 

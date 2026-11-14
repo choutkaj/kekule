@@ -1,9 +1,7 @@
 //! The log-weight arithmetic of [`Distribution`] and the bookkeeping of
 //! [`Ensemble`], checked against values worked out by hand.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use std::sync::Arc;
 
 use super::{log_sum_exp, Distribution, Ensemble, Samples, StateData};

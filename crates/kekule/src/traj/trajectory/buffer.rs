@@ -1,5 +1,4 @@
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, LengthMismatch};
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, Vector3};

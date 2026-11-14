@@ -3,7 +3,7 @@ mod neighbors;
 mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxOptions};
 
-use crate::diagnostics::{LimitExceeded, Resource, TopologyMismatch};
+use crate::diagnostics::{CapacityExceeded, LimitExceeded, Resource, TopologyMismatch};
 use crate::structure::{DenseArrayError, Structure, StructureBuildError};
 use crate::{
     math::{PeriodicCellError, Point3},
@@ -387,8 +387,8 @@ pub enum SolvationError {
     /// Tiling would examine more candidate waters than
     /// [`SolventOptions::max_candidates`] allows.
     LimitExceeded(LimitExceeded),
-    /// An ion count or allocation does not fit in `usize`.
-    CapacityOverflow,
+    /// There are more ions or water molecules than can be held.
+    CapacityExceeded(CapacityExceeded),
     /// The cell is too small for a water, or every water site clashes.
     NoSolventSpace,
     /// Too few water sites satisfy the ion separation for the requested ions.
@@ -436,9 +436,7 @@ impl fmt::Display for SolvationError {
             Self::LimitExceeded(limit) => {
                 write!(f, "Solvent tiling exceeded its {}.", limit.describe())
             }
-            Self::CapacityOverflow => {
-                f.write_str("An ion count or allocation exceeds the addressable capacity.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(f),
             Self::NoSolventSpace => {
                 f.write_str("No water fits in the cell without clashing with the solute.")
             }

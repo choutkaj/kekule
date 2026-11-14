@@ -1,15 +1,12 @@
 //! Weighted accumulators of per-atom statistics over geometries, their results
 //! and errors, and the structure-set and ensemble methods that run them.
 
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::TopologyMismatch;
+use crate::diagnostics::{Cancelled, Countable, IndexOutOfRange, TopologyMismatch};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::diagnostics::Cancelled;
 use crate::math::{Point3, PointGrid, Vector3};
 use crate::parallel::{Progress, Run};
 use crate::structure::{

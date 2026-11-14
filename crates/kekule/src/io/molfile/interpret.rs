@@ -1,10 +1,13 @@
 //! Interpretation of Molfile and SDF records: the represented graph, stereo
 //! from bond marks, atom parities, and 3D coordinates, and one structure with
 //! one molecule instance per connected component, with source-line reports.
+use crate::diagnostics::{
+    CapacityExceeded, Countable, DiagnosticKind, Format, FormatError, SourceLocation,
+    UnsupportedContent,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation, UnsupportedContent};
 use crate::io::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
@@ -496,8 +499,9 @@ fn publish_molfile_components(
     for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
         let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
         let instance = builder.add_molecule(molecule, &positions)?;
-        let sequence =
-            i32::try_from(index + 1).map_err(|_| StructureBuildError::CapacityOverflow)?;
+        let sequence = i32::try_from(index + 1).map_err(|_| {
+            StructureBuildError::CapacityExceeded(CapacityExceeded::new(Countable::Residue))
+        })?;
         let hierarchy = builder.hierarchy_mut();
         let residue = hierarchy.add_residue(
             chain,

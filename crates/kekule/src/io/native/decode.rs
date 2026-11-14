@@ -1158,7 +1158,7 @@ impl<R: Read> Decoder<'_, R> {
 
     fn hierarchy_error(&self, error: RawHierarchyError) -> FormatError {
         let kind = match error {
-            RawHierarchyError::IdentifierCapacityExceeded(_) => DiagnosticKind::Limit,
+            RawHierarchyError::CapacityExceeded(_) => DiagnosticKind::Limit,
             RawHierarchyError::InvalidResidue(_) | RawHierarchyError::InvalidAtomSite(_) => {
                 DiagnosticKind::InvalidReference
             }

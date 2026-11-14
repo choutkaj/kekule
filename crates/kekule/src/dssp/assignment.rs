@@ -1,8 +1,7 @@
 //! Secondary-structure assignment: the entry points, the reusable plan, its
 //! options and limits, and the per-residue result, report, and error types.
 
-use crate::diagnostics::TopologyMismatch;
-use crate::diagnostics::{Cancelled, LimitExceeded};
+use crate::diagnostics::{Cancelled, LimitExceeded, TopologyMismatch};
 use std::collections::BTreeMap;
 use std::fmt;
 

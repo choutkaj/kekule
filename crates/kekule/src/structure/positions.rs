@@ -1,6 +1,4 @@
-use crate::diagnostics::Countable;
-use crate::diagnostics::IndexOutOfRange;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use std::fmt;
 use std::sync::Arc;
 
