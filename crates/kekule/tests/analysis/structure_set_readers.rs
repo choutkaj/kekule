@@ -17,7 +17,7 @@ use kekule::statistics::{
 };
 use kekule::statistics::{ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult};
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Members, Order, Partition, Positions, Structure,
+    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, Structure,
     StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
@@ -108,7 +108,7 @@ fn file_and_memory(scratch: &str) -> (Scratch, StructureSet<IndexedFile>, Struct
 /// states.
 fn partial() -> Distribution {
     Distribution::new(
-        Members::Subset(vec![1, 2, 4, 5, 7, 8]),
+        Samples::Subset(vec![1, 2, 4, 5, 7, 8]),
         Partition::new(vec![0, 1, 0, 1, 1, 0], vec![0, 1]).unwrap(),
     )
     .unwrap()

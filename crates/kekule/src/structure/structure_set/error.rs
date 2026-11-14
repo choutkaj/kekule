@@ -140,8 +140,8 @@ pub enum StructureSetError {
         geometry: usize,
     },
     /// The samples of a distribution are not increasing geometry indices.
-    UnsortedMembers,
-    /// A distribution of every geometry ([`Members::All`](crate::structure::Members::All))
+    UnsortedSamples,
+    /// A distribution of every geometry ([`Samples::All`](crate::structure::Samples::All))
     /// covers another number of geometries than the set has.
     CoverageMismatch {
         /// The number of geometries the distribution covers.
@@ -190,7 +190,7 @@ pub enum StructureSetError {
         /// Its state.
         state: usize,
     },
-    /// A state energy is not finite ([`State::set_energy`](crate::structure::State::set_energy)).
+    /// A state energy is not finite ([`StateData::set_energy`](crate::structure::StateData::set_energy)).
     NonFiniteEnergy,
     /// A temperature is not finite and positive.
     InvalidTemperature,
@@ -288,7 +288,7 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "Geometry {geometry} is earlier than the geometry before it."
             ),
-            Self::UnsortedMembers => {
+            Self::UnsortedSamples => {
                 formatter.write_str("The samples of the distribution are not in increasing order.")
             }
             Self::CoverageMismatch { covered, geometries } => write!(

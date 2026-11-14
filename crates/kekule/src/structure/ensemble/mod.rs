@@ -3,17 +3,18 @@
 use crate::topology::AtomSelection;
 
 use super::{
-    Geometry, GeometryMut, GeometryStorage, InMemory, Partition, Place, StructureSet,
-    StructureSetError,
+    Geometry, GeometryMut, GeometryStorage, InMemory, Place, StructureSet, StructureSetError,
 };
 
 mod distribution;
+mod partition;
 mod states;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use distribution::log_sum_exp;
-pub use distribution::{Distribution, DistributionMut, Members, State};
+pub use distribution::{Distribution, DistributionMut, Samples, StateData};
+pub use partition::{Partition, PartitionError};
 pub use states::{StateIter, StateView};
 
 /// A [`StructureSet`] read as draws from a [`Distribution`]: which of its
@@ -65,7 +66,7 @@ pub struct Ensemble<S = InMemory> {
 
 impl<S: GeometryStorage> Ensemble<S> {
     /// `distribution` over the geometries of `set`. A subset listing every
-    /// geometry becomes [`Members::All`].
+    /// geometry becomes [`Samples::All`].
     ///
     /// # Errors
     ///
@@ -84,7 +85,7 @@ impl<S: GeometryStorage> Ensemble<S> {
     /// represented by the first: the frames of an equilibrium trajectory or
     /// the models of an NMR bundle. An empty set has no states.
     pub fn uniform(set: StructureSet<S>) -> Self {
-        let distribution = Distribution::new(Members::All, Partition::one_state(set.len()))
+        let distribution = Distribution::new(Samples::All, Partition::one_state(set.len()))
             .expect("a distribution of every geometry has no subset to check");
         Self { set, distribution }
     }
@@ -206,7 +207,7 @@ impl Ensemble {
     /// [`StructureSetError::LogWeightRequired`],
     /// [`StructureSetError::NonFiniteLogWeight`], and the errors of
     /// [`StructureSet::push`].
-    pub fn push_member(
+    pub fn push_sample(
         &mut self,
         geometry: Geometry,
         place: Option<Place>,
@@ -217,14 +218,14 @@ impl Ensemble {
         self.distribution.check_state(state)?;
         self.distribution.check_new_log_weight(log_weight, index)?;
         self.set.push(geometry, place)?;
-        self.distribution.push_member(index, state, log_weight);
+        self.distribution.push_sample(index, state, log_weight);
         Ok(index)
     }
 
     /// Validates and appends one geometry at `place`, as
     /// [`StructureSet::push`] does, as the representative of a new state,
     /// returning the state's index. `log_weight` is as in
-    /// [`Self::push_member`]. Failure changes nothing.
+    /// [`Self::push_sample`]. Failure changes nothing.
     ///
     /// # Errors
     ///
@@ -235,7 +236,7 @@ impl Ensemble {
         &mut self,
         geometry: Geometry,
         place: Option<Place>,
-        state: State,
+        state: StateData,
         log_weight: Option<f64>,
     ) -> Result<usize, StructureSetError> {
         let index = self.set.len();

@@ -9,7 +9,7 @@ use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Members, Order, Partition, Place, Positions, State,
+    Distribution, Ensemble, Geometry, Order, Partition, Place, Positions, Samples, StateData,
     Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
@@ -177,13 +177,13 @@ fn weighted_methanes() -> Ensemble {
         .unwrap()
     });
     let set = StructureSet::from_structures(structures).unwrap();
-    let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))
+    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(2))
         .unwrap()
         .with_log_weights(vec![0.0, 3.0_f64.ln()])
         .unwrap()
         .with_states(vec![
-            State::new(),
-            State::new()
+            StateData::new(),
+            StateData::new()
                 .with_energy(Quantity::new(-2.5, KILOJOULE_PER_MOLE))
                 .unwrap(),
         ])
@@ -604,7 +604,7 @@ fn xyz_structure_sets_have_no_order() {
     // frames as equally likely draws.
     let ensemble = Ensemble::uniform(set.into_structure_set());
     let distribution = ensemble.distribution();
-    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.samples(), &Samples::All);
     assert_eq!(distribution.state_count(), 1);
     assert_eq!(distribution.log_weights(), None);
     assert_eq!(distribution.probabilities().unwrap(), [0.5, 0.5]);

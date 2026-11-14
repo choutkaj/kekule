@@ -5,7 +5,7 @@ use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Members, Partition, Positions, StructureSet,
+    Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
@@ -38,7 +38,7 @@ fn weighted(
 ) -> Ensemble {
     let set = StructureSet::from_geometries(top.clone(), structures.into_iter().map(Geometry::new))
         .unwrap();
-    let distribution = Distribution::new(Members::All, partition)
+    let distribution = Distribution::new(Samples::All, partition)
         .unwrap()
         .with_log_weights(log_weights)
         .unwrap();
@@ -211,7 +211,7 @@ fn equal_weights_reproduce_frame_counting() {
     }
 
     // An equally weighted distribution of every frame keeps every statistic.
-    let distribution = Distribution::new(Members::All, Partition::state_per_sample(3)).unwrap();
+    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(3)).unwrap();
     let ensemble = Ensemble::new(t.clone(), distribution).unwrap();
     for (geometry, frame) in ensemble
         .rmsf(&all)

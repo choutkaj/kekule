@@ -36,12 +36,12 @@ fn time_axis(times: Vec<f64>, steps: Vec<u64>) -> Order {
 }
 
 fn distribution(
-    members: Members,
+    samples: Samples,
     assignments: &[usize],
     representatives: &[usize],
 ) -> Distribution {
     let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
-    Distribution::new(members, partition).unwrap()
+    Distribution::new(samples, partition).unwrap()
 }
 
 fn velocities(x: f64) -> Velocities {
@@ -317,11 +317,11 @@ fn any_geometry_may_carry_site_fields_and_dynamics() {
 #[test]
 fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
     assert_eq!(
-        Distribution::new(Members::Subset(vec![2, 1]), Partition::one_state(2)),
-        Err(StructureSetError::UnsortedMembers)
+        Distribution::new(Samples::Subset(vec![2, 1]), Partition::one_state(2)),
+        Err(StructureSetError::UnsortedSamples)
     );
     assert_eq!(
-        Distribution::new(Members::Subset(vec![1, 2]), Partition::one_state(3)),
+        Distribution::new(Samples::Subset(vec![1, 2]), Partition::one_state(3)),
         Err(StructureSetError::PartitionMismatch {
             expected: 2,
             actual: 3
@@ -330,7 +330,7 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
     assert_eq!(
         Ensemble::new(
             set_at(&[0.0, 1.0, 2.0]),
-            distribution(Members::All, &[0, 0], &[0])
+            distribution(Samples::All, &[0, 0], &[0])
         )
         .unwrap_err(),
         StructureSetError::CoverageMismatch {
@@ -341,7 +341,7 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
     assert_eq!(
         Ensemble::new(
             set_at(&[0.0, 1.0, 2.0]),
-            distribution(Members::Subset(vec![1, 3]), &[0, 0], &[0])
+            distribution(Samples::Subset(vec![1, 3]), &[0, 0], &[0])
         )
         .unwrap_err(),
         StructureSetError::IndexOutOfRange { index: 3, len: 3 }
@@ -349,13 +349,13 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
     // A subset listing every geometry is all of them.
     let all = ensemble_at(
         &[0.0, 1.0, 2.0],
-        distribution(Members::Subset(vec![0, 1, 2]), &[0, 0, 1], &[0, 2]),
+        distribution(Samples::Subset(vec![0, 1, 2]), &[0, 0, 1], &[0, 2]),
     );
-    assert_eq!(all.distribution().members(), &Members::All);
+    assert_eq!(all.distribution().samples(), &Samples::All);
 
     let set = ensemble_at(
         &[0.0, 1.0, 2.0],
-        distribution(Members::Subset(vec![1, 2]), &[0, 1], &[0, 1]),
+        distribution(Samples::Subset(vec![1, 2]), &[0, 1], &[0, 1]),
     );
     let distribution = set.distribution();
     assert_eq!(distribution.sample_position(0), None);
@@ -374,7 +374,7 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
 fn log_weights_are_finite_and_equal_when_absent() {
     let mut set = ensemble_at(
         &[0.0, 1.0, 2.0],
-        distribution(Members::Subset(vec![0, 2]), &[0, 0], &[0]),
+        distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[0]),
     );
     let mut distribution = set.distribution_mut();
     assert_eq!(distribution.log_weights(), None);
@@ -415,18 +415,18 @@ fn log_weights_are_finite_and_equal_when_absent() {
 
     // A new sample needs a log weight once the samples have log weights.
     assert_eq!(
-        set.push_member(Geometry::new(single_position(3.0)), None, 0, None),
+        set.push_sample(Geometry::new(single_position(3.0)), None, 0, None),
         Err(StructureSetError::LogWeightRequired)
     );
     assert_eq!(
-        set.push_member(Geometry::new(single_position(3.0)), None, 1, Some(0.0)),
+        set.push_sample(Geometry::new(single_position(3.0)), None, 1, Some(0.0)),
         Err(StructureSetError::StateOutOfRange {
             state: 1,
             states: 1
         })
     );
     assert_eq!(
-        set.push_member(
+        set.push_sample(
             Geometry::new(single_position(3.0)),
             None,
             0,
@@ -437,10 +437,10 @@ fn log_weights_are_finite_and_equal_when_absent() {
     assert_eq!(set.set().len(), 3);
     let half = 0.5_f64.ln();
     assert_eq!(
-        set.push_member(Geometry::new(single_position(3.0)), None, 0, Some(half)),
+        set.push_sample(Geometry::new(single_position(3.0)), None, 0, Some(half)),
         Ok(3)
     );
-    let state = State::new()
+    let state = StateData::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
         .unwrap();
     assert_eq!(
@@ -450,7 +450,7 @@ fn log_weights_are_finite_and_equal_when_absent() {
     // A geometry that is not a sample keeps the distribution as it was.
     assert_eq!(set.push(Geometry::new(single_position(5.0)), None), Ok(5));
     let distribution = set.distribution();
-    assert_eq!(distribution.members(), &Members::Subset(vec![0, 2, 3, 4]));
+    assert_eq!(distribution.samples(), &Samples::Subset(vec![0, 2, 3, 4]));
     assert_eq!(
         distribution.log_weights(),
         Some(&[normalized[0], normalized[1], half, 0.0][..])
@@ -470,11 +470,11 @@ fn log_weights_are_finite_and_equal_when_absent() {
     // geometry lists the others.
     let mut all = Ensemble::uniform(set_at(&[0.0]));
     all.push(Geometry::new(single_position(1.0)), None).unwrap();
-    assert_eq!(all.distribution().members(), &Members::Subset(vec![0]));
+    assert_eq!(all.distribution().samples(), &Samples::Subset(vec![0]));
 }
 
-fn distribution_of_one_state(members: usize) -> Distribution {
-    Distribution::new(Members::All, Partition::one_state(members)).unwrap()
+fn distribution_of_one_state(samples: usize) -> Distribution {
+    Distribution::new(Samples::All, Partition::one_state(samples)).unwrap()
 }
 
 #[test]
@@ -485,14 +485,14 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
         .set_order(Some(Order::Step(vec![0, 1, 2, 3, 4])))
         .unwrap();
     let energies = [1.0, 2.0].map(|energy| {
-        State::new()
+        StateData::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap()
     });
     let [one, two, three, four] = [1.0_f64, 2.0, 3.0, 4.0].map(f64::ln);
     let set = Ensemble::new(
         frames,
-        distribution(Members::Subset(vec![1, 2, 3, 4]), &[0, 1, 0, 1], &[0, 3])
+        distribution(Samples::Subset(vec![1, 2, 3, 4]), &[0, 1, 0, 1], &[0, 3])
             .with_log_weights(vec![one, two, three, four])
             .unwrap()
             .with_states(energies.to_vec())
@@ -506,7 +506,7 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     assert_eq!(xs(selected.set()), [4.0, 0.0, 3.0]);
     assert_eq!(selected.set().order(), Some(&Order::Step(vec![4, 0, 3])));
     let distribution = selected.distribution();
-    assert_eq!(distribution.members(), &Members::Subset(vec![0, 2]));
+    assert_eq!(distribution.samples(), &Samples::Subset(vec![0, 2]));
     assert_eq!(distribution.log_weights(), Some(&[four, three][..]));
     // States in state order: state 0 (geometry 3, a new representative),
     // then state 1 (geometry 4, its representative).
@@ -517,7 +517,7 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
 
     // Selecting a whole state keeps its energy.
     let whole = set.select([1, 3]).unwrap();
-    assert_eq!(whole.distribution().members(), &Members::All);
+    assert_eq!(whole.distribution().samples(), &Samples::All);
     assert_eq!(
         whole.state(0).unwrap().energy(),
         Some(Quantity::new(1.0, KILOJOULE_PER_MOLE))
@@ -543,7 +543,7 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     // Removing a geometry that is not a sample shifts the samples down.
     let mut removed = set.clone();
     removed.remove(0).unwrap();
-    assert_eq!(removed.distribution().members(), &Members::All);
+    assert_eq!(removed.distribution().samples(), &Samples::All);
     assert_eq!(removed.set().order(), Some(&Order::Step(vec![1, 2, 3, 4])));
     assert_eq!(removed.state(1).unwrap().representative(), 3);
     // The representative of a state with other samples stays.
@@ -562,7 +562,7 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     removed.remove(0).unwrap();
     let distribution = removed.distribution();
     assert_eq!(distribution.state_count(), 1);
-    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.samples(), &Samples::All);
     assert_eq!(distribution.log_weights(), Some(&[four][..]));
     assert_eq!(distribution.partition().representatives(), [0]);
     assert_eq!(
@@ -649,7 +649,7 @@ fn distribution_operations_keep_their_results() {
     let mut set = grouped(&weights, &[0, 1, 0, 1], &[2, 1]);
     assert_eq!(set.set().len(), 4);
     let distribution = set.distribution();
-    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.samples(), &Samples::All);
     assert_eq!(distribution.log_weights(), Some(&weights[..]));
     assert_eq!(distribution.partition().assignments(), [0, 1, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [2, 1]);
@@ -692,8 +692,8 @@ fn distribution_operations_keep_their_results() {
     assert_close(&log_weights(&collapsed), &[4.0_f64.ln(), 6.0_f64.ln()]);
 
     let mut energy_set = energy_conformers(&[3.0, 1.0, 2.0]);
-    let state = |energy| State::new().with_energy(kj(energy).unwrap()).unwrap();
-    let expected = Distribution::new(Members::All, Partition::state_per_sample(3))
+    let state = |energy| StateData::new().with_energy(kj(energy).unwrap()).unwrap();
+    let expected = Distribution::new(Samples::All, Partition::state_per_sample(3))
         .unwrap()
         .with_log_weights(vec![0.0; 3])
         .unwrap()
@@ -741,7 +741,7 @@ fn distribution_operations_keep_their_results() {
             .collect::<Vec<_>>(),
         [1.0, 2.0].map(|energy| Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
     );
-    let regrouped = Distribution::new(Members::All, partition)
+    let regrouped = Distribution::new(Samples::All, partition)
         .unwrap()
         .with_log_weights(vec![0.0; 3])
         .unwrap()
@@ -769,7 +769,7 @@ fn distribution_operations_keep_their_results() {
         &exponentials(distribution.log_weights().unwrap()),
         &[0.1, 0.2, 0.3, 0.4],
     );
-    assert_eq!(distribution.members(), before.members());
+    assert_eq!(distribution.samples(), before.samples());
     assert_eq!(distribution.partition(), before.partition());
     assert_eq!(distribution.states(), before.states());
     assert_eq!(distribution.temperature(), None);
@@ -831,7 +831,7 @@ fn subsets_keep_the_order_and_the_distribution() {
     let (structure, atom, _) = structure_fixture();
     let mut set = StructureSet::from_structures([structure.clone(), structure]).unwrap();
     set.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
-    let state = State::new()
+    let state = StateData::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
         .unwrap();
     let mut state = state;
@@ -848,7 +848,7 @@ fn subsets_keep_the_order_and_the_distribution() {
         .unwrap();
     let ensemble = Ensemble::new(
         set.clone(),
-        distribution(Members::Subset(vec![1]), &[0], &[0])
+        distribution(Samples::Subset(vec![1]), &[0], &[0])
             .with_log_weights(vec![2.0])
             .unwrap()
             .with_states(vec![state])
@@ -868,7 +868,7 @@ fn subsets_keep_the_order_and_the_distribution() {
     assert_eq!(state.energy(), Some(Quantity::new(1.0, KILOJOULE_PER_MOLE)));
     assert!(state.properties().is_empty());
     let distribution = subset.distribution();
-    assert_eq!(distribution.members(), &Members::Subset(vec![1]));
+    assert_eq!(distribution.samples(), &Samples::Subset(vec![1]));
     assert_eq!(distribution.log_weights(), Some(&[2.0][..]));
     assert_eq!(
         distribution.temperature(),
@@ -905,7 +905,7 @@ fn replacing_a_geometry_keeps_its_place_and_sample() {
     let two = 2.0_f64.ln();
     let mut set = Ensemble::new(
         frames,
-        distribution(Members::Subset(vec![1]), &[0], &[0])
+        distribution(Samples::Subset(vec![1]), &[0], &[0])
             .with_log_weights(vec![two])
             .unwrap(),
     )
@@ -933,7 +933,7 @@ fn replacing_a_geometry_keeps_its_place_and_sample() {
 #[test]
 fn the_distribution_guard_keeps_the_samples() {
     // The replacement the guard cannot make is refused when paired.
-    let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1)).unwrap();
+    let foreign = Distribution::new(Samples::Subset(vec![7]), Partition::one_state(1)).unwrap();
     assert_eq!(
         Ensemble::new(set_at(&[0.0, 1.0]), foreign).unwrap_err(),
         StructureSetError::IndexOutOfRange { index: 7, len: 2 }
@@ -950,7 +950,7 @@ fn the_distribution_guard_keeps_the_samples() {
         .unwrap()
         .set_energy(kj(1.0))
         .unwrap();
-    assert_eq!(set.distribution().members(), &Members::All);
+    assert_eq!(set.distribution().samples(), &Samples::All);
     assert_eq!(set.state(1).unwrap().representative_sample().index(), 1);
     assert_eq!(set.state(1).unwrap().energy(), kj(1.0));
     assert_eq!(set.distribution().log_weight(1), Some(3.0_f64.ln()));
@@ -966,7 +966,7 @@ fn weighted_observations_join_samples_and_probabilities() {
     assert_eq!(all.weights(), [1.0, 1.0, 1.0]);
     let mut ensemble = Ensemble::new(
         set,
-        distribution(Members::Subset(vec![0, 2]), &[0, 0], &[0]),
+        distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[0]),
     )
     .unwrap();
     // An ensemble's observe its samples with their probabilities.
@@ -1019,14 +1019,14 @@ fn duplicates_in_a_selection_become_separate_geometries() {
     let two = 2.0_f64.ln();
     let set = Ensemble::new(
         frames,
-        distribution(Members::All, &[0, 1], &[0, 1])
+        distribution(Samples::All, &[0, 1], &[0, 1])
             .with_log_weights(vec![0.0, two])
             .unwrap()
             .with_states(vec![
-                State::new()
+                StateData::new()
                     .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
-                State::new()
+                StateData::new()
                     .with_energy(Quantity::new(2.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
             ])
@@ -1037,7 +1037,7 @@ fn duplicates_in_a_selection_become_separate_geometries() {
     assert_eq!(xs(twice.set()), [1.0, 1.0]);
     assert_eq!(twice.set().order(), Some(&Order::Step(vec![6, 6])));
     let distribution = twice.distribution();
-    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.samples(), &Samples::All);
     assert_eq!(distribution.log_weights(), Some(&[two, two][..]));
     assert_eq!(distribution.partition().assignments(), [0, 0]);
     assert_eq!(distribution.partition().representatives(), [0]);
@@ -1067,7 +1067,7 @@ fn collapse_keeps_population_shares_of_any_samples() {
     frames.set_order(Some(Order::Step(vec![0, 1, 2]))).unwrap();
     let set = Ensemble::new(
         frames,
-        distribution(Members::Subset(vec![0, 2]), &[0, 0], &[1]),
+        distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[1]),
     )
     .unwrap();
     let collapsed = set.collapse();
@@ -1087,7 +1087,7 @@ fn collapse_keeps_population_shares_of_any_samples() {
     // Weights of e¹⁰⁰⁰, whose sum no linear weight holds, keep their ratios.
     let heavy = ensemble_at(
         &[0.0, 1.0, 2.0],
-        distribution(Members::All, &[0, 0, 1], &[0, 2])
+        distribution(Samples::All, &[0, 0, 1], &[0, 2])
             .with_log_weights(vec![1000.0; 3])
             .unwrap(),
     );
@@ -1113,7 +1113,7 @@ fn samples_pushed_into_a_distribution_of_every_geometry() {
     frames.set_order(Some(Order::Step(vec![0]))).unwrap();
     let mut set = Ensemble::uniform(frames);
     assert_eq!(
-        set.push_member(
+        set.push_sample(
             Geometry::new(single_position(1.0)),
             Some(Place::Step(1)),
             0,
@@ -1125,13 +1125,13 @@ fn samples_pushed_into_a_distribution_of_every_geometry() {
         set.push_state(
             Geometry::new(single_position(2.0)),
             Some(Place::Step(2)),
-            State::new(),
+            StateData::new(),
             None,
         ),
         Ok(1)
     );
     let distribution = set.distribution();
-    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.samples(), &Samples::All);
     assert_eq!(distribution.log_weights(), None);
     assert_eq!(distribution.partition().assignments(), [0, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 2]);
@@ -1141,11 +1141,11 @@ fn samples_pushed_into_a_distribution_of_every_geometry() {
     let before = set.clone();
     let wide = || Geometry::new(Positions::zeros(2));
     assert!(matches!(
-        set.push_member(wide(), Some(Place::Step(3)), 1, None),
+        set.push_sample(wide(), Some(Place::Step(3)), 1, None),
         Err(StructureSetError::Geometry(_))
     ));
     assert!(matches!(
-        set.push_state(wide(), Some(Place::Step(3)), State::new(), None),
+        set.push_state(wide(), Some(Place::Step(3)), StateData::new(), None),
         Err(StructureSetError::Geometry(_))
     ));
     assert!(matches!(
@@ -1184,7 +1184,7 @@ fn empty_selections_and_distributions() {
     let mut frames = set_at(&[0.0, 1.0]);
     frames.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
     let mut set =
-        Ensemble::new(frames, distribution(Members::Subset(vec![0]), &[0], &[0])).unwrap();
+        Ensemble::new(frames, distribution(Samples::Subset(vec![0]), &[0], &[0])).unwrap();
     let none = set.select([]).unwrap();
     assert!(none.set().is_empty());
     assert_eq!(none.set().order(), Some(&Order::Step(Vec::new())));
@@ -1204,25 +1204,25 @@ fn empty_selections_and_distributions() {
     // Removing the last geometry that is not a sample leaves a distribution
     // of every geometry.
     set.remove(1).unwrap();
-    assert_eq!(set.distribution().members(), &Members::All);
+    assert_eq!(set.distribution().samples(), &Samples::All);
     assert_eq!(set.set().order(), Some(&Order::Step(vec![0])));
     // Removing the last sample leaves an empty distribution.
     set.remove(0).unwrap();
     assert!(set.set().is_empty());
     assert_eq!(set.distribution().state_count(), 0);
-    assert_eq!(set.distribution().members(), &Members::All);
+    assert_eq!(set.distribution().samples(), &Samples::All);
 }
 
 #[test]
 fn regrouping_a_split_state_drops_its_energy() {
     let mut set = ensemble_at(
         &[0.0, 1.0, 2.0],
-        distribution(Members::All, &[0, 0, 1], &[0, 2])
+        distribution(Samples::All, &[0, 0, 1], &[0, 2])
             .with_states(vec![
-                State::new()
+                StateData::new()
                     .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
-                State::new()
+                StateData::new()
                     .with_energy(Quantity::new(2.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
             ])
@@ -1356,7 +1356,7 @@ fn every_error_reads_as_a_sentence() {
             "Geometry 2 is earlier than the geometry before it.",
         ),
         (
-            E::UnsortedMembers,
+            E::UnsortedSamples,
             "The samples of the distribution are not in increasing order.",
         ),
         (

@@ -8,7 +8,7 @@ use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 /// Which geometries of a set a [`Distribution`] covers: its samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum Members {
+pub enum Samples {
     /// Every geometry of the set.
     All,
     /// The listed geometries, by strictly increasing index; the others are
@@ -16,18 +16,19 @@ pub enum Members {
     Subset(Vec<usize>),
 }
 
-/// One state of a [`Distribution`]: an optional energy and owner properties.
+/// The data a [`Distribution`] stores for one state: an optional energy and
+/// owner properties.
 ///
 /// Which samples a state groups, and which of them represents it, belong to
 /// the distribution's [`Partition`]; [`StateView`](super::StateView) reads
 /// them together with the state's probability.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct State {
+pub struct StateData {
     energy: Option<Quantity<f64>>,
     properties: OwnerProperties,
 }
 
-impl State {
+impl StateData {
     /// A state without an energy or properties.
     pub fn new() -> Self {
         Self::default()
@@ -76,13 +77,13 @@ impl State {
     }
 }
 
-/// Members covering geometries `members` of a set of `len`, as
-/// [`Members::All`] when they are every geometry.
-fn normalized(members: Vec<usize>, len: usize) -> Members {
-    if members.len() == len {
-        Members::All
+/// Geometries `samples` of a set of `len`, as [`Samples::All`] when they
+/// are every geometry.
+fn normalized(samples: Vec<usize>, len: usize) -> Samples {
+    if samples.len() == len {
+        Samples::All
     } else {
-        Members::Subset(members)
+        Samples::Subset(samples)
     }
 }
 
@@ -91,19 +92,19 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 ///
 /// It has two levels, as a distribution of conformations does.
 ///
-/// - A *sample* is a geometry the distribution covers ([`Members`]), with a
+/// - A *sample* is a geometry the distribution covers ([`Samples`]), with a
 ///   *weight*: the share of probability it carries. Only ratios of weights
 ///   are meaningful, so they are stored as natural logarithms, which any
 ///   finite value is: weights from bias reweighting or importance sampling
 ///   span hundreds of orders of magnitude, beyond what a linear weight can
 ///   hold. Without weights, every sample weighs the same.
-/// - A *state* ([`State`]) is a distinct conformation: a group of samples,
-///   one of them its representative. Its *population* is the total weight
-///   of its samples, derived and never stored. A state may carry an
-///   *energy* on one scale for the whole distribution, such as a
+/// - A *state* is a distinct conformation: a group of samples, one of them
+///   its representative. Its *population* is the total weight of its
+///   samples, derived and never stored. Its data ([`StateData`]) may carry
+///   an *energy* on one scale for the whole distribution, such as a
 ///   conformer's minimized energy or a computed free energy, never a
 ///   snapshot's instantaneous energy, which stays a property of its
-///   geometry.
+///   geometry. [`StateView`](super::StateView) reads a state whole.
 ///
 /// Every sample is in exactly one state, and every state has at least one
 /// sample, its representative ([`Partition`]). The distribution may record
@@ -112,7 +113,7 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 /// Two index spaces meet here. Methods that take or return a `geometry` use
 /// geometry indices of the set. [`Self::log_weights`], [`Self::partition`],
 /// and [`Self::probabilities`] are in sample order, by sample position: the
-/// `i`th sample is the `i`th geometry [`Members`] lists.
+/// `i`th sample is the `i`th geometry [`Samples`] lists.
 /// [`Self::sample_probabilities`] joins the two.
 ///
 /// A conformer ensemble is one state per conformer; an NMR bundle or the
@@ -120,10 +121,10 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 /// makes several.
 ///
 /// ```
-/// use kekule::structure::{Distribution, Members, Partition};
+/// use kekule::structure::{Distribution, Partition, Samples};
 /// // Frames 1 and 2 of a three-frame trajectory, as one state, the first
 /// // weighing three times the second.
-/// let distribution = Distribution::new(Members::Subset(vec![1, 2]), Partition::one_state(2))?
+/// let distribution = Distribution::new(Samples::Subset(vec![1, 2]), Partition::one_state(2))?
 ///     .with_log_weights(vec![3.0_f64.ln(), 0.0])?;
 /// assert_eq!(distribution.log_weight(0), None);
 /// let probabilities = distribution.probabilities()?;
@@ -134,28 +135,28 @@ fn normalized(members: Vec<usize>, len: usize) -> Members {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Distribution {
-    members: Members,
+    samples: Samples,
     log_weights: Option<Vec<f64>>,
     partition: Partition,
-    states: Vec<State>,
+    states: Vec<StateData>,
     temperature: Option<Quantity<f64>>,
 }
 
 impl Distribution {
-    /// A distribution of `members` grouped by `partition`, without weights,
+    /// A distribution of `samples` grouped by `partition`, without weights,
     /// state energies, state properties, or a temperature.
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::UnsortedMembers`] when a subset's indices do not
+    /// [`StructureSetError::UnsortedSamples`] when a subset's indices do not
     /// increase, and [`StructureSetError::PartitionMismatch`] when the
     /// partition covers another number of samples than the subset lists. A
-    /// distribution of [`Members::All`] is checked against its set when an
+    /// distribution of [`Samples::All`] is checked against its set when an
     /// [`Ensemble`](super::Ensemble) is built.
-    pub fn new(members: Members, partition: Partition) -> Result<Self, StructureSetError> {
-        if let Members::Subset(indices) = &members {
+    pub fn new(samples: Samples, partition: Partition) -> Result<Self, StructureSetError> {
+        if let Samples::Subset(indices) = &samples {
             if indices.windows(2).any(|pair| pair[0] >= pair[1]) {
-                return Err(StructureSetError::UnsortedMembers);
+                return Err(StructureSetError::UnsortedSamples);
             }
             if indices.len() != partition.sample_count() {
                 return Err(StructureSetError::PartitionMismatch {
@@ -165,9 +166,9 @@ impl Distribution {
             }
         }
         Ok(Self {
-            members,
+            samples,
             log_weights: None,
-            states: vec![State::new(); partition.state_count()],
+            states: vec![StateData::new(); partition.state_count()],
             partition,
             temperature: None,
         })
@@ -180,13 +181,13 @@ impl Distribution {
         Ok(self)
     }
 
-    /// Returns this distribution with one state payload (energy and
+    /// Returns this distribution with one [`StateData`] (energy and
     /// properties) per state of its partition, in state order.
     ///
     /// # Errors
     ///
     /// [`StructureSetError::StateCountMismatch`] for another number of states.
-    pub fn with_states(mut self, states: Vec<State>) -> Result<Self, StructureSetError> {
+    pub fn with_states(mut self, states: Vec<StateData>) -> Result<Self, StructureSetError> {
         if states.len() != self.states.len() {
             return Err(StructureSetError::StateCountMismatch {
                 expected: self.states.len(),
@@ -208,8 +209,8 @@ impl Distribution {
     }
 
     /// Which geometries are samples.
-    pub fn members(&self) -> &Members {
-        &self.members
+    pub fn samples(&self) -> &Samples {
+        &self.samples
     }
 
     /// Number of samples.
@@ -220,17 +221,17 @@ impl Distribution {
     /// The position of geometry `geometry` among the samples, which indexes
     /// the log weights and the partition, or `None` when it is not a sample.
     pub fn sample_position(&self, geometry: usize) -> Option<usize> {
-        match &self.members {
-            Members::All => (geometry < self.sample_count()).then_some(geometry),
-            Members::Subset(indices) => indices.binary_search(&geometry).ok(),
+        match &self.samples {
+            Samples::All => (geometry < self.sample_count()).then_some(geometry),
+            Samples::Subset(indices) => indices.binary_search(&geometry).ok(),
         }
     }
 
     /// The geometry index of the sample at `position`.
     pub(crate) fn sample(&self, position: usize) -> usize {
-        match &self.members {
-            Members::All => position,
-            Members::Subset(indices) => indices[position],
+        match &self.samples {
+            Samples::All => position,
+            Samples::Subset(indices) => indices[position],
         }
     }
 
@@ -257,9 +258,9 @@ impl Distribution {
         self.states.len()
     }
 
-    /// The payload of every state, its energy and properties, in state
+    /// The data of every state, its energy and properties, in state
     /// order, as [`Self::with_states`] takes them.
-    pub fn states(&self) -> &[State] {
+    pub fn states(&self) -> &[StateData] {
         &self.states
     }
 
@@ -279,21 +280,21 @@ impl Distribution {
     /// This distribution in a set of `len` geometries whose first ones are
     /// those it describes, such as a file that grew after the distribution
     /// was saved. A distribution of every geometry becomes one of the
-    /// geometries it covered, [`Members::Subset`] of `0..n` for `n` samples,
+    /// geometries it covered, [`Samples::Subset`] of `0..n` for `n` samples,
     /// so the geometries after them are not samples; a subset keeps its
     /// samples. A subset listing all `len` geometries becomes
-    /// [`Members::All`]. The log weights, the partition, the states, and the
+    /// [`Samples::All`]. The log weights, the partition, the states, and the
     /// temperature are kept bit for bit. A subset does not record how many
     /// geometries it was made for, so a `len` shorter than that is not
     /// detected.
     ///
     /// ```
-    /// use kekule::structure::{Distribution, Members, Partition};
+    /// use kekule::structure::{Distribution, Partition, Samples};
     ///
-    /// let saved = Distribution::new(Members::All, Partition::one_state(3))?
+    /// let saved = Distribution::new(Samples::All, Partition::one_state(3))?
     ///     .with_log_weights(vec![0.0, 1.0, 2.0])?;
     /// let grown = saved.clone().extended_to(5)?;
-    /// assert_eq!(grown.members(), &Members::Subset(vec![0, 1, 2]));
+    /// assert_eq!(grown.samples(), &Samples::Subset(vec![0, 1, 2]));
     /// assert_eq!(grown.log_weights(), saved.log_weights());
     /// assert_eq!(grown.log_weight(4), None);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -313,7 +314,7 @@ impl Distribution {
     /// Re-expresses this distribution in place for a set of `len`
     /// geometries, as [`Self::extended_to`] does; failure changes nothing.
     pub(crate) fn extend(&mut self, len: usize) -> Result<(), StructureSetError> {
-        if self.members == Members::All {
+        if self.samples == Samples::All {
             let covered = self.sample_count();
             if covered > len {
                 return Err(StructureSetError::CoverageMismatch {
@@ -321,7 +322,7 @@ impl Distribution {
                     geometries: len,
                 });
             }
-            self.members = normalized((0..covered).collect(), len);
+            self.samples = normalized((0..covered).collect(), len);
         }
         self.bind(len)
     }
@@ -562,11 +563,11 @@ impl Distribution {
     /// The natural logarithm of each state's population, in state order, on
     /// the scale of the log weights.
     fn state_log_populations(&self) -> Vec<f64> {
-        let mut members = vec![Vec::new(); self.states.len()];
+        let mut by_state = vec![Vec::new(); self.states.len()];
         for (position, state) in self.partition.assignments().iter().enumerate() {
-            members[*state].push(self.sample_log_weight(position));
+            by_state[*state].push(self.sample_log_weight(position));
         }
-        members
+        by_state
             .into_iter()
             .map(|log_weights| log_sum_exp(log_weights.into_iter()))
             .collect()
@@ -581,16 +582,16 @@ impl Distribution {
         )
     }
 
-    /// The payload of one state, which must exist.
-    pub(crate) fn state(&self, state: usize) -> &State {
+    /// The data of one state, which must exist.
+    pub(crate) fn state(&self, state: usize) -> &StateData {
         &self.states[state]
     }
 
     /// Checks this distribution against a set of `len` geometries, and lists
-    /// every geometry as [`Members::All`].
+    /// every geometry as [`Samples::All`].
     pub(crate) fn bind(&mut self, len: usize) -> Result<(), StructureSetError> {
-        match &self.members {
-            Members::All => {
+        match &self.samples {
+            Samples::All => {
                 if self.sample_count() != len {
                     return Err(StructureSetError::CoverageMismatch {
                         covered: self.sample_count(),
@@ -598,21 +599,21 @@ impl Distribution {
                     });
                 }
             }
-            Members::Subset(indices) => {
+            Samples::Subset(indices) => {
                 if let Some(&last) = indices.last() {
                     if last >= len {
                         return Err(StructureSetError::IndexOutOfRange { index: last, len });
                     }
                 }
                 if indices.len() == len {
-                    self.members = Members::All;
+                    self.samples = Samples::All;
                 }
             }
         }
         Ok(())
     }
 
-    /// Checks a new sample's log weight before [`Self::push_member`] or
+    /// Checks a new sample's log weight before [`Self::push_sample`] or
     /// [`Self::push_state`].
     pub(crate) fn check_new_log_weight(
         &self,
@@ -642,7 +643,7 @@ impl Distribution {
     /// Adds geometry `geometry`, the new last geometry of the set, to an
     /// existing state, after [`Self::check_state`] and
     /// [`Self::check_new_log_weight`].
-    pub(crate) fn push_member(&mut self, geometry: usize, state: usize, log_weight: Option<f64>) {
+    pub(crate) fn push_sample(&mut self, geometry: usize, state: usize, log_weight: Option<f64>) {
         self.push_log_weight(log_weight);
         self.push_position(geometry);
         let (mut assignments, representatives) = self.take_partition();
@@ -656,7 +657,7 @@ impl Distribution {
     pub(crate) fn push_state(
         &mut self,
         geometry: usize,
-        state: State,
+        state: StateData,
         log_weight: Option<f64>,
     ) -> usize {
         let index = self.states.len();
@@ -685,7 +686,7 @@ impl Distribution {
     }
 
     fn push_position(&mut self, geometry: usize) {
-        if let Members::Subset(indices) = &mut self.members {
+        if let Samples::Subset(indices) = &mut self.samples {
             indices.push(geometry);
         }
     }
@@ -733,13 +734,13 @@ impl Distribution {
                 log_weights.remove(position);
             }
         }
-        if let Members::Subset(indices) = &self.members {
-            let members = indices
+        if let Samples::Subset(indices) = &self.samples {
+            let samples = indices
                 .iter()
                 .filter(|index| **index != geometry)
                 .map(|index| if *index > geometry { index - 1 } else { *index })
                 .collect();
-            self.members = normalized(members, len);
+            self.samples = normalized(samples, len);
         }
     }
 
@@ -777,7 +778,7 @@ impl Distribution {
                 states.push(if *count == sizes[state] {
                     self.states[state].clone()
                 } else {
-                    State::new()
+                    StateData::new()
                 });
             }
         }
@@ -802,7 +803,7 @@ impl Distribution {
             })
             .collect();
         Self {
-            members: normalized(
+            samples: normalized(
                 picked.iter().map(|(copy, _)| *copy).collect(),
                 indices.len(),
             ),
@@ -842,7 +843,7 @@ impl Distribution {
             states.push(self.states[*old].clone());
         }
         let distribution = Self {
-            members: Members::All,
+            samples: Samples::All,
             log_weights,
             partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
@@ -862,7 +863,7 @@ impl Distribution {
             .map(|position| self.sample(*position))
             .collect::<Vec<_>>();
         let distribution = Self {
-            members: Members::All,
+            samples: Samples::All,
             log_weights: Some(self.state_log_populations()),
             partition: Partition::state_per_sample(representatives.len()),
             states: self.states.clone(),
@@ -897,9 +898,9 @@ impl Distribution {
 /// so the distribution always fits its set.
 ///
 /// ```compile_fail,E0594
-/// use kekule::structure::{Distribution, Ensemble, Members, Partition};
+/// use kekule::structure::{Distribution, Ensemble, Partition, Samples};
 /// fn replace(ensemble: &mut Ensemble) {
-///     let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1));
+///     let foreign = Distribution::new(Samples::Subset(vec![7]), Partition::one_state(1));
 ///     *ensemble.distribution_mut() = foreign.unwrap();
 /// }
 /// ```
@@ -1068,7 +1069,7 @@ impl DistributionMut<'_> {
 
     /// The energy and properties of one state. Its samples and
     /// representative change only through [`Self::regroup`].
-    pub fn state_mut(&mut self, state: usize) -> Option<&mut State> {
+    pub fn state_mut(&mut self, state: usize) -> Option<&mut StateData> {
         self.distribution.states.get_mut(state)
     }
 
@@ -1114,7 +1115,7 @@ impl DistributionMut<'_> {
             .map(|representative| {
                 let state = old[*representative];
                 if split[state] {
-                    State::new()
+                    StateData::new()
                 } else {
                     std::mem::take(&mut previous[state])
                 }

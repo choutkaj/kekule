@@ -7,7 +7,7 @@ use crate::alignment::{
 use crate::math::Point3;
 use crate::parallel::map_ranges;
 use crate::structure::{
-    visit_geometry, Ensemble, GeometryStorage, Members, Partition, StructureSet, StructureSetRead,
+    visit_geometry, Ensemble, GeometryStorage, Partition, Samples, StructureSet, StructureSetRead,
 };
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -391,7 +391,7 @@ impl PairFits<'_, '_> {
     fn all_pairs(
         &self,
         members: &[Coordinates<'_>],
-        samples: &Members,
+        samples: &Samples,
         tracker: &Tracker<'_>,
     ) -> Result<Vec<f64>, ClusteringError> {
         let count = members.len();
@@ -462,7 +462,7 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 /// The first geometry is read once more to check `atoms`.
 ///
 /// To fit some of the geometries, such as the frames after equilibration,
-/// read them as the samples of an [`Ensemble`] ([`Members::Subset`]) and
+/// read them as the samples of an [`Ensemble`] ([`Samples::Subset`]) and
 /// use [`Ensemble::pairwise_fitted_rmsd`], which reads them through this
 /// loop.
 ///
@@ -520,7 +520,7 @@ pub fn pairwise_fitted_rmsd_with<'a>(
 ) -> Result<DistanceMatrix, ClusteringError> {
     fitted_rmsd_of(
         reader,
-        &Members::All,
+        &Samples::All,
         reader.len(),
         atoms.into(),
         options,
@@ -532,7 +532,7 @@ pub fn pairwise_fitted_rmsd_with<'a>(
 /// lists of `reader`, read through the loop of [`pairwise_fitted_rmsd`].
 fn fitted_rmsd_of(
     reader: &dyn StructureSetRead,
-    samples: &Members,
+    samples: &Samples,
     count: usize,
     atoms: FitAtoms<'_>,
     options: AlignmentOptions<'_>,
@@ -754,7 +754,7 @@ impl<S: GeometryStorage> StructureSet<S> {
     /// the same, on `distances` indexed by geometry
     /// ([`Self::pairwise_fitted_rmsd`]), as
     /// [`Ensemble::cluster_hierarchical`] does. Install the partition as a
-    /// new distribution of every geometry, `Distribution::new(Members::All,
+    /// new distribution of every geometry, `Distribution::new(Samples::All,
     /// partition)`, in [`Ensemble::new`].
     ///
     /// # Errors
@@ -780,7 +780,7 @@ where
     /// [`StructureSet::pairwise_fitted_rmsd`] fits geometries.
     ///
     /// The matrix is indexed by member position: its member `i` is the `i`th
-    /// sample ([`Distribution::members`](crate::structure::Distribution::members)),
+    /// sample ([`Distribution::samples`](crate::structure::Distribution::samples)),
     /// so it fits [`Self::cluster_hierarchical`] and
     /// [`Self::cluster_k_medoids`] of this ensemble. Geometries that are not
     /// samples are left out. The samples are read through the loop of
@@ -789,7 +789,7 @@ where
     /// ```
     /// use kekule::math::Point3;
     /// use kekule::structure::{
-    ///     Distribution, Ensemble, Geometry, Members, Partition, Positions, StructureSet,
+    ///     Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet,
     /// };
     /// use kekule::clustering::{Cut, Linkage};
     /// use kekule::topology::AtomSelection;
@@ -806,7 +806,7 @@ where
     ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
     /// }
     /// // Geometries 1 to 4 are the samples; geometry 0 is left out.
-    /// let samples = Members::Subset(vec![1, 2, 3, 4]);
+    /// let samples = Samples::Subset(vec![1, 2, 3, 4]);
     /// let mut ensemble = Ensemble::new(set, Distribution::new(samples, Partition::one_state(4))?)?;
     ///
     /// let atoms = AtomSelection::all(topology);
@@ -850,7 +850,7 @@ where
         let distribution = self.distribution();
         fitted_rmsd_of(
             self.set(),
-            distribution.members(),
+            distribution.samples(),
             distribution.sample_count(),
             atoms.into(),
             options,

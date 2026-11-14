@@ -23,7 +23,7 @@ use crate::properties::{
     GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
 };
 use crate::structure::{
-    Distribution, Geometry, GeometryView, Members, Order, Structure, StructureSet,
+    Distribution, Geometry, GeometryView, Order, Samples, Structure, StructureSet,
 };
 
 use super::StructureSetDescription;
@@ -806,9 +806,9 @@ impl<W: Write> Encoder<'_, W> {
     /// An ensemble's distribution: its samples, log weights, partition,
     /// states, and temperature.
     fn distribution(&mut self, distribution: &Distribution) -> Result {
-        match distribution.members() {
-            Members::All => self.u8(0)?,
-            Members::Subset(indices) => {
+        match distribution.samples() {
+            Samples::All => self.u8(0)?,
+            Samples::Subset(indices) => {
                 self.u8(1)?;
                 self.count(indices.len())?;
                 for index in indices {
