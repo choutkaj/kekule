@@ -1,5 +1,5 @@
 //! Trajectory file codecs, streaming reader and writer contracts, reusable
-//! frame buffers, periodic preprocessing, and streaming analysis.
+//! frame buffers, periodic preprocessing, and streaming superposition.
 //!
 //! # Data model
 //!
@@ -116,15 +116,37 @@
 //! atoms with a [`crate::alignment::AtomCorrespondence`]; correspondence does
 //! not assert chemical equality.
 //!
-//! [`analysis`] adds the streaming [`analysis::FrameSuperposer`]. Weighted
-//! RMSF and contact occupancy are [`crate::statistics`]; their accumulators
-//! observe streamed frames through `buffer.as_structure_view()` with explicit
-//! weights. Molecular reconstruction, imaging around anchors or onto a
-//! reference frame, and temporal unwrapping live in [`periodic`] and are
-//! explicit preprocessing steps, independent of alignment.
-//! [`analysis::FrameSuperposer`], [`periodic::MoleculeImager`], and
-//! [`periodic::TrajectoryUnwrapper`] apply the in-memory operations to
-//! streamed frames.
+//! [`FrameSuperposer`] superposes streamed frames. Weighted RMSF and contact
+//! occupancy are [`crate::statistics`]; their accumulators observe streamed
+//! frames through `buffer.as_structure_view()` with explicit weights: one for
+//! equally weighted equilibrium frames, or a reweighting factor. Frames read
+//! and fitted in parallel can be observed in parallel too: observe each range
+//! of frames into its own accumulator and merge the accumulators in range
+//! order.
+//!
+//! ```
+//! use kekule::statistics::{RmsfAccumulator, RmsfResult};
+//! use kekule::topology::AtomSelection;
+//! use kekule::traj::TrajectoryReader;
+//! # fn reduce(reader: &mut impl TrajectoryReader, atoms: &AtomSelection)
+//! # -> Result<RmsfResult, Box<dyn std::error::Error>> {
+//! let mut rmsf = RmsfAccumulator::new(atoms)?;
+//! let mut buffer = reader.frame_buffer();
+//! let mut index = 0;
+//! while reader.read_next(&mut buffer)? {
+//!     // Apply any intended periodic preprocessing and fitting here.
+//!     rmsf.observe(index, &buffer.as_structure_view(), 1.0)?;
+//!     index += 1;
+//! }
+//! Ok(rmsf.finish()?)
+//! # }
+//! ```
+//!
+//! Molecular reconstruction, imaging around anchors or onto a reference
+//! frame, and temporal unwrapping live in [`periodic`] and are explicit
+//! preprocessing steps, independent of alignment. [`FrameSuperposer`],
+//! [`periodic::MoleculeImager`], and [`periodic::TrajectoryUnwrapper`] apply
+//! the in-memory operations to streamed frames.
 //!
 //! # Structure sets of files
 //!
@@ -133,19 +155,20 @@
 //! decodes each geometry when it is read through
 //! [`crate::structure::StructureSetRead`]. [`Processed`] runs
 //! [`ProcessingSteps`] on the geometries of any reader as they are read, with
-//! the kernels of [`periodic`] and [`analysis::FrameSuperposer`].
+//! the kernels of [`periodic`] and [`FrameSuperposer`].
 //! [`crate::structure::StructureSet::from_reader`] loads chosen geometries of any
 //! reader, by range, stride, or explicit indices, into memory.
 mod processed;
+mod superposer;
 mod trajectory;
 
-pub mod analysis;
 pub mod io;
 pub mod periodic;
 
 pub use processed::{
     FitReference, Processed, ProcessingError, ProcessingStep, ProcessingStepError, ProcessingSteps,
 };
+pub use superposer::FrameSuperposer;
 pub use trajectory::{
     FrameBuffer, FrameData, FrameView, MemoryTrajectoryWriter, SeekableTrajectoryReader,
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,

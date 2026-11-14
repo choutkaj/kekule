@@ -6,9 +6,8 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Forces, Place, Positions, Structure, StructureSet, Velocities};
 use kekule::topology::AtomSelection;
-use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::periodic::{self, MoleculeImager, PeriodicError, TrajectoryUnwrapper};
-use kekule::traj::{FrameBuffer, FrameView};
+use kekule::traj::{FrameBuffer, FrameSuperposer, FrameView};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
 use crate::support::{self, linear_carbon_topology, time_ordered, Frame};

@@ -15,7 +15,9 @@ use super::{
 };
 
 mod bonds;
+mod expand;
 pub use bonds::{BondSelection, BondSelectionMode};
+pub(crate) use expand::{expand_mask, Expansion};
 
 /// A topology-bound, sorted, unique dense atom selection.
 ///
@@ -258,46 +260,25 @@ impl AtomSelection {
     /// Adds every atom in each touched residue. Selected atoms without a
     /// hierarchy assignment remain selected. This never removes an atom.
     pub fn expand_to_residues(&self) -> Self {
-        let residues = self
-            .atom_ids()
-            .filter_map(|atom| {
-                self.topology
-                    .atom(atom)
-                    .expect("validated atom")
-                    .residue()
-                    .map(|residue| residue.id())
-            })
-            .collect::<BTreeSet<_>>();
-        let added = self
-            .topology
-            .atom_sites()
-            .filter(|site| residues.contains(&site.residue().id()))
-            .map(|site| site.atom().id());
-        Self::from_atoms(Arc::clone(&self.topology), self.atom_ids().chain(added))
-            .expect("residue expansion uses validated topology atoms")
+        self.expanded(Expansion::Residues)
     }
 
     /// Adds all atoms in each touched molecule instance (connected component).
     pub fn expand_to_instances(&self) -> Self {
-        Self::for_instances(
-            Arc::clone(&self.topology),
-            self.atom_ids().map(InstanceAtomId::instance),
-        )
-        .expect("selected atoms have valid instances")
+        self.expanded(Expansion::Instances)
     }
 
     /// Adds all atoms in each touched chain, retaining atoms without hierarchy.
     /// Chain membership is independent of covalent connectedness.
     pub fn expand_to_chains(&self) -> Self {
-        let chains = self.atom_ids().filter_map(|atom| {
-            self.topology
-                .atom(atom)
-                .expect("validated atom")
-                .chain()
-                .map(|chain| chain.id())
-        });
-        self.union(&Self::for_chains(Arc::clone(&self.topology), chains).expect("valid chains"))
-            .expect("same snapshot")
+        self.expanded(Expansion::Chains)
+    }
+
+    fn expanded(&self, level: Expansion) -> Self {
+        let mut mask = self.to_mask();
+        expand_mask(&self.topology, &mut mask, level);
+        Self::from_mask(Arc::clone(&self.topology), &mask)
+            .expect("an expanded mask covers the topology's atoms")
     }
 
     /// Adds atoms at most `steps` asserted bonds away from any selected atom.

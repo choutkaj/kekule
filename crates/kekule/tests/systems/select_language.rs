@@ -455,6 +455,35 @@ fn conformance_suite_matches_reference_predicates_and_the_committed_file() {
 }
 
 #[test]
+fn expansion_terms_select_what_atom_selection_expansions_select() {
+    let structure = structure("mmcif/1AKE.cif");
+    let topology = structure.shared_topology();
+    let evaluate = |text: &str| {
+        parse(text)
+            .evaluate(topology.clone(), SelectEvaluateOptions::default())
+            .unwrap_or_else(|error| panic!("{text:?}: {error}"))
+    };
+    for inner in [
+        "resname AP5",
+        "name CA and resid 10",
+        "water and index < 3500",
+        "chain B and resid 1",
+        "none",
+    ] {
+        let atoms = evaluate(inner);
+        let expansions = [
+            ("byres", atoms.expand_to_residues()),
+            ("bychain", atoms.expand_to_chains()),
+            ("bymolecule", atoms.expand_to_instances()),
+        ];
+        for (term, expanded) in expansions {
+            let text = format!("{term} ({inner})");
+            assert_eq!(evaluate(&text), expanded, "{text}");
+        }
+    }
+}
+
+#[test]
 fn topology_evaluation_reports_terms_that_need_more() {
     let structure = structure("mmcif/1CRN.cif");
     let topology = structure.shared_topology();

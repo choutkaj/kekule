@@ -18,15 +18,14 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif;
 use kekule::structure::{Geometry, StructureSetRead};
 use kekule::topology::{AtomSelection, Topology};
-use kekule::traj::analysis::FrameSuperposer;
 use kekule::traj::io::{
     create_trajectory_stream_writer, open_indexed_structure_set, open_indexed_trajectory,
     TrajectoryWriteOptions,
 };
 use kekule::traj::periodic::MoleculeImager;
 use kekule::traj::{
-    FitReference, FrameBuffer, Processed, ProcessingSteps, SeekableTrajectoryReader,
-    TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
+    FitReference, FrameBuffer, FrameSuperposer, Processed, ProcessingSteps,
+    SeekableTrajectoryReader, TrajectoryFormat, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
