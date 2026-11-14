@@ -14,8 +14,8 @@ use super::encode::{
     ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, GEOMETRIES_EXTERNAL, GEOMETRIES_INLINE,
 };
 use super::{
-    NativeKind, NativeObject, NativeReadOptions, StructureSetDescription, NATIVE_FORMAT_VERSION,
-    NATIVE_MAGIC,
+    EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, StructureSetDescription,
+    NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
@@ -41,8 +41,8 @@ use crate::properties::{
     PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
-    Distribution, Forces, Geometry, Members, Order, Partition, Positions, State, Structure,
-    StructureSet, TimeAxis, Velocities,
+    Distribution, Ensemble, Forces, Geometry, Members, Order, Partition, Positions, State,
+    Structure, StructureSet, TimeAxis, Velocities,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, Hierarchy, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
@@ -87,12 +87,26 @@ pub(crate) fn read_native(
                 report,
             }))
         }
-        NativeKind::StructureSet => match decoder.structure_set(false)? {
+        NativeKind::StructureSet => match decoder.structure_set(false, false)?.0 {
             Decoded::Inline(set) => NativeObject::StructureSet(*set),
             Decoded::External(description) => NativeObject::StructureSetDescription(description),
         },
+        NativeKind::Ensemble => {
+            let (decoded, distribution) = decoder.structure_set(false, true)?;
+            let distribution = distribution.expect("an ensemble record has a distribution");
+            match decoded {
+                Decoded::Inline(set) => NativeObject::Ensemble(Box::new(
+                    Ensemble::new(*set, distribution)
+                        .map_err(|error| decoder.structure_error(error))?,
+                )),
+                Decoded::External(description) => NativeObject::EnsembleDescription(Box::new(
+                    EnsembleDescription::new(*description, distribution)
+                        .map_err(|error| decoder.structure_error(error))?,
+                )),
+            }
+        }
         NativeKind::StructureSetInterpretation => {
-            let Decoded::Inline(set) = decoder.structure_set(true)? else {
+            let (Decoded::Inline(set), _) = decoder.structure_set(true, false)? else {
                 unreachable!("an interpreted structure set is read with its geometries")
             };
             let mut reports = Vec::with_capacity(set.len().min(CHUNK_BYTES));
@@ -1259,24 +1273,32 @@ impl<R: Read> Decoder<'_, R> {
         Ok(structure)
     }
 
-    /// A structure set record; an external geometries section is rejected when
+    /// A structure set record, or with `ensemble` an ensemble record and its
+    /// distribution; an external geometries section is rejected when
     /// `inline` is required.
-    fn structure_set(&mut self, inline: bool) -> Result<Decoded> {
+    fn structure_set(
+        &mut self,
+        inline: bool,
+        ensemble: bool,
+    ) -> Result<(Decoded, Option<Distribution>)> {
         let topology = Arc::new(self.topology()?);
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let owner = self.owner()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
         let order = self.order(count)?;
-        let distribution = self.distribution(count)?;
+        let distribution = if ensemble {
+            Some(self.distribution(count)?)
+        } else {
+            None
+        };
         match self.u8()? {
             GEOMETRIES_INLINE => {}
             GEOMETRIES_EXTERNAL if !inline => {
                 let description = StructureSetDescription::new(topology, count)
                     .with_properties(owner)
                     .with_order(order)
-                    .and_then(|description| description.with_distribution(distribution))
                     .map_err(|error| self.structure_error(error))?;
-                return Ok(Decoded::External(Box::new(description)));
+                return Ok((Decoded::External(Box::new(description)), distribution));
             }
             GEOMETRIES_EXTERNAL => {
                 return Err(self.invalid(
@@ -1340,9 +1362,7 @@ impl<R: Read> Decoder<'_, R> {
         }
         set.set_order(order)
             .map_err(|error| self.structure_error(error))?;
-        set.set_distribution(distribution)
-            .map_err(|error| self.structure_error(error))?;
-        Ok(Decoded::Inline(Box::new(set)))
+        Ok((Decoded::Inline(Box::new(set)), distribution))
     }
 
     /// The order of a set of `count` geometries.
@@ -1380,17 +1400,14 @@ impl<R: Read> Decoder<'_, R> {
     }
 
     /// The distribution over a set of `count` geometries.
-    fn distribution(&mut self, count: usize) -> Result<Option<Distribution>> {
-        if !self.tag("distribution")? {
-            return Ok(None);
-        }
+    fn distribution(&mut self, count: usize) -> Result<Distribution> {
         let members = match self.u8()? {
             0 => Members::All,
             1 => {
                 let listed = self.u32()? as usize;
                 if listed > count {
                     return Err(self.invalid(format!(
-                        "The distribution lists {listed} members of {count} geometries."
+                        "The distribution lists {listed} samples of {count} geometries."
                     )));
                 }
                 Members::Subset(
@@ -1400,19 +1417,19 @@ impl<R: Read> Decoder<'_, R> {
                         .collect(),
                 )
             }
-            other => return Err(self.invalid(format!("The members tag {other} is unknown."))),
+            other => return Err(self.invalid(format!("The samples tag {other} is unknown."))),
         };
-        let member_count = match &members {
+        let sample_count = match &members {
             Members::Subset(indices) => indices.len(),
             _ => count,
         };
-        let weights = if self.tag("weights")? {
-            Some(self.f64_array(member_count)?)
+        let log_weights = if self.tag("log weights")? {
+            Some(self.f64_array(sample_count)?)
         } else {
             None
         };
         let assignments = self
-            .u32_array(member_count)?
+            .u32_array(sample_count)?
             .into_iter()
             .map(|state| state as usize)
             .collect();
@@ -1435,9 +1452,9 @@ impl<R: Read> Decoder<'_, R> {
         let mut distribution = Distribution::new(members, partition)
             .and_then(|distribution| distribution.with_states(states))
             .map_err(|error| self.structure_error(error))?;
-        if let Some(weights) = weights {
+        if let Some(log_weights) = log_weights {
             distribution = distribution
-                .with_weights(weights)
+                .with_log_weights(log_weights)
                 .map_err(|error| self.structure_error(error))?;
         }
         if let Some(temperature) = temperature {
@@ -1445,7 +1462,7 @@ impl<R: Read> Decoder<'_, R> {
                 .with_temperature(Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT))
                 .map_err(|error| self.structure_error(error))?;
         }
-        Ok(Some(distribution))
+        Ok(distribution)
     }
 
     fn f64_array(&mut self, count: usize) -> Result<Vec<f64>> {

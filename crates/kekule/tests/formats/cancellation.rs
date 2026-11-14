@@ -46,6 +46,22 @@ fn same_structure_set(
     left.reports() == right.reports()
         && left.topology().same_layout(right.topology())
         && left.structure_set().len() == right.structure_set().len()
+        && left
+            .structure_set()
+            .iter()
+            .zip(right.structure_set().iter())
+            .all(|(left, right)| left.payload() == right.payload())
+}
+
+/// Asserts that the structure set interpretation of a one-model entry is
+/// that model's structure interpretation as its one geometry.
+fn assert_one_model_set(set: &StructureSetInterpretation, structure: &StructureInterpretation) {
+    assert_eq!(set.structure_set().len(), 1);
+    assert_eq!(set.reports(), std::slice::from_ref(structure.report()));
+    assert!(same_structure(
+        &set.structure_set().get(0).unwrap().to_structure(),
+        structure.structure()
+    ));
 }
 
 /// Runs `interpret` with a check that never turns true, which must not change
@@ -99,15 +115,14 @@ fn mmcif_interpretation_stops_once_cancellation_is_requested() {
 #[test]
 fn mmcif_structure_set_interpretation_stops_once_cancellation_is_requested() {
     let document = mmcif::parse_str(ADENYLATE_KINASE_CIF, Default::default()).unwrap();
-    // The native encodings pin the sets themselves, document and block alike.
+    // The one-model entry is a set of its one structure, document and block
+    // alike.
+    let structure = document.interpret(Default::default()).unwrap();
     for interpretation in [
         document.interpret_structure_set(Default::default()),
         document.blocks()[0].interpret_structure_set(Default::default()),
     ] {
-        assert_eq!(
-            crate::native_fingerprint(&interpretation.unwrap()),
-            0xf56e_b122_0563_13c7
-        );
+        assert_one_model_set(&interpretation.unwrap(), &structure);
     }
     assert_cancellable(
         |cancellation| {
@@ -144,13 +159,11 @@ fn pdb_interpretation_stops_once_cancellation_is_requested() {
         },
         same_structure_set,
     );
-    assert_eq!(
-        crate::native_fingerprint(
-            &document
-                .interpret_structure_set(Default::default())
-                .unwrap()
-        ),
-        0x76e1_7f90_6b57_1a28
+    assert_one_model_set(
+        &document
+            .interpret_structure_set(Default::default())
+            .unwrap(),
+        &document.interpret(Default::default()).unwrap(),
     );
     let (cancellation, _) = requested_after(1);
     let error = document

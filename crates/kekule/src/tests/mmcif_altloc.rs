@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use super::{debug_fingerprint, error_detail};
+use super::{error_detail, geometry_atoms};
 use crate::diagnostics::{FormatError, FormatErrorDetail};
 use crate::macromolecular::*;
 use crate::mmcif::*;
@@ -315,7 +315,25 @@ fn mmcif_altloc_source_combinations_constrain_default_and_exact_selection() {
     assert!(selected(&source, AltLocPolicy::Configured(conflict)).is_err());
     let interpreted = source.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(interpreted.structure_set().len(), 1);
-    assert_eq!(debug_fingerprint(&interpreted), 0xb20a_4580_69d6_f965);
+    // The default source conformation, "first", selects A at 0 Å and C at 5 Å.
+    assert_eq!(
+        geometry_atoms(interpreted.structure_set()),
+        [vec![("C", [0.0, 0.0, 0.0]), ("C", [5.0, 0.0, 0.0])]]
+    );
+    let report = &interpreted.reports()[0];
+    assert_eq!(
+        report
+            .alternate_locations()
+            .iter()
+            .map(|choice| choice.selected_labels.clone())
+            .collect::<Vec<_>>(),
+        [vec!["A"], vec!["C"]]
+    );
+    assert!(report
+        .alternate_locations()
+        .iter()
+        .all(|choice| choice.reason
+            == AltLocSelectionReason::SourceConformation { id: "first".into() }));
 }
 
 #[test]
@@ -357,7 +375,27 @@ fn mmcif_altloc_structure_set_uses_source_models_and_stable_site_order() {
     let source = document(rows);
     let result = source.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(result.structure_set().len(), 2);
-    assert_eq!(debug_fingerprint(&result), 0x78a7_1ac6_6d6e_6279);
+    // Each model selects its most occupied label, A in model 1 and B in model
+    // 2, and both geometries list C1 before O1, as the first model's rows
+    // do, although model 2's B rows list O1 first.
+    assert_eq!(
+        geometry_atoms(result.structure_set()),
+        [
+            vec![("C", [0.0, 0.0, 0.0]), ("O", [1.2, 0.0, 0.0])],
+            vec![("C", [15.0, 0.0, 0.0]), ("O", [16.2, 0.0, 0.0])],
+        ]
+    );
+    assert_eq!(
+        result
+            .structure_set()
+            .iter()
+            .map(|geometry| geometry.occupancies().map(<[_]>::to_vec))
+            .collect::<Vec<_>>(),
+        [
+            Some(vec![Some(0.9), Some(0.9)]),
+            Some(vec![Some(0.9), Some(0.9)])
+        ]
+    );
     assert_eq!(
         result.reports()[0].alternate_locations()[0].selected_labels,
         ["A"]
@@ -399,7 +437,18 @@ fn mmcif_altloc_structure_set_uses_source_models_and_stable_site_order() {
         result.reports()[1].alternate_locations()[0].selected_labels,
         ["A"]
     );
-    assert_eq!(debug_fingerprint(&result), 0xb5c1_bc09_c31b_59ec);
+    // The override selects model 2's A sites, at 10 and 11.2 Å.
+    assert_eq!(
+        geometry_atoms(result.structure_set()),
+        [
+            vec![("C", [0.0, 0.0, 0.0]), ("O", [1.2, 0.0, 0.0])],
+            vec![("C", [10.0, 0.0, 0.0]), ("O", [11.2, 0.0, 0.0])],
+        ]
+    );
+    assert_eq!(
+        result.structure_set().get(1).unwrap().occupancies(),
+        Some([Some(0.1), Some(0.1)].as_slice())
+    );
     assert!(source
         .interpret_structure_set(StructureSetInterpretOptions::default().with_altloc_policy(
             AltLocPolicy::Configured(AltLocSelection::default().with_groups(vec![ids]))
@@ -418,11 +467,21 @@ fn mmcif_altloc_structure_set_rejects_changed_chemistry_and_keeps_single_plain_m
     assert!(plain.blocks()[0].alternate_locations().unwrap().is_empty());
     let interpreted = plain.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(interpreted.structure_set().len(), 1);
-    assert_eq!(debug_fingerprint(&interpreted), 0xfe7f_4cf8_d7f3_7bb7);
+    assert_eq!(
+        geometry_atoms(interpreted.structure_set()),
+        [vec![("C", [0.0, 0.0, 0.0])]]
+    );
+    assert_eq!(
+        interpreted.structure_set().get(0).unwrap().occupancies(),
+        Some([Some(1.0)].as_slice())
+    );
+    assert_eq!(interpreted.reports().len(), 1);
+    assert!(interpreted.reports()[0].alternate_locations().is_empty());
+    assert_eq!(interpreted.reports()[0].selected_model(), Some("1"));
 }
 
 #[test]
-fn mmcif_altloc_explicit_conformer_structure_set_is_unweighted_and_preserves_order() {
+fn mmcif_altloc_explicit_conformer_structure_set_preserves_order() {
     let source = document(CROSSED);
     let options = ["B", "A", "B"].map(|label| {
         StructureInterpretOptions::default()
@@ -430,7 +489,19 @@ fn mmcif_altloc_explicit_conformer_structure_set_is_unweighted_and_preserves_ord
     });
     let result = source.interpret_conformations(&options).unwrap();
     assert_eq!(result.structure_set().len(), 3);
-    assert_eq!(debug_fingerprint(&result), 0x5eba_b7e4_c916_b371);
+    // C1, O1, and the shared N1, at the B, A, and B sites in turn.
+    let b = vec![
+        ("C", [2.4, 2.4, 0.0]),
+        ("O", [2.4, 1.2, 0.0]),
+        ("N", [2.4, 0.0, 0.0]),
+    ];
+    let a = vec![
+        ("C", [0.0, 0.0, 0.0]),
+        ("O", [1.2, 0.0, 0.0]),
+        ("N", [2.4, 0.0, 0.0]),
+    ];
+    assert_eq!(geometry_atoms(result.structure_set()), [b.clone(), a, b]);
+    assert_eq!(result.structure_set().order(), None);
     let detached = document(
         &CROSSED
             .replace("B 0.1 2.4 2.4 0 1", "B 0.1 10 0 0 1")
@@ -440,12 +511,6 @@ fn mmcif_altloc_explicit_conformer_structure_set_is_unweighted_and_preserves_ord
         error_detail(detached.interpret_conformations(&options)),
         Some(FormatErrorDetail::InconsistentTopology { .. })
     ));
-    let distribution = result.structure_set().distribution().unwrap();
-    assert_eq!(distribution.weights(), None);
-    assert!(result
-        .structure_set()
-        .iter()
-        .all(|member| member.weight() == Some(1.0)));
     assert_eq!(
         result
             .reports()
@@ -462,7 +527,17 @@ fn mmcif_altloc_explicit_conformer_structure_set_is_unweighted_and_preserves_ord
         .interpret_conformations(&options)
         .unwrap();
     assert_eq!(block.reports(), result.reports());
-    assert_eq!(debug_fingerprint(&block), 0x5eba_b7e4_c916_b371);
+    assert_eq!(
+        geometry_atoms(block.structure_set()),
+        geometry_atoms(result.structure_set())
+    );
+    for (block, document) in block
+        .structure_set()
+        .iter()
+        .zip(result.structure_set().iter())
+    {
+        assert_eq!(block.payload(), document.payload());
+    }
     assert!(block
         .structure_set()
         .topology()

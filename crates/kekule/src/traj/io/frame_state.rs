@@ -137,14 +137,7 @@ fn geometry_field(field: TrajectoryField) -> GeometryField {
 /// The trajectory field that names the geometry state `field`.
 pub(crate) fn trajectory_field(field: GeometryField) -> TrajectoryField {
     match field {
-        GeometryField::Weight => TrajectoryField::Weight,
-        GeometryField::Energy => TrajectoryField::Energy,
-        GeometryField::State => TrajectoryField::State,
-        GeometryField::Temperature => TrajectoryField::Temperature,
-        GeometryField::StateProperties => TrajectoryField::StateProperties,
-        GeometryField::Representative => TrajectoryField::Representative,
         GeometryField::Order => TrajectoryField::Order,
-        GeometryField::Membership => TrajectoryField::Membership,
         GeometryField::Time => TrajectoryField::Time,
         GeometryField::Step => TrajectoryField::Step,
         GeometryField::OrderStep => TrajectoryField::OrderStep,

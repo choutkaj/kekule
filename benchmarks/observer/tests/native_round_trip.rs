@@ -111,7 +111,6 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
     assert_same_topology(decoded.topology(), source.topology());
     assert_eq!(decoded.len(), source.len());
     assert_eq!(decoded.order(), source.order());
-    assert_eq!(decoded.distribution(), source.distribution());
     for (left, right) in decoded.iter().zip(source.iter()) {
         assert_eq!(left.payload(), right.payload());
         assert_eq!(

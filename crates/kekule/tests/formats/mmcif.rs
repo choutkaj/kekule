@@ -252,7 +252,23 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
             .interpret_structure_set(macromolecular::StructureSetInterpretOptions::default())?
             .reports()
     );
-    assert_eq!(crate::native_fingerprint(&set), 0x2427_352a_afd6_2d3a);
+    // The one model is the set's one geometry: two carbons 1 A apart.
+    assert_eq!(set.structure_set().len(), 1);
+    assert_eq!(set.structure_set().order(), None);
+    assert_eq!(set.topology().atom_count(), 2);
+    assert_eq!(set.topology().bond_count(), 1);
+    let geometry = set.structure_set().get(0).unwrap();
+    let positions = geometry.positions();
+    let x = |index| {
+        positions
+            .get(index)
+            .unwrap()
+            .value_in(kekule::units::ANGSTROM)
+            .unwrap()
+    };
+    assert_eq!(x(0).x, 0.0);
+    assert!((x(1).x - 1.0).abs() <= 1e-12);
+    assert_eq!((x(1).y, x(1).z), (0.0, 0.0));
     let two_blocks = mmcif::parse_str(
         &format!("{MINIMAL_MMCIF}{}", MINIMAL_MMCIF.replace("demo", "other")),
         Default::default(),

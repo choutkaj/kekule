@@ -819,10 +819,7 @@ pub mod sdf {
         SdfDataField, SdfDocument, SdfParseOptions, SdfRecord, SdfRecordInterpretation,
         SdfRecordInterpretationReport, SdfRecordSource, SdfRecords, SdfWriteOptions,
         SDF_COORDINATE_FIELD as COORDINATE_FIELD,
-        SDF_COORDINATE_UNIT_FIELD as COORDINATE_UNIT_FIELD, SDF_ENERGY_FIELD as ENERGY_FIELD,
-        SDF_MEMBER_FIELD as MEMBER_FIELD, SDF_REPRESENTATIVE_FIELD as REPRESENTATIVE_FIELD,
-        SDF_STATE_FIELD as STATE_FIELD, SDF_STEP_FIELD as STEP_FIELD,
-        SDF_TEMPERATURE_FIELD as TEMPERATURE_FIELD, SDF_WEIGHT_FIELD as WEIGHT_FIELD,
+        SDF_COORDINATE_UNIT_FIELD as COORDINATE_UNIT_FIELD, SDF_STEP_FIELD as STEP_FIELD,
     };
 
     /// Assembles interpreted records, in order, into one structure set whose
@@ -830,28 +827,9 @@ pub mod sdf {
     /// `i`. Sibling records never form a set implicitly, and the set states
     /// only what the records state.
     ///
-    /// Records without ensemble fields give a set without a distribution.
-    /// When a record has one ([`WEIGHT_FIELD`], [`STATE_FIELD`],
-    /// [`REPRESENTATIVE_FIELD`], [`ENERGY_FIELD`], [`TEMPERATURE_FIELD`], or
-    /// [`MEMBER_FIELD`]), the set has a distribution: the ensemble of
-    /// the formats' terms. It has weights only when a record has
-    /// [`WEIGHT_FIELD`], each geometry's weight being its record's (1.0 when
-    /// absent). Records without [`STATE_FIELD`], such as a conformer set
-    /// from another program, are one state each, with the energy of
-    /// [`ENERGY_FIELD`] in kJ/mol (none when absent). Records with it, as
-    /// [`write()`] emits for geometries of a distribution, are grouped by it:
-    /// states are numbered in ascending order of its values, each
-    /// represented by the one record marked with [`REPRESENTATIVE_FIELD`],
-    /// which alone may carry the state's energy. [`TEMPERATURE_FIELD`], in
-    /// kelvin, is the distribution's temperature, the same on every record
-    /// or on none.
-    ///
-    /// A record marked with [`MEMBER_FIELD`] (`false`), as [`write()`]
-    /// emits a geometry outside a distribution over some of a set's geometries,
-    /// is outside the distribution: the distribution is over the others
-    /// ([`Members::Subset`](crate::structure::Members::Subset)), and the
-    /// temperature is the members'. Such a record carries no other ensemble
-    /// field, and a record is never taken as outside for lacking fields.
+    /// A record's data fields stay with its interpretation; none says how
+    /// much a geometry weighs or which state it belongs to, which an
+    /// [`Ensemble`](crate::structure::Ensemble) of the set states.
     ///
     /// When the records carry [`STEP_FIELD`], or [`COORDINATE_FIELD`] with
     /// [`COORDINATE_UNIT_FIELD`], as [`write()`] emits for geometries of a step
@@ -876,7 +854,6 @@ pub mod sdf {
     /// let set = sdf::structure_set(&records)?;
     /// assert_eq!(set.len(), 2);
     /// assert_eq!(set.order(), None);
-    /// assert!(set.distribution().is_none());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
@@ -885,14 +862,11 @@ pub mod sdf {
     /// Returns a [`FormatError`] of kind
     /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)
     /// when the records do not form a structure set (none, or differing
-    /// topologies), a field is repeated, some records name a state and
-    /// others do not, a state has no or two representatives, an energy is
-    /// on a record that does not represent its state, temperatures differ,
-    /// some records carry a step or coordinate and others do not, steps and
-    /// coordinates are mixed, or coordinate units differ, and
+    /// topologies), a field is repeated, some records carry a step or
+    /// coordinate and others do not, steps and coordinates are mixed, or
+    /// coordinate units differ, and
     /// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
-    /// when a field is not a valid number, state index, weight, energy,
-    /// temperature, step, coordinate, unit, or `true`.
+    /// when a field is not a valid step, coordinate, or unit.
     pub fn structure_set<'a>(
         records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
     ) -> Result<crate::structure::StructureSet, FormatError> {
@@ -1506,7 +1480,8 @@ pub mod xyz {
 /// Scientific formats exchange chemistry with other tools; they are not exact
 /// persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
 /// [`Topology`](crate::topology::Topology), [`Structure`](crate::structure::Structure),
-/// or [`StructureSet`](crate::structure::StructureSet) losslessly: represented
+/// [`StructureSet`](crate::structure::StructureSet), or
+/// [`Ensemble`](crate::structure::Ensemble) losslessly: represented
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every
@@ -1523,7 +1498,8 @@ pub mod xyz {
 /// or [`NativeObject::into_structure_set_interpretation`](native::NativeObject::into_structure_set_interpretation).
 /// A [`StructureSetDescription`](native::StructureSetDescription) stores a structure
 /// set whose geometries are kept elsewhere: its topology, properties, order,
-/// distribution, and the number of its geometries.
+/// and the number of its geometries; an
+/// [`EnsembleDescription`](native::EnsembleDescription) adds a distribution.
 /// Installed perception is stored with its provenance unless
 /// [`NativeWriteOptions::with_perception`](native::NativeWriteOptions::with_perception)
 /// omits it.
@@ -1553,10 +1529,10 @@ pub mod xyz {
 pub mod native {
     use crate::diagnostics::FormatError;
     pub use crate::io::{
-        NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
-        StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS,
-        DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES,
-        NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+        EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, NativeSource,
+        NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,
+        DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS,
+        DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
     };
 
     /// Encodes one object into a new byte vector.

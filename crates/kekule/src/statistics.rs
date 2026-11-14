@@ -15,21 +15,21 @@
 //! result is the same whichever threads observed the ranges, and it equals
 //! observing everything in one accumulator up to rounding.
 //!
-//! Structure sets reduce themselves with the same accumulators.
-//! [`StructureSet::rmsf`], [`StructureSet::contact_occupancy`], and
-//! [`StructureSet::group_contact_occupancy`] observe the members of the set's
-//! distribution, each with its probability, its weight divided by the
-//! members' total, and leave the other samples out. Without a distribution
-//! they observe every sample with weight one, taking a trajectory's frames
-//! as equally weighted equilibrium samples; to reweight frames, for example
-//! after biased sampling, give the set a distribution with those weights or
-//! observe the frames through an accumulator with explicit weights.
+//! Ensembles and structure sets reduce themselves with the same
+//! accumulators. [`Ensemble::rmsf`], [`Ensemble::contact_occupancy`], and
+//! [`Ensemble::group_contact_occupancy`] observe the samples of the
+//! ensemble's distribution, each with its probability, and leave the other
+//! geometries out. The same methods of a [`StructureSet`] observe every
+//! geometry with weight one, taking a trajectory's frames as equally
+//! weighted equilibrium samples; to reweight frames, for example after
+//! biased sampling, read the set as an [`Ensemble::weighted`] or observe the
+//! frames through an accumulator with explicit weights.
 //!
-//! An accumulator also observes the samples of any
+//! An accumulator also observes the geometries of any
 //! [`StructureSetRead`], such as a set read from a
-//! file: [`SampleObservations`] lists the samples and their weights, and
-//! `observe_samples` reads a range of them in order, as a set's own
-//! statistics do.
+//! file: [`SampleObservations`] lists the geometries and their weights, and
+//! `observe_samples` reads a range of them in order, as the statistics of a
+//! set or an ensemble do.
 //!
 //! Coordinates are used as stored, ignoring cells. Align and perform any
 //! periodic preprocessing explicitly before observation. Lengths are reported
@@ -39,20 +39,18 @@
 //!
 //! ```
 //! use kekule::math::Point3;
-//! use kekule::structure::{Distribution, Members, Partition, Positions, Geometry, StructureSet};
+//! use kekule::structure::{Ensemble, Positions, Geometry, StructureSet};
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, NANOMETER};
 //!
 //! let topology = kekule::smiles::to_topology("CC")?;
-//! let mut ensemble = StructureSet::new(topology.clone());
+//! let mut set = StructureSet::new(topology.clone());
 //! // The first atom sits at x = 0 with weight 3 and at x = 1 with weight 1.
 //! for x in [0.0, 1.0] {
 //!     let points = [Point3::new(x, 0.0, 0.0), Point3::new(0.15, 0.0, 0.0)];
-//!     ensemble.push(Geometry::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
+//!     set.push(Geometry::new(Positions::new(Quantity::new(points, NANOMETER))?), None)?;
 //! }
-//! let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))?
-//!     .with_weights(vec![3.0, 1.0])?;
-//! ensemble.set_distribution(Some(distribution))?;
+//! let ensemble = Ensemble::weighted(set, vec![3.0_f64.ln(), 0.0])?;
 //!
 //! // Weighted mean 0.25, weighted variance 0.75 × 0.25² + 0.25 × 0.75² = 0.1875.
 //! let fluctuation = ensemble.rmsf(&AtomSelection::all(topology.clone()))?;
@@ -63,7 +61,10 @@
 //! let atoms = topology.atom_ids();
 //! let cutoff = Quantity::new(0.2, NANOMETER);
 //! let contacts = ensemble.contact_occupancy([(atoms[0], atoms[1])], cutoff)?;
-//! assert_eq!(contacts.contacts().next(), Some(((atoms[0], atoms[1]), 0.75)));
+//! // ln 3 is not exact in binary, so the share is 3/4 up to rounding.
+//! let ((first, second), occupancy) = contacts.contacts().next().unwrap();
+//! assert_eq!((first, second), (atoms[0], atoms[1]));
+//! assert!((occupancy - 0.75).abs() < 1e-15);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -75,8 +76,8 @@ use std::sync::Arc;
 use crate::diagnostics::{Cancellation, Cancelled};
 use crate::math::{Point3, PointGrid, Vector3};
 use crate::structure::{
-    visit_geometry, AsStructureView, GeometryStorage, StructureSet, StructureSetRead,
-    StructureSetReadError, StructureView,
+    log_sum_exp, visit_geometry, AsStructureView, Ensemble, GeometryStorage, StructureSet,
+    StructureSetRead, StructureSetReadError, StructureView,
 };
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -299,63 +300,80 @@ pub struct SampleObservations {
 }
 
 impl SampleObservations {
-    /// The samples a set's statistics observe: the members of the reader's
-    /// distribution, each with its probability (its weight over the members'
-    /// total), or, without a distribution, every sample with weight one.
+    /// Every geometry of `reader`, in order, each with weight one: what the
+    /// statistics of a [`StructureSet`] observe.
     pub fn all(reader: &(impl StructureSetRead + ?Sized)) -> Self {
-        match reader.distribution() {
-            Some(distribution) => {
-                let (samples, weights): (Vec<_>, Vec<_>) = distribution.weighted_members().unzip();
-                Self::weighed(samples, weights)
-            }
-            None => Self {
-                samples: (0..reader.len()).collect(),
-                weights: vec![1.0; reader.len()],
-            },
+        Self {
+            samples: (0..reader.len()).collect(),
+            weights: vec![1.0; reader.len()],
         }
     }
 
-    /// The listed samples, in the listed order, with the distribution
-    /// restricted to them, as [`StructureSet::select`] restricts it: the listed
-    /// members, each with its weight over the listed members' total, and the
-    /// other listed samples left out. Without a distribution every listed
-    /// sample is observed with weight one. Ranges and strides are written as
+    /// The listed geometries of `reader`, in the listed order, each with
+    /// weight one. Ranges and strides are written as
     /// `(start..end).step_by(stride)`.
     ///
     /// # Errors
     ///
     /// [`StatisticsError::Read`] with [`StructureSetReadError::IndexOutOfRange`]
-    /// for an index past the last sample.
+    /// for an index past the last geometry.
     pub fn of(
         reader: &(impl StructureSetRead + ?Sized),
         samples: impl IntoIterator<Item = usize>,
     ) -> Result<Self, StatisticsError> {
-        let len = reader.len();
-        let samples = samples.into_iter().collect::<Vec<_>>();
-        if let Some(&index) = samples.iter().find(|index| **index >= len) {
-            return Err(StatisticsError::Read(
-                StructureSetReadError::IndexOutOfRange { index, len },
-            ));
-        }
-        Ok(match reader.distribution() {
-            Some(distribution) => {
-                let (samples, weights): (Vec<_>, Vec<_>) = samples
-                    .into_iter()
-                    .filter_map(|index| distribution.weight(index).map(|weight| (index, weight)))
-                    .unzip();
-                Self::weighed(samples, weights)
-            }
-            None => Self {
-                weights: vec![1.0; samples.len()],
-                samples,
-            },
+        let samples = checked(reader.len(), samples)?;
+        Ok(Self {
+            weights: vec![1.0; samples.len()],
+            samples,
         })
     }
 
-    /// Members with their relative weights, as probabilities.
-    fn weighed(samples: Vec<usize>, weights: Vec<f64>) -> Self {
-        let largest = weights.iter().copied().reduce(f64::max).unwrap_or(1.0);
-        let weights = probabilities(weights.into_iter().map(|weight| weight / largest).collect());
+    /// The samples of `ensemble`'s distribution, in geometry order, each
+    /// with its probability: what the statistics of an [`Ensemble`]
+    /// observe, reading [`Ensemble::set`]. A sample whose probability is
+    /// below the smallest positive `f64` contributes nothing and is left
+    /// out.
+    pub fn weighted<S: GeometryStorage>(ensemble: &Ensemble<S>) -> Self {
+        let distribution = ensemble.distribution();
+        Self::of_log_weights(
+            (0..ensemble.set().len())
+                .filter_map(|geometry| Some((geometry, distribution.log_weight(geometry)?))),
+        )
+    }
+
+    /// The listed geometries of `ensemble`, in the listed order, with its
+    /// distribution restricted to them, as [`Ensemble::select`] restricts
+    /// it: the listed samples, each with its probability among the listed
+    /// samples, and the other listed geometries left out. A probability
+    /// below the smallest positive `f64` contributes nothing and is left
+    /// out.
+    ///
+    /// # Errors
+    ///
+    /// [`StatisticsError::Read`] with [`StructureSetReadError::IndexOutOfRange`]
+    /// for an index past the last geometry.
+    pub fn weighted_of<S: GeometryStorage>(
+        ensemble: &Ensemble<S>,
+        samples: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, StatisticsError> {
+        let samples = checked(ensemble.set().len(), samples)?;
+        let distribution = ensemble.distribution();
+        Ok(Self::of_log_weights(samples.into_iter().filter_map(
+            |geometry| Some((geometry, distribution.log_weight(geometry)?)),
+        )))
+    }
+
+    /// Geometries with their natural-logarithm weights, observed with their
+    /// probabilities; those that underflow to zero are left out.
+    fn of_log_weights(weighted: impl Iterator<Item = (usize, f64)>) -> Self {
+        let (samples, log_weights): (Vec<_>, Vec<_>) = weighted.unzip();
+        let total = log_sum_exp(log_weights.iter().copied());
+        let (samples, weights) = samples
+            .into_iter()
+            .zip(log_weights)
+            .map(|(geometry, log_weight)| (geometry, (log_weight - total).exp()))
+            .filter(|(_, probability)| *probability > 0.0)
+            .unzip();
         Self { samples, weights }
     }
 
@@ -1692,75 +1710,106 @@ impl GroupContactOccupancyResult {
     }
 }
 
-/// Probabilities from weights already scaled by the largest one, so that
-/// the total cannot overflow.
-fn probabilities(scaled: Vec<f64>) -> Vec<f64> {
-    let total = scaled.iter().sum::<f64>();
-    scaled.into_iter().map(|weight| weight / total).collect()
+/// `samples`, each below `len`.
+fn checked(
+    len: usize,
+    samples: impl IntoIterator<Item = usize>,
+) -> Result<Vec<usize>, StatisticsError> {
+    let samples = samples.into_iter().collect::<Vec<_>>();
+    if let Some(&index) = samples.iter().find(|index| **index >= len) {
+        return Err(StatisticsError::Read(
+            StructureSetReadError::IndexOutOfRange { index, len },
+        ));
+    }
+    Ok(samples)
+}
+
+/// Per-atom RMSF over `observations` of `reader`.
+fn rmsf_of(
+    reader: &dyn StructureSetRead,
+    observations: &SampleObservations,
+    selection: &AtomSelection,
+) -> Result<RmsfResult, StatisticsError> {
+    selection
+        .ensure_compatible(reader.topology())
+        .map_err(StatisticsError::Selection)?;
+    let mut accumulator = RmsfAccumulator::new(selection)?;
+    accumulator.observe_samples(reader, observations, 0..observations.len())?;
+    accumulator.finish()
+}
+
+/// Contact occupancies over `observations` of `reader`.
+fn contact_occupancy_of(
+    reader: &dyn StructureSetRead,
+    observations: &SampleObservations,
+    pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
+    cutoff: Quantity<f64>,
+) -> Result<ContactOccupancyResult, StatisticsError> {
+    let mut accumulator = ContactOccupancyAccumulator::new(reader.topology(), pairs, cutoff)?;
+    accumulator.observe_samples(reader, observations, 0..observations.len())?;
+    accumulator.finish()
+}
+
+/// Group contact occupancies over `observations` of `reader`.
+fn group_contact_occupancy_of(
+    reader: &dyn StructureSetRead,
+    observations: &SampleObservations,
+    groups: impl IntoIterator<Item = AtomSelection>,
+    pairs: impl IntoIterator<Item = (usize, usize)>,
+    cutoff: Quantity<f64>,
+) -> Result<GroupContactOccupancyResult, StatisticsError> {
+    let mut accumulator =
+        GroupContactOccupancyAccumulator::new(reader.topology(), groups, pairs, cutoff)?;
+    accumulator.observe_samples(reader, observations, 0..observations.len())?;
+    accumulator.finish()
 }
 
 impl<S: GeometryStorage> StructureSet<S>
 where
     Self: StructureSetRead,
 {
-    /// Per-atom weighted RMSF about each atom's weighted mean stored position,
-    /// as defined by [`RmsfAccumulator`], over the samples statistics see
-    /// ([`Self::weighted_samples`]): the members of the distribution, each
-    /// observed with its probability (its weight over the members' total),
-    /// or, without a distribution, every sample with weight one. Samples
-    /// outside the distribution are not observed. Align and perform periodic
-    /// preprocessing beforehand.
+    /// Per-atom RMSF about each atom's mean stored position, as defined by
+    /// [`RmsfAccumulator`], over every geometry with weight one
+    /// ([`SampleObservations::all`]). [`Ensemble::rmsf`] weighs the samples
+    /// of a distribution instead. Align and perform periodic preprocessing
+    /// beforehand.
     ///
     /// # Errors
     ///
     /// Returns [`StatisticsError::Selection`] when `selection` is incompatible
-    /// with the set's topology, [`StatisticsError::NoObservations`] when there
-    /// is no sample to observe, [`StatisticsError::InvalidWeight`] naming the
-    /// sample index of a member whose probability underflows to zero, and the
-    /// errors of [`RmsfAccumulator::new`] and [`RmsfAccumulator::observe`].
+    /// with the set's topology, [`StatisticsError::NoObservations`] for a set
+    /// without geometries, and the errors of [`RmsfAccumulator::new`] and
+    /// [`RmsfAccumulator::observe`].
     pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
-        selection
-            .ensure_compatible(&self.shared_topology())
-            .map_err(StatisticsError::Selection)?;
-        let mut accumulator = RmsfAccumulator::new(selection)?;
-        let observations = SampleObservations::all(self);
-        accumulator.observe_samples(self, &observations, 0..observations.len())?;
-        accumulator.finish()
+        rmsf_of(self, &SampleObservations::all(self), selection)
     }
 
-    /// Weighted Cartesian contact occupancies, as defined by
-    /// [`ContactOccupancyAccumulator`], over the samples [`Self::rmsf`]
-    /// observes, with the same weights: each contact weight is a probability
-    /// with a distribution and a sample count without one.
+    /// Cartesian contact occupancies, as defined by
+    /// [`ContactOccupancyAccumulator`], over every geometry with weight one,
+    /// as [`Self::rmsf`] observes them: each contact weight is a geometry
+    /// count.
     ///
     /// # Errors
     ///
-    /// Returns [`StatisticsError::NoObservations`] when there is no sample to
-    /// observe, [`StatisticsError::InvalidWeight`] naming a member whose
-    /// probability underflows to zero, and the errors of
-    /// [`ContactOccupancyAccumulator::new`] and
-    /// [`ContactOccupancyAccumulator::observe`].
+    /// Returns [`StatisticsError::NoObservations`] for a set without
+    /// geometries, and the errors of [`ContactOccupancyAccumulator::new`]
+    /// and [`ContactOccupancyAccumulator::observe`].
     pub fn contact_occupancy(
         &self,
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
         cutoff: Quantity<f64>,
     ) -> Result<ContactOccupancyResult, StatisticsError> {
-        let mut accumulator =
-            ContactOccupancyAccumulator::new(&self.shared_topology(), pairs, cutoff)?;
-        let observations = SampleObservations::all(self);
-        accumulator.observe_samples(self, &observations, 0..observations.len())?;
-        accumulator.finish()
+        contact_occupancy_of(self, &SampleObservations::all(self), pairs, cutoff)
     }
 
-    /// Weighted Cartesian contact occupancies of pairs of atom groups, as
-    /// defined by [`GroupContactOccupancyAccumulator`], over the samples
-    /// [`Self::rmsf`] observes, with the same weights.
+    /// Cartesian contact occupancies of pairs of atom groups, as defined by
+    /// [`GroupContactOccupancyAccumulator`], over every geometry with weight
+    /// one, as [`Self::rmsf`] observes them.
     ///
     /// # Errors
     ///
-    /// Returns [`StatisticsError::NoObservations`] when there is no sample to
-    /// observe, [`StatisticsError::InvalidWeight`] naming a member whose
-    /// probability underflows to zero, and the errors of
+    /// Returns [`StatisticsError::NoObservations`] for a set without
+    /// geometries, and the errors of
     /// [`GroupContactOccupancyAccumulator::new`] and
     /// [`GroupContactOccupancyAccumulator::observe`].
     pub fn group_contact_occupancy(
@@ -1769,10 +1818,76 @@ where
         pairs: impl IntoIterator<Item = (usize, usize)>,
         cutoff: Quantity<f64>,
     ) -> Result<GroupContactOccupancyResult, StatisticsError> {
-        let mut accumulator =
-            GroupContactOccupancyAccumulator::new(&self.shared_topology(), groups, pairs, cutoff)?;
-        let observations = SampleObservations::all(self);
-        accumulator.observe_samples(self, &observations, 0..observations.len())?;
-        accumulator.finish()
+        group_contact_occupancy_of(self, &SampleObservations::all(self), groups, pairs, cutoff)
+    }
+}
+
+impl<S: GeometryStorage> Ensemble<S>
+where
+    StructureSet<S>: StructureSetRead,
+{
+    /// Per-atom weighted RMSF about each atom's weighted mean stored
+    /// position, as defined by [`RmsfAccumulator`], over the samples of the
+    /// distribution, each observed with its probability
+    /// ([`SampleObservations::weighted`]). Geometries that are not samples
+    /// are not observed. Align and perform periodic preprocessing
+    /// beforehand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::Selection`] when `selection` is incompatible
+    /// with the set's topology, [`StatisticsError::NoObservations`] for a
+    /// distribution without samples, and the errors of
+    /// [`RmsfAccumulator::new`] and [`RmsfAccumulator::observe`].
+    pub fn rmsf(&self, selection: &AtomSelection) -> Result<RmsfResult, StatisticsError> {
+        rmsf_of(self.set(), &SampleObservations::weighted(self), selection)
+    }
+
+    /// Weighted Cartesian contact occupancies, as defined by
+    /// [`ContactOccupancyAccumulator`], over the samples [`Self::rmsf`]
+    /// observes, with the same probabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::NoObservations`] for a distribution
+    /// without samples, and the errors of
+    /// [`ContactOccupancyAccumulator::new`] and
+    /// [`ContactOccupancyAccumulator::observe`].
+    pub fn contact_occupancy(
+        &self,
+        pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
+        cutoff: Quantity<f64>,
+    ) -> Result<ContactOccupancyResult, StatisticsError> {
+        contact_occupancy_of(
+            self.set(),
+            &SampleObservations::weighted(self),
+            pairs,
+            cutoff,
+        )
+    }
+
+    /// Weighted Cartesian contact occupancies of pairs of atom groups, as
+    /// defined by [`GroupContactOccupancyAccumulator`], over the samples
+    /// [`Self::rmsf`] observes, with the same probabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatisticsError::NoObservations`] for a distribution
+    /// without samples, and the errors of
+    /// [`GroupContactOccupancyAccumulator::new`] and
+    /// [`GroupContactOccupancyAccumulator::observe`].
+    pub fn group_contact_occupancy(
+        &self,
+        groups: impl IntoIterator<Item = AtomSelection>,
+        pairs: impl IntoIterator<Item = (usize, usize)>,
+        cutoff: Quantity<f64>,
+    ) -> Result<GroupContactOccupancyResult, StatisticsError> {
+        group_contact_occupancy_of(
+            self.set(),
+            &SampleObservations::weighted(self),
+            groups,
+            pairs,
+            cutoff,
+        )
     }
 }

@@ -81,10 +81,13 @@ fn mmcif_scalar_categories_support_document_block_and_structure_set_paths() {
         assert_eq!(actual.structure().topology().residues().count(), 1);
     }
     let interpreted = scalar.interpret_structure_set(Default::default()).unwrap();
+    // The one water oxygen at (1, 2, 3) Å.
     assert_eq!(
-        super::debug_fingerprint(&interpreted),
-        0x7ba5_967c_f9fc_063d
+        super::geometry_atoms(interpreted.structure_set()),
+        [vec![("O", [1.0, 2.0, 3.0])]]
     );
+    assert_eq!(interpreted.reports().len(), 1);
+    assert_eq!(interpreted.reports()[0].solvent_molecules(), 1);
     assert_eq!(interpreted.structure_set().len(), 1);
     assert!(interpreted.topology().same_layout(expected.topology()));
     assert_eq!(

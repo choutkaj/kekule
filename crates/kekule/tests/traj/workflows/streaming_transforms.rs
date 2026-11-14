@@ -10,11 +10,17 @@ use kekule::traj::periodic::{self, MoleculeImager, PeriodicError, TrajectoryUnwr
 use kekule::traj::{FrameBuffer, FrameView};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::support::{self, dynamics, linear_carbon_topology, time_ordered, Frame, Recorded};
+use crate::support::{self, linear_carbon_topology, time_ordered, Frame};
 
+/// The x coordinate of atom 0 in each frame of [`source`].
+const XS: [f64; 5] = [0.9, 0.1, 0.4, 0.8, 0.2];
+
+/// Five frames of a three-carbon chain in a 1 nm cubic cell: atom 0 at
+/// `(x, 0.2, 0.2)`, atom 1 at `(x + 0.2, 0.2, 0.2)` wrapped into the cell,
+/// and atom 2 at `(x, 0.4, 0.2)`, for each `x` of [`XS`].
 fn source() -> StructureSet {
     let mut frames = Vec::new();
-    for (index, x) in [0.9, 0.1, 0.4, 0.8, 0.2].into_iter().enumerate() {
+    for (index, x) in XS.into_iter().enumerate() {
         let mut frame = Frame::new(
             Positions::new(Quantity::new(
                 [
@@ -52,11 +58,48 @@ fn source() -> StructureSet {
     time_ordered(linear_carbon_topology(3), frames)
 }
 
-/// `set` made whole, the next result `recorded`.
-fn whole(set: &StructureSet, recorded: &mut Recorded) -> StructureSet {
+/// Asserts that every geometry of `set` has the positions `expected` gives
+/// for its index, and the zero velocities and forces of [`source`].
+fn assert_positions(set: &StructureSet, expected: impl Fn(usize) -> [[f64; 3]; 3]) {
+    assert_eq!(set.len(), XS.len());
+    for (index, geometry) in set.iter().enumerate() {
+        let positions = geometry.positions().values();
+        for (atom, (a, e)) in positions.value().iter().zip(expected(index)).enumerate() {
+            let e = Point3::new(e[0], e[1], e[2]);
+            assert!(
+                (*a - e).norm() < 1.0e-12,
+                "geometry {index} atom {atom}: {a:?} != {e:?}"
+            );
+        }
+        assert_eq!(geometry.velocities(), Some(&Velocities::zeros(3)));
+        assert_eq!(geometry.forces(), Some(&Forces::zeros(3)));
+    }
+}
+
+const X: Vector3 = Vector3::new(1.0, 0.0, 0.0);
+const Y: Vector3 = Vector3::new(0.0, 1.0, 0.0);
+const Z: Vector3 = Vector3::new(0.0, 0.0, 1.0);
+
+/// Asserts that geometry `index` of `set` has a cell of these vectors.
+fn assert_cell(set: &StructureSet, index: usize, expected: [Vector3; 3]) {
+    let vectors = set.get(index).unwrap().cell().unwrap().vectors();
+    for (actual, expected) in vectors.value().iter().zip(expected) {
+        assert!(
+            (*actual - expected).norm() < 1.0e-12,
+            "geometry {index}: {actual:?} != {expected:?}"
+        );
+    }
+}
+
+/// `set` made whole. The first atom of each frame stays and atom 1 takes
+/// its image 0.2 nm along x from it, so no bond crosses the cell.
+fn whole(set: &StructureSet) -> StructureSet {
     let mut whole = set.clone();
     periodic::make_molecules_whole(&mut whole).unwrap();
-    recorded.check(&dynamics(&whole));
+    assert_positions(&whole, |index| {
+        let x = XS[index];
+        [[x, 0.2, 0.2], [x + 0.2, 0.2, 0.2], [x, 0.4, 0.2]]
+    });
     whole
 }
 
@@ -67,22 +110,32 @@ fn frame_of(set: &StructureSet, index: usize) -> FrameView<'_> {
 
 #[test]
 fn streaming_and_loaded_whole_image_and_unwrap_preserve_identical_complete_frames() {
-    let mut recorded = Recorded::new(&[
-        0xf5ab_a216_67c8_6875, // whole
-        0x7242_7eee_5264_a0e3, // imaged
-        0x73a8_6f7c_f4ee_e247, // whole, then unwrapped
-    ]);
     let set = source();
     let topology = set.shared_topology();
     let anchors = AtomSelection::all(Arc::clone(&topology));
     let imager = MoleculeImager::new(topology.clone());
-    let expected_whole = whole(&set, &mut recorded);
+    let expected_whole = whole(&set);
     let mut expected_image = set.clone();
     periodic::image_molecules(&mut expected_image, &anchors).unwrap();
-    recorded.check(&dynamics(&expected_image));
+    // Imaging moves the whole molecule's geometric center, (x + 1/15, 4/15,
+    // 0.2), to the cell center in every frame.
+    let (dx, dy) = (1.0 / 15.0, 4.0 / 15.0);
+    assert_positions(&expected_image, |_| {
+        [
+            [0.5 - dx, 0.7 - dy, 0.5],
+            [0.7 - dx, 0.7 - dy, 0.5],
+            [0.5 - dx, 0.9 - dy, 0.5],
+        ]
+    });
     let mut expected_unwrap = expected_whole.clone();
     periodic::unwrap_trajectory(&mut expected_unwrap).unwrap();
-    recorded.check(&dynamics(&expected_unwrap));
+    // Each atom moves by under half a cell between frames: atom 0 by +0.2
+    // (crossing x = 1), +0.3, +0.4, and +0.4 (crossing again).
+    let unwrapped_xs = [0.9, 1.1, 1.4, 1.8, 2.2];
+    assert_positions(&expected_unwrap, |index| {
+        let x = unwrapped_xs[index];
+        [[x, 0.2, 0.2], [x + 0.2, 0.2, 0.2], [x, 0.4, 0.2]]
+    });
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
     let mut buffer = FrameBuffer::new(set.shared_topology());
     for index in 0..set.len() {
@@ -174,9 +227,6 @@ fn unwrapping_checks_that_time_increases_transactionally() {
 
 #[test]
 fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
-    let mut recorded = Recorded::new(&[
-        0xfc7d_d02b_e2ff_b45c, // unwrapped
-    ]);
     let set = source();
     let topology = set.shared_topology();
     let mut unwrapper = TrajectoryUnwrapper::new(topology.clone());
@@ -220,24 +270,39 @@ fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
     unwrapper.unwrap(1, &mut buffer).unwrap();
     let mut unwrapped = set.clone();
     periodic::unwrap_trajectory(&mut unwrapped).unwrap();
-    recorded.check(&dynamics(&unwrapped));
+    // Unwrapped atom by atom: atom 0 and atom 2 move as in the whole
+    // molecule; atom 1 starts wrapped at 0.1 and moves by +0.2, +0.3, +0.4
+    // (from 0.6 to 0.0, crossing x = 1), and +0.4.
+    let atom_0_xs = [0.9, 1.1, 1.4, 1.8, 2.2];
+    let atom_1_xs = [0.1, 0.3, 0.6, 1.0, 1.4];
+    assert_positions(&unwrapped, |index| {
+        let (x, x1) = (atom_0_xs[index], atom_1_xs[index]);
+        [[x, 0.2, 0.2], [x1, 0.2, 0.2], [x, 0.4, 0.2]]
+    });
     assert_eq!(*buffer, *unwrapped.get(1).unwrap().payload());
 }
 
 #[test]
 fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_indices() {
-    let mut recorded = Recorded::new(&[
-        0xf5ab_a216_67c8_6875, // whole
-        0x8b5f_d339_0a74_9dfc, // superposed
-    ]);
-    let set = whole(&source(), &mut recorded);
+    let set = whole(&source());
     let topology = set.shared_topology();
     let selection = AtomSelection::all(Arc::clone(&topology));
     let mut expected = set.clone();
     let reports = expected
         .superpose(0, &selection, Default::default())
         .unwrap();
-    recorded.check(&dynamics(&expected));
+    // Every whole frame is frame 0 translated along x, so each superposes
+    // exactly onto it, with zero RMSD.
+    assert_positions(&expected, |_| {
+        let x = XS[0];
+        [[x, 0.2, 0.2], [x + 0.2, 0.2, 0.2], [x, 0.4, 0.2]]
+    });
+    for index in 0..expected.len() {
+        assert!(reports.alignment(index).unwrap().rmsd().into_value() < 1.0e-12);
+        // The fitted rotation is the identity to rounding, so the cell is
+        // the unit cube still.
+        assert_cell(&expected, index, [X, Y, Z]);
+    }
     let reference = set.get(0).unwrap();
     let superposer = FrameSuperposer::new(&reference, &selection, Default::default());
     let mut buffer = FrameBuffer::new(topology.clone());
@@ -263,11 +328,7 @@ fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_ind
 
 #[test]
 fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffers() {
-    let mut recorded = Recorded::new(&[
-        0xf5ab_a216_67c8_6875, // whole
-        0x84cc_499d_3ac3_1bba, // superposed
-    ]);
-    let set = whole(&source(), &mut recorded);
+    let set = whole(&source());
     let moving = set.shared_topology();
     let first = set.get(0).unwrap().positions().values().value().to_vec();
     let turn = |p: Point3| Point3::new(-p.y + 2.0, p.x - 3.0, p.z + 1.0);
@@ -296,7 +357,15 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
     let options = AlignmentOptions::default().with_weighting(Weighting::Explicit(&[4.0, 1.0, 2.0]));
     let mut loaded = set.clone();
     loaded.superpose(&reference, &fit, options).unwrap();
-    recorded.check(&dynamics(&loaded));
+    // Every whole frame is frame 0 translated, and the paired reference
+    // atoms are frame 0 turned rigidly, so every frame lands on them.
+    assert_positions(&loaded, |_| {
+        [turn(first[0]), turn(first[1]), turn(first[2])].map(|p| [p.x, p.y, p.z])
+    });
+    // The cell turns with the frame: a to +y, b to -x, c unchanged.
+    for index in 0..loaded.len() {
+        assert_cell(&loaded, index, [Y, -X, Z]);
+    }
     let superposer = FrameSuperposer::new(&reference, &fit, options);
     let mut buffer = FrameBuffer::new(set.shared_topology());
     let mut index = 0;

@@ -580,8 +580,7 @@ impl Drop for FileTrajectoryWriter {
 /// and the extension names none, and
 /// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
 /// format stores, which must be cleared first: set properties
-/// ([`TrajectoryField::CollectionProperties`]), a distribution
-/// ([`TrajectoryField::Distribution`]), and a step or coordinate order
+/// ([`TrajectoryField::CollectionProperties`]) and a step or coordinate order
 /// ([`TrajectoryField::OrderStep`], [`TrajectoryField::OrderCoordinate`]).
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
@@ -666,13 +665,11 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
     Ok(report)
 }
 
-/// Fails for structure set state no trajectory format stores: set properties,
-/// a distribution, and a step or coordinate order.
+/// Fails for structure set state no trajectory format stores: set properties
+/// and a step or coordinate order.
 fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
     let field = if !set.properties().is_empty() {
         Some(TrajectoryField::CollectionProperties)
-    } else if set.distribution().is_some() {
-        Some(TrajectoryField::Distribution)
     } else {
         match set.order() {
             Some(Order::Step(_)) => Some(TrajectoryField::OrderStep),

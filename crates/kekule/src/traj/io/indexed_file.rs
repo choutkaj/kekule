@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::properties::OwnerProperties;
 use crate::structure::{
-    geometry_storage, Distribution, Geometry, GeometryStorage, GeometryView, Order, StructureSet,
+    geometry_storage, Ensemble, Geometry, GeometryStorage, GeometryView, Order, StructureSet,
     StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use crate::topology::Topology;
@@ -63,9 +63,9 @@ use super::{
 ///
 /// Cloning a set over a file reads nothing: the clone reads the file
 /// object this set reads, shares its frame index, and keeps the set
-/// properties, the order, and the distribution, so a host that changes only
-/// the distribution or the properties copies the set as cheaply as one in
-/// memory. Its pool starts empty. The clone keeps its geometries while the
+/// properties and the order, so a host that changes only the properties, or
+/// pairs the set with a distribution in an [`Ensemble`], copies it as cheaply
+/// as one in memory. Its pool starts empty. The clone keeps its geometries while the
 /// set follows the file: refreshing either adds frames to it alone. A
 /// host hands a clone to an analysis and refreshes the set meanwhile. While
 /// both share the index, a refresh that finds new frames copies its whole
@@ -169,8 +169,8 @@ impl GeometryStorage for IndexedFile {}
 /// Opens a trajectory file as a [`StructureSet`] over its frames, indexing
 /// them through [`open_indexed_trajectory`], which verifies every frame.
 ///
-/// The set's order is a time order of the frames' times and steps, and it
-/// has no distribution; give it one with [`StructureSet::set_distribution`].
+/// The set's order is a time order of the frames' times and steps; read it
+/// as draws from a distribution with an [`Ensemble`].
 /// `options` set the codec, its limits, and the indexing's cancellation and
 /// progress.
 ///
@@ -243,7 +243,7 @@ impl IndexedFileTrajectoryReader {
             reader: Arc::new(self),
             idle: Mutex::new(Vec::new()),
         };
-        StructureSet::from_storage(topology, storage, Some(order), None)
+        StructureSet::from_storage(topology, storage, Some(order))
     }
 }
 
@@ -260,11 +260,8 @@ impl StructureSet<IndexedFile> {
     /// last refreshed, as [`IndexedFileTrajectoryReader::refresh`] does, and
     /// takes them as new geometries; returns how many there are.
     ///
-    /// The new geometries extend the time order with their times and steps. A
-    /// distribution over every geometry becomes one over the geometries it
-    /// covered, so the new geometries are outside it, as
-    /// [`StructureSet::push`] leaves an appended geometry; a distribution over a
-    /// subset keeps its members, as [`Distribution::extended_to`] gives it.
+    /// The new geometries extend the time order with their times and steps;
+    /// [`Ensemble::refresh`] also re-expresses a distribution over them.
     /// The pool's readers are kept and read by the new index, which they
     /// share. A set whose clone shares its reader first opens a reader of
     /// its own, as the pool does. Failure changes nothing.
@@ -322,7 +319,7 @@ impl StructureSet<IndexedFile> {
             return Ok(0);
         }
         let order = time_order(&reader.to_frame_index());
-        self.grown(previous, Some(order));
+        self.grown(Some(order));
         Ok(count - previous)
     }
 
@@ -342,6 +339,50 @@ impl StructureSet<IndexedFile> {
     }
 }
 
+impl Ensemble<IndexedFile> {
+    /// Takes the frames appended to the file as new geometries, as
+    /// [`StructureSet::refresh`] does, and returns how many there are.
+    ///
+    /// A distribution over every geometry becomes one over the geometries it
+    /// covered, so the new geometries are not samples, as
+    /// [`Ensemble::push`] leaves an appended geometry; a distribution over a
+    /// subset keeps its samples, as [`Distribution::extended_to`](crate::structure::Distribution::extended_to) gives it.
+    /// Failure changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`StructureSet::refresh`].
+    pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
+        let (set, distribution) = self.parts_mut();
+        let added = set.refresh()?;
+        if added > 0 {
+            distribution
+                .extend(set.len())
+                .expect("the distribution describes the geometries before the new ones");
+        }
+        Ok(added)
+    }
+
+    /// Reads the geometries `indices` into an ensemble in memory, as
+    /// [`StructureSet::load`] does, with the distribution restricted to them
+    /// as [`Ensemble::select`] restricts it.
+    ///
+    /// # Errors
+    ///
+    /// As [`StructureSet::from_reader`].
+    pub fn load(
+        &self,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Result<Ensemble, StructureSetReadError> {
+        let indices = indices.into_iter().collect::<Vec<_>>();
+        let set = self.set().load(indices.iter().copied())?;
+        Ok(Ensemble::from_parts_unchecked(
+            set,
+            self.distribution().select(&indices),
+        ))
+    }
+}
+
 impl StructureSetRead for StructureSet<IndexedFile> {
     fn topology(&self) -> &Arc<Topology> {
         self.topology_handle()
@@ -353,10 +394,6 @@ impl StructureSetRead for StructureSet<IndexedFile> {
 
     fn order(&self) -> Option<&Order> {
         StructureSet::order(self)
-    }
-
-    fn distribution(&self) -> Option<&Distribution> {
-        StructureSet::distribution(self)
     }
 
     fn properties(&self) -> Option<&OwnerProperties> {

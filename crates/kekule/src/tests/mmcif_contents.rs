@@ -1,5 +1,5 @@
 use super::{
-    debug_fingerprint, deterministic_text_mutations, error_detail, mmcif_issue, test_positions,
+    deterministic_text_mutations, error_detail, geometry_atoms, mmcif_issue, test_positions,
 };
 use crate::diagnostics::{FormatErrorDetail, GeometryField};
 use crate::io::{UnrepresentablePolicy, WriteOmission};
@@ -1195,8 +1195,13 @@ fn structure_set_block_interpretation_matches_exactly_one_document_helper() {
     let from_block = document.blocks()[0]
         .interpret_structure_set(Default::default())
         .expect("block structure set interprets");
-    assert_eq!(debug_fingerprint(&from_document), 0xbff8_9390_671c_e377);
-    assert_eq!(debug_fingerprint(&from_block), 0xbff8_9390_671c_e377);
+    // Model 1 at 0 and 1.2 Å, model 2 at 5 and 6.2 Å.
+    let models = [
+        vec![("C", [0.0, 0.0, 0.0]), ("O", [1.2, 0.0, 0.0])],
+        vec![("C", [5.0, 0.0, 0.0]), ("O", [6.2, 0.0, 0.0])],
+    ];
+    assert_eq!(geometry_atoms(from_document.structure_set()), models);
+    assert_eq!(geometry_atoms(from_block.structure_set()), models);
     let method_default = document.blocks()[0]
         .interpret_structure_set(Default::default())
         .expect("default block method interprets");
@@ -1241,8 +1246,16 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
     let interpreted = (parse(MULTI_MODEL))
         .interpret_structure_set(Default::default())
         .expect("consistent coordinate models form a structure set");
-    assert_eq!(debug_fingerprint(&interpreted), 0xbff8_9390_671c_e377);
     let set = interpreted.structure_set();
+    assert_eq!(
+        geometry_atoms(set),
+        [
+            vec![("C", [0.0, 0.0, 0.0]), ("O", [1.2, 0.0, 0.0])],
+            vec![("C", [5.0, 0.0, 0.0]), ("O", [6.2, 0.0, 0.0])],
+        ]
+    );
+    assert_eq!(set.order(), None);
+    assert!(set.properties().is_empty());
     assert_eq!(set.len(), 2);
     assert_eq!(interpreted.reports().len(), 2);
     let shared_topology = set.shared_topology();
@@ -1279,9 +1292,10 @@ fn multimodel_interpretation_builds_shared_topology_with_distinct_properties() {
 fn structure_set_preparation_preserves_selected_order_reports_and_shared_connectivity() {
     let input = format!("{MULTI_MODEL}\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nLIG C1 O1 DOUB\n");
     let document = parse(&input);
-    for (model_ids, fingerprint) in [
-        (vec!["2", "1"], 0x16e4_3c6e_2f45_efc1),
-        (vec!["2"], 0x0c68_8d79_7976_df6a),
+    let model = |x: f64| vec![("C", [x, 0.0, 0.0]), ("O", [x + 1.2, 0.0, 0.0])];
+    for (model_ids, atoms) in [
+        (vec!["2", "1"], vec![model(5.0), model(0.0)]),
+        (vec!["2"], vec![model(5.0)]),
     ] {
         let interpreted = document
             .interpret_structure_set(
@@ -1290,7 +1304,7 @@ fn structure_set_preparation_preserves_selected_order_reports_and_shared_connect
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(debug_fingerprint(&interpreted), fingerprint);
+        assert_eq!(geometry_atoms(interpreted.structure_set()), atoms);
         assert_eq!(interpreted.structure_set().len(), model_ids.len());
         assert_eq!(interpreted.topology().bond_count(), 1);
         assert_eq!(
@@ -1370,7 +1384,19 @@ fn structure_set_identity_distinguishes_repeated_residues_and_insertion_codes() 
     let interpreted = (parse(REPEATED_RESIDUE_MODELS))
         .interpret_structure_set(Default::default())
         .expect("stable repeated-residue identities form a structure set");
-    assert_eq!(debug_fingerprint(&interpreted), 0x2f0c_d487_716e_43c1);
+    // Residues 7, 7A, and 8 at 0, 2, and 4 Å in model 1 and 10 Å further in
+    // model 2.
+    let model = |x: f64| {
+        vec![
+            ("C", [x, 0.0, 0.0]),
+            ("C", [x + 2.0, 0.0, 0.0]),
+            ("C", [x + 4.0, 0.0, 0.0]),
+        ]
+    };
+    assert_eq!(
+        geometry_atoms(interpreted.structure_set()),
+        [model(0.0), model(10.0)]
+    );
 
     assert_eq!(interpreted.structure_set().len(), 2);
     assert_eq!(interpreted.structure_set().topology().atom_count(), 3);
@@ -1395,7 +1421,19 @@ fn structure_set_identity_preserves_repeated_nonpolymer_occurrences() {
     let interpreted = (parse(REPEATED_NONPOLYMER_MODELS))
         .interpret_structure_set(Default::default())
         .expect("stable occurrence discriminators form a structure set");
-    assert_eq!(debug_fingerprint(&interpreted), 0xbdaa_cd92_50f0_cf18);
+    // Two ligand occurrences 5 Å apart in model 1 and 10 Å further in model 2.
+    let model = |x: f64| {
+        vec![
+            ("C", [x, 0.0, 0.0]),
+            ("O", [x + 1.2, 0.0, 0.0]),
+            ("C", [x + 5.0, 0.0, 0.0]),
+            ("O", [x + 6.2, 0.0, 0.0]),
+        ]
+    };
+    assert_eq!(
+        geometry_atoms(interpreted.structure_set()),
+        [model(0.0), model(10.0)]
+    );
 
     assert_eq!(interpreted.structure_set().len(), 2);
     assert_eq!(interpreted.structure_set().topology().instance_count(), 2);
@@ -1494,8 +1532,12 @@ ATOM 4 C CA GLY A 1 1 B 0.9 11.0 0.0 0.0 2
     let interpreted = (parse(input))
         .interpret_structure_set(Default::default())
         .expect("selected altloc is provenance rather than atom identity");
-    assert_eq!(debug_fingerprint(&interpreted), 0x9736_301e_ec44_0a5c);
     let set = interpreted.structure_set();
+    // The most occupied site of each model: A at 0 Å, then B at 11 Å.
+    assert_eq!(
+        geometry_atoms(set),
+        [vec![("C", [0.0, 0.0, 0.0])], vec![("C", [11.0, 0.0, 0.0])]]
+    );
     assert_eq!(set.len(), 2);
     assert_eq!(set.topology().atom_count(), 1);
     let selected_positions = set

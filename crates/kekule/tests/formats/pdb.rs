@@ -972,7 +972,27 @@ fn coordinate_models_become_geometries() {
         .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(set.structure_set().len(), 2);
-    assert_eq!(crate::native_fingerprint(&set), 0x1cd5_e03e_d0b4_e079);
+    assert_eq!(set.structure_set().order(), None);
+    // One water topology; each model's coordinates are its geometry's, the
+    // second shifted by 5 A along x.
+    let topology = set.structure_set().topology();
+    assert_eq!(topology.atom_count(), 3);
+    assert_eq!(topology.bond_count(), 2);
+    for (geometry, offset) in set.structure_set().iter().zip([0.0, 5.0]) {
+        let expected = [[0.0, 0.0, 0.0], [0.96, 0.0, 0.0], [-0.24, 0.93, 0.0]];
+        for (index, [x, y, z]) in expected.into_iter().enumerate() {
+            let point = geometry
+                .positions()
+                .get(index)
+                .unwrap()
+                .value_in(kekule::units::ANGSTROM)
+                .unwrap();
+            let actual = [point.x, point.y, point.z];
+            for (actual, expected) in actual.into_iter().zip([x + offset, y, z]) {
+                assert!((actual - expected).abs() <= 1e-9, "{actual} != {expected}");
+            }
+        }
+    }
     let models = set
         .reports()
         .iter()
@@ -1195,7 +1215,25 @@ fn a_ter_record_ends_the_residue_it_follows() {
         .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(set.structure_set().len(), 2);
-    assert_eq!(crate::native_fingerprint(&set), 0xd3e5_ee11_62ce_d370);
+    // Both models hold the two separate alpha carbons at x = 0 and 10 A.
+    assert_eq!(set.structure_set().topology().instance_count(), 2);
+    for geometry in set.structure_set().iter() {
+        let xs = (0..2)
+            .map(|index| {
+                geometry
+                    .positions()
+                    .get(index)
+                    .unwrap()
+                    .value_in(kekule::units::ANGSTROM)
+                    .unwrap()
+                    .x
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            (xs[0] - 0.0).abs() <= 1e-9 && (xs[1] - 10.0).abs() <= 1e-9,
+            "{xs:?}"
+        );
+    }
     let occurrences = set
         .reports()
         .iter()
@@ -2062,7 +2100,9 @@ fn read_structure(text: &str) -> kekule::structure::Structure {
 fn separately_read_structures_become_geometries_with_their_own_state() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::properties::{PropertyKey, PropertyValue};
-    use kekule::structure::{Distribution, Members, Partition, StructureSet, StructureSetError};
+    use kekule::structure::{
+        Distribution, Ensemble, Members, Partition, StructureSet, StructureSetError,
+    };
     use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};
     use kekule::units::{Quantity, ANGSTROM, SQUARE_NANOMETER};
 
@@ -2105,20 +2145,11 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
         .unwrap();
     let expected = [first.clone(), second.clone()];
 
-    let one_state = |set: StructureSet, partition| {
-        let mut set = set;
-        set.set_distribution(Some(Distribution::new(Members::All, partition).unwrap()))
-            .unwrap();
-        set
-    };
-    let set = one_state(
-        StructureSet::from_structures([first, second]).unwrap(),
-        Partition::one_state(2),
-    );
+    let set = StructureSet::from_structures([first, second]).unwrap();
     assert!(std::sync::Arc::ptr_eq(&set.shared_topology(), &topology));
-    assert_eq!(set.distribution().unwrap().state_count(), 1);
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.order(), None);
     for (geometry, structure) in set.iter().zip(&expected) {
-        assert_eq!(geometry.weight(), Some(1.0));
         assert_eq!(geometry.positions(), structure.positions());
         assert_eq!(geometry.cell(), structure.cell());
         assert_eq!(geometry.occupancies(), structure.occupancies());
@@ -2138,12 +2169,14 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
     assert!(projected.topology().shares_layout(&topology));
     assert_eq!(projected.atom_at(atom).unwrap().occupancy(), Some(0.25));
 
-    // The partition the caller passes is kept.
-    let conformers = one_state(
+    // An ensemble over the set keeps the partition the caller passes.
+    let conformers = Ensemble::new(
         StructureSet::from_structures([read_structure(CRAMBIN), read_structure(CRAMBIN)]).unwrap(),
-        Partition::state_per_sample(2),
-    );
-    assert_eq!(conformers.distribution().unwrap().state_count(), 2);
+        Distribution::new(Members::All, Partition::state_per_sample(2)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(conformers.distribution().state_count(), 2);
+    assert_eq!(conformers.states().count(), 2);
 
     // A different topology is refused.
     assert_eq!(

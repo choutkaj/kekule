@@ -11,10 +11,10 @@ use std::thread;
 
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
-use kekule::native::StructureSetDescription;
+use kekule::native::{EnsembleDescription, StructureSetDescription};
 use kekule::structure::{
-    Distribution, Geometry, Members, Order, Partition, Positions, StructureSet, StructureSetRead,
-    StructureSetReadError,
+    Distribution, Ensemble, Geometry, Members, Order, Partition, Positions, StructureSet,
+    StructureSetRead, StructureSetReadError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdCellPolicy, DcdEndian, DcdWriteOptions};
@@ -165,7 +165,6 @@ fn every_read_is_the_indexed_frame_of_every_format() {
         assert_eq!(set.len(), frames.len(), "{path:?}");
         assert!(set.len() >= 2, "{path:?}");
         assert!(Arc::ptr_eq(&set.shared_topology(), &topology));
-        assert!(set.distribution().is_none());
         assert_eq!(set.storage().path(), path);
         assert_eq!(set.storage().frame_index().frame_count(), frames.len());
         assert_eq!(
@@ -203,7 +202,7 @@ fn every_read_is_the_indexed_frame_of_every_format() {
 }
 
 #[test]
-fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
+fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distribution() {
     for (path, topology) in fixtures() {
         let set =
             open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
@@ -223,46 +222,50 @@ fn loading_gives_the_set_in_memory_with_its_order_and_distribution() {
         assert_eq!(described.order(), set.order());
     }
 
-    // Listed geometries keep their order values and the distribution's
-    // members among them, as selecting them in memory does.
+    // Listed geometries keep their order values and, loaded from an
+    // ensemble, the distribution's samples among them, as selecting them in
+    // memory does.
     let topology = linear_carbon_topology(12);
     let directory = Directory::new();
     let path = directory.0.join("run.xtc");
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     write_structure_set(&path, &chain(&topology, 8), options).unwrap();
-    let mut set =
-        open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let set = open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
     let kept = (0..set.len())
         .filter(|index| index % 3 != 1)
         .collect::<Vec<_>>();
     let count = kept.len();
     let members = Members::Subset(kept);
-    let weights = (0..count).map(|index| 1.0 + index as f64).collect();
+    let log_weights = (0..count).map(|index| (1.0 + index as f64).ln()).collect();
     let distribution = Distribution::new(members, Partition::one_state(count))
         .unwrap()
-        .with_weights(weights)
+        .with_log_weights(log_weights)
         .unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    let mut memory = set.load(0..set.len()).unwrap();
-    assert_eq!(memory.distribution(), set.distribution());
+    let ensemble = Ensemble::new(set, distribution).unwrap();
+    let mut memory = ensemble.load(0..ensemble.set().len()).unwrap();
+    assert_eq!(memory.distribution(), ensemble.distribution());
     let listed = [4, 1, 0, 4];
-    let loaded = set.load(listed).unwrap();
+    let loaded = ensemble.load(listed).unwrap();
     let selected = memory.select(listed).unwrap();
-    assert_eq!(loaded.order(), selected.order());
+    assert_eq!(loaded.set().order(), selected.set().order());
     assert_eq!(loaded.distribution(), selected.distribution());
+    // Of the listed geometries, only geometry 0 is a sample (kept: 0, 2, 3,
+    // 5, 6), its first, with log weight ln 1; geometries 4 and 1 are not.
+    assert_eq!(loaded.distribution().members(), &Members::Subset(vec![2]));
+    assert_eq!(loaded.distribution().log_weights(), Some([0.0].as_slice()));
     for (position, index) in listed.into_iter().enumerate() {
         assert_eq!(
-            loaded.get(position).unwrap().payload(),
-            memory.get(index).unwrap().payload()
+            loaded.set().get(position).unwrap().payload(),
+            memory.set().get(index).unwrap().payload()
         );
     }
     assert!(matches!(
-        set.load([0, set.len()]),
+        ensemble.load([0, ensemble.set().len()]),
         Err(StructureSetReadError::IndexOutOfRange { .. })
     ));
-    // The set in memory is the set's own: editing it leaves the file alone.
-    memory.set_distribution(None).unwrap();
-    assert!(set.distribution().is_some());
+    // The ensemble in memory is its own: editing it leaves the file's alone.
+    memory.distribution_mut().set_log_weights(None).unwrap();
+    assert!(ensemble.distribution().log_weights().is_some());
 }
 
 #[test]
@@ -304,13 +307,12 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     write_structure_set(&path, &head, options.clone()).unwrap();
 
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    let set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     assert_eq!(set.len(), 3);
-    assert_eq!(set.refresh().unwrap(), 0);
-    let distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
+    let mut ensemble = Ensemble::uniform(set);
+    assert_eq!(ensemble.refresh().unwrap(), 0);
     let before = (0..3)
-        .map(|index| set.read(index).unwrap())
+        .map(|index| ensemble.set().read(index).unwrap())
         .collect::<Vec<_>>();
 
     // A restarted run continues the file after its three frames.
@@ -323,15 +325,16 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
             .unwrap();
     }
     writer.flush().unwrap();
-    assert_eq!(set.refresh().unwrap(), 2);
-    assert_eq!(set.len(), 5);
+    assert_eq!(ensemble.refresh().unwrap(), 2);
+    assert_eq!(ensemble.set().len(), 5);
     for frame in all.iter().skip(5) {
         writer
             .write_frame(FrameView::from_geometry(frame).unwrap())
             .unwrap();
     }
     writer.finish().unwrap();
-    assert_eq!(set.refresh().unwrap(), frames.len() - 5);
+    assert_eq!(ensemble.refresh().unwrap(), frames.len() - 5);
+    let set = ensemble.set();
     assert_eq!(set.len(), frames.len());
 
     let written = indexed_frames(&path, &topology);
@@ -342,7 +345,7 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
         assert_eq!(&set.read(index).unwrap(), geometry);
     }
     // The distribution over every geometry covers the geometries it covered.
-    let distribution = set.distribution().unwrap();
+    let distribution = ensemble.distribution();
     assert_eq!(distribution.members(), &Members::Subset(vec![0, 1, 2]));
     assert_eq!(set.storage().frame_index().frame_count(), frames.len());
     assert_eq!(
@@ -568,7 +571,7 @@ fn a_replaced_file_reads_as_before_and_refresh_fails() {
 }
 
 #[test]
-fn refresh_keeps_a_distribution_over_some_geometries_or_none() {
+fn refresh_keeps_a_distribution_over_some_geometries_or_no_samples() {
     let topology = linear_carbon_topology(12);
     let all = chain(&topology, 6);
     let frames = frames_of(&all);
@@ -579,11 +582,11 @@ fn refresh_keeps_a_distribution_over_some_geometries_or_none() {
         let path = directory.0.join("run.xtc");
         let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
         write_structure_set(&path, &head, options.clone()).unwrap();
-        let mut set =
+        let set =
             open_indexed_structure_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
         let partition = Partition::one_state(members.len());
         let distribution = Distribution::new(Members::Subset(members.clone()), partition).unwrap();
-        set.set_distribution(Some(distribution.clone())).unwrap();
+        let mut ensemble = Ensemble::new(set, distribution.clone()).unwrap();
         let (mut writer, _) = append_trajectory(
             &path,
             Arc::clone(&topology),
@@ -597,10 +600,10 @@ fn refresh_keeps_a_distribution_over_some_geometries_or_none() {
                 .unwrap();
         }
         writer.finish().unwrap();
-        assert_eq!(set.refresh().unwrap(), 3);
-        assert_eq!(set.len(), 6);
-        assert_eq!(set.distribution(), Some(&distribution), "{members:?}");
-        assert_eq!(set.states().count(), usize::from(!members.is_empty()));
+        assert_eq!(ensemble.refresh().unwrap(), 3);
+        assert_eq!(ensemble.set().len(), 6);
+        assert_eq!(ensemble.distribution(), &distribution, "{members:?}");
+        assert_eq!(ensemble.states().count(), usize::from(!members.is_empty()));
     }
 }
 
@@ -947,15 +950,12 @@ fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
     for index in 0..3 {
         assert_eq!(set.read(index).unwrap(), opened.read(index).unwrap());
     }
-    let distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
     let expected = (0..3)
         .map(|index| set.read(index).unwrap())
         .collect::<Vec<_>>();
 
     let mut copy = set.clone();
     assert_eq!(copy.order(), set.order());
-    assert_eq!(copy.distribution(), set.distribution());
     let (mut writer, _) =
         append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
     for frame in all.iter().skip(3) {
@@ -968,7 +968,6 @@ fn a_set_from_an_open_reader_and_its_clone_read_without_opening_the_file() {
     assert_eq!(set.len(), 6);
     assert_eq!(copy.len(), 3);
     assert_eq!(copy.storage().frame_index().frame_count(), 3);
-    assert_eq!(copy.distribution().unwrap().members(), &Members::All);
 
     // Another file at the path: the clone reads the file it shares.
     let other = directory.0.join("other.xtc");
@@ -1238,7 +1237,7 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
     }
 }
 
-/// The distribution of three geometries a host saved, with weights, states
+/// The distribution of three geometries a host saved, with log weights, states
 /// with energies and properties, and a temperature.
 fn saved_distribution() -> Distribution {
     use kekule::properties::{PropertyKey, PropertyValue};
@@ -1263,7 +1262,7 @@ fn saved_distribution() -> Distribution {
         Partition::new(vec![0, 1, 0], vec![2, 1]).unwrap(),
     )
     .unwrap()
-    .with_weights(vec![0.1, 0.7, 1.0 / 3.0])
+    .with_log_weights(vec![0.1_f64.ln(), 0.7_f64.ln(), (1.0_f64 / 3.0).ln()])
     .unwrap()
     .with_states(vec![labelled, other])
     .unwrap()
@@ -1285,15 +1284,14 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
     write_structure_set(&path, &head, options.clone()).unwrap();
 
     // The host saves the description of the three geometries and keeps
-    // following the file with the set.
+    // following the file with the ensemble.
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    let mut followed =
+    let followed =
         open_indexed_structure_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
-    followed
-        .set_distribution(Some(saved_distribution()))
-        .unwrap();
-    let saved = StructureSetDescription::of(&followed);
-    let states = saved.distribution().unwrap().states();
+    let mut followed = Ensemble::new(followed, saved_distribution()).unwrap();
+    let saved = EnsembleDescription::of(&followed);
+    assert_eq!(saved.set().geometry_count(), 3);
+    let states = saved.distribution().states();
     assert_eq!(states.len(), 2);
     assert_eq!(
         states[0].energy().unwrap().value().to_bits(),
@@ -1313,50 +1311,51 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
 
     // Opened again, the file has five geometries; the saved distribution of
     // three does not cover them, and extended it does.
-    let mut reopened = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    let reopened = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
     assert_eq!(reopened.len(), 5);
-    let distribution = saved.distribution().unwrap().clone();
-    assert!(reopened
-        .set_distribution(Some(distribution.clone()))
-        .is_err());
+    let distribution = saved.distribution().clone();
+    assert!(Ensemble::new(reopened.clone(), distribution.clone()).is_err());
     let extended = distribution.clone().extended_to(5).unwrap();
-    reopened.set_distribution(Some(extended.clone())).unwrap();
+    let reopened = Ensemble::new(reopened, extended.clone()).unwrap();
     assert_eq!(extended.members(), &Members::Subset(vec![0, 1, 2]));
-    assert_eq!(extended.weights(), distribution.weights());
+    assert_eq!(extended.log_weights(), distribution.log_weights());
     assert_eq!(extended.partition(), distribution.partition());
     assert_eq!(extended.states(), distribution.states());
     assert_eq!(extended.temperature(), distribution.temperature());
-    let bits = |weights: Option<&[f64]>| {
-        weights
+    let bits = |log_weights: Option<&[f64]>| {
+        log_weights
             .unwrap()
             .iter()
-            .map(|weight| weight.to_bits())
+            .map(|log_weight| log_weight.to_bits())
             .collect::<Vec<_>>()
     };
-    assert_eq!(bits(extended.weights()), bits(distribution.weights()));
+    assert_eq!(
+        bits(extended.log_weights()),
+        bits(distribution.log_weights())
+    );
     // The refresh and the public operation agree.
-    assert_eq!(followed.distribution(), Some(&extended));
+    assert_eq!(followed.distribution(), &extended);
     assert_eq!(reopened.distribution(), followed.distribution());
 
     // The description extends alike, and takes the longer set's order.
     let grown = saved
         .clone()
-        .extended_to(5, reopened.order().cloned())
+        .extended_to(5, reopened.set().order().cloned())
         .unwrap();
-    assert_eq!(grown.geometry_count(), 5);
-    assert_eq!(grown.distribution(), Some(&extended));
-    assert_eq!(grown.properties(), saved.properties());
-    assert_eq!(grown.order(), reopened.order());
+    assert_eq!(grown.set().geometry_count(), 5);
+    assert_eq!(grown.distribution(), &extended);
+    assert_eq!(grown.set().properties(), saved.set().properties());
+    assert_eq!(grown.set().order(), reopened.set().order());
     let same = saved
         .clone()
-        .extended_to(3, saved.order().cloned())
+        .extended_to(3, saved.set().order().cloned())
         .unwrap();
-    assert_eq!(same.order(), saved.order());
+    assert_eq!(same.set().order(), saved.set().order());
     assert_eq!(same.distribution(), saved.distribution());
     // The order must cover the longer set, and the set must not be shorter.
     assert!(saved
         .clone()
-        .extended_to(5, saved.order().cloned())
+        .extended_to(5, saved.set().order().cloned())
         .is_err());
     assert!(saved.extended_to(2, None).is_err());
     assert!(extended.extended_to(2).is_err());

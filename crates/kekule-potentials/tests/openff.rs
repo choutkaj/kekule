@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
-use kekule::structure::{Distribution, Members, Partition, Positions, Structure, StructureView};
+use kekule::structure::{Ensemble, Positions, Structure, StructureView};
 use kekule::structure::{Geometry, Order, StructureSet, TimeAxis};
 use kekule::topology::{AtomSelection, Topology, TopologyBuilder};
 use kekule::traj::FrameBuffer;
@@ -346,15 +346,11 @@ fn distribution_members_and_trajectory_frames_evaluate_like_structures() {
     let structure = structure(&topology);
     let expected = potential.evaluate(structure.as_structure_view()).unwrap();
 
-    let mut members = StructureSet::from_structures([structure.clone()]).unwrap();
-    members
-        .set_distribution(Some(
-            Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
-        ))
-        .unwrap();
+    let members = Ensemble::uniform(StructureSet::from_structures([structure.clone()]).unwrap());
+    let representative = members.state(0).unwrap().representative_sample();
     assert_eq!(
         potential
-            .evaluate(members.get(0).unwrap().as_structure_view())
+            .evaluate(representative.as_structure_view())
             .unwrap(),
         expected
     );

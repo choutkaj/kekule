@@ -1,7 +1,7 @@
-//! Superposition, RMSD, weighted statistics, clustering, and Boltzmann
-//! populations of structure sets: the values the retired ensemble, trajectory,
-//! and series paths gave, and restricted to the members of a distribution
-//! over part of a set.
+//! Superposition, RMSD, statistics, clustering, and Boltzmann populations of
+//! structure sets, unweighted over every geometry, and of ensembles, weighted
+//! over the samples of their distributions, each checked against its
+//! definition evaluated directly from the coordinates and weights.
 
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
@@ -9,11 +9,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use kekule::alignment::{
-    AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions, Weighting,
+    self, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions, Weighting,
 };
 use kekule::clustering::{
     ClusterOrder, ClusteringError, ClusteringOptions, ClusteringProgress, ClusteringRun, Cut,
-    Linkage,
+    DistanceMatrix, Linkage,
 };
 use kekule::diagnostics::Cancellation;
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
@@ -22,17 +22,19 @@ use kekule::statistics::{
     ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Geometry, Members, Order, Partition, Positions, Requirement, State, Structure,
-    StructureSet, StructureSetError, TimeAxis, Velocities,
+    Distribution, Ensemble, Geometry, Members, Order, Partition, Positions, Requirement, State,
+    Structure, StructureSet, StructureSetError, StructureView, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
     Quantity, CANONICAL_VELOCITY_UNIT, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND,
 };
 
-use crate::fingerprint::Recorded;
-
 const ATOMS: usize = 6;
+
+/// The molar gas constant in kJ/(mol K): the Avogadro constant times the
+/// Boltzmann constant, both exact since the 2019 SI.
+const GAS_CONSTANT: f64 = 6.022_140_76e23 * 1.380_649e-23 * 1.0e-3;
 
 /// Deterministic values in `[0, 1)` from a linear congruential generator.
 struct Lcg(u64);
@@ -102,6 +104,11 @@ fn positions(points: Vec<Point3>) -> Positions {
     Positions::new(Quantity::new(points, NANOMETER)).unwrap()
 }
 
+/// The velocity of `atom` in frame `index` of [`trajectory`].
+fn velocity(index: usize, atom: usize) -> Vector3 {
+    Vector3::new(atom as f64, 1.0, -(index as f64))
+}
+
 /// Atoms on a line, to which no fit succeeds.
 fn collinear() -> Vec<Point3> {
     (0..ATOMS)
@@ -114,6 +121,11 @@ const WEIGHTS: [f64; 8] = [1.0, 3.0, 0.5, 2.0, 1.5, 4.0, 0.25, 1.0];
 const STATES: [usize; 8] = [0, 0, 1, 1, 2, 2, 2, 3];
 const ENERGIES: [f64; 4] = [1.5, 0.0, 4.0, 0.7];
 
+/// The natural logarithms of linear weights.
+fn ln(weights: &[f64]) -> Vec<f64> {
+    weights.iter().map(|weight| weight.ln()).collect()
+}
+
 /// Unordered geometries of [`points`] `0..count`.
 fn unordered(count: usize) -> StructureSet {
     let geometries = (0..count).map(|index| Geometry::new(positions(points(index))));
@@ -121,8 +133,7 @@ fn unordered(count: usize) -> StructureSet {
 }
 
 /// Eight weighted geometries in four states, with state energies or without.
-fn ensemble(energies: bool) -> StructureSet {
-    let mut set = unordered(8);
+fn ensemble(energies: bool) -> Ensemble {
     let states = ENERGIES.map(|energy| {
         if energies {
             State::new()
@@ -135,12 +146,11 @@ fn ensemble(energies: bool) -> StructureSet {
     let partition = Partition::new(STATES.to_vec(), vec![0, 2, 4, 7]).unwrap();
     let distribution = Distribution::new(Members::All, partition)
         .unwrap()
-        .with_weights(WEIGHTS.to_vec())
+        .with_log_weights(ln(&WEIGHTS))
         .unwrap()
         .with_states(states.to_vec())
         .unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    set
+    Ensemble::new(unordered(8), distribution).unwrap()
 }
 
 /// Eight frames two picoseconds apart, with velocities.
@@ -148,7 +158,7 @@ fn trajectory() -> StructureSet {
     let geometries = (0..8).map(|index| {
         let mut geometry = Geometry::new(positions(points(index)));
         let velocities = (0..ATOMS)
-            .map(|atom| Vector3::new(atom as f64, 1.0, -(index as f64)))
+            .map(|atom| velocity(index, atom))
             .collect::<Vec<_>>();
         geometry
             .set_velocities(Some(
@@ -176,33 +186,101 @@ fn series() -> StructureSet {
     set
 }
 
-/// What a set holds apart from its topology, whose layout identity differs
-/// between runs.
-fn contents(set: &StructureSet) -> impl Debug {
-    (
-        geometries(set),
-        set.order().cloned(),
-        set.distribution().cloned(),
-        set.properties().clone(),
-    )
+/// The positions of geometry `index` of `set`, in nanometres.
+fn nanometers(set: &StructureSet, index: usize) -> Vec<Point3> {
+    let geometry = set.get(index).unwrap();
+    let positions = geometry.positions().values();
+    assert_eq!(positions.unit(), NANOMETER);
+    positions.value().to_vec()
+}
+
+/// The velocities of geometry `index` of `set`, in the canonical unit.
+fn velocities(set: &StructureSet, index: usize) -> Vec<Vector3> {
+    let geometry = set.get(index).unwrap();
+    let velocities = geometry.velocities().unwrap().values();
+    assert_eq!(velocities.unit(), CANONICAL_VELOCITY_UNIT);
+    velocities.value().to_vec()
+}
+
+fn assert_close(actual: f64, expected: f64, tolerance: f64) {
+    assert!(
+        (actual - expected).abs() <= tolerance,
+        "{actual} != {expected} within {tolerance}"
+    );
+}
+
+fn assert_points_close(actual: &[Point3], expected: &[Point3], tolerance: f64) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (*actual - *expected).norm() <= tolerance,
+            "{actual:?} != {expected:?}"
+        );
+    }
+}
+
+/// Asserts that `set` holds the geometries of [`points`] `0..count`.
+fn assert_holds_points(set: &StructureSet, count: usize) {
+    assert_eq!(set.len(), count);
+    assert!(set.topology().shares_layout(&topology()));
+    for index in 0..count {
+        assert_eq!(nanometers(set, index), points(index));
+    }
 }
 
 #[test]
-fn fixtures_are_the_sets_the_retired_collections_converted_to() {
-    // The sets the retired ensemble, trajectory, and series fixtures
-    // converted to, and the extreme ensemble of the Boltzmann checks.
-    let mut recorded = Recorded::new(&[
-        0xa5fa19e6526db86c,
-        0x42e4efdbbadc3cb5,
-        0xfc329782205000e5,
-        0x7383ea19ec476c83,
-        0x20f1b1720214d9ba,
-    ]);
-    recorded.check(&contents(&ensemble(true)));
-    recorded.check(&contents(&ensemble(false)));
-    recorded.check(&contents(&trajectory()));
-    recorded.check(&contents(&series()));
-    recorded.check(&contents(&extreme()));
+fn fixtures_hold_their_geometries_order_and_distribution() {
+    for energies in [true, false] {
+        let ensemble = ensemble(energies);
+        assert_holds_points(ensemble.set(), 8);
+        assert_eq!(ensemble.set().order(), None);
+        assert!(ensemble.set().iter().all(|g| g.velocities().is_none()));
+        let distribution = ensemble.distribution();
+        assert_eq!(distribution.members(), &Members::All);
+        assert_eq!(distribution.partition().assignments(), STATES);
+        assert_eq!(distribution.partition().representatives(), [0, 2, 4, 7]);
+        assert_eq!(distribution.log_weights(), Some(&ln(&WEIGHTS)[..]));
+        assert_eq!(distribution.temperature(), None);
+        let expected =
+            ENERGIES.map(|energy| energies.then(|| Quantity::new(energy, KILOJOULE_PER_MOLE)));
+        for (state, energy) in ensemble.states().zip(expected) {
+            assert_eq!(state.energy(), energy);
+        }
+    }
+
+    let trajectory = trajectory();
+    assert_holds_points(&trajectory, 8);
+    let Some(Order::Time(axis)) = trajectory.order() else {
+        panic!("{:?}", trajectory.order());
+    };
+    let times = axis.times().unwrap();
+    assert_eq!(times.unit(), PICOSECOND);
+    assert_eq!(*times.value(), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 14.0]);
+    for index in 0..8 {
+        let expected = (0..ATOMS)
+            .map(|atom| velocity(index, atom))
+            .collect::<Vec<_>>();
+        assert_eq!(velocities(&trajectory, index), expected);
+    }
+
+    let series = series();
+    assert_holds_points(&series, 6);
+    assert_eq!(
+        series.order(),
+        Some(&Order::Coordinate {
+            unit: DEGREE,
+            values: vec![0.0, 30.0, 60.0, 90.0, 120.0, 150.0],
+        })
+    );
+
+    let extreme = extreme();
+    assert_holds_points(extreme.set(), 3);
+    let distribution = extreme.distribution();
+    assert_eq!(distribution.partition().assignments(), [0, 1, 1]);
+    assert_eq!(
+        distribution.log_weights(),
+        Some(&ln(&[1.0e300, 1.0e-300, 2.0e-300])[..])
+    );
 }
 
 fn all(set_topology: Arc<Topology>) -> AtomSelection {
@@ -256,139 +334,366 @@ fn group_contact_values(result: &GroupContactOccupancyResult) -> impl Debug + Pa
     )
 }
 
+const CONTACT_PAIRS: [(usize, usize); 3] = [(0, 5), (1, 4), (0, 1)];
+
 fn contact_pairs(topology: &Topology) -> Vec<(InstanceAtomId, InstanceAtomId)> {
     let ids = topology.atom_ids();
-    vec![(ids[0], ids[5]), (ids[1], ids[4]), (ids[0], ids[1])]
+    CONTACT_PAIRS
+        .iter()
+        .map(|(first, second)| (ids[*first], ids[*second]))
+        .collect()
 }
+
+const GROUPS: [[usize; 2]; 3] = [[0, 1], [4, 5], [2, 3]];
+const GROUP_PAIRS: [(usize, usize); 3] = [(0, 1), (2, 0), (1, 2)];
 
 /// The groups and group pairs of the group contact checks.
 fn contact_groups(topology: &Arc<Topology>) -> (Vec<AtomSelection>, Vec<(usize, usize)>) {
-    let groups = vec![
-        selection(topology, &[0, 1]),
-        selection(topology, &[4, 5]),
-        selection(topology, &[2, 3]),
-    ];
-    (groups, vec![(0, 1), (2, 0), (1, 2)])
+    let groups = GROUPS
+        .iter()
+        .map(|atoms| selection(topology, atoms))
+        .collect();
+    (groups, GROUP_PAIRS.to_vec())
 }
 
 const CUTOFF: f64 = 0.62;
+/// The atoms of the second RMSF selection.
+const RMSF_ATOMS: [usize; 3] = [1, 4, 5];
 
-/// Every statistic of `set`: the RMSF over all atoms and over three, and
-/// the contact and group contact occupancies.
-fn statistics(set: &StructureSet) -> impl Debug + PartialEq {
-    let topology = set.shared_topology();
-    let cutoff = Quantity::new(CUTOFF, NANOMETER);
-    let rmsf = [all(Arc::clone(&topology)), selection(&topology, &[1, 4, 5])]
-        .map(|atoms| rmsf_values(&set.rmsf(&atoms).unwrap()));
-    let contacts = contact_values(
-        &set.contact_occupancy(contact_pairs(&topology), cutoff)
-            .unwrap(),
-    );
-    let (groups, pairs) = contact_groups(&topology);
-    let group_contacts =
-        group_contact_values(&set.group_contact_occupancy(groups, pairs, cutoff).unwrap());
-    (rmsf, contacts, group_contacts)
+/// Every statistic of a set or ensemble: the RMSF over all atoms and over
+/// [`RMSF_ATOMS`], and the contact and group contact occupancies.
+struct Statistics {
+    rmsf: [RmsfResult; 2],
+    contacts: ContactOccupancyResult,
+    groups: GroupContactOccupancyResult,
 }
 
-/// Every alignment of a set, as `(rmsd, aligned rmsd, superposition
-/// report)`.
-type AlignmentResults = (
-    Result<Vec<u64>, AlignmentError>,
-    Result<Vec<u64>, AlignmentError>,
-    Result<kekule::alignment::SuperpositionReport, AlignmentError>,
-);
-
-/// Measures and then superposes a set with one set of atoms, weights, and
-/// options, against `reference` or else its geometry `index`.
-fn alignments(
-    set: &mut StructureSet,
-    reference: Option<&Structure>,
-    index: usize,
-) -> AlignmentResults {
-    let topology = set.shared_topology();
-    let fit = selection(&topology, &[0, 1, 2, 3]);
-    let measured = selection(&topology, &[2, 3, 4, 5]);
-    let pair_weights = [1.0, 2.0, 0.5, 3.0];
-    let options = AlignmentOptions::default().with_weighting(Weighting::Explicit(&pair_weights));
-    let aligned = AlignedRmsdOptions::default()
-        .with_fit(options)
-        .with_measurement_weighting(Weighting::Explicit(&pair_weights));
-    let values = |result: Result<Quantity<Vec<f64>>, AlignmentError>| {
-        result.map(|values| bits(values.value()))
-    };
-    match reference {
-        Some(structure) => (
-            values(set.rmsd(structure, &fit, options)),
-            values(set.aligned_rmsd(structure, &fit, &measured, aligned)),
-            set.superpose(structure, &fit, options),
-        ),
-        None => (
-            values(set.rmsd(index, &fit, options)),
-            values(set.aligned_rmsd(index, &fit, &measured, aligned)),
-            set.superpose(index, &fit, options),
-        ),
+impl Statistics {
+    /// The statistics of `set`, every geometry with weight one.
+    fn of_set(set: &StructureSet) -> Self {
+        let topology = set.shared_topology();
+        let cutoff = Quantity::new(CUTOFF, NANOMETER);
+        let (groups, pairs) = contact_groups(&topology);
+        Self {
+            rmsf: [
+                all(Arc::clone(&topology)),
+                selection(&topology, &RMSF_ATOMS),
+            ]
+            .map(|atoms| set.rmsf(&atoms).unwrap()),
+            contacts: set
+                .contact_occupancy(contact_pairs(&topology), cutoff)
+                .unwrap(),
+            groups: set.group_contact_occupancy(groups, pairs, cutoff).unwrap(),
+        }
     }
-}
 
-#[test]
-fn structure_set_alignments_keep_the_retired_values() {
-    // Fingerprints of the values the retired paths gave.
-    let mut recorded = Recorded::new(&[
-        0xa708ddfed8a897b0,
-        0x07625540f7777f0b,
-        0xa708ddfed8a897b0,
-        0xf38b9d85095e7243,
-        0x7d356d80e26864d5,
-        0xa35fa4d52f0063aa,
-        0xa46e16252c8a8818,
-        0x95efc9e759738885,
-        0xa46e16252c8a8818,
-        0x6ec5046ca312731b,
-        0xef9aa5844b998ecc,
-        0x1f818a856ac1c01b,
-        0xd0250a17c77174b1,
-        0x2566cf08131b906a,
-        0xd0250a17c77174b1,
-        0xb0d1e5bf907da88e,
-        0x4f8e715505afaaa7,
-        0xd11175428936afd6,
-    ]);
-    let structure = Structure::new(topology(), positions(points(11))).unwrap();
-    // A geometry of the set, an independent view, and a reference out of range.
-    for (reference, index) in [(None, 3), (Some(&structure), 0), (None, 9)] {
-        // Velocities rotate with the frames, and the order is kept.
-        for fixture in [ensemble(true), trajectory(), series()] {
-            let mut set = fixture.clone();
-            let results = alignments(&mut set, reference, index);
-            assert_eq!(results.2.is_ok(), index < fixture.len());
-            recorded.check(&results);
-            recorded.check(&geometries(&set));
-            assert_eq!(set.order(), fixture.order());
-            assert_eq!(set.distribution(), fixture.distribution());
+    /// The statistics of `ensemble`, its samples with their probabilities.
+    fn of_ensemble(ensemble: &Ensemble) -> Self {
+        let topology = ensemble.set().shared_topology();
+        let cutoff = Quantity::new(CUTOFF, NANOMETER);
+        let (groups, pairs) = contact_groups(&topology);
+        Self {
+            rmsf: [
+                all(Arc::clone(&topology)),
+                selection(&topology, &RMSF_ATOMS),
+            ]
+            .map(|atoms| ensemble.rmsf(&atoms).unwrap()),
+            contacts: ensemble
+                .contact_occupancy(contact_pairs(&topology), cutoff)
+                .unwrap(),
+            groups: ensemble
+                .group_contact_occupancy(groups, pairs, cutoff)
+                .unwrap(),
+        }
+    }
+
+    /// Every value, bit for bit, for comparing two runs.
+    fn values(&self) -> impl Debug + PartialEq {
+        (
+            self.rmsf.each_ref().map(rmsf_values),
+            contact_values(&self.contacts),
+            group_contact_values(&self.groups),
+        )
+    }
+
+    /// Checks every statistic against its definition, evaluated over the
+    /// geometries `observed` of `set` with their weights.
+    fn check(&self, set: &StructureSet, observed: &[(usize, f64)]) {
+        let total = observed.iter().map(|(_, weight)| weight).sum::<f64>();
+        let atom = |geometry: usize, atom: usize| nanometers(set, geometry)[atom];
+        let distance = |geometry: usize, first: usize, second: usize| {
+            (atom(geometry, first) - atom(geometry, second)).norm()
+        };
+        for (result, atoms) in self
+            .rmsf
+            .iter()
+            .zip([(0..ATOMS).collect::<Vec<_>>(), RMSF_ATOMS.to_vec()])
+        {
+            assert_eq!(result.observation_count(), observed.len());
+            assert_close(result.total_weight(), total, 1.0e-12 * total);
+            assert_eq!(result.values().unit(), NANOMETER);
+            assert_eq!(result.values().value().len(), atoms.len());
+            for (value, atom_index) in result.values().value().iter().zip(atoms) {
+                // The weighted mean position, then the weighted mean squared
+                // deviation from it.
+                let mean =
+                    observed
+                        .iter()
+                        .fold(Vector3::new(0.0, 0.0, 0.0), |sum, (geometry, weight)| {
+                            let point = atom(*geometry, atom_index);
+                            sum + Vector3::new(point.x, point.y, point.z) * (*weight / total)
+                        });
+                let variance = observed
+                    .iter()
+                    .map(|(geometry, weight)| {
+                        let point = atom(*geometry, atom_index);
+                        let deviation = Vector3::new(point.x, point.y, point.z) - mean;
+                        weight * deviation.dot(deviation)
+                    })
+                    .sum::<f64>()
+                    / total;
+                assert_close(*value, variance.sqrt(), 1.0e-12);
+            }
+        }
+
+        assert_eq!(self.contacts.observation_count(), observed.len());
+        assert_close(self.contacts.total_weight(), total, 1.0e-12 * total);
+        assert_eq!(self.contacts.cutoff(), Quantity::new(CUTOFF, NANOMETER));
+        assert_eq!(self.contacts.pairs(), contact_pairs(set.topology()));
+        for (weight, (first, second)) in self.contacts.contact_weights().iter().zip(CONTACT_PAIRS) {
+            let expected = observed
+                .iter()
+                .filter(|(geometry, _)| distance(*geometry, first, second) <= CUTOFF)
+                .map(|(_, weight)| weight)
+                .sum::<f64>();
+            assert_close(*weight, expected, 1.0e-12 * total);
+        }
+
+        assert_eq!(self.groups.observation_count(), observed.len());
+        assert_close(self.groups.total_weight(), total, 1.0e-12 * total);
+        assert_eq!(self.groups.pairs(), GROUP_PAIRS);
+        for (weight, (first, second)) in self.groups.contact_weights().iter().zip(GROUP_PAIRS) {
+            // Two groups touch when some atom of one is within the cutoff of
+            // some atom of the other.
+            let touching = |geometry: usize| {
+                GROUPS[first].iter().any(|a| {
+                    GROUPS[second]
+                        .iter()
+                        .any(|b| distance(geometry, *a, *b) <= CUTOFF)
+                })
+            };
+            let expected = observed
+                .iter()
+                .filter(|(geometry, _)| touching(*geometry))
+                .map(|(_, weight)| weight)
+                .sum::<f64>();
+            assert_close(*weight, expected, 1.0e-12 * total);
         }
     }
 }
 
+/// Each geometry with weight one.
+fn unweighted(count: usize) -> Vec<(usize, f64)> {
+    (0..count).map(|geometry| (geometry, 1.0)).collect()
+}
+
+/// The fit and measured atoms, pair weights, and options of the alignment
+/// checks.
+struct AlignmentCase {
+    fit: AtomSelection,
+    measured: AtomSelection,
+}
+
+const PAIR_WEIGHTS: [f64; 4] = [1.0, 2.0, 0.5, 3.0];
+
+impl AlignmentCase {
+    fn new(topology: &Arc<Topology>) -> Self {
+        Self {
+            fit: selection(topology, &[0, 1, 2, 3]),
+            measured: selection(topology, &[2, 3, 4, 5]),
+        }
+    }
+
+    fn options(&self) -> AlignmentOptions<'static> {
+        AlignmentOptions::default().with_weighting(Weighting::Explicit(&PAIR_WEIGHTS))
+    }
+
+    fn aligned(&self) -> AlignedRmsdOptions<'static> {
+        AlignedRmsdOptions::default()
+            .with_fit(self.options())
+            .with_measurement_weighting(Weighting::Explicit(&PAIR_WEIGHTS))
+    }
+}
+
+/// The weighted RMSD over `atoms` between two lists of points, as stored:
+/// `sqrt(sum(w_i |x_i - y_i|^2) / sum(w_i))`.
+fn direct_rmsd(moving: &[Point3], reference: &[Point3], atoms: &[usize]) -> f64 {
+    let total = PAIR_WEIGHTS.iter().sum::<f64>();
+    let sum = atoms
+        .iter()
+        .zip(PAIR_WEIGHTS)
+        .map(|(atom, weight)| {
+            let difference = moving[*atom] - reference[*atom];
+            weight * difference.dot(difference)
+        })
+        .sum::<f64>();
+    (sum / total).sqrt()
+}
+
+/// Measures and superposes `fixture` against its geometry `index`, whose
+/// points `reference` holds, or else against `reference` itself, and checks
+/// every value against the definitions and against fits and measurements of
+/// each geometry on its own.
+fn check_alignments(fixture: &StructureSet, index: Option<usize>, reference: &Structure) {
+    let topology = fixture.shared_topology();
+    let case = AlignmentCase::new(&topology);
+    let reference_points = reference.positions().values().value().to_vec();
+    let mut set = fixture.clone();
+    let (rmsd, aligned, report) = match index {
+        Some(index) => (
+            set.rmsd(index, &case.fit, case.options()).unwrap(),
+            set.aligned_rmsd(index, &case.fit, &case.measured, case.aligned())
+                .unwrap(),
+            set.superpose(index, &case.fit, case.options()).unwrap(),
+        ),
+        None => (
+            set.rmsd(reference, &case.fit, case.options()).unwrap(),
+            set.aligned_rmsd(reference, &case.fit, &case.measured, case.aligned())
+                .unwrap(),
+            set.superpose(reference, &case.fit, case.options()).unwrap(),
+        ),
+    };
+    let view = reference.as_structure_view();
+    assert_eq!(rmsd.unit(), NANOMETER);
+    assert_eq!(aligned.unit(), NANOMETER);
+    assert_eq!(rmsd.value().len(), fixture.len());
+    assert_eq!(aligned.value().len(), fixture.len());
+    assert_eq!(report.len(), fixture.len());
+    assert_eq!(report.reference_index(), index);
+    for geometry in 0..fixture.len() {
+        let before = nanometers(fixture, geometry);
+        let moving = fixture.get(geometry).unwrap();
+        let moving: StructureView<'_> = moving.as_structure_view();
+        // The RMSD is measured as stored, without fitting.
+        let direct = direct_rmsd(&before, &reference_points, &[0, 1, 2, 3]);
+        assert_close(rmsd.value()[geometry], direct, 1.0e-12);
+        assert_eq!(
+            rmsd.value()[geometry],
+            alignment::rmsd(moving, view, &case.fit, case.options())
+                .unwrap()
+                .into_value()
+        );
+        // The aligned RMSD is the free kernel's, geometry by geometry.
+        assert_eq!(
+            aligned.value()[geometry],
+            alignment::aligned_rmsd(moving, view, &case.fit, &case.measured, case.aligned())
+                .unwrap()
+                .into_value()
+        );
+        // Superposing applies each geometry's own fit.
+        let applied = report.alignment(geometry).unwrap();
+        let fit = alignment::fit(moving, view, &case.fit, case.options()).unwrap();
+        assert_eq!(applied, &fit);
+        let transform = applied.transform();
+        let after = nanometers(&set, geometry);
+        let moved = before
+            .iter()
+            .map(|point| transform.transform_point(*point))
+            .collect::<Vec<_>>();
+        assert_points_close(&after, &moved, 1.0e-12);
+        // A fit cannot be farther than the stored coordinates, and once
+        // applied its RMSD is measured as stored; so is the aligned RMSD
+        // over the measured atoms.
+        let fitted = applied.rmsd().into_value();
+        assert!(fitted <= direct + 1.0e-12, "{fitted} > {direct}");
+        assert_close(
+            direct_rmsd(&after, &reference_points, &[0, 1, 2, 3]),
+            fitted,
+            1.0e-12,
+        );
+        assert_close(
+            direct_rmsd(&after, &reference_points, &[2, 3, 4, 5]),
+            aligned.value()[geometry],
+            1.0e-12,
+        );
+        // Velocities rotate with the frames.
+        if fixture.get(geometry).unwrap().velocities().is_some() {
+            let rotated = velocities(fixture, geometry)
+                .into_iter()
+                .map(|velocity| transform.transform_vector(velocity))
+                .collect::<Vec<_>>();
+            for (actual, expected) in velocities(&set, geometry).iter().zip(rotated) {
+                assert!((*actual - expected).norm() <= 1.0e-12);
+            }
+        }
+    }
+    if let Some(index) = index {
+        assert_eq!(rmsd.value()[index], 0.0);
+        assert_close(aligned.value()[index], 0.0, 1.0e-12);
+        assert_close(
+            report.alignment(index).unwrap().rmsd().into_value(),
+            0.0,
+            1.0e-12,
+        );
+    }
+    // The order is kept.
+    assert_eq!(set.order(), fixture.order());
+}
+
 #[test]
-fn structure_set_alignment_covers_non_members_and_keeps_the_distribution() {
-    // A failing geometry outside the distribution still fails the fit, and a
-    // fit keeps the order and the distribution.
+fn structure_set_alignments_match_each_geometry_fitted_alone() {
+    let structure = Structure::new(topology(), positions(points(11))).unwrap();
+    // Velocities rotate with the frames, and the order is kept.
+    for fixture in [ensemble(true).set().clone(), trajectory(), series()] {
+        // A geometry of the set, and an independent view.
+        let own = Structure::new(topology(), positions(points(3))).unwrap();
+        check_alignments(&fixture, Some(3), &own);
+        check_alignments(&fixture, None, &structure);
+
+        // A reference out of range changes nothing.
+        let mut set = fixture.clone();
+        let case = AlignmentCase::new(&set.shared_topology());
+        let out_of_range = AlignmentError::ReferenceOutOfRange {
+            index: 9,
+            len: fixture.len(),
+        };
+        assert_eq!(
+            set.rmsd(9, &case.fit, case.options()),
+            Err(out_of_range.clone())
+        );
+        assert_eq!(
+            set.aligned_rmsd(9, &case.fit, &case.measured, case.aligned()),
+            Err(out_of_range.clone())
+        );
+        assert_eq!(
+            set.superpose(9, &case.fit, case.options()),
+            Err(out_of_range)
+        );
+        assert_eq!(geometries(&set), geometries(&fixture));
+    }
+}
+
+#[test]
+fn structure_set_alignment_covers_every_geometry_and_keeps_the_order() {
+    // A fit moves every geometry, keeps the order, and leaves a distribution
+    // over part of the set fitting the set.
     let mut set = trajectory();
     let distribution =
         Distribution::new(Members::Subset(vec![1, 4]), Partition::state_per_sample(2))
             .unwrap()
-            .with_weights(vec![2.0, 1.0])
+            .with_log_weights(ln(&[2.0, 1.0]))
             .unwrap();
-    set.set_distribution(Some(distribution.clone())).unwrap();
     let atoms = all(set.shared_topology());
     let order = set.order().cloned();
     let report = set.superpose(0, &atoms, Default::default()).unwrap();
     assert_eq!(report.len(), 8);
-    assert_eq!(set.distribution(), Some(&distribution));
     assert_eq!(set.order().cloned(), order);
     let rmsd = set.rmsd(0, &atoms, Default::default()).unwrap();
     assert_eq!(rmsd.value().len(), 8);
+    let ensemble = Ensemble::new(set.clone(), distribution.clone()).unwrap();
+    assert_eq!(ensemble.distribution(), &distribution);
 
+    // A geometry no fit succeeds to fails the fit and changes nothing.
     let mut broken = set.clone();
     broken
         .get_mut(6)
@@ -408,17 +713,36 @@ fn structure_set_alignment_covers_non_members_and_keeps_the_distribution() {
     assert_eq!(geometries(&broken), before);
 }
 
-#[test]
-fn structure_set_statistics_keep_the_retired_values() {
-    // Fingerprints of the values the retired paths gave.
-    let mut recorded = Recorded::new(&[0x9c767ac7a8c90863, 0x9c767ac7a8c90863, 0x3a279110203f7b17]);
-    for energies in [true, false] {
-        recorded.check(&statistics(&ensemble(energies)));
-    }
+/// Each sample's geometry index with its probability: its weight divided by
+/// the total.
+fn probabilities(geometries: &[usize], weights: &[f64]) -> Vec<(usize, f64)> {
+    let total = weights.iter().sum::<f64>();
+    geometries
+        .iter()
+        .zip(weights)
+        .map(|(geometry, weight)| (*geometry, weight / total))
+        .collect()
+}
 
-    // Without a distribution, every frame counts with weight one.
+#[test]
+fn set_statistics_weigh_every_geometry_and_ensemble_statistics_their_samples() {
+    // The ensembles observe each geometry with its probability; energies do
+    // not enter.
+    let samples = probabilities(&(0..8).collect::<Vec<_>>(), &WEIGHTS);
+    let with_energies = Statistics::of_ensemble(&ensemble(true));
+    with_energies.check(ensemble(true).set(), &samples);
+    assert!(with_energies.values() == Statistics::of_ensemble(&ensemble(false)).values());
+
+    // The set of an ensemble, on its own, weighs every geometry one.
+    let set = ensemble(true).set().clone();
+    let statistics = Statistics::of_set(&set);
+    statistics.check(&set, &unweighted(8));
+    assert!(statistics.values() != with_energies.values());
+
+    // So does a trajectory, whatever its order and velocities.
     let set = trajectory();
-    recorded.check(&statistics(&set));
+    let statistics = Statistics::of_set(&set);
+    statistics.check(&set, &unweighted(8));
     let rmsf = set.rmsf(&all(set.shared_topology())).unwrap();
     assert_eq!(rmsf.total_weight(), 8.0);
 
@@ -433,56 +757,64 @@ fn structure_set_statistics_keep_the_retired_values() {
     ));
 }
 
-/// The members of `set`'s distribution as a set of their own, unordered,
-/// with their weights and states, and without velocities.
-fn members(set: &StructureSet) -> StructureSet {
-    let members = set
-        .weighted_samples()
+/// The samples of `ensemble` as an ensemble of their own, unordered, with
+/// their weights and states, and without velocities.
+fn members(ensemble: &Ensemble) -> Ensemble {
+    let samples = ensemble
+        .distribution()
+        .sample_probabilities()
+        .unwrap()
+        .into_iter()
         .map(|(geometry, _)| geometry)
         .collect::<Vec<_>>();
-    let mut members = set.select(members).unwrap();
-    members.set_order(None).unwrap();
-    for index in 0..members.len() {
-        members.get_mut(index).unwrap().take_velocities();
+    let (mut set, distribution) = ensemble.select(samples).unwrap().into_parts();
+    set.set_order(None).unwrap();
+    for index in 0..set.len() {
+        set.get_mut(index).unwrap().take_velocities();
     }
-    members
+    Ensemble::new(set, distribution).unwrap()
 }
+
+/// The samples of [`equilibrated`], and their weights.
+const EQUILIBRATED: [usize; 5] = [2, 3, 5, 6, 7];
+const EQUILIBRATED_WEIGHTS: [f64; 5] = [1.0, 2.0, 3.0, 0.5, 1.5];
 
 /// A time-ordered set of eight frames whose distribution covers frames 2,
 /// 3, 5, 6, and 7, weighted, in two states with energies.
-fn equilibrated() -> StructureSet {
-    let mut set = trajectory();
+fn equilibrated() -> Ensemble {
     let states = [0.0, 2.5].map(|energy| {
         State::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap()
     });
     let distribution = Distribution::new(
-        Members::Subset(vec![2, 3, 5, 6, 7]),
+        Members::Subset(EQUILIBRATED.to_vec()),
         Partition::new(vec![0, 1, 0, 1, 1], vec![0, 1]).unwrap(),
     )
     .unwrap()
-    .with_weights(vec![1.0, 2.0, 3.0, 0.5, 1.5])
+    .with_log_weights(ln(&EQUILIBRATED_WEIGHTS))
     .unwrap()
     .with_states(states.to_vec())
     .unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    set
+    Ensemble::new(trajectory(), distribution).unwrap()
 }
 
 #[test]
-fn statistics_over_part_of_a_time_ordered_set_observe_its_members_alone() {
-    // Fingerprints of the values the retired paths gave.
-    let mut recorded = Recorded::new(&[0x5e9439675b22d875]);
-    let set = equilibrated();
-    let observed = statistics(&set);
-    recorded.check(&observed);
-    assert!(observed == statistics(&members(&set)));
-    let rmsf = set.rmsf(&all(set.shared_topology())).unwrap();
+fn statistics_over_part_of_a_time_ordered_set_observe_its_samples_alone() {
+    let ensemble = equilibrated();
+    let observed = Statistics::of_ensemble(&ensemble);
+    observed.check(
+        ensemble.set(),
+        &probabilities(&EQUILIBRATED, &EQUILIBRATED_WEIGHTS),
+    );
+    assert!(observed.values() == Statistics::of_ensemble(&members(&ensemble)).values());
+    let rmsf = ensemble
+        .rmsf(&all(ensemble.set().shared_topology()))
+        .unwrap();
     assert_eq!(rmsf.observation_count(), 5);
 
-    // Moving a non-member changes nothing.
-    let mut moved = set.clone();
+    // Moving a geometry that is not a sample changes nothing.
+    let mut moved = ensemble.set().clone();
     moved
         .get_mut(0)
         .unwrap()
@@ -493,21 +825,21 @@ fn statistics_over_part_of_a_time_ordered_set_observe_its_members_alone() {
         .unwrap()
         .apply_rigid_transform(&motion(2.0))
         .unwrap();
-    assert!(statistics(&moved) == observed);
+    let moved = Ensemble::new(moved, ensemble.distribution().clone()).unwrap();
+    assert!(Statistics::of_ensemble(&moved).values() == observed.values());
 
-    // A distribution without weights observes each member with probability
+    // A distribution without weights observes each sample with probability
     // one in five.
-    let mut equal = set.clone();
-    equal.distribution_mut().unwrap().set_weights(None).unwrap();
-    let rmsf = equal.rmsf(&all(set.shared_topology())).unwrap();
+    let mut equal = ensemble.clone();
+    equal.distribution_mut().set_log_weights(None).unwrap();
+    let topology = ensemble.set().shared_topology();
+    let rmsf = equal.rmsf(&all(Arc::clone(&topology))).unwrap();
     assert!((rmsf.total_weight() - 1.0).abs() < 1.0e-15);
     let cutoff = Quantity::new(CUTOFF, NANOMETER);
-    let topology = set.shared_topology();
     let contacts = equal
         .contact_occupancy(contact_pairs(&topology), cutoff)
         .unwrap();
-    let mut frames = equal.select([2, 3, 5, 6, 7]).unwrap();
-    frames.set_distribution(None).unwrap();
+    let frames = ensemble.set().select(EQUILIBRATED).unwrap();
     let counts = frames
         .contact_occupancy(contact_pairs(&topology), cutoff)
         .unwrap();
@@ -518,64 +850,390 @@ fn statistics_over_part_of_a_time_ordered_set_observe_its_members_alone() {
     {
         assert!((probability - count / 5.0).abs() < 1.0e-15);
     }
+    Statistics::of_ensemble(&equal).check(ensemble.set(), &probabilities(&EQUILIBRATED, &[1.0; 5]));
 }
 
-/// Every clustering of `set`: its fitted distance matrix, clusters of five
-/// radii by weight and, with `energies`, by energy, hierarchical clusters of
+/// What clustering a set or an ensemble needs: its members' geometries,
+/// their linear weights, and the clustering methods.
+trait Clustered {
+    fn set(&self) -> &StructureSet;
+    /// The geometry index of each member, in member order.
+    fn members(&self) -> Vec<usize>;
+    /// Each member's linear weight, up to a common factor.
+    fn weights(&self) -> Vec<f64>;
+    fn by_radius(
+        &self,
+        radius: f64,
+        atoms: &AtomSelection,
+        options: ClusteringOptions<'_>,
+    ) -> Result<Partition, ClusteringError>;
+    fn matrix(&self, atoms: &AtomSelection) -> DistanceMatrix;
+    fn hierarchical(&self, matrix: &DistanceMatrix, linkage: Linkage, cut: Cut) -> Partition;
+    fn k_medoids(
+        &self,
+        matrix: &DistanceMatrix,
+        clusters: usize,
+    ) -> Result<Partition, ClusteringError>;
+}
+
+impl Clustered for StructureSet {
+    fn set(&self) -> &StructureSet {
+        self
+    }
+
+    fn members(&self) -> Vec<usize> {
+        (0..self.len()).collect()
+    }
+
+    fn weights(&self) -> Vec<f64> {
+        vec![1.0; self.len()]
+    }
+
+    fn by_radius(
+        &self,
+        radius: f64,
+        atoms: &AtomSelection,
+        options: ClusteringOptions<'_>,
+    ) -> Result<Partition, ClusteringError> {
+        self.cluster_by_radius(Quantity::new(radius, NANOMETER), atoms, options)
+    }
+
+    fn matrix(&self, atoms: &AtomSelection) -> DistanceMatrix {
+        self.pairwise_fitted_rmsd(atoms, Default::default())
+            .unwrap()
+    }
+
+    fn hierarchical(&self, matrix: &DistanceMatrix, linkage: Linkage, cut: Cut) -> Partition {
+        self.cluster_hierarchical(matrix, linkage, cut).unwrap()
+    }
+
+    fn k_medoids(
+        &self,
+        matrix: &DistanceMatrix,
+        clusters: usize,
+    ) -> Result<Partition, ClusteringError> {
+        self.cluster_k_medoids(matrix, clusters)
+    }
+}
+
+impl Clustered for Ensemble {
+    fn set(&self) -> &StructureSet {
+        Ensemble::set(self)
+    }
+
+    fn members(&self) -> Vec<usize> {
+        self.distribution()
+            .sample_probabilities()
+            .unwrap()
+            .into_iter()
+            .map(|(geometry, _)| geometry)
+            .collect()
+    }
+
+    fn weights(&self) -> Vec<f64> {
+        self.distribution()
+            .sample_probabilities()
+            .unwrap()
+            .into_iter()
+            .map(|(_, probability)| probability)
+            .collect()
+    }
+
+    fn by_radius(
+        &self,
+        radius: f64,
+        atoms: &AtomSelection,
+        options: ClusteringOptions<'_>,
+    ) -> Result<Partition, ClusteringError> {
+        self.cluster_by_radius(Quantity::new(radius, NANOMETER), atoms, options)
+    }
+
+    fn matrix(&self, atoms: &AtomSelection) -> DistanceMatrix {
+        self.pairwise_fitted_rmsd(atoms, Default::default())
+            .unwrap()
+    }
+
+    fn hierarchical(&self, matrix: &DistanceMatrix, linkage: Linkage, cut: Cut) -> Partition {
+        self.cluster_hierarchical(matrix, linkage, cut).unwrap()
+    }
+
+    fn k_medoids(
+        &self,
+        matrix: &DistanceMatrix,
+        clusters: usize,
+    ) -> Result<Partition, ClusteringError> {
+        self.cluster_k_medoids(matrix, clusters)
+    }
+}
+
+/// The fitted RMSD in nanometres between two geometries of `set`, the first
+/// moving.
+fn fitted(set: &StructureSet, moving: usize, reference: usize, atoms: &AtomSelection) -> f64 {
+    alignment::fit(
+        set.get(moving).unwrap().as_structure_view(),
+        set.get(reference).unwrap().as_structure_view(),
+        atoms,
+        Default::default(),
+    )
+    .unwrap()
+    .rmsd()
+    .into_value()
+}
+
+/// Leader clustering as documented, one fit at a time: members in
+/// `visiting` order, by member position, join the nearest representative
+/// within `radius`, the first on ties, or found a cluster.
+fn naive_leaders(
+    subject: &impl Clustered,
+    visiting: &[usize],
+    radius: f64,
+    atoms: &AtomSelection,
+) -> Partition {
+    let members = subject.members();
+    let mut assignments = vec![0; members.len()];
+    let mut representatives: Vec<usize> = Vec::new();
+    for &member in visiting {
+        let mut nearest: Option<(usize, f64)> = None;
+        for (cluster, representative) in representatives.iter().enumerate() {
+            let rmsd = fitted(
+                subject.set(),
+                members[member],
+                members[*representative],
+                atoms,
+            );
+            if rmsd <= radius && nearest.is_none_or(|(_, best)| rmsd < best) {
+                nearest = Some((cluster, rmsd));
+            }
+        }
+        assignments[member] = match nearest {
+            Some((cluster, _)) => cluster,
+            None => {
+                representatives.push(member);
+                representatives.len() - 1
+            }
+        };
+    }
+    Partition::new(assignments, representatives).unwrap()
+}
+
+/// Member positions by descending `keys`, ties in member order.
+fn descending(keys: &[f64]) -> Vec<usize> {
+    let mut order = (0..keys.len()).collect::<Vec<_>>();
+    order.sort_by(|a, b| keys[*b].total_cmp(&keys[*a]));
+    order
+}
+
+/// The weighted summed distance from `candidate` to the members of
+/// `cluster`.
+fn weighted_cost(
+    matrix: &DistanceMatrix,
+    weights: &[f64],
+    cluster: &[usize],
+    candidate: usize,
+) -> f64 {
+    cluster
+        .iter()
+        .map(|other| weights[*other] * matrix.get(candidate, *other).unwrap().into_value())
+        .sum()
+}
+
+/// The member of `cluster` with the least weighted summed distance to the
+/// others, the first on ties: the medoid that represents a cluster.
+fn weighted_medoid(matrix: &DistanceMatrix, weights: &[f64], cluster: &[usize]) -> usize {
+    let cost = |candidate: usize| weighted_cost(matrix, weights, cluster, candidate);
+    let mut best = cluster[0];
+    for &candidate in &cluster[1..] {
+        if cost(candidate) < cost(best) {
+            best = candidate;
+        }
+    }
+    best
+}
+
+/// The members of each state of `partition`.
+fn clusters_of(partition: &Partition) -> Vec<Vec<usize>> {
+    (0..partition.state_count())
+        .map(|state| partition.samples(state).collect())
+        .collect()
+}
+
+/// Members grouped by `shapes`, the shape of each member, as two states.
+fn by_shape(partition: &Partition, shapes: &[usize]) {
+    assert_eq!(partition.state_count(), 2);
+    for (position, state) in partition.assignments().iter().enumerate() {
+        let representative = partition.representatives()[*state];
+        assert_eq!(shapes[position], shapes[representative], "{partition:?}");
+    }
+}
+
+const RADII: [f64; 5] = [0.0, 0.05, 0.08, 0.2, 10.0];
+
+/// Every clustering of `subject`: its fitted distance matrix, clusters of
+/// [`RADII`] in each visiting order of `orders`, hierarchical clusters of
 /// every count and one height under three linkages, and k-medoids of every
-/// count.
-fn clusterings(set: &StructureSet, energies: bool) -> impl Debug + PartialEq {
-    let atoms = all(set.shared_topology());
-    // The two shapes are two clusters of one radius.
-    let shapes = set
-        .cluster_by_radius(Quantity::new(0.08, NANOMETER), &atoms, Default::default())
-        .unwrap();
-    assert_eq!(shapes.state_count(), 2);
-    let matrix = set
-        .pairwise_fitted_rmsd(&atoms, Default::default())
-        .unwrap();
-    let mut orders = vec![ClusterOrder::Weight];
-    if energies {
-        orders.push(ClusterOrder::Energy);
+/// count; each checked against its definition. `shapes` is the shape of
+/// each member, which two clusters separate.
+fn clusterings(
+    subject: &impl Clustered,
+    shapes: &[usize],
+    orders: &[(ClusterOrder, Vec<usize>)],
+) -> impl Debug + PartialEq {
+    let atoms = all(subject.set().shared_topology());
+    let members = subject.members();
+    let weights = subject.weights();
+    let count = members.len();
+
+    // Each entry is the fitted RMSD of its pair.
+    let matrix = subject.matrix(&atoms);
+    assert_eq!(matrix.member_count(), count);
+    for first in 0..count {
+        assert_eq!(matrix.get(first, first).unwrap().into_value(), 0.0);
+        for second in first + 1..count {
+            let fit = alignment::fit(
+                subject
+                    .set()
+                    .get(members[first])
+                    .unwrap()
+                    .as_structure_view(),
+                subject
+                    .set()
+                    .get(members[second])
+                    .unwrap()
+                    .as_structure_view(),
+                &atoms,
+                Default::default(),
+            )
+            .unwrap();
+            assert_eq!(matrix.get(first, second), Some(fit.rmsd()));
+            assert_eq!(matrix.get(second, first), Some(fit.rmsd()));
+        }
     }
     let mut radii = Vec::new();
-    for order in orders {
-        for radius in [0.0, 0.05, 0.08, 0.2, 10.0] {
-            let options = ClusteringOptions::default().with_order(order);
-            let radius = Quantity::new(radius, NANOMETER);
-            radii.push(set.cluster_by_radius(radius, &atoms, options).unwrap());
+    for (order, visiting) in orders {
+        for radius in RADII {
+            let options = ClusteringOptions::default().with_order(*order);
+            let partition = subject.by_radius(radius, &atoms, options).unwrap();
+            assert_eq!(
+                partition,
+                naive_leaders(subject, visiting, radius, &atoms),
+                "{order:?} {radius}"
+            );
+            radii.push(partition);
         }
+        // Within no radius every member founds its own cluster, in visiting
+        // order; within 0.08 nm the first of each shape leads its shape; within
+        // 10 nm the first member leads one cluster.
+        let alone = &radii[radii.len() - 5];
+        assert_eq!(alone.representatives(), visiting);
+        let shapes_at_radius = &radii[radii.len() - 3];
+        by_shape(shapes_at_radius, shapes);
+        assert_eq!(shapes_at_radius.representatives()[0], visiting[0]);
+        let one = &radii[radii.len() - 1];
+        assert_eq!(one.assignments(), vec![0; count]);
+        assert_eq!(one.representatives(), [visiting[0]]);
     }
+
     let mut hierarchical = Vec::new();
     for linkage in [Linkage::Single, Linkage::Complete, Linkage::Average] {
-        for count in 1..=matrix.member_count() {
-            let cut = Cut::Count(count);
-            hierarchical.push(set.cluster_hierarchical(&matrix, linkage, cut).unwrap());
+        let dendrogram = matrix.dendrogram(linkage);
+        let cuts = (1..=count)
+            .map(Cut::Count)
+            .chain([Cut::Height(Quantity::new(0.06, NANOMETER))]);
+        for cut in cuts {
+            let partition = subject.hierarchical(&matrix, linkage, cut);
+            // The dendrogram's cut, each cluster represented by its weighted
+            // medoid.
+            assert_eq!(partition.assignments(), dendrogram.cut(cut).unwrap());
+            if let Cut::Count(clusters) = cut {
+                assert_eq!(partition.state_count(), clusters);
+            }
+            for (cluster, representative) in clusters_of(&partition)
+                .iter()
+                .zip(partition.representatives())
+            {
+                assert_eq!(*representative, weighted_medoid(&matrix, &weights, cluster));
+            }
+            if matches!(cut, Cut::Count(2)) {
+                by_shape(&partition, shapes);
+            }
+            hierarchical.push(partition);
         }
-        let cut = Cut::Height(Quantity::new(0.06, NANOMETER));
-        hierarchical.push(set.cluster_hierarchical(&matrix, linkage, cut).unwrap());
     }
-    let medoids = (1..=matrix.member_count())
-        .map(|clusters| set.cluster_k_medoids(&matrix, clusters).unwrap())
+
+    let medoids = (1..=count)
+        .map(|clusters| {
+            let partition = subject.k_medoids(&matrix, clusters).unwrap();
+            assert_eq!(partition.state_count(), clusters);
+            let representatives = partition.representatives();
+            // Each member joins its nearest medoid, and each medoid is the
+            // weighted medoid of its cluster.
+            for (member, state) in partition.assignments().iter().enumerate() {
+                let distance = |state: usize| {
+                    matrix
+                        .get(member, representatives[state])
+                        .unwrap()
+                        .into_value()
+                };
+                assert!((0..clusters).all(|other| distance(*state) <= distance(other)));
+            }
+            for (cluster, representative) in clusters_of(&partition).iter().zip(representatives) {
+                // Ties may keep either medoid: no swap lowers the total.
+                let cost = |candidate: usize| weighted_cost(&matrix, &weights, cluster, candidate);
+                assert!(cluster
+                    .iter()
+                    .all(|other| cost(*representative) <= cost(*other)));
+            }
+            partition
+        })
         .collect::<Vec<_>>();
+    // One medoid is the weighted medoid of every member, two split the
+    // shapes, and one per member leaves each alone.
+    let everyone = (0..count).collect::<Vec<_>>();
+    assert_eq!(
+        medoids[0].representatives(),
+        [weighted_medoid(&matrix, &weights, &everyone)]
+    );
+    by_shape(&medoids[1], shapes);
+    assert_eq!(medoids[count - 1].assignments(), everyone);
+    assert_eq!(medoids[count - 1].representatives(), everyone);
     (matrix, radii, hierarchical, medoids)
 }
 
+/// Member positions by ascending energy of their states, ties in member
+/// order.
+fn by_energy(energies: &[f64]) -> Vec<usize> {
+    let mut order = (0..energies.len()).collect::<Vec<_>>();
+    order.sort_by(|a, b| energies[*a].total_cmp(&energies[*b]));
+    order
+}
+
 #[test]
-fn structure_set_clusterings_keep_the_retired_values() {
-    // Fingerprints of the values the retired paths gave.
-    let mut recorded = Recorded::new(&[
-        0x38518c62c0a59494,
-        0xf515e1b2b996a0fe,
-        0x7b21e643d2f3651e,
-        0x2c116153dbaf17bd,
-    ]);
-    for energies in [true, false] {
-        recorded.check(&clusterings(&ensemble(energies), energies));
-    }
+fn structure_set_and_ensemble_clusterings_follow_their_definitions() {
+    // By weight 4, 3, 2, 1.5, then 1 twice in member order, 0.5, 0.25; by
+    // state energy 0 (geometries 2, 3), 0.7 (7), 1.5 (0, 1), 4 (4, 5, 6).
+    let weight_order = descending(&WEIGHTS);
+    assert_eq!(weight_order, [5, 1, 3, 4, 0, 7, 2, 6]);
+    let energies = STATES.map(|state| ENERGIES[state]);
+    let energy_order = by_energy(&energies);
+    assert_eq!(energy_order, [2, 3, 7, 0, 1, 4, 5, 6]);
+    let parity = (0..8).map(|geometry| geometry % 2).collect::<Vec<_>>();
+    clusterings(
+        &ensemble(true),
+        &parity,
+        &[
+            (ClusterOrder::Weight, weight_order.clone()),
+            (ClusterOrder::Energy, energy_order),
+        ],
+    );
+    clusterings(
+        &ensemble(false),
+        &parity,
+        &[(ClusterOrder::Weight, weight_order)],
+    );
+
     // Without energies, ordering by energy is refused.
     let set = ensemble(false);
-    let atoms = all(set.shared_topology());
+    let atoms = all(set.set().shared_topology());
     let by_energy = ClusteringOptions::default().with_order(ClusterOrder::Energy);
     let radius = Quantity::new(0.1, NANOMETER);
     assert_eq!(
@@ -587,7 +1245,13 @@ fn structure_set_clusterings_keep_the_retired_values() {
     let matrix = set
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
-    recorded.check(&set.cluster_k_medoids(&matrix, 0));
+    assert_eq!(
+        set.cluster_k_medoids(&matrix, 0),
+        Err(ClusteringError::InvalidClusterCount {
+            requested: 0,
+            members: 8
+        })
+    );
     let smaller = set.select(0..3).unwrap();
     let mismatch = smaller.cluster_hierarchical(&matrix, Linkage::Single, Cut::Count(1));
     assert_eq!(
@@ -604,41 +1268,56 @@ fn structure_set_clusterings_keep_the_retired_values() {
     let refusal = set
         .cluster_by_radius(radius, &atoms, by_energy)
         .unwrap_err();
-    assert_eq!(refusal.to_string(), "Cannot cluster the structure set.");
+    assert_eq!(refusal.to_string(), "Cannot cluster the geometries.");
     assert_eq!(
         std::error::Error::source(&refusal).unwrap().to_string(),
         "The structure set needs an energy for every state."
     );
 
-    // A trajectory's frames, as a set without a distribution, cluster as
-    // equally weighted geometries did.
+    // The set of an ensemble, and a trajectory's frames, cluster every
+    // geometry equally weighted, visited in geometry order.
+    let geometry_order = (0..8).collect::<Vec<_>>();
+    let own = clusterings(
+        ensemble(true).set(),
+        &parity,
+        &[(ClusterOrder::Weight, geometry_order.clone())],
+    );
     let set = trajectory();
-    recorded.check(&clusterings(&set, false));
+    assert!(own == clusterings(&set, &parity, &[(ClusterOrder::Weight, geometry_order)]));
+    // A set has no states, so no energies to order by.
     assert_eq!(
         set.cluster_by_radius(radius, &atoms, by_energy),
         Err(ClusteringError::StructureSet(Box::new(
-            StructureSetError::Missing(Requirement::Distribution)
+            StructureSetError::Missing(Requirement::StateEnergies)
         )))
     );
 }
 
 #[test]
-fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
-    // Fingerprints of the values the retired paths gave.
-    let mut recorded = Recorded::new(&[0x25b0a03d01643e37]);
+fn clustering_part_of_a_time_ordered_set_groups_its_samples_by_position() {
     let set = equilibrated();
-    let clustered = clusterings(&set, true);
-    recorded.check(&clustered);
-    assert!(clustered == clusterings(&members(&set), true));
-    let atoms = all(set.shared_topology());
+    // Samples 2, 3, 5, 6, 7 weigh 1, 2, 3, 0.5, 1.5 and lie in states of
+    // energies 0, 2.5, 0, 2.5, 2.5.
+    let weight_order = descending(&EQUILIBRATED_WEIGHTS);
+    assert_eq!(weight_order, [2, 1, 4, 0, 3]);
+    let energy_order = by_energy(&[0.0, 2.5, 0.0, 2.5, 2.5]);
+    assert_eq!(energy_order, [0, 2, 1, 3, 4]);
+    let orders = [
+        (ClusterOrder::Weight, weight_order),
+        (ClusterOrder::Energy, energy_order),
+    ];
+    let parity = EQUILIBRATED.map(|geometry| geometry % 2);
+    let clustered = clusterings(&set, &parity, &orders);
+    assert!(clustered == clusterings(&members(&set), &parity, &orders));
+    let atoms = all(set.set().shared_topology());
     let matrix = set
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
     assert_eq!(matrix.member_count(), 5);
-    // Entry (0, 1) is between the first two members, geometries 2 and 3.
-    let fit = kekule::alignment::fit(
-        set.get(2).unwrap().as_structure_view(),
-        set.get(3).unwrap().as_structure_view(),
+    // Entry (0, 1) is between the first two samples, geometries 2 and 3.
+    let fit = alignment::fit(
+        set.set().get(2).unwrap().as_structure_view(),
+        set.set().get(3).unwrap().as_structure_view(),
         &atoms,
         Default::default(),
     )
@@ -647,52 +1326,50 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
     assert!((distance - fit.rmsd().into_value()).abs() < 1.0e-12);
 
     // Even and odd geometries have different shapes: two medoids group the
-    // members by shape, each member by its position.
+    // samples by shape, each sample by its position.
     let states = set.cluster_k_medoids(&matrix, 2).unwrap();
-    let shapes = [2, 3, 5, 6, 7].map(|geometry| geometry % 2);
+    let shapes = EQUILIBRATED.map(|geometry| geometry % 2);
     for (position, state) in states.assignments().iter().enumerate() {
         let representative = states.representatives()[*state];
         assert_eq!(shapes[position], shapes[representative]);
     }
 
     // The partition installs as the distribution's grouping, keeping every
-    // weight, member, and the order.
+    // weight, sample, and the order.
     let mut regrouped = set.clone();
     regrouped
         .distribution_mut()
-        .unwrap()
         .regroup(states.clone())
         .unwrap();
-    let distribution = regrouped.distribution().unwrap();
+    let distribution = regrouped.distribution();
     assert_eq!(distribution.partition(), &states);
-    assert_eq!(
-        distribution.weights(),
-        set.distribution().unwrap().weights()
-    );
+    assert_eq!(distribution.log_weights(), set.distribution().log_weights());
     assert_eq!(
         distribution.members(),
-        &Members::Subset(vec![2, 3, 5, 6, 7])
+        &Members::Subset(EQUILIBRATED.to_vec())
     );
-    assert_eq!(regrouped.order(), set.order());
-    assert!(regrouped.get(4).unwrap().state().is_none());
+    assert_eq!(regrouped.set().order(), set.set().order());
+    assert!(distribution.state_of(4).is_none());
 
-    // Non-members are not clustered, even when no fit to them succeeds.
-    let mut broken = set.clone();
-    broken
-        .get_mut(4)
-        .unwrap()
-        .set_positions(Quantity::new(collinear(), NANOMETER))
-        .unwrap();
+    // Geometries that are not samples are not clustered, even when no fit to
+    // them succeeds.
+    let broken = |geometries: &[usize]| {
+        let mut broken = set.set().clone();
+        for geometry in geometries {
+            broken
+                .get_mut(*geometry)
+                .unwrap()
+                .set_positions(Quantity::new(collinear(), NANOMETER))
+                .unwrap();
+        }
+        Ensemble::new(broken, set.distribution().clone()).unwrap()
+    };
     assert_eq!(
-        broken.pairwise_fitted_rmsd(&atoms, Default::default()),
+        broken(&[4]).pairwise_fitted_rmsd(&atoms, Default::default()),
         Ok(matrix.clone())
     );
-    // A failing member is named by its geometry index.
-    broken
-        .get_mut(5)
-        .unwrap()
-        .set_positions(Quantity::new(collinear(), NANOMETER))
-        .unwrap();
+    // A failing sample is named by its geometry index.
+    let broken = broken(&[4, 5]);
     assert_eq!(
         broken.pairwise_fitted_rmsd(&atoms, Default::default()),
         Err(ClusteringError::PairFit {
@@ -710,7 +1387,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
             .to_string(),
         "Cannot fit geometries 2 and 5."
     );
-    // The heaviest member, geometry 5, leads; geometry 3, visited next, fails
+    // The heaviest sample, geometry 5, leads; geometry 3, visited next, fails
     // to fit onto it.
     assert_eq!(
         broken.cluster_by_radius(Quantity::new(0.05, NANOMETER), &atoms, Default::default()),
@@ -724,9 +1401,9 @@ fn clustering_part_of_a_time_ordered_set_groups_its_members_by_position() {
 }
 
 #[test]
-fn structure_set_clustering_runs_on_threads_report_progress_and_cancel() {
+fn ensemble_clustering_runs_on_threads_report_progress_and_cancel() {
     let set = equilibrated();
-    let atoms = all(set.shared_topology());
+    let atoms = all(set.set().shared_topology());
     let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
     let fitted = AtomicUsize::new(0);
     let progress = |progress: ClusteringProgress| {
@@ -743,6 +1420,7 @@ fn structure_set_clustering_runs_on_threads_report_progress_and_cancel() {
         set.pairwise_fitted_rmsd(&atoms, Default::default())
             .unwrap()
     );
+    // Five samples make ten pairs.
     assert_eq!(fitted.load(Ordering::Relaxed), 10);
     let radius = Quantity::new(0.08, NANOMETER);
     assert_eq!(
@@ -766,8 +1444,8 @@ fn structure_set_clustering_runs_on_threads_report_progress_and_cancel() {
 }
 
 #[test]
-fn a_set_without_a_distribution_installs_its_clusters_as_one() {
-    let mut set = trajectory();
+fn a_set_installs_its_clusters_as_the_distribution_of_an_ensemble() {
+    let set = trajectory();
     let atoms = all(set.shared_topology());
     let matrix = set
         .pairwise_fitted_rmsd(&atoms, Default::default())
@@ -777,20 +1455,20 @@ fn a_set_without_a_distribution_installs_its_clusters_as_one() {
         .cluster_hierarchical(&matrix, Linkage::Average, Cut::Count(2))
         .unwrap();
     let distribution = Distribution::new(Members::All, states.clone()).unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    assert_eq!(set.distribution().unwrap().partition(), &states);
-    assert_eq!(set.states().len(), 2);
+    let ensemble = Ensemble::new(set, distribution).unwrap();
+    assert_eq!(ensemble.distribution().partition(), &states);
+    assert_eq!(ensemble.states().len(), 2);
     // Frames of one shape share a state.
-    for geometry in set.iter() {
-        let representative = geometry.state().unwrap().representative();
-        assert_eq!(geometry.index() % 2, representative % 2);
+    for geometry in 0..8 {
+        let state = ensemble.distribution().state_of(geometry).unwrap();
+        let representative = ensemble.state(state).unwrap().representative();
+        assert_eq!(geometry % 2, representative % 2);
     }
 }
 
-/// Three geometries whose weights are near the floating-point limits, in two
+/// Three geometries whose weights lie near the floating-point limits, in two
 /// states with energies.
-fn extreme() -> StructureSet {
-    let mut set = unordered(3);
+fn extreme() -> Ensemble {
     let states = [0.0, 1.0].map(|energy| {
         State::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
@@ -801,65 +1479,135 @@ fn extreme() -> StructureSet {
         Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap(),
     )
     .unwrap()
-    .with_weights(vec![1.0e300, 1.0e-300, 2.0e-300])
+    .with_log_weights(ln(&[1.0e300, 1.0e-300, 2.0e-300]))
     .unwrap()
     .with_states(states.to_vec())
     .unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    set
+    Ensemble::new(unordered(3), distribution).unwrap()
 }
 
-#[test]
-fn boltzmann_populations_keep_the_retired_values() {
-    // Fingerprints of the values the retired paths gave.
-    let mut recorded = Recorded::new(&[
-        0x068a61a3e61a908f,
-        0x85c659922dd3ad74,
-        0xb077e016f001eac2,
-        0x7f9b35233a28d61f,
-        0xa88494baf97eb0ab,
-    ]);
-    for temperature in [1.0, 298.15, 5000.0] {
-        let temperature = Quantity::new(temperature, KELVIN);
-        let mut set = ensemble(true);
-        set.distribution_mut()
-            .unwrap()
-            .assign_boltzmann_populations(temperature)
-            .unwrap();
-        let distribution = set.distribution().unwrap();
-        recorded.check(&(bits(distribution.weights().unwrap()), distribution));
-        assert_eq!(distribution.temperature(), Some(temperature));
+/// Checks Boltzmann populations: each state's probability is
+/// `exp(-E / RT)` over the sum of those factors, and its samples share it in
+/// proportion to their `prior` linear weights; the total weight is kept.
+fn check_boltzmann(ensemble: &Ensemble, kelvin: f64, energies: &[f64], prior_log_weights: &[f64]) {
+    let distribution = ensemble.distribution();
+    let partition = distribution.partition();
+    let thermal = GAS_CONSTANT * kelvin;
+    // In log space relative to the lowest energy, so nothing underflows.
+    let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
+    let factors = energies
+        .iter()
+        .map(|energy| (-(energy - minimum) / thermal).exp())
+        .collect::<Vec<_>>();
+    let factor_total = factors.iter().sum::<f64>();
+    let state_probabilities = factors
+        .iter()
+        .map(|factor| factor / factor_total)
+        .collect::<Vec<_>>();
+    for (actual, expected) in distribution
+        .state_probabilities()
+        .unwrap()
+        .iter()
+        .zip(&state_probabilities)
+    {
+        assert_close(*actual, *expected, 1.0e-12);
     }
-
-    // Weights near the floating-point limits take the within-state path.
-    let mut set = extreme();
-    let temperature = Quantity::new(300.0, KELVIN);
-    set.distribution_mut()
-        .unwrap()
-        .assign_boltzmann_populations(temperature)
-        .unwrap();
-    let distribution = set.distribution().unwrap();
-    recorded.check(&(bits(distribution.weights().unwrap()), distribution));
-
-    // A distribution over part of a set without weights gains them.
-    let mut part = equilibrated();
-    part.distribution_mut().unwrap().set_weights(None).unwrap();
-    part.distribution_mut()
-        .unwrap()
-        .assign_boltzmann_populations(temperature)
-        .unwrap();
-    recorded.check(&bits(part.distribution().unwrap().weights().unwrap()));
+    // Each sample's share of its state, relative to the heaviest sample of
+    // the state, so that no share underflows.
+    let shares = (0..prior_log_weights.len())
+        .map(|position| {
+            let state = partition.assignments()[position];
+            let heaviest = partition
+                .samples(state)
+                .map(|other| prior_log_weights[other])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let total = partition
+                .samples(state)
+                .map(|other| (prior_log_weights[other] - heaviest).exp())
+                .sum::<f64>();
+            (prior_log_weights[position] - heaviest).exp() / total
+        })
+        .collect::<Vec<_>>();
+    for (position, probability) in distribution.probabilities().unwrap().iter().enumerate() {
+        let state = partition.assignments()[position];
+        let expected = state_probabilities[state] * shares[position];
+        assert_close(*probability, expected, 1.0e-12);
+    }
+    // The total weight is kept.
+    let log_sum = |values: &[f64]| {
+        let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        maximum
+            + values
+                .iter()
+                .map(|value| (value - maximum).exp())
+                .sum::<f64>()
+                .ln()
+    };
+    assert_close(
+        log_sum(distribution.log_weights().unwrap()),
+        log_sum(prior_log_weights),
+        1.0e-9 * log_sum(prior_log_weights).abs().max(1.0),
+    );
     assert_eq!(
-        part.distribution().unwrap().temperature(),
-        Some(temperature)
+        distribution.temperature(),
+        Some(Quantity::new(kelvin, KELVIN))
     );
 }
 
 #[test]
+fn boltzmann_populations_follow_the_energies_and_keep_shares_within_states() {
+    for kelvin in [1.0, 298.15, 5000.0] {
+        let mut ensemble = ensemble(true);
+        ensemble
+            .distribution_mut()
+            .assign_boltzmann_populations(Quantity::new(kelvin, KELVIN))
+            .unwrap();
+        check_boltzmann(&ensemble, kelvin, &ENERGIES, &ln(&WEIGHTS));
+    }
+    // At room temperature the lowest state, 0 kJ/mol, is the most
+    // populated, then 0.7, 1.5, and 4 kJ/mol.
+    let mut ensemble = ensemble(true);
+    ensemble
+        .distribution_mut()
+        .assign_boltzmann_populations(Quantity::new(298.15, KELVIN))
+        .unwrap();
+    assert_eq!(ensemble.distribution().ranked_by_population(), [1, 3, 0, 2]);
+
+    // Weights near the floating-point limits keep their ratios within a
+    // state: geometry 2 weighs twice geometry 1.
+    let mut set = extreme();
+    set.distribution_mut()
+        .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))
+        .unwrap();
+    check_boltzmann(
+        &set,
+        300.0,
+        &[0.0, 1.0],
+        &ln(&[1.0e300, 1.0e-300, 2.0e-300]),
+    );
+    let log_weights = set.distribution().log_weights().unwrap();
+    assert_close(log_weights[2] - log_weights[1], 2.0_f64.ln(), 1.0e-9);
+
+    // A distribution over part of a set without weights gains them, equal
+    // within each state.
+    let mut part = equilibrated();
+    part.distribution_mut().set_log_weights(None).unwrap();
+    part.distribution_mut()
+        .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))
+        .unwrap();
+    check_boltzmann(&part, 300.0, &[0.0, 2.5], &[0.0; 5]);
+    let log_weights = part.distribution().log_weights().unwrap();
+    assert_eq!(log_weights.len(), 5);
+    assert_eq!(log_weights[0], log_weights[2]);
+    assert_eq!(log_weights[1], log_weights[3]);
+    assert_eq!(log_weights[1], log_weights[4]);
+}
+
+#[test]
 fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
-    let mut set = ensemble(false);
-    let before = set.distribution().cloned();
-    let mut distribution = set.distribution_mut().unwrap();
+    let mut ensemble = ensemble(false);
+    let before = ensemble.distribution().clone();
+    let mut distribution = ensemble.distribution_mut();
     assert_eq!(
         distribution.assign_boltzmann_populations(Quantity::new(300.0, KELVIN)),
         Err(StructureSetError::Missing(Requirement::StateEnergies))
@@ -872,27 +1620,35 @@ fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
         distribution.assign_boltzmann_populations(Quantity::new(300.0, NANOMETER)),
         Err(StructureSetError::Unit(_))
     ));
-    assert_eq!(set.distribution().cloned(), before);
+    assert_eq!(ensemble.distribution(), &before);
     assert_eq!(
         StructureSetError::Missing(Requirement::StateEnergies).to_string(),
         "The structure set needs an energy for every state."
     );
 
-    // A state far above the others underflows.
-    let mut set = ensemble(false);
-    let mut distribution = set.distribution_mut().unwrap();
-    for (state, energy) in [0.0, 1.0e6, 2.0, 3.0].into_iter().enumerate() {
+    // A state far above the others keeps a finite log population, lower by
+    // its energy over RT, though its probability underflows.
+    let mut ensemble = self::ensemble(false);
+    let energies = [0.0, 1.0e6, 2.0, 3.0];
+    let mut distribution = ensemble.distribution_mut();
+    for (state, energy) in energies.into_iter().enumerate() {
         *distribution.state_mut(state).unwrap() = State::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap();
     }
-    let cold = Quantity::new(1.0, KELVIN);
-    let before = set.distribution().cloned();
-    assert_eq!(
-        set.distribution_mut()
-            .unwrap()
-            .assign_boltzmann_populations(cold),
-        Err(StructureSetError::InvalidWeight { geometry: 2 })
-    );
-    assert_eq!(set.distribution().cloned(), before);
+    distribution
+        .assign_boltzmann_populations(Quantity::new(1.0, KELVIN))
+        .unwrap();
+    check_boltzmann(&ensemble, 1.0, &energies, &ln(&WEIGHTS));
+    let distribution = ensemble.distribution();
+    assert!(distribution
+        .log_weights()
+        .unwrap()
+        .iter()
+        .all(|w| w.is_finite()));
+    let gap =
+        ensemble.state(0).unwrap().log_population() - ensemble.state(1).unwrap().log_population();
+    let expected = 1.0e6 / GAS_CONSTANT;
+    assert_close(gap, expected, 1.0e-9 * expected);
+    assert_eq!(distribution.state_probabilities().unwrap()[1], 0.0);
 }

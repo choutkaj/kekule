@@ -25,6 +25,8 @@ use crate::properties::{
 use crate::structure::{
     Distribution, Members, Order, Structure, StructureKind, StructureSet, StructureView,
 };
+
+use super::StructureSetDescription;
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -84,13 +86,18 @@ pub(crate) fn write_native_to<'a>(
             encoder.reports(reports)?;
         }
         NativeContent::StructureSetDescription(description) => {
-            encoder.structure_set_head(SetHead {
-                topology: description.topology(),
-                properties: description.properties(),
-                geometry_count: description.geometry_count(),
-                order: description.order(),
-                distribution: description.distribution(),
-            })?;
+            encoder.structure_set_head(SetHead::of_description(description))?;
+            encoder.u8(GEOMETRIES_EXTERNAL)?;
+        }
+        NativeContent::Ensemble(ensemble) => {
+            let set = ensemble.set();
+            encoder.structure_set_head(SetHead::of_set(set))?;
+            encoder.distribution(ensemble.distribution())?;
+            encoder.geometries(set.iter().map(|geometry| geometry.as_structure_view()))?;
+        }
+        NativeContent::EnsembleDescription(description) => {
+            encoder.structure_set_head(SetHead::of_description(description.set()))?;
+            encoder.distribution(description.distribution())?;
             encoder.u8(GEOMETRIES_EXTERNAL)?;
         }
     }
@@ -102,13 +109,33 @@ pub(super) const GEOMETRIES_INLINE: u8 = 0;
 /// The geometries section's tag for geometries stored elsewhere.
 pub(super) const GEOMETRIES_EXTERNAL: u8 = 1;
 
-/// The sections of a structure set record before its geometries.
+/// The sections of a structure set or ensemble record that describe its set,
+/// before the distribution and the geometries.
 struct SetHead<'a> {
     topology: &'a Topology,
     properties: &'a OwnerProperties,
     geometry_count: usize,
     order: Option<&'a Order>,
-    distribution: Option<&'a Distribution>,
+}
+
+impl<'a> SetHead<'a> {
+    fn of_set(set: &'a StructureSet) -> Self {
+        Self {
+            topology: set.topology(),
+            properties: set.properties(),
+            geometry_count: set.len(),
+            order: set.order(),
+        }
+    }
+
+    fn of_description(description: &'a StructureSetDescription) -> Self {
+        Self {
+            topology: description.topology(),
+            properties: description.properties(),
+            geometry_count: description.geometry_count(),
+            order: description.order(),
+        }
+    }
 }
 
 pub(crate) fn write_native<'a>(
@@ -705,13 +732,7 @@ impl<W: Write> Encoder<'_, W> {
     // Structure sets.
 
     fn structure_set(&mut self, set: &StructureSet) -> Result {
-        self.structure_set_head(SetHead {
-            topology: set.topology(),
-            properties: set.properties(),
-            geometry_count: set.len(),
-            order: set.order(),
-            distribution: set.distribution(),
-        })?;
+        self.structure_set_head(SetHead::of_set(set))?;
         self.geometries(set.iter().map(|geometry| geometry.as_structure_view()))
     }
 
@@ -759,10 +780,12 @@ impl<W: Write> Encoder<'_, W> {
                 self.f64s(values)?;
             }
         }
-        let Some(distribution) = head.distribution else {
-            return self.u8(0);
-        };
-        self.u8(1)?;
+        Ok(())
+    }
+
+    /// An ensemble's distribution: its samples, log weights, partition,
+    /// states, and temperature.
+    fn distribution(&mut self, distribution: &Distribution) -> Result {
         match distribution.members() {
             Members::All => self.u8(0)?,
             Members::Subset(indices) => {
@@ -773,11 +796,11 @@ impl<W: Write> Encoder<'_, W> {
                 }
             }
         }
-        match distribution.weights() {
+        match distribution.log_weights() {
             None => self.u8(0)?,
-            Some(weights) => {
+            Some(log_weights) => {
                 self.u8(1)?;
-                self.f64s(weights)?;
+                self.f64s(log_weights)?;
             }
         }
         let partition = distribution.partition();

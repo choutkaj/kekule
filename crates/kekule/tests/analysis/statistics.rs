@@ -4,7 +4,9 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
 };
-use kekule::structure::{Distribution, Geometry, Members, Partition, Positions, StructureSet};
+use kekule::structure::{
+    Distribution, Ensemble, Geometry, Members, Partition, Positions, StructureSet,
+};
 use kekule::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
 
@@ -26,22 +28,26 @@ fn trajectory(top: &Arc<Topology>, rows: &[[f64; 3]]) -> StructureSet {
     .unwrap()
 }
 
-/// Samples of `structures` weighted by `weights`, grouped by `partition`.
+/// Samples of `structures` with natural-logarithm weights `log_weights`,
+/// grouped by `partition`.
 fn weighted(
     top: &Arc<Topology>,
     structures: impl IntoIterator<Item = Positions>,
     partition: Partition,
-    weights: Vec<f64>,
-) -> StructureSet {
-    let mut set =
-        StructureSet::from_geometries(top.clone(), structures.into_iter().map(Geometry::new))
-            .unwrap();
+    log_weights: Vec<f64>,
+) -> Ensemble {
+    let set = StructureSet::from_geometries(top.clone(), structures.into_iter().map(Geometry::new))
+        .unwrap();
     let distribution = Distribution::new(Members::All, partition)
         .unwrap()
-        .with_weights(weights)
+        .with_log_weights(log_weights)
         .unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    set
+    Ensemble::new(set, distribution).unwrap()
+}
+
+/// The natural logarithms of linear weights.
+fn ln(weights: impl IntoIterator<Item = f64>) -> Vec<f64> {
+    weights.into_iter().map(f64::ln).collect()
 }
 
 fn close(a: f64, b: f64) {
@@ -112,7 +118,7 @@ fn distribution_statistics_use_sample_weights_not_states() {
         &top,
         weighted_structures(),
         Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap(),
-        vec![10.0, 20.0, 10.0],
+        ln([10.0, 20.0, 10.0]),
     );
 
     let rmsf = ensemble.rmsf(&AtomSelection::all(top.clone())).unwrap();
@@ -133,12 +139,13 @@ fn distribution_statistics_use_sample_weights_not_states() {
         [(pairs[0], 0.75), (pairs[1], 0.0)]
     );
 
-    // Weights near the floating-point limits are scaled before summing.
+    // Weights beyond the floating-point limits, e^1000 times these, give the
+    // same probabilities.
     let extreme = weighted(
         &top,
         weighted_structures(),
         Partition::state_per_sample(3),
-        WEIGHTS.map(|weight| weight * 1.0e307).to_vec(),
+        WEIGHTS.map(|weight| weight.ln() + 1000.0).to_vec(),
     );
     let extreme = extreme.rmsf(&AtomSelection::all(top.clone())).unwrap();
     for (value, expected) in extreme
@@ -204,9 +211,8 @@ fn equal_weights_reproduce_frame_counting() {
     }
 
     // An equally weighted distribution of every frame keeps every statistic.
-    let mut ensemble = t.clone();
     let distribution = Distribution::new(Members::All, Partition::state_per_sample(3)).unwrap();
-    ensemble.set_distribution(Some(distribution)).unwrap();
+    let ensemble = Ensemble::new(t.clone(), distribution).unwrap();
     for (geometry, frame) in ensemble
         .rmsf(&all)
         .unwrap()
@@ -632,7 +638,7 @@ fn group_contacts_weight_samples_by_probability_and_frames_equally() {
         &top,
         rows.map(|row| positions(row.map(|x| Point3::new(x, 0.0, 0.0)))),
         Partition::state_per_sample(3),
-        WEIGHTS.to_vec(),
+        ln(WEIGHTS),
     );
     let groups = [group(&top, [0]), group(&top, [1, 2])];
     let cutoff = Quantity::new(1.0, NANOMETER);

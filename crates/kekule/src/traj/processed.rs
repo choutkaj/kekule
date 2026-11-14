@@ -8,8 +8,8 @@ use crate::alignment::{self, AlignmentOptions};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::OwnerProperties;
 use crate::structure::{
-    subset_rows, DenseArrayError, Distribution, Geometry, GeometryError, GeometryView, Order,
-    Positions, Structure, StructureError, StructureSetRead, StructureSetReadError,
+    subset_rows, DenseArrayError, Geometry, GeometryError, GeometryView, Order, Positions,
+    Structure, StructureError, StructureSetRead, StructureSetReadError,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
 
@@ -326,8 +326,7 @@ impl From<StructureSetReadError> for ProcessingError {
 /// Reading geometry `i` reads geometry `i` of the reader below, and with
 /// smoothing the geometries of its window, and runs the steps on them in the
 /// order [`ProcessingSteps`] gives. A host caches geometries in front of this
-/// reader when it reads them again. The order and the distribution are
-/// those of the reader below.
+/// reader when it reads them again. The order is that of the reader below.
 ///
 /// Only geometry 0 is kept: [`Self::new`] processes it, [`StructureSetRead::peek`]
 /// lends it, and [`StructureSetRead::read`] returns it, so a host's cache in front
@@ -694,10 +693,6 @@ impl<R: StructureSetRead> StructureSetRead for Processed<R> {
 
     fn order(&self) -> Option<&Order> {
         self.inner.order()
-    }
-
-    fn distribution(&self) -> Option<&Distribution> {
-        self.inner.distribution()
     }
 
     fn properties(&self) -> Option<&OwnerProperties> {
