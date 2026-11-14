@@ -140,24 +140,26 @@ impl Topology {
                 continue;
             }
             let whole_instance_selected = selected_local.len() == source_molecule.atom_count();
-            let definitions =
-                match definition_subsets.entry((molecule_view.definition_id(), selected_local)) {
-                    std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                    std::collections::btree_map::Entry::Vacant(entry) => {
-                        let definitions =
-                            super::components::build_component_definitions::<TopologySubsetError>(
-                                source_molecule,
-                                &entry.key().1,
-                                Some((
-                                    molecule_view.class(),
-                                    this.molecule_class_overrides
-                                        .contains_key(&molecule_view.definition_id()),
-                                )),
-                                &mut builder,
-                            )?;
-                        entry.insert(definitions)
-                    }
-                };
+            let definitions = match definition_subsets
+                .entry((molecule_view.definition_id(), selected_local))
+            {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    let definitions =
+                        super::components::build_component_definitions::<TopologySubsetError, _>(
+                            source_molecule,
+                            source_molecule.properties(),
+                            &entry.key().1,
+                            Some((
+                                molecule_view.class(),
+                                this.molecule_class_overrides
+                                    .contains_key(&molecule_view.definition_id()),
+                            )),
+                            &mut builder,
+                        )?;
+                    entry.insert(definitions)
+                }
+            };
             for definition in definitions.iter() {
                 let target_instance = builder.add_instance(definition.id)?;
                 instance_sources

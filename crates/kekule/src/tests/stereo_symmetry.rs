@@ -240,7 +240,7 @@ fn stereo_cleanup_is_explicit_transactional_and_preserves_surviving_groups() {
             stereo_api::cleanup::cleanup_stereo(&mut editor, options),
             Err(stereo_api::StereoSearchError::LimitExceeded(_))
         ));
-        assert_eq!(editor.working(), &before);
+        assert_eq!(&editor.snapshot().0, &before);
     }
     let report = stereo_api::cleanup::cleanup_stereo(&mut editor, Default::default()).unwrap();
     assert_eq!(report.removed_elements, vec![elements[0].0]);

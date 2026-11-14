@@ -799,8 +799,9 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
             },
         )))
         .expect("double-bond stereo");
+    let mut molecule = molecule.into_unchecked();
     assert!(molfile::write(
-        molecule.working(),
+        &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000)
     )
     .expect_err("specified double-bond stereo should be rejected")
@@ -811,15 +812,19 @@ fn v2000_rejects_unsupported_stereo_and_bond_representations() {
         .stereo_element_ids()
         .next()
         .expect("stereo element");
-    molecule
-        .remove_stereo_element(element)
-        .expect("remove stereo element");
-    molecule
-        .bond_mut(bond)
-        .expect("bond")
-        .set_order(BondOrder::Quadruple);
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .remove_stereo_element(element)
+            .expect("remove stereo element");
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .bond_mut(bond)
+            .expect("bond")
+            .set_order(BondOrder::Quadruple);
+    });
     assert!(molfile::write(
-        molecule.working(),
+        &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000)
     )
     .expect_err("quadruple bond should be rejected")

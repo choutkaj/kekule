@@ -56,6 +56,39 @@ impl StereoElement {
     pub fn references_bond(&self, bond: BondId) -> bool {
         self.kind.references_bond(bond)
     }
+
+    /// Rewrites every atom and bond reference into another ID space.
+    pub(crate) fn map_references(
+        &mut self,
+        atom: impl Fn(AtomId) -> AtomId,
+        bond: impl Fn(BondId) -> BondId,
+    ) {
+        let carrier = |value| match value {
+            StereoCarrier::Atom(id) => StereoCarrier::Atom(atom(id)),
+            other => other,
+        };
+        match &mut self.kind {
+            StereoElementKind::Tetrahedral(stereo) => {
+                stereo.center = atom(stereo.center);
+                for value in &mut stereo.carriers {
+                    *value = carrier(*value);
+                }
+            }
+            StereoElementKind::DoubleBond(stereo) => {
+                stereo.bond = bond(stereo.bond);
+                stereo.left = atom(stereo.left);
+                stereo.right = atom(stereo.right);
+                stereo.left_carrier = carrier(stereo.left_carrier);
+                stereo.right_carrier = carrier(stereo.right_carrier);
+            }
+            StereoElementKind::Axis(stereo) => {
+                stereo.axis = bond(stereo.axis);
+                for value in &mut stereo.carriers {
+                    *value = carrier(*value);
+                }
+            }
+        }
+    }
 }
 
 /// The geometry of one stereo assertion and its focus.
@@ -275,7 +308,7 @@ impl AxisOrientation {
     }
 }
 
-pub(crate) fn has_tetrahedral_stereo(molecule: &Molecule, center: AtomId) -> bool {
+pub(crate) fn has_tetrahedral_stereo<L: SlotLiveness>(molecule: &Graph<L>, center: AtomId) -> bool {
     molecule.stereo_elements().any(|(_, element)| {
         matches!(
             &element.kind,
@@ -284,7 +317,7 @@ pub(crate) fn has_tetrahedral_stereo(molecule: &Molecule, center: AtomId) -> boo
     })
 }
 
-pub(crate) fn has_double_bond_stereo(molecule: &Molecule, bond: BondId) -> bool {
+pub(crate) fn has_double_bond_stereo<L: SlotLiveness>(molecule: &Graph<L>, bond: BondId) -> bool {
     molecule.stereo_elements().any(|(_, element)| {
         matches!(
             &element.kind,
@@ -293,7 +326,7 @@ pub(crate) fn has_double_bond_stereo(molecule: &Molecule, bond: BondId) -> bool 
     })
 }
 
-pub(crate) fn has_axis_stereo(molecule: &Molecule, axis: BondId) -> bool {
+pub(crate) fn has_axis_stereo<L: SlotLiveness>(molecule: &Graph<L>, axis: BondId) -> bool {
     molecule.stereo_elements().any(|(_, element)| {
         matches!(
             &element.kind,

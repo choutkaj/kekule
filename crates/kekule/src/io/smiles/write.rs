@@ -136,13 +136,13 @@ pub(super) fn without_unknown_stereo(mol: &Molecule) -> Cow<'_, Molecule> {
     if unknown.is_empty() {
         return Cow::Borrowed(mol);
     }
-    let mut unmarked = mol.clone();
+    let mut unmarked = mol.to_editor();
     for id in unknown {
         unmarked
             .remove_stereo_element(id)
             .expect("collected live stereo element");
     }
-    Cow::Owned(unmarked)
+    Cow::Owned(unmarked.snapshot_keeping_ids())
 }
 
 pub(super) fn validate_smiles_writeable(
@@ -537,9 +537,8 @@ fn validate_directional_projection(
             },
         })
         .collect::<Vec<_>>();
-    let mut decoded = mol.clone();
-    decoded.graph.stereo_elements.clear();
-    decoded.graph.stereo_groups.clear();
+    let mut decoded = mol.to_editor();
+    decoded.graph_mut().clear_stereo();
     normalize_source_stereo(&mut decoded, None, &marks).map_err(|error| {
         SMILES_WRITE
             .unsupported("Bond directions cannot state the double-bond stereo.")

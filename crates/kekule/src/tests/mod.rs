@@ -87,7 +87,7 @@ pub(super) fn oxygen() -> Atom {
     Atom::new(Element::from_symbol("O").expect("oxygen should be available"))
 }
 
-pub(super) fn read_smiles(input: &str) -> Result<Molecule, Box<dyn std::error::Error>> {
+pub(crate) fn read_smiles(input: &str) -> Result<Molecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input, Default::default())?;
     Ok(document.interpret(Default::default())?.into_molecule()?)
 }
@@ -146,7 +146,41 @@ pub(super) trait CanonicalizeFixture {
     ) -> Result<NormalizationReport, NormalizationError>;
 }
 
+/// Applies a structural edit to a published test molecule in place, without
+/// publication's checks, as crate code once could on the molecule directly.
+pub(crate) fn edit<R>(molecule: &mut Molecule, edit: impl FnOnce(&mut MoleculeEditor) -> R) -> R {
+    let mut editor = molecule.clone().into_editor();
+    let result = edit(&mut editor);
+    *molecule = editor.into_unchecked();
+    result
+}
+
+/// Runs `f` on a draft that has deleted nothing, through an unchecked
+/// published copy whose IDs equal the draft's, keeping what `f` installs.
+pub(crate) fn on_draft<R>(editor: &mut MoleculeEditor, f: impl FnOnce(&mut Molecule) -> R) -> R {
+    assert!(!editor.has_deleted(), "draft IDs must survive publication");
+    let mut molecule = std::mem::take(editor).into_unchecked();
+    let result = f(&mut molecule);
+    *editor = molecule.into_editor();
+    result
+}
+
 impl CanonicalizeFixture for Molecule {
+    fn canonicalize_fixture(&mut self) -> Result<NormalizationReport, NormalizationError> {
+        edit(self, |editor| editor.canonicalize_fixture())
+    }
+
+    fn canonicalize_fixture_with_source_stereo(
+        &mut self,
+        source_stereo: &[SourceStereoBondMark],
+    ) -> Result<NormalizationReport, NormalizationError> {
+        edit(self, |editor| {
+            editor.canonicalize_fixture_with_source_stereo(source_stereo)
+        })
+    }
+}
+
+impl CanonicalizeFixture for MoleculeEditor {
     fn canonicalize_fixture(&mut self) -> Result<NormalizationReport, NormalizationError> {
         canonicalize_molecule_for_publication(self, None, &[])
     }
@@ -465,11 +499,9 @@ pub(super) struct RepresentedMoleculeSnapshot {
 pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedMoleculeSnapshot {
     RepresentedMoleculeSnapshot {
         atoms: molecule
-            .graph
-            .atoms
-            .iter()
-            .map(|atom| {
-                atom.as_ref().map(|atom| RepresentedAtomSnapshot {
+            .atoms()
+            .map(|(_, atom)| {
+                Some(RepresentedAtomSnapshot {
                     element: atom.element,
                     isotope: atom.isotope.map(std::num::NonZero::get),
                     formal_charge: atom.formal_charge,
@@ -480,32 +512,38 @@ pub(super) fn represented_molecule_snapshot(molecule: &Molecule) -> RepresentedM
             })
             .collect(),
         bonds: molecule
-            .graph
-            .bonds
-            .iter()
-            .map(|bond| {
-                bond.as_ref().map(|bond| RepresentedBondSnapshot {
+            .bonds()
+            .map(|(_, bond)| {
+                Some(RepresentedBondSnapshot {
                     a: bond.a,
                     b: bond.b,
                     order: bond.order,
                 })
             })
             .collect(),
-        adjacency: molecule.graph.adjacency.clone(),
-        stereo_elements: molecule
-            .graph
-            .stereo_elements
-            .iter()
-            .map(|element| {
-                element
-                    .as_ref()
-                    .map(|element| RepresentedStereoElementSnapshot {
-                        kind: element.kind.clone(),
-                        group: element.group,
-                    })
+        adjacency: molecule
+            .atom_ids()
+            .map(|atom| {
+                molecule
+                    .incident_bonds(atom)
+                    .expect("live atom")
+                    .map(|(id, _)| id)
+                    .collect()
             })
             .collect(),
-        stereo_groups: molecule.graph.stereo_groups.clone(),
+        stereo_elements: molecule
+            .stereo_elements()
+            .map(|(_, element)| {
+                Some(RepresentedStereoElementSnapshot {
+                    kind: element.kind.clone(),
+                    group: element.group,
+                })
+            })
+            .collect(),
+        stereo_groups: molecule
+            .stereo_groups()
+            .map(|(_, group)| Some(group.clone()))
+            .collect(),
     }
 }
 
@@ -544,10 +582,18 @@ pub(super) fn mark_all_fresh(mol: &mut Molecule) {
 }
 
 pub(super) fn assert_all_stale(mol: &Molecule) {
-    assert!(mol.perception().valence().is_none());
-    assert!(mol.perception().rings().is_none());
-    assert!(mol.perception().aromaticity().is_none());
-    assert!(mol.perception().cip().is_none());
+    assert_perception_stale(mol.perception());
+}
+
+pub(super) fn assert_draft_stale(editor: &MoleculeEditor) {
+    assert_perception_stale(editor.perception());
+}
+
+fn assert_perception_stale(perception: &Perception) {
+    assert!(perception.valence().is_none());
+    assert!(perception.rings().is_none());
+    assert!(perception.aromaticity().is_none());
+    assert!(perception.cip().is_none());
 }
 
 pub(super) fn tetrahedral_marked_graph() -> (MoleculeEditor, AtomId, Vec<AtomId>, BondId) {
@@ -573,10 +619,7 @@ pub(super) fn insert_unchecked_stereo(
     editor: &mut MoleculeEditor,
     element: StereoElement,
 ) -> StereoElementId {
-    let slots = &mut editor.working_mut().graph.stereo_elements;
-    let id = StereoElementId::new(u32::try_from(slots.len()).unwrap());
-    slots.push(Some(element));
-    id
+    editor.graph_mut().push_stereo_element(element)
 }
 
 pub(super) fn implicit_h_wedge_geometry_molblock() -> &'static str {

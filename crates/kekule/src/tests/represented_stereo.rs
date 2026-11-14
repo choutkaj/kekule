@@ -11,7 +11,6 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
         .add_atom(element_atom("N"))
         .expect("atom identifier capacity");
     mol.add_bond(center, a, BondOrder::Single).expect("bond");
-    mark_all_fresh(mol.working_mut());
     let element = insert_unchecked_stereo(
         &mut mol,
         StereoElement {
@@ -25,16 +24,18 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
     );
     // Inject nonadjacency through internal storage to test the diagnostic;
     // checked editing now rejects this malformed reference.
-    let stored = mol.working_mut().graph.stereo_elements[element.index()]
-        .as_mut()
+    let stored = mol
+        .graph_mut()
+        .stereo_element_mut(element)
         .expect("stored stereo element");
     let StereoElementKind::Tetrahedral(stereo) = &mut stored.kind else {
         unreachable!("test element is tetrahedral");
     };
     stereo.carriers[2] = StereoCarrier::Atom(b);
-    mark_all_fresh(mol.working_mut());
+    let mut mol = mol.into_unchecked();
+    mark_all_fresh(&mut mol);
 
-    let error = crate::molecule::validate_represented_stereo(mol.working())
+    let error = crate::molecule::validate_represented_stereo(mol.graph())
         .expect_err("invalid stored stereo");
 
     assert!(mol.stereo_elements().next().is_some());
@@ -81,7 +82,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         )))
         .expect("tetrahedral stereo element");
 
-    crate::molecule::validate_represented_stereo(tetrahedral.working())
+    crate::molecule::validate_represented_stereo(tetrahedral.graph())
         .expect("implicit hydrogen availability is chemically interpretive");
 
     tetrahedral
@@ -97,7 +98,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
             },
         )))
         .expect("tetrahedral stereo element");
-    crate::molecule::validate_represented_stereo(tetrahedral.working())
+    crate::molecule::validate_represented_stereo(tetrahedral.graph())
         .expect("implicit lone-pair availability is chemically interpretive");
 
     let mut double_bond = crate::molecule::MoleculeEditor::new();
@@ -122,7 +123,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         })),
     );
 
-    let error = crate::molecule::validate_represented_stereo(double_bond.working())
+    let error = crate::molecule::validate_represented_stereo(double_bond.graph())
         .expect_err("unavailable double-bond carriers should be reported");
     assert_eq!(
         error.violations,
@@ -151,7 +152,7 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
         })),
     );
 
-    let error = crate::molecule::validate_represented_stereo(axis.working())
+    let error = crate::molecule::validate_represented_stereo(axis.graph())
         .expect_err("implicit axis carriers should be unsupported");
     assert_eq!(
         error.violations,
@@ -389,7 +390,7 @@ fn stereo_validation_accepts_structural_axis_elements() {
         })))
         .expect("axis element");
 
-    crate::molecule::validate_represented_stereo(mol.working())
+    crate::molecule::validate_represented_stereo(mol.graph())
         .expect("axis should be structurally valid");
 
     mol.remove_stereo_element(valid_axis)
@@ -406,7 +407,7 @@ fn stereo_validation_accepts_structural_axis_elements() {
         })),
     );
 
-    let error = crate::molecule::validate_represented_stereo(mol.working())
+    let error = crate::molecule::validate_represented_stereo(mol.graph())
         .expect_err("axis should be invalid");
 
     assert_eq!(
@@ -461,7 +462,7 @@ fn implicit_hydrogen_carriers_must_match_fixed_hydrogen_declarations() {
         Err(MoleculePublicationError::InvalidStereo(mismatch.clone()))
     );
     assert_eq!(
-        crate::molecule::validate_represented_stereo(editor.working())
+        crate::molecule::validate_represented_stereo(editor.graph())
             .unwrap_err()
             .violations,
         [mismatch]

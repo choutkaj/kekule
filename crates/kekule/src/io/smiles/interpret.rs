@@ -14,8 +14,8 @@ use crate::io::{
     SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::molecule::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
-    MoleculeEditor,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, Graph, ImplicitHydrogens, Molecule,
+    MoleculeEditor, SlotLiveness,
 };
 use crate::stereo::{
     StereoCarrier, StereoElement, StereoElementId, StereoElementKind, TetrahedralOrientation,
@@ -557,16 +557,14 @@ fn interpret_smiles_program_component(
             source_offset: bond.direction_offset.unwrap_or(bond.offset),
         });
     }
-    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
-        |error| {
-            interpret_error(
-                DiagnosticKind::Chemistry,
-                first_aromatic_offset.unwrap_or(end_offset),
-                "Cannot assign single and double bonds to the aromatic bonds.",
-            )
-            .with_source(error)
-        },
-    )?;
+    localize_source_aromatic_bonds(&mut editor, &source_aromatic_bonds).map_err(|error| {
+        interpret_error(
+            DiagnosticKind::Chemistry,
+            first_aromatic_offset.unwrap_or(end_offset),
+            "Cannot assign single and double bonds to the aromatic bonds.",
+        )
+        .with_source(error)
+    })?;
 
     for (&source_index, &atom_id) in &source_to_atom {
         if let Some(radical) = radicals.get(&source_index) {
@@ -576,7 +574,7 @@ fn interpret_smiles_program_component(
                 .radical = Some(*radical);
             continue;
         }
-        let molecule = editor.working();
+        let molecule = editor.graph();
         let atom = molecule.atom(atom_id).expect("source atom is live");
         if let ImplicitHydrogens::Fixed(hydrogens) = atom.hydrogens {
             let electrons = crate::algorithms::rdkit_bracket_radical_electrons(
@@ -603,7 +601,7 @@ fn interpret_smiles_program_component(
         end_offset,
     )?;
     let mut publication_report = canonicalize_molecule_for_publication(
-        editor.working_mut(),
+        &mut editor,
         None,
         &source_stereo,
     )
@@ -675,10 +673,10 @@ fn omit_nonstereogenic_double_bond_stereo(
     editor: &mut MoleculeEditor,
     created: &mut Vec<StereoElementId>,
 ) -> Vec<BondId> {
-    if !has_specified_double_bond_stereo(editor.working()) {
+    if !has_specified_double_bond_stereo(editor) {
         return Vec::new();
     }
-    match crate::algorithms::locally_eligible_double_bonds(editor.working()) {
+    match crate::algorithms::locally_eligible_double_bonds(&editor.snapshot_keeping_ids()) {
         Ok(e_z_double_bonds) => remove_unkept_source_stereo(editor, &e_z_double_bonds, created),
         Err(_) => Vec::new(),
     }
@@ -843,7 +841,7 @@ fn add_smiles_tetrahedral_elements(
             continue;
         };
         let carriers = resolve_smiles_tetrahedral_carriers(
-            editor.working(),
+            editor.graph(),
             center,
             source_to_atom,
             carriers_by_center
@@ -853,7 +851,6 @@ fn add_smiles_tetrahedral_elements(
             offset,
         )?;
         let carriers = editor
-            .working()
             .tetrahedral_carriers(center, carriers)
             .map_err(|error| {
                 interpret_error(
@@ -886,8 +883,8 @@ fn add_smiles_tetrahedral_elements(
     Ok(())
 }
 
-fn resolve_smiles_tetrahedral_carriers(
-    mol: &Molecule,
+fn resolve_smiles_tetrahedral_carriers<L: SlotLiveness>(
+    mol: &Graph<L>,
     center: AtomId,
     source_to_atom: &BTreeMap<usize, AtomId>,
     carriers: Vec<PendingStereoCarrier>,
@@ -932,7 +929,10 @@ fn resolve_smiles_tetrahedral_carriers(
     Ok(carriers)
 }
 
-fn smiles_tetrahedral_center_can_have_lone_pair(mol: &Molecule, center: AtomId) -> bool {
+fn smiles_tetrahedral_center_can_have_lone_pair<L: SlotLiveness>(
+    mol: &Graph<L>,
+    center: AtomId,
+) -> bool {
     mol.atom(center)
         .map(|atom| {
             matches!(
@@ -958,7 +958,7 @@ mod tests {
         assert_eq!(interpretation.components().len(), 2);
         assert!(interpretation
             .molecules()
-            .all(|molecule| molecule.is_connected()));
+            .all(|molecule| molecule.connected_components().len() == 1));
         assert_eq!(interpretation.components()[0].source_span(), 0..10);
         assert_eq!(interpretation.components()[1].source_span(), 11..16);
     }

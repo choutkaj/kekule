@@ -949,12 +949,7 @@ pub(super) fn validate_perception(
     validate_delocalization(molecule, state)?;
     if let Some(valence) = &state.valence {
         for (&atom, &count) in &valence.inferred_hydrogens {
-            let Some(payload) = molecule
-                .graph
-                .atoms
-                .get(atom.index())
-                .and_then(Option::as_ref)
-            else {
+            let Some(payload) = molecule.atom(atom) else {
                 return Err(PerceptionInstallError::InvalidAtomId(atom));
             };
             if count != 0 && !payload.hydrogens.is_inferred() {
@@ -969,24 +964,12 @@ pub(super) fn validate_perception(
 
     if let Some(aromaticity) = &state.aromaticity {
         for atom in aromaticity.atoms.iter().copied() {
-            if molecule
-                .graph
-                .atoms
-                .get(atom.index())
-                .and_then(Option::as_ref)
-                .is_none()
-            {
+            if molecule.atom(atom).is_none() {
                 return Err(PerceptionInstallError::InvalidAtomId(atom));
             }
         }
         for bond in aromaticity.bonds.iter().copied() {
-            if molecule
-                .graph
-                .bonds
-                .get(bond.index())
-                .and_then(Option::as_ref)
-                .is_none()
-            {
+            if molecule.bond(bond).is_none() {
                 return Err(PerceptionInstallError::InvalidBondId(bond));
             }
         }
@@ -995,10 +978,7 @@ pub(super) fn validate_perception(
     if let Some(stereo) = &state.stereo {
         for (&element, &descriptor) in &stereo.cip_descriptors {
             let represented = molecule
-                .graph
-                .stereo_elements
-                .get(element.index())
-                .and_then(Option::as_ref)
+                .stereo_element(element)
                 .ok_or(PerceptionInstallError::InvalidStereoElementId(element))?;
             let compatible = matches!(
                 (&represented.kind, descriptor),
@@ -1135,39 +1115,25 @@ fn validate_ring_state(
     let bond_slots = membership.bond_flags().len();
     check_install_component_capacity(atom_slots, PerceptionComponent::RingAtomSlots)?;
     check_install_component_capacity(bond_slots, PerceptionComponent::RingBondSlots)?;
-    if atom_slots != molecule.graph.atoms.len() {
+    if atom_slots != molecule.atom_slot_count() {
         return Err(PerceptionInstallError::RingAtomSlotCountMismatch {
-            expected: molecule.graph.atoms.len(),
+            expected: molecule.atom_slot_count(),
             actual: atom_slots,
         });
     }
-    if bond_slots != molecule.graph.bonds.len() {
+    if bond_slots != molecule.bond_slot_count() {
         return Err(PerceptionInstallError::RingBondSlotCountMismatch {
-            expected: molecule.graph.bonds.len(),
+            expected: molecule.bond_slot_count(),
             actual: bond_slots,
         });
     }
     for (raw, in_ring) in (0..=u32::MAX).zip(membership.atom_flags()) {
-        if *in_ring
-            && molecule
-                .graph
-                .atoms
-                .get(AtomId::new(raw).index())
-                .and_then(Option::as_ref)
-                .is_none()
-        {
+        if *in_ring && molecule.atom(AtomId::new(raw)).is_none() {
             return Err(PerceptionInstallError::InvalidAtomId(AtomId::new(raw)));
         }
     }
     for (raw, in_ring) in (0..=u32::MAX).zip(membership.bond_flags()) {
-        if *in_ring
-            && molecule
-                .graph
-                .bonds
-                .get(BondId::new(raw).index())
-                .and_then(Option::as_ref)
-                .is_none()
-        {
+        if *in_ring && molecule.bond(BondId::new(raw)).is_none() {
             return Err(PerceptionInstallError::InvalidBondId(BondId::new(raw)));
         }
     }
@@ -1245,25 +1211,14 @@ fn validate_installed_ring(
     let mut degrees = BTreeMap::<AtomId, usize>::new();
     let mut adjacency = BTreeMap::<AtomId, Vec<AtomId>>::new();
     for atom in atom_set.iter().copied() {
-        if molecule
-            .graph
-            .atoms
-            .get(atom.index())
-            .and_then(Option::as_ref)
-            .is_none()
-        {
+        if molecule.atom(atom).is_none() {
             return Err(PerceptionInstallError::InvalidAtomId(atom));
         }
         degrees.insert(atom, 0);
         adjacency.insert(atom, Vec::new());
     }
     for bond_id in bond_set {
-        let Some(bond) = molecule
-            .graph
-            .bonds
-            .get(bond_id.index())
-            .and_then(Option::as_ref)
-        else {
+        let Some(bond) = molecule.bond(bond_id) else {
             return Err(PerceptionInstallError::InvalidBondId(bond_id));
         };
         if !atom_set.contains(&bond.a) || !atom_set.contains(&bond.b) {

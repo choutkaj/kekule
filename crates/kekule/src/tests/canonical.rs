@@ -34,7 +34,8 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
     first
         .add_bond(first_center, first_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perceive(first.working_mut()).expect("propane perceives");
+    let mut first = first.into_unchecked();
+    perceive(&mut first).expect("propane perceives");
 
     let mut second = crate::molecule::MoleculeEditor::new();
     let second_center = second.add_atom(carbon()).expect("atom identifier capacity");
@@ -46,10 +47,11 @@ fn canonical_ranking_is_stable_across_atom_order_for_path_roles() {
     second
         .add_bond(second_center, second_terminal_b, BondOrder::Single)
         .expect("bond should be valid");
-    perceive(second.working_mut()).expect("propane perceives");
+    let mut second = second.into_unchecked();
+    perceive(&mut second).expect("propane perceives");
 
-    let first_ranking = descriptors::canonical_atom_ranking(first.working());
-    let second_ranking = descriptors::canonical_atom_ranking(second.working());
+    let first_ranking = descriptors::canonical_atom_ranking(&first);
+    let second_ranking = descriptors::canonical_atom_ranking(&second);
 
     assert_eq!(
         first_ranking.rank_of(first_center),
@@ -127,11 +129,17 @@ fn canonical_ranking_preserves_radical_spin_assertions() {
         descriptors::canonical_atom_ranking(&molecule).rank_of(left),
         descriptors::canonical_atom_ranking(&molecule).rank_of(right)
     );
-    molecule.atom_mut(left).unwrap().radical = AtomRadical::new(2, Some(1));
-    molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, Some(3));
+    crate::tests::edit(&mut molecule, |editor| {
+        editor.atom_mut(left).unwrap().radical = AtomRadical::new(2, Some(1));
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        editor.atom_mut(right).unwrap().radical = AtomRadical::new(2, Some(3));
+    });
     let ranks = descriptors::canonical_atom_ranking(&molecule);
     assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
-    molecule.atom_mut(right).unwrap().radical = AtomRadical::new(2, None);
+    crate::tests::edit(&mut molecule, |editor| {
+        editor.atom_mut(right).unwrap().radical = AtomRadical::new(2, None);
+    });
     let ranks = descriptors::canonical_atom_ranking(&molecule);
     assert_ne!(ranks.rank_of(left), ranks.rank_of(right));
 }

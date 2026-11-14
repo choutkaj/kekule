@@ -32,7 +32,7 @@ fn oxo_halide(oxo_count: usize) -> (MoleculeEditor, AtomId, Vec<AtomId>, Vec<Bon
 fn normalization_rewrites_hypervalent_oxo_halide_representation() {
     let (mut molecule, chlorine, oxygens, bonds) = oxo_halide(2);
 
-    canonicalize_molecule_for_publication(molecule.working_mut(), None, &[])
+    canonicalize_molecule_for_publication(&mut molecule, None, &[])
         .expect("normalization should succeed");
 
     assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 2);
@@ -50,12 +50,10 @@ fn normalization_is_idempotent() {
     let (mut molecule, ..) = oxo_halide(2);
 
     molecule
-        .working_mut()
         .canonicalize_fixture()
         .expect("first normalization should succeed");
     let once = molecule.clone();
     molecule
-        .working_mut()
         .canonicalize_fixture()
         .expect("second normalization should succeed");
 
@@ -235,10 +233,10 @@ fn ambiguous_directional_source_marks_return_a_structured_publication_error() {
         kind: SourceStereoBondMarkKind::DirectionalUp,
     })
     .collect::<Vec<_>>();
-    mark_all_fresh(graph.working_mut());
+    let mut graph = graph.into_unchecked();
+    mark_all_fresh(&mut graph);
     let mut molecule = graph;
     let error = molecule
-        .working_mut()
         .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("same-direction marks on both left carriers are ambiguous");
 
@@ -424,7 +422,6 @@ fn normalization_does_not_invent_large_oxohalogen_charges() {
     for oxo_count in [4, 128] {
         let (mut molecule, chlorine, oxygens, bonds) = oxo_halide(oxo_count);
         molecule
-            .working_mut()
             .canonicalize_fixture()
             .expect("out-of-model chemistry is preserved");
         assert_eq!(molecule.atom(chlorine).unwrap().formal_charge, 0);
@@ -434,8 +431,9 @@ fn normalization_does_not_invent_large_oxohalogen_charges() {
         assert!(bonds
             .iter()
             .all(|&bond| molecule.bond(bond).unwrap().order == BondOrder::Double));
+        let mut molecule = molecule.into_unchecked();
         assert!(valence_api::perceive_valence(
-            molecule.working_mut(),
+            &mut molecule,
             ValenceModel::RdkitLike,
             Default::default()
         )

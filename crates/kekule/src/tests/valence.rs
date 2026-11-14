@@ -481,11 +481,11 @@ fn normalized_aromatic_systems_perceive_valence_before_rings_and_aromaticity() {
     }
 
     let mut radical = read_smiles("c1ccccc1").expect("radical fixture syntax should interpret");
-    {
-        let mut radical_carbon = radical.atom_mut(AtomId::new(0)).expect("radical carbon");
+    crate::tests::edit(&mut radical, |editor| {
+        let mut radical_carbon = editor.atom_mut(AtomId::new(0)).expect("radical carbon");
         radical_carbon.radical = AtomRadical::new(1, Some(2));
         radical_carbon.hydrogens = ImplicitHydrogens::Fixed(0);
-    }
+    });
     assert_aromatic_valence_pipeline_for_molecule(
         "explicitly represented phenyl radical",
         radical,

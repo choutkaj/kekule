@@ -367,7 +367,8 @@ mod tests {
             .expect("atom identifier capacity");
         let degree = usize::from(u16::MAX) + 1;
 
-        let signature = atom_signature(mol.working(), atom, mol.atom(atom).expect("atom"), degree);
+        let mol = mol.into_unchecked();
+        let signature = atom_signature(&mol, atom, mol.atom(atom).expect("atom"), degree);
 
         assert_eq!(signature.degree, degree);
     }
@@ -404,9 +405,10 @@ mod tests {
                 .expect("regular test graph bond");
         }
 
-        let mut ordinary = initial_ranks(mol.working(), &atoms);
+        let mol = mol.into_unchecked();
+        let mut ordinary = initial_ranks(&mol, &atoms);
         for _ in 0..atoms.len() {
-            let refined = refine_ranks(mol.working(), &atoms, &ordinary);
+            let refined = refine_ranks(&mol, &atoms, &ordinary);
             if refined == ordinary {
                 break;
             }
@@ -421,7 +423,7 @@ mod tests {
             1
         );
 
-        let ranking = canonical_atom_ranking(mol.working());
+        let ranking = canonical_atom_ranking(&mol);
         assert_eq!(ranking.rank_count(), 2);
         let mut class_sizes = BTreeMap::<u32, usize>::new();
         for (_, rank) in ranking.iter() {

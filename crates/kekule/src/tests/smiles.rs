@@ -91,7 +91,9 @@ fn smiles_ring_direction_is_relative_to_each_written_endpoint() {
 fn smiles_rejects_directional_projection_that_invents_an_alkene_assertion() {
     let mut mol = read_smiles("F/C=C/C=C/C=C/F").unwrap();
     let middle = mol.stereo_elements().find_map(|(id, element)| matches!(&element.kind, StereoElementKind::DoubleBond(value) if value.bond == BondId::new(3)).then_some(id)).unwrap();
-    mol.remove_stereo_element(middle).unwrap();
+    crate::tests::edit(&mut mol, |editor| {
+        editor.remove_stereo_element(middle).unwrap();
+    });
     perceive(&mut mol).unwrap();
     assert_eq!(mol.stereo_elements().count(), 2);
     assert!(
@@ -831,10 +833,11 @@ fn smiles_document_preserves_spans_and_dot_boundaries_before_interpretation() {
     for component in interpretation.components() {
         assert_eq!(component.molecule().atom_count(), 1);
         assert_eq!(component.molecule().bond_count(), 0);
-        component
-            .molecule()
-            .validate_connected()
-            .expect("each interpreted component is connected");
+        assert_eq!(
+            component.molecule().connected_components().len(),
+            1,
+            "each interpreted component is connected"
+        );
         assert!(component.molecule().perception().valence().is_none());
         assert_eq!(component.report().atom_mappings().len(), 1);
         assert!(component.report().bond_mappings().is_empty());
@@ -1369,74 +1372,87 @@ fn smiles_writer_rejects_lossy_bonds_and_stereo() {
         .add_atom(carbon())
         .expect("atom identifier capacity");
     let bond = molecule.add_bond(a, b, BondOrder::Dative).expect("bond");
-    assert!(smiles_api::write(
-        molecule.working(),
-        smiles_api::SmilesWriteOptions::default()
-    )
-    .expect_err("dative bond should be rejected")
-    .message()
-    .contains("cannot state zero-order or dative bonds"));
+    let mut molecule = molecule.into_unchecked();
+    assert!(
+        smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default())
+            .expect_err("dative bond should be rejected")
+            .message()
+            .contains("cannot state zero-order or dative bonds")
+    );
 
-    molecule
-        .bond_mut(bond)
-        .expect("bond")
-        .set_order(BondOrder::Single);
-    let c = molecule.add_atom(carbon()).expect("third atom");
-    let d = molecule.add_atom(carbon()).expect("fourth atom");
-    molecule.add_bond(a, c, BondOrder::Single).expect("bond");
-    molecule.add_bond(a, d, BondOrder::Single).expect("bond");
-    molecule
-        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
-            TetrahedralStereo {
-                center: a,
-                carriers: [
-                    StereoCarrier::Atom(b),
-                    StereoCarrier::Atom(c),
-                    StereoCarrier::Atom(d),
-                    StereoCarrier::ImplicitHydrogen,
-                ],
-                orientation: Some(TetrahedralOrientation::Clockwise),
-            },
-        )))
-        .expect("atom stereo");
-    assert!(smiles_api::write(
-        molecule.working(),
-        smiles_api::SmilesWriteOptions::default()
-    )
-    .expect_err("atom chirality should be rejected")
-    .message()
-    .contains("stereochemistry"));
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .bond_mut(bond)
+            .expect("bond")
+            .set_order(BondOrder::Single);
+    });
+    let c = crate::tests::edit(&mut molecule, |editor| {
+        editor.add_atom(carbon()).expect("third atom")
+    });
+    let d = crate::tests::edit(&mut molecule, |editor| {
+        editor.add_atom(carbon()).expect("fourth atom")
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .add_bond_unpruned(a, c, BondOrder::Single)
+            .expect("bond");
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .add_bond_unpruned(a, d, BondOrder::Single)
+            .expect("bond");
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+                TetrahedralStereo {
+                    center: a,
+                    carriers: [
+                        StereoCarrier::Atom(b),
+                        StereoCarrier::Atom(c),
+                        StereoCarrier::Atom(d),
+                        StereoCarrier::ImplicitHydrogen,
+                    ],
+                    orientation: Some(TetrahedralOrientation::Clockwise),
+                },
+            )))
+            .expect("atom stereo");
+    });
+    assert!(
+        smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default())
+            .expect_err("atom chirality should be rejected")
+            .message()
+            .contains("stereochemistry")
+    );
 
     let element = molecule
         .stereo_element_ids()
         .next()
         .expect("stereo element");
-    molecule
-        .remove_stereo_element(element)
-        .expect("remove atom stereo");
-    {
-        let mut atom = molecule.atom_mut(a).expect("atom");
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .remove_stereo_element(element)
+            .expect("remove atom stereo");
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        let mut atom = editor.atom_mut(a).expect("atom");
         atom.radical = AtomRadical::new(2, Some(3));
         atom.hydrogens = ImplicitHydrogens::Fixed(1);
-    }
-    assert!(smiles_api::write(
-        molecule.working(),
-        smiles_api::SmilesWriteOptions::default()
-    )
-    .expect_err("ordinary SMILES cannot preserve an explicit spin assertion")
-    .message()
-    .contains("spin multiplicity"));
+    });
+    assert!(
+        smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default())
+            .expect_err("ordinary SMILES cannot preserve an explicit spin assertion")
+            .message()
+            .contains("spin multiplicity")
+    );
 
-    {
-        let mut atom = molecule.atom_mut(a).expect("atom");
+    crate::tests::edit(&mut molecule, |editor| {
+        let mut atom = editor.atom_mut(a).expect("atom");
         atom.radical = AtomRadical::new(1, None);
         atom.hydrogens = ImplicitHydrogens::Fixed(0);
-    }
-    let written = smiles_api::write(
-        molecule.working(),
-        smiles_api::SmilesWriteOptions::default(),
-    )
-    .expect("no-implicit-hydrogen atom should write");
+    });
+    let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default())
+        .expect("no-implicit-hydrogen atom should write");
     assert!(written.contains("[C]"));
     let reparsed = read_smiles(&written).expect("writer output should parse");
     assert!(reparsed
@@ -1766,20 +1782,22 @@ fn isomeric_smiles_materializes_required_tetrahedral_hydrogen_without_mutating_s
             .and_then(|valence| valence.inferred_hydrogen_count(center)),
         Some(1)
     );
-    molecule
-        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
-            TetrahedralStereo {
-                center,
-                carriers: [
-                    StereoCarrier::Atom(AtomId::new(0)),
-                    StereoCarrier::Atom(AtomId::new(2)),
-                    StereoCarrier::Atom(AtomId::new(3)),
-                    StereoCarrier::ImplicitHydrogen,
-                ],
-                orientation: Some(TetrahedralOrientation::Clockwise),
-            },
-        )))
-        .expect("canonical tetrahedral element");
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+                TetrahedralStereo {
+                    center,
+                    carriers: [
+                        StereoCarrier::Atom(AtomId::new(0)),
+                        StereoCarrier::Atom(AtomId::new(2)),
+                        StereoCarrier::Atom(AtomId::new(3)),
+                        StereoCarrier::ImplicitHydrogen,
+                    ],
+                    orientation: Some(TetrahedralOrientation::Clockwise),
+                },
+            )))
+            .expect("canonical tetrahedral element");
+    });
 
     let before = assigned_descriptors(&mut molecule);
     for written in [
@@ -1804,23 +1822,27 @@ fn isomeric_smiles_flips_tetrahedral_marker_for_odd_writer_carrier_order() {
         .stereo_element_ids()
         .next()
         .expect("stereo element");
-    molecule
-        .remove_stereo_element(element)
-        .expect("remove parsed stereo");
-    molecule
-        .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
-            TetrahedralStereo {
-                center: AtomId::new(1),
-                carriers: [
-                    StereoCarrier::Atom(AtomId::new(0)),
-                    StereoCarrier::ImplicitHydrogen,
-                    StereoCarrier::Atom(AtomId::new(3)),
-                    StereoCarrier::Atom(AtomId::new(2)),
-                ],
-                orientation: Some(TetrahedralOrientation::Clockwise),
-            },
-        )))
-        .expect("replacement stereo element");
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .remove_stereo_element(element)
+            .expect("remove parsed stereo");
+    });
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
+                TetrahedralStereo {
+                    center: AtomId::new(1),
+                    carriers: [
+                        StereoCarrier::Atom(AtomId::new(0)),
+                        StereoCarrier::ImplicitHydrogen,
+                        StereoCarrier::Atom(AtomId::new(3)),
+                        StereoCarrier::Atom(AtomId::new(2)),
+                    ],
+                    orientation: Some(TetrahedralOrientation::Clockwise),
+                },
+            )))
+            .expect("replacement stereo element");
+    });
 
     let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
         .expect("tetrahedral stereo should write");
@@ -1853,9 +1875,11 @@ fn isomeric_smiles_accepts_interpreted_source_stereo_and_leaves_unknown_stereo_u
             StereoElementKind::DoubleBond(stereo) => stereo.orientation = None,
             other => panic!("expected tetrahedral or double-bond stereo, found {other:?}"),
         }
-        unknown
-            .replace_stereo_element(element, replacement)
-            .expect("valid replacement");
+        crate::tests::edit(&mut unknown, |editor| {
+            editor
+                .replace_stereo_element(element, replacement)
+                .expect("valid replacement");
+        });
         perceive(&mut unknown).expect("molecule perceives");
         assert_eq!(
             smiles_api::write(&unknown, smiles_api::SmilesWriteOptions::isomeric()).unwrap(),
@@ -1968,14 +1992,12 @@ fn isomeric_smiles_writes_implicit_carrier_double_bond_elements() {
                 },
             )))
             .expect("double-bond stereo");
-        molecule.working_mut().set_inferred_hydrogens(left, 1);
-        molecule.working_mut().set_inferred_hydrogens(right, 1);
+        let mut molecule = molecule.into_unchecked();
+        molecule.set_inferred_hydrogens(left, 1);
+        molecule.set_inferred_hydrogens(right, 1);
 
-        let written = smiles_api::write(
-            molecule.working(),
-            smiles_api::SmilesWriteOptions::isomeric(),
-        )
-        .expect("implicit-carrier stereo should write");
+        let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::isomeric())
+            .expect("implicit-carrier stereo should write");
         assert!(
             written.contains('/') || written.contains('\\'),
             "isomeric output should contain directional marks: {written}"
@@ -2013,11 +2035,8 @@ fn smiles_writer_reuses_ring_labels_after_closure() {
         }
     }
 
-    let written = smiles_api::write(
-        molecule.working(),
-        smiles_api::SmilesWriteOptions::default(),
-    )
-    .unwrap();
+    let molecule = molecule.into_unchecked();
+    let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default()).unwrap();
     let restored = read_smiles(&written).unwrap();
     assert_eq!(restored.atom_count(), molecule.atom_count());
     assert_eq!(restored.bond_count(), molecule.bond_count());

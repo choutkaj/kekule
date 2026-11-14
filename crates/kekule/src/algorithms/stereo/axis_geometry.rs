@@ -6,8 +6,8 @@ use crate::molecule::*;
 /// Source interpretation supplies declared H; coordinate inference supplies
 /// total implicit H. A multiple bond is one ligand direction, while a localized
 /// lone pair adds a domain (notably in sulfoxides and phosphines).
-pub(crate) fn atom_is_atropisomeric_sp2_endpoint(
-    mol: &Molecule,
+pub(crate) fn atom_is_atropisomeric_sp2_endpoint<L: SlotLiveness>(
+    mol: &Graph<L>,
     center: AtomId,
     hydrogens: u8,
 ) -> bool {

@@ -4,8 +4,8 @@ use std::fmt;
 
 use crate::algorithms::StereoViolation;
 use crate::molecule::{
-    canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, ImplicitHydrogens,
-    Molecule, MoleculeError,
+    canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, Graph, ImplicitHydrogens,
+    MoleculeEditor, MoleculeError, SlotLiveness,
 };
 use crate::stereo::StereoElementId;
 
@@ -252,7 +252,7 @@ impl SourceStereoNormalizationError {
 /// canonicalization clears all derived perception state so interpretation
 /// publishes represented chemistry only.
 pub(crate) fn canonicalize_molecule_for_publication(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     geometry: Option<&dyn crate::io::AtomPositionSource>,
     source_stereo: &[SourceStereoBondMark],
 ) -> Result<NormalizationReport, NormalizationError> {
@@ -275,7 +275,7 @@ pub(crate) fn canonicalize_molecule_for_publication(
 /// it here by ID. This keeps source syntax outside [`BondOrder`] while reusing
 /// the deterministic representation-localization rules.
 pub(crate) fn localize_source_aromatic_bonds(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     aromatic_bonds: &BTreeSet<BondId>,
 ) -> Result<(), NormalizationError> {
     for component in source_aromatic_bond_components(molecule, aromatic_bonds) {
@@ -303,7 +303,7 @@ pub(crate) fn localize_source_aromatic_bonds(
 /// that require one additional bond-order unit. They intentionally do not
 /// consult installed perception or any selectable chemical model.
 fn try_localize_aromatic_component_with_limit(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     component: &[AtomId],
     aromatic_bonds: &BTreeSet<BondId>,
     max_matching_states: usize,
@@ -417,26 +417,31 @@ fn try_localize_aromatic_component_with_limit(
     };
 
     let selected_double_bonds = selected_double_bonds.into_iter().collect::<BTreeSet<_>>();
-    for (bond_id, bond) in (0..=u32::MAX)
-        .zip(molecule.graph.bonds.iter_mut())
-        .filter_map(|(raw, bond)| bond.as_mut().map(|bond| (BondId::new(raw), bond)))
-    {
-        if aromatic_bonds.contains(&bond_id)
-            && component_atoms.contains(&bond.a())
-            && component_atoms.contains(&bond.b())
-        {
-            bond.order = if selected_double_bonds.contains(&bond_id) {
-                BondOrder::Double
-            } else {
-                BondOrder::Single
-            };
-        }
+    let component_bonds = molecule
+        .bonds()
+        .filter(|(bond_id, bond)| {
+            aromatic_bonds.contains(bond_id)
+                && component_atoms.contains(&bond.a())
+                && component_atoms.contains(&bond.b())
+        })
+        .map(|(bond_id, _)| bond_id)
+        .collect::<Vec<_>>();
+    let graph = molecule.graph_mut();
+    for bond_id in component_bonds {
+        graph
+            .bond_mut(bond_id)
+            .expect("component bond is live")
+            .order = if selected_double_bonds.contains(&bond_id) {
+            BondOrder::Double
+        } else {
+            BondOrder::Single
+        };
     }
     Ok(true)
 }
 
-fn source_aromatic_bond_components(
-    molecule: &Molecule,
+fn source_aromatic_bond_components<L: SlotLiveness>(
+    molecule: &Graph<L>,
     aromatic_bonds: &BTreeSet<BondId>,
 ) -> Vec<Vec<AtomId>> {
     let mut adjacency = BTreeMap::<AtomId, Vec<AtomId>>::new();
@@ -551,14 +556,14 @@ mod tests {
                     .unwrap()
             })
             .collect::<BTreeSet<_>>();
-        let component = source_aromatic_bond_components(molecule.working(), &aromatic_bonds)
+        let component = source_aromatic_bond_components(&molecule, &aromatic_bonds)
             .into_iter()
             .next()
             .expect("imported aromatic component");
         let before = molecule.clone();
 
         let error = try_localize_aromatic_component_with_limit(
-            molecule.working_mut(),
+            &mut molecule,
             &component,
             &aromatic_bonds,
             0,
