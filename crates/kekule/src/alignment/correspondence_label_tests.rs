@@ -215,7 +215,7 @@ fn labels_naming_several_atoms_are_refused_by_name() {
     let error =
         AtomCorrespondence::from_labels(&all(&moving), &all(&reference), LabelScheme::Author)
             .unwrap_err();
-    let AtomCorrespondenceError::AmbiguousLabels { side, labels } = &error else {
+    let AlignmentError::AmbiguousLabels { side, labels } = &error else {
         panic!("{error:?}");
     };
     assert_eq!(*side, CorrespondenceSide::Moving);
@@ -239,7 +239,7 @@ fn labels_naming_several_atoms_are_refused_by_name() {
             .unwrap_err();
     assert!(matches!(
         error,
-        AtomCorrespondenceError::AmbiguousLabels {
+        AlignmentError::AmbiguousLabels {
             side: CorrespondenceSide::Reference,
             ..
         }

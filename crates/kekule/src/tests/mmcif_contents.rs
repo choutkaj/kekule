@@ -9,7 +9,7 @@ use crate::macromolecular::{
 };
 use crate::math::Point3;
 use crate::mmcif::{
-    self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteIssue, MmcifWriteOptions,
+    self, MmcifEntityClassifications, MmcifParseOptions, MmcifWriteErrorKind, MmcifWriteOptions,
 };
 use crate::molecule::{Atom, AtomId, BondOrder, Element};
 use crate::properties::{PropertyColumn, PropertyKey};
@@ -2279,7 +2279,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .unwrap();
     assert!(matches!(
         mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::structure(interpreted.structure()).with_classifications(&conflicting)], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(MmcifWriteIssue::ConflictingAsymEntityClassifications {
+        Some(MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
             asym_id,
             ..
         }) if asym_id == "A"
@@ -2289,7 +2289,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
     contradictory_report.instances[1].atoms[0].entity_id = Some("8".to_owned());
     assert!(matches!(
         mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::structure(interpreted.structure()).with_reports(std::slice::from_ref(&contradictory_report))], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(MmcifWriteIssue::ConflictingAsymEntityIds { asym_id, .. })
+        Some(MmcifWriteErrorKind::ConflictingAsymEntityIds { asym_id, .. })
             if asym_id == "A"
     ));
 }
@@ -2309,7 +2309,7 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::UnsupportedBondOrder {
+        Some(MmcifWriteErrorKind::UnsupportedBondOrder {
             order: BondOrder::Zero,
             ..
         })
@@ -2456,7 +2456,7 @@ fn mmcif_writer_rejects_ambiguous_atom_identity() {
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::DuplicateAtomIdentity(_))
+        Some(MmcifWriteErrorKind::DuplicateAtomIdentity(_))
     ));
 }
 
@@ -2587,10 +2587,12 @@ fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
             mmcif_issue(
                 mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)
             ),
-            Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
-                molecule,
-                classification: MoleculeClass::Carbohydrate,
-            })
+            Some(
+                MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
+                    molecule,
+                    classification: MoleculeClass::Carbohydrate,
+                }
+            )
         );
     }
 }
@@ -2606,10 +2608,12 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
     assert_eq!(molecule.residues().count(), 3);
     assert!(matches!(
         mmcif_issue(mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
-            classification: MoleculeClass::Carbohydrate,
-            ..
-        })
+        Some(
+            MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
+                classification: MoleculeClass::Carbohydrate,
+                ..
+            }
+        )
     ));
 
     let written = mmcif::write(
@@ -2629,7 +2633,7 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
     let report = report_with_entity_kinds(&structure, &[EntityKind::Polymer, EntityKind::Branched]);
     assert!(matches!(
         mmcif_issue(mmcif::write([mmcif::MmcifBlockSource::structure(&structure).with_reports(std::slice::from_ref(&report))], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(MmcifWriteIssue::ConflictingEntityClassifications {
+        Some(MmcifWriteErrorKind::ConflictingEntityClassifications {
             molecule: conflicted,
             ..
         }) if conflicted == molecule
@@ -2645,7 +2649,7 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::MissingEntityClassification(molecule))
+        Some(MmcifWriteErrorKind::MissingEntityClassification(molecule))
     );
 
     let report = report_with_entity_kinds(
@@ -2661,7 +2665,7 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::UnsupportedEntityClassification {
+        Some(MmcifWriteErrorKind::UnsupportedEntityClassification {
             molecule,
             classification: "unsupported-kind".to_owned(),
         })
@@ -2678,14 +2682,14 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::DuplicateEntityClassification(molecule))
+        Some(MmcifWriteErrorKind::DuplicateEntityClassification(molecule))
     );
 
     let mut duplicate = MmcifEntityClassifications::new();
     duplicate.insert(molecule, EntityKind::Branched).unwrap();
     assert_eq!(
         mmcif_issue(duplicate.insert(molecule, EntityKind::Polymer)),
-        Some(MmcifWriteIssue::DuplicateEntityClassification(molecule))
+        Some(MmcifWriteErrorKind::DuplicateEntityClassification(molecule))
     );
 
     let unknown = MoleculeInstanceId::new(u32::MAX);
@@ -2702,7 +2706,7 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::UnknownClassifiedMolecule(unknown))
+        Some(MmcifWriteErrorKind::UnknownClassifiedMolecule(unknown))
     );
 }
 
@@ -2730,7 +2734,7 @@ fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
             )
             .map(|(text, _)| text)
         ),
-        Some(MmcifWriteIssue::ConflictingAsymEntityClassifications { .. })
+        Some(MmcifWriteErrorKind::ConflictingAsymEntityClassifications { .. })
     ));
 }
 

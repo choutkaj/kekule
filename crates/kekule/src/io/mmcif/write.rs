@@ -1,7 +1,8 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
 use crate::diagnostics::{
-    counted, Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
+    Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::macromolecular::{
     EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
@@ -60,7 +61,7 @@ impl MmcifWriteOptions {
     ///
     /// # Errors
     ///
-    /// A write [`FormatError`] with [`MmcifWriteIssue::InvalidBlockName`]
+    /// A write [`FormatError`] with [`MmcifWriteErrorKind::InvalidBlockName`]
     /// unless the name is a nonempty run of ASCII letters, digits, `_`, `-`
     /// and `.`.
     pub fn with_block_name(mut self, block_name: impl Into<String>) -> Result<Self, FormatError> {
@@ -81,13 +82,13 @@ impl MmcifWriteOptions {
     /// # Errors
     ///
     /// A write [`FormatError`] with
-    /// [`MmcifWriteIssue::CoordinatePrecisionTooLarge`] above 15 digits.
+    /// [`MmcifWriteErrorKind::CoordinatePrecisionTooLarge`] above 15 digits.
     pub fn with_coordinate_precision(
         mut self,
         coordinate_precision: usize,
     ) -> Result<Self, FormatError> {
         if coordinate_precision > MAX_COORDINATE_PRECISION {
-            return Err(fail(MmcifWriteIssue::CoordinatePrecisionTooLarge(
+            return Err(fail(MmcifWriteErrorKind::CoordinatePrecisionTooLarge(
                 coordinate_precision,
             )));
         }
@@ -188,7 +189,7 @@ impl Default for MmcifWriteOptions {
 /// [`FormatErrorDetail::MmcifWrite`](crate::diagnostics::FormatErrorDetail::MmcifWrite).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MmcifWriteIssue {
+pub enum MmcifWriteErrorKind {
     /// [`MmcifWriteOptions::block_name`] or
     /// [`MmcifBlockSource::block_name`] is empty or not a valid data block
     /// name.
@@ -305,12 +306,7 @@ pub enum MmcifWriteIssue {
     },
     /// The number of interpretation reports does not match the number of
     /// structures written.
-    ReportCountMismatch {
-        /// The number of structures.
-        expected: usize,
-        /// The number of reports.
-        actual: usize,
-    },
+    ReportCountMismatch(LengthMismatch),
     /// The 1-based geometry `geometry` differs from the first geometry in state
     /// one mmCIF block shares between models.
     IncompatibleGeometry {
@@ -338,7 +334,7 @@ pub enum MmcifWriteIssue {
     },
 }
 
-/// Atom state named by an [`MmcifWriteIssue`].
+/// Atom state named by an [`MmcifWriteErrorKind`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MmcifAtomField {
@@ -383,7 +379,7 @@ impl fmt::Display for MmcifAtomField {
     }
 }
 
-/// Geometry state named by [`MmcifWriteIssue::IncompatibleGeometry`].
+/// Geometry state named by [`MmcifWriteErrorKind::IncompatibleGeometry`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MmcifGeometryField {
@@ -435,7 +431,7 @@ impl fmt::Display for MmcifCellReason {
     }
 }
 
-impl MmcifWriteIssue {
+impl MmcifWriteErrorKind {
     /// The diagnostic kind of a write error with this detail.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
@@ -468,13 +464,13 @@ impl MmcifWriteIssue {
             | Self::MissingAtomProvenance(_)
             | Self::DuplicateAtomProvenance(_)
             | Self::EmptyStructureSet
-            | Self::ReportCountMismatch { .. }
+            | Self::ReportCountMismatch(_)
             | Self::IncompatibleGeometry { .. } => DiagnosticKind::Inconsistent,
         }
     }
 }
 
-impl fmt::Display for MmcifWriteIssue {
+impl fmt::Display for MmcifWriteErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBlockName(name) => write!(
@@ -604,12 +600,7 @@ impl fmt::Display for MmcifWriteIssue {
             Self::UnsupportedTextValue { item } => {
                 write!(f, "A value of {item} does not fit one mmCIF token.")
             }
-            Self::ReportCountMismatch { expected, actual } => write!(
-                f,
-                "The block has {} and {}.",
-                counted(*expected, "structure", "structures"),
-                counted(*actual, "interpretation report", "interpretation reports")
-            ),
+            Self::ReportCountMismatch(error) => error.fmt(f),
             Self::IncompatibleGeometry { geometry, field } => write!(
                 f,
                 "Geometry {geometry} has a different {field} from the first geometry."
@@ -684,7 +675,7 @@ pub(in crate::io) fn bond_order_name(order: BondOrder) -> &'static str {
     }
 }
 
-/// Fails with [`MmcifWriteIssue::InvalidBlockName`] unless `name` is a
+/// Fails with [`MmcifWriteErrorKind::InvalidBlockName`] unless `name` is a
 /// nonempty run of ASCII letters, digits, `_`, `-` and `.`.
 fn validate_block_name(name: &str) -> Result<(), FormatError> {
     if name.is_empty()
@@ -692,13 +683,13 @@ fn validate_block_name(name: &str) -> Result<(), FormatError> {
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || "_-.".contains(character))
     {
-        return Err(fail(MmcifWriteIssue::InvalidBlockName(name.to_owned())));
+        return Err(fail(MmcifWriteErrorKind::InvalidBlockName(name.to_owned())));
     }
     Ok(())
 }
 
 /// The write error carrying `issue` as its detail.
-pub(super) fn fail(issue: MmcifWriteIssue) -> FormatError {
+pub(super) fn fail(issue: MmcifWriteErrorKind) -> FormatError {
     FormatError::write(Format::Mmcif, issue.kind(), issue.to_string())
         .with_detail(FormatErrorDetail::MmcifWrite(issue))
 }
@@ -736,7 +727,7 @@ impl MmcifEntityClassifications {
     /// # Errors
     ///
     /// A write [`FormatError`] with
-    /// [`MmcifWriteIssue::DuplicateEntityClassification`] when the instance
+    /// [`MmcifWriteErrorKind::DuplicateEntityClassification`] when the instance
     /// already has a kind; the collection is unchanged.
     pub fn insert(
         &mut self,
@@ -744,7 +735,7 @@ impl MmcifEntityClassifications {
         kind: EntityKind,
     ) -> Result<(), FormatError> {
         if self.kinds.contains_key(&molecule) {
-            return Err(fail(MmcifWriteIssue::DuplicateEntityClassification(
+            return Err(fail(MmcifWriteErrorKind::DuplicateEntityClassification(
                 molecule,
             )));
         }
@@ -883,11 +874,11 @@ impl<'a> MmcifBlockSource<'a> {
     /// Blocks of one write must have different names, compared
     /// case-insensitively, including the names the options give unnamed
     /// blocks; a clash fails the write with
-    /// [`MmcifWriteIssue::DuplicateBlockName`] before anything is written.
+    /// [`MmcifWriteErrorKind::DuplicateBlockName`] before anything is written.
     ///
     /// # Errors
     ///
-    /// A write [`FormatError`] with [`MmcifWriteIssue::InvalidBlockName`]
+    /// A write [`FormatError`] with [`MmcifWriteErrorKind::InvalidBlockName`]
     /// unless the name is a nonempty run of ASCII letters, digits, `_`, `-`
     /// and `.`.
     pub fn with_block_name(mut self, block_name: &'a str) -> Result<Self, FormatError> {
@@ -974,7 +965,9 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
         .iter()
         .find(|name| !seen.insert(name.to_ascii_lowercase()))
     {
-        return Err(fail(MmcifWriteIssue::DuplicateBlockName(duplicate.clone())));
+        return Err(fail(MmcifWriteErrorKind::DuplicateBlockName(
+            duplicate.clone(),
+        )));
     }
     for (block, block_name) in blocks.into_iter().zip(names) {
         let block_options = MmcifWriteOptions {
@@ -992,7 +985,7 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
                     .collect::<Vec<_>>();
                 let record_state = |state: &mut Omissions| {
                     let unrepresentable = |(geometry, field)| {
-                        fail(MmcifWriteIssue::UnrepresentableGeometry { geometry, field })
+                        fail(MmcifWriteErrorKind::UnrepresentableGeometry { geometry, field })
                     };
                     record_multi_model_structure_set(set, options.geometry_metadata, state)
                         .map_err(unrepresentable)?;
@@ -1003,7 +996,7 @@ pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
                     writer,
                     &views,
                     record_state,
-                    MmcifWriteIssue::EmptyStructureSet,
+                    MmcifWriteErrorKind::EmptyStructureSet,
                     block.entities,
                     &block_options,
                     &mut omissions,
@@ -1025,10 +1018,9 @@ fn write_model_block_to(
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
-                return Err(fail(MmcifWriteIssue::ReportCountMismatch {
-                    expected: 1,
-                    actual: reports.len(),
-                }));
+                return Err(fail(MmcifWriteErrorKind::ReportCountMismatch(
+                    LengthMismatch::new(Countable::Report, 1, reports.len()),
+                )));
             };
             entity_plan_from_report(view, report)?
         }
@@ -1092,7 +1084,7 @@ fn block_cell<'a>(
     };
     match (parameters, policy) {
         (Err(reason), UnrepresentablePolicy::Fail) => {
-            Err(fail(MmcifWriteIssue::UnrepresentableCell { reason }))
+            Err(fail(MmcifWriteErrorKind::UnrepresentableCell { reason }))
         }
         (Err(_), UnrepresentablePolicy::Omit) => Ok(None),
         (Ok(parameters), _) => Ok(parameters),
@@ -1107,7 +1099,7 @@ fn write_multi_model_block_to(
     writer: &mut impl Write,
     views: &[StructureView<'_>],
     record_state: impl FnOnce(&mut Omissions) -> Result<(), FormatError>,
-    empty: MmcifWriteIssue,
+    empty: MmcifWriteErrorKind,
     entities: EntitySemantics<'_>,
     options: &MmcifWriteOptions,
     omissions: &mut Omissions,
@@ -1117,10 +1109,9 @@ fn write_multi_model_block_to(
         EntitySemantics::Classifications(classifications) => (Some(classifications), None),
         EntitySemantics::Reports(reports) => {
             if reports.len() != views.len() {
-                return Err(fail(MmcifWriteIssue::ReportCountMismatch {
-                    expected: views.len(),
-                    actual: reports.len(),
-                }));
+                return Err(fail(MmcifWriteErrorKind::ReportCountMismatch(
+                    LengthMismatch::new(Countable::Report, views.len(), reports.len()),
+                )));
             }
             (None, Some(reports))
         }

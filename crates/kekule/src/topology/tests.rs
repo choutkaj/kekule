@@ -1,5 +1,6 @@
 use super::builder::{checked_future_len, checked_id, TopologyHierarchyError};
 use super::*;
+use crate::diagnostics::{CapacityExceeded, Countable, TopologyMismatch};
 use std::sync::Arc;
 
 use crate::molecule::{Atom, BondOrder, Element};
@@ -529,7 +530,9 @@ fn property_edits_and_clones_keep_layout_identity_while_publication_mints_one() 
     assert!(republished.same_layout(&source));
     assert_eq!(
         selection.ensure_compatible(&republished),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 
@@ -790,10 +793,10 @@ fn builder_is_transactional_and_does_not_intern_equal_definitions() {
     assert_eq!(topology.definition_count(), 2);
     assert_eq!(topology.instance_count(), 2);
     assert_eq!(
-        checked_future_len(usize::MAX, 1, TopologyIdKind::Atom),
-        Err(TopologyBuildError::IdentifierCapacityExceeded(
-            TopologyIdKind::Atom
-        ))
+        checked_future_len(usize::MAX, 1, Countable::Atom),
+        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Atom
+        )))
     );
 }
 
@@ -804,41 +807,38 @@ fn every_topology_identifier_space_checks_its_boundary() {
     let first_unsupported_slot = usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
 
     assert_eq!(
-        checked_id::<MoleculeDefinitionId>(max_slot, TopologyIdKind::MoleculeDefinition,),
+        checked_id::<MoleculeDefinitionId>(max_slot, Countable::MoleculeDefinition,),
         Ok(MoleculeDefinitionId::new(u32::MAX))
     );
     assert_eq!(
-        checked_id::<MoleculeDefinitionId>(
-            first_unsupported_slot,
-            TopologyIdKind::MoleculeDefinition,
-        ),
-        Err(TopologyBuildError::IdentifierCapacityExceeded(
-            TopologyIdKind::MoleculeDefinition
-        ))
+        checked_id::<MoleculeDefinitionId>(first_unsupported_slot, Countable::MoleculeDefinition,),
+        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+            Countable::MoleculeDefinition
+        )))
     );
     assert_eq!(
-        checked_id::<MoleculeInstanceId>(first_unsupported_slot, TopologyIdKind::MoleculeInstance,),
-        Err(TopologyBuildError::IdentifierCapacityExceeded(
-            TopologyIdKind::MoleculeInstance
-        ))
+        checked_id::<MoleculeInstanceId>(first_unsupported_slot, Countable::MoleculeInstance,),
+        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+            Countable::MoleculeInstance
+        )))
     );
     assert_eq!(
-        checked_id::<TopologyAtomIndex>(first_unsupported_slot, TopologyIdKind::Atom,),
-        Err(TopologyBuildError::IdentifierCapacityExceeded(
-            TopologyIdKind::Atom
-        ))
+        checked_id::<TopologyAtomIndex>(first_unsupported_slot, Countable::Atom,),
+        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Atom
+        )))
     );
     assert_eq!(
-        checked_id::<TopologyBondIndex>(first_unsupported_slot, TopologyIdKind::Bond,),
-        Err(TopologyBuildError::IdentifierCapacityExceeded(
-            TopologyIdKind::Bond
-        ))
+        checked_id::<TopologyBondIndex>(first_unsupported_slot, Countable::Bond,),
+        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Bond
+        )))
     );
     assert_eq!(
-        checked_future_len(first_unsupported_slot, 1, TopologyIdKind::Atom),
-        Err(TopologyBuildError::IdentifierCapacityExceeded(
-            TopologyIdKind::Atom
-        ))
+        checked_future_len(first_unsupported_slot, 1, Countable::Atom),
+        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Atom
+        )))
     );
 }
 
@@ -887,7 +887,9 @@ fn selections_distinguish_instances_elements_and_queries() {
     let independent = Arc::new(independent_builder.build().unwrap());
     assert_eq!(
         selected.ensure_compatible(&independent),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 

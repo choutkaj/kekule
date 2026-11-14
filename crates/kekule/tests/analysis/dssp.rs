@@ -1,4 +1,4 @@
-use kekule::diagnostics::{LimitExceeded, Resource};
+use kekule::diagnostics::{LimitExceeded, Resource, TopologyMismatch};
 use kekule::dssp::{
     self, DsspChainBreak, DsspError, DsspLimits, DsspOptions, DsspSecondaryStructure,
 };
@@ -194,8 +194,8 @@ fn dssp_codes_cover_the_complete_dssp4_alphabet() {
         DsspSecondaryStructure::Loop
     );
     assert_eq!(
-        DsspSecondaryStructure::try_from('X').unwrap_err().code(),
-        'X'
+        DsspSecondaryStructure::try_from('X').unwrap_err(),
+        DsspError::InvalidCode { code: 'X' }
     );
 }
 
@@ -701,11 +701,14 @@ fn dssp_plan_rejects_structures_of_another_layout() {
     let copy = adenylate_kinase_structure();
     assert!(copy.topology().same_layout(structure.topology()));
     for other in [copy, crambin_structure()] {
-        assert_eq!(plan.assign(&other), Err(DsspError::TopologyMismatch));
+        assert_eq!(
+            plan.assign(&other),
+            Err(DsspError::TopologyMismatch(TopologyMismatch::Structure))
+        );
     }
     assert_eq!(
-        DsspError::TopologyMismatch.to_string(),
-        "The structure's topology layout differs from the DSSP plan's."
+        DsspError::TopologyMismatch(TopologyMismatch::Structure).to_string(),
+        "The structure has a different topology layout."
     );
 }
 

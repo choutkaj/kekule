@@ -4,6 +4,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::diagnostics::TopologyMismatch;
 use crate::math::{Point3, Vector3};
 use crate::topology::{SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
@@ -16,9 +17,10 @@ use super::{HydrogenBondCriteria, InteractionCriterion};
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum InteractionError {
-    /// A structure or selection does not share its features' topology
-    /// layout.
-    TopologyMismatch,
+    /// A structure ([`TopologyMismatch::Structure`]) or selection
+    /// ([`TopologyMismatch::Selection`]) does not share its features'
+    /// topology layout.
+    TopologyMismatch(TopologyMismatch),
     /// An atom selection is invalid. It displays as the selection error.
     Selection(SelectionError),
     /// A criterion is not a finite, nonnegative length, or an angle between
@@ -54,9 +56,7 @@ pub enum InteractionError {
 impl fmt::Display for InteractionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => f.write_str(
-                "The structure or selection has a different topology layout from the features.",
-            ),
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::Selection(error) => write!(f, "{error}"),
             Self::InvalidCriterion(criterion) if criterion.is_angle() => {
                 write!(f, "The {criterion} is not between 0 and 180°.")

@@ -1,5 +1,6 @@
 //! The geometric search of one structure, or two.
 
+use crate::diagnostics::TopologyMismatch;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -45,10 +46,15 @@ impl<'a> InteractionSide<'a> {
         atoms: &'a AtomSelection,
     ) -> Result<Self, InteractionError> {
         let structure = structure.as_structure_view();
-        if !structure.topology().shares_layout(features.topology())
-            || !atoms.topology().shares_layout(features.topology())
-        {
-            return Err(InteractionError::TopologyMismatch);
+        if !structure.topology().shares_layout(features.topology()) {
+            return Err(InteractionError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
+        }
+        if !atoms.topology().shares_layout(features.topology()) {
+            return Err(InteractionError::TopologyMismatch(
+                TopologyMismatch::Selection,
+            ));
         }
         Ok(Self {
             features,

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use super::{Lattice, LatticeError, Point3};
+use super::{Lattice, PeriodicCellError, Point3};
 
 /// A grid cell, by its integer coordinates along each axis.
 pub(crate) type Cell = (i64, i64, i64);
@@ -284,12 +284,12 @@ impl<T: Copy> PointGrid<T> {
     /// coordinate by at most one bin. A skewed cell still needs exact
     /// nearest-image measurement of the candidates.
     ///
-    /// Fails with [`LatticeError::NumericalFailure`] for a cutoff that is not
+    /// Fails with [`PeriodicCellError::NumericalFailure`] for a cutoff that is not
     /// positive or bins that are not finite.
-    pub(crate) fn periodic(lattice: &Lattice, cutoff: f64) -> Result<Self, LatticeError> {
+    pub(crate) fn periodic(lattice: &Lattice, cutoff: f64) -> Result<Self, PeriodicCellError> {
         let spans = lattice.reciprocal_norms().map(|norm| norm * cutoff);
         if cutoff <= 0.0 || spans.iter().any(|span| !span.is_finite() || *span <= 0.0) {
-            return Err(LatticeError::NumericalFailure);
+            return Err(PeriodicCellError::NumericalFailure);
         }
         let bins = spans.map(|span| {
             (1.0 / (span * (1.0 + 128.0 * f64::EPSILON)))
@@ -308,9 +308,9 @@ impl<T: Copy> PointGrid<T> {
 
     /// Adds `point` to a periodic grid, after the points already there.
     ///
-    /// Fails with [`LatticeError::NumericalFailure`] when its fractional
+    /// Fails with [`PeriodicCellError::NumericalFailure`] when its fractional
     /// coordinates are not finite or too large to wrap exactly.
-    pub(crate) fn insert(&mut self, point: Point3, payload: T) -> Result<(), LatticeError> {
+    pub(crate) fn insert(&mut self, point: Point3, payload: T) -> Result<(), PeriodicCellError> {
         let cell = self.locate(&point)?;
         let Index::Lists(lists) = &mut self.index else {
             unreachable!("only a periodic grid grows a point at a time");
@@ -341,7 +341,7 @@ impl<T: Copy> PointGrid<T> {
         self.locate(point).ok()
     }
 
-    fn locate(&self, point: &Point3) -> Result<Cell, LatticeError> {
+    fn locate(&self, point: &Point3) -> Result<Cell, PeriodicCellError> {
         match &self.space {
             Space::Open { low, scale, .. } => Ok(open_cell(*low, *scale, point)),
             Space::Periodic { lattice, bins } => {
@@ -350,7 +350,7 @@ impl<T: Copy> PointGrid<T> {
                     .iter()
                     .any(|value| value.abs() >= 2.0_f64.powi(48))
                 {
-                    return Err(LatticeError::NumericalFailure);
+                    return Err(PeriodicCellError::NumericalFailure);
                 }
                 let axis = |axis: usize| {
                     ((fractional[axis].rem_euclid(1.0) * bins[axis] as f64).floor() as i64)
@@ -499,9 +499,9 @@ impl<T: Copy> PointGrid<T> {
     /// Whether `test` holds for a point around `candidate`, passing the
     /// points to it in grid order until it does or fails.
     ///
-    /// Fails as `test` does, or with [`LatticeError::NumericalFailure`]
+    /// Fails as `test` does, or with [`PeriodicCellError::NumericalFailure`]
     /// when a periodic grid cannot wrap `candidate`.
-    pub(crate) fn try_any_near<E: From<LatticeError>>(
+    pub(crate) fn try_any_near<E: From<PeriodicCellError>>(
         &self,
         candidate: &Point3,
         test: impl FnMut(&Point3, T) -> Result<bool, E>,
@@ -1008,7 +1008,7 @@ mod tests {
                         .try_any_near(&query, |point, index| {
                             assert_eq!(*point, points[index]);
                             visited.push(index);
-                            Ok::<_, LatticeError>(false)
+                            Ok::<_, PeriodicCellError>(false)
                         })
                         .unwrap();
                     assert!(!found);
@@ -1039,7 +1039,7 @@ mod tests {
                             if hit {
                                 stopped = Some(index);
                             }
-                            Ok::<_, LatticeError>(hit)
+                            Ok::<_, PeriodicCellError>(hit)
                         })
                         .unwrap();
                     assert_eq!(any, first.is_some());
@@ -1054,19 +1054,19 @@ mod tests {
         let lattice = lattices().remove(0);
         assert_eq!(
             PointGrid::<()>::periodic(&lattice, 0.0).unwrap_err(),
-            LatticeError::NumericalFailure
+            PeriodicCellError::NumericalFailure
         );
         let mut grid = PointGrid::periodic(&lattice, 0.5).unwrap();
         let far = Point3::new(1.0e20, 0.0, 0.0);
         assert_eq!(
             grid.insert(far, ()).unwrap_err(),
-            LatticeError::NumericalFailure
+            PeriodicCellError::NumericalFailure
         );
         assert!(grid.is_empty());
         grid.insert(Point3::origin(), ()).unwrap();
         assert_eq!(
-            grid.try_any_near(&far, |_, ()| Ok::<_, LatticeError>(true)),
-            Err(LatticeError::NumericalFailure)
+            grid.try_any_near(&far, |_, ()| Ok::<_, PeriodicCellError>(true)),
+            Err(PeriodicCellError::NumericalFailure)
         );
         assert!(!grid.any_near(&far, |_, ()| true));
         assert!(grid.any_near(&Point3::new(0.1, 0.0, 0.0), |_, ()| true));

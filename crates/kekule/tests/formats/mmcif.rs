@@ -154,7 +154,7 @@ duplicate covale A C1 A C2 {order}
 fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std::error::Error>> {
     use kekule::macromolecular::{self, EntityKind, StructureInterpretOptions};
     use kekule::mmcif::{
-        self, MmcifBlock, MmcifEntityClassifications, MmcifWriteIssue, MmcifWriteOptions,
+        self, MmcifBlock, MmcifEntityClassifications, MmcifWriteErrorKind, MmcifWriteOptions,
     };
 
     let document = mmcif::parse_str(MINIMAL_MMCIF, Default::default())?;
@@ -325,7 +325,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert_eq!(
         unnamed.detail(),
         Some(&kekule::diagnostics::FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::InvalidBlockName(String::new())
+            MmcifWriteErrorKind::InvalidBlockName(String::new())
         ))
     );
     let automatic = mmcif::write([interpreted.structure()], MmcifWriteOptions::default())

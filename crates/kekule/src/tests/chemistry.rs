@@ -244,8 +244,8 @@ fn failed_default_valence_perception_is_transactional() {
 
     assert!(matches!(
         error,
-        perception_api::PerceptionError::Valence(ValenceError { issues })
-            if matches!(issues.as_slice(), [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon)
+        perception_api::PerceptionError::Valence(ValenceError { violations: issues })
+            if matches!(issues.as_slice(), [ValenceViolation::ValenceExceeded { atom, .. }] if *atom == carbon)
     ));
     assert_eq!(molecule, before);
 }
@@ -350,7 +350,7 @@ fn valence_reports_excess_common_valence() {
     )
     .expect_err("pentavalent carbon should fail strict perception");
 
-    assert_eq!(error.issues.len(), 1);
+    assert_eq!(error.violations.len(), 1);
 
     valence_api::perceive_valence(
         mol.working_mut(),
@@ -410,8 +410,8 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
     .expect_err("pentavalent carbon should fail strict perception");
 
     assert!(matches!(
-        error.issues.as_slice(),
-        [ValenceIssue::ValenceExceeded { atom, .. }] if *atom == carbon
+        error.violations.as_slice(),
+        [ValenceViolation::ValenceExceeded { atom, .. }] if *atom == carbon
     ));
     assert_eq!(mol.perception(), &previous);
     assert_eq!(
@@ -481,8 +481,8 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
     .expect_err("high-degree carbon should fail strict perception");
 
     assert_eq!(
-        error.issues,
-        vec![ValenceIssue::ValenceExceeded {
+        error.violations,
+        vec![ValenceViolation::ValenceExceeded {
             atom: carbon,
             explicit_valence: 300,
             max_allowed: 4,
@@ -584,8 +584,8 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
         .expect_err("excess hypervalent anion valence should fail");
         assert!(
             matches!(
-                rejected_error.issues.as_slice(),
-                [ValenceIssue::ValenceOccupancyExceeded { atom, .. }] if *atom == rejected_center
+                rejected_error.violations.as_slice(),
+                [ValenceViolation::ValenceOccupancyExceeded { atom, .. }] if *atom == rejected_center
             ),
             "{symbol}{charge:+} valence {rejected}"
         );

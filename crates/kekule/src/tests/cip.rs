@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::UnknownHydrogenCount;
 use std::num::NonZeroU16;
 
 fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
@@ -320,8 +321,8 @@ fn cip_default_depth_resolves_a_remote_constitutional_difference() {
     )
     .expect_err("the distinguishing atom is beyond depth 32");
     assert!(matches!(
-        error.issues.as_slice(),
-        [CipAssignmentIssue::LimitExceeded { element, limit }]
+        error.failures.as_slice(),
+        [CipAssignmentFailure::LimitExceeded { element, limit }]
             if *element == StereoElementId::new(0)
                 && limit.resource() == crate::diagnostics::Resource::DigraphDepth
                 && limit.limit() == 32
@@ -362,8 +363,8 @@ fn cip_stops_at_the_first_distinguishing_shell_within_the_node_budget() {
         )
         .expect_err("the first distinguishing shell must fit in its entirety");
         assert!(matches!(
-            error.issues.as_slice(),
-            [CipAssignmentIssue::LimitExceeded { element, limit }]
+            error.failures.as_slice(),
+            [CipAssignmentFailure::LimitExceeded { element, limit }]
                 if *element == StereoElementId::new(0)
                     && limit.resource() == crate::diagnostics::Resource::DigraphNodes
                     && limit.limit() == 9
@@ -385,8 +386,8 @@ fn cip_depth_limit_cannot_promote_isotope_rule_or_claim_nonstereogenicity() {
         )
         .expect_err("a truncated constitutional tie cannot be resolved");
         assert!(matches!(
-            error.issues.as_slice(),
-            [CipAssignmentIssue::LimitExceeded { element, limit }]
+            error.failures.as_slice(),
+            [CipAssignmentFailure::LimitExceeded { element, limit }]
                 if *element == StereoElementId::new(0)
                     && limit.resource() == crate::diagnostics::Resource::DigraphDepth
                     && limit.limit() == 0
@@ -1860,11 +1861,11 @@ fn cip_requires_known_implicit_hydrogen_counts() {
             assert_eq!(
                 stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()),
                 Err(CipAssignmentError {
-                    issues: unknown
+                    failures: unknown
                         .iter()
-                        .map(|&atom| CipAssignmentIssue::UnknownHydrogenCount {
-                            atom: AtomId::new(atom),
-                        })
+                        .map(|&atom| CipAssignmentFailure::UnknownHydrogenCount(
+                            UnknownHydrogenCount::new(AtomId::new(atom)),
+                        ))
                         .collect(),
                 }),
                 "{source}"
@@ -1892,8 +1893,8 @@ fn failed_cip_resource_limit_restores_previous_stereo_section() {
     .expect_err("the constrained reassignment should fail");
 
     assert!(matches!(
-        error.issues.as_slice(),
-        [CipAssignmentIssue::LimitExceeded { element, limit }]
+        error.failures.as_slice(),
+        [CipAssignmentFailure::LimitExceeded { element, limit }]
             if *element == StereoElementId::new(0)
                 && limit.resource() == crate::diagnostics::Resource::DigraphNodes
                 && limit.limit() == 1
@@ -1948,8 +1949,8 @@ fn failed_mixed_cip_attempt_publishes_no_partial_assignments() {
     let error = stereo_api::cip::assign_cip_descriptors(&mut molecule, options)
         .expect_err("the later center should exceed the resource limit");
     assert!(matches!(
-        error.issues.as_slice(),
-        [CipAssignmentIssue::LimitExceeded { element, limit }]
+        error.failures.as_slice(),
+        [CipAssignmentFailure::LimitExceeded { element, limit }]
             if *element == StereoElementId::new(1)
                 && limit.resource() == crate::diagnostics::Resource::DigraphNodes
                 && limit.limit() == 1
@@ -2002,9 +2003,9 @@ fn failed_cip_validation_preserves_previous_stereo_section() {
         .expect_err("invalid stored stereo should reject CIP assignment");
 
     assert!(error
-        .issues
+        .failures
         .iter()
-        .all(|issue| matches!(issue, CipAssignmentIssue::InvalidStereo { .. })));
+        .all(|issue| matches!(issue, CipAssignmentFailure::InvalidStereo { .. })));
     assert_eq!(installed_cip_descriptors(mol.working()), before);
     assert_eq!(
         mol.perception()

@@ -518,7 +518,7 @@ impl EditPropertiesMut<'_> {
             .properties_mut()
             .atoms_mut()
             .set_value(key.clone(), row, value)
-            .map_err(|error| MoleculeError::Property(Box::new(error)))?;
+            .map_err(MoleculeError::Property)?;
         if staged.properties().atoms().value_ref(&key, row)
             != editor
                 .molecule(loc.group)
@@ -548,7 +548,7 @@ impl EditPropertiesMut<'_> {
             .properties_mut()
             .bonds_mut()
             .set_value(key.clone(), row, value)
-            .map_err(|error| MoleculeError::Property(Box::new(error)))?;
+            .map_err(MoleculeError::Property)?;
         if staged.properties().bonds().value_ref(&key, row)
             != editor
                 .molecule(loc.group)

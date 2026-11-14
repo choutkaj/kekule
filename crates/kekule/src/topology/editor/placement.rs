@@ -5,7 +5,7 @@
 use super::{EditAtomId, EditBondId, Location, TopologyEditError, TopologyEditor};
 use crate::algorithms::{
     assign_collapsed_hydrogen_counts, collapse_stereo_hydrogen_carrier,
-    materialize_stereo_hydrogen_carriers, rdkit_inferred_hydrogen_count, rdkit_valence_issue,
+    materialize_stereo_hydrogen_carriers, rdkit_inferred_hydrogen_count, rdkit_valence_violation,
     removable_hydrogen, stereo_hydrogen_bindings, stereo_hydrogen_is_collapsible,
     stereo_hydrogen_parents, AddedHydrogenOrigin, RetainedHydrogenReason,
 };
@@ -259,7 +259,7 @@ impl TopologyEditor {
         let loc = self.atom_location(atom)?;
         let molecule = self.molecule(loc.group);
         let value = molecule.atom(loc.local).expect("live draft atom");
-        Ok(rdkit_valence_issue(molecule, loc.local, value).is_some())
+        Ok(rdkit_valence_violation(molecule, loc.local, value).is_some())
     }
 
     /// Adds an unbonded atom to the occurrence draft that holds `anchor`, as

@@ -1,12 +1,14 @@
 mod boxes;
 mod neighbors;
 mod packing;
-pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxError, PeriodicBoxOptions};
+pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxOptions};
 
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{
+    CapacityExceeded, Countable, LengthMismatch, LimitExceeded, Resource, TopologyMismatch,
+};
 use crate::structure::{DenseArrayError, Structure, StructureBuildError};
 use crate::{
-    math::{LatticeError, Point3},
+    math::{PeriodicCellError, Point3},
     properties::PropertyKey,
     topology::{HierarchyError, InstanceAtomId, Topology},
     units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT, MOLAR, NANOMETER},
@@ -120,7 +122,11 @@ impl SolvationRadii {
         let topology = topology.into();
         let radii = radii.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if radii.len() != topology.atom_count() {
-            return Err(SolvationError::RadiusCountMismatch);
+            return Err(SolvationError::RadiusCountMismatch(LengthMismatch::new(
+                Countable::SoluteRadius,
+                topology.atom_count(),
+                radii.len(),
+            )));
         }
         if radii.iter().any(|r| !r.is_finite() || *r < 0.0) {
             return Err(SolvationError::InvalidRadius);
@@ -359,18 +365,23 @@ impl SolvationReport {
     }
 }
 
-/// Solvation options or the structure prevent filling the cell with solvent.
+/// Solvation options or the structure prevent adding a periodic box or
+/// filling the cell with solvent.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum SolvationError {
     /// The structure has no periodic cell.
     MissingCell,
-    /// The structure's cell is not periodic along all three axes.
+    /// The cell, of the structure or supplied for its box, is not periodic
+    /// along all three axes.
     NotFullyPeriodic,
-    /// The supplied solute radii belong to a different topology layout.
-    RadiusTopologyMismatch,
+    /// The box padding is not finite and positive.
+    InvalidPadding,
+    /// The supplied solute radii belong to a different topology layout
+    /// ([`TopologyMismatch::SoluteRadii`]).
+    TopologyMismatch(TopologyMismatch),
     /// The number of radii differs from the topology's atom count.
-    RadiusCountMismatch,
+    RadiusCountMismatch(LengthMismatch),
     /// A radius is negative or not finite.
     InvalidRadius,
     /// No reference van der Waals radius is known for this atom's element.
@@ -382,8 +393,8 @@ pub enum SolvationError {
     /// Tiling would examine more candidate waters than
     /// [`SolventOptions::max_candidates`] allows.
     LimitExceeded(LimitExceeded),
-    /// An ion count or allocation does not fit in `usize`.
-    CapacityOverflow,
+    /// There are more ions or water molecules than can be held.
+    CapacityExceeded(CapacityExceeded),
     /// The cell is too small for a water, or every water site clashes.
     NoSolventSpace,
     /// Too few water sites satisfy the ion separation for the requested ions.
@@ -394,13 +405,14 @@ pub enum SolvationError {
         placed: usize,
     },
     /// A quantity could not be converted to the required unit; see the source.
-    Unit(UnitError),
-    /// A lattice calculation failed; see the source.
-    Lattice(LatticeError),
+    Unit(Box<UnitError>),
+    /// The box vectors form no valid cell, or a calculation on the cell
+    /// failed; see the source.
+    Cell(Box<PeriodicCellError>),
     /// Position data was rejected; see the source.
-    Position(DenseArrayError),
+    Position(Box<DenseArrayError>),
     /// Building the solvated structure failed; see the source.
-    Build(StructureBuildError),
+    Build(Box<StructureBuildError>),
     /// Adding solvent molecules, chains or residues failed; see the source.
     Hierarchy(HierarchyError),
 }
@@ -409,14 +421,11 @@ impl fmt::Display for SolvationError {
         match self {
             Self::MissingCell => f.write_str("The structure has no periodic cell."),
             Self::NotFullyPeriodic => {
-                f.write_str("The structure's cell is not periodic along all three axes.")
+                f.write_str("The cell is not periodic along all three axes.")
             }
-            Self::RadiusTopologyMismatch => {
-                f.write_str("The solute radii belong to a different topology.")
-            }
-            Self::RadiusCountMismatch => {
-                f.write_str("The number of solute radii differs from the number of atoms.")
-            }
+            Self::InvalidPadding => f.write_str("The padding is not finite and positive."),
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
+            Self::RadiusCountMismatch(mismatch) => mismatch.fmt(f),
             Self::InvalidRadius => f.write_str("A solute radius is negative or not finite."),
             Self::MissingElementRadius(atom) => write!(
                 f,
@@ -431,9 +440,7 @@ impl fmt::Display for SolvationError {
             Self::LimitExceeded(limit) => {
                 write!(f, "Solvent tiling exceeded its {}.", limit.describe())
             }
-            Self::CapacityOverflow => {
-                f.write_str("An ion count or allocation exceeds the addressable capacity.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(f),
             Self::NoSolventSpace => {
                 f.write_str("No water fits in the cell without clashing with the solute.")
             }
@@ -442,7 +449,7 @@ impl fmt::Display for SolvationError {
                 "Cannot place {requested} ions: only {placed} water sites satisfy the ion separation."
             ),
             Self::Unit(error) => error.fmt(f),
-            Self::Lattice(error) => error.fmt(f),
+            Self::Cell(error) => error.fmt(f),
             Self::Position(error) => error.fmt(f),
             Self::Build(_) => f.write_str("Cannot build the solvated structure."),
             Self::Hierarchy(_) => f.write_str("Cannot build the solvent hierarchy."),
@@ -453,28 +460,39 @@ impl std::error::Error for SolvationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Unit(e) => e.source(),
-            Self::Lattice(e) => e.source(),
+            Self::Cell(e) => e.source(),
             Self::Position(e) => e.source(),
-            Self::Build(e) => Some(e),
+            Self::Build(e) => Some(e.as_ref()),
             Self::Hierarchy(e) => Some(e),
             _ => None,
         }
     }
 }
-macro_rules! from_error {
-    ($source:ty, $variant:ident) => {
-        impl From<$source> for SolvationError {
-            fn from(error: $source) -> Self {
-                Self::$variant(error)
-            }
-        }
-    };
+impl From<UnitError> for SolvationError {
+    fn from(error: UnitError) -> Self {
+        Self::Unit(Box::new(error))
+    }
 }
-from_error!(UnitError, Unit);
-from_error!(LatticeError, Lattice);
-from_error!(DenseArrayError, Position);
-from_error!(StructureBuildError, Build);
-from_error!(HierarchyError, Hierarchy);
+impl From<PeriodicCellError> for SolvationError {
+    fn from(error: PeriodicCellError) -> Self {
+        Self::Cell(Box::new(error))
+    }
+}
+impl From<DenseArrayError> for SolvationError {
+    fn from(error: DenseArrayError) -> Self {
+        Self::Position(Box::new(error))
+    }
+}
+impl From<StructureBuildError> for SolvationError {
+    fn from(error: StructureBuildError) -> Self {
+        Self::Build(Box::new(error))
+    }
+}
+impl From<HierarchyError> for SolvationError {
+    fn from(error: HierarchyError) -> Self {
+        Self::Hierarchy(error)
+    }
+}
 
 /// Fills the existing cell with TIP3P water and optional monovalent ions.
 ///
@@ -508,7 +526,7 @@ from_error!(HierarchyError, Hierarchy);
 /// ([`SolvationError::MissingCell`]) and be periodic along all three axes
 /// ([`SolvationError::NotFullyPeriodic`]). Invalid options return
 /// [`SolvationError::InvalidIonicStrength`], [`SolvationError::InvalidIonSeparation`],
-/// [`SolvationError::Unit`] or [`SolvationError::RadiusTopologyMismatch`];
+/// [`SolvationError::Unit`] or [`SolvationError::TopologyMismatch`];
 /// a solute element without a reference radius returns
 /// [`SolvationError::MissingElementRadius`]. A cell with no room for water returns
 /// [`SolvationError::NoSolventSpace`], too few separated sites for the ions
@@ -538,7 +556,7 @@ pub fn solvate(
 }
 
 /// Numerically safer bounding-box midpoint than `(min + max) / 2`.
-fn center(points: &[Point3]) -> Result<Point3, LatticeError> {
+fn center(points: &[Point3]) -> Result<Point3, PeriodicCellError> {
     let mut low = points[0];
     let mut high = points[0];
     for p in &points[1..] {
@@ -551,7 +569,7 @@ fn center(points: &[Point3]) -> Result<Point3, LatticeError> {
         low.z * 0.5 + high.z * 0.5,
     );
     if !result.is_finite() {
-        return Err(LatticeError::NumericalFailure);
+        return Err(PeriodicCellError::NumericalFailure);
     }
     Ok(result)
 }

@@ -6,7 +6,7 @@
 use super::super::rings::compute_ring_membership;
 use super::super::valence::{allowed_valences_with_charge, explicit_valence};
 use super::ResonancePerceptionError;
-use crate::diagnostics::{Cancellation, LimitExceeded, Resource};
+use crate::diagnostics::{Cancellation, LimitExceeded, Resource, UnknownHydrogenCount};
 use crate::molecule::{
     AromaticityPerception, AtomId, BondId, BondOrder, Molecule, ResonanceGroup, RingMembership,
 };
@@ -147,10 +147,9 @@ impl Search<'_> {
         }
         let id = index_atom(index);
         let atom = self.mol.atom(id).expect("adjacency reaches live atoms");
-        let hydrogens = self
-            .mol
-            .implicit_hydrogens(id)
-            .ok_or(ResonancePerceptionError::UnknownHydrogens(id))?;
+        let hydrogens = self.mol.implicit_hydrogens(id).ok_or(
+            ResonancePerceptionError::UnknownHydrogenCount(UnknownHydrogenCount::new(id)),
+        )?;
         let state = AtomState {
             number: atom.element.atomic_number(),
             charge: atom.formal_charge,

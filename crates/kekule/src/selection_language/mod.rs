@@ -676,7 +676,7 @@ pub enum SelectEvaluateError {
         /// Its span.
         span: Range<usize>,
         /// The matching failure.
-        source: Box<SubstructureMatchError>,
+        source: SubstructureMatchError,
     },
     /// The expression has a host term and the options have no resolver.
     NoResolver {
@@ -799,7 +799,7 @@ impl std::error::Error for SelectEvaluateError {
         match self {
             Self::Unit { source, .. } => Some(source.as_ref()),
             Self::InvalidSmarts { source, .. } => Some(source),
-            Self::Smarts { source, .. } => Some(source.as_ref()),
+            Self::Smarts { source, .. } => Some(source),
             Self::Host { source, .. } => Some(source),
             Self::Cancelled { source, .. } => Some(source),
             _ => None,

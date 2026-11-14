@@ -17,7 +17,7 @@ pub use aromaticity::{perceive_aromaticity, AromaticityError, AromaticityOptions
 pub use canonical::{canonical_atom_ranking, CanonicalAtomRanking};
 pub(crate) use cip::bond_reference_atoms;
 pub use cip::{
-    assign_cip_descriptors, CipAssignment, CipAssignmentError, CipAssignmentIssue,
+    assign_cip_descriptors, CipAssignment, CipAssignmentError, CipAssignmentFailure,
     CipAssignmentOptions, CipAssignmentReport, CipRankingError, CipSkipped, CipSkippedReason,
 };
 pub use conjugation::{perceive_conjugation, ConjugationError};
@@ -53,7 +53,7 @@ pub use stereo::{
     cleanup_stereo, detect_stereo_candidates, infer_coordinate_stereo,
     materialize_coordinate_stereo, CoordinateStereoError, CoordinateStereoMaterializationReport,
     CoordinateStereoOptions, CoordinateStereoResult, StereoCandidate, StereoCleanupReport,
-    StereoSearchError, StereoSearchOptions, StereoValidationError, StereoValidationIssue,
+    StereoSearchError, StereoSearchOptions, StereoValidationError, StereoViolation,
 };
 pub use substructure::{
     MatchCompletion, PreparedTarget, PreparedTopologyTarget, QueryMatch, QueryPerception,
@@ -63,8 +63,8 @@ pub use substructure::{
 pub(crate) use valence::{
     allowed_valences, explicit_valence, rdkit_bracket_radical_electrons,
     rdkit_charge_adjusted_default_valence, rdkit_default_valence, rdkit_inferred_hydrogen_count,
-    rdkit_valence_issue,
+    rdkit_valence_violation,
 };
 pub use valence::{
-    perceive_valence, represented_valence, ValenceError, ValenceIssue, ValenceOptions,
+    perceive_valence, represented_valence, ValenceError, ValenceOptions, ValenceViolation,
 };

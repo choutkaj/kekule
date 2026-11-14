@@ -1,5 +1,6 @@
 //! A codec's decoded frame state as a [`Geometry`].
 
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, OwnerProperties};
 use crate::structure::{DenseArrayError, Forces, GeometryError, Positions, Velocities};
@@ -30,10 +31,13 @@ impl Geometry {
             if actual == atoms {
                 Ok(())
             } else {
-                Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                    expected: atoms,
-                    actual,
-                }))
+                Err(GeometryError::Array(Box::new(
+                    DenseArrayError::CountMismatch(LengthMismatch::new(
+                        Countable::Row,
+                        atoms,
+                        actual,
+                    )),
+                )))
             }
         };
         count(frame.positions.value().len())?;

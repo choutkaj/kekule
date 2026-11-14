@@ -1,3 +1,4 @@
+use crate::diagnostics::TopologyMismatch;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
@@ -534,7 +535,7 @@ impl AtomSelection {
         if mask.len() != expected {
             return Err(SelectionError::AtomMaskLength {
                 expected,
-                found: mask.len(),
+                actual: mask.len(),
             });
         }
         let tail = count % 64;
@@ -851,7 +852,9 @@ impl AtomSelection {
         let topology = &topology.into();
         for matched in matches {
             if !topology.shares_layout(matched.topology()) {
-                return Err(SelectionError::TopologyMismatch);
+                return Err(SelectionError::TopologyMismatch(
+                    TopologyMismatch::Selection,
+                ));
             }
         }
         Self::from_atoms(
@@ -870,7 +873,9 @@ impl AtomSelection {
     /// [`SelectionError::TopologyMismatch`] when the layouts differ.
     pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
         if !self.topology.shares_layout(topology) {
-            return Err(SelectionError::TopologyMismatch);
+            return Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection,
+            ));
         }
         Ok(())
     }
@@ -914,8 +919,9 @@ impl AtomSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SelectionError {
-    /// The selection belongs to a different topology layout.
-    TopologyMismatch,
+    /// The selection belongs to a different topology layout
+    /// ([`TopologyMismatch::Selection`]).
+    TopologyMismatch(TopologyMismatch),
     /// A molecule definition is not in the topology.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     /// A molecule instance is not in the topology.
@@ -938,7 +944,7 @@ pub enum SelectionError {
         /// The number of words the topology's atoms need.
         expected: usize,
         /// The number of words supplied.
-        found: usize,
+        actual: usize,
     },
     /// A bond is not in the topology.
     InvalidBondId(InstanceBondId),
@@ -950,9 +956,7 @@ impl fmt::Display for SelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         use crate::diagnostics::Capitalized;
         match self {
-            Self::TopologyMismatch => {
-                formatter.write_str("The selection belongs to a different topology.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(formatter),
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "Molecule {id} is not in the topology.")
             }
@@ -969,9 +973,9 @@ impl fmt::Display for SelectionError {
                 "{} is out of order or repeated in the selection.",
                 Capitalized(index)
             ),
-            Self::AtomMaskLength { expected, found } => write!(
+            Self::AtomMaskLength { expected, actual } => write!(
                 formatter,
-                "The atom mask has {found} words, but the topology needs {expected}."
+                "The atom mask has {actual} words, but the topology needs {expected}."
             ),
             Self::InvalidBondId(id) => not_in_topology(formatter, id),
             Self::InvalidBondIndex(index) => not_in_topology(formatter, index),

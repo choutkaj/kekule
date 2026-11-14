@@ -6,7 +6,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::algorithms::{rdkit_valence_issue, ValenceIssue};
+use crate::algorithms::{rdkit_valence_violation, ValenceViolation};
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
@@ -697,8 +697,8 @@ impl<'r> Resolver<'r, '_> {
                 .clone();
             if atom.formal_charge != 0
                 || !matches!(
-                    rdkit_valence_issue(self.graph, site.atom, &atom),
-                    Some(ValenceIssue::ValenceExceeded { .. })
+                    rdkit_valence_violation(self.graph, site.atom, &atom),
+                    Some(ValenceViolation::ValenceExceeded { .. })
                 )
             {
                 continue;
@@ -706,7 +706,7 @@ impl<'r> Resolver<'r, '_> {
             let valid = |charge: i8| {
                 let mut charged = atom.clone();
                 charged.formal_charge = charge;
-                rdkit_valence_issue(self.graph, site.atom, &charged).is_none()
+                rdkit_valence_violation(self.graph, site.atom, &charged).is_none()
             };
             let Some(charge) = [1, -1].into_iter().find(|&charge| valid(charge)) else {
                 continue;

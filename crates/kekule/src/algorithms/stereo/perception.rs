@@ -1,7 +1,6 @@
 use super::*;
 use crate::diagnostics::{LimitExceeded, Resource};
 use std::borrow::Cow;
-use std::result::Result;
 
 /// Bounds for exact graph-symmetry searches used by stereo perception.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

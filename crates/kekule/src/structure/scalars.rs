@@ -1,3 +1,4 @@
+use crate::diagnostics::{Countable, LengthMismatch};
 use std::sync::Arc;
 
 use crate::structure::DenseArrayError;
@@ -56,16 +57,21 @@ impl AtomScalars {
     ) -> Result<(), GeometryError> {
         if let Some(values) = &values {
             if values.len() != len {
-                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                    expected: len,
-                    actual: values.len(),
-                }));
+                return Err(GeometryError::Array(Box::new(
+                    DenseArrayError::CountMismatch(LengthMismatch::new(
+                        Countable::Row,
+                        len,
+                        values.len(),
+                    )),
+                )));
             }
             if let Some(index) = values
                 .iter()
                 .position(|value| value.is_some_and(|value| !value.is_finite()))
             {
-                return Err(GeometryError::Array(DenseArrayError::NonFinite { index }));
+                return Err(GeometryError::Array(Box::new(DenseArrayError::NonFinite {
+                    index,
+                })));
             }
         }
         self.0 = values
@@ -115,9 +121,9 @@ impl AtomScalars {
 
     fn set_row(&mut self, row: usize, len: usize, value: Option<f64>) -> Result<(), GeometryError> {
         if value.is_some_and(|value| !value.is_finite()) {
-            return Err(GeometryError::Array(DenseArrayError::NonFinite {
+            return Err(GeometryError::Array(Box::new(DenseArrayError::NonFinite {
                 index: row,
-            }));
+            })));
         }
         match (&mut self.0, value) {
             (Some(values), value) => {

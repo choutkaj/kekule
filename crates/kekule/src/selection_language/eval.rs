@@ -746,11 +746,7 @@ impl<'a> Evaluator<'a> {
     fn smarts(&self, node: &Node, pattern: &str) -> Result<Bits> {
         let error = |source| {
             let (term, span) = self.term(node);
-            SelectEvaluateError::Smarts {
-                term,
-                span,
-                source: Box::new(source),
-            }
+            SelectEvaluateError::Smarts { term, span, source }
         };
         let query = crate::smarts::parse_str(pattern, Default::default()).map_err(|source| {
             let (term, span) = self.term(node);

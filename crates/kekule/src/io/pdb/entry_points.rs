@@ -78,7 +78,7 @@ pub fn parse_reader(
 ///
 /// A write-stage [`FormatError`] of kind
 /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
-/// with a [`PdbWriteIssue`](crate::pdb::PdbWriteIssue) when PDB cannot hold the content, and
+/// with a [`PdbWriteErrorKind`](crate::pdb::PdbWriteErrorKind) when PDB cannot hold the content, and
 /// `Inconsistent` for an empty structure set or a report count that
 /// does not match the structures. Identifiers
 /// that do not fit their columns fail: chain identifiers longer

@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
-use super::{AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide};
+use super::{AlignmentError, AtomCorrespondence, CorrespondenceSide};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex};
 
 /// Which hierarchy identifiers label an atom when pairing by labels.
@@ -189,7 +189,7 @@ impl AtomCorrespondence {
     ///
     /// # Errors
     ///
-    /// [`AtomCorrespondenceError::AmbiguousLabels`] when a label names more
+    /// [`AlignmentError::AmbiguousLabels`] when a label names more
     /// than one selected atom on a side, for example alternate locations kept
     /// as separate atoms or repeated atom names. It names every such label of
     /// the first side, moving then reference, that has one, whether or not the
@@ -234,7 +234,7 @@ impl AtomCorrespondence {
         moving: &AtomSelection,
         reference: &AtomSelection,
         scheme: LabelScheme,
-    ) -> Result<LabelCorrespondence, AtomCorrespondenceError> {
+    ) -> Result<LabelCorrespondence, AlignmentError> {
         let moving_side = Side::new(moving, scheme, CorrespondenceSide::Moving)?;
         let reference_side = Side::new(reference, scheme, CorrespondenceSide::Reference)?;
         let mut reference_paired = vec![false; reference.len()];
@@ -349,7 +349,7 @@ impl<'a> Side<'a> {
         selection: &'a AtomSelection,
         scheme: LabelScheme,
         side: CorrespondenceSide,
-    ) -> Result<Self, AtomCorrespondenceError> {
+    ) -> Result<Self, AlignmentError> {
         let topology = selection.topology();
         let keys: Vec<_> = selection
             .indices()
@@ -383,7 +383,7 @@ impl<'a> Side<'a> {
                 atoms: std::iter::once(first).chain(others).map(atom_id).collect(),
             })
             .collect();
-        Err(AtomCorrespondenceError::AmbiguousLabels { side, labels })
+        Err(AlignmentError::AmbiguousLabels { side, labels })
     }
 }
 

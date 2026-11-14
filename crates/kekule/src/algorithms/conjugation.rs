@@ -3,6 +3,7 @@
 // BSD 3-Clause; see LICENSE-RDKit in the crate root.
 use super::aromaticity::{count_rdkit_like_atom_pi_electrons, rdkit_outer_electrons};
 use super::valence::{explicit_valence, rdkit_default_valence};
+use crate::diagnostics::UnknownHydrogenCount;
 use crate::molecule::*;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -13,8 +14,8 @@ use std::fmt;
 pub enum ConjugationError {
     /// The molecule has no installed aromaticity perception.
     MissingAromaticity,
-    /// The atom's implicit hydrogen count is not yet perceived.
-    UnknownHydrogens(AtomId),
+    /// An atom's implicit hydrogen count is not yet perceived.
+    UnknownHydrogenCount(UnknownHydrogenCount),
 }
 impl fmt::Display for ConjugationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -22,10 +23,7 @@ impl fmt::Display for ConjugationError {
             Self::MissingAromaticity => {
                 f.write_str("Aromaticity is not perceived. Perceive it before conjugation.")
             }
-            Self::UnknownHydrogens(atom) => write!(
-                f,
-                "The hydrogen count of {atom} is unknown. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
         }
     }
 }
@@ -41,12 +39,12 @@ impl std::error::Error for ConjugationError {}
 /// # Errors
 ///
 /// [`ConjugationError::MissingAromaticity`] when aromaticity is not installed,
-/// and [`ConjugationError::UnknownHydrogens`] for the first atom whose
+/// and [`ConjugationError::UnknownHydrogenCount`] for the first atom whose
 /// implicit hydrogen count is unknown.
 pub fn perceive_conjugation(
     mol: &mut Molecule,
     model: ConjugationModel,
-) -> std::result::Result<(), ConjugationError> {
+) -> Result<(), ConjugationError> {
     let aromaticity = mol
         .perception()
         .aromaticity()
@@ -56,7 +54,9 @@ pub fn perceive_conjugation(
     for (id, atom) in mol.atoms() {
         let h = mol
             .implicit_hydrogens(id)
-            .ok_or(ConjugationError::UnknownHydrogens(id))?;
+            .ok_or(ConjugationError::UnknownHydrogenCount(
+                UnknownHydrogenCount::new(id),
+            ))?;
         let degree = mol.incident_bonds(id).expect("live atom").count() + h;
         let total_valence = explicit_valence(mol, id) + h;
         let outer = rdkit_outer_electrons(atom);

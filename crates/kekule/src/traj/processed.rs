@@ -1,6 +1,7 @@
 //! Geometries processed as they are read: [`Processed`] and its
 //! [`ProcessingSteps`].
 
+use crate::diagnostics::{Countable, IndexOutOfRange};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
@@ -265,15 +266,10 @@ pub enum ProcessingError {
         step: ProcessingStep,
     },
     /// The reference geometry does not exist.
-    ReferenceOutOfRange {
-        /// The reference geometry index.
-        index: usize,
-        /// The number of geometries.
-        len: usize,
-    },
+    ReferenceOutOfRange(IndexOutOfRange),
     /// The reference positions do not fit the reader's topology; see the
     /// source.
-    Reference(Box<StructureError>),
+    Reference(StructureError),
     /// The subset cannot be made; see the source.
     Subset(TopologySubsetError),
     /// A step cannot process the first geometry or the reference; see the
@@ -294,11 +290,7 @@ impl fmt::Display for ProcessingError {
             Self::EmptySelection { step } => {
                 write!(formatter, "The atoms of {step} are none.")
             }
-            Self::ReferenceOutOfRange { index, len } => write!(
-                formatter,
-                "The reference geometry {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*len, "geometry", "geometries")
-            ),
+            Self::ReferenceOutOfRange(error) => error.fmt(formatter),
             Self::Reference(_) => {
                 formatter.write_str("The reference positions do not fit the topology.")
             }
@@ -311,7 +303,7 @@ impl fmt::Display for ProcessingError {
 impl std::error::Error for ProcessingError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Reference(error) => Some(error.as_ref()),
+            Self::Reference(error) => Some(error),
             Self::Subset(error) => std::error::Error::source(error),
             Self::Geometry(error) => std::error::Error::source(error),
             _ => None,
@@ -519,7 +511,11 @@ impl<R: StructureSetRead> Processed<R> {
             FitReference::Geometry(index) => {
                 let len = self.inner.len();
                 if *index >= len {
-                    return Err(ProcessingError::ReferenceOutOfRange { index: *index, len });
+                    return Err(ProcessingError::ReferenceOutOfRange(IndexOutOfRange::new(
+                        Countable::Geometry,
+                        *index,
+                        len,
+                    )));
                 }
                 let mut geometry = self.read_inner(*index)?;
                 self.prepare(*index, &mut geometry)?;
@@ -530,7 +526,7 @@ impl<R: StructureSetRead> Processed<R> {
             }
             FitReference::Positions(positions) => {
                 Structure::new(Arc::clone(self.inner.topology()), positions.clone())
-                    .map_err(|error| ProcessingError::Reference(Box::new(error)))
+                    .map_err(ProcessingError::Reference)
             }
         }
     }
@@ -654,9 +650,9 @@ impl<R: StructureSetRead> Processed<R> {
         for (atom, (point, total)) in center.positions_in_place().iter_mut().zip(&sum).enumerate() {
             *point = Point3::origin() + *total / count;
             if !point.is_finite() {
-                return Err(geometry_error(index)(GeometryError::Array(
+                return Err(geometry_error(index)(GeometryError::Array(Box::new(
                     DenseArrayError::NonFinite { index: atom },
-                )));
+                ))));
             }
         }
         Ok(center)
@@ -679,7 +675,7 @@ impl<R: StructureSetRead> Processed<R> {
                     .projected(atoms, bonds)
                     .map_err(|source| StructureSetReadError::Geometry {
                         geometry: index,
-                        source: Box::new(source),
+                        source,
                     })
             }
             None => Ok(geometry),
@@ -732,10 +728,7 @@ fn periodic(geometry: usize) -> impl FnOnce(PeriodicError) -> StructureSetReadEr
 
 /// Reports a step's failure to store its result in geometry `geometry`.
 fn geometry_error(geometry: usize) -> impl FnOnce(GeometryError) -> StructureSetReadError {
-    move |source| StructureSetReadError::Geometry {
-        geometry,
-        source: Box::new(source),
-    }
+    move |source| StructureSetReadError::Geometry { geometry, source }
 }
 
 /// Checks that the atoms of `step` are some atoms of `topology`.

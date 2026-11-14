@@ -3,6 +3,8 @@
 //! over the samples of their distributions, each checked against its
 //! definition evaluated directly from the coordinates and weights.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -652,10 +654,11 @@ fn structure_set_alignments_match_each_geometry_fitted_alone() {
         // A reference out of range changes nothing.
         let mut set = fixture.clone();
         let case = AlignmentCase::new(&set.shared_topology());
-        let out_of_range = AlignmentError::ReferenceOutOfRange {
-            index: 9,
-            len: fixture.len(),
-        };
+        let out_of_range = AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+            Countable::Structure,
+            9,
+            fixture.len(),
+        ));
         assert_eq!(
             set.rmsd(9, &case.fit, case.options()),
             Err(out_of_range.clone())

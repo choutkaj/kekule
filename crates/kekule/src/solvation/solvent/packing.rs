@@ -1,5 +1,6 @@
 use super::neighbors::Neighbors;
 use super::*;
+use crate::diagnostics::{CapacityExceeded, Countable};
 use crate::{
     math::{Lattice, PeriodicCell, Vector3},
     molecule::{
@@ -60,7 +61,9 @@ pub(super) fn solvate(
     let radii = match &options.solute_radii {
         Some(radii) => {
             if !radii.topology.shares_layout(structure.topology()) {
-                return Err(SolvationError::RadiusTopologyMismatch);
+                return Err(SolvationError::TopologyMismatch(
+                    TopologyMismatch::SoluteRadii,
+                ));
             }
             radii.radii.clone()
         }
@@ -107,7 +110,8 @@ pub(super) fn solvate(
         return Err(SolvationError::NoSolventSpace);
     }
     let counterions = if options.neutralize {
-        usize::try_from(charge.unsigned_abs()).map_err(|_| SolvationError::CapacityOverflow)?
+        usize::try_from(charge.unsigned_abs())
+            .map_err(|_| SolvationError::CapacityExceeded(CapacityExceeded::new(Countable::Ion)))?
     } else {
         0
     };
@@ -119,18 +123,26 @@ pub(super) fn solvate(
     }
     let pairs = ((waters.len() - counterions) as f64 * ionic_strength / 55.4 + 0.5).floor();
     if !pairs.is_finite() || pairs >= usize::MAX as f64 {
-        return Err(SolvationError::CapacityOverflow);
+        return Err(SolvationError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Ion,
+        )));
     }
     let pairs = pairs as usize;
     let positive = pairs
         .checked_add(if charge < 0 { counterions } else { 0 })
-        .ok_or(SolvationError::CapacityOverflow)?;
+        .ok_or(SolvationError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Ion,
+        )))?;
     let negative = pairs
         .checked_add(if charge > 0 { counterions } else { 0 })
-        .ok_or(SolvationError::CapacityOverflow)?;
+        .ok_or(SolvationError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Ion,
+        )))?;
     let ion_count = positive
         .checked_add(negative)
-        .ok_or(SolvationError::CapacityOverflow)?;
+        .ok_or(SolvationError::CapacityExceeded(CapacityExceeded::new(
+            Countable::Ion,
+        )))?;
     if ion_count > waters.len() {
         return Err(SolvationError::InsufficientIonSites {
             requested: ion_count,
@@ -158,7 +170,7 @@ pub(super) fn solvate(
     let mut selected = Vec::new();
     selected
         .try_reserve(ion_count)
-        .map_err(|_| SolvationError::CapacityOverflow)?;
+        .map_err(|_| SolvationError::CapacityExceeded(CapacityExceeded::new(Countable::Ion)))?;
     for index in order {
         if selected.len() == ion_count {
             break;
@@ -331,9 +343,9 @@ fn pack(
                     {
                         continue;
                     }
-                    waters
-                        .try_reserve(1)
-                        .map_err(|_| SolvationError::CapacityOverflow)?;
+                    waters.try_reserve(1).map_err(|_| {
+                        SolvationError::CapacityExceeded(CapacityExceeded::new(Countable::Water))
+                    })?;
                     water_search.insert(oxygen)?;
                     waters.push(Water {
                         oxygen,
@@ -440,7 +452,7 @@ fn translated(origin: Point3, local: Point3) -> Result<Point3, SolvationError> {
     let delta = local - Point3::origin();
     let placed = origin + delta;
     if !placed.is_finite() || ((placed - origin) - delta).norm() > 1e-8 {
-        return Err(LatticeError::NumericalFailure.into());
+        return Err(PeriodicCellError::NumericalFailure.into());
     }
     Ok(placed)
 }

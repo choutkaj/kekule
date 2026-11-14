@@ -14,8 +14,8 @@
 //! non-empty, connected publication invariant is checked transactionally;
 //! [`AtomMut`] and [`BondMut`] are its checked mutable views, and
 //! [`MoleculeCorrespondence`] maps IDs across appends and publication.
-//! Operations fail with [`MoleculeError`] (naming a [`MoleculeIdKind`] when an
-//! ID space is exhausted) or, at publication, [`MoleculePublicationError`].
+//! Operations fail with [`MoleculeError`] or, at publication,
+//! [`MoleculePublicationError`].
 //! [`Element`] provides element identity and reference data, including
 //! van der Waals radii selected by [`VanDerWaalsRadiusSource`]; unknown
 //! symbols and atomic numbers are reported as [`ElementError`].
@@ -67,8 +67,8 @@ pub(crate) use ids::{StereoElementId, StereoGroupId};
 pub(crate) use molecule_edit::{canonicalize_represented_chemistry, validate_represented_stereo};
 pub use molecule_edit::{MoleculeEditor, MoleculePublicationError};
 pub use molecule_editor_ops::MoleculeCorrespondence;
-pub use owner::{AtomMut, BondMut, Molecule, MoleculeError, MoleculeIdKind};
-pub(crate) use owner::{Result, SlotCompaction};
+pub(crate) use owner::SlotCompaction;
+pub use owner::{AtomMut, BondMut, Molecule, MoleculeError};
 use perception::validate_perception;
 pub(crate) use perception::{
     AromaticityModel, AromaticityPerception, Ring, RingBasisModel, RingBasisState, RingMembership,

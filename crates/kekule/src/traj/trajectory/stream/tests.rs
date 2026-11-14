@@ -1,5 +1,6 @@
 //! The in-memory test reader and the in-memory stream contracts.
 
+use crate::diagnostics::{Countable, IndexOutOfRange};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyKey, PropertyValue};
@@ -367,6 +368,10 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
     assert!(StructureSet::from_reader(&set, []).unwrap().is_empty());
     assert_eq!(
         StructureSet::from_reader(&set, [1, 5, 4]).unwrap_err(),
-        crate::structure::StructureSetReadError::IndexOutOfRange { index: 5, len: 4 }
+        crate::structure::StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(
+            Countable::Geometry,
+            5,
+            4
+        ))
     );
 }

@@ -65,7 +65,7 @@ mod kernel;
 
 pub use assignment::{
     assign, assign_with, DsspBackboneAtom, DsspBetaPartner, DsspBridgeDirection, DsspChainBreak,
-    DsspCodeError, DsspError, DsspHelixPosition, DsspHydrogenBond, DsspLimits, DsspOptions,
-    DsspPlan, DsspReport, DsspResidue, DsspResidueSource, DsspResult, DsspSecondaryStructure,
-    DsspSkipReason, DsspSkippedResidue, DsspStatistics,
+    DsspError, DsspHelixPosition, DsspHydrogenBond, DsspLimits, DsspOptions, DsspPlan, DsspReport,
+    DsspResidue, DsspResidueSource, DsspResult, DsspSecondaryStructure, DsspSkipReason,
+    DsspSkippedResidue, DsspStatistics,
 };

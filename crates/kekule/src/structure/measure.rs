@@ -58,7 +58,7 @@ mod bond_dihedrals;
 mod measurements;
 
 pub use bond_dihedrals::{bond_dihedral, bond_dihedrals, BondDihedral, BondDihedralError};
-pub use measurements::{angle, dihedral, distance, within, ConnectivityCheck, MeasurementError};
+pub use measurements::{angle, dihedral, distance, within, ConnectivityCheck};
 pub(super) use measurements::{angle_points, dihedral_points, norm, normalized};
 
 #[cfg(doc)]

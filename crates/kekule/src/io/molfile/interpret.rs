@@ -1,10 +1,13 @@
 //! Interpretation of Molfile and SDF records: the represented graph, stereo
 //! from bond marks, atom parities, and 3D coordinates, and one structure with
 //! one molecule instance per connected component, with source-line reports.
+use crate::diagnostics::{
+    CapacityExceeded, Countable, DiagnosticKind, Format, FormatError, SourceLocation,
+    UnsupportedContent,
+};
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
-use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation, UnsupportedContent};
 use crate::io::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
@@ -345,7 +348,7 @@ pub struct MolfileInterpretationReport {
     atom_mappings: Vec<MolfileAtomMapping>,
     bond_mappings: Vec<MolfileBondMapping>,
     created_stereo_elements: Vec<StereoElementId>,
-    warnings: Vec<MolfileInterpretationWarning>,
+    issues: Vec<MolfileInterpretIssue>,
 }
 
 impl MolfileInterpretationReport {
@@ -365,15 +368,15 @@ impl MolfileInterpretationReport {
     }
 
     /// Nonfatal diagnostics for the molecule.
-    pub fn warnings(&self) -> &[MolfileInterpretationWarning] {
-        &self.warnings
+    pub fn issues(&self) -> &[MolfileInterpretIssue] {
+        &self.issues
     }
 }
 
 /// Nonfatal source-representation diagnostic produced during interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum MolfileInterpretationWarning {
+pub enum MolfileInterpretIssue {
     /// Incompatible wedge marks cannot specify an axis configuration. The
     /// source document retains the marks; the interpreted graph omits that
     /// assertion and preserves its connectivity and unrelated stereo.
@@ -496,8 +499,9 @@ fn publish_molfile_components(
     for (index, (molecule, positions, report)) in components.into_iter().enumerate() {
         let atom_ids = molecule.atom_ids().collect::<Vec<_>>();
         let instance = builder.add_molecule(molecule, &positions)?;
-        let sequence =
-            i32::try_from(index + 1).map_err(|_| StructureBuildError::CapacityOverflow)?;
+        let sequence = i32::try_from(index + 1).map_err(|_| {
+            StructureBuildError::CapacityExceeded(CapacityExceeded::new(Countable::Residue))
+        })?;
         let hierarchy = builder.hierarchy_mut();
         let residue = hierarchy.add_residue(
             chain,
@@ -708,7 +712,7 @@ pub(crate) fn interpret_molfile_document(
                         .iter()
                         .find_map(|(old, new)| (*new == axis).then_some(*old))
                         .expect("published bonds map to source bonds");
-                    MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
+                    MolfileInterpretIssue::ConflictingAtropisomericWedgeMarks {
                         axis,
                         location: bond_lines[old.index()],
                         mark_count,
@@ -721,7 +725,7 @@ pub(crate) fn interpret_molfile_document(
                         .iter()
                         .find_map(|(old, new)| (*new == center).then_some(*old))
                         .expect("published atoms map to source atoms");
-                    MolfileInterpretationWarning::AmbiguousTetrahedralWedgeMarks {
+                    MolfileInterpretIssue::AmbiguousTetrahedralWedgeMarks {
                         center,
                         location: atom_lines[old.index()],
                         mark_count,
@@ -731,7 +735,7 @@ pub(crate) fn interpret_molfile_document(
             .collect::<Vec<_>>();
         warnings.extend(coordinate_warnings);
         warnings.extend(contradicted_parities.into_iter().map(|(center, location)| {
-            MolfileInterpretationWarning::AtomParityContradictsCoordinates {
+            MolfileInterpretIssue::AtomParityContradictsCoordinates {
                 center: ids.atom(center).expect("warned atoms survive publication"),
                 location,
             }
@@ -759,7 +763,7 @@ pub(crate) fn interpret_molfile_document(
                 atom_mappings,
                 bond_mappings,
                 created_stereo_elements: publication_report.created_stereo_elements,
-                warnings,
+                issues: warnings,
             },
         ));
     }
@@ -1057,7 +1061,7 @@ pub(super) fn molfile_coordinate_double_bonds(
 pub(super) fn molfile_coordinate_tetrahedra(
     molecule: &Molecule,
     geometry: &dyn crate::io::AtomPositionSource,
-    warnings: &mut Vec<MolfileInterpretationWarning>,
+    warnings: &mut Vec<MolfileInterpretIssue>,
 ) -> Result<Vec<StereoElement>, FormatError> {
     let points = molfile_points(molecule, geometry)?;
     if molfile_coordinates_are_flat(&points) {
@@ -1075,8 +1079,7 @@ pub(super) fn molfile_coordinate_tetrahedra(
                 crate::algorithms::PerceptionError::Valence(error),
             ),
         )) => {
-            warnings
-                .push(MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { error });
+            warnings.push(MolfileInterpretIssue::CoordinateStereoValenceUnsupported { error });
             return Ok(Vec::new());
         }
         Err(error) => {

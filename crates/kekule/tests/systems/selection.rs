@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::{
@@ -205,15 +206,24 @@ fn distinct_snapshots_are_rejected_even_when_empty_and_layout_equal() {
             selected.difference(&foreign),
             selected.symmetric_difference(&foreign),
         ] {
-            assert_eq!(result, Err(SelectionError::TopologyMismatch));
+            assert_eq!(
+                result,
+                Err(SelectionError::TopologyMismatch(
+                    TopologyMismatch::Selection
+                ))
+            );
         }
         assert_eq!(
             selected.is_subset(&foreign),
-            Err(SelectionError::TopologyMismatch)
+            Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection
+            ))
         );
         assert_eq!(
             selected.is_disjoint(&foreign),
-            Err(SelectionError::TopologyMismatch)
+            Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection
+            ))
         );
     }
     for selected in [
@@ -228,19 +238,30 @@ fn distinct_snapshots_are_rejected_even_when_empty_and_layout_equal() {
             selected.difference(&foreign),
             selected.symmetric_difference(&foreign),
         ] {
-            assert_eq!(result, Err(SelectionError::TopologyMismatch));
+            assert_eq!(
+                result,
+                Err(SelectionError::TopologyMismatch(
+                    TopologyMismatch::Selection
+                ))
+            );
         }
         assert_eq!(
             selected.is_subset(&foreign),
-            Err(SelectionError::TopologyMismatch)
+            Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection
+            ))
         );
         assert_eq!(
             selected.is_disjoint(&foreign),
-            Err(SelectionError::TopologyMismatch)
+            Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection
+            ))
         );
         assert_eq!(
             selected.ensure_compatible(&other),
-            Err(SelectionError::TopologyMismatch)
+            Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection
+            ))
         );
     }
 }
@@ -396,7 +417,9 @@ fn topology_query_match_conversion_checks_provenance_before_selecting() {
     let foreign = topology();
     assert_eq!(
         AtomSelection::from_topology_query_matches(Arc::clone(&foreign), &matches),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 
@@ -535,14 +558,14 @@ fn dense_index_and_mask_constructors_refuse_invalid_input() {
         AtomSelection::from_mask(Arc::clone(&top), &[0, 0]),
         Err(SelectionError::AtomMaskLength {
             expected: 3,
-            found: 2
+            actual: 2
         })
     );
     assert_eq!(
         AtomSelection::from_mask(Arc::clone(&top), &[0, 0, 0, 0]),
         Err(SelectionError::AtomMaskLength {
             expected: 3,
-            found: 4
+            actual: 4
         })
     );
     assert_eq!(

@@ -431,7 +431,7 @@ impl std::error::Error for RingPerceptionError {
 pub fn perceive_rings(
     mol: &mut Molecule,
     options: RingPerceptionOptions,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     perceive_rings_cancellable(mol, options, None)
 }
 
@@ -440,7 +440,7 @@ pub(crate) fn perceive_rings_cancellable(
     mol: &mut Molecule,
     options: RingPerceptionOptions,
     cancellation: Option<&Cancellation>,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     if options.scope == RingPerceptionScope::Membership {
         let membership = compute_ring_membership(mol);
         mol.install_ring_membership(membership);
@@ -574,7 +574,7 @@ fn figueras_sssr_candidates(
     mol: &Molecule,
     membership: &RingMembership,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
+) -> Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
     let mut graph = ActiveRingGraph::with_ring_bonds(mol, membership);
     let fragments = active_fragments(mol, &graph);
     let mut seen_invariants = BTreeSet::<Vec<AtomId>>::new();
@@ -746,7 +746,7 @@ fn find_rings_from_degree_two_nodes(
     seen_invariants: &mut BTreeSet<Vec<AtomId>>,
     discovered: &mut RingMembership,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     let mut duplicate_roots = BTreeMap::<Vec<AtomId>, Vec<AtomId>>::new();
     let mut duplicate_map = BTreeMap::<AtomId, Vec<AtomId>>::new();
 
@@ -792,7 +792,7 @@ fn recover_duplicate_degree_two_candidates(
     candidates: &mut Vec<Ring>,
     seen_invariants: &mut BTreeSet<Vec<AtomId>>,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     for roots in duplicate_roots.values() {
         if roots.len() <= 1 {
             continue;
@@ -838,7 +838,7 @@ fn find_rings_from_degree_three_node(
     candidates: &mut Vec<Ring>,
     seen_invariants: &mut BTreeSet<Vec<AtomId>>,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     let smallest = smallest_rings_bfs(root, graph, &BTreeSet::new(), tracker)?;
     store_unique_atom_rings(&smallest, graph, candidates, seen_invariants, tracker)?;
     if smallest.len() >= 3 {
@@ -891,7 +891,7 @@ fn store_unique_atom_rings(
     candidates: &mut Vec<Ring>,
     seen_invariants: &mut BTreeSet<Vec<AtomId>>,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     for atoms in rings {
         if seen_invariants.insert(ring_invariant(atoms)) {
             candidates.push(atom_ring_to_ring(atoms, graph, tracker)?);
@@ -905,7 +905,7 @@ fn smallest_rings_bfs(
     graph: &ActiveRingGraph,
     forbidden: &BTreeSet<AtomId>,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<Vec<Vec<AtomId>>, RingPerceptionError> {
+) -> Result<Vec<Vec<AtomId>>, RingPerceptionError> {
     const WHITE: u8 = 0;
     const GRAY: u8 = 1;
     const BLACK: u8 = 2;
@@ -991,7 +991,7 @@ fn atom_ring_to_ring(
     atoms: &[AtomId],
     graph: &ActiveRingGraph,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<Ring, RingPerceptionError> {
+) -> Result<Ring, RingPerceptionError> {
     let mut bonds = Vec::with_capacity(atoms.len());
     for index in 0..atoms.len() {
         let left = atoms[index];
@@ -1014,7 +1014,7 @@ fn remove_extra_rings(
     mut rings: Vec<Ring>,
     bond_slots: usize,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
+) -> Result<(Vec<Ring>, Vec<Ring>), RingPerceptionError> {
     rings.sort_by_key(|ring| ring.bonds.len());
     let mut available = vec![true; rings.len()];
     let mut keep = vec![false; rings.len()];
@@ -1102,7 +1102,7 @@ fn recover_connecting_cycles(
     invariants: &mut BTreeSet<Vec<AtomId>>,
     discovered: &mut RingMembership,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<(), RingPerceptionError> {
+) -> Result<(), RingPerceptionError> {
     let graph = ActiveRingGraph::new(mol);
     let fragment_atoms = fragment.iter().copied().collect::<BTreeSet<_>>();
     let mut dead = vec![false; mol.graph.bond_slot_count()];
@@ -1170,7 +1170,7 @@ fn recover_connecting_cycles(
 fn depth_first_ring_basis(
     mol: &Molecule,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
+) -> Result<Vec<Ring>, RingPerceptionError> {
     struct Frame {
         atom: AtomId,
         parent: Option<AtomId>,
@@ -1272,7 +1272,7 @@ impl RingWorkTracker {
         atom_count: usize,
         bond_count: usize,
         cancellation: Option<Cancellation>,
-    ) -> std::result::Result<Self, RingPerceptionError> {
+    ) -> Result<Self, RingPerceptionError> {
         let total_work = atom_count.saturating_add(bond_count);
         let tracker = Self {
             used_fallback: false,
@@ -1294,11 +1294,11 @@ impl RingWorkTracker {
         resource: Resource,
         observed: usize,
         limit: usize,
-    ) -> std::result::Result<(), RingPerceptionError> {
+    ) -> Result<(), RingPerceptionError> {
         LimitExceeded::check(resource, limit, observed).map_err(RingPerceptionError::LimitExceeded)
     }
 
-    fn add_work(&mut self, amount: usize) -> std::result::Result<(), RingPerceptionError> {
+    fn add_work(&mut self, amount: usize) -> Result<(), RingPerceptionError> {
         let before = self.total_work;
         self.total_work = self.total_work.saturating_add(amount);
         if self.cancellation.is_some()
@@ -1310,7 +1310,7 @@ impl RingWorkTracker {
         self.check(Resource::Work, self.total_work, self.options.max_total_work)
     }
 
-    fn record_path_expansion(&mut self) -> std::result::Result<(), RingPerceptionError> {
+    fn record_path_expansion(&mut self) -> Result<(), RingPerceptionError> {
         self.path_expansions = self.path_expansions.saturating_add(1);
         self.check(
             Resource::PathExpansions,
@@ -1320,7 +1320,7 @@ impl RingWorkTracker {
         self.add_work(1)
     }
 
-    fn record_shortest_path(&mut self) -> std::result::Result<(), RingPerceptionError> {
+    fn record_shortest_path(&mut self) -> Result<(), RingPerceptionError> {
         self.equivalent_shortest_paths = self.equivalent_shortest_paths.saturating_add(1);
         self.check(
             Resource::ShortestPaths,
@@ -1330,7 +1330,7 @@ impl RingWorkTracker {
         self.add_work(1)
     }
 
-    fn record_candidate(&mut self) -> std::result::Result<(), RingPerceptionError> {
+    fn record_candidate(&mut self) -> Result<(), RingPerceptionError> {
         self.candidate_cycles = self.candidate_cycles.saturating_add(1);
         self.check(
             Resource::CandidateCycles,
@@ -1356,7 +1356,7 @@ fn symmetrize_ring_set(
     extras: Vec<Ring>,
     bond_slots: usize,
     tracker: &mut RingWorkTracker,
-) -> std::result::Result<Vec<Ring>, RingPerceptionError> {
+) -> Result<Vec<Ring>, RingPerceptionError> {
     let basis_len = rings.len();
     let bond_counts = sssr_bond_counts(&rings, bond_slots);
     let mut selected_bonds = rings

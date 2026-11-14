@@ -15,7 +15,7 @@ use crate::molecule::*;
 use super::emit::Emission;
 use super::parse::SmilesDirectionToken;
 
-pub(crate) fn write_smiles(molecule: &Molecule) -> std::result::Result<String, FormatError> {
+pub(crate) fn write_smiles(molecule: &Molecule) -> Result<String, FormatError> {
     write_source_order_emission(
         molecule,
         StereoWriteMode::Reject,
@@ -24,9 +24,7 @@ pub(crate) fn write_smiles(molecule: &Molecule) -> std::result::Result<String, F
     .render()
 }
 
-pub(crate) fn write_isomeric_smiles(
-    molecule: &Molecule,
-) -> std::result::Result<String, FormatError> {
+pub(crate) fn write_isomeric_smiles(molecule: &Molecule) -> Result<String, FormatError> {
     write_source_order_emission(
         molecule,
         StereoWriteMode::Encode,
@@ -39,7 +37,7 @@ pub(super) fn write_source_order_emission(
     mol: &Molecule,
     mode: StereoWriteMode,
     style: CanonicalAtomStyle,
-) -> std::result::Result<Emission, FormatError> {
+) -> Result<Emission, FormatError> {
     let mol = match mode {
         StereoWriteMode::Encode => without_unknown_stereo(mol),
         StereoWriteMode::Reject => Cow::Borrowed(mol),
@@ -150,7 +148,7 @@ pub(super) fn without_unknown_stereo(mol: &Molecule) -> Cow<'_, Molecule> {
 pub(super) fn validate_smiles_writeable(
     mol: &Molecule,
     stereo: StereoWriteMode,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     match stereo {
         StereoWriteMode::Reject if mol.stereo_elements().next().is_some() => {
             return Err(
@@ -180,7 +178,7 @@ pub(super) fn validate_smiles_writeable(
     Ok(())
 }
 
-fn validate_isomeric_smiles_stereo(mol: &Molecule) -> std::result::Result<(), FormatError> {
+fn validate_isomeric_smiles_stereo(mol: &Molecule) -> Result<(), FormatError> {
     super::emit::validate_groups(mol)?;
     for (_, element) in mol.stereo_elements() {
         if !element.is_specified() {
@@ -251,7 +249,7 @@ fn validate_isomeric_double_bond_endpoint(
     other_endpoint: AtomId,
     focus_bond: BondId,
     carrier: StereoCarrier,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     match carrier {
         StereoCarrier::Atom(atom) => {
             let bond = mol
@@ -305,7 +303,7 @@ pub(super) fn plan_smiles_component(
     root: AtomId,
     atom_style: CanonicalAtomStyle,
     order_neighbors: impl Fn(&mut [(BondId, SmilesBondOrder, AtomId)]),
-) -> std::result::Result<SmilesWritePlan, FormatError> {
+) -> Result<SmilesWritePlan, FormatError> {
     // Record back edges in DFS discovery order. In particular, closures
     // sharing their opening atom must follow when their far endpoints are
     // encountered, not the ranks of those endpoints.
@@ -411,10 +409,7 @@ struct DirectionalBondConstraints {
 }
 
 impl SmilesStereoWriteContext {
-    pub(super) fn new(
-        mol: &Molecule,
-        rank: impl Fn(AtomId) -> usize,
-    ) -> std::result::Result<Self, FormatError> {
+    pub(super) fn new(mol: &Molecule, rank: impl Fn(AtomId) -> usize) -> Result<Self, FormatError> {
         let mut tetrahedral = BTreeMap::new();
         let mut double_bonds = Vec::new();
         for (_, element) in mol.stereo_elements() {
@@ -478,7 +473,7 @@ impl SmilesStereoWriteContext {
         closures: Option<&[SmilesRingClosure]>,
         children: &[(BondId, SmilesBondOrder, AtomId)],
         main_child_index: Option<usize>,
-    ) -> Option<std::result::Result<ChiralAtomWriteState, FormatError>> {
+    ) -> Option<Result<ChiralAtomWriteState, FormatError>> {
         let stereo = self.tetrahedral.get(&atom)?;
         Some(tetrahedral_chirality_for_smiles_order(
             stereo,
@@ -495,7 +490,7 @@ impl SmilesStereoWriteContext {
         left: AtomId,
         right: AtomId,
         phases: &mut BTreeMap<BondId, bool>,
-    ) -> std::result::Result<Option<SmilesDirectionToken>, FormatError> {
+    ) -> Result<Option<SmilesDirectionToken>, FormatError> {
         let Some(constraint) = self.directional.get(&bond) else {
             return Ok(None);
         };
@@ -519,7 +514,7 @@ impl SmilesStereoWriteContext {
 fn validate_directional_projection(
     mol: &Molecule,
     directional: &BTreeMap<BondId, DirectionalSmilesConstraint>,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     use crate::io::{normalize_source_stereo, SourceStereoBondMark, SourceStereoBondMarkKind};
     let expected = mol
         .stereo_elements()
@@ -581,7 +576,7 @@ fn add_double_bond_directional_constraints(
     stereo: &DoubleBondStereo,
     [left_carrier_bond, right_carrier_bond]: [DoubleBondPrintableCarrierBond; 2],
     constraints: &mut BTreeMap<BondId, DirectionalBondConstraints>,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     let orientation = stereo.orientation.expect("validated specified double bond");
     let left_direction = SmilesDirectionToken::Up;
     let right_direction = match orientation {
@@ -614,7 +609,7 @@ fn canonical_directional_constraint(
     carrier: DoubleBondPrintableCarrierBond,
     endpoint: AtomId,
     direction: SmilesDirectionToken,
-) -> std::result::Result<DirectionalSmilesConstraint, FormatError> {
+) -> Result<DirectionalSmilesConstraint, FormatError> {
     let bond = mol
         .bond(carrier.bond)
         .expect("the writer visits live bonds");
@@ -635,7 +630,7 @@ fn solve_directional_constraints(
     mol: &Molecule,
     constraints: BTreeMap<BondId, DirectionalBondConstraints>,
     rank: &impl Fn(AtomId) -> usize,
-) -> std::result::Result<BTreeMap<BondId, DirectionalSmilesConstraint>, FormatError> {
+) -> Result<BTreeMap<BondId, DirectionalSmilesConstraint>, FormatError> {
     let mut assigned = BTreeMap::new();
     // Independent constraint components can meet at a substituted alkene.
     // Their relative phases affect whether redundant marks are compatible, so
@@ -695,7 +690,7 @@ fn choose_directional_bonds(
     mol: &Molecule,
     mut stereo: Vec<DoubleBondStereo>,
     rank: &impl Fn(AtomId) -> usize,
-) -> std::result::Result<BTreeMap<BondId, DirectionalSmilesConstraint>, FormatError> {
+) -> Result<BTreeMap<BondId, DirectionalSmilesConstraint>, FormatError> {
     if stereo.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -820,7 +815,7 @@ fn implicit_double_bond_printable_carrier_bond(
     endpoint: AtomId,
     other_endpoint: AtomId,
     focus_bond: BondId,
-) -> std::result::Result<Option<BondId>, FormatError> {
+) -> Result<Option<BondId>, FormatError> {
     let mut candidates = Vec::new();
     for (bond_id, bond) in mol
         .incident_bonds(endpoint)
@@ -850,7 +845,7 @@ fn directional_mark_for_emitted_bond(
     endpoint: AtomId,
     left: AtomId,
     right: AtomId,
-) -> std::result::Result<SmilesDirectionToken, FormatError> {
+) -> Result<SmilesDirectionToken, FormatError> {
     if endpoint == left {
         Ok(direction_at_endpoint)
     } else if endpoint == right {
@@ -874,7 +869,7 @@ fn tetrahedral_chirality_for_smiles_order(
     closures: Option<&[SmilesRingClosure]>,
     children: &[(BondId, SmilesBondOrder, AtomId)],
     main_child_index: Option<usize>,
-) -> std::result::Result<ChiralAtomWriteState, FormatError> {
+) -> Result<ChiralAtomWriteState, FormatError> {
     let force_hydrogen = stereo
         .carriers
         .iter()
@@ -966,7 +961,7 @@ pub(super) fn write_smiles_component(
     atom_style: CanonicalAtomStyle,
     canonical: bool,
     order_children: impl Fn(AtomId, &mut Vec<(BondId, SmilesBondOrder, AtomId)>) -> Option<usize>,
-) -> std::result::Result<Emission, FormatError> {
+) -> Result<Emission, FormatError> {
     enum Action {
         Node {
             atom: AtomId,
@@ -985,7 +980,7 @@ pub(super) fn write_smiles_component(
     let mut out = String::new();
     let mut atom_order = Vec::new();
     // Stereo normalization and actual emission must use the same carrier frame.
-    let ordered_children = |atom, parent| -> std::result::Result<_, FormatError> {
+    let ordered_children = |atom, parent| -> Result<_, FormatError> {
         let mut children = smiles_incident_bonds_for_style(mol, atom, atom_style)?
             .into_iter()
             .filter(|(bond, _, other)| plan.tree_bonds.contains(bond) && Some(*other) != parent)
@@ -1212,7 +1207,7 @@ pub(super) fn smiles_incident_bonds_for_style(
     mol: &Molecule,
     atom_id: AtomId,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<Vec<(BondId, SmilesBondOrder, AtomId)>, FormatError> {
+) -> Result<Vec<(BondId, SmilesBondOrder, AtomId)>, FormatError> {
     let mut incident = Vec::new();
     for (bond_id, bond) in mol
         .incident_bonds(atom_id)
@@ -1247,7 +1242,7 @@ pub(super) fn smiles_ring_number(number: u64) -> String {
     }
 }
 
-fn smiles_bond_order(order: BondOrder) -> std::result::Result<SmilesBondOrder, FormatError> {
+fn smiles_bond_order(order: BondOrder) -> Result<SmilesBondOrder, FormatError> {
     match order {
         BondOrder::Single => Ok(SmilesBondOrder::Single),
         BondOrder::Double => Ok(SmilesBondOrder::Double),
@@ -1303,7 +1298,7 @@ fn smiles_bond_between_with_direction(
     right: AtomId,
     directional: Option<SmilesDirectionToken>,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<&'static str, FormatError> {
+) -> Result<&'static str, FormatError> {
     if let Some(directional) = directional {
         if order != SmilesBondOrder::Single {
             return Err(SMILES_WRITE
@@ -1403,7 +1398,7 @@ fn smiles_atom_with_style_and_chirality(
     atom_style: CanonicalAtomStyle,
     chirality: Option<TetrahedralOrientation>,
     force_hydrogen: bool,
-) -> std::result::Result<String, FormatError> {
+) -> Result<String, FormatError> {
     let aromatic = mol
         .perception()
         .aromaticity()
@@ -1458,7 +1453,7 @@ pub(super) fn validate_smiles_bracket_radical(
     atom_id: AtomId,
     atom: &Atom,
     inferred_hydrogens: u8,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     // At most one term is nonzero: perception infers no hydrogens on a fixed count.
     let hydrogens = atom
         .hydrogens

@@ -28,9 +28,7 @@ pub use labeling::{
     MAX_CANONICAL_PENDING_LABELS, MAX_CANONICAL_REFINEMENT_WORK, MAX_CANONICAL_SEARCH_STATES,
 };
 
-pub(crate) fn write_canonical_smiles(
-    molecule: &Molecule,
-) -> std::result::Result<String, FormatError> {
+pub(crate) fn write_canonical_smiles(molecule: &Molecule) -> Result<String, FormatError> {
     write_canonical_smiles_with_limits(
         molecule,
         MAX_CANONICAL_INPUT_COMPLEXITY,
@@ -42,13 +40,11 @@ fn write_canonical_smiles_with_limits(
     molecule: &Molecule,
     max_input_complexity: usize,
     max_graph_slots: usize,
-) -> std::result::Result<String, FormatError> {
+) -> Result<String, FormatError> {
     write_canonical_emission_with_limits(molecule, max_input_complexity, max_graph_slots)?.render()
 }
 
-pub(super) fn write_canonical_emission(
-    molecule: &Molecule,
-) -> std::result::Result<Emission, FormatError> {
+pub(super) fn write_canonical_emission(molecule: &Molecule) -> Result<Emission, FormatError> {
     write_canonical_emission_with_limits(
         molecule,
         MAX_CANONICAL_INPUT_COMPLEXITY,
@@ -60,7 +56,7 @@ fn write_canonical_emission_with_limits(
     molecule: &Molecule,
     max_input_complexity: usize,
     max_graph_slots: usize,
-) -> std::result::Result<Emission, FormatError> {
+) -> Result<Emission, FormatError> {
     // Check before cloning or ranking. A sparse graph can have many deleted
     // slots, so live atom counts alone do not bound
     // the dense scratch arrays used by ranking and labeling.
@@ -126,7 +122,7 @@ fn write_canonical_emission_with_limits(
     write_canonical_smiles_component(mol, root, &order, atom_style, &stereo)
 }
 
-fn canonical_hydrogen_graph(mol: &Molecule) -> std::result::Result<Molecule, FormatError> {
+fn canonical_hydrogen_graph(mol: &Molecule) -> Result<Molecule, FormatError> {
     let mut normalized = mol.clone();
     // Metadata does not affect a molecular identifier. Use the common hydrogen
     // transform so carrier remapping and count reconstruction have one owner.
@@ -210,7 +206,7 @@ fn hydrogen_normalization_error(error: HydrogenTransformError) -> FormatError {
 fn canonical_projection_graph(
     mol: &Molecule,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<Molecule, FormatError> {
+) -> Result<Molecule, FormatError> {
     // Ranking and labeling must see the same isotope and hydrogen projection
     // as the output; only this private copy adopts the exported representation.
     let mut projected = mol.clone();
@@ -310,7 +306,7 @@ fn write_canonical_smiles_component(
     ranking: &CanonicalOrder,
     atom_style: CanonicalAtomStyle,
     stereo: &SmilesStereoWriteContext,
-) -> std::result::Result<Emission, FormatError> {
+) -> Result<Emission, FormatError> {
     let rings = crate::algorithms::compute_ring_membership(mol);
     let plan = plan_canonical_smiles_component(mol, root, ranking, atom_style, &rings)?;
     write_smiles_component(
@@ -333,7 +329,7 @@ fn plan_canonical_smiles_component(
     ranking: &CanonicalOrder,
     atom_style: CanonicalAtomStyle,
     rings: &RingMembership,
-) -> std::result::Result<SmilesWritePlan, FormatError> {
+) -> Result<SmilesWritePlan, FormatError> {
     super::write::plan_smiles_component(mol, root, atom_style, |neighbors| {
         sort_canonical_smiles_neighbors(neighbors, ranking, rings);
     })
@@ -383,7 +379,7 @@ fn canonical_smiles_atom(
     atom_id: AtomId,
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<String, FormatError> {
+) -> Result<String, FormatError> {
     let (atom, aromatic, inferred_hydrogens) =
         canonical_smiles_atom_representation(mol, atom_id, atom, atom_style)?;
     Ok(smiles_atom(&atom, aromatic, inferred_hydrogens))
@@ -394,7 +390,7 @@ fn canonical_smiles_atom_representation(
     atom_id: AtomId,
     atom: &Atom,
     atom_style: CanonicalAtomStyle,
-) -> std::result::Result<(Atom, bool, u8), FormatError> {
+) -> Result<(Atom, bool, u8), FormatError> {
     let aromatic = mol
         .perception()
         .aromaticity()
@@ -440,7 +436,7 @@ fn canonical_smiles_atom_normalized(
     aromatic: bool,
     inferred_hydrogens: u8,
     stored_kekule: bool,
-) -> std::result::Result<(Atom, u8), FormatError> {
+) -> Result<(Atom, u8), FormatError> {
     if canonical_smiles_should_bracket_metal_bound_hydrogens(
         mol,
         atom_id,
@@ -548,7 +544,7 @@ fn canonical_smiles_can_use_organic_form(
     aromatic: bool,
     inferred_hydrogens: u8,
     stored_kekule: bool,
-) -> std::result::Result<bool, FormatError> {
+) -> Result<bool, FormatError> {
     if atom.formal_charge != 0
         || atom.radical.is_some()
         || atom.atom_map.is_some()

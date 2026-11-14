@@ -1,5 +1,6 @@
 //! [`GeometryError`]: invalid geometry state.
 
+use crate::diagnostics::{CapacityExceeded, LengthMismatch};
 use std::fmt;
 
 use crate::math::PeriodicCellError;
@@ -12,16 +13,11 @@ use crate::units::UnitError;
 #[non_exhaustive]
 pub enum GeometryError {
     /// Dense per-atom state is invalid.
-    Array(DenseArrayError),
+    Array(Box<DenseArrayError>),
     /// Bound bond property rows have the wrong length.
-    BondCountMismatch {
-        /// The required bond row count.
-        expected: usize,
-        /// The supplied bond row count.
-        actual: usize,
-    },
-    /// The geometry exceeds addressable capacity.
-    CapacityOverflow,
+    BondCountMismatch(LengthMismatch),
+    /// The geometry cannot hold more atoms.
+    CapacityExceeded(CapacityExceeded),
     /// A geometry property edit failed; see the source.
     Property(Box<PropertyError>),
     /// The periodic cell is invalid; see the source.
@@ -34,13 +30,8 @@ impl fmt::Display for GeometryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Array(error) => error.fmt(formatter),
-            Self::BondCountMismatch { expected, actual } => write!(
-                formatter,
-                "The bond properties have {actual} rows, but the topology has {expected} bonds."
-            ),
-            Self::CapacityOverflow => {
-                formatter.write_str("The geometry exceeds the addressable capacity.")
-            }
+            Self::BondCountMismatch(error) => error.fmt(formatter),
+            Self::CapacityExceeded(error) => error.fmt(formatter),
             Self::Property(error) => error.fmt(formatter),
             Self::Cell(error) => error.fmt(formatter),
             Self::Unit(error) => error.fmt(formatter),
@@ -62,7 +53,7 @@ impl std::error::Error for GeometryError {
 
 impl From<DenseArrayError> for GeometryError {
     fn from(error: DenseArrayError) -> Self {
-        Self::Array(error)
+        Self::Array(Box::new(error))
     }
 }
 

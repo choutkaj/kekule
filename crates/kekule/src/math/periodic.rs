@@ -1,69 +1,25 @@
 //! Exact lattice geometry. Cartesian inputs and outputs are length quantities.
-use super::{PeriodicCell, Vector3};
+use super::{PeriodicCell, PeriodicCellError, Vector3};
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
-use std::fmt;
+use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 /// Maximum lattice images an exact nearest-image search examines.
 pub const MAX_LATTICE_IMAGES: usize = 1_000_000;
 
-/// A nonfinite, unrepresentable, or excessively expensive periodic calculation.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum LatticeError {
-    /// A Cartesian input is not a length; see the source.
-    Unit(Box<UnitError>),
-    /// The calculation exceeds numerical precision or range.
-    NumericalFailure,
-    /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
-    LimitExceeded(LimitExceeded),
-}
-impl fmt::Display for LatticeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Unit(_) => f.write_str("A periodic calculation input is not a length."),
-            Self::NumericalFailure => {
-                f.write_str("The periodic calculation exceeds the numerical precision or range.")
-            }
-            Self::LimitExceeded(limit) => {
-                write!(
-                    f,
-                    "The nearest-image search exceeded its {}.",
-                    limit.describe()
-                )
-            }
-        }
-    }
-}
-
 /// The nearest-image search would examine `images` lattice images, more than
 /// [`MAX_LATTICE_IMAGES`]; `None` means more than `u64` counts.
-fn image_limit(images: Option<u64>) -> LatticeError {
+fn image_limit(images: Option<u64>) -> PeriodicCellError {
     let observed = images
         .and_then(|images| usize::try_from(images).ok())
         .unwrap_or(usize::MAX);
-    LatticeError::LimitExceeded(LimitExceeded::new(
+    PeriodicCellError::LimitExceeded(LimitExceeded::new(
         Resource::LatticeImages,
         MAX_LATTICE_IMAGES,
         observed.max(MAX_LATTICE_IMAGES + 1),
     ))
 }
-impl std::error::Error for LatticeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Unit(error) => Some(error.as_ref()),
-            Self::NumericalFailure | Self::LimitExceeded(_) => None,
-        }
-    }
-}
 
-impl From<UnitError> for LatticeError {
-    fn from(error: UnitError) -> Self {
-        Self::Unit(Box::new(error))
-    }
-}
-
-fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, LatticeError> {
+fn canonical(vector: Quantity<Vector3>) -> Result<Vector3, PeriodicCellError> {
     Ok(vector.value_in(CANONICAL_LENGTH_UNIT)?)
 }
 
@@ -86,9 +42,9 @@ impl Lattice {
     ///
     /// # Errors
     ///
-    /// [`LatticeError::NumericalFailure`] when the reciprocal basis is
+    /// [`PeriodicCellError::NumericalFailure`] when the reciprocal basis is
     /// not finite, such as for a nearly degenerate cell.
-    pub fn new(cell: PeriodicCell) -> Result<Self, LatticeError> {
+    pub fn new(cell: PeriodicCell) -> Result<Self, PeriodicCellError> {
         let [a, b, c] = cell.vectors().into_value();
         let inverse_volume = 1.0 / a.dot(b.cross(c));
         let reciprocal = [
@@ -97,7 +53,7 @@ impl Lattice {
             a.cross(b) * inverse_volume,
         ];
         if !reciprocal.iter().all(|v| v.is_finite()) {
-            return Err(LatticeError::NumericalFailure);
+            return Err(PeriodicCellError::NumericalFailure);
         }
         Ok(Self {
             basis: [a, b, c],
@@ -110,10 +66,10 @@ impl Lattice {
     ///
     /// # Errors
     ///
-    /// [`LatticeError::Unit`] when `vector` is not a length, and
-    /// [`LatticeError::NumericalFailure`] when a coordinate is not
+    /// [`PeriodicCellError::Unit`] when `vector` is not a length, and
+    /// [`PeriodicCellError::NumericalFailure`] when a coordinate is not
     /// finite.
-    pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], LatticeError> {
+    pub fn fractional(&self, vector: Quantity<Vector3>) -> Result<[f64; 3], PeriodicCellError> {
         self.fractional_canonical(canonical(vector)?)
     }
 
@@ -131,7 +87,7 @@ impl Lattice {
     pub fn minimum_image(
         &self,
         delta: Quantity<Vector3>,
-    ) -> Result<Quantity<Vector3>, LatticeError> {
+    ) -> Result<Quantity<Vector3>, PeriodicCellError> {
         self.minimum_image_canonical(canonical(delta)?)
             .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
     }
@@ -144,15 +100,15 @@ impl Lattice {
     ///
     /// # Errors
     ///
-    /// [`LatticeError::Unit`] when `delta` is not a length,
-    /// [`LatticeError::NumericalFailure`] when the search exceeds
+    /// [`PeriodicCellError::Unit`] when `delta` is not a length,
+    /// [`PeriodicCellError::NumericalFailure`] when the search exceeds
     /// numerical precision or range, and
-    /// [`LatticeError::LimitExceeded`] when more than
+    /// [`PeriodicCellError::LimitExceeded`] when more than
     /// [`MAX_LATTICE_IMAGES`] candidate images would need examination.
     pub fn nearest_image(
         &self,
         delta: Quantity<Vector3>,
-    ) -> Result<(Quantity<Vector3>, [i64; 3]), LatticeError> {
+    ) -> Result<(Quantity<Vector3>, [i64; 3]), PeriodicCellError> {
         self.nearest_image_canonical(canonical(delta)?)
             .map(|(vector, images)| (Quantity::new(vector, CANONICAL_LENGTH_UNIT), images))
     }
@@ -161,19 +117,22 @@ impl Lattice {
     ///
     /// # Errors
     ///
-    /// [`LatticeError::NumericalFailure`] when the search exceeds
+    /// [`PeriodicCellError::NumericalFailure`] when the search exceeds
     /// numerical precision or range, and
-    /// [`LatticeError::LimitExceeded`] when more than
+    /// [`PeriodicCellError::LimitExceeded`] when more than
     /// [`MAX_LATTICE_IMAGES`] integer candidates would need examination.
-    pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, LatticeError> {
+    pub fn shortest_translation(&self) -> Result<Quantity<Vector3>, PeriodicCellError> {
         self.shortest_translation_canonical()
             .map(|vector| Quantity::new(vector, CANONICAL_LENGTH_UNIT))
     }
 
-    pub(crate) fn fractional_canonical(&self, vector: Vector3) -> Result<[f64; 3], LatticeError> {
+    pub(crate) fn fractional_canonical(
+        &self,
+        vector: Vector3,
+    ) -> Result<[f64; 3], PeriodicCellError> {
         let fractional = self.reciprocal.map(|dual| dual.dot(vector));
         if !fractional.iter().all(|v| v.is_finite()) {
-            return Err(LatticeError::NumericalFailure);
+            return Err(PeriodicCellError::NumericalFailure);
         }
         Ok(fractional)
     }
@@ -184,7 +143,10 @@ impl Lattice {
             + self.basis[2] * fractional[2]
     }
 
-    pub(crate) fn minimum_image_canonical(&self, delta: Vector3) -> Result<Vector3, LatticeError> {
+    pub(crate) fn minimum_image_canonical(
+        &self,
+        delta: Vector3,
+    ) -> Result<Vector3, PeriodicCellError> {
         self.nearest_image_canonical(delta)
             .map(|(vector, _)| vector)
     }
@@ -192,7 +154,7 @@ impl Lattice {
     pub(crate) fn nearest_image_canonical(
         &self,
         delta: Vector3,
-    ) -> Result<(Vector3, [i64; 3]), LatticeError> {
+    ) -> Result<(Vector3, [i64; 3]), PeriodicCellError> {
         let fractional = self.fractional_canonical(delta)?;
         let mut images = [0.0; 3];
         for axis in 0..3 {
@@ -204,7 +166,7 @@ impl Lattice {
         let mut best_images = images.map(|n| n as i64);
         let mut best_squared = best.norm_squared();
         if !best_squared.is_finite() {
-            return Err(LatticeError::NumericalFailure);
+            return Err(PeriodicCellError::NumericalFailure);
         }
         // In an exactly orthogonal basis the three image choices are independent.
         // Besides avoiding enumeration, this handles very elongated rectangular
@@ -231,7 +193,7 @@ impl Lattice {
                     || !high.is_finite()
                     || low.abs().max(high.abs()) >= 2.0_f64.powi(52)
                 {
-                    return Err(LatticeError::NumericalFailure);
+                    return Err(PeriodicCellError::NumericalFailure);
                 }
                 let (low, high) = (low as i64, high as i64);
                 let count = (high - low + 1).max(0) as u64;
@@ -259,9 +221,9 @@ impl Lattice {
     }
 }
 
-fn checked_image(value: f64) -> Result<f64, LatticeError> {
+fn checked_image(value: f64) -> Result<f64, PeriodicCellError> {
     if !value.is_finite() || value.abs() >= 2.0_f64.powi(52) {
-        return Err(LatticeError::NumericalFailure);
+        return Err(PeriodicCellError::NumericalFailure);
     }
     Ok(value.round())
 }
@@ -273,7 +235,7 @@ impl Lattice {
     }
 }
 impl Lattice {
-    pub(crate) fn shortest_translation_canonical(&self) -> Result<Vector3, LatticeError> {
+    pub(crate) fn shortest_translation_canonical(&self) -> Result<Vector3, PeriodicCellError> {
         let mut best = self
             .basis
             .iter()
@@ -321,7 +283,7 @@ impl Lattice {
             }
         }
         if !best.is_finite() || best.norm() == 0.0 {
-            return Err(LatticeError::NumericalFailure);
+            return Err(PeriodicCellError::NumericalFailure);
         }
         Ok(best)
     }

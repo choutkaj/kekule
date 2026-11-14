@@ -523,7 +523,7 @@ pub enum ClusteringError {
     /// it; no partial result is returned.
     Cancelled(Cancelled),
     /// A member cannot be read; see the source.
-    Read(Box<StructureSetReadError>),
+    Read(StructureSetReadError),
 }
 
 impl fmt::Display for ClusteringError {
@@ -582,7 +582,7 @@ impl std::error::Error for ClusteringError {
             Self::StructureSet(error) => Some(error.as_ref()),
             Self::Unit(error) => Some(error.as_ref()),
             Self::Cancelled(cancelled) => Some(cancelled),
-            Self::Read(error) => std::error::Error::source(error.as_ref()),
+            Self::Read(error) => std::error::Error::source(error),
             _ => None,
         }
     }

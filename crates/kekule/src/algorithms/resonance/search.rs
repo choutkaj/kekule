@@ -2,7 +2,7 @@
 // Paolo Tosco. BSD 3-Clause; see LICENSE-RDKit in the crate root.
 use super::*;
 use crate::algorithms::{aromaticity::rdkit_outer_electrons, valence::explicit_valence};
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{LimitExceeded, Resource, UnknownHydrogenCount};
 use std::collections::VecDeque;
 
 pub(super) struct Work {
@@ -528,7 +528,9 @@ fn prepare(
         let atom = mol.atom(id).expect("live group atom");
         let h = mol
             .implicit_hydrogens(id)
-            .ok_or(ResonanceError::UnknownHydrogens(id))?;
+            .ok_or(ResonanceError::UnknownHydrogenCount(
+                UnknownHydrogenCount::new(id),
+            ))?;
         let degree = mol
             .incident_bonds(id)
             .expect("live atom")

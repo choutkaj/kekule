@@ -1,6 +1,7 @@
 //! The distribution of an [`Ensemble`](super::Ensemble): which geometries
 //! are samples, their log weights, and their grouping into states.
 
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
 use crate::structure::{Partition, Requirement, StructureSetError};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
@@ -159,10 +160,11 @@ impl Distribution {
                 return Err(StructureSetError::UnsortedSamples);
             }
             if indices.len() != partition.sample_count() {
-                return Err(StructureSetError::PartitionMismatch {
-                    expected: indices.len(),
-                    actual: partition.sample_count(),
-                });
+                return Err(StructureSetError::PartitionMismatch(LengthMismatch::new(
+                    Countable::Sample,
+                    indices.len(),
+                    partition.sample_count(),
+                )));
             }
         }
         Ok(Self {
@@ -189,10 +191,11 @@ impl Distribution {
     /// [`StructureSetError::StateCountMismatch`] for another number of states.
     pub fn with_states(mut self, states: Vec<StateData>) -> Result<Self, StructureSetError> {
         if states.len() != self.states.len() {
-            return Err(StructureSetError::StateCountMismatch {
-                expected: self.states.len(),
-                actual: states.len(),
-            });
+            return Err(StructureSetError::StateCountMismatch(LengthMismatch::new(
+                Countable::State,
+                self.states.len(),
+                states.len(),
+            )));
         }
         self.states = states;
         Ok(self)
@@ -522,10 +525,13 @@ impl Distribution {
     fn set_log_weights(&mut self, log_weights: Option<Vec<f64>>) -> Result<(), StructureSetError> {
         if let Some(log_weights) = &log_weights {
             if log_weights.len() != self.sample_count() {
-                return Err(StructureSetError::LogWeightCountMismatch {
-                    expected: self.sample_count(),
-                    actual: log_weights.len(),
-                });
+                return Err(StructureSetError::LogWeightCountMismatch(
+                    LengthMismatch::new(
+                        Countable::LogWeight,
+                        self.sample_count(),
+                        log_weights.len(),
+                    ),
+                ));
             }
             if let Some(position) = log_weights
                 .iter()
@@ -602,7 +608,11 @@ impl Distribution {
             Samples::Subset(indices) => {
                 if let Some(&last) = indices.last() {
                     if last >= len {
-                        return Err(StructureSetError::IndexOutOfRange { index: last, len });
+                        return Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+                            Countable::Geometry,
+                            last,
+                            len,
+                        )));
                     }
                 }
                 if indices.len() == len {
@@ -632,10 +642,11 @@ impl Distribution {
     /// Checks that `state` exists.
     pub(crate) fn check_state(&self, state: usize) -> Result<(), StructureSetError> {
         if state >= self.states.len() {
-            return Err(StructureSetError::StateOutOfRange {
+            return Err(StructureSetError::StateOutOfRange(IndexOutOfRange::new(
+                Countable::State,
                 state,
-                states: self.states.len(),
-            });
+                self.states.len(),
+            )));
         }
         Ok(())
     }
@@ -1090,10 +1101,11 @@ impl DistributionMut<'_> {
     /// another number of samples than there are; failure changes nothing.
     pub fn regroup(&mut self, partition: Partition) -> Result<(), StructureSetError> {
         if partition.sample_count() != self.distribution.sample_count() {
-            return Err(StructureSetError::PartitionMismatch {
-                expected: self.distribution.sample_count(),
-                actual: partition.sample_count(),
-            });
+            return Err(StructureSetError::PartitionMismatch(LengthMismatch::new(
+                Countable::Sample,
+                self.distribution.sample_count(),
+                partition.sample_count(),
+            )));
         }
         let old = self.distribution.partition.assignments();
         let new = partition.assignments();

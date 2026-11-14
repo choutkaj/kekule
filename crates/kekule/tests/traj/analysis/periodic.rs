@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
@@ -372,7 +373,7 @@ fn imaging_rejects_empty_or_foreign_anchors_and_preserves_nonperiodic_coordinate
     let foreign = AtomSelection::all(Arc::clone(&linear_carbon_topology(2)));
     assert!(matches!(
         imaged(&set, &foreign),
-        Err(PeriodicError::SelectionTopologyMismatch)
+        Err(PeriodicError::TopologyMismatch(TopologyMismatch::Selection))
     ));
     let imaged = imaged(&set, &AtomSelection::all(Arc::clone(&topology))).unwrap();
     close(xyz(&imaged, 0)[0], [0.4, 2.0, 3.0]);

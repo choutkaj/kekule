@@ -3,7 +3,9 @@
 //!
 //! The enumeration search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
-use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded};
+use crate::diagnostics::{
+    Cancellation, Cancelled, Countable, IndexOutOfRange, LimitExceeded, UnknownHydrogenCount,
+};
 use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, MoleculeError,
     MoleculePublicationError, ResonanceGroup, ResonanceModel, ResonancePerception,
@@ -136,7 +138,7 @@ pub enum ResonancePerceptionError {
     /// Aromaticity is not installed.
     MissingAromaticity,
     /// The implicit hydrogen count of an atom the search reads is unknown.
-    UnknownHydrogens(AtomId),
+    UnknownHydrogenCount(UnknownHydrogenCount),
     /// The path search exceeded its work bound, which grows with the graph.
     LimitExceeded(LimitExceeded),
     /// The caller's [`Cancellation`] stopped the path search. Only
@@ -152,10 +154,7 @@ impl fmt::Display for ResonancePerceptionError {
             Self::MissingAromaticity => {
                 f.write_str("Aromaticity is not perceived. Perceive it before resonance.")
             }
-            Self::UnknownHydrogens(a) => write!(
-                f,
-                "The hydrogen count of {a} is unknown. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
             Self::LimitExceeded(limit) => {
                 write!(f, "Resonance perception exceeded its {}.", limit.describe())
             }
@@ -178,8 +177,8 @@ impl std::error::Error for ResonancePerceptionError {
 pub enum ResonanceError {
     /// Conjugation is not installed.
     MissingConjugation,
-    /// The atom's implicit hydrogen count is unknown.
-    UnknownHydrogens(AtomId),
+    /// An atom's implicit hydrogen count is unknown.
+    UnknownHydrogenCount(UnknownHydrogenCount),
     /// A resonance group contains a bond the search does not support.
     UnsupportedBond(BondId),
     /// The search reached an impossible electron count.
@@ -190,12 +189,7 @@ pub enum ResonanceError {
     /// The enumeration exceeded [`ResonanceOptions::max_total_work`].
     LimitExceeded(LimitExceeded),
     /// No contributor has this index.
-    ContributorOutOfRange {
-        /// The requested index.
-        index: usize,
-        /// The number of contributors.
-        count: usize,
-    },
+    ContributorOutOfRange(IndexOutOfRange),
     /// Editing the contributor molecule failed; see the source.
     Molecule(MoleculeError),
     /// Publishing the contributor molecule failed; see the source.
@@ -207,10 +201,7 @@ impl fmt::Display for ResonanceError {
             Self::MissingConjugation => {
                 f.write_str("Conjugation is not perceived. Perceive it before resonance.")
             }
-            Self::UnknownHydrogens(a) => write!(
-                f,
-                "The hydrogen count of {a} is unknown. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
             Self::UnsupportedBond(b) => {
                 write!(f, "Resonance enumeration does not support {b}.")
             }
@@ -227,11 +218,7 @@ impl fmt::Display for ResonanceError {
                     limit.describe()
                 )
             }
-            Self::ContributorOutOfRange { index, count } => write!(
-                f,
-                "Resonance contributor {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*count, "contributor", "contributors")
-            ),
+            Self::ContributorOutOfRange(error) => error.fmt(f),
             Self::Molecule(_) => f.write_str("Cannot edit the resonance contributor."),
             Self::Publication(_) => f.write_str("Cannot publish the resonance contributor."),
         }
@@ -265,7 +252,7 @@ impl std::error::Error for ResonanceError {
 ///
 /// - [`ResonancePerceptionError::MissingAromaticity`] when aromaticity is not
 ///   installed.
-/// - [`ResonancePerceptionError::UnknownHydrogens`] for the first atom the
+/// - [`ResonancePerceptionError::UnknownHydrogenCount`] for the first atom the
 ///   search reads whose implicit hydrogen count is unknown.
 /// - [`ResonancePerceptionError::LimitExceeded`] when the path search exceeds
 ///   its work bound.
@@ -400,16 +387,19 @@ impl ResonanceStructures<'_> {
         let contributor =
             self.contributors
                 .get(index)
-                .ok_or(ResonanceError::ContributorOutOfRange {
+                .ok_or(ResonanceError::ContributorOutOfRange(IndexOutOfRange::new(
+                    Countable::ResonanceContributor,
                     index,
-                    count: self.contributors.len(),
-                })?;
+                    self.contributors.len(),
+                )))?;
         let mut editor = self.source.to_editor();
         for (id, _) in self.source.atoms() {
-            let h = self
-                .source
-                .implicit_hydrogens(id)
-                .ok_or(ResonanceError::UnknownHydrogens(id))?;
+            let h =
+                self.source
+                    .implicit_hydrogens(id)
+                    .ok_or(ResonanceError::UnknownHydrogenCount(
+                        UnknownHydrogenCount::new(id),
+                    ))?;
             let mut atom = editor
                 .require_atom_mut(id)
                 .map_err(ResonanceError::Molecule)?;
@@ -441,7 +431,7 @@ impl ResonanceStructures<'_> {
 /// - [`ResonanceError::MissingConjugation`] when conjugation is not installed.
 /// - [`ResonanceError::InvalidStructureLimit`] when the structure limit is one
 ///   and the molecule has a conjugated group.
-/// - [`ResonanceError::UnknownHydrogens`] for the first atom whose implicit
+/// - [`ResonanceError::UnknownHydrogenCount`] for the first atom whose implicit
 ///   hydrogen count is unknown.
 /// - [`ResonanceError::LimitExceeded`] when the search exceeds
 ///   [`ResonanceOptions::max_total_work`].
@@ -471,7 +461,9 @@ pub fn enumerate_resonance(
     }
     for id in mol.atom_ids() {
         if mol.implicit_hydrogens(id).is_none() {
-            return Err(ResonanceError::UnknownHydrogens(id));
+            return Err(ResonanceError::UnknownHydrogenCount(
+                UnknownHydrogenCount::new(id),
+            ));
         }
     }
     let contributors = search::enumerate(mol, &groups, options)?;

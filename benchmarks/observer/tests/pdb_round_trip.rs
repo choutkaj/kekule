@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use kekule::diagnostics::{DiagnosticKind, FormatErrorDetail};
 use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
 use kekule::mmcif;
-use kekule::pdb::{self, PdbWriteIssue};
+use kekule::pdb::{self, PdbWriteErrorKind};
 use kekule::structure::{Structure, StructureSet, StructureView};
 use kekule::topology::{Topology, TopologyAtomIndex};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
@@ -167,17 +167,17 @@ fn assert_same_structure(reread: StructureView<'_>, source: StructureView<'_>, l
 
 /// The PDB write issues an entry may legitimately hit: identifiers or
 /// values PDB has no columns for.
-fn is_representability_limit(issue: &PdbWriteIssue) -> bool {
+fn is_representability_limit(issue: &PdbWriteErrorKind) -> bool {
     matches!(
         issue,
-        PdbWriteIssue::ChainIdTooLong { .. }
-            | PdbWriteIssue::ResidueNameTooLong { .. }
-            | PdbWriteIssue::InvalidAtomName { .. }
-            | PdbWriteIssue::InsertionCodeTooLong { .. }
-            | PdbWriteIssue::InvalidResidueNumber { .. }
-            | PdbWriteIssue::TooManyAtoms { .. }
-            | PdbWriteIssue::CoordinateOutOfRange { .. }
-            | PdbWriteIssue::DictionaryBondConflict { .. }
+        PdbWriteErrorKind::ChainIdTooLong { .. }
+            | PdbWriteErrorKind::ResidueNameTooLong { .. }
+            | PdbWriteErrorKind::InvalidAtomName { .. }
+            | PdbWriteErrorKind::InsertionCodeTooLong { .. }
+            | PdbWriteErrorKind::InvalidResidueNumber { .. }
+            | PdbWriteErrorKind::TooManyAtoms { .. }
+            | PdbWriteErrorKind::CoordinateOutOfRange { .. }
+            | PdbWriteErrorKind::DictionaryBondConflict { .. }
     )
 }
 

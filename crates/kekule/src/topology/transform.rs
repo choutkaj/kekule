@@ -3,6 +3,7 @@
 //! [`Topology::subset`] returns the subset together with its narrow
 //! dense-state correspondence.
 
+use crate::diagnostics::TopologyMismatch;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -110,7 +111,7 @@ impl Topology {
         let source: Arc<Self> = source.into();
         let this = &source;
         if !this.shares_layout(selection.topology()) {
-            return Err(SelectionError::TopologyMismatch.into());
+            return Err(SelectionError::TopologyMismatch(TopologyMismatch::Selection).into());
         }
         if selection.indices().is_empty() {
             return Err(TopologySubsetError::EmptySelection);
@@ -143,16 +144,17 @@ impl Topology {
                 match definition_subsets.entry((molecule_view.definition_id(), selected_local)) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
-                        let definitions = super::components::build_component_definitions(
-                            source_molecule,
-                            &entry.key().1,
-                            Some((
-                                molecule_view.class(),
-                                this.molecule_class_overrides
-                                    .contains_key(&molecule_view.definition_id()),
-                            )),
-                            &mut builder,
-                        )?;
+                        let definitions =
+                            super::components::build_component_definitions::<TopologySubsetError>(
+                                source_molecule,
+                                &entry.key().1,
+                                Some((
+                                    molecule_view.class(),
+                                    this.molecule_class_overrides
+                                        .contains_key(&molecule_view.definition_id()),
+                                )),
+                                &mut builder,
+                            )?;
                         entry.insert(definitions)
                     }
                 };
@@ -381,15 +383,15 @@ pub enum TopologySubsetError {
     /// The selection does not match the topology; see the source.
     Selection(SelectionError),
     /// Extracting a selected molecule fragment failed; see the source.
-    Molecule(MoleculeError),
+    Molecule(Box<MoleculeError>),
     /// A selected molecule fragment could not be published; see the source.
     Publication(MoleculePublicationError),
     /// Building the subset hierarchy failed; see the source.
     Hierarchy(HierarchyError),
     /// Publishing the subset topology failed; see the source.
-    TopologyBuild(TopologyBuildError),
+    TopologyBuild(Box<TopologyBuildError>),
     /// Projecting property rows onto the subset failed; see the source.
-    Property(PropertyError),
+    Property(Box<PropertyError>),
 }
 
 impl fmt::Display for TopologySubsetError {
@@ -410,11 +412,11 @@ impl std::error::Error for TopologySubsetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Selection(error) => error.source(),
-            Self::Molecule(error) => Some(error),
+            Self::Molecule(error) => Some(error.as_ref()),
             Self::Publication(error) => Some(error),
             Self::Hierarchy(error) => Some(error),
-            Self::TopologyBuild(error) => Some(error),
-            Self::Property(error) => Some(error),
+            Self::TopologyBuild(error) => Some(error.as_ref()),
+            Self::Property(error) => Some(error.as_ref()),
             Self::EmptySelection => None,
         }
     }
@@ -427,7 +429,7 @@ impl From<SelectionError> for TopologySubsetError {
 }
 impl From<MoleculeError> for TopologySubsetError {
     fn from(error: MoleculeError) -> Self {
-        Self::Molecule(error)
+        Self::Molecule(Box::new(error))
     }
 }
 impl From<MoleculePublicationError> for TopologySubsetError {
@@ -442,24 +444,12 @@ impl From<HierarchyError> for TopologySubsetError {
 }
 impl From<TopologyBuildError> for TopologySubsetError {
     fn from(error: TopologyBuildError) -> Self {
-        Self::TopologyBuild(error)
+        Self::TopologyBuild(Box::new(error))
     }
 }
 
 impl From<PropertyError> for TopologySubsetError {
     fn from(error: PropertyError) -> Self {
-        Self::Property(error)
-    }
-}
-
-impl From<super::components::ComponentBuildError> for TopologySubsetError {
-    fn from(error: super::components::ComponentBuildError) -> Self {
-        use super::components::ComponentBuildError;
-        match error {
-            ComponentBuildError::Molecule(e) => Self::Molecule(e),
-            ComponentBuildError::Publication(e) => Self::Publication(e),
-            ComponentBuildError::Property(e) => Self::Property(e),
-            ComponentBuildError::Topology(e) => Self::TopologyBuild(e),
-        }
+        Self::Property(Box::new(error))
     }
 }

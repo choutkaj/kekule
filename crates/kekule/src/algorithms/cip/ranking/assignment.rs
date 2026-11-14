@@ -4,7 +4,7 @@ pub(super) enum CipElementAssignment {
     Assigned(StereoDescriptor),
     Skipped(CipSkippedReason),
     Unresolved,
-    Issue(CipAssignmentIssue),
+    Issue(CipAssignmentFailure),
 }
 
 pub(super) fn assign_cip_element(
@@ -27,7 +27,7 @@ pub(super) fn assign_cip_element(
     };
     match assignment {
         Ok(descriptor) => CipElementAssignment::Assigned(descriptor),
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => CipElementAssignment::Unresolved,
+        Err(CipAssignmentFailure::UnresolvedPriority { .. }) => CipElementAssignment::Unresolved,
         Err(issue) => CipElementAssignment::Issue(issue),
     }
 }
@@ -47,7 +47,7 @@ fn assign_tetrahedral_descriptor(
     options: CipAssignmentOptions,
 ) -> CipResult<StereoDescriptor> {
     match assign_tetrahedral_descriptor_with_auxiliary(mol, element, stereo, options, false) {
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
+        Err(CipAssignmentFailure::UnresolvedPriority { .. }) => {
             assign_tetrahedral_descriptor_with_auxiliary(mol, element, stereo, options, true)
         }
         result => result,
@@ -79,7 +79,7 @@ pub(super) fn tetrahedral_descriptor_from_ranked(
 ) -> CipResult<StereoDescriptor> {
     let orientation = stereo
         .orientation
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let mut priority_positions = Vec::new();
     for carrier in &ranked.carriers {
         let Some(position) = stereo
@@ -87,7 +87,7 @@ pub(super) fn tetrahedral_descriptor_from_ranked(
             .iter()
             .position(|candidate| candidate == carrier)
         else {
-            return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            return Err(CipAssignmentFailure::UnresolvedPriority { element });
         };
         priority_positions.push(position);
     }
@@ -110,7 +110,7 @@ fn assign_double_bond_descriptor(
 ) -> CipResult<StereoDescriptor> {
     let orientation = stereo
         .orientation
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let left_carriers = double_bond_endpoint_carriers(mol, stereo.left, stereo.right, stereo.bond);
     let right_carriers = double_bond_endpoint_carriers(mol, stereo.right, stereo.left, stereo.bond);
     let left_ranked = ranked_carriers(
@@ -148,10 +148,10 @@ fn assign_axis_descriptor(
 ) -> CipResult<StereoDescriptor> {
     let orientation = stereo
         .orientation
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let bond = mol
         .bond(stereo.axis)
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let (left, right) = bond.endpoints();
     let (left_reference, right_reference) =
         axis_reference_carriers(mol, element, stereo, left, right)?;
@@ -192,12 +192,12 @@ fn ranked_endpoint_relation(
         .carriers
         .first()
         .copied()
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let right_top = right
         .carriers
         .first()
         .copied()
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     Ok((
         (left_reference != left_top) != (right_reference != right_top),
         left.pseudo_asymmetric_ordering != right.pseudo_asymmetric_ordering,
@@ -250,25 +250,25 @@ pub(super) fn axis_reference_carriers(
     right: AtomId,
 ) -> CipResult<(StereoCarrier, StereoCarrier)> {
     if stereo.carriers.len() != 2 {
-        return Err(CipAssignmentIssue::UnresolvedPriority { element });
+        return Err(CipAssignmentFailure::UnresolvedPriority { element });
     }
     let mut left_reference = None;
     let mut right_reference = None;
     for carrier in &stereo.carriers {
         let StereoCarrier::Atom(atom) = carrier else {
-            return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            return Err(CipAssignmentFailure::UnresolvedPriority { element });
         };
         let adjacent_left = mol.bond_between(left, *atom).is_some();
         let adjacent_right = mol.bond_between(right, *atom).is_some();
         match (adjacent_left, adjacent_right) {
             (true, false) if left_reference.is_none() => left_reference = Some(*carrier),
             (false, true) if right_reference.is_none() => right_reference = Some(*carrier),
-            _ => return Err(CipAssignmentIssue::UnresolvedPriority { element }),
+            _ => return Err(CipAssignmentFailure::UnresolvedPriority { element }),
         }
     }
     match (left_reference, right_reference) {
         (Some(left), Some(right)) => Ok((left, right)),
-        _ => Err(CipAssignmentIssue::UnresolvedPriority { element }),
+        _ => Err(CipAssignmentFailure::UnresolvedPriority { element }),
     }
 }
 
@@ -348,7 +348,7 @@ fn ranked_tetrahedral_carriers(
     )?;
     match rank_carrier_signatures(element, &signatures, None) {
         Ok(ranked) => Ok(ranked),
-        Err(CipAssignmentIssue::UnresolvedPriority { .. })
+        Err(CipAssignmentFailure::UnresolvedPriority { .. })
             if allow_auxiliary_descriptors && carriers.len() == 4 =>
         {
             rank_tetrahedral_signatures_with_rule6(element, &signatures)
@@ -396,7 +396,7 @@ fn tetrahedral_final_tie_is_nonstereogenic(
     )?;
     match rank_tetrahedral_signatures_with_rule6(element, &signatures) {
         Ok(_) => Ok(false),
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
+        Err(CipAssignmentFailure::UnresolvedPriority { .. }) => {
             Ok(grouped_signature_indices(&signatures)
                 .iter()
                 .any(|group| group.len() > 1))
@@ -438,7 +438,7 @@ fn axis_final_tie_is_nonstereogenic(
 ) -> CipResult<bool> {
     let bond = mol
         .bond(stereo.axis)
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let (left, right) = bond.endpoints();
     axis_reference_carriers(mol, element, stereo, left, right)?;
     let left_carriers = axis_endpoint_carriers(mol, left, right, stereo.axis);
@@ -478,7 +478,7 @@ fn endpoint_final_tie_is_nonstereogenic(
     )?;
     match rank_carrier_signatures(element, &signatures, None) {
         Ok(_) => Ok(false),
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) => {
+        Err(CipAssignmentFailure::UnresolvedPriority { .. }) => {
             Ok(grouped_signature_indices(&signatures)
                 .iter()
                 .any(|group| group.len() > 1))
@@ -585,7 +585,7 @@ pub(super) fn rank_carrier_signatures(
                 .1
                 .compare_with_rule6_reference(&signatures[right].1, rule6_reference);
             if comparison.ordering == Ordering::Equal {
-                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+                return Err(CipAssignmentFailure::UnresolvedPriority { element });
             }
             if comparison.pseudo_asymmetric {
                 pseudo_asymmetric_pair_count += 1;
@@ -618,17 +618,17 @@ pub(super) fn rank_tetrahedral_signatures_with_rule6(
     match groups.len() {
         2 => {
             let Some(reference_index) = groups.iter().flatten().copied().nth(1) else {
-                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+                return Err(CipAssignmentFailure::UnresolvedPriority { element });
             };
             let Some(reference) = carrier_rule6_atom(signatures[reference_index].0) else {
-                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+                return Err(CipAssignmentFailure::UnresolvedPriority { element });
             };
             let ranked = rank_carrier_signatures(element, signatures, Some(reference))?;
             reject_rule6_parity_unstable_references(element, signatures, &ranked)?;
             Ok(ranked)
         }
         1 => rank_s4_tetrahedral_signatures_with_rule6(element, signatures, &groups[0]),
-        _ => Err(CipAssignmentIssue::UnresolvedPriority { element }),
+        _ => Err(CipAssignmentFailure::UnresolvedPriority { element }),
     }
 }
 
@@ -644,18 +644,18 @@ fn rank_s4_tetrahedral_signatures_with_rule6(
         };
         let ranking = match rank_carrier_signatures(element, signatures, Some(reference)) {
             Ok(ranking) => ranking,
-            Err(CipAssignmentIssue::UnresolvedPriority { .. }) => continue,
+            Err(CipAssignmentFailure::UnresolvedPriority { .. }) => continue,
             Err(issue) => return Err(issue),
         };
         if let Some(stable) = &stable_ranking {
             if carrier_permutation_is_odd(&stable.carriers, &ranking.carriers).unwrap_or(true) {
-                return Err(CipAssignmentIssue::UnresolvedPriority { element });
+                return Err(CipAssignmentFailure::UnresolvedPriority { element });
             }
         } else {
             stable_ranking = Some(ranking);
         }
     }
-    stable_ranking.ok_or(CipAssignmentIssue::UnresolvedPriority { element })
+    stable_ranking.ok_or(CipAssignmentFailure::UnresolvedPriority { element })
 }
 
 fn reject_rule6_parity_unstable_references(
@@ -669,11 +669,11 @@ fn reject_rule6_parity_unstable_references(
         };
         let ranking = match rank_carrier_signatures(element, signatures, Some(reference)) {
             Ok(ranking) => ranking,
-            Err(CipAssignmentIssue::UnresolvedPriority { .. }) => continue,
+            Err(CipAssignmentFailure::UnresolvedPriority { .. }) => continue,
             Err(issue) => return Err(issue),
         };
         if carrier_permutation_is_odd(&stable.carriers, &ranking.carriers).unwrap_or(true) {
-            return Err(CipAssignmentIssue::UnresolvedPriority { element });
+            return Err(CipAssignmentFailure::UnresolvedPriority { element });
         }
     }
     Ok(())

@@ -47,6 +47,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
@@ -295,10 +296,11 @@ impl PropertyColumn {
     /// [`PropertyError::InvalidIndex`] when `index` is outside the column.
     pub fn value_ref(&self, index: usize) -> Result<Option<PropertyValueRef<'_>>, PropertyError> {
         if index >= self.len() {
-            return Err(PropertyError::InvalidIndex {
-                len: self.len(),
+            return Err(PropertyError::InvalidIndex(IndexOutOfRange::new(
+                Countable::Row,
                 index,
-            });
+                self.len(),
+            )));
         }
         Ok(match self {
             Self::Bool(values) => values[index].map(PropertyValueRef::Bool),
@@ -824,10 +826,11 @@ impl RawPropertyTable {
         mut column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, PropertyError> {
         if column.len() != self.len {
-            return Err(PropertyError::LengthMismatch {
-                expected: self.len,
-                actual: column.len(),
-            });
+            return Err(PropertyError::LengthMismatch(LengthMismatch::new(
+                Countable::Value,
+                self.len,
+                column.len(),
+            )));
         }
         column.validate()?;
         if column.is_all_missing() {
@@ -1052,10 +1055,11 @@ impl RawPropertyTable {
         rows: &[usize],
     ) -> Result<(), PropertyError> {
         if rows.len() != source.len() {
-            return Err(PropertyError::LengthMismatch {
-                expected: source.len(),
-                actual: rows.len(),
-            });
+            return Err(PropertyError::LengthMismatch(LengthMismatch::new(
+                Countable::Value,
+                source.len(),
+                rows.len(),
+            )));
         }
         for &row in rows {
             self.validate_index(row)?;
@@ -1095,10 +1099,11 @@ impl RawPropertyTable {
 
     fn validate_index(&self, index: usize) -> Result<(), PropertyError> {
         if index >= self.len {
-            return Err(PropertyError::InvalidIndex {
-                len: self.len,
+            return Err(PropertyError::InvalidIndex(IndexOutOfRange::new(
+                Countable::Row,
                 index,
-            });
+                self.len,
+            )));
         }
         Ok(())
     }
@@ -1371,10 +1376,11 @@ impl TopologyProperties {
     pub(crate) fn validate_dimensions(&self, dimensions: [usize; 6]) -> Result<(), PropertyError> {
         for (table, expected) in self.tables().into_iter().zip(dimensions) {
             if table.len() != expected {
-                return Err(PropertyError::LengthMismatch {
+                return Err(PropertyError::LengthMismatch(LengthMismatch::new(
+                    Countable::Value,
                     expected,
-                    actual: table.len(),
-                });
+                    table.len(),
+                )));
             }
         }
         Ok(())
@@ -1538,10 +1544,11 @@ impl GeometryProperties {
         if self.bonds.len() == bond_count || self.bonds.is_empty() {
             return Ok(());
         }
-        Err(PropertyError::LengthMismatch {
-            expected: bond_count,
-            actual: self.bonds.len(),
-        })
+        Err(PropertyError::LengthMismatch(LengthMismatch::new(
+            Countable::Value,
+            bond_count,
+            self.bonds.len(),
+        )))
     }
 
     /// Allocates bond rows after [`Self::validate_bond_rows`] succeeded.
@@ -1724,19 +1731,9 @@ pub enum PropertyError {
     /// The text is not a 1 to `MAX_PROPERTY_KEY_LEN` character ASCII identifier.
     InvalidKey(String),
     /// A column or row set has a different length than the table.
-    LengthMismatch {
-        /// The table's row count.
-        expected: usize,
-        /// The number of values supplied.
-        actual: usize,
-    },
+    LengthMismatch(LengthMismatch),
     /// A row index is outside the table.
-    InvalidIndex {
-        /// The table's row count.
-        len: usize,
-        /// The requested row index.
-        index: usize,
-    },
+    InvalidIndex(IndexOutOfRange),
     /// The row belongs to an atom or bond removed from an editing draft.
     RemovedRow {
         /// The removed row's index.
@@ -1764,15 +1761,8 @@ impl fmt::Display for PropertyError {
                 formatter,
                 "The property key {key:?} is invalid. Use an ASCII identifier of 1 to {MAX_PROPERTY_KEY_LEN} characters."
             ),
-            Self::LengthMismatch { expected, actual } => write!(
-                formatter,
-                "The property table has {expected} rows. {actual} values were given."
-            ),
-            Self::InvalidIndex { len, index } => write!(
-                formatter,
-                "Property row {index} does not exist. The table has {}.",
-                crate::diagnostics::counted(*len, "row", "rows")
-            ),
+            Self::LengthMismatch(error) => error.fmt(formatter),
+            Self::InvalidIndex(error) => error.fmt(formatter),
             Self::RemovedRow { index } => write!(
                 formatter,
                 "Property row {index} belongs to a removed atom or bond."
@@ -1839,10 +1829,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             properties.validate_bond_rows(1),
-            Err(PropertyError::LengthMismatch {
-                expected: 1,
-                actual: 2
-            })
+            Err(PropertyError::LengthMismatch(LengthMismatch::new(
+                Countable::Value,
+                1,
+                2
+            )))
         );
         let projected = properties.project(&[2, 0], &[1]).unwrap();
         assert!(projected.owner().is_empty());
@@ -1880,7 +1871,7 @@ mod tests {
                     (AtomId::new(3), Some(PropertyValue::Int(4))),
                 ],
             ),
-            Err(PropertyError::InvalidIndex { len: 3, index: 3 })
+            Err(PropertyError::InvalidIndex(payload)) if payload == IndexOutOfRange::new(Countable::Row, 3, 3)
         ));
         assert_eq!(guard.atoms(), &before);
         assert_eq!(

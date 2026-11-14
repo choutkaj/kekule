@@ -2,7 +2,7 @@ use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::algorithms::StereoValidationIssue;
+use crate::algorithms::StereoViolation;
 use crate::molecule::{
     canonicalize_represented_chemistry, Atom, AtomId, BondId, BondOrder, ImplicitHydrogens,
     Molecule, MoleculeError,
@@ -78,7 +78,7 @@ pub(crate) enum SourceStereoNormalizationIssue {
         bond: BondId,
         kind: SourceStereoBondMarkKind,
     },
-    InvalidStereo(StereoValidationIssue),
+    InvalidStereo(StereoViolation),
     CouldNotCreateStereoElement(MoleculeError),
 }
 
@@ -211,13 +211,13 @@ impl SourceStereoNormalizationError {
                 Some(*endpoint)
             }
             SourceStereoNormalizationIssue::InvalidStereo(
-                StereoValidationIssue::MissingStereoAtom { atom, .. }
-                | StereoValidationIssue::InvalidTetrahedralCarrierCount { center: atom, .. }
-                | StereoValidationIssue::DuplicateTetrahedralCarrier { center: atom, .. }
-                | StereoValidationIssue::TetrahedralCarrierNotAdjacent { center: atom, .. }
-                | StereoValidationIssue::DoubleBondCarrierIsFocusAtom { endpoint: atom, .. }
-                | StereoValidationIssue::DoubleBondCarrierNotAdjacent { endpoint: atom, .. }
-                | StereoValidationIssue::UnsupportedDoubleBondCarrier { endpoint: atom, .. },
+                StereoViolation::MissingStereoAtom { atom, .. }
+                | StereoViolation::InvalidTetrahedralCarrierCount { center: atom, .. }
+                | StereoViolation::DuplicateTetrahedralCarrier { center: atom, .. }
+                | StereoViolation::TetrahedralCarrierNotAdjacent { center: atom, .. }
+                | StereoViolation::DoubleBondCarrierIsFocusAtom { endpoint: atom, .. }
+                | StereoViolation::DoubleBondCarrierNotAdjacent { endpoint: atom, .. }
+                | StereoViolation::UnsupportedDoubleBondCarrier { endpoint: atom, .. },
             ) => Some(*atom),
             _ => None,
         })
@@ -234,12 +234,12 @@ impl SourceStereoNormalizationError {
                 double_bond, ..
             } => Some(*double_bond),
             SourceStereoNormalizationIssue::InvalidStereo(
-                StereoValidationIssue::MissingStereoBond { bond, .. }
-                | StereoValidationIssue::InvalidDoubleBondOrder { bond, .. }
-                | StereoValidationIssue::DoubleBondFocusMismatch { bond, .. }
-                | StereoValidationIssue::AxisCarrierIsFocusAtom { axis: bond, .. }
-                | StereoValidationIssue::AxisCarrierNotAdjacent { axis: bond, .. }
-                | StereoValidationIssue::UnsupportedAxisCarrier { axis: bond, .. },
+                StereoViolation::MissingStereoBond { bond, .. }
+                | StereoViolation::InvalidDoubleBondOrder { bond, .. }
+                | StereoViolation::DoubleBondFocusMismatch { bond, .. }
+                | StereoViolation::AxisCarrierIsFocusAtom { axis: bond, .. }
+                | StereoViolation::AxisCarrierNotAdjacent { axis: bond, .. }
+                | StereoViolation::UnsupportedAxisCarrier { axis: bond, .. },
             ) => Some(*bond),
             _ => None,
         })

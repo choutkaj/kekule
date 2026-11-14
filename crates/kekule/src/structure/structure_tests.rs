@@ -1,5 +1,6 @@
 //! Structure construction, identity, and position-update regressions.
 
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::structure::{DenseArrayError, GeometryError, Positions, Structure, StructureBuildError};
@@ -208,10 +209,7 @@ fn construction_rejects_empty_and_mismatched_positions_transactionally() {
     let mut builder = Structure::builder();
     assert!(matches!(
         builder.add_molecule(small.clone(), &wrong_count),
-        Err(StructureBuildError::InstancePositionCountMismatch {
-            expected: 2,
-            actual: 1
-        })
+        Err(StructureBuildError::InstancePositionCountMismatch(payload)) if payload == LengthMismatch::new(Countable::Position, 2, 1)
     ));
     assert!(matches!(
         builder.build(),
@@ -230,7 +228,7 @@ fn position_updates_are_complete_finite_and_transactional() {
         structure
             .geometry_mut()
             .set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch { .. }))
+        Err(GeometryError::Array(error)) if matches!(*error, DenseArrayError::CountMismatch { .. })
     ));
     assert_eq!(
         structure.positions().values().into_value(),
@@ -242,9 +240,8 @@ fn position_updates_are_complete_finite_and_transactional() {
         structure
             .geometry_mut()
             .set_positions(Quantity::new(&invalid, ANGSTROM)),
-        Err(GeometryError::Array(DenseArrayError::NonFinite {
-            index: 0
-        }))
+        Err(GeometryError::Array(error))
+            if matches!(*error, DenseArrayError::NonFinite { index: 0 })
     ));
     assert_eq!(
         structure.positions().values().into_value(),

@@ -20,8 +20,8 @@
 pub use crate::io::molfile::entry_points::{parse_reader, parse_str, write, write_to};
 pub use crate::io::{
     MolfileAtom, MolfileAtomMapping, MolfileAtomParity, MolfileBond, MolfileBondMapping,
-    MolfileBondOrder, MolfileBondStereo, MolfileDocument, MolfileHeader, MolfileInterpretOptions,
-    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
+    MolfileBondOrder, MolfileBondStereo, MolfileDocument, MolfileHeader, MolfileInterpretIssue,
+    MolfileInterpretOptions, MolfileInterpretation, MolfileInterpretationReport,
     MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup, MolfileStereoGroupKind,
     MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion, MolfileWriteOptions,
     MolfileWriteVersion,

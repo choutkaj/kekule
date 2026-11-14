@@ -1,6 +1,7 @@
 //! Checks shared by the geometry owners: row indices, topology binding, and
 //! property row counts.
 
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::GeometryProperties;
 use crate::topology::{Topology, TopologyAtomIndex};
 
@@ -10,10 +11,9 @@ use super::{DenseArrayError, GeometryError};
 pub(crate) fn atom_row(len: usize, atom: TopologyAtomIndex) -> Result<usize, GeometryError> {
     let index = atom.index();
     if index >= len {
-        return Err(GeometryError::Array(DenseArrayError::IndexOutOfRange {
-            index,
-            len,
-        }));
+        return Err(GeometryError::Array(Box::new(
+            DenseArrayError::IndexOutOfRange(IndexOutOfRange::new(Countable::Row, index, len)),
+        )));
     }
     Ok(index)
 }
@@ -27,16 +27,22 @@ pub(crate) fn validate_binding(
     topology: &Topology,
 ) -> Result<(), GeometryError> {
     if atoms != topology.atom_count() {
-        return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: topology.atom_count(),
-            actual: atoms,
-        }));
+        return Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                topology.atom_count(),
+                atoms,
+            )),
+        )));
     }
     properties
         .validate_bond_rows(topology.bond_count())
-        .map_err(|_| GeometryError::BondCountMismatch {
-            expected: topology.bond_count(),
-            actual: properties.bonds().len(),
+        .map_err(|_| {
+            GeometryError::BondCountMismatch(LengthMismatch::new(
+                Countable::Row,
+                topology.bond_count(),
+                properties.bonds().len(),
+            ))
         })
 }
 
@@ -52,16 +58,20 @@ pub(crate) fn check_property_rows(
     replacement: &GeometryProperties,
 ) -> Result<(), GeometryError> {
     if replacement.atoms().len() != atoms {
-        return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: atoms,
-            actual: replacement.atoms().len(),
-        }));
+        return Err(GeometryError::Array(Box::new(
+            DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                atoms,
+                replacement.atoms().len(),
+            )),
+        )));
     }
     if replacement.bonds().len() != current.bonds().len() {
-        return Err(GeometryError::BondCountMismatch {
-            expected: current.bonds().len(),
-            actual: replacement.bonds().len(),
-        });
+        return Err(GeometryError::BondCountMismatch(LengthMismatch::new(
+            Countable::Row,
+            current.bonds().len(),
+            replacement.bonds().len(),
+        )));
     }
     Ok(())
 }

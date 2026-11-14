@@ -55,9 +55,10 @@
 //! Owners accept semantic atom and bond IDs (and, in `*_at` methods, dense
 //! indexes), translate IDs to dense indexes, and check every array's length.
 //! Each owner has its own error type ([`StructureError`], [`StructureBuildError`],
-//! [`StructureEditError`], [`StructureSetError`], [`PartitionError`],
-//! [`GeometryEditError`]); [`GeometryError`] and [`DenseArrayError`] report
-//! invalid geometry state shared by all of them.
+//! [`StructureEditError`], [`StructureSetError`], [`PartitionError`]);
+//! [`GeometryError`] and [`DenseArrayError`] report invalid geometry state
+//! shared by all of them, and [`CoordinateError`] reports failed
+//! measurements and geometry edits.
 //!
 //! ```
 //! use kekule::{math::Point3, smiles, units::{Quantity, NANOMETER}};
@@ -122,6 +123,7 @@
 //! No relaxation is performed.
 
 mod builder;
+mod coordinate_error;
 mod dynamics;
 mod ensemble;
 mod geometry;
@@ -137,6 +139,7 @@ mod structure_set;
 mod view;
 
 pub use builder::{StructureBuildError, StructureBuilder, StructureTopologyMut};
+pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
 pub(crate) use ensemble::log_sum_exp;
 pub use ensemble::{
@@ -145,7 +148,7 @@ pub use ensemble::{
 };
 pub(crate) use geometry::{subset_rows, GeometryData};
 pub use geometry::{Geometry, GeometryError, GeometryMut};
-pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
+pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit};
 pub use owned::{Structure, StructureError};
 pub use positions::{DenseArrayError, Positions};
 pub use structure_editor::{

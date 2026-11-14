@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::alignment::{AlignmentError, AlignmentOptions, AtomCorrespondence, Weighting};
@@ -197,12 +198,14 @@ fn unwrapper_rejects_skips_reordering_and_failures_without_advancing_and_support
     let mut foreign = FrameBuffer::new(linear_carbon_topology(3));
     assert_eq!(
         unwrapper.unwrap(101, &mut foreign),
-        Err(PeriodicError::TopologyMismatch { frame: 101 })
+        Err(PeriodicError::TopologyMismatch(TopologyMismatch::Frame(
+            101
+        )))
     );
     assert_eq!(unwrapper.last_frame_index(), Some(100));
     assert_eq!(
         MoleculeImager::new(topology).make_whole(8, &mut foreign),
-        Err(PeriodicError::TopologyMismatch { frame: 8 })
+        Err(PeriodicError::TopologyMismatch(TopologyMismatch::Frame(8)))
     );
 }
 

@@ -480,7 +480,7 @@ fn interpret_smiles_program_component(
     component: &ComponentProgram,
     source: &str,
     radicals: &BTreeMap<usize, AtomRadical>,
-) -> std::result::Result<(Molecule, SmilesInterpretationReport), FormatError> {
+) -> Result<(Molecule, SmilesInterpretationReport), FormatError> {
     validate_smiles_source_aromaticity(program, component, source)?;
     let end_offset = source.len();
 
@@ -720,7 +720,7 @@ fn validate_smiles_source_aromaticity(
     program: &SmilesProgram,
     component: &ComponentProgram,
     source: &str,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     let mut source_aromatic_atoms = BTreeSet::new();
     for &index in &component.atoms {
         let record = &program.atoms[index];
@@ -781,10 +781,7 @@ fn explicit_aromatic_bond_offset(source: &str, fallback: usize) -> usize {
         .map_or(fallback, |(offset, _)| offset)
 }
 
-fn interpret_smiles_atom(
-    syntax: &SmilesAtomSyntax,
-    offset: usize,
-) -> std::result::Result<Atom, FormatError> {
+fn interpret_smiles_atom(syntax: &SmilesAtomSyntax, offset: usize) -> Result<Atom, FormatError> {
     let element = Element::from_symbol(&syntax.symbol).ok_or_else(|| {
         interpret_error(
             DiagnosticKind::InvalidValue,
@@ -827,7 +824,7 @@ fn add_smiles_bond(
     right: AtomId,
     order: BondOrder,
     offset: usize,
-) -> std::result::Result<BondId, FormatError> {
+) -> Result<BondId, FormatError> {
     editor.add_bond(left, right, order).map_err(|error| {
         interpret_error(DiagnosticKind::Chemistry, offset, "Cannot add the bond.")
             .with_source(error)
@@ -840,7 +837,7 @@ fn add_smiles_tetrahedral_elements(
     centers: &[PendingTetrahedral],
     carriers_by_center: &BTreeMap<usize, Vec<PendingStereoCarrier>>,
     offset: usize,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     for pending in centers {
         let Some(&center) = source_to_atom.get(&pending.center) else {
             continue;
@@ -895,7 +892,7 @@ fn resolve_smiles_tetrahedral_carriers(
     source_to_atom: &BTreeMap<usize, AtomId>,
     carriers: Vec<PendingStereoCarrier>,
     offset: usize,
-) -> std::result::Result<Vec<StereoCarrier>, FormatError> {
+) -> Result<Vec<StereoCarrier>, FormatError> {
     let mut carriers = carriers
         .into_iter()
         .map(|carrier| match carrier {
@@ -919,7 +916,7 @@ fn resolve_smiles_tetrahedral_carriers(
                 "A ring bond neighbor of the stereocenter is not resolved.".to_owned(),
             )),
         })
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
     if carriers.len() == 3 && smiles_tetrahedral_center_can_have_lone_pair(mol, center) {
         // Trigonal-pyramidal SMILES with a bracket H use explicit neighbors,
         // then H, then the phantom lone-pair carrier (RDKit's convention).

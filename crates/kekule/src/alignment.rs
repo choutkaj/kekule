@@ -95,8 +95,8 @@ pub use collection::{
     AlignedRmsdOptions, Reference, SuperpositionReport,
 };
 pub use correspondence::{
-    AmbiguousLabel, AtomCorrespondence, AtomCorrespondenceError, AtomLabel, CorrespondenceSide,
-    LabelCorrespondence, LabelScheme,
+    AmbiguousLabel, AtomCorrespondence, AtomLabel, CorrespondenceSide, LabelCorrespondence,
+    LabelScheme,
 };
 pub use rigid::{
     aligned_rmsd, fit, rmsd, AlignmentError, AlignmentGeometry, AlignmentOptions, FitAtoms,
@@ -106,7 +106,7 @@ pub(crate) use rigid::{
     best_kabsch, best_measure, check_fit_count, check_measurement_count, Coordinates,
     NormalizedWeights, Pairs,
 };
-pub use symmetry::{SymmetricSelection, SymmetryError, SymmetryLimits};
+pub use symmetry::{SymmetricSelection, SymmetryLimits};
 
 #[cfg(doc)]
 use crate::topology::AtomSelection;

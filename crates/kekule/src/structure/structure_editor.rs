@@ -7,6 +7,7 @@ use super::scalars::{b_factor_quantity, canonical_b_factor};
 use super::{
     DenseArrayError, Geometry, GeometryData, GeometryError, Positions, Structure, StructureError,
 };
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{OwnerProperties, PropertyError};
@@ -154,10 +155,11 @@ impl StructureEditor {
         positions: &Positions,
     ) -> Result<EditMolecule, StructureEditError> {
         if positions.len() != molecule.atom_count() {
-            return Err(DenseArrayError::CountMismatch {
-                expected: molecule.atom_count(),
-                actual: positions.len(),
-            }
+            return Err(DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                molecule.atom_count(),
+                positions.len(),
+            ))
             .into());
         }
         self.slots.try_reserve_atoms(positions.len())?;
@@ -333,10 +335,11 @@ impl StructureEditor {
     ) -> Result<(), StructureEditError> {
         let positions = Positions::new(positions)?;
         if positions.len() != self.topology.atom_count() {
-            return Err(DenseArrayError::CountMismatch {
-                expected: self.topology.atom_count(),
-                actual: positions.len(),
-            }
+            return Err(DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                self.topology.atom_count(),
+                positions.len(),
+            ))
             .into());
         }
         let staged = self
@@ -729,7 +732,7 @@ pub enum StructureEditError {
     /// Editing the topology failed; see the source.
     Topology(TopologyEditError),
     /// Dense per-atom state is invalid; see the source.
-    Position(DenseArrayError),
+    Position(Box<DenseArrayError>),
     /// A position is not finite: of editor atom `atom`, or of the atom being
     /// added when `atom` is `None`.
     NonFinitePosition {
@@ -737,13 +740,11 @@ pub enum StructureEditError {
         atom: Option<EditAtomId>,
     },
     /// A property edit failed; see the source.
-    Property(PropertyError),
+    Property(Box<PropertyError>),
     /// Geometry state is invalid; see the source.
     Geometry(GeometryError),
     /// The edited structure is invalid; see the source.
-    Structure(Box<StructureError>),
-    /// The edit exceeds coordinate capacity.
-    CapacityOverflow,
+    Structure(StructureError),
     /// A periodic source cannot be imported under the destination's cell.
     IncompatibleAppendCell,
     /// An imported geometry property cannot be combined with its destination table.
@@ -768,9 +769,6 @@ impl fmt::Display for StructureEditError {
             Self::Property(error) => error.fmt(f),
             Self::Geometry(error) => error.fmt(f),
             Self::Structure(error) => error.fmt(f),
-            Self::CapacityOverflow => {
-                f.write_str("The edit exceeds the addressable number of atoms.")
-            }
             Self::IncompatibleAppendCell => f.write_str(
                 "The appended structure has a different periodic cell. Set the destination cell or remove the source cell first.",
             ),
@@ -789,28 +787,33 @@ impl std::error::Error for StructureEditError {
             Self::Geometry(e) => e.source(),
             Self::Structure(e) => e.source(),
             Self::AppendProperty { error, .. } => Some(error.as_ref()),
-            Self::CapacityOverflow
-            | Self::IncompatibleAppendCell
-            | Self::NonFinitePosition { .. } => None,
+            Self::IncompatibleAppendCell | Self::NonFinitePosition { .. } => None,
         }
     }
 }
-macro_rules! convert {
-    ($ty:ty, $variant:ident) => {
-        impl From<$ty> for StructureEditError {
-            fn from(e: $ty) -> Self {
-                Self::$variant(e)
-            }
-        }
-    };
+impl From<TopologyEditError> for StructureEditError {
+    fn from(error: TopologyEditError) -> Self {
+        Self::Topology(error)
+    }
 }
-convert!(TopologyEditError, Topology);
-convert!(DenseArrayError, Position);
-convert!(PropertyError, Property);
-convert!(GeometryError, Geometry);
+impl From<DenseArrayError> for StructureEditError {
+    fn from(error: DenseArrayError) -> Self {
+        Self::Position(Box::new(error))
+    }
+}
+impl From<PropertyError> for StructureEditError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(Box::new(error))
+    }
+}
+impl From<GeometryError> for StructureEditError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
+    }
+}
 impl From<StructureError> for StructureEditError {
     fn from(error: StructureError) -> Self {
-        Self::Structure(Box::new(error))
+        Self::Structure(error)
     }
 }
 

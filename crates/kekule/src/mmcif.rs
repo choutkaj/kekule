@@ -51,5 +51,5 @@ pub use crate::io::mmcif::entry_points::{parse_reader, parse_str, write, write_t
 pub use crate::io::{
     MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
     MmcifEntityClassifications, MmcifEntry, MmcifGeometryField, MmcifItem, MmcifLoopTable,
-    MmcifParseOptions, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
+    MmcifParseOptions, MmcifValue, MmcifWriteErrorKind, MmcifWriteOptions,
 };

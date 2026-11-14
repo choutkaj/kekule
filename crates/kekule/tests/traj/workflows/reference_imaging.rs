@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
@@ -241,12 +242,12 @@ fn imaging_onto_a_reference_requires_the_frame_cell_and_is_transactional() {
     let snapshot = format!("{buffer:?}");
     assert_eq!(
         imager.image_onto(0, &mut buffer, &foreign.get(0).unwrap()),
-        Err(PeriodicError::ReferenceTopologyMismatch)
+        Err(PeriodicError::TopologyMismatch(TopologyMismatch::Reference))
     );
     let mut foreign_buffer = FrameBuffer::new(foreign.shared_topology());
     assert_eq!(
         imager.image_onto(4, &mut foreign_buffer, &set.get(0).unwrap()),
-        Err(PeriodicError::TopologyMismatch { frame: 4 })
+        Err(PeriodicError::TopologyMismatch(TopologyMismatch::Frame(4)))
     );
     assert_eq!(format!("{buffer:?}"), snapshot);
 }

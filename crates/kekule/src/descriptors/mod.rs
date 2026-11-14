@@ -58,6 +58,7 @@ pub(crate) fn mass_difference_reference(element: Element) -> Option<u16> {
     data::most_abundant_isotope(element)
 }
 
+use crate::diagnostics::UnknownHydrogenCount;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -177,10 +178,7 @@ impl fmt::Display for MolecularFormula {
 #[non_exhaustive]
 pub enum MolecularDescriptorError {
     /// Installed implicit-hydrogen state is absent for a live atom that permits it.
-    MissingImplicitHydrogens {
-        /// The atom without installed hydrogen state.
-        atom: AtomId,
-    },
+    UnknownHydrogenCount(UnknownHydrogenCount),
     /// No AME 2020 atomic mass is available for an asserted isotope label.
     UnknownIsotope {
         /// The labelled atom.
@@ -218,10 +216,7 @@ pub enum MolecularDescriptorError {
 impl fmt::Display for MolecularDescriptorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingImplicitHydrogens { atom } => write!(
-                formatter,
-                "The implicit hydrogens of {atom} are not perceived. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(formatter),
             Self::UnknownIsotope {
                 atom,
                 element,
@@ -259,7 +254,7 @@ impl Error for MolecularDescriptorError {}
 ///
 /// # Errors
 ///
-/// [`MolecularDescriptorError::MissingImplicitHydrogens`] when
+/// [`MolecularDescriptorError::UnknownHydrogenCount`] when
 /// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
 /// implicit-hydrogen state, and [`MolecularDescriptorError::CountOverflow`]
 /// when a count exceeds `u64`.
@@ -293,7 +288,7 @@ pub fn molecular_formula(
 ///
 /// # Errors
 ///
-/// [`MolecularDescriptorError::MissingImplicitHydrogens`] when
+/// [`MolecularDescriptorError::UnknownHydrogenCount`] when
 /// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
 /// implicit-hydrogen state, [`MolecularDescriptorError::UnknownIsotope`] for an
 /// isotope label without an AME 2020 mass,
@@ -311,7 +306,7 @@ pub fn average_mass(
 ///
 /// # Errors
 ///
-/// [`MolecularDescriptorError::MissingImplicitHydrogens`] when
+/// [`MolecularDescriptorError::UnknownHydrogenCount`] when
 /// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
 /// implicit-hydrogen state, [`MolecularDescriptorError::UnknownIsotope`] for an
 /// isotope label without an AME 2020 mass,
@@ -376,9 +371,9 @@ fn visit_constituents(
         )?;
         let implicit = match hydrogen_policy {
             HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.represented_count()),
-            HydrogenCountPolicy::IncludePerceived => graph
-                .implicit_hydrogens(atom_id)
-                .ok_or(MolecularDescriptorError::MissingImplicitHydrogens { atom: atom_id })?,
+            HydrogenCountPolicy::IncludePerceived => graph.implicit_hydrogens(atom_id).ok_or(
+                MolecularDescriptorError::UnknownHydrogenCount(UnknownHydrogenCount::new(atom_id)),
+            )?,
         };
         if implicit != 0 {
             // At most two u8 contributions, widened by the public count API.
@@ -462,9 +457,9 @@ mod tests {
         );
         assert_eq!(
             molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived),
-            Err(MolecularDescriptorError::MissingImplicitHydrogens {
-                atom: AtomId::new(0)
-            })
+            Err(MolecularDescriptorError::UnknownHydrogenCount(
+                UnknownHydrogenCount::new(AtomId::new(0))
+            ))
         );
 
         molecule.perceive().expect("methane perceives");

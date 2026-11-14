@@ -2,6 +2,8 @@
 //! to the same reductions of the set in memory, for every geometry, a range
 //! with a stride, and a distribution over part of the set.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -281,7 +283,11 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
     assert_eq!(
         SampleObservations::of(&file, [2, 10]),
         Err(StatisticsError::Read(
-            StructureSetReadError::IndexOutOfRange { index: 10, len: 10 }
+            StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Geometry,
+                10,
+                10
+            ))
         ))
     );
 
@@ -338,7 +344,11 @@ fn statistics_over_a_reader_equal_the_set_in_memory() {
     assert_eq!(
         SampleObservations::weighted_of(&file, [2, 10]),
         Err(StatisticsError::Read(
-            StructureSetReadError::IndexOutOfRange { index: 10, len: 10 }
+            StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Geometry,
+                10,
+                10
+            ))
         ))
     );
 }
@@ -517,7 +527,7 @@ fn rmsd_of_listed_geometries_equals_the_set_in_memory() {
     assert!(matches!(
         alignment::geometry_rmsd(&file, [0, 10], 3, &fit, options),
         Err(AlignmentError::Read(error))
-            if *error == StructureSetReadError::IndexOutOfRange { index: 10, len: 10 }
+            if error == StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 10, 10))
     ));
 }
 

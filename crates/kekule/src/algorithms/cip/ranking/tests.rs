@@ -817,7 +817,7 @@ fn rule6_tetrahedral_retry_rejects_parity_unstable_two_partition_rankings() {
     let issue = rank_tetrahedral_signatures_with_rule6(element, &signatures)
         .expect_err("odd successful reference permutations must remain unresolved");
 
-    assert_eq!(issue, CipAssignmentIssue::UnresolvedPriority { element });
+    assert_eq!(issue, CipAssignmentFailure::UnresolvedPriority { element });
 }
 
 fn s4_rule6_signatures(
@@ -881,7 +881,7 @@ fn rule6_s4_retry_rejects_parity_unstable_reference_rankings() {
     let issue = rank_tetrahedral_signatures_with_rule6(element, &signatures)
         .expect_err("odd reference permutations must remain unresolved");
 
-    assert_eq!(issue, CipAssignmentIssue::UnresolvedPriority { element });
+    assert_eq!(issue, CipAssignmentFailure::UnresolvedPriority { element });
 }
 
 #[test]

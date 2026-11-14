@@ -1,5 +1,6 @@
 //! Reading the geometries of any set: [`StructureSetRead`] and [`StructureSetReadError`].
 
+use crate::diagnostics::IndexOutOfRange;
 use std::fmt;
 use std::sync::Arc;
 
@@ -155,12 +156,7 @@ pub(crate) fn visit_geometry<T, E>(
 #[non_exhaustive]
 pub enum StructureSetReadError {
     /// No geometry has this index.
-    IndexOutOfRange {
-        /// The requested index.
-        index: usize,
-        /// The number of geometries.
-        len: usize,
-    },
+    IndexOutOfRange(IndexOutOfRange),
     /// A geometry cannot be read from its trajectory file; see the source.
     Trajectory {
         /// The geometry index.
@@ -188,7 +184,7 @@ pub enum StructureSetReadError {
         /// The geometry index.
         geometry: usize,
         /// The failure.
-        source: Box<GeometryError>,
+        source: GeometryError,
     },
     /// A host's reader cannot provide the geometry, for its own reason, such
     /// as a cache whose source is gone; see the source. Made with
@@ -228,13 +224,7 @@ impl StructureSetReadError {
 impl PartialEq for StructureSetReadError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (
-                Self::IndexOutOfRange { index, len },
-                Self::IndexOutOfRange {
-                    index: other_index,
-                    len: other_len,
-                },
-            ) => index == other_index && len == other_len,
+            (Self::IndexOutOfRange(error), Self::IndexOutOfRange(other)) => error == other,
             (
                 Self::Trajectory { geometry, source },
                 Self::Trajectory {
@@ -278,11 +268,7 @@ impl PartialEq for StructureSetReadError {
 impl fmt::Display for StructureSetReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IndexOutOfRange { index, len } => write!(
-                formatter,
-                "Geometry {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*len, "geometry", "geometries")
-            ),
+            Self::IndexOutOfRange(error) => error.fmt(formatter),
             Self::Periodic { geometry, .. } | Self::Geometry { geometry, .. } => {
                 write!(formatter, "Cannot process geometry {geometry}.")
             }
@@ -303,7 +289,7 @@ impl std::error::Error for StructureSetReadError {
             Self::Trajectory { source, .. } => Some(source),
             Self::Periodic { source, .. } => Some(source.as_ref()),
             Self::Alignment { source, .. } => Some(source.as_ref()),
-            Self::Geometry { source, .. } => Some(source.as_ref()),
+            Self::Geometry { source, .. } => Some(source),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }
     }

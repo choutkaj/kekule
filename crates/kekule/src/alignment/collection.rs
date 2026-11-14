@@ -1,7 +1,7 @@
 //! Superposition and RMSD over every geometry of a [`StructureSet`], and RMSD
 //! over listed geometries of any [`StructureSetRead`], through one implementation.
 
-use crate::diagnostics::Cancellation;
+use crate::diagnostics::{Cancellation, Countable, IndexOutOfRange, TopologyMismatch};
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
 use crate::structure::{
@@ -308,14 +308,18 @@ fn geometry_values(
     run: Run<'_>,
 ) -> Result<Quantity<Vec<f64>>, AlignmentError> {
     run.check().map_err(AlignmentError::Cancelled)?;
-    let read_error = |error| AlignmentError::Read(Box::new(error));
+    let read_error = |error| AlignmentError::Read(error);
     let held: Geometry;
     let reference = match reference {
         Reference::View(view) => view,
         Reference::Index(index) => {
             let len = reader.len();
             if index >= len {
-                return Err(AlignmentError::ReferenceOutOfRange { index, len });
+                return Err(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+                    Countable::Structure,
+                    index,
+                    len,
+                )));
             }
             match reader.peek(index) {
                 Some(view) => view.as_structure_view(),
@@ -499,10 +503,11 @@ fn reference_view<'a>(
             items
                 .get(index)
                 .copied()
-                .ok_or(AlignmentError::ReferenceOutOfRange {
+                .ok_or(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+                    Countable::Structure,
                     index,
-                    len: items.len(),
-                })
+                    items.len(),
+                )))
         }
         Reference::View(view) => Ok(view),
     }
@@ -529,9 +534,7 @@ fn item_pair_sets(
                     .collect()])
             }
             FitAtoms::Correspondence(correspondence) => {
-                correspondence
-                    .ensure_compatible(topology, reference.topology())
-                    .map_err(AlignmentError::Correspondence)?;
+                correspondence.ensure_compatible(topology, reference.topology())?;
                 Ok(vec![correspondence.index_pairs().to_vec()])
             }
             FitAtoms::Symmetric(symmetric) => {
@@ -548,10 +551,14 @@ fn check_empty_selection(
     reference: StructureView<'_>,
 ) -> Result<(), AlignmentError> {
     if !topology.shares_layout(reference.topology()) {
-        return Err(AlignmentError::TopologyMismatch);
+        return Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Reference,
+        ));
     }
     if !selection.topology().shares_layout(topology) {
-        return Err(AlignmentError::SelectionTopologyMismatch);
+        return Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Selection,
+        ));
     }
     Ok(())
 }

@@ -1,3 +1,5 @@
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 use std::{io, io::Write};
 
@@ -7,7 +9,7 @@ use kekule::diagnostics::{
 };
 use kekule::macromolecular::EntityKind;
 use kekule::math::{PeriodicCell, Point3, Vector3};
-use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteIssue, MmcifWriteOptions};
+use kekule::mmcif::{self, MmcifEntityClassifications, MmcifWriteErrorKind, MmcifWriteOptions};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
@@ -1318,7 +1320,7 @@ fn mmcif_blocks_take_their_own_names_and_read_back_under_them() {
     assert_eq!(
         invalid.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::InvalidBlockName("two words".to_owned())
+            MmcifWriteErrorKind::InvalidBlockName("two words".to_owned())
         ))
     );
 
@@ -1343,7 +1345,7 @@ fn mmcif_blocks_take_their_own_names_and_read_back_under_them() {
         assert_eq!(
             error.detail(),
             Some(&FormatErrorDetail::MmcifWrite(
-                MmcifWriteIssue::DuplicateBlockName(clash.to_owned())
+                MmcifWriteErrorKind::DuplicateBlockName(clash.to_owned())
             ))
         );
         assert!(sink.is_empty());
@@ -1783,7 +1785,7 @@ fn mmcif_export_still_rejects_a_partially_assigned_molecule() {
     let structure = Structure::new(builder.build().unwrap(), Positions::zeros(2)).unwrap();
     assert_eq!(
         mmcif_issue(mmcif::write([&structure], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(MmcifWriteIssue::MissingAtomSite(InstanceAtomId::new(
+        Some(MmcifWriteErrorKind::MissingAtomSite(InstanceAtomId::new(
             instance, atoms[0]
         )))
     );
@@ -1900,15 +1902,12 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     assert_eq!(
         structure_error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::ReportCountMismatch {
-                expected: 1,
-                actual: 0
-            }
+            MmcifWriteErrorKind::ReportCountMismatch(LengthMismatch::new(Countable::Report, 1, 0))
         ))
     );
     assert_eq!(
         structure_error.to_string(),
-        "Cannot write the mmCIF output. The block has 1 structure and 0 interpretation reports."
+        "Cannot write the mmCIF output. There are 0 interpretation reports instead of 1."
     );
 
     let set = StructureSet::from_structures([first, second]).unwrap();
@@ -1921,15 +1920,12 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     assert_eq!(
         set_error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::ReportCountMismatch {
-                expected: 2,
-                actual: 0
-            }
+            MmcifWriteErrorKind::ReportCountMismatch(LengthMismatch::new(Countable::Report, 2, 0))
         ))
     );
     assert_eq!(
         set_error.to_string(),
-        "Cannot write the mmCIF output. The block has 2 structures and 0 interpretation reports."
+        "Cannot write the mmCIF output. There are 0 interpretation reports instead of 2."
     );
 }
 
@@ -1943,7 +1939,7 @@ fn described(error: FormatError) -> (DiagnosticKind, Option<FormatErrorDetail>, 
 }
 
 /// The mmCIF writer issue of a failed write.
-fn mmcif_issue<T>(result: Result<T, FormatError>) -> Option<MmcifWriteIssue> {
+fn mmcif_issue<T>(result: Result<T, FormatError>) -> Option<MmcifWriteErrorKind> {
     match result.err()?.detail()? {
         FormatErrorDetail::MmcifWrite(issue) => Some(issue.clone()),
         _ => None,
@@ -2371,7 +2367,7 @@ fn structure_sets_write_their_order_or_fail_on_it() {
                 assert_eq!(
                     error.detail(),
                     Some(&FormatErrorDetail::PdbWrite(
-                        pdb::PdbWriteIssue::UnrepresentableGeometry { geometry: 1, field }
+                        pdb::PdbWriteErrorKind::UnrepresentableGeometry { geometry: 1, field }
                     ))
                 );
                 assert_eq!(
@@ -2559,7 +2555,7 @@ fn structure_sets_report_or_refuse_the_order_pdb_and_mmcif_lose() {
         assert_eq!(
             error.detail(),
             Some(&FormatErrorDetail::MmcifWrite(
-                MmcifWriteIssue::UnrepresentableGeometry { geometry, field }
+                MmcifWriteErrorKind::UnrepresentableGeometry { geometry, field }
             )),
             "{error}"
         );
@@ -2605,10 +2601,7 @@ fn mmcif_structure_sets_check_the_report_count_before_their_state() {
     .unwrap_err();
     assert!(matches!(
         mmcif_issue::<()>(Err(error)),
-        Some(MmcifWriteIssue::ReportCountMismatch {
-            expected: 2,
-            actual: 0
-        })
+        Some(MmcifWriteErrorKind::ReportCountMismatch(payload)) if payload == LengthMismatch::new(Countable::Report, 2, 0)
     ),);
 }
 
@@ -2663,7 +2656,7 @@ fn mmcif_geometries_share_the_first_geometry_s_entities() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteIssue::IncompatibleGeometry {
+            MmcifWriteErrorKind::IncompatibleGeometry {
                 geometry: 2,
                 field: kekule::mmcif::MmcifGeometryField::Entities,
             }
@@ -3062,7 +3055,7 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::PdbWrite(
-            pdb::PdbWriteIssue::UnrepresentableGeometry {
+            pdb::PdbWriteErrorKind::UnrepresentableGeometry {
                 geometry: 1,
                 field: GeometryField::SetProperties,
             }
@@ -3089,7 +3082,7 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     set.properties_mut().clear();
     assert_eq!(
         mmcif_issue(mmcif::write([&set], mmcif_default())),
-        Some(MmcifWriteIssue::UnrepresentableGeometry {
+        Some(MmcifWriteErrorKind::UnrepresentableGeometry {
             geometry: 2,
             field: GeometryField::AtomProperties,
         })

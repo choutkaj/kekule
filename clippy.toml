@@ -1,0 +1,2 @@
+# SPEC "Errors": an error is at most 120 bytes.
+large-error-threshold = 121

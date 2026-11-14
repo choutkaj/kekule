@@ -84,7 +84,7 @@ through the workspace.
   distances (`XyzInterpretationReport`, `Format::Xyz`).
 - The PDB writer: `pdb::write` and `write_to` write a structure or set, one
   `MODEL` per geometry, and return a `WriteReport`; what PDB cannot hold fails
-  (`PdbWriteIssue`) unless `PdbWriteOptions` omits it.
+  (`PdbWriteErrorKind`) unless `PdbWriteOptions` omits it.
 - `MmcifWriteOptions::with_implicit_hydrogens`, like PDB's, omits fixed
   implicit-hydrogen counts, so XYZ interpretations export.
 - `PdbWriteOptions::with_chain_ids(PdbChainIdPolicy::SegmentId)` writes chain
@@ -95,7 +95,7 @@ through the workspace.
   interpretation (`with_cancellation`, `DiagnosticKind::Cancelled`) and
   perception (`perceive_with`, `PerceptionError::Cancelled`).
 - `MmcifBlockSource::with_block_name` names a data block; duplicate names fail
-  with `MmcifWriteIssue::DuplicateBlockName`.
+  with `MmcifWriteErrorKind::DuplicateBlockName`.
 - `XyzWriter::report` and `FileTrajectoryWriter::report` list what XYZ leaves
   out, and `XyzWriteOptions::cell` omits cells; `WriteOmission` gains
   `FormalCharges` and `AtomSites`, `WriteReport` `is_empty` and `FromIterator`.
@@ -135,7 +135,7 @@ through the workspace.
   atom groups, such as a pocket's residues against a ligand.
 - `AtomCorrespondence::from_labels` pairs atoms of two structures by chain,
   residue, insertion code, and atom name (`LabelScheme`, `LabelCorrespondence`,
-  `AtomCorrespondenceError::AmbiguousLabels`).
+  `AlignmentError::AmbiguousLabels`).
 - `EditCorrespondence::atoms`, `bonds`, `residues`, and `chains` return a
   `DenseCorrespondence` for remapping per-atom columns after an edit.
 - Builder geometry on `StructureEditor` (`structure::placement`):
@@ -165,7 +165,7 @@ through the workspace.
   `Assembly::to_structure` builds one.
 - `diagnostics::ErrorChain` writes an error and its sources as one message;
   `LimitExceeded::describe`, and `Display` for `StructureInterpretIssue`,
-  `BondOrder`, `ValenceIssue`, and other issue and stereo types.
+  `BondOrder`, `ValenceViolation`, and other report and stereo types.
 - Benchmarks of large interpretation, edits, clustering, pooled reads,
   statistics, and selections over externally supplied entries.
 
@@ -189,8 +189,8 @@ through the workspace.
   `cleared_model_properties` becomes `cleared_geometry_properties`, and the
   matching `PropertyDomain` rows become `GeometryAtoms` and `GeometryBonds`.
 - **Breaking:** `kekule::geometry` becomes `kekule::math`, and
-  `PeriodicGeometry` becomes `Lattice` (`LatticeError`;
-  `SolvationError::Lattice`, `PeriodicBoxError::Lattice`).
+  `PeriodicGeometry` becomes `Lattice`, whose `PeriodicGeometryError` merges
+  into `PeriodicCellError` (`SolvationError::Cell`).
 - **Breaking:** `StructureKind` is `Standalone` or `InSet(SetContext)`, whose
   context gives the geometry's `Place`; match `InSet` where code matched
   `Model`, `Member`, or `Frame`.
@@ -230,7 +230,7 @@ through the workspace.
 - **Breaking:** SDF no longer writes or reads `kekule.weight` and
   `kekule.energy.kJ_per_mol`; such fields are ordinary data, and
   `sdf::WEIGHT_FIELD` and `ENERGY_FIELD` are gone.
-- **Breaking:** `MmcifWriteIssue`'s `*EnsembleMember` and `EmptyEnsemble` are
+- **Breaking:** `MmcifWriteErrorKind`'s `*EnsembleMember` and `EmptyEnsemble` are
   `IncompatibleGeometry`, `UnrepresentableGeometry`, and `EmptyStructureSet`;
   `MmcifMemberField` is `MmcifGeometryField`, without `Weight` and `Energy`.
 - **Breaking:** `MmcifCellReason::MemberCellsDiffer` is `GeometryCellsDiffer`.
@@ -298,7 +298,7 @@ through the workspace.
   `InstanceView::residues`, cost what they change or return; cloning a
   structure copies no coordinates.
 - **Breaking:** The mmCIF writer writes chains that share a label as copies
-  (`A-2`, `A-3`); `MmcifWriteIssue::DuplicateAsymId` is removed.
+  (`A-2`, `A-3`); `MmcifWriteErrorKind::DuplicateAsymId` is removed.
 - **Breaking:** The mmCIF writer states as `_struct_conn` rows only bonds its
   reader cannot derive, and selects partners by author sequence and insertion
   code.
@@ -309,6 +309,48 @@ through the workspace.
 - **Breaking:** `kekule-potentials`' `minimize_with_observer` is
   `minimize_with(potential, structure, options, observer, run)`, whose
   `parallel::Run` can cancel (`MinimizationError::Cancelled`).
+- **Breaking:** Facts that several errors report are shared payloads in
+  `diagnostics`, with one message each: `IndexOutOfRange`, `LengthMismatch`,
+  `TopologyMismatch`, `CapacityExceeded`, and `UnknownHydrogenCount`, counted
+  by `Countable`. The variants that carried them as fields now hold the
+  payload, in `AlignmentError`, `BondDihedralError`, `CoordinateStereoError`,
+  `DenseArrayError`, `DsspError`, `GeometryError`, `HierarchyError`,
+  `MoleculeError`, `PeriodicError`, `PropertyError`, `ResonanceError`,
+  `SelectionError`, `SolvationError`, `StructureBuildError`, and
+  `TopologyBuildError`; a mismatch's
+  `found` is `actual`.
+- **Breaking:** `MoleculeIdKind` and `TopologyIdKind` are removed;
+  `IdentifierCapacityExceeded` and `CapacityOverflow` are
+  `CapacityExceeded(CapacityExceeded)`.
+- **Breaking:** `ConjugationError`, `ResonancePerceptionError`, and
+  `ResonanceError` `UnknownHydrogens`, `CipRankingError` and
+  `CipAssignmentFailure` `UnknownHydrogenCount { atom }`, and
+  `MolecularDescriptorError::MissingImplicitHydrogens` are
+  `UnknownHydrogenCount(UnknownHydrogenCount)`.
+- **Breaking:** `GeometryEditError` and `MeasurementError` merge into
+  `structure::CoordinateError`.
+- **Breaking:** `PeriodicBoxError` merges into `SolvationError`
+  (`InvalidPadding`, `Cell`).
+- **Breaking:** `AtomCorrespondenceError` and `SymmetryError` merge into
+  `AlignmentError` (`LayoutMismatch`, `InvalidAtom`, `DuplicateAtom`,
+  `AmbiguousLabels`, `SymmetryLimitExceeded`, `Perception`,
+  `UnknownHydrogenCount`).
+- **Breaking:** `DsspCodeError` is `DsspError::InvalidCode`.
+- **Breaking:** "Issue" names only non-fatal report entries.
+  `CipAssignmentIssue`, `StereoValidationIssue`, `ValenceIssue`,
+  `DelocalizationIssue`, and `QueryStereoIssue` are `CipAssignmentFailure`,
+  `StereoViolation`, `ValenceViolation`, `DelocalizationViolation`, and
+  `QueryStereoViolation`, in `failures` and `violations` fields;
+  `MmcifWriteIssue` is `MmcifWriteErrorKind`; `MolfileInterpretationWarning`
+  is `MolfileInterpretIssue`, read with `MolfileInterpretationReport::issues`.
+- **Breaking:** Errors box a payload only to stay under 128 bytes:
+  `MoleculeError::Property`, `TopologyBuildError::Property`, and
+  `RigidTransformError::Unit` are inline; `GeometryError::Array`,
+  `TopologyEditError` and `TopologySubsetError`'s `Molecule`, `Topology` or
+  `TopologyBuild`, and `Property`, `StructureEditError`'s `Position` and
+  `Property`, `SolvationError`'s `Unit`, `Cell`, `Position`, and `Build`, and
+  `kekule-potentials`' `MinimizationError`'s `Evaluation`, `Position`, and
+  `Unit` are boxed.
 
 ### Removed
 

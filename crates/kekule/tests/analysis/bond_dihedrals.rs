@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use kekule::diagnostics::{LimitExceeded, Resource};
 use std::sync::Arc;
 
@@ -10,8 +11,8 @@ use kekule::{
         StereoDescriptor, StereoElementKind,
     },
     structure::{
-        measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck, MeasurementError},
-        Geometry, Positions, Structure, StructureSet,
+        measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck},
+        CoordinateError, Geometry, Positions, Structure, StructureSet,
     },
     topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId},
     units::{Quantity, DEGREE, NANOMETER},
@@ -235,7 +236,7 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
     assert_eq!(
         selected.measure(structure.as_structure_view()),
         Err(BondDihedralError::Measurement(
-            MeasurementError::NumericalFailure
+            CoordinateError::NumericalFailure
         ))
     );
     for &id in &ids {
@@ -250,13 +251,17 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
     let foreign = make_structure("CCCC", true);
     assert_eq!(
         selected.measure(foreign.as_structure_view()),
-        Err(BondDihedralError::TopologyMismatch)
+        Err(BondDihedralError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     let absent = definition(&structure, 0, 1);
     assert_eq!(absent.atoms(), None);
     assert_eq!(
         absent.measure(foreign.as_structure_view()),
-        Err(BondDihedralError::TopologyMismatch)
+        Err(BondDihedralError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     for invalid in [
         InstanceBondId::new(ids[0].instance(), BondId::new(99)),
@@ -369,7 +374,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
             Default::default()
         ),
         Err(BondDihedralError::Ranking {
-            error: CipRankingError::UnknownHydrogenCount { .. },
+            error: CipRankingError::UnknownHydrogenCount(_),
             ..
         })
     ));

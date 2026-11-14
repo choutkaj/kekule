@@ -5,7 +5,7 @@ use crate::diagnostics::{Capitalized, LimitExceeded, Resource};
 /// Why a query stereo constraint or group is invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum QueryStereoIssue {
+pub enum QueryStereoViolation {
     /// An atom's carrier frame names a different tetrahedral focus.
     FrameFocusMismatch,
     /// Two constraints share one focus.
@@ -30,7 +30,7 @@ pub enum QueryStereoIssue {
     InvalidDoubleBondCarriers,
 }
 
-impl fmt::Display for QueryStereoIssue {
+impl fmt::Display for QueryStereoViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::FrameFocusMismatch => {
@@ -394,7 +394,7 @@ impl QueryGraphBuilder {
         self.validate_atom(atom)?;
         if !matches!(&frame, QueryStereoConstraint::Tetrahedral { center, .. } if *center == atom) {
             return Err(QueryGraphError::InvalidStereo(
-                QueryStereoIssue::FrameFocusMismatch,
+                QueryStereoViolation::FrameFocusMismatch,
             ));
         }
         frame.validate(self.atoms.len(), &self.bonds, &self.adjacency)?;
@@ -454,7 +454,7 @@ impl QueryGraphBuilder {
             .any(|existing| existing.focus() == constraint.focus())
         {
             return Err(QueryGraphError::InvalidStereo(
-                QueryStereoIssue::DuplicateFocus,
+                QueryStereoViolation::DuplicateFocus,
             ));
         }
         constraint.canonicalize();
@@ -494,7 +494,7 @@ impl QueryGraphBuilder {
                 && atom.stereo_frame.is_none()
             {
                 return Err(QueryGraphError::InvalidStereo(
-                    QueryStereoIssue::MissingCarrierFrame,
+                    QueryStereoViolation::MissingCarrierFrame,
                 ));
             }
         }
@@ -512,12 +512,14 @@ impl QueryGraphBuilder {
     /// Adds one enhanced stereo relationship. No member may occur in two groups.
     pub fn add_stereo_group(&mut self, mut group: QueryStereoGroup) -> Result<(), QueryGraphError> {
         if group.members.is_empty() {
-            return Err(QueryGraphError::InvalidStereo(QueryStereoIssue::EmptyGroup));
+            return Err(QueryGraphError::InvalidStereo(
+                QueryStereoViolation::EmptyGroup,
+            ));
         }
         group.members.sort_unstable();
         if group.members.windows(2).any(|p| p[0] == p[1]) {
             return Err(QueryGraphError::InvalidStereo(
-                QueryStereoIssue::DuplicateGroupMember,
+                QueryStereoViolation::DuplicateGroupMember,
             ));
         }
         for &member in &group.members {
@@ -528,7 +530,7 @@ impl QueryGraphBuilder {
                 .any(|g| g.members.contains(&member))
             {
                 return Err(QueryGraphError::InvalidStereo(
-                    QueryStereoIssue::MemberAlreadyGrouped,
+                    QueryStereoViolation::MemberAlreadyGrouped,
                 ));
             }
             let atom = &self.atoms[member.index()];
@@ -539,7 +541,7 @@ impl QueryGraphBuilder {
             let has_constraint = self.stereo.iter().any(|s| matches!(s, QueryStereoConstraint::Tetrahedral { center, .. } if *center == member));
             if !has_frame && !has_constraint {
                 return Err(QueryGraphError::InvalidStereo(
-                    QueryStereoIssue::GroupMemberWithoutFrame,
+                    QueryStereoViolation::GroupMemberWithoutFrame,
                 ));
             }
         }
@@ -567,7 +569,7 @@ pub enum QueryGraphError {
     /// A bond reference is not in the graph.
     InvalidBondId(QueryBondId),
     /// A stereo constraint or group is invalid.
-    InvalidStereo(QueryStereoIssue),
+    InvalidStereo(QueryStereoViolation),
     /// A bond would connect an atom to itself.
     SelfBond(QueryAtomId),
     /// The two atoms are already bonded.

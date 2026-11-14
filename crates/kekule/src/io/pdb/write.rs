@@ -15,13 +15,13 @@
 //! A chain identifier longer than the one-character chain column, such as
 //! the `SOL1` and `ION1` chains [`crate::solvation::solvate`] adds, is
 //! written as a segment identifier under [`PdbChainIdPolicy::SegmentId`].
+use crate::diagnostics::{Countable, LengthMismatch};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
 
 use crate::diagnostics::{
-    counted, Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail,
-    GeometryField,
+    Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
@@ -57,7 +57,7 @@ const MAX_RESIDUE_NUMBER: i64 = 2_436_111;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PdbChainIdPolicy {
-    /// Fail with [`PdbWriteIssue::ChainIdTooLong`].
+    /// Fail with [`PdbWriteErrorKind::ChainIdTooLong`].
     #[default]
     Fail,
     /// Write an identifier of up to four printable ASCII characters, such as
@@ -170,9 +170,9 @@ impl PdbWriteOptions {
 
     /// Other represented chemistry PDB cannot carry: isotopes other than
     /// deuterium and tritium, radicals, atom maps, represented stereo, bonds
-    /// `CONECT` cannot state (see [`PdbWriteIssue::UnsupportedBondOrder`]),
+    /// `CONECT` cannot state (see [`PdbWriteErrorKind::UnsupportedBondOrder`]),
     /// and residue bonds that differ from the dictionary readers apply (see
-    /// [`PdbWriteIssue::DictionaryBondConflict`]). By default it fails to
+    /// [`PdbWriteErrorKind::DictionaryBondConflict`]). By default it fails to
     /// write; [`UnrepresentablePolicy::Omit`] writes the records without it
     /// and reports each kind left out. Fixed implicit-hydrogen counts have
     /// their own policy, [`Self::implicit_hydrogens`].
@@ -202,7 +202,7 @@ impl PdbWriteOptions {
     }
 }
 
-/// Atom state named by [`PdbWriteIssue::UnsupportedAtomField`].
+/// Atom state named by [`PdbWriteErrorKind::UnsupportedAtomField`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PdbAtomField {
@@ -279,7 +279,7 @@ impl fmt::Display for PdbCellReason {
 /// [`FormatErrorDetail::PdbWrite`](crate::diagnostics::FormatErrorDetail::PdbWrite).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PdbWriteIssue {
+pub enum PdbWriteErrorKind {
     /// The chain identifier is longer than PDB's one column, and under
     /// [`PdbChainIdPolicy::SegmentId`] than the four segment identifier
     /// columns or not printable ASCII. [`PdbChainIdPolicy::SegmentId`]
@@ -418,30 +418,23 @@ pub enum PdbWriteIssue {
     EmptyStructureSet,
     /// The number of interpretation reports does not match the number of
     /// structures: one for a structure, one per geometry or item.
-    ReportCountMismatch {
-        /// The number of structures.
-        expected: usize,
-        /// The number of reports.
-        actual: usize,
-    },
+    ReportCountMismatch(LengthMismatch),
 }
 
-impl PdbWriteIssue {
+impl PdbWriteErrorKind {
     /// The diagnostic kind of a write error with this detail:
     /// [`DiagnosticKind::Inconsistent`] for an empty structure set and for
     /// reports that do not match the structures, and
     /// [`DiagnosticKind::Unsupported`] otherwise.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::EmptyStructureSet | Self::ReportCountMismatch { .. } => {
-                DiagnosticKind::Inconsistent
-            }
+            Self::EmptyStructureSet | Self::ReportCountMismatch(_) => DiagnosticKind::Inconsistent,
             _ => DiagnosticKind::Unsupported,
         }
     }
 }
 
-impl fmt::Display for PdbWriteIssue {
+impl fmt::Display for PdbWriteErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ChainIdTooLong { atom, chain_id } => write!(
@@ -534,17 +527,12 @@ impl fmt::Display for PdbWriteIssue {
                 f.write_str(&unrepresentable_state("PDB", *field, Some(*geometry)))
             }
             Self::EmptyStructureSet => f.write_str("The structure set has no geometries."),
-            Self::ReportCountMismatch { expected, actual } => write!(
-                f,
-                "The entry has {} and {}.",
-                counted(*expected, "structure", "structures"),
-                counted(*actual, "interpretation report", "interpretation reports")
-            ),
+            Self::ReportCountMismatch(error) => error.fmt(f),
         }
     }
 }
 
-fn fail(issue: PdbWriteIssue) -> FormatError {
+fn fail(issue: PdbWriteErrorKind) -> FormatError {
     FormatError::write(Format::Pdb, issue.kind(), issue.to_string())
         .with_detail(FormatErrorDetail::PdbWrite(issue))
 }
@@ -683,10 +671,10 @@ pub(crate) fn write_pdb_to<'a>(
         }
         Content::StructureSet(set) => {
             if set.is_empty() {
-                return Err(fail(PdbWriteIssue::EmptyStructureSet));
+                return Err(fail(PdbWriteErrorKind::EmptyStructureSet));
             }
             let unrepresentable = |(geometry, field)| {
-                fail(PdbWriteIssue::UnrepresentableGeometry { geometry, field })
+                fail(PdbWriteErrorKind::UnrepresentableGeometry { geometry, field })
             };
             record_multi_model_structure_set(set, options.geometry_metadata, &mut omissions)
                 .map_err(unrepresentable)?;
@@ -708,10 +696,9 @@ pub(crate) fn write_pdb_to<'a>(
     let plan = Plan::new(views[0].topology(), &options, &mut omissions)?;
     let links = match source.reports {
         Some(reports) if reports.len() != views.len() => {
-            return Err(fail(PdbWriteIssue::ReportCountMismatch {
-                expected: views.len(),
-                actual: reports.len(),
-            }));
+            return Err(fail(PdbWriteErrorKind::ReportCountMismatch(
+                LengthMismatch::new(Countable::Report, views.len(), reports.len()),
+            )));
         }
         Some(reports) => plan.links(&views, reports, &mut omissions),
         None => Vec::new(),
@@ -781,7 +768,7 @@ fn entry_cell<'a>(
     };
     match (parameters, policy) {
         (Err(reason), UnrepresentablePolicy::Fail) => {
-            Err(fail(PdbWriteIssue::UnrepresentableCell { reason }))
+            Err(fail(PdbWriteErrorKind::UnrepresentableCell { reason }))
         }
         (Err(_), _) => Ok(None),
         (Ok(parameters), _) => Ok(parameters),
@@ -951,7 +938,7 @@ impl Plan {
                 || molecule.stereo_groups().next().is_some()
             {
                 if strict {
-                    return Err(fail(PdbWriteIssue::UnsupportedStereo(instance.id())));
+                    return Err(fail(PdbWriteErrorKind::UnsupportedStereo(instance.id())));
                 }
                 stereo.insert(instance.id());
             }
@@ -969,7 +956,7 @@ impl Plan {
                     continue;
                 }
                 if strict {
-                    return Err(fail(PdbWriteIssue::UnsupportedAtomField {
+                    return Err(fail(PdbWriteErrorKind::UnsupportedAtomField {
                         atom: atom_id,
                         field,
                     }));
@@ -982,7 +969,7 @@ impl Plan {
             }
             if atom.hydrogens != ImplicitHydrogens::default() {
                 if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
-                    return Err(fail(PdbWriteIssue::UnsupportedAtomField {
+                    return Err(fail(PdbWriteErrorKind::UnsupportedAtomField {
                         atom: atom_id,
                         field: PdbAtomField::Hydrogens,
                     }));
@@ -990,7 +977,7 @@ impl Plan {
                 omitted_hydrogens += 1;
             }
             if !(-9..=9).contains(&atom.formal_charge) {
-                return Err(fail(PdbWriteIssue::FormalChargeOutOfRange {
+                return Err(fail(PdbWriteErrorKind::FormalChargeOutOfRange {
                     atom: atom_id,
                     charge: atom.formal_charge,
                 }));
@@ -1012,14 +999,14 @@ impl Plan {
                     (' ', identity.chain_id.clone())
                 }
                 None => {
-                    return Err(fail(PdbWriteIssue::ChainIdTooLong {
+                    return Err(fail(PdbWriteErrorKind::ChainIdTooLong {
                         atom: atom_id,
                         chain_id: identity.chain_id,
                     }))
                 }
             };
             if identity.residue_name.chars().count() > 3 {
-                return Err(fail(PdbWriteIssue::ResidueNameTooLong {
+                return Err(fail(PdbWriteErrorKind::ResidueNameTooLong {
                     atom: atom_id,
                     name: identity.residue_name,
                 }));
@@ -1029,14 +1016,14 @@ impl Plan {
                 || name.len() > 4
                 || !name.bytes().all(|byte| byte.is_ascii_graphic())
             {
-                return Err(fail(PdbWriteIssue::InvalidAtomName {
+                return Err(fail(PdbWriteErrorKind::InvalidAtomName {
                     atom: atom_id,
                     name,
                 }));
             }
             let insertion_code = single_character(identity.insertion_code.as_deref().unwrap_or(""))
                 .ok_or_else(|| {
-                    fail(PdbWriteIssue::InsertionCodeTooLong {
+                    fail(PdbWriteErrorKind::InsertionCodeTooLong {
                         atom: atom_id,
                         code: identity.insertion_code.clone().unwrap_or_default(),
                     })
@@ -1047,13 +1034,13 @@ impl Plan {
                 .and_then(|text| text.trim().parse::<i64>().ok())
                 .filter(|value| (MIN_RESIDUE_NUMBER..=MAX_RESIDUE_NUMBER).contains(value));
             let Some(number) = number else {
-                return Err(fail(PdbWriteIssue::InvalidResidueNumber {
+                return Err(fail(PdbWriteErrorKind::InvalidResidueNumber {
                     atom: atom_id,
                     number: identity.sequence,
                 }));
             };
             if !names.insert((identity.residue.key.clone(), name.clone())) {
-                return Err(fail(PdbWriteIssue::DuplicateAtomName {
+                return Err(fail(PdbWriteErrorKind::DuplicateAtomName {
                     atom: atom_id,
                     name,
                 }));
@@ -1090,7 +1077,7 @@ impl Plan {
             if previous != current {
                 left.insert(previous.clone());
                 if left.contains(current) {
-                    return Err(fail(PdbWriteIssue::NonContiguousResidue {
+                    return Err(fail(PdbWriteErrorKind::NonContiguousResidue {
                         atom: records[index].atom,
                     }));
                 }
@@ -1111,7 +1098,7 @@ impl Plan {
         }
         let serials = records.len() + last_polymer_atom.len();
         if i64::try_from(serials).map_or(true, |count| count > MAX_ATOM_SERIAL) {
-            return Err(fail(PdbWriteIssue::TooManyAtoms { serials }));
+            return Err(fail(PdbWriteErrorKind::TooManyAtoms { serials }));
         }
         let mut serial = 0;
         for record in &mut records {
@@ -1279,7 +1266,7 @@ impl Plan {
                 _ if templated => continue,
                 (order, _) => {
                     if strict {
-                        return Err(fail(PdbWriteIssue::UnsupportedBondOrder {
+                        return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
                             bond: bond.id(),
                             order,
                         }));
@@ -1564,7 +1551,7 @@ fn check_dictionary_bonds(
             continue;
         }
         if strict {
-            return Err(fail(PdbWriteIssue::DictionaryBondConflict {
+            return Err(fail(PdbWriteErrorKind::DictionaryBondConflict {
                 atoms: [records[left].atom, records[right].atom],
                 order,
             }));
@@ -1679,13 +1666,13 @@ fn structure_values(view: StructureView<'_>, plan: &Plan) -> Result<Vec<SiteValu
             .into_iter()
             .all(|value| fits(value, -999.999, 9999.999, 3))
         {
-            return Err(fail(PdbWriteIssue::CoordinateOutOfRange {
+            return Err(fail(PdbWriteErrorKind::CoordinateOutOfRange {
                 atom: record.atom,
             }));
         }
         let occupancy = view.occupancy(dense);
         if occupancy.is_some_and(|value| !fits(value, -99.99, 999.99, 2)) {
-            return Err(fail(PdbWriteIssue::OccupancyOutOfRange {
+            return Err(fail(PdbWriteErrorKind::OccupancyOutOfRange {
                 atom: record.atom,
             }));
         }
@@ -1695,7 +1682,9 @@ fn structure_values(view: StructureView<'_>, plan: &Plan) -> Result<Vec<SiteValu
             .transpose()
             .map_err(invalid("B factor", record.atom))?;
         if b_factor.is_some_and(|value| !fits(value, -99.99, 999.99, 2)) {
-            return Err(fail(PdbWriteIssue::BFactorOutOfRange { atom: record.atom }));
+            return Err(fail(PdbWriteErrorKind::BFactorOutOfRange {
+                atom: record.atom,
+            }));
         }
         rows.push(SiteValues {
             position,

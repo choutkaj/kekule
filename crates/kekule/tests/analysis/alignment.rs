@@ -1,13 +1,16 @@
 //! Superposition and RMSD over structure sets, against geometries of the set or
 //! independent references.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use kekule::alignment::{
     self, rmsd, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions,
-    AtomCorrespondence, AtomCorrespondenceError, CorrespondenceSide, PeriodicPolicy, Reference,
-    SymmetricSelection, Weighting,
+    AtomCorrespondence, PeriodicPolicy, Reference, SymmetricSelection, Weighting,
 };
+use kekule::diagnostics::TopologyMismatch;
 use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
@@ -327,7 +330,11 @@ fn superposition_failure_leaves_the_complete_collection_unchanged() {
 
     assert_eq!(
         trajectory.superpose(3, &all, Default::default()),
-        Err(AlignmentError::ReferenceOutOfRange { index: 3, len: 3 })
+        Err(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+            Countable::Structure,
+            3,
+            3
+        )))
     );
     // The last item fails after earlier items fitted; nothing is published.
     assert_eq!(
@@ -365,7 +372,11 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
 
     assert_eq!(
         trajectory.rmsd(1, &all, Default::default()),
-        Err(AlignmentError::ReferenceOutOfRange { index: 1, len: 1 })
+        Err(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+            Countable::Structure,
+            1,
+            1
+        )))
     );
     // Collection-wide failures are reported once, not per item.
     assert_eq!(
@@ -378,7 +389,9 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
             &AtomSelection::all(Arc::clone(&chain(4))),
             Default::default()
         ),
-        Err(AlignmentError::SelectionTopologyMismatch)
+        Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
     let with_weights = |weights: &[f64]| {
         trajectory.rmsd(
@@ -389,10 +402,11 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
     };
     assert_eq!(
         with_weights(&[1.0]),
-        Err(AlignmentError::WeightCountMismatch {
-            expected: 4,
-            actual: 1,
-        })
+        Err(AlignmentError::WeightCountMismatch(LengthMismatch::new(
+            Countable::Weight,
+            4,
+            1
+        )))
     );
     assert_eq!(
         with_weights(&[1.0, 1.0, f64::NAN, 1.0]),
@@ -860,20 +874,14 @@ fn correspondence_failures_preserve_whole_collections() {
     let wrong = chain_structure(reference.positions().values().value());
     assert_eq!(
         trajectory.rmsd(&wrong, &measurement, Default::default()),
-        Err(AlignmentError::Correspondence(
-            AtomCorrespondenceError::TopologyMismatch {
-                side: CorrespondenceSide::Reference
-            }
+        Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Reference
         ))
     );
     let mut empty = StructureSet::new(wrong.shared_topology());
     assert_eq!(
         empty.superpose(&reference, &fit, Default::default()),
-        Err(AlignmentError::Correspondence(
-            AtomCorrespondenceError::TopologyMismatch {
-                side: CorrespondenceSide::Moving
-            }
-        ))
+        Err(AlignmentError::TopologyMismatch(TopologyMismatch::Moving))
     );
 }
 
@@ -996,7 +1004,9 @@ fn symmetric_rmsd_pairs_equivalent_atoms_with_their_closest_counterparts() {
             &foreign,
             Default::default()
         ),
-        Err(AlignmentError::SelectionTopologyMismatch)
+        Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 
@@ -1058,6 +1068,8 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     let structure = acetate_structure(&topology, &reference);
     assert_eq!(
         StructureSet::new(Arc::clone(&topology)).rmsd(&structure, &foreign, Default::default()),
-        Err(AlignmentError::SelectionTopologyMismatch)
+        Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }

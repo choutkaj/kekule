@@ -3,6 +3,8 @@
 //! averages a window of processed geometries imaged onto the geometry, and a set
 //! read from a file processes like the same set in memory.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
@@ -792,7 +794,7 @@ fn steps_that_cannot_process_the_geometries_fail_on_construction() {
             ProcessingSteps::default().with_fit(all.clone(), FitReference::Geometry(7))
         )
         .unwrap_err(),
-        ProcessingError::ReferenceOutOfRange { index: 7, len: 7 }
+        ProcessingError::ReferenceOutOfRange(IndexOutOfRange::new(Countable::Geometry, 7, 7))
     );
     let short = Positions::new(Quantity::new([Point3::origin(); 2], NANOMETER)).unwrap();
     assert!(matches!(
@@ -817,7 +819,9 @@ fn steps_that_cannot_process_the_geometries_fail_on_construction() {
     let processed = Processed::new(&set, ProcessingSteps::default().with_whole(true)).unwrap();
     assert_eq!(
         processed.read(7),
-        Err(StructureSetReadError::IndexOutOfRange { index: 7, len: 7 })
+        Err(StructureSetReadError::IndexOutOfRange(
+            IndexOutOfRange::new(Countable::Geometry, 7, 7)
+        ))
     );
 }
 

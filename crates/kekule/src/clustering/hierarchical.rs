@@ -547,7 +547,7 @@ fn fitted_rmsd_of(
             values: Vec::new(),
         });
     }
-    let read_error = |error| ClusteringError::Read(Box::new(error));
+    let read_error = |error| ClusteringError::Read(error);
     let sets = visit_geometry(reader, sample_index(samples, 0), read_error, |first| {
         Ok(atoms.pair_sets(first, first)?)
     })?;

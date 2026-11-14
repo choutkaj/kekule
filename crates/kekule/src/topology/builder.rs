@@ -1,3 +1,4 @@
+use crate::diagnostics::{CapacityExceeded, Countable, LengthMismatch};
 use crate::DraftError;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -157,7 +158,7 @@ impl TopologyBuilder {
         for (molecule, default_perception, class) in definitions {
             let id = checked_id::<MoleculeDefinitionId>(
                 self.definitions.len(),
-                TopologyIdKind::MoleculeDefinition,
+                Countable::MoleculeDefinition,
             )?;
             self.definitions.push(MoleculeDefinition {
                 id,
@@ -199,9 +200,9 @@ impl TopologyBuilder {
     ) -> Result<Vec<usize>, TopologyBuildError> {
         let mut atoms = self.atoms.clone();
         let previous = atoms.reorder(order).map_err(|error| match error {
-            OrderError::Length { expected, actual } => {
-                TopologyBuildError::AtomOrderLengthMismatch { expected, actual }
-            }
+            OrderError::Length { expected, actual } => TopologyBuildError::AtomOrderLengthMismatch(
+                LengthMismatch::new(Countable::Atom, expected, actual),
+            ),
             OrderError::Unknown(atom) => TopologyBuildError::InvalidAtomOrderEntry(atom),
             OrderError::Duplicate(atom) => TopologyBuildError::DuplicateAtomOrderEntry(atom),
         })?;
@@ -211,7 +212,7 @@ impl TopologyBuilder {
             .atoms()
             .raw()
             .select_indices(&previous)
-            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+            .map_err(TopologyBuildError::Property)?;
         self.atoms = atoms;
         *self.properties.atoms_mut() = rows;
         Ok(previous)
@@ -316,16 +317,18 @@ impl TopologyBuilder {
     ///
     /// # Errors
     ///
-    /// [`TopologyBuildError::IdentifierCapacityExceeded`] when the definitions
+    /// [`TopologyBuildError::CapacityExceeded`] when the definitions
     /// would not fit the [`MoleculeDefinitionId`] space or cannot be allocated.
     pub fn reserve_definitions(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
         checked_future_len(
             self.definitions.len(),
             additional,
-            TopologyIdKind::MoleculeDefinition,
+            Countable::MoleculeDefinition,
         )?;
         self.definitions.try_reserve(additional).map_err(|_| {
-            TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::MoleculeDefinition)
+            TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+                Countable::MoleculeDefinition,
+            ))
         })
     }
 
@@ -333,16 +336,16 @@ impl TopologyBuilder {
     ///
     /// # Errors
     ///
-    /// [`TopologyBuildError::IdentifierCapacityExceeded`] when the instances
+    /// [`TopologyBuildError::CapacityExceeded`] when the instances
     /// would not fit the [`MoleculeInstanceId`] space or cannot be allocated.
     pub fn reserve_instances(&mut self, additional: usize) -> Result<(), TopologyBuildError> {
         checked_future_len(
             self.instances.len(),
             additional,
-            TopologyIdKind::MoleculeInstance,
+            Countable::MoleculeInstance,
         )?;
         self.instances.try_reserve(additional).map_err(|_| {
-            TopologyBuildError::IdentifierCapacityExceeded(TopologyIdKind::MoleculeInstance)
+            TopologyBuildError::CapacityExceeded(CapacityExceeded::new(Countable::MoleculeInstance))
         })
     }
 
@@ -451,10 +454,8 @@ impl TopologyBuilder {
     ) -> Result<MoleculeInstanceId, TopologyBuildError> {
         self.require_definition(definition)?;
         self.reserve_instances(1)?;
-        let id = checked_id::<MoleculeInstanceId>(
-            self.instances.len(),
-            TopologyIdKind::MoleculeInstance,
-        )?;
+        let id =
+            checked_id::<MoleculeInstanceId>(self.instances.len(), Countable::MoleculeInstance)?;
         self.extend_orders(id, definition)?;
         self.instances.push(MoleculeInstance { id, definition });
         if self.extending_topology {
@@ -599,7 +600,7 @@ impl TopologyBuilder {
         self.properties.resize_domains(dimensions);
         self.properties
             .validate_dimensions(dimensions)
-            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+            .map_err(TopologyBuildError::Property)?;
 
         let hierarchy_index = HierarchyIndex::new(&hierarchy, &self.atoms, self.instances.len());
         Ok(Topology {
@@ -663,7 +664,7 @@ impl TopologyBuilder {
         self.properties.resize_domains(dimensions);
         self.properties
             .validate_dimensions(dimensions)
-            .map_err(|error| TopologyBuildError::Property(Box::new(error)))?;
+            .map_err(TopologyBuildError::Property)?;
         Ok(Topology {
             definitions: self.definitions,
             instances: self.instances,
@@ -697,14 +698,14 @@ impl TopologyBuilder {
         let molecule = self.definitions[definition.index()].molecule();
         let (atoms, bonds) = (molecule.atom_count(), molecule.bond_count());
         if !self.atoms.can_extend(atoms) {
-            return Err(TopologyBuildError::IdentifierCapacityExceeded(
-                TopologyIdKind::Atom,
-            ));
+            return Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom,
+            )));
         }
         if !self.bonds.can_extend(bonds) {
-            return Err(TopologyBuildError::IdentifierCapacityExceeded(
-                TopologyIdKind::Bond,
-            ));
+            return Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Bond,
+            )));
         }
         let atom_slots = molecule.graph().atom_slot_count();
         let bond_slots = molecule.graph().bond_slot_count();
@@ -799,7 +800,7 @@ impl TopologyBuilder {
         self.reserve_definitions(1)?;
         let id = checked_id::<MoleculeDefinitionId>(
             self.definitions.len(),
-            TopologyIdKind::MoleculeDefinition,
+            Countable::MoleculeDefinition,
         )?;
         self.definitions.push(MoleculeDefinition {
             id,
@@ -819,12 +820,10 @@ impl TopologyBuilder {
         self.reserve_instances(1)?;
         let definition = checked_id::<MoleculeDefinitionId>(
             self.definitions.len(),
-            TopologyIdKind::MoleculeDefinition,
+            Countable::MoleculeDefinition,
         )?;
-        let instance = checked_id::<MoleculeInstanceId>(
-            self.instances.len(),
-            TopologyIdKind::MoleculeInstance,
-        )?;
+        let instance =
+            checked_id::<MoleculeInstanceId>(self.instances.len(), Countable::MoleculeInstance)?;
         self.definitions.push(MoleculeDefinition {
             id: definition,
             molecule: Arc::new(molecule),
@@ -877,20 +876,20 @@ impl FromRawId for TopologyBondIndex {
 
 pub(super) fn checked_id<T: FromRawId>(
     length: usize,
-    kind: TopologyIdKind,
+    kind: Countable,
 ) -> Result<T, TopologyBuildError> {
     let raw = crate::molecule::checked_raw_id(length)
-        .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))?;
+        .map_err(|_| TopologyBuildError::CapacityExceeded(CapacityExceeded::new(kind)))?;
     Ok(T::from_raw(raw))
 }
 
 pub(super) fn checked_future_len(
     current: usize,
     additional: usize,
-    kind: TopologyIdKind,
+    kind: Countable,
 ) -> Result<(), TopologyBuildError> {
     crate::molecule::checked_fixed_id_collection_len(current, additional)
-        .map_err(|_| TopologyBuildError::IdentifierCapacityExceeded(kind))
+        .map_err(|_| TopologyBuildError::CapacityExceeded(CapacityExceeded::new(kind)))
 }
 
 /// An inconsistency between hierarchy storage and the topology. Hierarchy
@@ -1110,31 +1109,6 @@ pub(crate) fn validate_hierarchy(
     Ok(())
 }
 
-/// Fixed-width identifier spaces owned by [`Topology`].
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TopologyIdKind {
-    /// Reusable molecule definitions.
-    MoleculeDefinition,
-    /// Explicit molecule instances.
-    MoleculeInstance,
-    /// Authoritative dense atom indices.
-    Atom,
-    /// Authoritative dense bond indices.
-    Bond,
-}
-
-impl fmt::Display for TopologyIdKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::MoleculeDefinition => "molecule definition",
-            Self::MoleculeInstance => "molecule instance",
-            Self::Atom => "topology atom",
-            Self::Bond => "topology bond",
-        })
-    }
-}
-
 /// A topology builder edit or publication was rejected.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -1142,7 +1116,7 @@ pub enum TopologyBuildError {
     /// The builder has no molecule instances to publish.
     NoMoleculeInstances,
     /// Reordering or validating topology property rows failed; see the source.
-    Property(Box<PropertyError>),
+    Property(PropertyError),
     /// A molecule definition reference is not staged.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     /// A residue reference is not in the staged hierarchy.
@@ -1156,15 +1130,10 @@ pub enum TopologyBuildError {
         /// The missing atom.
         atom: InstanceAtomId,
     },
-    /// A topology collection exceeded the fixed-width identifier space for `kind`.
-    IdentifierCapacityExceeded(TopologyIdKind),
+    /// A topology collection exceeded its fixed-width identifier space.
+    CapacityExceeded(CapacityExceeded),
     /// A replacement dense atom order does not list every staged atom once.
-    AtomOrderLengthMismatch {
-        /// The number of staged atoms.
-        expected: usize,
-        /// The number of atoms in the replacement order.
-        actual: usize,
-    },
+    AtomOrderLengthMismatch(LengthMismatch),
     /// A replacement dense atom order names an atom that is not staged.
     InvalidAtomOrderEntry(InstanceAtomId),
     /// A replacement dense atom order lists one atom more than once.
@@ -1193,13 +1162,8 @@ impl fmt::Display for TopologyBuildError {
                 "{} places {atom}, and the topology has no such atom.",
                 Capitalized(site)
             ),
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(formatter, "The topology has run out of {kind} identifiers.")
-            }
-            Self::AtomOrderLengthMismatch { expected, actual } => write!(
-                formatter,
-                "The atom order lists {actual} atoms, but the topology has {expected}."
-            ),
+            Self::CapacityExceeded(error) => error.fmt(formatter),
+            Self::AtomOrderLengthMismatch(error) => error.fmt(formatter),
             Self::InvalidAtomOrderEntry(atom) => {
                 write!(
                     formatter,

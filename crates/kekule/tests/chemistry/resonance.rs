@@ -570,7 +570,7 @@ fn structure_caps_and_unknown_hydrogens_are_explicit() {
     let before = m.perception().clone();
     assert!(matches!(
         perceive_conjugation(&mut m, ConjugationModel::RdkitLike),
-        Err(ConjugationError::UnknownHydrogens(_))
+        Err(ConjugationError::UnknownHydrogenCount(_))
     ));
     assert_eq!(m.perception(), &before);
     // Neutral molecules need no hydrogen counts; a charge's path does.
@@ -587,7 +587,7 @@ fn structure_caps_and_unknown_hydrogens_are_explicit() {
     let before = m.perception().clone();
     assert!(matches!(
         perceive_resonance(&mut m, ResonanceModel::ChargeMoves),
-        Err(ResonancePerceptionError::UnknownHydrogens(_))
+        Err(ResonancePerceptionError::UnknownHydrogenCount(_))
     ));
     assert_eq!(m.perception(), &before);
 }

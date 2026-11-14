@@ -331,14 +331,14 @@ pub(super) fn parse_error(
 pub(crate) fn parse_smiles_document(
     input: &str,
     options: SmilesParseOptions,
-) -> std::result::Result<SmilesDocument, FormatError> {
+) -> Result<SmilesDocument, FormatError> {
     parse_smiles_record(input, 1, options)
 }
 
 pub(crate) fn parse_smiles_reader(
     reader: impl Read,
     options: SmilesParseOptions,
-) -> std::result::Result<SmilesDocument, FormatError> {
+) -> Result<SmilesDocument, FormatError> {
     let input = read_bounded(reader, options.max_input_bytes, Format::Smiles)
         .map_err(|error| error.at(SourceLocation::at_column(1, 1)))?;
     parse_smiles_document(&input, options)
@@ -349,7 +349,7 @@ fn parse_smiles_record(
     input: &str,
     line: usize,
     options: SmilesParseOptions,
-) -> std::result::Result<SmilesDocument, FormatError> {
+) -> Result<SmilesDocument, FormatError> {
     parse_smiles_record_text(input, line, options).map_err(|error| error.on_line(line))
 }
 
@@ -357,7 +357,7 @@ fn parse_smiles_record_text(
     input: &str,
     line: usize,
     options: SmilesParseOptions,
-) -> std::result::Result<SmilesDocument, FormatError> {
+) -> Result<SmilesDocument, FormatError> {
     if input.len() > options.max_input_bytes {
         let limit = LimitExceeded::new(Resource::InputBytes, options.max_input_bytes, input.len());
         return Err(parse_error(
@@ -461,7 +461,7 @@ fn parse_smiles_program(
     input: &str,
     chars: &[(usize, char)],
     options: SmilesParseOptions,
-) -> std::result::Result<ParsedSmiles, FormatError> {
+) -> Result<ParsedSmiles, FormatError> {
     let token_end = |cursor: usize| {
         chars
             .get(cursor)
@@ -938,7 +938,7 @@ fn next_smiles_atom_index(
     atom_count: usize,
     offset: usize,
     max_atoms: usize,
-) -> std::result::Result<usize, FormatError> {
+) -> Result<usize, FormatError> {
     if atom_count >= max_atoms {
         let limit = LimitExceeded::first_beyond(Resource::Atoms, max_atoms);
         return Err(parse_error(
@@ -966,7 +966,7 @@ fn add_smiles_program_bond(
     source_offsets: (usize, Option<usize>, Option<usize>),
     component: usize,
     max_bonds: usize,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     let (offset, direction_from, direction_offset) = source_offsets;
     let (left, right) = endpoints;
     if bonds.len() >= max_bonds {
@@ -1104,7 +1104,7 @@ enum SmilesTokenKind {
 fn parse_smiles_ring_label(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(usize, usize), FormatError> {
+) -> Result<(usize, usize), FormatError> {
     let (offset, ch) = chars[cursor];
     if ch != '%' {
         return Ok(((ch as u8 - b'0') as usize, cursor + 1));
@@ -1144,7 +1144,7 @@ fn parse_smiles_ring_label(
 fn parse_organic_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(SmilesAtomSyntax, bool, usize), FormatError> {
+) -> Result<(SmilesAtomSyntax, bool, usize), FormatError> {
     let (offset, ch) = chars[cursor];
     let mut symbol = ch.to_string();
     let mut aromatic = false;
@@ -1190,8 +1190,7 @@ fn parse_organic_atom(
 fn parse_bracket_atom(
     chars: &[(usize, char)],
     cursor: usize,
-) -> std::result::Result<(SmilesAtomSyntax, bool, Option<SmilesChiralityToken>, usize), FormatError>
-{
+) -> Result<(SmilesAtomSyntax, bool, Option<SmilesChiralityToken>, usize), FormatError> {
     let start = chars[cursor].0;
     let mut end = cursor + 1;
     while end < chars.len() && chars[end].1 != ']' {
@@ -1482,7 +1481,7 @@ impl<R: Read> SmilesRecords<R> {
 }
 
 impl<R: Read> Iterator for SmilesRecords<R> {
-    type Item = std::result::Result<SmilesDocument, FormatError>;
+    type Item = Result<SmilesDocument, FormatError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.done {

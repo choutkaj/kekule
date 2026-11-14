@@ -1,3 +1,4 @@
+use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::sync::Arc;
 
 use crate::math::RigidTransform;
@@ -291,14 +292,16 @@ impl StructureSet {
         let indices = indices.into_iter().collect::<Vec<_>>();
         let len = reader.len();
         if let Some(&index) = indices.iter().find(|&&index| index >= len) {
-            return Err(StructureSetReadError::IndexOutOfRange { index, len });
+            return Err(StructureSetReadError::IndexOutOfRange(
+                IndexOutOfRange::new(Countable::Geometry, index, len),
+            ));
         }
         let read = |index: usize| {
             let geometry = reader.read(index)?;
             check_bound(reader.topology(), &geometry).map_err(|source| {
                 StructureSetReadError::Geometry {
                     geometry: index,
-                    source: Box::new(source),
+                    source,
                 }
             })?;
             Ok(geometry)
@@ -370,7 +373,9 @@ impl StructureSet {
         set.storage.geometries.push(Geometry::from_structure(first));
         for structure in structures {
             if !structure.topology().same_layout(&set.topology) {
-                return Err(StructureSetError::TopologyMismatch);
+                return Err(StructureSetError::TopologyMismatch(
+                    TopologyMismatch::Structure,
+                ));
             }
             set.storage
                 .geometries
@@ -488,18 +493,26 @@ impl StructureSet {
     ) -> Result<(), StructureSetError> {
         let positions = positions.into_iter().collect::<Vec<_>>();
         if positions.len() != self.storage.geometries.len() {
-            return Err(StructureSetError::GeometryCountMismatch {
-                expected: self.storage.geometries.len(),
-                actual: positions.len(),
-            });
+            return Err(StructureSetError::GeometryCountMismatch(
+                LengthMismatch::new(
+                    Countable::Geometry,
+                    self.storage.geometries.len(),
+                    positions.len(),
+                ),
+            ));
         }
         for values in &positions {
             if values.len() != self.topology.atom_count() {
-                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                    expected: self.topology.atom_count(),
-                    actual: values.len(),
-                })
-                .into());
+                return Err(
+                    GeometryError::Array(Box::new(DenseArrayError::CountMismatch(
+                        LengthMismatch::new(
+                            Countable::Row,
+                            self.topology.atom_count(),
+                            values.len(),
+                        ),
+                    )))
+                    .into(),
+                );
             }
         }
         for (geometry, positions) in self.storage.geometries.iter_mut().zip(positions) {
@@ -628,10 +641,11 @@ impl StructureSet {
 
     fn check_index(&self, index: usize) -> Result<(), StructureSetError> {
         if index >= self.storage.geometries.len() {
-            return Err(StructureSetError::IndexOutOfRange {
+            return Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Geometry,
                 index,
-                len: self.storage.geometries.len(),
-            });
+                self.storage.geometries.len(),
+            )));
         }
         Ok(())
     }
@@ -676,9 +690,8 @@ impl StructureSetRead for StructureSet {
             .geometries
             .get(index)
             .cloned()
-            .ok_or(StructureSetReadError::IndexOutOfRange {
-                index,
-                len: self.storage.geometries.len(),
-            })
+            .ok_or(StructureSetReadError::IndexOutOfRange(
+                IndexOutOfRange::new(Countable::Geometry, index, self.storage.geometries.len()),
+            ))
     }
 }

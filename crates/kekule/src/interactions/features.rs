@@ -1,5 +1,6 @@
 //! Interaction features perceived once per topology.
 
+use crate::diagnostics::TopologyMismatch;
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
@@ -454,7 +455,9 @@ impl<'a> AromaticRing<'a> {
     ) -> Result<(Quantity<Point3>, Vector3), InteractionError> {
         let structure = structure.as_structure_view();
         if !structure.topology().shares_layout(self.topology) {
-            return Err(InteractionError::TopologyMismatch);
+            return Err(InteractionError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
         }
         let positions = structure.positions().values();
         let (center, normal) =

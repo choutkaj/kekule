@@ -1104,17 +1104,17 @@ pub enum MinimizationError {
     NumericalFailure(NumericalFailure),
     /// The initial evaluation failed, or a trial failed for a reason other
     /// than singular geometry.
-    Evaluation(EvaluationError),
+    Evaluation(Box<EvaluationError>),
     /// A [`MinimizationScope`] or the view given to [`Minimization::to_structure`]
     /// belongs to a different topology layout.
     IncompatibleTopology,
     /// The minimized structure could not be built; see the source.
     Geometry(GeometryError),
     /// The positions could not be updated; see the source.
-    Position(DenseArrayError),
+    Position(Box<DenseArrayError>),
     /// An option could not be converted to the canonical unit; see the
     /// source.
-    Unit(UnitError),
+    Unit(Box<UnitError>),
     /// The run's [`Cancellation`](kekule::diagnostics::Cancellation) stopped
     /// [`minimize_with`] or [`minimize_scoped_with`].
     Cancelled(Cancelled),
@@ -1147,10 +1147,10 @@ impl fmt::Display for MinimizationError {
 impl std::error::Error for MinimizationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Evaluation(error) => Some(error),
+            Self::Evaluation(error) => Some(error.as_ref()),
             Self::Geometry(error) => Some(error),
-            Self::Position(error) => Some(error),
-            Self::Unit(error) => Some(error),
+            Self::Position(error) => Some(error.as_ref()),
+            Self::Unit(error) => Some(error.as_ref()),
             Self::Cancelled(cancelled) => Some(cancelled),
             Self::InvalidOptions(_)
             | Self::InvalidRestraint { .. }
@@ -1162,7 +1162,7 @@ impl std::error::Error for MinimizationError {
 
 impl From<EvaluationError> for MinimizationError {
     fn from(error: EvaluationError) -> Self {
-        Self::Evaluation(error)
+        Self::Evaluation(Box::new(error))
     }
 }
 
@@ -1174,13 +1174,13 @@ impl From<GeometryError> for MinimizationError {
 
 impl From<DenseArrayError> for MinimizationError {
     fn from(error: DenseArrayError) -> Self {
-        Self::Position(error)
+        Self::Position(Box::new(error))
     }
 }
 
 impl From<UnitError> for MinimizationError {
     fn from(error: UnitError) -> Self {
-        Self::Unit(error)
+        Self::Unit(Box::new(error))
     }
 }
 

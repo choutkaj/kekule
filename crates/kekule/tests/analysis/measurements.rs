@@ -1,11 +1,12 @@
 use kekule::{
+    diagnostics::TopologyMismatch,
     math::{PeriodicCell, Point3, Vector3},
     smiles,
     structure::{
-        measure::{self, ConnectivityCheck, MeasurementError},
-        Positions, Structure,
+        measure::{self, ConnectivityCheck},
+        CoordinateError, Positions, Structure,
     },
-    topology::{AtomSelection, InstanceAtomId, SelectionError},
+    topology::{AtomSelection, InstanceAtomId},
     units::{Quantity, Unit, ANGSTROM, DEGREE, NANOMETER, PICOSECOND},
 };
 
@@ -189,7 +190,7 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
                 y,
                 ConnectivityCheck::ConsecutiveBonds
             ),
-            Err(MeasurementError::MissingBond { a: x, b: y })
+            Err(CoordinateError::MissingBond { a: x, b: y })
         );
         let unrestricted = measure::distance(
             structure.as_structure_view(),
@@ -219,7 +220,7 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
                 z,
                 ConnectivityCheck::ConsecutiveBonds
             ),
-            Err(MeasurementError::MissingBond {
+            Err(CoordinateError::MissingBond {
                 a: missing[0],
                 b: missing[1]
             })
@@ -259,7 +260,7 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
                 z,
                 ConnectivityCheck::ConsecutiveBonds
             ),
-            Err(MeasurementError::MissingBond {
+            Err(CoordinateError::MissingBond {
                 a: missing[0],
                 b: missing[1]
             })
@@ -308,7 +309,7 @@ fn reused_definitions_do_not_create_bonds_between_instances() {
         .unwrap();
     let structure = builder.build().unwrap();
     let [a, b, c, d] = <[InstanceAtomId; 4]>::try_from(structure.topology().atom_ids()).unwrap();
-    let missing = Err(MeasurementError::MissingBond { a: b, b: c });
+    let missing = Err(CoordinateError::MissingBond { a: b, b: c });
     assert_eq!(
         measure::distance(
             structure.as_structure_view(),
@@ -373,7 +374,7 @@ fn connectivity_checks_reject_invalid_ids_before_missing_bonds() {
         InstanceAtomId::new(a.instance(), kekule::molecule::AtomId::new(99)),
         InstanceAtomId::new(kekule::topology::MoleculeInstanceId::new(99), a.atom()),
     ] {
-        let error = Err(MeasurementError::InvalidAtomId(invalid));
+        let error = Err(CoordinateError::InvalidAtomId(invalid));
         assert_eq!(
             measure::distance(
                 structure.as_structure_view(),
@@ -441,7 +442,7 @@ fn bonded_geometry_is_still_checked_independently() {
             d,
             ConnectivityCheck::ConsecutiveBonds
         ),
-        Err(MeasurementError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     // Nonconsecutive repeats are allowed when the geometry remains defined.
     close(
@@ -478,7 +479,7 @@ fn bonded_geometry_is_still_checked_independently() {
             c,
             ConnectivityCheck::ConsecutiveBonds
         ),
-        Err(MeasurementError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(
         measure::dihedral(
@@ -489,7 +490,7 @@ fn bonded_geometry_is_still_checked_independently() {
             d,
             ConnectivityCheck::ConsecutiveBonds
         ),
-        Err(MeasurementError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
 }
 
@@ -562,7 +563,7 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
             a[1],
             ConnectivityCheck::Unrestricted
         ),
-        Err(MeasurementError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(
         measure::dihedral(
@@ -573,7 +574,7 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
             a[3],
             ConnectivityCheck::Unrestricted
         ),
-        Err(MeasurementError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     let invalid = InstanceAtomId::new(a[0].instance(), kekule::molecule::AtomId::new(99));
     assert!(matches!(
@@ -583,7 +584,7 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
             a[0],
             ConnectivityCheck::Unrestricted
         ),
-        Err(MeasurementError::InvalidAtomId(_))
+        Err(CoordinateError::InvalidAtomId(_))
     ));
     let huge = structure(
         [
@@ -602,7 +603,7 @@ fn undefined_geometry_and_numerical_overflow_reject_without_nan_results() {
             a[1],
             ConnectivityCheck::Unrestricted
         ),
-        Err(MeasurementError::NumericalFailure)
+        Err(CoordinateError::NumericalFailure)
     );
     let large = structure(
         [
@@ -711,7 +712,7 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
                 &reference,
                 Quantity::new(cutoff, NANOMETER)
             ),
-            Err(MeasurementError::InvalidCutoff)
+            Err(CoordinateError::InvalidCutoff)
         );
     }
     assert!(matches!(
@@ -721,7 +722,7 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
             &reference,
             Quantity::new(1.0, PICOSECOND)
         ),
-        Err(MeasurementError::Unit(_))
+        Err(CoordinateError::Unit(_))
     ));
     // A perceived snapshot shares the layout, so its selections stay usable.
     let perceived = AtomSelection::all(top.perceived().unwrap());
@@ -743,8 +744,8 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
             &reference,
             Quantity::new(1.0, NANOMETER)
         ),
-        Err(MeasurementError::Selection(
-            SelectionError::TopologyMismatch
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Selection
         ))
     );
     assert_eq!(
@@ -754,8 +755,8 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
             &foreign,
             Quantity::new(1.0, NANOMETER)
         ),
-        Err(MeasurementError::Selection(
-            SelectionError::TopologyMismatch
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Selection
         ))
     );
     structure

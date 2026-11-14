@@ -1,10 +1,9 @@
-use super::center;
+use super::{center, SolvationError};
 use crate::structure::Structure;
 use crate::{
-    math::{Lattice, LatticeError, PeriodicCell, PeriodicCellError, Vector3},
-    units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT},
+    math::{Lattice, PeriodicCell, Vector3},
+    units::{Quantity, CANONICAL_LENGTH_UNIT},
 };
-use std::fmt;
 
 /// The cell shape for [`PeriodicBoxOptions::Padding`]. Every shape has the same
 /// minimum image distance, the computed width.
@@ -36,44 +35,6 @@ pub enum PeriodicBoxOptions {
         shape: BoxShape,
     },
 }
-/// A periodic box could not be built for the structure.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum PeriodicBoxError {
-    /// The padding is not finite and positive.
-    InvalidPadding,
-    /// The supplied cell is not periodic along all three axes.
-    NotFullyPeriodic,
-    /// The padding could not be converted to the canonical length unit; see
-    /// the source.
-    Unit(UnitError),
-    /// The box vectors do not form a valid cell; see the source.
-    Cell(PeriodicCellError),
-    /// Centering the solute or validating the cell geometry failed; see the
-    /// source.
-    Lattice(LatticeError),
-}
-impl fmt::Display for PeriodicBoxError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPadding => f.write_str("The padding is not finite and positive."),
-            Self::NotFullyPeriodic => f.write_str("The box is not periodic along all three axes."),
-            Self::Unit(_) => f.write_str("The padding is not a length."),
-            Self::Cell(error) => error.fmt(f),
-            Self::Lattice(error) => error.fmt(f),
-        }
-    }
-}
-impl std::error::Error for PeriodicBoxError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Unit(e) => Some(e),
-            Self::Cell(e) => e.source(),
-            Self::Lattice(e) => e.source(),
-            _ => None,
-        }
-    }
-}
 /// Sets or replaces a fully periodic box without moving any atom or replacing topology.
 ///
 /// Padding uses a sphere centered at the Cartesian bounding-box midpoint. For
@@ -84,31 +45,26 @@ impl std::error::Error for PeriodicBoxError {
 ///
 /// # Errors
 ///
-/// Returns [`PeriodicBoxError::InvalidPadding`] for a padding that is not finite
-/// and positive, [`PeriodicBoxError::Unit`] when it is not a length,
-/// [`PeriodicBoxError::Cell`] when the box vectors form no valid cell,
-/// [`PeriodicBoxError::NotFullyPeriodic`] for a [`PeriodicBoxOptions::Cell`]
-/// that is not periodic along all three axes, and [`PeriodicBoxError::Lattice`]
-/// when centering or the cell geometry fails numerically.
+/// Returns [`SolvationError::InvalidPadding`] for a padding that is not finite
+/// and positive, [`SolvationError::Unit`] when it is not a length,
+/// [`SolvationError::Cell`] when the box vectors form no valid cell or
+/// centering or the cell geometry fails numerically, and
+/// [`SolvationError::NotFullyPeriodic`] for a [`PeriodicBoxOptions::Cell`]
+/// that is not periodic along all three axes.
 pub fn add_periodic_box(
     structure: &mut Structure,
     options: &PeriodicBoxOptions,
-) -> Result<(), PeriodicBoxError> {
+) -> Result<(), SolvationError> {
     let cell = match options {
-        PeriodicBoxOptions::Dimensions(lengths) => {
-            PeriodicCell::orthorhombic(*lengths, [true; 3]).map_err(PeriodicBoxError::Cell)?
-        }
+        PeriodicBoxOptions::Dimensions(lengths) => PeriodicCell::orthorhombic(*lengths, [true; 3])?,
         PeriodicBoxOptions::Cell(cell) => *cell,
         PeriodicBoxOptions::Padding { padding, shape } => {
-            let padding = padding
-                .into_unit(CANONICAL_LENGTH_UNIT)
-                .map_err(PeriodicBoxError::Unit)?
-                .into_value();
+            let padding = padding.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
             if !padding.is_finite() || padding <= 0.0 {
-                return Err(PeriodicBoxError::InvalidPadding);
+                return Err(SolvationError::InvalidPadding);
             }
             let points = structure.positions().values();
-            let center = center(points.value()).map_err(PeriodicBoxError::Lattice)?;
+            let center = center(points.value())?;
             let radius = points
                 .value()
                 .iter()
@@ -133,14 +89,13 @@ pub fn add_periodic_box(
                 ],
             }
             .map(|v| v * width);
-            PeriodicCell::new(Quantity::new(vectors, CANONICAL_LENGTH_UNIT), [true; 3])
-                .map_err(PeriodicBoxError::Cell)?
+            PeriodicCell::new(Quantity::new(vectors, CANONICAL_LENGTH_UNIT), [true; 3])?
         }
     };
     if cell.periodic_axes() != [true; 3] {
-        return Err(PeriodicBoxError::NotFullyPeriodic);
+        return Err(SolvationError::NotFullyPeriodic);
     }
-    Lattice::new(cell).map_err(PeriodicBoxError::Lattice)?;
+    Lattice::new(cell)?;
     structure.geometry_mut().set_cell(Some(cell));
     Ok(())
 }

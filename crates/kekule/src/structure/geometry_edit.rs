@@ -11,113 +11,15 @@
 use std::{
     collections::BTreeSet,
     f64::consts::{PI, TAU},
-    fmt,
     sync::Arc,
 };
 
-use crate::diagnostics::Capitalized;
+use crate::diagnostics::TopologyMismatch;
 use crate::math::{Point3, RigidTransform, Vector3};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology};
-use crate::units::{Quantity, Unit, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
+use crate::units::{Quantity, Unit, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 
-use super::{
-    measure::{self, MeasurementError},
-    Structure, StructureView,
-};
-
-/// An edit failed before any coordinates were published.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum GeometryEditError {
-    /// A reference atom is not in the topology.
-    InvalidAtomId(InstanceAtomId),
-    /// A reference atom appears more than once.
-    RepeatedAtom(InstanceAtomId),
-    /// Selection or prepared edit belongs to a different shared snapshot.
-    TopologyMismatch,
-    /// Consecutive reference atoms lack a direct bond, in argument order.
-    MissingBond {
-        /// The earlier atom of the pair.
-        a: InstanceAtomId,
-        /// The later atom of the pair.
-        b: InstanceAtomId,
-    },
-    /// Removing the traversal bond did not separate moving and fixed references.
-    InseparableFragment,
-    /// The last reference must be selected and the first must be excluded.
-    InvalidMovingSelection,
-    /// A quantity could not be converted to the canonical unit; see the source.
-    Unit(UnitError),
-    /// Nonfinite target, nonpositive distance, or angle outside [0, pi].
-    InvalidTarget,
-    /// A rigid-motion origin, axis, or displacement is nonfinite.
-    NonFiniteInput,
-    /// A direction, rotation plane, or dihedral is undefined.
-    DegenerateGeometry,
-    /// Arithmetic overflow or loss of precision prevents achieving the target.
-    NumericalFailure,
-}
-
-impl fmt::Display for GeometryEditError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidAtomId(atom) => write!(f, "{} is not in the topology.", Capitalized(atom)),
-            Self::RepeatedAtom(atom) => {
-                write!(f, "{} appears twice among the reference atoms.", Capitalized(atom))
-            }
-            Self::TopologyMismatch => {
-                f.write_str("The geometry edit belongs to a different topology.")
-            }
-            Self::MissingBond { a, b } => write!(f, "{} and {b} are not bonded.", Capitalized(a)),
-            Self::InseparableFragment => {
-                f.write_str("The moving fragment reaches a fixed reference atom.")
-            }
-            Self::InvalidMovingSelection => f.write_str(
-                "The moving selection lacks the last reference atom or contains the first.",
-            ),
-            Self::Unit(error) => error.fmt(f),
-            Self::InvalidTarget => f.write_str(
-                "The target is not finite, or its distance is not positive, or its angle is outside 0 to 180 degrees.",
-            ),
-            Self::NonFiniteInput => f.write_str("The origin, axis or displacement is not finite."),
-            Self::DegenerateGeometry => {
-                f.write_str("The atoms define no direction, plane or dihedral.")
-            }
-            Self::NumericalFailure => {
-                f.write_str("The edit exceeds the numerical range or precision.")
-            }
-        }
-    }
-}
-
-impl std::error::Error for GeometryEditError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Unit(error) => error.source(),
-            _ => None,
-        }
-    }
-}
-
-impl From<UnitError> for GeometryEditError {
-    fn from(error: UnitError) -> Self {
-        Self::Unit(error)
-    }
-}
-
-impl From<MeasurementError> for GeometryEditError {
-    fn from(error: MeasurementError) -> Self {
-        match error {
-            MeasurementError::InvalidAtomId(atom) => Self::InvalidAtomId(atom),
-            MeasurementError::MissingBond { a, b } => Self::MissingBond { a, b },
-            MeasurementError::Selection(_) => Self::TopologyMismatch,
-            MeasurementError::Unit(error) => Self::Unit(error),
-            MeasurementError::InvalidCutoff => Self::InvalidTarget,
-            MeasurementError::DegenerateGeometry => Self::DegenerateGeometry,
-            MeasurementError::NumericalFailure => Self::NumericalFailure,
-        }
-    }
-}
+use super::{measure, CoordinateError, Structure, StructureView};
 
 // Private shared bookkeeping; only the three concrete edit types are public.
 #[derive(Debug, Clone)]
@@ -132,36 +34,36 @@ impl<const N: usize> Prepared<N> {
         topology: &Arc<Topology>,
         atoms: [InstanceAtomId; N],
         moving: Option<&AtomSelection>,
-    ) -> Result<Self, GeometryEditError> {
+    ) -> Result<Self, CoordinateError> {
         let mut indices = [0; N];
         for (i, &atom) in atoms.iter().enumerate() {
             indices[i] = topology
                 .atom_index(atom)
-                .ok_or(GeometryEditError::InvalidAtomId(atom))?
+                .ok_or(CoordinateError::InvalidAtomId(atom))?
                 .index();
         }
         for (i, &atom) in atoms.iter().enumerate() {
             if atoms[..i].contains(&atom) {
-                return Err(GeometryEditError::RepeatedAtom(atom));
+                return Err(CoordinateError::RepeatedAtom(atom));
             }
         }
         let moving = if let Some(moving) = moving {
             moving
                 .ensure_compatible(topology)
-                .map_err(|_| GeometryEditError::TopologyMismatch)?;
+                .map_err(|_| CoordinateError::TopologyMismatch(TopologyMismatch::Selection))?;
             if moving.contains(atoms[0]) || !moving.contains(atoms[N - 1]) {
-                return Err(GeometryEditError::InvalidMovingSelection);
+                return Err(CoordinateError::InvalidMovingSelection);
             }
             moving.clone()
         } else {
             for pair in atoms.windows(2) {
                 if !topology
                     .atom(pair[0])
-                    .ok_or(GeometryEditError::InvalidAtomId(pair[0]))?
+                    .ok_or(CoordinateError::InvalidAtomId(pair[0]))?
                     .neighbors()
                     .any(|a| a.id() == pair[1])
                 {
-                    return Err(GeometryEditError::MissingBond {
+                    return Err(CoordinateError::MissingBond {
                         a: pair[0],
                         b: pair[1],
                     });
@@ -177,7 +79,7 @@ impl<const N: usize> Prepared<N> {
             while let Some(atom) = pending.pop() {
                 for neighbor in topology
                     .atom(atom)
-                    .ok_or(GeometryEditError::InvalidAtomId(atom))?
+                    .ok_or(CoordinateError::InvalidAtomId(atom))?
                     .neighbors()
                     .map(|neighbor| neighbor.id())
                 {
@@ -185,7 +87,7 @@ impl<const N: usize> Prepared<N> {
                         continue;
                     }
                     if neighbor == left || neighbor == atoms[0] {
-                        return Err(GeometryEditError::InseparableFragment);
+                        return Err(CoordinateError::InseparableFragment);
                     }
                     if visited.insert(neighbor) {
                         pending.push(neighbor);
@@ -193,7 +95,7 @@ impl<const N: usize> Prepared<N> {
                 }
             }
             AtomSelection::from_atoms(Arc::clone(topology), visited)
-                .map_err(|_| GeometryEditError::NumericalFailure)?
+                .map_err(|_| CoordinateError::NumericalFailure)?
         };
         Ok(Self {
             atoms,
@@ -202,10 +104,10 @@ impl<const N: usize> Prepared<N> {
         })
     }
 
-    fn ensure_compatible(&self, structure: StructureView<'_>) -> Result<(), GeometryEditError> {
+    fn ensure_compatible(&self, structure: StructureView<'_>) -> Result<(), CoordinateError> {
         self.moving
             .ensure_compatible(&structure.shared_topology())
-            .map_err(|_| GeometryEditError::TopologyMismatch)
+            .map_err(|_| CoordinateError::TopologyMismatch(TopologyMismatch::Structure))
     }
 
     fn points(&self, structure: StructureView<'_>) -> [Point3; N] {
@@ -213,7 +115,7 @@ impl<const N: usize> Prepared<N> {
         self.indices.map(|i| values.value()[i])
     }
 
-    fn value(points: [Point3; N]) -> Result<f64, GeometryEditError> {
+    fn value(points: [Point3; N]) -> Result<f64, CoordinateError> {
         Ok(match N {
             2 => measure::norm(points[1] - points[0])?,
             3 => measure::angle_points(points[0], points[1], points[2])?,
@@ -230,7 +132,7 @@ impl<const N: usize> Prepared<N> {
         }
     }
 
-    fn measure(&self, structure: StructureView<'_>) -> Result<Quantity<f64>, GeometryEditError> {
+    fn measure(&self, structure: StructureView<'_>) -> Result<Quantity<f64>, CoordinateError> {
         self.ensure_compatible(structure)?;
         Ok(Quantity::new(
             Self::value(self.points(structure))?,
@@ -242,14 +144,14 @@ impl<const N: usize> Prepared<N> {
         &self,
         structure: &mut Structure,
         target: Quantity<f64>,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         self.ensure_compatible(structure.as_structure_view())?;
         let mut target = target.into_unit(Self::unit())?.into_value();
         if !target.is_finite()
             || (N == 2 && target <= 0.0)
             || (N == 3 && !(0.0..=PI).contains(&target))
         {
-            return Err(GeometryEditError::InvalidTarget);
+            return Err(CoordinateError::InvalidTarget);
         }
         if N == 4 {
             target = signed_angle(target);
@@ -289,7 +191,7 @@ impl<const N: usize> Prepared<N> {
         }
         // Reject finite but unachievable targets (e.g. displacement below the
         // coordinate resolution at a very large offset), rather than report success.
-        let achieved = Self::value(result).map_err(|_| GeometryEditError::NumericalFailure)?;
+        let achieved = Self::value(result).map_err(|_| CoordinateError::NumericalFailure)?;
         let residual = if N == 4 {
             signed_angle(achieved - target).abs()
         } else {
@@ -297,7 +199,7 @@ impl<const N: usize> Prepared<N> {
         };
         let tolerance = if N == 2 { 1.0e-10 * target } else { 1.0e-10 };
         if residual > tolerance {
-            return Err(GeometryEditError::NumericalFailure);
+            return Err(CoordinateError::NumericalFailure);
         }
         publish(structure, &staged)
     }
@@ -321,7 +223,7 @@ macro_rules! prepared_edit {
             pub fn new(
                 topology: impl Into<Arc<Topology>>,
                 atoms: [InstanceAtomId; $n],
-            ) -> Result<Self, GeometryEditError> {
+            ) -> Result<Self, CoordinateError> {
                 Prepared::new(&topology.into(), atoms, None).map(Self)
             }
 
@@ -332,7 +234,7 @@ macro_rules! prepared_edit {
                 topology: impl Into<Arc<Topology>>,
                 atoms: [InstanceAtomId; $n],
                 moving: &AtomSelection,
-            ) -> Result<Self, GeometryEditError> {
+            ) -> Result<Self, CoordinateError> {
                 Prepared::new(&topology.into(), atoms, Some(moving)).map(Self)
             }
 
@@ -350,7 +252,7 @@ macro_rules! prepared_edit {
             pub fn measure(
                 &self,
                 structure: StructureView<'_>,
-            ) -> Result<Quantity<f64>, GeometryEditError> {
+            ) -> Result<Quantity<f64>, CoordinateError> {
                 self.0.measure(structure)
             }
 
@@ -362,7 +264,7 @@ macro_rules! prepared_edit {
                 &self,
                 structure: &mut Structure,
                 target: Quantity<f64>,
-            ) -> Result<(), GeometryEditError> {
+            ) -> Result<(), CoordinateError> {
                 self.0.apply(structure, target)
             }
         }
@@ -454,10 +356,10 @@ fn stage(
     selection: &AtomSelection,
     pivots: &[usize],
     transform: impl Fn(Point3) -> Point3,
-) -> Result<Vec<(usize, Point3)>, GeometryEditError> {
+) -> Result<Vec<(usize, Point3)>, CoordinateError> {
     selection
         .ensure_compatible(&structure.shared_topology())
-        .map_err(|_| GeometryEditError::TopologyMismatch)?;
+        .map_err(|_| CoordinateError::TopologyMismatch(TopologyMismatch::Selection))?;
     let values = structure.positions().values();
     selection
         .indices()
@@ -467,14 +369,14 @@ fn stage(
         .map(|index| {
             let point = transform(values.value()[index]);
             if !point.is_finite() {
-                return Err(GeometryEditError::NumericalFailure);
+                return Err(CoordinateError::NumericalFailure);
             }
             Ok((index, point))
         })
         .collect()
 }
 
-fn publish(structure: &mut Structure, staged: &[(usize, Point3)]) -> Result<(), GeometryEditError> {
+fn publish(structure: &mut Structure, staged: &[(usize, Point3)]) -> Result<(), CoordinateError> {
     if staged.is_empty() {
         return Ok(());
     }
@@ -483,7 +385,7 @@ fn publish(structure: &mut Structure, staged: &[(usize, Point3)]) -> Result<(), 
         .data_in_place()
         .positions
         .set_canonical_batch(staged)
-        .map_err(|_| GeometryEditError::NumericalFailure)
+        .map_err(|_| CoordinateError::NumericalFailure)
 }
 
 impl Structure {
@@ -493,7 +395,7 @@ impl Structure {
         a: InstanceAtomId,
         b: InstanceAtomId,
         target: Quantity<f64>,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         DistanceEdit::new(self.shared_topology(), [a, b])?.apply(self, target)
     }
 
@@ -504,7 +406,7 @@ impl Structure {
         b: InstanceAtomId,
         c: InstanceAtomId,
         target: Quantity<f64>,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         AngleEdit::new(self.shared_topology(), [a, b, c])?.apply(self, target)
     }
 
@@ -516,7 +418,7 @@ impl Structure {
         c: InstanceAtomId,
         d: InstanceAtomId,
         target: Quantity<f64>,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         DihedralEdit::new(self.shared_topology(), [a, b, c, d])?.apply(self, target)
     }
 
@@ -526,10 +428,10 @@ impl Structure {
         &mut self,
         selection: &AtomSelection,
         displacement: Quantity<Vector3>,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         let displacement = displacement.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         if !displacement.is_finite() {
-            return Err(GeometryEditError::NonFiniteInput);
+            return Err(CoordinateError::NonFiniteInput);
         }
         let staged = stage(self, selection, &[], |point| point + displacement)?;
         publish(self, &staged)
@@ -544,20 +446,20 @@ impl Structure {
         origin: Quantity<Point3>,
         axis: Vector3,
         angle: Quantity<f64>,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         let origin = origin.into_unit(CANONICAL_LENGTH_UNIT)?.into_value();
         let angle = angle.into_unit(CANONICAL_ANGLE_UNIT)?.into_value();
         if !origin.is_finite() || !axis.is_finite() {
-            return Err(GeometryEditError::NonFiniteInput);
+            return Err(CoordinateError::NonFiniteInput);
         }
         if !angle.is_finite() {
-            return Err(GeometryEditError::InvalidTarget);
+            return Err(CoordinateError::InvalidTarget);
         }
         // Scale first so any finite nonzero axis, including subnormal and very
         // large components, can be normalized without norm overflow.
         let scale = axis.x.abs().max(axis.y.abs()).max(axis.z.abs());
         if scale == 0.0 {
-            return Err(GeometryEditError::DegenerateGeometry);
+            return Err(CoordinateError::DegenerateGeometry);
         }
         let axis = measure::normalized(axis / scale)?;
         let motion = Motion::rotation(origin, axis, angle);
@@ -576,7 +478,7 @@ impl Structure {
         &mut self,
         selection: &AtomSelection,
         transform: &RigidTransform,
-    ) -> Result<(), GeometryEditError> {
+    ) -> Result<(), CoordinateError> {
         let staged = stage(self, selection, &[], |point| {
             transform.transform_point(point)
         })?;

@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::{
@@ -93,12 +94,24 @@ fn set_operations_preserve_dense_order_and_exact_snapshot_identity() {
     assert_eq!(empty.difference(&a).unwrap(), empty);
     assert_eq!(a.atom_ids().len(), 3);
     let other = AtomSelection::all(Arc::clone(&topology()));
-    assert_eq!(a.union(&other), Err(SelectionError::TopologyMismatch));
+    assert_eq!(
+        a.union(&other),
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
+    );
     assert_eq!(
         empty.intersection(&other),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
-    assert_eq!(a.difference(&other), Err(SelectionError::TopologyMismatch));
+    assert_eq!(
+        a.difference(&other),
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
+    );
 }
 
 #[test]

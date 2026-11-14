@@ -2,10 +2,11 @@
 
 use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::VecDeque;
-use std::fmt;
 
 use crate::molecule::Element;
-use crate::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyPerceptionError};
+use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
+
+use super::AlignmentError;
 
 /// An [`AtomSelection`] with every permutation of its atoms that a symmetry
 /// of the molecular graph allows, for symmetry-corrected fitting and RMSD.
@@ -57,7 +58,7 @@ impl SymmetricSelection {
     /// # Errors
     ///
     /// As [`Self::with_limits`].
-    pub fn new(selection: &AtomSelection) -> Result<Self, SymmetryError> {
+    pub fn new(selection: &AtomSelection) -> Result<Self, AlignmentError> {
         Self::with_limits(selection, SymmetryLimits::default())
     }
 
@@ -65,25 +66,25 @@ impl SymmetricSelection {
     ///
     /// # Errors
     ///
-    /// - [`SymmetryError::LimitExceeded`] when the selection admits more than
+    /// - [`AlignmentError::SymmetryLimitExceeded`] when the selection admits more than
     ///   [`SymmetryLimits::max_permutations`] permutations or the search
     ///   examines more than [`SymmetryLimits::max_search_steps`] mappings.
-    /// - [`SymmetryError::Perception`] when hydrogen counts must be inferred
+    /// - [`AlignmentError::Perception`] when hydrogen counts must be inferred
     ///   and perceiving the topology fails.
-    /// - [`SymmetryError::UnknownHydrogenCount`] when an atom's hydrogen count
+    /// - [`AlignmentError::UnknownHydrogenCount`] when an atom's hydrogen count
     ///   is unknown even after perception.
     pub fn with_limits(
         selection: &AtomSelection,
         limits: SymmetryLimits,
-    ) -> Result<Self, SymmetryError> {
+    ) -> Result<Self, AlignmentError> {
         let topology = selection.topology();
         let search = match Search::new(topology, selection.indices()) {
             Ok(search) => search,
             // Inferred hydrogen counts are known only after perception.
             Err(_) => {
-                let perceived = topology.perceived().map_err(SymmetryError::Perception)?;
+                let perceived = topology.perceived().map_err(AlignmentError::Perception)?;
                 Search::new(&perceived, selection.indices())
-                    .map_err(|atom| SymmetryError::UnknownHydrogenCount { atom })?
+                    .map_err(|atom| AlignmentError::UnknownHydrogenCount { atom })?
             }
         };
         let permutations = search.run(limits)?;
@@ -186,48 +187,6 @@ impl Default for SymmetryLimits {
     }
 }
 
-/// Failure to find the symmetry permutations of a selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SymmetryError {
-    /// The selection admits more permutations ([`Resource::Permutations`]) or
-    /// the search examined more candidate mappings
-    /// ([`Resource::SearchStates`]) than allowed.
-    LimitExceeded(LimitExceeded),
-    /// Perceiving inferred hydrogen counts failed.
-    Perception(TopologyPerceptionError),
-    /// An atom's hydrogen count is unknown even after perception.
-    UnknownHydrogenCount {
-        /// The atom with the unknown count.
-        atom: TopologyAtomIndex,
-    },
-}
-
-impl fmt::Display for SymmetryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Perception(_) => formatter.write_str("Cannot perceive hydrogen counts."),
-            Self::UnknownHydrogenCount { atom } => {
-                write!(formatter, "The hydrogen count of {atom} is unknown.")
-            }
-            Self::LimitExceeded(limit) => write!(
-                formatter,
-                "The symmetry search exceeded its {}.",
-                limit.describe()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for SymmetryError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Perception(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
 const UNMAPPED: usize = usize::MAX;
 
 /// Initial atom invariant; refinement only splits these classes.
@@ -322,7 +281,7 @@ impl Search {
 
     /// Enumerates each distinct restriction to the selection of the graph
     /// automorphisms that fix the selection setwise, identity first.
-    fn run(self, limits: SymmetryLimits) -> Result<Vec<Box<[usize]>>, SymmetryError> {
+    fn run(self, limits: SymmetryLimits) -> Result<Vec<Box<[usize]>>, AlignmentError> {
         let identity = (0..self.selected).collect::<Box<[usize]>>();
         if self.selected == 0 {
             return Ok(vec![identity]);
@@ -356,10 +315,12 @@ impl Search {
                     continue;
                 }
                 if permutations.len() == limits.max_permutations {
-                    return Err(SymmetryError::LimitExceeded(LimitExceeded::first_beyond(
-                        Resource::Permutations,
-                        limits.max_permutations,
-                    )));
+                    return Err(AlignmentError::SymmetryLimitExceeded(
+                        LimitExceeded::first_beyond(
+                            Resource::Permutations,
+                            limits.max_permutations,
+                        ),
+                    ));
                 }
                 permutations.push(self.restriction(&image));
                 // Other extensions of this restriction add nothing; resume
@@ -390,15 +351,14 @@ impl Search {
         used: &mut [bool],
         steps: &mut usize,
         limits: SymmetryLimits,
-    ) -> Result<bool, SymmetryError> {
+    ) -> Result<bool, AlignmentError> {
         let depth = candidates.len() - 1;
         let atom = self.order[depth];
         while let Some(target) = candidates[depth].pop() {
             if *steps == limits.max_search_steps {
-                return Err(SymmetryError::LimitExceeded(LimitExceeded::first_beyond(
-                    Resource::SearchStates,
-                    limits.max_search_steps,
-                )));
+                return Err(AlignmentError::SymmetryLimitExceeded(
+                    LimitExceeded::first_beyond(Resource::SearchStates, limits.max_search_steps),
+                ));
             }
             *steps += 1;
             if self.consistent(atom, target, image, used) {

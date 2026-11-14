@@ -1,4 +1,4 @@
-use crate::diagnostics::Capitalized;
+use crate::diagnostics::{Capitalized, Countable, LengthMismatch};
 use crate::io::AtomPositionSource;
 use crate::math::{Point3, Vector3};
 use crate::molecule::*;
@@ -163,7 +163,7 @@ pub enum StereoCandidate {
 /// named by the ID it would receive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum StereoValidationIssue {
+pub enum StereoViolation {
     /// Two elements assert the same focus.
     DuplicateStereoFocus {
         /// The later element.
@@ -387,7 +387,7 @@ pub enum StereoValidationIssue {
     },
 }
 
-impl fmt::Display for StereoValidationIssue {
+impl fmt::Display for StereoViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateStereoFocus { element, previous } => write!(
@@ -573,14 +573,14 @@ impl fmt::Display for StereoValidationIssue {
 /// The molecule's represented stereo elements and groups are inconsistent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoValidationError {
-    /// Every validation issue found.
-    pub issues: Vec<StereoValidationIssue>,
+    /// Every violation found.
+    pub violations: Vec<StereoViolation>,
 }
 
-/// Writes the first issue; [`Self::issues`] holds them all.
+/// Writes the first violation; [`Self::violations`] holds them all.
 impl fmt::Display for StereoValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.first() {
+        match self.violations.first() {
             None => formatter.write_str("The represented stereo is invalid."),
             Some(issue) => write!(formatter, "{issue}"),
         }
@@ -596,12 +596,7 @@ pub enum CoordinateStereoError {
     /// Stereo candidate detection failed; see the source.
     Perception(StereoSearchError),
     /// `positions` does not hold one position per atom.
-    PositionCountMismatch {
-        /// The molecule's atom count.
-        expected: usize,
-        /// The number of positions supplied.
-        actual: usize,
-    },
+    PositionCountMismatch(LengthMismatch),
     /// Represented stereo fails validation before or after materialization;
     /// see the source.
     InvalidStereo(StereoValidationError),
@@ -615,12 +610,7 @@ impl fmt::Display for CoordinateStereoError {
             Self::Perception(_) => {
                 formatter.write_str("Cannot find the stereo elements of the molecule.")
             }
-            Self::PositionCountMismatch { expected, actual } => write!(
-                formatter,
-                "The molecule has {} and {}. Give one position per atom.",
-                crate::diagnostics::counted(*expected, "atom", "atoms"),
-                crate::diagnostics::counted(*actual, "position", "positions")
-            ),
+            Self::PositionCountMismatch(error) => error.fmt(formatter),
             Self::InvalidStereo(_) => formatter.write_str("The represented stereo is invalid."),
             Self::CouldNotCreateElement(_) => {
                 formatter.write_str("Cannot add a stereo element perceived from coordinates.")
@@ -671,12 +661,11 @@ pub fn infer_coordinate_stereo(
     mol: &Molecule,
     positions: &Positions,
     options: CoordinateStereoOptions,
-) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
+) -> Result<CoordinateStereoResult, CoordinateStereoError> {
     if positions.len() != mol.atom_count() {
-        return Err(CoordinateStereoError::PositionCountMismatch {
-            expected: mol.atom_count(),
-            actual: positions.len(),
-        });
+        return Err(CoordinateStereoError::PositionCountMismatch(
+            LengthMismatch::new(Countable::Position, mol.atom_count(), positions.len()),
+        ));
     }
     crate::molecule::validate_represented_stereo(mol)?;
     let perceived = perception::prepared(mol).map_err(CoordinateStereoError::Perception)?;
@@ -717,7 +706,7 @@ pub fn materialize_coordinate_stereo(
     editor: &mut MoleculeEditor,
     positions: &Positions,
     options: CoordinateStereoOptions,
-) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
+) -> Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
     let inferred = infer_coordinate_stereo(editor.working(), positions, options)?;
     let mut staged = editor.clone();
     let mut created_elements = Vec::with_capacity(inferred.elements.len());
@@ -791,7 +780,7 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 /// candidate set, this does not depend on the molecule's stereo elements.
 pub(crate) fn locally_eligible_double_bonds(
     mol: &Molecule,
-) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoSearchError> {
+) -> Result<std::collections::BTreeSet<BondId>, StereoSearchError> {
     let perceived = prepared(mol)?;
     Ok(double_bond_candidates(&perceived)
         .into_iter()

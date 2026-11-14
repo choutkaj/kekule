@@ -236,15 +236,15 @@ fn rings_reject_automatic_edits_but_explicit_edits_can_deform_them() {
     let topology = ring.shared_topology();
     assert_eq!(
         DistanceEdit::new(topology.clone(), [a, b]).unwrap_err(),
-        GeometryEditError::InseparableFragment
+        CoordinateError::InseparableFragment
     );
     assert_eq!(
         AngleEdit::new(topology.clone(), [a, b, c]).unwrap_err(),
-        GeometryEditError::InseparableFragment
+        CoordinateError::InseparableFragment
     );
     assert_eq!(
         DihedralEdit::new(topology.clone(), [a, b, c, d]).unwrap_err(),
-        GeometryEditError::InseparableFragment
+        CoordinateError::InseparableFragment
     );
     let baseline = ring.clone();
     let selected = AtomSelection::from_atoms(topology.clone(), [b, c, d]).unwrap();
@@ -315,34 +315,34 @@ fn preparation_validates_references_connectivity_and_selections() {
     let topology = structure.shared_topology();
     assert_eq!(
         DistanceEdit::new(topology.clone(), [a, a]).unwrap_err(),
-        GeometryEditError::RepeatedAtom(a)
+        CoordinateError::RepeatedAtom(a)
     );
     assert_eq!(
         AngleEdit::new(topology.clone(), [a, c, d]).unwrap_err(),
-        GeometryEditError::MissingBond { a, b: c }
+        CoordinateError::MissingBond { a, b: c }
     );
     assert_eq!(
         DihedralEdit::new(topology.clone(), [a, b, d, c]).unwrap_err(),
-        GeometryEditError::MissingBond { a: b, b: d }
+        CoordinateError::MissingBond { a: b, b: d }
     );
     let larger = fixture("CCCCC", &[Point3::origin(); 5]);
     let invalid = larger.topology().atom_ids()[4];
     assert_eq!(
         DistanceEdit::new(topology.clone(), [a, invalid]).unwrap_err(),
-        GeometryEditError::InvalidAtomId(invalid)
+        CoordinateError::InvalidAtomId(invalid)
     );
     for selected in [vec![], vec![a, d], vec![b, c]] {
         let moving = AtomSelection::from_atoms(topology.clone(), selected).unwrap();
         assert_eq!(
             DihedralEdit::with_moving_atoms(topology.clone(), [a, b, c, d], &moving).unwrap_err(),
-            GeometryEditError::InvalidMovingSelection
+            CoordinateError::InvalidMovingSelection
         );
     }
     let different = chain();
     let foreign = AtomSelection::all(different.shared_topology());
     assert_eq!(
         DistanceEdit::with_moving_atoms(topology.clone(), [a, b], &foreign).unwrap_err(),
-        GeometryEditError::TopologyMismatch
+        CoordinateError::TopologyMismatch(TopologyMismatch::Selection)
     );
     // Consecutive bonds need not be single or chemically rotatable.
     let unsaturated = fixture("C=CC#N", structure.positions().values().value());
@@ -358,11 +358,15 @@ fn prepared_edits_reject_independently_equal_topologies_atomically() {
     let baseline = other.clone();
     assert_eq!(
         edit.measure(other.as_structure_view()),
-        Err(GeometryEditError::TopologyMismatch)
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     assert_eq!(
         edit.apply(&mut other, Quantity::new(30.0, DEGREE)),
-        Err(GeometryEditError::TopologyMismatch)
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     assert_eq!(other, baseline);
     let mut clone = structure.clone();
@@ -377,28 +381,28 @@ fn invalid_targets_and_units_leave_structure_unchanged() {
     for target in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
             structure.set_distance(a, b, Quantity::new(target, NANOMETER)),
-            Err(GeometryEditError::InvalidTarget)
+            Err(CoordinateError::InvalidTarget)
         );
         assert_eq!(structure, baseline);
     }
     for target in [-1.0, 181.0, f64::NAN, f64::INFINITY] {
         assert_eq!(
             structure.set_angle(a, b, c, Quantity::new(target, DEGREE)),
-            Err(GeometryEditError::InvalidTarget)
+            Err(CoordinateError::InvalidTarget)
         );
         assert_eq!(structure, baseline);
     }
     assert_eq!(
         structure.set_dihedral(a, b, c, d, Quantity::new(f64::NAN, DEGREE)),
-        Err(GeometryEditError::InvalidTarget)
+        Err(CoordinateError::InvalidTarget)
     );
     assert!(matches!(
         structure.set_angle(a, b, c, Quantity::new(1.0, NANOMETER)),
-        Err(GeometryEditError::Unit(_))
+        Err(CoordinateError::Unit(_))
     ));
     assert!(matches!(
         structure.set_distance(a, b, Quantity::new(1.0, PICOSECOND)),
-        Err(GeometryEditError::Unit(_))
+        Err(CoordinateError::Unit(_))
     ));
     assert_eq!(structure, baseline);
 }
@@ -417,11 +421,11 @@ fn degenerate_geometry_is_rejected_without_inventing_axes() {
     assert_eq!(structure, straight);
     assert_eq!(
         structure.set_angle(a, b, c, Quantity::new(90.0, DEGREE)),
-        Err(GeometryEditError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(
         structure.set_dihedral(a, b, c, d, Quantity::new(0.0, RADIAN)),
-        Err(GeometryEditError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(structure, straight);
     structure
@@ -430,11 +434,11 @@ fn degenerate_geometry_is_rejected_without_inventing_axes() {
     let coincident = structure.clone();
     assert_eq!(
         structure.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
-        Err(GeometryEditError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(
         structure.set_angle(a, b, c, Quantity::new(90.0, DEGREE)),
-        Err(GeometryEditError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(structure, coincident);
 }
@@ -449,7 +453,7 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
     let baseline = structure.clone();
     assert_eq!(
         structure.set_distance(b, c, Quantity::new(f64::MAX, NANOMETER)),
-        Err(GeometryEditError::NumericalFailure)
+        Err(CoordinateError::NumericalFailure)
     );
     assert_eq!(structure, baseline);
     let all = AtomSelection::all(structure.shared_topology());
@@ -458,7 +462,7 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
             &all,
             Quantity::new(Vector3::new(f64::MAX, 0.0, 0.0), NANOMETER)
         ),
-        Err(GeometryEditError::NumericalFailure)
+        Err(CoordinateError::NumericalFailure)
     );
     assert_eq!(structure, baseline);
     let transform =
@@ -466,7 +470,7 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
             .unwrap();
     assert_eq!(
         structure.transform_atoms(&all, &transform),
-        Err(GeometryEditError::NumericalFailure)
+        Err(CoordinateError::NumericalFailure)
     );
     assert_eq!(structure, baseline);
     structure
@@ -483,7 +487,7 @@ fn numerical_failures_in_late_atoms_do_not_publish_earlier_atoms() {
             Vector3::new(0.0, 0.0, 1.0),
             Quantity::new(90.0, DEGREE)
         ),
-        Err(GeometryEditError::NumericalFailure)
+        Err(CoordinateError::NumericalFailure)
     );
     assert_eq!(structure, baseline);
 }
@@ -501,7 +505,7 @@ fn finite_but_unachievable_distance_returns_numerical_failure() {
     let baseline = structure.clone();
     assert_eq!(
         structure.set_distance(a, b, Quantity::new(1.0, NANOMETER)),
-        Err(GeometryEditError::NumericalFailure)
+        Err(CoordinateError::NumericalFailure)
     );
     assert_eq!(structure, baseline);
 }
@@ -573,26 +577,26 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
     assert_eq!(structure, baseline);
     assert_eq!(
         structure.rotate(&empty, zero, Vector3::zero(), Quantity::new(0.0, DEGREE)),
-        Err(GeometryEditError::DegenerateGeometry)
+        Err(CoordinateError::DegenerateGeometry)
     );
     assert_eq!(
         structure.rotate(&empty, zero, axis, Quantity::new(f64::NAN, DEGREE)),
-        Err(GeometryEditError::InvalidTarget)
+        Err(CoordinateError::InvalidTarget)
     );
     assert!(matches!(
         structure.rotate(&empty, zero, axis, Quantity::new(1.0, NANOMETER)),
-        Err(GeometryEditError::Unit(_))
+        Err(CoordinateError::Unit(_))
     ));
     assert!(matches!(
         structure.translate(&empty, Quantity::new(Vector3::zero(), PICOSECOND)),
-        Err(GeometryEditError::Unit(_))
+        Err(CoordinateError::Unit(_))
     ));
     assert_eq!(
         structure.translate(
             &empty,
             Quantity::new(Vector3::new(f64::INFINITY, 0.0, 0.0), NANOMETER)
         ),
-        Err(GeometryEditError::NonFiniteInput)
+        Err(CoordinateError::NonFiniteInput)
     );
     assert_eq!(
         structure.rotate(
@@ -601,7 +605,7 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
             axis,
             Quantity::new(0.0, DEGREE)
         ),
-        Err(GeometryEditError::NonFiniteInput)
+        Err(CoordinateError::NonFiniteInput)
     );
     assert_eq!(
         structure.rotate(
@@ -610,20 +614,26 @@ fn empty_selections_still_validate_binding_and_motion_arguments() {
             Vector3::new(f64::NAN, 0.0, 0.0),
             Quantity::new(0.0, DEGREE)
         ),
-        Err(GeometryEditError::NonFiniteInput)
+        Err(CoordinateError::NonFiniteInput)
     );
     let foreign = AtomSelection::empty(chain().shared_topology());
     assert_eq!(
         structure.translate(&foreign, Quantity::new(Vector3::zero(), NANOMETER)),
-        Err(GeometryEditError::TopologyMismatch)
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
     assert_eq!(
         structure.rotate(&foreign, zero, axis, Quantity::new(0.0, DEGREE)),
-        Err(GeometryEditError::TopologyMismatch)
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
     assert_eq!(
         structure.transform_atoms(&foreign, &RigidTransform::identity()),
-        Err(GeometryEditError::TopologyMismatch)
+        Err(CoordinateError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
     assert_eq!(structure, baseline);
 }

@@ -1,6 +1,7 @@
 //! Whole-molecule imaging and trajectory unwrapping over periodic cells, and
 //! the periodic error type.
 
+use crate::diagnostics::TopologyMismatch;
 use std::collections::VecDeque;
 use std::fmt;
 
@@ -23,15 +24,10 @@ pub enum PeriodicError {
         /// The frame index.
         frame: usize,
     },
-    /// The anchor selection belongs to another topology.
-    SelectionTopologyMismatch,
-    /// The reference structure belongs to another topology.
-    ReferenceTopologyMismatch,
-    /// A frame belongs to another topology.
-    TopologyMismatch {
-        /// The frame index.
-        frame: usize,
-    },
+    /// The anchor selection ([`TopologyMismatch::Selection`]), the
+    /// reference structure ([`TopologyMismatch::Reference`]), or a frame
+    /// ([`TopologyMismatch::Frame`]) belongs to another topology layout.
+    TopologyMismatch(TopologyMismatch),
     /// Stateful unwrapping requires consecutive source-frame indices.
     NonSequentialFrame {
         /// The previously unwrapped frame index.
@@ -89,22 +85,14 @@ pub enum PeriodicError {
         source: Box<DenseArrayError>,
     },
     /// Valid positions could not be published into the destination.
-    Publication(Box<StructureSetError>),
+    Publication(StructureSetError),
 }
 
 impl fmt::Display for PeriodicError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingCell { frame } => write!(f, "Frame {frame} has no periodic cell."),
-            Self::SelectionTopologyMismatch => {
-                f.write_str("The anchor selection belongs to another topology.")
-            }
-            Self::ReferenceTopologyMismatch => {
-                f.write_str("The reference structure belongs to another topology.")
-            }
-            Self::TopologyMismatch { frame } => {
-                write!(f, "Frame {frame} belongs to another topology.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::NonSequentialFrame { previous, frame } => write!(
                 f,
                 "Frame {frame} does not follow frame {previous}."
@@ -144,7 +132,7 @@ impl std::error::Error for PeriodicError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Position { source, .. } => Some(source.as_ref()),
-            Self::Publication(source) => Some(source.as_ref()),
+            Self::Publication(source) => Some(source),
             _ => None,
         }
     }
@@ -185,7 +173,7 @@ pub fn make_molecules_whole(trajectory: &mut StructureSet) -> Result<(), Periodi
 ///
 /// # Errors
 ///
-/// Returns [`PeriodicError::SelectionTopologyMismatch`] when `anchors`
+/// Returns [`PeriodicError::TopologyMismatch`] when `anchors`
 /// belongs to another layout, [`PeriodicError::EmptyAnchors`] when it selects
 /// no atom, and the errors of [`make_molecules_whole`]. On error the set is
 /// unchanged.
@@ -225,7 +213,7 @@ pub fn image_molecules(
 ///
 /// # Errors
 ///
-/// Returns [`PeriodicError::ReferenceTopologyMismatch`] when `reference` does
+/// Returns [`PeriodicError::TopologyMismatch`] when `reference` does
 /// not share the set's layout, [`PeriodicError::MissingCell`] for a
 /// frame without a cell, [`PeriodicError::LimitExceeded`] or
 /// [`PeriodicError::NumericalFailure`] for an ill-conditioned cell or
@@ -312,7 +300,7 @@ fn whole_positions(
 fn publish(trajectory: &mut StructureSet, positions: Vec<Positions>) -> Result<(), PeriodicError> {
     trajectory
         .replace_positions(positions)
-        .map_err(|error| PeriodicError::Publication(Box::new(error)))
+        .map_err(PeriodicError::Publication)
 }
 
 pub(super) fn positions(points: Vec<Point3>, frame: usize) -> Result<Positions, PeriodicError> {
@@ -577,10 +565,12 @@ impl Lattice {
             .map_err(|error| geometry_error(error, self.frame))
     }
 }
-fn geometry_error(error: crate::math::LatticeError, frame: usize) -> PeriodicError {
+fn geometry_error(error: crate::math::PeriodicCellError, frame: usize) -> PeriodicError {
     match error {
-        crate::math::LatticeError::NumericalFailure => PeriodicError::NumericalFailure { frame },
-        crate::math::LatticeError::LimitExceeded(limit) => {
+        crate::math::PeriodicCellError::NumericalFailure => {
+            PeriodicError::NumericalFailure { frame }
+        }
+        crate::math::PeriodicCellError::LimitExceeded(limit) => {
             PeriodicError::LimitExceeded { frame, limit }
         }
         _ => PeriodicError::NumericalFailure { frame },

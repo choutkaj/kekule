@@ -1,13 +1,13 @@
-use crate::diagnostics::LimitExceeded;
+use crate::diagnostics::{LimitExceeded, UnknownHydrogenCount};
 use std::fmt;
 
-use crate::algorithms::StereoValidationIssue;
+use crate::algorithms::StereoViolation;
 use crate::molecule::*;
 
 mod ranking;
 
-type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
-type RankingResult<T> = std::result::Result<T, CipRankingError>;
+type CipResult<T> = Result<T, CipAssignmentFailure>;
+type RankingResult<T> = Result<T, CipRankingError>;
 
 /// Failure to compare rooted ligands without assigning a stereo descriptor.
 /// A resource limit or unresolved comparison is never an equal-priority result.
@@ -24,15 +24,12 @@ pub enum CipRankingError {
     UnresolvedPriority,
     /// The molecule's stereo elements fail validation.
     InvalidStereo {
-        /// The first validation issue found.
-        issue: StereoValidationIssue,
+        /// The first violation found.
+        violation: StereoViolation,
     },
     /// Run valence perception explicitly before ranking ligands whose inferred
     /// hydrogen counts are unknown. No perception is installed by ranking.
-    UnknownHydrogenCount {
-        /// The atom whose implicit hydrogen count is unknown.
-        atom: AtomId,
-    },
+    UnknownHydrogenCount(UnknownHydrogenCount),
 }
 
 impl fmt::Display for CipRankingError {
@@ -42,11 +39,8 @@ impl fmt::Display for CipRankingError {
                 write!(f, "CIP ranking exceeded its {}.", limit.describe())
             }
             Self::UnresolvedPriority => f.write_str("CIP ranking cannot order the ligands."),
-            Self::InvalidStereo { issue } => write!(f, "{issue}"),
-            Self::UnknownHydrogenCount { atom } => write!(
-                f,
-                "The hydrogen count of {atom} is unknown. Perceive valence first."
-            ),
+            Self::InvalidStereo { violation } => write!(f, "{violation}"),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
         }
     }
 }
@@ -54,14 +48,12 @@ impl fmt::Display for CipRankingError {
 impl std::error::Error for CipRankingError {}
 
 impl CipRankingError {
-    fn for_element(self, element: StereoElementId) -> CipAssignmentIssue {
+    fn for_element(self, element: StereoElementId) -> CipAssignmentFailure {
         match self {
-            Self::LimitExceeded(limit) => CipAssignmentIssue::LimitExceeded { element, limit },
-            Self::InvalidStereo { issue } => CipAssignmentIssue::InvalidStereo { issue },
-            Self::UnknownHydrogenCount { atom } => {
-                CipAssignmentIssue::UnknownHydrogenCount { atom }
-            }
-            Self::UnresolvedPriority => CipAssignmentIssue::UnresolvedPriority { element },
+            Self::LimitExceeded(limit) => CipAssignmentFailure::LimitExceeded { element, limit },
+            Self::InvalidStereo { violation } => CipAssignmentFailure::InvalidStereo { violation },
+            Self::UnknownHydrogenCount(error) => CipAssignmentFailure::UnknownHydrogenCount(error),
+            Self::UnresolvedPriority => CipAssignmentFailure::UnresolvedPriority { element },
         }
     }
 }
@@ -147,16 +139,16 @@ impl CipAssignmentReport {
 /// CIP descriptor assignment failed and left existing CIP perception unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CipAssignmentError {
-    /// Every issue that prevented assignment.
-    pub issues: Vec<CipAssignmentIssue>,
+    /// Every failure that prevented assignment.
+    pub failures: Vec<CipAssignmentFailure>,
 }
 
-/// Writes the first issue; [`Self::issues`] holds them all.
+/// Writes the first failure; [`Self::failures`] holds them all.
 impl fmt::Display for CipAssignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.first() {
+        match self.failures.first() {
             None => formatter.write_str("Cannot assign CIP descriptors."),
-            Some(issue) => write!(formatter, "{issue}"),
+            Some(failure) => write!(formatter, "{failure}"),
         }
     }
 }
@@ -216,11 +208,11 @@ pub enum CipSkippedReason {
 /// One reason CIP descriptor assignment failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum CipAssignmentIssue {
+pub enum CipAssignmentFailure {
     /// The molecule's stereo elements fail validation.
     InvalidStereo {
-        /// The validation issue.
-        issue: StereoValidationIssue,
+        /// The violation.
+        violation: StereoViolation,
     },
     /// The element's ligands or stereo carriers could not be ordered.
     UnresolvedPriority {
@@ -234,18 +226,15 @@ pub enum CipAssignmentIssue {
         /// The exceeded bound.
         limit: LimitExceeded,
     },
-    /// The atom's implicit hydrogen count is inferred but not yet perceived.
+    /// An atom's implicit hydrogen count is inferred but not yet perceived.
     /// Missing valence perception is not zero hydrogens, so no ranking ran.
-    UnknownHydrogenCount {
-        /// The atom whose implicit hydrogen count is unknown.
-        atom: AtomId,
-    },
+    UnknownHydrogenCount(UnknownHydrogenCount),
 }
 
-impl fmt::Display for CipAssignmentIssue {
+impl fmt::Display for CipAssignmentFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidStereo { issue } => write!(f, "{issue}"),
+            Self::InvalidStereo { violation } => write!(f, "{violation}"),
             Self::UnresolvedPriority { element } => {
                 write!(f, "CIP ranking cannot order the ligands of {element}.")
             }
@@ -254,10 +243,7 @@ impl fmt::Display for CipAssignmentIssue {
                 "CIP ranking of {element} exceeded its {}.",
                 limit.describe()
             ),
-            Self::UnknownHydrogenCount { atom } => write!(
-                f,
-                "The hydrogen count of {atom} is unknown. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
         }
     }
 }
@@ -275,7 +261,7 @@ impl fmt::Display for CipAssignmentIssue {
 /// Ligand expansion counts every implicit hydrogen, so every atom's implicit
 /// hydrogen count must be known: fixed, or inferred by valence perception
 /// (`Molecule::perceive` or the valence facade). Otherwise assignment reports
-/// [`CipAssignmentIssue::UnknownHydrogenCount`] for each such atom, ranks
+/// [`CipAssignmentFailure::UnknownHydrogenCount`] for each such atom, ranks
 /// nothing, and leaves perception unchanged.
 ///
 /// `options` bounds the expansion. Exceeding a bound returns an issue and
@@ -285,15 +271,15 @@ impl fmt::Display for CipAssignmentIssue {
 /// # Errors
 ///
 /// [`CipAssignmentError`] listing every issue; nothing is installed. Its
-/// issues are [`CipAssignmentIssue::InvalidStereo`] for every stereo
-/// validation failure, else [`CipAssignmentIssue::UnknownHydrogenCount`] for
+/// issues are [`CipAssignmentFailure::InvalidStereo`] for every stereo
+/// validation failure, else [`CipAssignmentFailure::UnknownHydrogenCount`] for
 /// every atom with an unknown implicit hydrogen count, else
-/// [`CipAssignmentIssue::LimitExceeded`] and
-/// [`CipAssignmentIssue::UnresolvedPriority`] for each element that could not
+/// [`CipAssignmentFailure::LimitExceeded`] and
+/// [`CipAssignmentFailure::UnresolvedPriority`] for each element that could not
 /// be ranked.
 pub fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
-) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
+) -> Result<CipAssignmentReport, CipAssignmentError> {
     ranking::assign_cip_descriptors(mol, options)
 }

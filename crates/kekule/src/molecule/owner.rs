@@ -1,13 +1,13 @@
+use crate::diagnostics::{CapacityExceeded, Capitalized, Countable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::diagnostics::Capitalized;
 use std::ops::{Deref, DerefMut};
 
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut, PropertyError};
 
 use super::*;
-use crate::stereo::StereoValidationIssue;
+use crate::stereo::StereoViolation;
 
 /// One published, non-empty, connected, geometry-independent molecular entity.
 ///
@@ -216,12 +216,12 @@ impl Molecule {
     /// Public molecule construction goes through [`MoleculeEditor`], because
     /// adding an atom to an already populated graph would temporarily violate
     /// the connected-molecule invariant.
-    pub(crate) fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
+    pub(crate) fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MoleculeError> {
         self.add_atom_at_slot(atom, self.graph.atoms.len())
     }
 
-    fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId> {
-        let id = checked_molecule_id(slot, MoleculeIdKind::Atom, AtomId::new)?;
+    fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId, MoleculeError> {
+        let id = checked_molecule_id(slot, Countable::Atom, AtomId::new)?;
         debug_assert_eq!(slot, self.graph.atoms.len());
         self.graph.atoms.push(Some(atom));
         self.graph.adjacency.push(Vec::new());
@@ -236,7 +236,10 @@ impl Molecule {
     /// Removes an atom and its bonds only inside crate-private construction or
     /// edit state, returning the stereo elements removed because they
     /// referenced the atom or no longer describe valid stereo.
-    pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<(Atom, Vec<StereoElementId>)> {
+    pub(crate) fn delete_atom(
+        &mut self,
+        id: AtomId,
+    ) -> Result<(Atom, Vec<StereoElementId>), MoleculeError> {
         self.require_atom(id)?;
         let mut pruned = Vec::new();
         let incident = self.graph.adjacency[id.index()].clone();
@@ -267,7 +270,7 @@ impl Molecule {
         Some(AtomMut { molecule: self, id })
     }
 
-    pub(crate) fn require_atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
+    pub(crate) fn require_atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>, MoleculeError> {
         self.atom_mut(id).ok_or(MoleculeError::InvalidAtomId(id))
     }
 
@@ -276,7 +279,12 @@ impl Molecule {
     /// Existing stereo is left as it is, for transforms that rewrite the
     /// carriers of the new bond's endpoints themselves; the public
     /// [`MoleculeEditor::add_bond`] prunes what the bond invalidates.
-    pub(crate) fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
+    pub(crate) fn add_bond(
+        &mut self,
+        a: AtomId,
+        b: AtomId,
+        order: BondOrder,
+    ) -> Result<BondId, MoleculeError> {
         self.require_atom(a)?;
         self.require_atom(b)?;
         if a == b {
@@ -285,7 +293,7 @@ impl Molecule {
         if self.require_bond_between(a, b)?.is_some() {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
-        let id = checked_molecule_id(self.graph.bonds.len(), MoleculeIdKind::Bond, BondId::new)?;
+        let id = checked_molecule_id(self.graph.bonds.len(), Countable::Bond, BondId::new)?;
         self.graph.bonds.push(Some(Bond::new(a, b, order)));
         self.graph.adjacency[a.index()].push(id);
         self.graph.adjacency[b.index()].push(id);
@@ -299,7 +307,10 @@ impl Molecule {
 
     /// Removes a bond only inside crate-private construction/edit state,
     /// returning the stereo elements it invalidated.
-    pub(crate) fn delete_bond(&mut self, id: BondId) -> Result<(Bond, Vec<StereoElementId>)> {
+    pub(crate) fn delete_bond(
+        &mut self,
+        id: BondId,
+    ) -> Result<(Bond, Vec<StereoElementId>), MoleculeError> {
         let bond = self
             .graph
             .bonds
@@ -327,7 +338,7 @@ impl Molecule {
         })
     }
 
-    pub(crate) fn require_bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
+    pub(crate) fn require_bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>, MoleculeError> {
         self.bond_mut(id).ok_or(MoleculeError::InvalidBondId(id))
     }
 
@@ -367,10 +378,7 @@ impl Molecule {
     ///
     /// The detached state is checked against all stable graph and stereo slots
     /// before mutation. Failure leaves the previous state exactly unchanged.
-    pub fn install_perception(
-        &mut self,
-        state: Perception,
-    ) -> std::result::Result<(), PerceptionInstallError> {
+    pub fn install_perception(&mut self, state: Perception) -> Result<(), PerceptionInstallError> {
         validate_perception(self, &state)?;
         self.perception = state;
         Ok(())
@@ -451,32 +459,30 @@ impl Molecule {
         &self,
         center: AtomId,
         carriers: Vec<StereoCarrier>,
-    ) -> Result<[StereoCarrier; 4]> {
+    ) -> Result<[StereoCarrier; 4], MoleculeError> {
         let carrier_count = carriers.len();
         carriers.try_into().map_err(|_| {
-            MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::InvalidTetrahedralCarrierCount {
-                    element: StereoElementId::new(
-                        u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
-                    ),
-                    center,
-                    carrier_count,
-                },
-            )
+            MoleculeError::InvalidStereoReference(StereoViolation::InvalidTetrahedralCarrierCount {
+                element: StereoElementId::new(
+                    u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
+                ),
+                center,
+                carrier_count,
+            })
         })
     }
 
     pub(crate) fn add_stereo_element(
         &mut self,
         mut element: StereoElement,
-    ) -> Result<StereoElementId> {
+    ) -> Result<StereoElementId, MoleculeError> {
         // The ID this element receives, which issues name.
         let pending = StereoElementId::new(
             u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
         );
         if element.group.is_some() {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: pending },
+                StereoViolation::GroupMembershipOutsideGroupEdit { element: pending },
             ));
         }
         self.validate_stereo_element(pending, &element)?;
@@ -484,7 +490,7 @@ impl Molecule {
         self.canonicalize_stereo_element(&mut element);
         let id = checked_molecule_id(
             self.graph.stereo_elements.len(),
-            MoleculeIdKind::StereoElement,
+            Countable::StereoElement,
             StereoElementId::new,
         )?;
         self.graph.stereo_elements.push(Some(element));
@@ -499,7 +505,7 @@ impl Molecule {
         &mut self,
         id: StereoElementId,
         mut replacement: StereoElement,
-    ) -> Result<StereoElement> {
+    ) -> Result<StereoElement, MoleculeError> {
         let Some(current) = self
             .graph
             .stereo_elements
@@ -510,7 +516,7 @@ impl Molecule {
         };
         if replacement.group != current.group {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: id },
+                StereoViolation::GroupMembershipOutsideGroupEdit { element: id },
             ));
         }
         self.validate_stereo_element(id, &replacement)?;
@@ -528,7 +534,10 @@ impl Molecule {
     }
 
     /// Removes a stereo element and returns it detached from any relation group.
-    pub(crate) fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
+    pub(crate) fn remove_stereo_element(
+        &mut self,
+        id: StereoElementId,
+    ) -> Result<StereoElement, MoleculeError> {
         let mut element = self
             .graph
             .stereo_elements
@@ -543,7 +552,10 @@ impl Molecule {
     }
 
     /// Inserts a validated stereo group transactionally.
-    pub(crate) fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+    pub(crate) fn add_stereo_group(
+        &mut self,
+        group: StereoGroup,
+    ) -> Result<StereoGroupId, MoleculeError> {
         // The ID this group receives, which issues name.
         let pending =
             StereoGroupId::new(u32::try_from(self.graph.stereo_groups.len()).unwrap_or(u32::MAX));
@@ -552,7 +564,7 @@ impl Molecule {
             let element = self.require_stereo_element(member)?;
             if let Some(group) = element.group {
                 return Err(MoleculeError::InvalidStereoReference(
-                    StereoValidationIssue::StereoElementAlreadyGrouped {
+                    StereoViolation::StereoElementAlreadyGrouped {
                         element: member,
                         group,
                     },
@@ -561,7 +573,7 @@ impl Molecule {
         }
         let id = checked_molecule_id(
             self.graph.stereo_groups.len(),
-            MoleculeIdKind::StereoGroup,
+            Countable::StereoGroup,
             StereoGroupId::new,
         )?;
         for member in &group.members {
@@ -576,7 +588,10 @@ impl Molecule {
         Ok(id)
     }
 
-    pub(crate) fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
+    pub(crate) fn remove_stereo_group(
+        &mut self,
+        id: StereoGroupId,
+    ) -> Result<StereoGroup, MoleculeError> {
         let group = self
             .graph
             .stereo_groups
@@ -868,7 +883,7 @@ impl Molecule {
         &self,
         id: StereoElementId,
         element: &StereoElement,
-    ) -> Result<()> {
+    ) -> Result<(), MoleculeError> {
         self.validate_stereo_element_refs(id, element)?;
         let invalid = |issue| Err(MoleculeError::InvalidStereoReference(issue));
         match &element.kind {
@@ -883,7 +898,7 @@ impl Molecule {
                     self.require_atom(center)?.hydrogens()
                 {
                     if usize::from(fixed_hydrogens) != carried {
-                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                        return invalid(StereoViolation::ImplicitHydrogenCarrierMismatch {
                             element: id,
                             atom: center,
                             fixed_hydrogens,
@@ -899,7 +914,7 @@ impl Molecule {
                     if carrier == StereoCarrier::ImplicitHydrogen
                         && self.require_atom(endpoint)?.hydrogens() == ImplicitHydrogens::Fixed(0)
                     {
-                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                        return invalid(StereoViolation::ImplicitHydrogenCarrierMismatch {
                             element: id,
                             atom: endpoint,
                             fixed_hydrogens: 0,
@@ -918,7 +933,7 @@ impl Molecule {
         &self,
         id: StereoElementId,
         element: &StereoElement,
-    ) -> Result<()> {
+    ) -> Result<(), MoleculeError> {
         let invalid = |issue| Err(MoleculeError::InvalidStereoReference(issue));
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
@@ -926,7 +941,7 @@ impl Molecule {
                 self.require_atom(center)?;
                 for (index, &carrier) in stereo.carriers.iter().enumerate() {
                     if stereo.carriers[..index].contains(&carrier) {
-                        return invalid(StereoValidationIssue::DuplicateTetrahedralCarrier {
+                        return invalid(StereoViolation::DuplicateTetrahedralCarrier {
                             element: id,
                             center,
                             carrier,
@@ -936,7 +951,7 @@ impl Molecule {
                 self.validate_stereo_carriers(&stereo.carriers)?;
                 for &carrier in &stereo.carriers {
                     if !self.carrier_is_adjacent(center, None, carrier)? {
-                        return invalid(StereoValidationIssue::TetrahedralCarrierNotAdjacent {
+                        return invalid(StereoViolation::TetrahedralCarrierNotAdjacent {
                             element: id,
                             center,
                             carrier,
@@ -947,7 +962,7 @@ impl Molecule {
                     .require_neighbors(center)?
                     .find(|neighbor| !stereo.carriers.contains(&StereoCarrier::Atom(*neighbor)))
                 {
-                    return invalid(StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
+                    return invalid(StereoViolation::UnrepresentedTetrahedralNeighbor {
                         element: id,
                         center,
                         neighbor,
@@ -957,14 +972,14 @@ impl Molecule {
             StereoElementKind::DoubleBond(stereo) => {
                 let bond = self.require_bond(stereo.bond)?;
                 if bond.order != BondOrder::Double {
-                    return invalid(StereoValidationIssue::InvalidDoubleBondOrder {
+                    return invalid(StereoViolation::InvalidDoubleBondOrder {
                         element: id,
                         bond: stereo.bond,
                         order: bond.order,
                     });
                 }
                 if !bond.connects(stereo.left, stereo.right) {
-                    return invalid(StereoValidationIssue::DoubleBondFocusMismatch {
+                    return invalid(StereoViolation::DoubleBondFocusMismatch {
                         element: id,
                         bond: stereo.bond,
                         left: stereo.left,
@@ -976,7 +991,7 @@ impl Molecule {
                     (stereo.right, stereo.right_carrier),
                 ] {
                     if carrier == StereoCarrier::ImplicitLonePair {
-                        return invalid(StereoValidationIssue::UnsupportedDoubleBondCarrier {
+                        return invalid(StereoViolation::UnsupportedDoubleBondCarrier {
                             element: id,
                             endpoint,
                             carrier,
@@ -989,14 +1004,14 @@ impl Molecule {
                     (stereo.right, stereo.left, stereo.right_carrier),
                 ] {
                     if carrier == StereoCarrier::Atom(other) {
-                        return invalid(StereoValidationIssue::DoubleBondCarrierIsFocusAtom {
+                        return invalid(StereoViolation::DoubleBondCarrierIsFocusAtom {
                             element: id,
                             endpoint,
                             carrier: other,
                         });
                     }
                     if !self.carrier_is_adjacent(endpoint, Some(other), carrier)? {
-                        return invalid(StereoValidationIssue::DoubleBondCarrierNotAdjacent {
+                        return invalid(StereoViolation::DoubleBondCarrierNotAdjacent {
                             element: id,
                             endpoint,
                             carrier,
@@ -1010,7 +1025,7 @@ impl Molecule {
                         .filter(|neighbor| *neighbor != other)
                         .count();
                     if substituent_count > 2 {
-                        return invalid(StereoValidationIssue::DoubleBondEndpointOvercoordinated {
+                        return invalid(StereoViolation::DoubleBondEndpointOvercoordinated {
                             element: id,
                             endpoint,
                             substituent_count,
@@ -1024,7 +1039,7 @@ impl Molecule {
                 let mut endpoints = [false; 2];
                 for &carrier in &stereo.carriers {
                     let StereoCarrier::Atom(atom) = carrier else {
-                        return invalid(StereoValidationIssue::UnsupportedAxisCarrier {
+                        return invalid(StereoViolation::UnsupportedAxisCarrier {
                             element: id,
                             axis: stereo.axis,
                             carrier,
@@ -1035,7 +1050,7 @@ impl Molecule {
                         atom != axis.a() && self.require_bond_between(axis.b(), atom)?.is_some(),
                     ];
                     if adjacent[0] == adjacent[1] {
-                        return invalid(StereoValidationIssue::AxisCarrierNotAdjacent {
+                        return invalid(StereoViolation::AxisCarrierNotAdjacent {
                             element: id,
                             axis: stereo.axis,
                             carrier,
@@ -1043,7 +1058,7 @@ impl Molecule {
                     }
                     let endpoint = usize::from(adjacent[1]);
                     if endpoints[endpoint] {
-                        return invalid(StereoValidationIssue::AxisCarrierEndpointMismatch {
+                        return invalid(StereoViolation::AxisCarrierEndpointMismatch {
                             element: id,
                             axis: stereo.axis,
                         });
@@ -1056,7 +1071,7 @@ impl Molecule {
                         .filter(|neighbor| *neighbor != other)
                         .count();
                     if substituent_count > 2 {
-                        return invalid(StereoValidationIssue::AxisEndpointOvercoordinated {
+                        return invalid(StereoViolation::AxisEndpointOvercoordinated {
                             element: id,
                             endpoint,
                             substituent_count,
@@ -1073,12 +1088,12 @@ impl Molecule {
         id: StereoElementId,
         element: &StereoElement,
         replacing: Option<StereoElementId>,
-    ) -> Result<()> {
+    ) -> Result<(), MoleculeError> {
         if let Some((previous, _)) = self.stereo_elements().find(|(stored_id, stored)| {
             Some(*stored_id) != replacing && stored.kind.focus() == element.kind.focus()
         }) {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::DuplicateStereoFocus {
+                StereoViolation::DuplicateStereoFocus {
                     element: id,
                     previous,
                 },
@@ -1286,7 +1301,7 @@ impl Molecule {
         references
     }
 
-    fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<()> {
+    fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<(), MoleculeError> {
         for carrier in carriers {
             if let StereoCarrier::Atom(atom) = carrier {
                 self.require_atom(*atom)?;
@@ -1302,7 +1317,7 @@ impl Molecule {
         center: AtomId,
         excluded: Option<AtomId>,
         carrier: StereoCarrier,
-    ) -> Result<bool> {
+    ) -> Result<bool, MoleculeError> {
         Ok(match carrier {
             StereoCarrier::Atom(atom) => {
                 Some(atom) != excluded && self.require_bond_between(center, atom)?.is_some()
@@ -1448,33 +1463,6 @@ impl Bond {
     }
 }
 
-pub(crate) type Result<T> = std::result::Result<T, MoleculeError>;
-
-/// Fixed-width identifier spaces owned by [`Molecule`].
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MoleculeIdKind {
-    /// Stable atom slots.
-    Atom,
-    /// Stable bond slots.
-    Bond,
-    /// Stable stereo-element slots.
-    StereoElement,
-    /// Stable stereo-group slots.
-    StereoGroup,
-}
-
-impl fmt::Display for MoleculeIdKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Atom => "atom",
-            Self::Bond => "bond",
-            Self::StereoElement => "stereo element",
-            Self::StereoGroup => "stereo group",
-        })
-    }
-}
-
 /// Why a molecule or editor operation was rejected.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
@@ -1489,7 +1477,7 @@ pub enum MoleculeError {
     InvalidStereoGroupId(StereoGroupId),
     /// A stereo element or group is inconsistent with the graph or with the
     /// other stereo assertions.
-    InvalidStereoReference(StereoValidationIssue),
+    InvalidStereoReference(StereoViolation),
     /// A bond would join an atom to itself.
     SelfBond(AtomId),
     /// A bond between these atoms already exists.
@@ -1499,10 +1487,11 @@ pub enum MoleculeError {
         /// The other endpoint.
         b: AtomId,
     },
-    /// A new value cannot be represented by the fixed-width ID for `kind`.
-    IdentifierCapacityExceeded(MoleculeIdKind),
+    /// A new atom, bond, stereo element or stereo group cannot be given a
+    /// fixed-width ID.
+    CapacityExceeded(CapacityExceeded),
     /// A property operation failed.
-    Property(Box<PropertyError>),
+    Property(PropertyError),
 }
 
 impl fmt::Display for MoleculeError {
@@ -1517,9 +1506,7 @@ impl fmt::Display for MoleculeError {
             Self::DuplicateBond { a, b } => {
                 write!(f, "{} and {b} are already bonded.", Capitalized(a))
             }
-            Self::IdentifierCapacityExceeded(kind) => {
-                write!(f, "The molecule has run out of {kind} identifiers.")
-            }
+            Self::CapacityExceeded(error) => error.fmt(f),
             Self::Property(_) => f.write_str("The molecule property is invalid."),
         }
     }
@@ -1528,24 +1515,27 @@ impl fmt::Display for MoleculeError {
 impl std::error::Error for MoleculeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Property(error) => Some(error.as_ref()),
+            Self::Property(error) => Some(error),
             _ => None,
         }
     }
 }
 
 /// Checks that a group's members are present and unique; `group` names it.
-pub(crate) fn validate_group_members(group_id: StereoGroupId, group: &StereoGroup) -> Result<()> {
+pub(crate) fn validate_group_members(
+    group_id: StereoGroupId,
+    group: &StereoGroup,
+) -> Result<(), MoleculeError> {
     if group.members.is_empty() {
         return Err(MoleculeError::InvalidStereoReference(
-            StereoValidationIssue::EmptyStereoGroup { group: group_id },
+            StereoViolation::EmptyStereoGroup { group: group_id },
         ));
     }
     let mut seen = BTreeSet::new();
     for &member in &group.members {
         if !seen.insert(member) {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::DuplicateStereoGroupMember {
+                StereoViolation::DuplicateStereoGroupMember {
                     group: group_id,
                     element: member,
                 },
@@ -1557,12 +1547,12 @@ pub(crate) fn validate_group_members(group_id: StereoGroupId, group: &StereoGrou
 
 fn checked_molecule_id<T>(
     length: usize,
-    kind: MoleculeIdKind,
+    kind: Countable,
     construct: impl FnOnce(u32) -> T,
-) -> Result<T> {
+) -> Result<T, MoleculeError> {
     checked_raw_id(length)
         .map(construct)
-        .map_err(|_| MoleculeError::IdentifierCapacityExceeded(kind))
+        .map_err(|_| MoleculeError::CapacityExceeded(CapacityExceeded::new(kind)))
 }
 
 #[cfg(test)]
@@ -1620,40 +1610,40 @@ mod capacity_tests {
     #[test]
     fn every_molecule_identifier_space_checks_its_boundary() {
         assert_eq!(
-            checked_molecule_id(max_slot(), MoleculeIdKind::Atom, AtomId::new),
+            checked_molecule_id(max_slot(), Countable::Atom, AtomId::new),
             Ok(AtomId::new(u32::MAX))
         );
         assert_eq!(
-            checked_molecule_id(first_unsupported_slot(), MoleculeIdKind::Atom, AtomId::new,),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Atom
-            ))
+            checked_molecule_id(first_unsupported_slot(), Countable::Atom, AtomId::new,),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom
+            )))
         );
         assert_eq!(
-            checked_molecule_id(first_unsupported_slot(), MoleculeIdKind::Bond, BondId::new,),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Bond
-            ))
+            checked_molecule_id(first_unsupported_slot(), Countable::Bond, BondId::new,),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Bond
+            )))
         );
         assert_eq!(
             checked_molecule_id(
                 first_unsupported_slot(),
-                MoleculeIdKind::StereoElement,
+                Countable::StereoElement,
                 StereoElementId::new,
             ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::StereoElement
-            ))
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::StereoElement
+            )))
         );
         assert_eq!(
             checked_molecule_id(
                 first_unsupported_slot(),
-                MoleculeIdKind::StereoGroup,
+                Countable::StereoGroup,
                 StereoGroupId::new,
             ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::StereoGroup
-            ))
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::StereoGroup
+            )))
         );
     }
 
@@ -1666,9 +1656,9 @@ mod capacity_tests {
                 Atom::new(Element::from_atomic_number(6).expect("carbon")),
                 first_unsupported_slot(),
             ),
-            Err(MoleculeError::IdentifierCapacityExceeded(
-                MoleculeIdKind::Atom
-            ))
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom
+            )))
         );
         assert_eq!(molecule, before);
     }

@@ -1,6 +1,7 @@
 //! What the order of a [`super::StructureSet`]'s geometries means, and each
 //! geometry's place in it.
 
+use crate::diagnostics::{Countable, LengthMismatch};
 use crate::units::{Quantity, Unit, CANONICAL_TIME_UNIT};
 
 use super::StructureSetError;
@@ -186,10 +187,9 @@ impl Order {
             }
         };
         match count {
-            Some(actual) if actual != len => Err(StructureSetError::OrderLengthMismatch {
-                expected: len,
-                actual,
-            }),
+            Some(actual) if actual != len => Err(StructureSetError::OrderLengthMismatch(
+                LengthMismatch::new(Countable::OrderValue, len, actual),
+            )),
             _ => Ok(()),
         }
     }
