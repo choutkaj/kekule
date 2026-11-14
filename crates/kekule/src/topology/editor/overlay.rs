@@ -271,6 +271,35 @@ impl<K: DenseKey, V> Overlay<K, V> {
     }
 }
 
+/// A stored draft row, which names its property storage slot.
+pub(super) trait Slotted {
+    fn slot(&self) -> usize;
+}
+
+// An unchanged source entity's slot is its source index.
+impl<K: DenseKey, V: Clone + Slotted> crate::properties::HandleSlots for Overlay<K, V> {
+    fn slot(&self, position: u64) -> Option<usize> {
+        let key = K::from_position(position);
+        match self.block.source(key) {
+            Some(index) => {
+                let index = index as usize;
+                (!self.removed.contains(index))
+                    .then(|| self.changed.get(&key).map_or(index, Slotted::slot))
+            }
+            None => self.added.get(&key).map(Slotted::slot),
+        }
+    }
+
+    fn live_slots(&self) -> Vec<usize> {
+        self.entries()
+            .map(|(_, entry)| match entry {
+                Entry::Source(index) => index,
+                Entry::Stored(value) => value.slot(),
+            })
+            .collect()
+    }
+}
+
 /// Live entries of an [`Overlay`] in handle order.
 pub(super) struct Iter<'a, K: DenseKey, V, F> {
     overlay: &'a Overlay<K, V>,

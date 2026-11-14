@@ -311,14 +311,17 @@ every repeated entity.
 | State of a distribution | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
-take the table's row type. Writes go through length-preserving `*Mut` guards:
-whole-column replacement or removal, single-cell writes, and transactional
-batches. Published tables have one row per entity. Draft tables have one row
-per slot, the draft graph decides which rows are live, and writing to a
-deleted slot fails. `StructureEditor` does not dereference to its topology draft:
-`topology()` reads it, `topology_mut()` reaches edits that need no geometry,
-and its own `properties_mut()` holds structure-scoped values, so the two scopes
-never shadow each other.
+take the table's row type. Writes go through one length-preserving table guard,
+`PropertyTableMut<R>`, handed out by each scope's `*Mut` guard: whole-column
+replacement or removal, single-cell writes, and transactional batches. Its row
+key `R` (`TableRow`) is an identifier or a draft's editing handle, and sets the
+error type. Published tables have one row per entity. Draft tables have one row per slot: a molecule draft addresses them
+by `AtomId` and `BondId`, and its graph decides which rows are live; topology
+and structure drafts address them by editing handle, with columns in live-handle
+order. Writing to a deleted slot or handle fails. `StructureEditor` does not
+dereference to its topology draft: `topology()` reads it, `topology_mut()`
+reaches edits that need no geometry, and its own `properties_mut()` holds
+structure-scoped values, so the two scopes never shadow each other.
 
 Keys are validated and never reserved. A column has one type and, for real
 values, one physical unit; missing entries are explicit; column length matches

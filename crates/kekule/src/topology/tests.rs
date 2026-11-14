@@ -269,7 +269,7 @@ fn annotated_topology() -> Topology {
         .owner_mut()
         .insert(owner_key, PropertyValue::String("annotated".into()))
         .unwrap();
-    fn insert_values<R>(
+    fn insert_values<R: crate::properties::PropertyRow>(
         mut table: crate::properties::PropertyTableMut<'_, R>,
         key: &PropertyKey,
         values: Vec<Option<i64>>,
@@ -585,7 +585,10 @@ fn topology_properties_cover_every_domain_and_do_not_change_layout_identity() {
         .owner_mut()
         .insert(owner_key.clone(), PropertyValue::String("test".into()))
         .unwrap();
-    fn insert_tag<R>(mut table: crate::properties::PropertyTableMut<'_, R>, key: &PropertyKey) {
+    fn insert_tag<R: crate::properties::PropertyRow>(
+        mut table: crate::properties::PropertyTableMut<'_, R>,
+        key: &PropertyKey,
+    ) {
         table
             .insert(key.clone(), PropertyColumn::Int(vec![Some(1); table.len()]))
             .unwrap();

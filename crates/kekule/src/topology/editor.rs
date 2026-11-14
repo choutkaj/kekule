@@ -45,12 +45,12 @@ use crate::properties::{
 };
 pub(crate) use append::{AppendMapping, ChainIds};
 pub use error::TopologyEditError;
+use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
-use hierarchy::{EditHierarchy, SourceHierarchy};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 use overlay::{HandleBlock, Overlay};
 pub(crate) use placement::{AttachedInOccurrence, DraftHydrogenError};
-pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable, EditPropertyTableMut};
+pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -213,6 +213,12 @@ pub(crate) struct Location<Id> {
     group: usize,
     local: Id,
     slot: usize,
+}
+
+impl<Id> overlay::Slotted for Location<Id> {
+    fn slot(&self) -> usize {
+        self.slot
+    }
 }
 
 /// Editing handles and storage slots for one registered group, listed in the

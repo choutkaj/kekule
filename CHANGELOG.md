@@ -360,6 +360,10 @@ through the workspace.
 - Chain, residue, and atom-site views read a topology's hierarchy columns
   directly, and `HierarchyBuilder` alone stages a hierarchy by ID; results are
   unchanged.
+- **Breaking:** `PropertyTableMut` is the one table guard: topology and
+  structure drafts return `PropertyTableMut<'_, EditAtomId>` (and the other
+  handles) for `EditPropertyTableMut`, and its row key `R: TableRow` sets the
+  error type.
 
 ### Removed
 
