@@ -143,16 +143,17 @@ impl Topology {
                 match definition_subsets.entry((molecule_view.definition_id(), selected_local)) {
                     std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                     std::collections::btree_map::Entry::Vacant(entry) => {
-                        let definitions = super::components::build_component_definitions(
-                            source_molecule,
-                            &entry.key().1,
-                            Some((
-                                molecule_view.class(),
-                                this.molecule_class_overrides
-                                    .contains_key(&molecule_view.definition_id()),
-                            )),
-                            &mut builder,
-                        )?;
+                        let definitions =
+                            super::components::build_component_definitions::<TopologySubsetError>(
+                                source_molecule,
+                                &entry.key().1,
+                                Some((
+                                    molecule_view.class(),
+                                    this.molecule_class_overrides
+                                        .contains_key(&molecule_view.definition_id()),
+                                )),
+                                &mut builder,
+                            )?;
                         entry.insert(definitions)
                     }
                 };
@@ -449,17 +450,5 @@ impl From<TopologyBuildError> for TopologySubsetError {
 impl From<PropertyError> for TopologySubsetError {
     fn from(error: PropertyError) -> Self {
         Self::Property(error)
-    }
-}
-
-impl From<super::components::ComponentBuildError> for TopologySubsetError {
-    fn from(error: super::components::ComponentBuildError) -> Self {
-        use super::components::ComponentBuildError;
-        match error {
-            ComponentBuildError::Molecule(e) => Self::Molecule(e),
-            ComponentBuildError::Publication(e) => Self::Publication(e),
-            ComponentBuildError::Property(e) => Self::Property(e),
-            ComponentBuildError::Topology(e) => Self::TopologyBuild(e),
-        }
     }
 }

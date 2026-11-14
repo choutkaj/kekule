@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::diagnostics::{LimitExceeded, Resource};
-use std::result::Result;
+use Result;
 
 /// Maximum search states of complete canonical SMILES labeling.
 pub const MAX_CANONICAL_SEARCH_STATES: usize = 100_000;

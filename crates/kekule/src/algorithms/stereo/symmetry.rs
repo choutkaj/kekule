@@ -6,7 +6,7 @@ use super::eligibility::AtomIdentity;
 use super::*;
 use crate::diagnostics::{LimitExceeded, Resource};
 use std::collections::{BTreeMap, BTreeSet};
-use std::result::Result;
+use Result;
 
 const UNMAPPED: usize = usize::MAX;
 const LONE_PAIR: usize = usize::MAX - 1;

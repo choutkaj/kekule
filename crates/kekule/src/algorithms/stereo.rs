@@ -671,7 +671,7 @@ pub fn infer_coordinate_stereo(
     mol: &Molecule,
     positions: &Positions,
     options: CoordinateStereoOptions,
-) -> std::result::Result<CoordinateStereoResult, CoordinateStereoError> {
+) -> Result<CoordinateStereoResult, CoordinateStereoError> {
     if positions.len() != mol.atom_count() {
         return Err(CoordinateStereoError::PositionCountMismatch {
             expected: mol.atom_count(),
@@ -717,7 +717,7 @@ pub fn materialize_coordinate_stereo(
     editor: &mut MoleculeEditor,
     positions: &Positions,
     options: CoordinateStereoOptions,
-) -> std::result::Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
+) -> Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
     let inferred = infer_coordinate_stereo(editor.working(), positions, options)?;
     let mut staged = editor.clone();
     let mut created_elements = Vec::with_capacity(inferred.elements.len());
@@ -791,7 +791,7 @@ fn double_bond_candidates(mol: &Molecule) -> Vec<StereoCandidate> {
 /// candidate set, this does not depend on the molecule's stereo elements.
 pub(crate) fn locally_eligible_double_bonds(
     mol: &Molecule,
-) -> std::result::Result<std::collections::BTreeSet<BondId>, StereoSearchError> {
+) -> Result<std::collections::BTreeSet<BondId>, StereoSearchError> {
     let perceived = prepared(mol)?;
     Ok(double_bond_candidates(&perceived)
         .into_iter()

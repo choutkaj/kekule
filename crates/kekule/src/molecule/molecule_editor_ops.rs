@@ -98,7 +98,7 @@ impl MoleculeEditor {
     }
 
     /// Replaces represented atom state while retaining its ID and properties.
-    pub fn replace_atom(&mut self, id: AtomId, atom: Atom) -> Result<Atom> {
+    pub fn replace_atom(&mut self, id: AtomId, atom: Atom) -> Result<Atom, MoleculeError> {
         if self.require_atom(id)? == &atom {
             return Ok(atom);
         }
@@ -110,7 +110,7 @@ impl MoleculeEditor {
     /// Rewiring removes stereo assertions referencing the bond or changed
     /// endpoints, whose chemical neighborhoods have changed.
     /// Changing only the order removes assertions focused on this bond.
-    pub fn replace_bond(&mut self, id: BondId, replacement: Bond) -> Result<Bond> {
+    pub fn replace_bond(&mut self, id: BondId, replacement: Bond) -> Result<Bond, MoleculeError> {
         let previous = self.require_bond(id)?.clone();
         let (a, b) = replacement.endpoints();
         self.require_atom(a)?;
@@ -158,7 +158,7 @@ impl MoleculeEditor {
 
     /// Changes represented order, removing stereo assertions focused on this bond.
     /// Assigning the current order leaves chemistry, stereo, and annotations intact.
-    pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<()> {
+    pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<(), MoleculeError> {
         if self.require_bond(id)?.order == order {
             return Ok(());
         }
@@ -174,7 +174,12 @@ impl MoleculeEditor {
     /// As [`Self::replace_bond`]: [`MoleculeError::InvalidBondId`],
     /// [`MoleculeError::InvalidAtomId`], [`MoleculeError::SelfBond`], or
     /// [`MoleculeError::DuplicateBond`], leaving the draft unchanged.
-    pub fn set_bond_endpoints(&mut self, id: BondId, a: AtomId, b: AtomId) -> Result<()> {
+    pub fn set_bond_endpoints(
+        &mut self,
+        id: BondId,
+        a: AtomId,
+        b: AtomId,
+    ) -> Result<(), MoleculeError> {
         self.replace_bond(id, Bond::new(a, b, self.require_bond(id)?.order))?;
         Ok(())
     }
@@ -184,7 +189,7 @@ impl MoleculeEditor {
     pub fn delete_atoms(
         &mut self,
         atoms: impl IntoIterator<Item = AtomId>,
-    ) -> Result<Vec<(AtomId, Atom)>> {
+    ) -> Result<Vec<(AtomId, Atom)>, MoleculeError> {
         let atoms = atoms.into_iter().collect::<BTreeSet<_>>();
         for &id in &atoms {
             self.require_atom(id)?;
@@ -199,7 +204,7 @@ impl MoleculeEditor {
     pub fn delete_bonds(
         &mut self,
         bonds: impl IntoIterator<Item = BondId>,
-    ) -> Result<Vec<(BondId, Bond)>> {
+    ) -> Result<Vec<(BondId, Bond)>, MoleculeError> {
         let bonds = bonds.into_iter().collect::<BTreeSet<_>>();
         for &id in &bonds {
             self.require_bond(id)?;
@@ -214,7 +219,7 @@ impl MoleculeEditor {
     pub fn retain_atoms(
         &mut self,
         atoms: impl IntoIterator<Item = AtomId>,
-    ) -> Result<Vec<(AtomId, Atom)>> {
+    ) -> Result<Vec<(AtomId, Atom)>, MoleculeError> {
         let retained = atoms.into_iter().collect::<BTreeSet<_>>();
         for &id in &retained {
             self.require_atom(id)?;
@@ -237,7 +242,7 @@ impl MoleculeEditor {
         &mut self,
         id: StereoGroupId,
         replacement: StereoGroup,
-    ) -> Result<StereoGroup> {
+    ) -> Result<StereoGroup, MoleculeError> {
         let previous = self.require_stereo_group(id)?.clone();
         super::owner::validate_group_members(id, &replacement)?;
         for &member in &replacement.members {
@@ -281,12 +286,18 @@ impl MoleculeEditor {
     /// append clears target owner properties and perception as a structural edit.
     /// A temporary disconnected result is allowed; connect it before finishing.
     /// This compound operation stages a clone of the target for rollback on error.
-    pub fn append_molecule(&mut self, source: &Molecule) -> Result<MoleculeCorrespondence> {
+    pub fn append_molecule(
+        &mut self,
+        source: &Molecule,
+    ) -> Result<MoleculeCorrespondence, MoleculeError> {
         self.append_working(source)
     }
 
     // System edits may combine disconnected private drafts before partitioning.
-    pub(crate) fn append_working(&mut self, source: &Molecule) -> Result<MoleculeCorrespondence> {
+    pub(crate) fn append_working(
+        &mut self,
+        source: &Molecule,
+    ) -> Result<MoleculeCorrespondence, MoleculeError> {
         let mut staged = self.clone();
         let mut map = MoleculeCorrespondence::default();
         for (id, atom) in source.atoms() {

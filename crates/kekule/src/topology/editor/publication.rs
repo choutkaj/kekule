@@ -533,12 +533,13 @@ impl TopologyEditor {
                 }
                 GroupChemistry::Draft(draft) => {
                     let molecule = draft.working();
-                    let components = super::super::components::build_component_definitions(
-                        molecule,
-                        &molecule.atom_ids().collect(),
-                        None,
-                        &mut builder,
-                    )?;
+                    let components =
+                        super::super::components::build_component_definitions::<TopologyEditError>(
+                            molecule,
+                            &molecule.atom_ids().collect(),
+                            None,
+                            &mut builder,
+                        )?;
                     for component in components {
                         let atoms = component
                             .source_atoms

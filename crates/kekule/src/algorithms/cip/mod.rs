@@ -6,8 +6,8 @@ use crate::molecule::*;
 
 mod ranking;
 
-type CipResult<T> = std::result::Result<T, CipAssignmentIssue>;
-type RankingResult<T> = std::result::Result<T, CipRankingError>;
+type CipResult<T> = Result<T, CipAssignmentIssue>;
+type RankingResult<T> = Result<T, CipRankingError>;
 
 /// Failure to compare rooted ligands without assigning a stereo descriptor.
 /// A resource limit or unresolved comparison is never an equal-priority result.
@@ -294,6 +294,6 @@ impl fmt::Display for CipAssignmentIssue {
 pub fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
-) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
+) -> Result<CipAssignmentReport, CipAssignmentError> {
     ranking::assign_cip_descriptors(mol, options)
 }

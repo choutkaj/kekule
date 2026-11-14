@@ -146,7 +146,7 @@ pub fn perceive_valence(
     mol: &mut Molecule,
     model: ValenceModel,
     options: ValenceOptions,
-) -> std::result::Result<(), ValenceError> {
+) -> Result<(), ValenceError> {
     let assignments = match model {
         ValenceModel::RdkitLike => rdkit_valence_assignments(mol, options)?,
     };
@@ -157,7 +157,7 @@ pub fn perceive_valence(
 pub(crate) fn rdkit_valence_assignments(
     mol: &Molecule,
     options: ValenceOptions,
-) -> std::result::Result<BTreeMap<AtomId, u8>, ValenceError> {
+) -> Result<BTreeMap<AtomId, u8>, ValenceError> {
     let mut assignments = BTreeMap::new();
     let mut issues = Vec::new();
     for (atom_id, atom) in mol.atoms() {
@@ -259,7 +259,7 @@ fn rdkit_atom_inferred_hydrogen_count(
     atom_id: AtomId,
     atom: &Atom,
     strict: bool,
-) -> std::result::Result<u8, ValenceIssue> {
+) -> Result<u8, ValenceIssue> {
     let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.represented_count());
     let radical_electrons = atom
         .radical
@@ -437,7 +437,7 @@ fn can_be_rdkit_hypervalent_anion(atom: &Atom, effective_atomic_number: u8) -> b
 /// # Errors
 ///
 /// [`MoleculeError::InvalidAtomId`] when `atom` is not live in `mol`.
-pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize> {
+pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize, MoleculeError> {
     let declaration = mol.require_atom(atom)?.hydrogens.represented_count();
     Ok(explicit_valence(mol, atom) + usize::from(declaration))
 }

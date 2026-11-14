@@ -30,7 +30,7 @@ use assignment::{
 pub(super) fn assign_cip_descriptors(
     mol: &mut Molecule,
     options: CipAssignmentOptions,
-) -> std::result::Result<CipAssignmentReport, CipAssignmentError> {
+) -> Result<CipAssignmentReport, CipAssignmentError> {
     if let Err(error) = validate_represented_stereo(mol) {
         return Err(CipAssignmentError {
             issues: error

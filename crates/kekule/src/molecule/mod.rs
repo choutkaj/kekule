@@ -67,8 +67,8 @@ pub(crate) use ids::{StereoElementId, StereoGroupId};
 pub(crate) use molecule_edit::{canonicalize_represented_chemistry, validate_represented_stereo};
 pub use molecule_edit::{MoleculeEditor, MoleculePublicationError};
 pub use molecule_editor_ops::MoleculeCorrespondence;
+pub(crate) use owner::SlotCompaction;
 pub use owner::{AtomMut, BondMut, Molecule, MoleculeError, MoleculeIdKind};
-pub(crate) use owner::{Result, SlotCompaction};
 use perception::validate_perception;
 pub(crate) use perception::{
     AromaticityModel, AromaticityPerception, Ring, RingBasisModel, RingBasisState, RingMembership,

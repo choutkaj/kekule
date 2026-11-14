@@ -226,7 +226,7 @@ impl Hierarchy {
         &mut self,
         label_id: impl Into<String>,
         author_id: Option<String>,
-    ) -> std::result::Result<ChainId, HierarchyError> {
+    ) -> Result<ChainId, HierarchyError> {
         let label_id = label_id.into();
         let id = checked_hierarchy_id(self.chains.len(), HierarchyIdKind::Chain, ChainId::new)?;
         self.chains.push(Chain {
@@ -246,7 +246,7 @@ impl Hierarchy {
         label_seq_id: Option<i32>,
         author_seq_id: Option<String>,
         insertion_code: Option<String>,
-    ) -> std::result::Result<ResidueId, HierarchyError> {
+    ) -> Result<ResidueId, HierarchyError> {
         self.require_chain(chain)?;
         let id = checked_hierarchy_id(
             self.residue_chains.len(),
@@ -277,7 +277,7 @@ impl Hierarchy {
         residue: ResidueId,
         atom: InstanceAtomId,
         metadata: AtomSiteMetadata,
-    ) -> std::result::Result<AtomSiteId, HierarchyError> {
+    ) -> Result<AtomSiteId, HierarchyError> {
         self.require_residue(residue)?;
         if self.lookup().contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
@@ -298,7 +298,7 @@ impl Hierarchy {
         residue: ResidueId,
         atom: InstanceAtomId,
         metadata: &SharedRow<AtomSiteMetadata>,
-    ) -> std::result::Result<AtomSiteId, HierarchyError> {
+    ) -> Result<AtomSiteId, HierarchyError> {
         self.require_residue(residue)?;
         if self.lookup().contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
@@ -356,7 +356,7 @@ impl Hierarchy {
         chains: Vec<RawChain>,
         residues: Vec<RawResidue>,
         sites: Vec<RawAtomSite>,
-    ) -> std::result::Result<Self, RawHierarchyError> {
+    ) -> Result<Self, RawHierarchyError> {
         let id = |index: usize, kind| {
             crate::molecule::checked_raw_id(index)
                 .map_err(|_| RawHierarchyError::IdentifierCapacityExceeded(kind))
@@ -485,23 +485,17 @@ impl Hierarchy {
     }
 
     /// [`Self::chain`] for staging code that reports a missing chain.
-    pub(crate) fn require_chain(&self, id: ChainId) -> std::result::Result<&Chain, HierarchyError> {
+    pub(crate) fn require_chain(&self, id: ChainId) -> Result<&Chain, HierarchyError> {
         self.chain(id).ok_or(HierarchyError::InvalidChainId(id))
     }
 
     /// [`Self::residue`] for staging code that reports a missing residue.
-    pub(crate) fn require_residue(
-        &self,
-        id: ResidueId,
-    ) -> std::result::Result<Residue<'_>, HierarchyError> {
+    pub(crate) fn require_residue(&self, id: ResidueId) -> Result<Residue<'_>, HierarchyError> {
         self.residue(id).ok_or(HierarchyError::InvalidResidueId(id))
     }
 
     /// [`Self::atom_site`] for staging code that reports a missing site.
-    pub(crate) fn require_atom_site(
-        &self,
-        id: AtomSiteId,
-    ) -> std::result::Result<AtomSite<'_>, HierarchyError> {
+    pub(crate) fn require_atom_site(&self, id: AtomSiteId) -> Result<AtomSite<'_>, HierarchyError> {
         self.atom_site(id)
             .ok_or(HierarchyError::InvalidAtomSiteId(id))
     }
@@ -535,7 +529,7 @@ impl Hierarchy {
         residue: ResidueId,
         label_comp_id: Option<String>,
         author_comp_id: Option<String>,
-    ) -> std::result::Result<(), HierarchyError> {
+    ) -> Result<(), HierarchyError> {
         let labels = ResidueLabels {
             label_comp_id: label_comp_id.map(Arc::from),
             author_comp_id: author_comp_id.map(Arc::from),
@@ -550,7 +544,7 @@ impl Hierarchy {
         &mut self,
         residue: ResidueId,
         class: Option<ResidueClass>,
-    ) -> std::result::Result<(), HierarchyError> {
+    ) -> Result<(), HierarchyError> {
         self.require_residue(residue)?;
         self.residue_explicit[residue.index()] = class;
         Ok(())
@@ -1171,7 +1165,7 @@ fn checked_hierarchy_id<T>(
     length: usize,
     kind: HierarchyIdKind,
     construct: impl FnOnce(u32) -> T,
-) -> std::result::Result<T, HierarchyError> {
+) -> Result<T, HierarchyError> {
     crate::molecule::checked_raw_id(length)
         .map(construct)
         .map_err(|_| HierarchyError::IdentifierCapacityExceeded(kind))

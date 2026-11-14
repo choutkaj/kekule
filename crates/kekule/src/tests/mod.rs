@@ -21,7 +21,7 @@ use crate::{
 
 /// The typed detail of a failed format operation.
 pub(super) fn error_detail<T>(
-    result: std::result::Result<T, crate::diagnostics::FormatError>,
+    result: Result<T, crate::diagnostics::FormatError>,
 ) -> Option<crate::diagnostics::FormatErrorDetail> {
     result.err()?.detail().cloned()
 }
@@ -62,7 +62,7 @@ pub(super) fn chain_text(error: &(dyn std::error::Error + 'static)) -> String {
 
 /// The mmCIF writer issue of a failed format operation.
 pub(super) fn mmcif_issue<T>(
-    result: std::result::Result<T, crate::diagnostics::FormatError>,
+    result: Result<T, crate::diagnostics::FormatError>,
 ) -> Option<crate::mmcif::MmcifWriteIssue> {
     match error_detail(result)? {
         crate::diagnostics::FormatErrorDetail::MmcifWrite(issue) => Some(issue),
@@ -87,16 +87,14 @@ pub(super) fn oxygen() -> Atom {
     Atom::new(Element::from_symbol("O").expect("oxygen should be available"))
 }
 
-pub(super) fn read_smiles(
-    input: &str,
-) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
+pub(super) fn read_smiles(input: &str) -> Result<Molecule, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input, Default::default())?;
     Ok(document.interpret(Default::default())?.into_molecule()?)
 }
 
 pub(super) fn read_smiles_components(
     input: &str,
-) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input, Default::default())?;
     Ok(document.interpret(Default::default())?.into_molecules())
 }
@@ -104,7 +102,7 @@ pub(super) fn read_smiles_components(
 pub(super) fn read_smiles_component(
     input: &str,
     component: usize,
-) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
+) -> Result<Molecule, Box<dyn std::error::Error>> {
     read_smiles_components(input)?
         .into_iter()
         .nth(component)
@@ -117,9 +115,7 @@ pub(super) fn read_smiles_component(
         })
 }
 
-pub(super) fn perceive(
-    molecule: &mut Molecule,
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
+pub(super) fn perceive(molecule: &mut Molecule) -> Result<(), Box<dyn std::error::Error>> {
     molecule.perceive()?;
     Ok(())
 }
@@ -136,40 +132,34 @@ pub(super) fn canonical_smiles_round_trip(molecule: &Molecule) -> (String, Molec
 
 pub(super) fn read_smiles_with_report(
     input: &str,
-) -> std::result::Result<(Molecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
+) -> Result<(Molecule, SmilesInterpretationReport), Box<dyn std::error::Error>> {
     let document = smiles_api::parse_str(input, Default::default())?;
     Ok(document.interpret(Default::default())?.into_parts()?)
 }
 
 pub(super) trait CanonicalizeFixture {
-    fn canonicalize_fixture(
-        &mut self,
-    ) -> std::result::Result<NormalizationReport, NormalizationError>;
+    fn canonicalize_fixture(&mut self) -> Result<NormalizationReport, NormalizationError>;
 
     fn canonicalize_fixture_with_source_stereo(
         &mut self,
         source_stereo: &[SourceStereoBondMark],
-    ) -> std::result::Result<NormalizationReport, NormalizationError>;
+    ) -> Result<NormalizationReport, NormalizationError>;
 }
 
 impl CanonicalizeFixture for Molecule {
-    fn canonicalize_fixture(
-        &mut self,
-    ) -> std::result::Result<NormalizationReport, NormalizationError> {
+    fn canonicalize_fixture(&mut self) -> Result<NormalizationReport, NormalizationError> {
         canonicalize_molecule_for_publication(self, None, &[])
     }
 
     fn canonicalize_fixture_with_source_stereo(
         &mut self,
         source_stereo: &[SourceStereoBondMark],
-    ) -> std::result::Result<NormalizationReport, NormalizationError> {
+    ) -> Result<NormalizationReport, NormalizationError> {
         canonicalize_molecule_for_publication(self, None, source_stereo)
     }
 }
 
-pub(super) fn read_molfile(
-    input: &str,
-) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
+pub(super) fn read_molfile(input: &str) -> Result<Molecule, Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input, Default::default())?;
     let molecules = document.interpret(Default::default())?.into_molecules();
     exactly_one(molecules, "molfile")
@@ -205,8 +195,7 @@ pub(super) fn molfile_failure(input: &str) -> (FailureStage, DiagnosticKind, Opt
 
 pub(super) fn read_molfile_with_report(
     input: &str,
-) -> std::result::Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>>
-{
+) -> Result<(Molecule, molfile::MolfileInterpretationReport), Box<dyn std::error::Error>> {
     let document = molfile::parse_str(input, Default::default())?;
     let (structure, mut reports, _) = document.interpret(Default::default())?.into_parts();
     if reports.len() != 1 {
@@ -224,45 +213,43 @@ pub(super) fn read_molfile_with_report(
 
 pub(super) fn read_sdf_records(
     input: &str,
-) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
+) -> Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     read_sdf_records_with_options(input, SdfParseOptions::default())
 }
 
 pub(super) fn read_sdf_records_with_options(
     input: &str,
     options: SdfParseOptions,
-) -> std::result::Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
+) -> Result<Vec<SdfRecordInterpretation>, Box<dyn std::error::Error>> {
     let document = sdf::parse_str(input, options)?;
     Ok(document
         .records()
         .iter()
         .map(|record| record.interpret(Default::default()))
-        .collect::<std::result::Result<_, _>>()?)
+        .collect::<Result<_, _>>()?)
 }
 
-pub(super) fn read_sdf_molecules(
-    input: &str,
-) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
+pub(super) fn read_sdf_molecules(input: &str) -> Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     read_sdf_records(input)?
         .into_iter()
         .map(|record| exactly_one(record.into_molecules(), "SDF record"))
-        .collect::<std::result::Result<Vec<_>, _>>()
+        .collect::<Result<Vec<_>, _>>()
 }
 
 pub(super) fn read_sdf_molecules_with_options(
     input: &str,
     options: SdfParseOptions,
-) -> std::result::Result<Vec<Molecule>, Box<dyn std::error::Error>> {
+) -> Result<Vec<Molecule>, Box<dyn std::error::Error>> {
     read_sdf_records_with_options(input, options)?
         .into_iter()
         .map(|record| exactly_one(record.into_molecules(), "SDF record"))
-        .collect::<std::result::Result<Vec<_>, _>>()
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn exactly_one(
     mut molecules: Vec<Molecule>,
     source: &str,
-) -> std::result::Result<Molecule, Box<dyn std::error::Error>> {
+) -> Result<Molecule, Box<dyn std::error::Error>> {
     if molecules.len() != 1 {
         return Err(format!(
             "expected one molecule from {source}, found {}",

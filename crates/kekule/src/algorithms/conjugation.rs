@@ -46,7 +46,7 @@ impl std::error::Error for ConjugationError {}
 pub fn perceive_conjugation(
     mol: &mut Molecule,
     model: ConjugationModel,
-) -> std::result::Result<(), ConjugationError> {
+) -> Result<(), ConjugationError> {
     let aromaticity = mol
         .perception()
         .aromaticity()

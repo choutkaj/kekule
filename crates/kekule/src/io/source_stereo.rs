@@ -54,7 +54,7 @@ pub(crate) fn normalize_source_stereo(
     molecule: &mut Molecule,
     geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],
-) -> std::result::Result<NormalizationReport, SourceStereoNormalizationError> {
+) -> Result<NormalizationReport, SourceStereoNormalizationError> {
     crate::molecule::validate_represented_stereo(molecule).map_err(source_validation_error)?;
     validate_source_stereo_marks(molecule, source_marks)?;
 
@@ -186,7 +186,7 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     molecule: &Molecule,
     geometry: Option<&dyn AtomPositionSource>,
     coordinate_double_bonds: Option<&BTreeSet<BondId>>,
-) -> std::result::Result<BTreeMap<BondId, MolfileStereoBondProjection>, FormatError> {
+) -> Result<BTreeMap<BondId, MolfileStereoBondProjection>, FormatError> {
     let keeps = |element: &StereoElement| keeps_source_stereo(element, coordinate_double_bonds);
     if molecule.stereo_elements().next().is_none() && geometry.is_none() {
         return Ok(BTreeMap::new());
@@ -356,7 +356,7 @@ pub(crate) fn molfile_double_bond_geometry_marks(
 fn molfile_projection_candidates(
     molecule: &Molecule,
     element: &StereoElement,
-) -> std::result::Result<Vec<(BondId, MolfileStereoBondProjection)>, FormatError> {
+) -> Result<Vec<(BondId, MolfileStereoBondProjection)>, FormatError> {
     match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => {
             let kinds = match stereo.orientation {
@@ -439,7 +439,7 @@ fn molfile_projection_candidates(
 fn validate_source_stereo_marks(
     molecule: &Molecule,
     source_marks: &[SourceStereoBondMark],
-) -> std::result::Result<(), SourceStereoNormalizationError> {
+) -> Result<(), SourceStereoNormalizationError> {
     let issues = source_marks
         .iter()
         .filter_map(|mark| match molecule.bond(mark.bond) {

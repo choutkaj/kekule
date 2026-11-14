@@ -504,7 +504,7 @@ impl PerceptionBuilder {
         model: ValenceModel,
         validation: ValenceValidation,
         assignments: Vec<(AtomId, u8)>,
-    ) -> std::result::Result<Self, PerceptionBuildError> {
+    ) -> Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(
             assignments.len(),
             PerceptionComponent::InferredHydrogens,
@@ -542,7 +542,7 @@ impl PerceptionBuilder {
         model: AromaticityModel,
         atoms: Vec<AtomId>,
         bonds: Vec<BondId>,
-    ) -> std::result::Result<Self, PerceptionBuildError> {
+    ) -> Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(atoms.len(), PerceptionComponent::AromaticAtoms)?;
         check_perception_component_capacity(bonds.len(), PerceptionComponent::AromaticBonds)?;
         let mut atom_set = BTreeSet::new();
@@ -578,7 +578,7 @@ impl PerceptionBuilder {
     pub fn with_cip_descriptors(
         mut self,
         assignments: Vec<(StereoElementId, StereoDescriptor)>,
-    ) -> std::result::Result<Self, PerceptionBuildError> {
+    ) -> Result<Self, PerceptionBuildError> {
         check_perception_component_capacity(
             assignments.len(),
             PerceptionComponent::CipDescriptors,
@@ -929,7 +929,7 @@ impl std::error::Error for PerceptionInstallError {}
 fn check_perception_component_capacity(
     length: usize,
     component: PerceptionComponent,
-) -> std::result::Result<(), PerceptionBuildError> {
+) -> Result<(), PerceptionBuildError> {
     checked_fixed_id_collection_len(0, length)
         .map_err(|_| PerceptionBuildError::ComponentCapacityExceeded(component))
 }
@@ -937,7 +937,7 @@ fn check_perception_component_capacity(
 fn check_install_component_capacity(
     length: usize,
     component: PerceptionComponent,
-) -> std::result::Result<(), PerceptionInstallError> {
+) -> Result<(), PerceptionInstallError> {
     checked_fixed_id_collection_len(0, length)
         .map_err(|_| PerceptionInstallError::ComponentCapacityExceeded(component))
 }
@@ -945,7 +945,7 @@ fn check_install_component_capacity(
 pub(super) fn validate_perception(
     molecule: &Molecule,
     state: &Perception,
-) -> std::result::Result<(), PerceptionInstallError> {
+) -> Result<(), PerceptionInstallError> {
     validate_delocalization(molecule, state)?;
     if let Some(valence) = &state.valence {
         for (&atom, &count) in &valence.inferred_hydrogens {
@@ -1121,7 +1121,7 @@ fn validate_delocalization(
 fn validate_ring_state(
     molecule: &Molecule,
     state: &RingPerception,
-) -> std::result::Result<(), PerceptionInstallError> {
+) -> Result<(), PerceptionInstallError> {
     let membership = &state.membership;
     let atom_slots = membership.atom_flags().len();
     let bond_slots = membership.bond_flags().len();
@@ -1204,7 +1204,7 @@ fn validate_installed_ring(
     molecule: &Molecule,
     ring_index: usize,
     ring: &Ring,
-) -> std::result::Result<(), PerceptionInstallError> {
+) -> Result<(), PerceptionInstallError> {
     check_install_component_capacity(ring.atoms.len(), PerceptionComponent::RingAtoms)?;
     check_install_component_capacity(ring.bonds.len(), PerceptionComponent::RingBonds)?;
     if ring.atoms.len() < 3 {

@@ -8,7 +8,7 @@ use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
 
 use super::{
     Atom, AtomId, Bond, BondId, BondOrder, Graph, Molecule, MoleculeCorrespondence, Perception,
-    Result, StereoElement, StereoElementId, StereoGroup, StereoGroupId,
+    StereoElement, StereoElementId, StereoGroup, StereoGroupId,
 };
 
 /// Failure to publish checked molecule construction or editing state.
@@ -88,7 +88,7 @@ impl Molecule {
     }
 
     /// Validates the public connectedness invariant.
-    pub(crate) fn validate_connected(&self) -> std::result::Result<(), MoleculePublicationError> {
+    pub(crate) fn validate_connected(&self) -> Result<(), MoleculePublicationError> {
         let components = self.connected_components().len();
         if components == 1 {
             Ok(())
@@ -236,7 +236,10 @@ impl MoleculeEditor {
         self.working.atom_mut(atom)
     }
 
-    pub(crate) fn require_atom_mut(&mut self, atom: AtomId) -> Result<super::AtomMut<'_>> {
+    pub(crate) fn require_atom_mut(
+        &mut self,
+        atom: AtomId,
+    ) -> Result<super::AtomMut<'_>, MoleculeError> {
         self.working.require_atom_mut(atom)
     }
 
@@ -256,7 +259,10 @@ impl MoleculeEditor {
             .bond_mut_recording(bond, &mut self.pruned_stereo)
     }
 
-    pub(crate) fn require_bond_mut(&mut self, bond: BondId) -> Result<super::BondMut<'_>> {
+    pub(crate) fn require_bond_mut(
+        &mut self,
+        bond: BondId,
+    ) -> Result<super::BondMut<'_>, MoleculeError> {
         self.bond_mut(bond)
             .ok_or(MoleculeError::InvalidBondId(bond))
     }
@@ -268,14 +274,14 @@ impl MoleculeEditor {
     ///
     /// [`MoleculeError::IdentifierCapacityExceeded`] when the draft already
     /// holds the maximum number of atom slots.
-    pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
+    pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MoleculeError> {
         self.working.add_atom(atom)
     }
 
     /// Deletes an atom and its bonds, removing every stereo element that
     /// references the atom and those its deleted bonds invalidate. See
     /// [`Self::pruned_stereo_elements`].
-    pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom> {
+    pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom, MoleculeError> {
         let (atom, pruned) = self.working.delete_atom(atom)?;
         self.pruned_stereo.extend(pruned);
         Ok(atom)
@@ -286,7 +292,12 @@ impl MoleculeEditor {
     /// a double-bond endpoint that gains a third substituent; elements away
     /// from the bond's endpoints are untouched. See
     /// [`Self::pruned_stereo_elements`].
-    pub fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
+    pub fn add_bond(
+        &mut self,
+        a: AtomId,
+        b: AtomId,
+        order: BondOrder,
+    ) -> Result<BondId, MoleculeError> {
         let bond = self.working.add_bond(a, b, order)?;
         let pruned = self.working.prune_invalid_stereo_at([a, b], bond);
         self.pruned_stereo.extend(pruned);
@@ -297,7 +308,7 @@ impl MoleculeEditor {
     /// invalidates are removed, such as an assertion whose carrier it bonded
     /// to the focus, and every other element is untouched. See
     /// [`Self::pruned_stereo_elements`].
-    pub fn delete_bond(&mut self, bond: BondId) -> Result<Bond> {
+    pub fn delete_bond(&mut self, bond: BondId) -> Result<Bond, MoleculeError> {
         let (bond, pruned) = self.working.delete_bond(bond)?;
         self.pruned_stereo.extend(pruned);
         Ok(bond)
@@ -333,7 +344,10 @@ impl MoleculeEditor {
     ///   order, or another element already describes the same focus.
     /// - [`MoleculeError::IdentifierCapacityExceeded`] when no stereo element
     ///   ID is left.
-    pub fn add_stereo_element(&mut self, element: StereoElement) -> Result<StereoElementId> {
+    pub fn add_stereo_element(
+        &mut self,
+        element: StereoElement,
+    ) -> Result<StereoElementId, MoleculeError> {
         self.working.add_stereo_element(element)
     }
 
@@ -351,7 +365,7 @@ impl MoleculeEditor {
         &mut self,
         id: StereoElementId,
         replacement: StereoElement,
-    ) -> Result<StereoElement> {
+    ) -> Result<StereoElement, MoleculeError> {
         self.working.replace_stereo_element(id, replacement)
     }
 
@@ -362,7 +376,10 @@ impl MoleculeEditor {
     /// # Errors
     ///
     /// [`MoleculeError::InvalidStereoElementId`] when `id` names no element.
-    pub fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
+    pub fn remove_stereo_element(
+        &mut self,
+        id: StereoElementId,
+    ) -> Result<StereoElement, MoleculeError> {
         self.working.remove_stereo_element(id)
     }
 
@@ -377,7 +394,7 @@ impl MoleculeEditor {
     ///   element.
     /// - [`MoleculeError::IdentifierCapacityExceeded`] when no stereo group ID
     ///   is left.
-    pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+    pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId, MoleculeError> {
         self.working.add_stereo_group(group)
     }
 
@@ -387,7 +404,7 @@ impl MoleculeEditor {
     /// # Errors
     ///
     /// [`MoleculeError::InvalidStereoGroupId`] when `id` names no group.
-    pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
+    pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup, MoleculeError> {
         self.working.remove_stereo_group(id)
     }
 
@@ -405,7 +422,7 @@ impl MoleculeEditor {
     /// let mut editor = MoleculeEditor::new();
     /// editor.install_perception(Perception::default()).unwrap();
     /// ```
-    pub fn finish(self) -> std::result::Result<Molecule, MoleculePublicationError> {
+    pub fn finish(self) -> Result<Molecule, MoleculePublicationError> {
         publish_molecule(self.working).map(|(molecule, _)| molecule)
     }
 
@@ -431,7 +448,7 @@ impl MoleculeEditor {
     /// ```
     pub fn finish_with_correspondence(
         self,
-    ) -> std::result::Result<(Molecule, MoleculeCorrespondence), MoleculePublicationError> {
+    ) -> Result<(Molecule, MoleculeCorrespondence), MoleculePublicationError> {
         publish_molecule(self.working).map(|(molecule, compaction)| {
             let correspondence = MoleculeCorrespondence::from_compaction(&compaction);
             (molecule, correspondence)
@@ -469,16 +486,14 @@ impl MoleculeEditor {
 
     /// Checks whether a snapshot would publish successfully, leaving this editor
     /// unchanged. This clones the working state to check canonicalization too.
-    pub fn validate(&self) -> std::result::Result<(), MoleculePublicationError> {
+    pub fn validate(&self) -> Result<(), MoleculePublicationError> {
         publish_molecule(self.working.clone()).map(|_| ())
     }
 
     /// Publishes, or returns the original editor for repair through
     /// [`DraftError::into_draft`]. Keeps a cloned rollback snapshot;
     /// use [`Self::finish`] when recovery is unnecessary.
-    pub fn try_finish(
-        self,
-    ) -> std::result::Result<Molecule, DraftError<Self, MoleculePublicationError>> {
+    pub fn try_finish(self) -> Result<Molecule, DraftError<Self, MoleculePublicationError>> {
         let snapshot = self.clone();
         publish_molecule(self.working)
             .map(|(molecule, _)| molecule)
@@ -488,7 +503,7 @@ impl MoleculeEditor {
 
 fn publish_molecule(
     mut molecule: Molecule,
-) -> std::result::Result<(Molecule, super::SlotCompaction), MoleculePublicationError> {
+) -> Result<(Molecule, super::SlotCompaction), MoleculePublicationError> {
     if molecule.atom_count() == 0 {
         return Err(MoleculePublicationError::EmptyGraph);
     }
@@ -514,7 +529,7 @@ fn publish_molecule(
     Ok((molecule, compaction))
 }
 
-fn validate_graph(molecule: &Molecule) -> std::result::Result<(), GraphValidationError> {
+fn validate_graph(molecule: &Molecule) -> Result<(), GraphValidationError> {
     if molecule.properties().atoms().len() != molecule.graph.atoms.len() {
         return Err(GraphValidationError::AtomPropertySlotCount {
             expected: molecule.graph.atoms.len(),
@@ -634,7 +649,7 @@ fn validate_stereo_group(
     molecule: &Molecule,
     group_id: StereoGroupId,
     group: &StereoGroup,
-) -> std::result::Result<(), StereoValidationIssue> {
+) -> Result<(), StereoValidationIssue> {
     if group.members.is_empty() {
         return Err(StereoValidationIssue::EmptyStereoGroup { group: group_id });
     }
@@ -666,7 +681,7 @@ fn validate_stereo_group(
 /// represented stereo.
 pub(crate) fn validate_represented_stereo(
     molecule: &Molecule,
-) -> std::result::Result<(), crate::algorithms::StereoValidationError> {
+) -> Result<(), crate::algorithms::StereoValidationError> {
     let issues = stereo_validation_issues(molecule);
     if issues.is_empty() {
         Ok(())

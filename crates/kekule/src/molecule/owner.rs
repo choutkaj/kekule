@@ -216,11 +216,11 @@ impl Molecule {
     /// Public molecule construction goes through [`MoleculeEditor`], because
     /// adding an atom to an already populated graph would temporarily violate
     /// the connected-molecule invariant.
-    pub(crate) fn add_atom(&mut self, atom: Atom) -> Result<AtomId> {
+    pub(crate) fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MoleculeError> {
         self.add_atom_at_slot(atom, self.graph.atoms.len())
     }
 
-    fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId> {
+    fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId, MoleculeError> {
         let id = checked_molecule_id(slot, MoleculeIdKind::Atom, AtomId::new)?;
         debug_assert_eq!(slot, self.graph.atoms.len());
         self.graph.atoms.push(Some(atom));
@@ -236,7 +236,10 @@ impl Molecule {
     /// Removes an atom and its bonds only inside crate-private construction or
     /// edit state, returning the stereo elements removed because they
     /// referenced the atom or no longer describe valid stereo.
-    pub(crate) fn delete_atom(&mut self, id: AtomId) -> Result<(Atom, Vec<StereoElementId>)> {
+    pub(crate) fn delete_atom(
+        &mut self,
+        id: AtomId,
+    ) -> Result<(Atom, Vec<StereoElementId>), MoleculeError> {
         self.require_atom(id)?;
         let mut pruned = Vec::new();
         let incident = self.graph.adjacency[id.index()].clone();
@@ -267,7 +270,7 @@ impl Molecule {
         Some(AtomMut { molecule: self, id })
     }
 
-    pub(crate) fn require_atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>> {
+    pub(crate) fn require_atom_mut(&mut self, id: AtomId) -> Result<AtomMut<'_>, MoleculeError> {
         self.atom_mut(id).ok_or(MoleculeError::InvalidAtomId(id))
     }
 
@@ -276,7 +279,12 @@ impl Molecule {
     /// Existing stereo is left as it is, for transforms that rewrite the
     /// carriers of the new bond's endpoints themselves; the public
     /// [`MoleculeEditor::add_bond`] prunes what the bond invalidates.
-    pub(crate) fn add_bond(&mut self, a: AtomId, b: AtomId, order: BondOrder) -> Result<BondId> {
+    pub(crate) fn add_bond(
+        &mut self,
+        a: AtomId,
+        b: AtomId,
+        order: BondOrder,
+    ) -> Result<BondId, MoleculeError> {
         self.require_atom(a)?;
         self.require_atom(b)?;
         if a == b {
@@ -299,7 +307,10 @@ impl Molecule {
 
     /// Removes a bond only inside crate-private construction/edit state,
     /// returning the stereo elements it invalidated.
-    pub(crate) fn delete_bond(&mut self, id: BondId) -> Result<(Bond, Vec<StereoElementId>)> {
+    pub(crate) fn delete_bond(
+        &mut self,
+        id: BondId,
+    ) -> Result<(Bond, Vec<StereoElementId>), MoleculeError> {
         let bond = self
             .graph
             .bonds
@@ -327,7 +338,7 @@ impl Molecule {
         })
     }
 
-    pub(crate) fn require_bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>> {
+    pub(crate) fn require_bond_mut(&mut self, id: BondId) -> Result<BondMut<'_>, MoleculeError> {
         self.bond_mut(id).ok_or(MoleculeError::InvalidBondId(id))
     }
 
@@ -367,10 +378,7 @@ impl Molecule {
     ///
     /// The detached state is checked against all stable graph and stereo slots
     /// before mutation. Failure leaves the previous state exactly unchanged.
-    pub fn install_perception(
-        &mut self,
-        state: Perception,
-    ) -> std::result::Result<(), PerceptionInstallError> {
+    pub fn install_perception(&mut self, state: Perception) -> Result<(), PerceptionInstallError> {
         validate_perception(self, &state)?;
         self.perception = state;
         Ok(())
@@ -451,7 +459,7 @@ impl Molecule {
         &self,
         center: AtomId,
         carriers: Vec<StereoCarrier>,
-    ) -> Result<[StereoCarrier; 4]> {
+    ) -> Result<[StereoCarrier; 4], MoleculeError> {
         let carrier_count = carriers.len();
         carriers.try_into().map_err(|_| {
             MoleculeError::InvalidStereoReference(
@@ -469,7 +477,7 @@ impl Molecule {
     pub(crate) fn add_stereo_element(
         &mut self,
         mut element: StereoElement,
-    ) -> Result<StereoElementId> {
+    ) -> Result<StereoElementId, MoleculeError> {
         // The ID this element receives, which issues name.
         let pending = StereoElementId::new(
             u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
@@ -499,7 +507,7 @@ impl Molecule {
         &mut self,
         id: StereoElementId,
         mut replacement: StereoElement,
-    ) -> Result<StereoElement> {
+    ) -> Result<StereoElement, MoleculeError> {
         let Some(current) = self
             .graph
             .stereo_elements
@@ -528,7 +536,10 @@ impl Molecule {
     }
 
     /// Removes a stereo element and returns it detached from any relation group.
-    pub(crate) fn remove_stereo_element(&mut self, id: StereoElementId) -> Result<StereoElement> {
+    pub(crate) fn remove_stereo_element(
+        &mut self,
+        id: StereoElementId,
+    ) -> Result<StereoElement, MoleculeError> {
         let mut element = self
             .graph
             .stereo_elements
@@ -543,7 +554,10 @@ impl Molecule {
     }
 
     /// Inserts a validated stereo group transactionally.
-    pub(crate) fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId> {
+    pub(crate) fn add_stereo_group(
+        &mut self,
+        group: StereoGroup,
+    ) -> Result<StereoGroupId, MoleculeError> {
         // The ID this group receives, which issues name.
         let pending =
             StereoGroupId::new(u32::try_from(self.graph.stereo_groups.len()).unwrap_or(u32::MAX));
@@ -576,7 +590,10 @@ impl Molecule {
         Ok(id)
     }
 
-    pub(crate) fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup> {
+    pub(crate) fn remove_stereo_group(
+        &mut self,
+        id: StereoGroupId,
+    ) -> Result<StereoGroup, MoleculeError> {
         let group = self
             .graph
             .stereo_groups
@@ -868,7 +885,7 @@ impl Molecule {
         &self,
         id: StereoElementId,
         element: &StereoElement,
-    ) -> Result<()> {
+    ) -> Result<(), MoleculeError> {
         self.validate_stereo_element_refs(id, element)?;
         let invalid = |issue| Err(MoleculeError::InvalidStereoReference(issue));
         match &element.kind {
@@ -918,7 +935,7 @@ impl Molecule {
         &self,
         id: StereoElementId,
         element: &StereoElement,
-    ) -> Result<()> {
+    ) -> Result<(), MoleculeError> {
         let invalid = |issue| Err(MoleculeError::InvalidStereoReference(issue));
         match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => {
@@ -1073,7 +1090,7 @@ impl Molecule {
         id: StereoElementId,
         element: &StereoElement,
         replacing: Option<StereoElementId>,
-    ) -> Result<()> {
+    ) -> Result<(), MoleculeError> {
         if let Some((previous, _)) = self.stereo_elements().find(|(stored_id, stored)| {
             Some(*stored_id) != replacing && stored.kind.focus() == element.kind.focus()
         }) {
@@ -1286,7 +1303,7 @@ impl Molecule {
         references
     }
 
-    fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<()> {
+    fn validate_stereo_carriers(&self, carriers: &[StereoCarrier]) -> Result<(), MoleculeError> {
         for carrier in carriers {
             if let StereoCarrier::Atom(atom) = carrier {
                 self.require_atom(*atom)?;
@@ -1302,7 +1319,7 @@ impl Molecule {
         center: AtomId,
         excluded: Option<AtomId>,
         carrier: StereoCarrier,
-    ) -> Result<bool> {
+    ) -> Result<bool, MoleculeError> {
         Ok(match carrier {
             StereoCarrier::Atom(atom) => {
                 Some(atom) != excluded && self.require_bond_between(center, atom)?.is_some()
@@ -1448,8 +1465,6 @@ impl Bond {
     }
 }
 
-pub(crate) type Result<T> = std::result::Result<T, MoleculeError>;
-
 /// Fixed-width identifier spaces owned by [`Molecule`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1535,7 +1550,10 @@ impl std::error::Error for MoleculeError {
 }
 
 /// Checks that a group's members are present and unique; `group` names it.
-pub(crate) fn validate_group_members(group_id: StereoGroupId, group: &StereoGroup) -> Result<()> {
+pub(crate) fn validate_group_members(
+    group_id: StereoGroupId,
+    group: &StereoGroup,
+) -> Result<(), MoleculeError> {
     if group.members.is_empty() {
         return Err(MoleculeError::InvalidStereoReference(
             StereoValidationIssue::EmptyStereoGroup { group: group_id },
@@ -1559,7 +1577,7 @@ fn checked_molecule_id<T>(
     length: usize,
     kind: MoleculeIdKind,
     construct: impl FnOnce(u32) -> T,
-) -> Result<T> {
+) -> Result<T, MoleculeError> {
     checked_raw_id(length)
         .map(construct)
         .map_err(|_| MoleculeError::IdentifierCapacityExceeded(kind))

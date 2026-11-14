@@ -18,7 +18,7 @@ use crate::diagnostics::FormatError;
 pub(super) fn parse_v3000_ctab(
     lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> std::result::Result<(MolfileCtab, usize), FormatError> {
+) -> Result<(MolfileCtab, usize), FormatError> {
     let (records, end) = collect_v3000_lines(lines, options)?;
     let Some(first) = records.first() else {
         return Err(lines.error(
@@ -222,7 +222,7 @@ struct V3000Line {
 fn collect_v3000_lines(
     lines: MolfileLines<'_>,
     options: MolfileParseOptions,
-) -> std::result::Result<(Vec<V3000Line>, usize), FormatError> {
+) -> Result<(Vec<V3000Line>, usize), FormatError> {
     let limit = |index| {
         let limit = LimitExceeded::first_beyond(
             Resource::RecordBytes,
@@ -354,7 +354,7 @@ fn parse_v3000_atom(
     row: &V3000Line,
     position: usize,
     unsupported: &mut Vec<MolfileUnsupported>,
-) -> std::result::Result<(usize, MolfileAtom), FormatError> {
+) -> Result<(usize, MolfileAtom), FormatError> {
     let syntax = || {
         lines.error(
             row.index,
@@ -465,7 +465,7 @@ fn parse_v3000_bonds(
     rows: &[V3000Line],
     atom_positions: &BTreeMap<usize, usize>,
     ctab: &mut MolfileCtab,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     let mut serials = BTreeSet::new();
     let mut endpoints = BTreeSet::new();
     for row in rows {
@@ -498,7 +498,7 @@ fn parse_v3000_bond(
     position: usize,
     atom_positions: &BTreeMap<usize, usize>,
     unsupported: &mut Vec<MolfileUnsupported>,
-) -> std::result::Result<(usize, MolfileBond), FormatError> {
+) -> Result<(usize, MolfileBond), FormatError> {
     let syntax = || {
         lines.error(
             row.index,
@@ -628,7 +628,7 @@ fn parse_v3000_collection(
     rows: &[V3000Line],
     atom_positions: &BTreeMap<usize, usize>,
     ctab: &mut MolfileCtab,
-) -> std::result::Result<(), FormatError> {
+) -> Result<(), FormatError> {
     for row in rows {
         let error = |kind, message: &str| lines.error(row.index, kind, message);
         let syntax = |message: &str| error(DiagnosticKind::Syntax, message);
@@ -708,7 +708,7 @@ fn parse_v3000_collection(
                         )
                     })
                 })
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()?;
             if members.len() != count {
                 return Err(error(
                     DiagnosticKind::Inconsistent,

@@ -112,28 +112,28 @@ impl std::error::Error for TopologyEditError {
         }
     }
 }
-macro_rules! convert {
-    ($ty:ty, $variant:ident) => {
-        impl From<$ty> for TopologyEditError {
-            fn from(e: $ty) -> Self {
-                Self::$variant(e)
-            }
-        }
-    };
+impl From<MoleculeError> for TopologyEditError {
+    fn from(error: MoleculeError) -> Self {
+        Self::Molecule(error)
+    }
 }
-convert!(MoleculeError, Molecule);
-convert!(MoleculePublicationError, Publication);
-convert!(TopologyBuildError, Topology);
-convert!(HierarchyError, Hierarchy);
-convert!(PropertyError, Property);
-impl From<super::super::components::ComponentBuildError> for TopologyEditError {
-    fn from(e: super::super::components::ComponentBuildError) -> Self {
-        use super::super::components::ComponentBuildError as E;
-        match e {
-            E::Molecule(e) => e.into(),
-            E::Publication(e) => e.into(),
-            E::Property(e) => e.into(),
-            E::Topology(e) => e.into(),
-        }
+impl From<MoleculePublicationError> for TopologyEditError {
+    fn from(error: MoleculePublicationError) -> Self {
+        Self::Publication(error)
+    }
+}
+impl From<TopologyBuildError> for TopologyEditError {
+    fn from(error: TopologyBuildError) -> Self {
+        Self::Topology(error)
+    }
+}
+impl From<HierarchyError> for TopologyEditError {
+    fn from(error: HierarchyError) -> Self {
+        Self::Hierarchy(error)
+    }
+}
+impl From<PropertyError> for TopologyEditError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
     }
 }

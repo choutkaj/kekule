@@ -5,46 +5,25 @@ use crate::properties::PropertyError;
 use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) enum ComponentBuildError {
-    Molecule(MoleculeError),
-    Publication(MoleculePublicationError),
-    Property(PropertyError),
-    Topology(super::TopologyBuildError),
-}
-impl From<MoleculeError> for ComponentBuildError {
-    fn from(e: MoleculeError) -> Self {
-        Self::Molecule(e)
-    }
-}
-impl From<MoleculePublicationError> for ComponentBuildError {
-    fn from(e: MoleculePublicationError) -> Self {
-        Self::Publication(e)
-    }
-}
-impl From<PropertyError> for ComponentBuildError {
-    fn from(e: PropertyError) -> Self {
-        Self::Property(e)
-    }
-}
-impl From<super::TopologyBuildError> for ComponentBuildError {
-    fn from(e: super::TopologyBuildError) -> Self {
-        Self::Topology(e)
-    }
-}
-
 pub(super) struct ComponentDefinition {
     pub(super) id: super::MoleculeDefinitionId,
     pub(super) source_atoms: Vec<AtomId>,
     pub(super) source_bonds: Vec<BondId>,
 }
 
-pub(super) fn build_component_definitions(
+/// Fails with the caller's own error, which wraps each cause.
+pub(super) fn build_component_definitions<E>(
     source_molecule: &crate::molecule::Molecule,
     selected_local: &BTreeSet<AtomId>,
     class: Option<(super::MoleculeClass, bool)>,
     builder: &mut TopologyBuilder,
-) -> Result<Vec<ComponentDefinition>, ComponentBuildError> {
+) -> Result<Vec<ComponentDefinition>, E>
+where
+    E: From<MoleculeError>
+        + From<MoleculePublicationError>
+        + From<PropertyError>
+        + From<super::TopologyBuildError>,
+{
     let whole_instance_selected = selected_local.len() == source_molecule.atom_count()
         && source_molecule.connected_components().len() == 1;
     let mut definitions = Vec::new();

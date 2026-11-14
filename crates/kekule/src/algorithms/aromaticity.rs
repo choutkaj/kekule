@@ -117,7 +117,7 @@ impl AromaticityWork {
         }
     }
 
-    fn charge(&mut self, amount: usize) -> std::result::Result<(), AromaticityError> {
+    fn charge(&mut self, amount: usize) -> Result<(), AromaticityError> {
         self.remaining =
             self.remaining
                 .checked_sub(amount)
@@ -190,7 +190,7 @@ pub fn perceive_aromaticity(
     mol: &mut Molecule,
     model: AromaticityModel,
     options: AromaticityOptions,
-) -> std::result::Result<(), AromaticityError> {
+) -> Result<(), AromaticityError> {
     let previous = mol.perception().clone();
     if let Err(error) = perceive_aromaticity_with_options_in_place(mol, model, options) {
         mol.install_perception(previous)
@@ -203,7 +203,7 @@ pub fn perceive_aromaticity(
 pub(crate) fn perceive_aromaticity_in_place(
     mol: &mut Molecule,
     model: AromaticityModel,
-) -> std::result::Result<(), AromaticityError> {
+) -> Result<(), AromaticityError> {
     let options = AromaticityOptions::for_molecule(mol);
     perceive_aromaticity_with_options_in_place(mol, model, options)
 }
@@ -212,7 +212,7 @@ fn perceive_aromaticity_with_options_in_place(
     mol: &mut Molecule,
     model: AromaticityModel,
     options: AromaticityOptions,
-) -> std::result::Result<(), AromaticityError> {
+) -> Result<(), AromaticityError> {
     perceive_localized_aromaticity(mol, model, options)
 }
 
@@ -220,7 +220,7 @@ fn perceive_localized_aromaticity(
     mol: &mut Molecule,
     model: AromaticityModel,
     options: AromaticityOptions,
-) -> std::result::Result<(), AromaticityError> {
+) -> Result<(), AromaticityError> {
     let mut work = AromaticityWork::new(options.max_total_work);
     work.charge(mol.graph.atom_slot_count())?;
     work.charge(mol.graph.bond_slot_count())?;
@@ -269,7 +269,7 @@ fn assign_localized_aromaticity(
     ring_set: &RingSet,
     model: AromaticityModel,
     work: &mut AromaticityWork,
-) -> std::result::Result<(), AromaticityError> {
+) -> Result<(), AromaticityError> {
     mol.begin_aromaticity(model);
 
     let mut donors = vec![AromaticElectronDonorType::None; mol.graph.atom_slot_count()];
@@ -411,7 +411,7 @@ fn rdkit_fused_ring_neighbors(
     rings: &[Ring],
     candidates: &[usize],
     work: &mut AromaticityWork,
-) -> std::result::Result<Vec<Vec<usize>>, AromaticityError> {
+) -> Result<Vec<Vec<usize>>, AromaticityError> {
     // Only rings sharing a bond can fuse. Avoid comparing every pair in a
     // molecule containing many independent ring systems.
     let mut rings_by_bond = BTreeMap::<BondId, Vec<usize>>::new();
@@ -480,7 +480,7 @@ fn apply_rdkit_huckel_to_fused_component(
     donors: &[AromaticElectronDonorType],
     model: AromaticityModel,
     work: &mut AromaticityWork,
-) -> std::result::Result<(), AromaticityError> {
+) -> Result<(), AromaticityError> {
     let min_ring_size = if model.is_mdl() { 6 } else { 0 };
     let component_bonds = component
         .iter()
@@ -572,11 +572,8 @@ fn visit_connected_ring_subsets(
     indexes: &[usize],
     subset_size: usize,
     work: &mut AromaticityWork,
-    visit: &mut impl FnMut(
-        &[usize],
-        &mut AromaticityWork,
-    ) -> std::result::Result<ControlFlow<()>, AromaticityError>,
-) -> std::result::Result<ControlFlow<()>, AromaticityError> {
+    visit: &mut impl FnMut(&[usize], &mut AromaticityWork) -> Result<ControlFlow<()>, AromaticityError>,
+) -> Result<ControlFlow<()>, AromaticityError> {
     let mut excluded = BTreeSet::new();
     let mut current = Vec::with_capacity(subset_size);
     for &root in indexes {
@@ -612,11 +609,8 @@ fn extend_connected_ring_subset(
     current: &mut Vec<usize>,
     excluded: &mut BTreeSet<usize>,
     work: &mut AromaticityWork,
-    visit: &mut impl FnMut(
-        &[usize],
-        &mut AromaticityWork,
-    ) -> std::result::Result<ControlFlow<()>, AromaticityError>,
-) -> std::result::Result<ControlFlow<()>, AromaticityError> {
+    visit: &mut impl FnMut(&[usize], &mut AromaticityWork) -> Result<ControlFlow<()>, AromaticityError>,
+) -> Result<ControlFlow<()>, AromaticityError> {
     work.charge(1)?;
     if current.len() == subset_size {
         return visit(current, work);

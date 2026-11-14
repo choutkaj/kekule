@@ -795,19 +795,26 @@ impl std::error::Error for StructureEditError {
         }
     }
 }
-macro_rules! convert {
-    ($ty:ty, $variant:ident) => {
-        impl From<$ty> for StructureEditError {
-            fn from(e: $ty) -> Self {
-                Self::$variant(e)
-            }
-        }
-    };
+impl From<TopologyEditError> for StructureEditError {
+    fn from(error: TopologyEditError) -> Self {
+        Self::Topology(error)
+    }
 }
-convert!(TopologyEditError, Topology);
-convert!(DenseArrayError, Position);
-convert!(PropertyError, Property);
-convert!(GeometryError, Geometry);
+impl From<DenseArrayError> for StructureEditError {
+    fn from(error: DenseArrayError) -> Self {
+        Self::Position(error)
+    }
+}
+impl From<PropertyError> for StructureEditError {
+    fn from(error: PropertyError) -> Self {
+        Self::Property(error)
+    }
+}
+impl From<GeometryError> for StructureEditError {
+    fn from(error: GeometryError) -> Self {
+        Self::Geometry(error)
+    }
+}
 impl From<StructureError> for StructureEditError {
     fn from(error: StructureError) -> Self {
         Self::Structure(Box::new(error))
