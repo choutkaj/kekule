@@ -8,13 +8,9 @@ pub struct IndexedXyzReader<R> {
 indexed_reader_traits!(IndexedXyzReader, BufRead + Seek);
 
 impl<R: BufRead + Seek> IndexedXyzReader<R> {
-    /// Opens a stream whose coordinates follow the supplied topology's dense order
-    /// and indexes it for random access.
-    ///
-    /// The stream's position at construction is frame 0. Every frame from there to
-    /// the end is decoded and verified before the reader is returned, and both
-    /// sequential and indexed reads then address frames from that start. Topology,
-    /// limits, and diagnostic labels follow [`XyzReader::new`].
+    /// Opens a stream as [`XyzReader::new`] does and indexes it for random
+    /// access from its current position, frame 0, verifying every frame (see
+    /// [`traj::io`](crate::traj::io)).
     ///
     /// # Errors
     ///

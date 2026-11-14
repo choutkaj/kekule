@@ -1,9 +1,6 @@
 use super::*;
 
 /// Fully verified indexed TRR reader.
-///
-/// Sequential and random reads share one set of decode scratch arrays. Random
-/// reads restore stream position and header state before publishing a frame.
 pub struct IndexedTrrReader<R> {
     pub(crate) inner: IndexedReader<TrrReader<R>>,
 }
@@ -11,13 +8,9 @@ pub struct IndexedTrrReader<R> {
 indexed_reader_traits!(IndexedTrrReader, Read + Seek);
 
 impl<R: Read + Seek> IndexedTrrReader<R> {
-    /// Opens a stream whose coordinates follow the supplied topology's dense order
-    /// and indexes it for random access.
-    ///
-    /// The stream's position at construction is frame 0. Every frame from there to
-    /// the end is decoded and verified before the reader is returned, and both
-    /// sequential and indexed reads then address frames from that start. Topology,
-    /// limits, and diagnostic labels follow [`TrrReader::new`].
+    /// Opens a stream as [`TrrReader::new`] does and indexes it for random
+    /// access from its current position, frame 0, verifying every frame (see
+    /// [`traj::io`](crate::traj::io)).
     ///
     /// # Errors
     ///

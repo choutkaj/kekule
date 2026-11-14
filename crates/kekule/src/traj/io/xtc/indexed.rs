@@ -1,10 +1,8 @@
 use super::*;
 
-/// Fully decoded-and-verified indexed XTC reader.
-///
-/// Random and sequential reads share decode scratch. A random read restores
-/// stream/header state and invalidates cached coordinates, so the next sequential
-/// frame is decoded again when it was already pending.
+/// Fully verified indexed XTC reader. A random read drops the coordinates
+/// decoded for a frame read ahead, so the next sequential read decodes them
+/// again.
 pub struct IndexedXtcReader<R> {
     pub(crate) inner: IndexedReader<XtcReader<R>>,
 }
@@ -12,13 +10,9 @@ pub struct IndexedXtcReader<R> {
 indexed_reader_traits!(IndexedXtcReader, Read + Seek);
 
 impl<R: Read + Seek> IndexedXtcReader<R> {
-    /// Opens a stream whose coordinates follow the supplied topology's dense order
-    /// and indexes it for random access.
-    ///
-    /// The stream's position at construction is frame 0. Every frame from there to
-    /// the end is decoded and verified before the reader is returned, and both
-    /// sequential and indexed reads then address frames from that start. Topology,
-    /// limits, and diagnostic labels follow [`XtcReader::new`].
+    /// Opens a stream as [`XtcReader::new`] does and indexes it for random
+    /// access from its current position, frame 0, verifying every frame (see
+    /// [`traj::io`](crate::traj::io)).
     ///
     /// # Errors
     ///
