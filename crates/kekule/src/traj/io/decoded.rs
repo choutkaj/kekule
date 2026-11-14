@@ -19,13 +19,11 @@ pub(crate) struct DecodedGeometry {
     pub(crate) owner: Option<OwnerProperties>,
 }
 
-impl Geometry {
-    /// A decoded frame of `topology`'s atoms as a geometry, keeping the
+impl DecodedGeometry {
+    /// The decoded frame of `topology`'s atoms as a geometry, keeping the
     /// decoded arrays and converting them to canonical units in place.
-    pub(crate) fn from_decoded(
-        frame: DecodedGeometry,
-        topology: &Topology,
-    ) -> Result<Self, GeometryError> {
+    pub(crate) fn into_geometry(self, topology: &Topology) -> Result<Geometry, GeometryError> {
+        let frame = self;
         let atoms = topology.atom_count();
         let count = |actual: usize| {
             if actual == atoms {
@@ -64,6 +62,6 @@ impl Geometry {
         let mut data = GeometryData::from_frame_state(positions, frame.cell, properties);
         data.velocities = velocities;
         data.forces = forces;
-        Ok(Self::from_data(data))
+        Ok(Geometry::from_data(data))
     }
 }

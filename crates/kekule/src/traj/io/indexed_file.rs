@@ -62,7 +62,7 @@ use super::{
 /// [`open_indexed_structure_set_from_index`], or from an open reader with
 /// [`IndexedFileTrajectoryReader::into_structure_set`]. Follow a growing file
 /// with [`StructureSet::refresh`], and load geometries into memory with
-/// [`StructureSet::load`].
+/// [`StructureSet::from_reader`].
 ///
 /// Cloning a set reads nothing: the clone shares the file object, the frame
 /// index, the set properties, and the order, with an empty pool, so a host
@@ -315,21 +315,6 @@ impl StructureSet<IndexedFile> {
         self.grown(Some(order));
         Ok(count - previous)
     }
-
-    /// Reads the geometries `indices` into a set in memory, as
-    /// [`StructureSet::from_reader`] does, keeping the set properties.
-    ///
-    /// # Errors
-    ///
-    /// As [`StructureSet::from_reader`].
-    pub fn load(
-        &self,
-        indices: impl IntoIterator<Item = usize>,
-    ) -> Result<StructureSet, StructureSetReadError> {
-        let mut set = StructureSet::from_reader(self, indices)?;
-        set.properties_mut().clone_from(self.properties());
-        Ok(set)
-    }
 }
 
 impl Ensemble<IndexedFile> {
@@ -357,8 +342,8 @@ impl Ensemble<IndexedFile> {
     }
 
     /// Reads the geometries `indices` into an ensemble in memory, as
-    /// [`StructureSet::load`] does, with the distribution restricted to them
-    /// as [`Ensemble::select`] restricts it.
+    /// [`StructureSet::from_reader`] does, with the distribution restricted
+    /// to them as [`Ensemble::select`] restricts it.
     ///
     /// # Errors
     ///
@@ -368,7 +353,7 @@ impl Ensemble<IndexedFile> {
         indices: impl IntoIterator<Item = usize>,
     ) -> Result<Ensemble, StructureSetReadError> {
         let indices = indices.into_iter().collect::<Vec<_>>();
-        let set = self.set().load(indices.iter().copied())?;
+        let set = StructureSet::from_reader(self.set(), indices.iter().copied())?;
         Ok(Ensemble::from_parts_unchecked(
             set,
             self.distribution().select(&indices),
@@ -406,9 +391,6 @@ impl StructureSetRead for StructureSet<IndexedFile> {
         }
         self.storage()
             .read(index)
-            .map_err(|source| StructureSetReadError::Trajectory {
-                geometry: index,
-                source,
-            })
+            .map_err(|source| StructureSetReadError::reader(index, source))
     }
 }

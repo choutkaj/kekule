@@ -51,7 +51,12 @@ pub trait TrajectoryReader {
     fn read_next(&mut self, destination: &mut FrameBuffer) -> Result<bool, TrajectoryIoError>;
 }
 
-/// Trajectory reader with random frame access.
+/// Trajectory reader with random frame access into a reused [`FrameBuffer`].
+///
+/// It reads a codec's frames through one cursor. Geometries read by index
+/// from any thread go through a structure set over the file
+/// ([`open_indexed_structure_set`](crate::traj::io::open_indexed_structure_set))
+/// and [`StructureSetRead`](crate::structure::StructureSetRead).
 ///
 /// Implementations may build an index eagerly; callers should inspect
 /// format-specific metadata when index construction cost matters.

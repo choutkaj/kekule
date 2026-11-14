@@ -14,8 +14,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
 use crate::diagnostics::LimitExceeded;
-use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
+use crate::traj::io::DecodedGeometry;
 use crate::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError,
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,

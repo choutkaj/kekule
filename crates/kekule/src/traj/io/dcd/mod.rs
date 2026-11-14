@@ -72,8 +72,8 @@ use crate::diagnostics::{
 };
 use crate::io::write_policy::{Carries, StatePolicies};
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::structure::DecodedGeometry;
 use crate::topology::Topology;
+use crate::traj::io::DecodedGeometry;
 use crate::traj::{
     FrameBuffer, FrameData, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,

@@ -24,7 +24,7 @@ use kekule::traj::io::{open_indexed_structure_set, write_structure_set, Trajecto
 use kekule::traj::periodic::{self, MoleculeImager};
 use kekule::traj::{
     FitReference, FrameBuffer, FrameView, Processed, ProcessingError, ProcessingStep,
-    ProcessingSteps, TrajectoryFormat,
+    ProcessingStepError, ProcessingSteps, TrajectoryFormat,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -717,7 +717,7 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
     .unwrap();
     let file =
         open_indexed_structure_set(&path, set.shared_topology(), Default::default()).unwrap();
-    let memory = file.load(0..file.len()).unwrap();
+    let memory = StructureSet::from_reader(&file, 0..file.len()).unwrap();
     // The file holds the frames: their times, steps, cells, and positions to
     // TRR's single precision.
     assert_eq!(memory.order(), set.order());
@@ -806,15 +806,30 @@ fn steps_that_cannot_process_the_geometries_fail_on_construction() {
     ));
     // A collapsed reference cannot be fitted onto.
     let collapsed = Positions::new(Quantity::new([Point3::origin(); 6], NANOMETER)).unwrap();
-    assert!(matches!(
-        Processed::new(
-            &set,
-            ProcessingSteps::default().with_fit(all, FitReference::Positions(collapsed))
+    let failed = Processed::new(
+        &set,
+        ProcessingSteps::default().with_fit(all, FitReference::Positions(collapsed)),
+    )
+    .unwrap_err();
+    let ProcessingError::Geometry(StructureSetReadError::Reader {
+        geometry: 0,
+        source,
+    }) = &failed
+    else {
+        panic!("{failed:?}");
+    };
+    assert!(
+        matches!(
+            source.downcast_ref::<ProcessingStepError>(),
+            Some(ProcessingStepError::Fit(_))
         ),
-        Err(ProcessingError::Geometry(
-            StructureSetReadError::Alignment { geometry: 0, .. }
-        ))
-    ));
+        "{failed:?}"
+    );
+    assert_eq!(failed.to_string(), "Cannot read geometry 0.");
+    assert_eq!(
+        source.to_string(),
+        "Cannot fit the geometry onto its reference."
+    );
     // A geometry past the last is out of range.
     let processed = Processed::new(&set, ProcessingSteps::default().with_whole(true)).unwrap();
     assert_eq!(

@@ -823,7 +823,19 @@ fn sets_read_chosen_geometries_of_another_set_without_consuming_it() {
         geometry.set_velocities(Some(Velocities::zeros(2))).unwrap();
         geometry
     });
-    let trajectory = StructureSet::from_geometries(structure.shared_topology(), frames).unwrap();
+    let mut trajectory =
+        StructureSet::from_geometries(structure.shared_topology(), frames).unwrap();
+    trajectory
+        .properties_mut()
+        .insert(key("run"), PropertyValue::Int(7))
+        .unwrap();
+    // The copy keeps the set properties.
+    assert_eq!(
+        StructureSet::from_reader(&trajectory, [2])
+            .unwrap()
+            .properties(),
+        trajectory.properties()
+    );
 
     // Leave out equilibration, take every second geometry, and weight them.
     let sampled = Ensemble::weighted(

@@ -12,7 +12,6 @@ use super::{
 };
 
 mod context;
-mod decoded;
 mod error;
 mod order;
 mod read;
@@ -20,7 +19,6 @@ mod storage;
 mod views;
 
 pub use context::SetContext;
-pub(crate) use decoded::DecodedGeometry;
 pub use error::{Requirement, StructureSetError};
 pub use order::{Order, Place, TimeAxis};
 pub(crate) use read::visit_geometry;
@@ -235,8 +233,8 @@ impl StructureSet {
     /// Reads the geometries `indices` of `reader` into a set in memory, in the
     /// requested order: a faithful copy. Each picked geometry is kept whole,
     /// with its velocities, forces, occupancies, and B-factors; the set
-    /// keeps the reader's order values for the picked geometries. Set
-    /// properties are not kept; [`StructureSet::load`] keeps a file's.
+    /// keeps the reader's order values for the picked geometries and the
+    /// reader's set properties, when it has them.
     ///
     /// Ranges and strides can be written as `(start..end).step_by(stride)`,
     /// and every geometry as `0..reader.len()`. Indices may repeat and come in
@@ -328,11 +326,15 @@ impl StructureSet {
                 })
                 .collect()
         };
-        Ok(Self::from_storage(
+        let mut set = Self::from_storage(
             Arc::clone(reader.topology()),
             InMemory::new(geometries),
             reader.order().map(|order| order.select(&indices)),
-        ))
+        );
+        if let Some(properties) = reader.properties() {
+            set.properties_mut().clone_from(properties);
+        }
+        Ok(set)
     }
 
     /// Validates and collects each geometry in order, binding its bond
