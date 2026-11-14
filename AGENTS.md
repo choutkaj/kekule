@@ -22,12 +22,15 @@ cargo check --manifest-path fuzz/Cargo.toml --bins --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo clippy -p kekule-potentials --all-targets --no-default-features --locked -- -D warnings
 cargo clippy -p kekule-openff --all-targets --no-default-features --locked -- -D warnings
+cargo clippy -p kekule-potentials --all-targets --no-default-features --features openff --locked -- -D warnings
 cargo test --workspace --all-features --locked
 cargo test -p kekule-potentials --no-default-features --locked
 cargo test -p kekule-openff --no-default-features --locked
+cargo test -p kekule-potentials --no-default-features --features openff --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
 RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-openff --no-default-features --no-deps --locked
+RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --features openff --no-deps --locked
 cargo package --workspace --exclude kekule-bench --locked
 ```
 
