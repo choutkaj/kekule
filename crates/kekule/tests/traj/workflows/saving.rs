@@ -1017,3 +1017,38 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_geometry() {
     assert!(FrameView::new(&ethanol, &copy, None, None).is_ok());
     assert_eq!(before.positions().values().value().as_ptr(), stored);
 }
+
+#[test]
+fn writers_name_the_caller_label_or_else_the_path_or_the_format_stream() {
+    use kekule::traj::io::write_structure_set_to;
+
+    let directory = Directory::new();
+    let path = directory.file("out.xyz");
+    let empty = StructureSet::new(linear_carbon_topology(3));
+    let no_frame = |label: &str| {
+        codec_error(
+            TrajectoryIoErrorKind::InvalidFrame,
+            TrajectoryIoOperation::Finish,
+            TrajectoryFormat::Xyz,
+            label,
+            None,
+            "The XYZ trajectory has no frame. It needs at least one.",
+        )
+    };
+    let labelled = TrajectoryWriteOptions::default().with_source_label("custom");
+    assert_eq!(
+        write_structure_set(&path, &empty, labelled),
+        Err(no_frame("custom"))
+    );
+    assert_eq!(directory.names(), Vec::<String>::new());
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz);
+    let mut stream = io::Cursor::new(Vec::new());
+    assert_eq!(
+        write_structure_set_to(&mut stream, &empty, options.clone()),
+        Err(no_frame("xyz stream"))
+    );
+    assert_eq!(
+        write_structure_set_to(&mut stream, &empty, options.with_source_label("custom")),
+        Err(no_frame("custom"))
+    );
+}

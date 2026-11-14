@@ -37,7 +37,7 @@
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! frame.geometry_mut().set_positions(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
 //!
-//! let options = XyzWriteOptions::default().with_decimal_places(3).with_comment("helium");
+//! let options = XyzWriteOptions::default().with_decimal_places(3)?.with_comment("helium")?;
 //! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options)?;
 //! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
@@ -121,6 +121,25 @@ const GEOMETRY_CARRIES: Carries = Carries {
 
 const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
 
+/// The label of errors in setting writer options.
+const WRITER_OPTIONS: &str = "XYZ writer options";
+
+/// Fails unless `unit` is a length.
+fn validate_length_unit(unit: Unit, source_label: &str) -> Result<(), TrajectoryIoError> {
+    unit.conversion_factor_to(CANONICAL_LENGTH_UNIT)
+        .map(|_| ())
+        .map_err(|error| {
+            codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                source_label,
+                "The XYZ length unit is not a length.",
+            )
+            .with_source(error)
+        })
+}
+
 /// XYZ length-unit interpretation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzReadOptions {
@@ -137,10 +156,15 @@ impl Default for XyzReadOptions {
 
 impl XyzReadOptions {
     /// Sets [`Self::length_unit`].
-    #[must_use]
-    pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when
+    /// `length_unit` is not a length.
+    pub fn with_length_unit(mut self, length_unit: Unit) -> Result<Self, TrajectoryIoError> {
+        validate_length_unit(length_unit, "XYZ reader options")?;
         self.length_unit = length_unit;
-        self
+        Ok(self)
     }
 
     /// The length unit of file coordinates; angstrom by default. Positions are
@@ -179,24 +203,69 @@ impl Default for XyzWriteOptions {
 
 impl XyzWriteOptions {
     /// Sets [`Self::length_unit`].
-    #[must_use]
-    pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when
+    /// `length_unit` is not a length.
+    pub fn with_length_unit(mut self, length_unit: Unit) -> Result<Self, TrajectoryIoError> {
+        validate_length_unit(length_unit, WRITER_OPTIONS)?;
         self.length_unit = length_unit;
-        self
+        Ok(self)
     }
 
     /// Sets [`Self::decimal_places`].
-    #[must_use]
-    pub const fn with_decimal_places(mut self, decimal_places: usize) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InvalidPrecision`] for more than 17
+    /// places.
+    pub fn with_decimal_places(mut self, decimal_places: usize) -> Result<Self, TrajectoryIoError> {
+        if decimal_places > 17 {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InvalidPrecision,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                WRITER_OPTIONS,
+                format!("The decimal precision is {decimal_places} places, more than 17."),
+            ));
+        }
         self.decimal_places = decimal_places;
-        self
+        Ok(self)
     }
 
     /// Sets [`Self::comment`].
-    #[must_use]
-    pub fn with_comment(mut self, comment: impl Into<String>) -> Self {
-        self.comment = comment.into();
-        self
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when `comment`
+    /// contains a line break, and [`TrajectoryIoErrorKind::LimitExceeded`]
+    /// when it exceeds 1 MiB.
+    pub fn with_comment(mut self, comment: impl Into<String>) -> Result<Self, TrajectoryIoError> {
+        let comment = comment.into();
+        if comment.contains(['\r', '\n']) {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                WRITER_OPTIONS,
+                "The comment contains a line break.",
+            ));
+        }
+        if comment.len() > MAX_WRITER_COMMENT_BYTES {
+            return Err(codec_context(
+                TrajectoryIoErrorKind::LimitExceeded,
+                TrajectoryIoOperation::Open,
+                Some(FORMAT),
+                WRITER_OPTIONS,
+                format!(
+                    "The comment has {} bytes, more than {MAX_WRITER_COMMENT_BYTES}.",
+                    comment.len()
+                ),
+            ));
+        }
+        self.comment = comment;
+        Ok(self)
     }
 
     /// Sets [`Self::cell`].

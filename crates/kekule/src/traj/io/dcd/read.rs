@@ -74,7 +74,6 @@ impl<R: Read + Seek> DcdReader<R> {
     ) -> Result<Self, TrajectoryIoError> {
         let source_label = &source.label;
         let limits = &source.limits;
-        validate_time_policy(options.time_policy, source_label)?;
         let atom_count = topology.atom_count();
         validate_atom_count(FORMAT, atom_count, i32::MAX as usize, limits, source_label)?;
         let start = reader

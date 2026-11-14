@@ -90,7 +90,9 @@ const TEXT: &str = "3\nitem\nO 0.000 0.000 0.000\nH 0.957 0.000 0.000\nH -0.240 
 fn options() -> XyzWriteOptions {
     XyzWriteOptions::default()
         .with_decimal_places(3)
+        .unwrap()
         .with_comment("item")
+        .unwrap()
 }
 
 fn omit_places() -> XyzWriteOptions {

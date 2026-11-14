@@ -410,6 +410,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             .with_endian(endian)
             .with_unit_cells(true)
             .with_step_sequence(10, 2)
+            .unwrap()
             .with_header_delta(
                 Quantity::new(0.5, PICOSECOND),
                 DcdTimePolicy::HeaderDelta { unit: PICOSECOND },
@@ -453,7 +454,8 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         let bytes = writer.finish().unwrap().into_inner();
 
         let options = DcdReadOptions::default()
-            .with_time_policy(DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
+            .with_time_policy(DcdTimePolicy::HeaderDelta { unit: PICOSECOND })
+            .unwrap();
         let mut reader = DcdReader::new(
             Cursor::new(bytes.clone()),
             Arc::clone(&topology),
@@ -694,7 +696,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
 #[test]
 fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let topology = topology();
-    let options = DcdWriteOptions::default().with_step_sequence(0, 1);
+    let options = DcdWriteOptions::default().with_step_sequence(0, 1).unwrap();
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
@@ -876,7 +878,8 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     let topology = topology();
     let options = DcdWriteOptions::default()
         .with_unit_cells(true)
-        .with_step_sequence(0, 1);
+        .with_step_sequence(0, 1)
+        .unwrap();
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
@@ -989,6 +992,7 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
         TrajectoryWriteOptions::from(
             DcdWriteOptions::default()
                 .with_step_sequence(0, 1000)
+                .unwrap()
                 .with_header_delta(Quantity::new(TIMESTEP, PICOSECOND), time_policy)
                 .unwrap(),
         )
@@ -1031,7 +1035,9 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
     let mut reader = DcdReader::new(
         Cursor::new(bytes),
         topology,
-        DcdReadOptions::default().with_time_policy(time_policy),
+        DcdReadOptions::default()
+            .with_time_policy(time_policy)
+            .unwrap(),
     )
     .unwrap();
     let mut destination = reader.frame_buffer();
@@ -1048,5 +1054,62 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
             (Some(1000), Some(1000.0 * stored)),
             (Some(2000), Some(2000.0 * stored)),
         ]
+    );
+}
+
+#[test]
+fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
+    let writer_error = |detail: &str| {
+        codec_error(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::Open,
+            TrajectoryFormat::Dcd,
+            "DCD writer options",
+            None,
+            detail,
+        )
+    };
+    let options = DcdWriteOptions::default();
+    assert_eq!(
+        options.with_step_sequence(0, 0).map(|_| ()),
+        Err(writer_error("The step interval is zero."))
+    );
+    let beyond = i32::MAX as u64 + 1;
+    for (start, interval) in [(beyond, 1), (0, beyond)] {
+        assert_eq!(
+            options.with_step_sequence(start, interval).map(|_| ()),
+            Err(writer_error(
+                "The first step or the step interval exceeds the 32-bit header field."
+            ))
+        );
+    }
+    let largest = i32::MAX as u64;
+    assert!(options.with_step_sequence(largest, largest).is_ok());
+
+    let policy = DcdTimePolicy::HeaderDelta { unit: PICOSECOND };
+    for (delta, shown) in [(-1.0, "-1"), (f64::NAN, "NaN"), (1e300, "inf")] {
+        assert_eq!(
+            options
+                .with_header_delta(Quantity::new(delta, PICOSECOND), policy)
+                .map(|_| ()),
+            Err(writer_error(&format!(
+                "The time step DELTA is {shown}. It is not a finite, nonnegative number."
+            )))
+        );
+    }
+    assert!(options
+        .with_header_delta(Quantity::new(0.0, PICOSECOND), policy)
+        .is_ok());
+
+    let error = DcdReadOptions::default()
+        .with_time_policy(DcdTimePolicy::HeaderDelta { unit: ANGSTROM })
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.source_label(), error.detail()),
+        (
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            Some("DCD reader options"),
+            Some("The DCD time-policy unit is incompatible.")
+        )
     );
 }

@@ -35,10 +35,8 @@ impl<R: BufRead> XyzReader<R> {
     ///
     /// # Errors
     ///
-    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the length
-    /// unit is not a length, and [`TrajectoryIoErrorKind::LimitExceeded`] when
-    /// the atom count exceeds the limits or position scratch cannot be
-    /// reserved.
+    /// Returns [`TrajectoryIoErrorKind::LimitExceeded`] when the atom count
+    /// exceeds the limits or position scratch cannot be reserved.
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
@@ -59,19 +57,6 @@ impl<R: BufRead> XyzReader<R> {
     ) -> Result<Self, TrajectoryIoError> {
         let source_label = &source.label;
         let limits = &source.limits;
-        options
-            .length_unit
-            .conversion_factor_to(CANONICAL_LENGTH_UNIT)
-            .map_err(|error| {
-                codec_context(
-                    TrajectoryIoErrorKind::InconsistentMetadata,
-                    TrajectoryIoOperation::Open,
-                    Some(FORMAT),
-                    source_label,
-                    "The XYZ length unit is not a length.",
-                )
-                .with_source(error)
-            })?;
         let atom_count = topology.atom_count();
         validate_atom_limit(atom_count, limits, source_label)?;
         let mut positions = Vec::new();

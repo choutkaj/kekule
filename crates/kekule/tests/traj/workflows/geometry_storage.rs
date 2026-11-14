@@ -828,6 +828,7 @@ fn growing_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
             DcdWriteOptions::default()
                 .with_unit_cells(true)
                 .with_step_sequence(0, 10)
+                .unwrap()
                 .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
         .with_xyz_options(

@@ -45,7 +45,9 @@ const BONDS: WriteOmission = WriteOmission::Bonds { bonds: 2 };
 fn options() -> XyzWriteOptions {
     XyzWriteOptions::default()
         .with_decimal_places(3)
+        .unwrap()
         .with_comment("sample")
+        .unwrap()
 }
 
 fn omit() -> XyzWriteOptions {

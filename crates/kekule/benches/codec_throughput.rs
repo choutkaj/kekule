@@ -366,7 +366,7 @@ fn encode_dcd(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(topology),
-        TrajectoryWriteOptions::from(DcdWriteOptions::default().with_step_sequence(0, 1))
+        TrajectoryWriteOptions::from(DcdWriteOptions::default().with_step_sequence(0, 1).unwrap())
             .with_source_label("bench.dcd"),
     )?;
     let mut frame = base_frame(topology)?;

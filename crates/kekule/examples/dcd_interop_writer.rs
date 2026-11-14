@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_dcd_options(
             DcdWriteOptions::default()
                 .with_unit_cells(true)
-                .with_step_sequence(0, 1),
+                .with_step_sequence(0, 1)?,
         );
     let mut writer = create_trajectory_writer(&output, Arc::clone(&topology), options)?;
     let cell = PeriodicCell::new(

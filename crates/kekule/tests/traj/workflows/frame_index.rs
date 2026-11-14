@@ -609,7 +609,7 @@ fn dcd_indexes_record_times_under_the_header_delta_policy_they_were_built_with()
     let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
     let with_policy = |policy| {
         TrajectoryOpenOptions::default()
-            .with_dcd_options(DcdReadOptions::default().with_time_policy(policy))
+            .with_dcd_options(DcdReadOptions::default().with_time_policy(policy).unwrap())
     };
     let timed = with_policy(DcdTimePolicy::HeaderDelta { unit: FEMTOSECOND });
     let mut built = open_indexed_trajectory(&path, Arc::clone(&topology), timed.clone()).unwrap();

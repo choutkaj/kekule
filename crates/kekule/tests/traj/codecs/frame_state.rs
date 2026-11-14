@@ -624,6 +624,7 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
 fn dcd_numbers_frames_on_the_step_sequence() {
     let numbered = DcdWriteOptions::default()
         .with_step_sequence(100, 10)
+        .unwrap()
         .with_frame_timing(FrameTimingPolicy::Number);
     let stepped = |steps: [u64; 3]| {
         trajectory((0..3).map(|index| {
@@ -689,6 +690,7 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
     let time_policy = DcdTimePolicy::HeaderDelta { unit: PICOSECOND };
     let options = DcdWriteOptions::default()
         .with_step_sequence(0, 5)
+        .unwrap()
         .with_header_delta(Quantity::new(0.5, PICOSECOND), time_policy)
         .unwrap();
     let numbered = options.with_frame_timing(FrameTimingPolicy::Number);
@@ -736,7 +738,9 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
         &mut DcdReader::new(
             Cursor::new(bytes),
             topology(),
-            DcdReadOptions::default().with_time_policy(time_policy),
+            DcdReadOptions::default()
+                .with_time_policy(time_policy)
+                .unwrap(),
         )
         .unwrap(),
     );

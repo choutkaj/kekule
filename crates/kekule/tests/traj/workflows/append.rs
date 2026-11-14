@@ -115,6 +115,7 @@ fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
             DcdWriteOptions::default()
                 .with_unit_cells(true)
                 .with_step_sequence(0, INTERVAL)
+                .unwrap()
                 .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
         .with_trr_options(
@@ -538,10 +539,12 @@ fn appending_with_settings_other_than_the_file_records_is_refused() {
         .with_unit_cells(true)
         .with_geometry_metadata(UnrepresentablePolicy::Omit);
     for (other, setting) in [
-        (dcd.with_step_sequence(0, 5), "step interval"),
-        (dcd.with_step_sequence(10, INTERVAL), "first step"),
+        (dcd.with_step_sequence(0, 5).unwrap(), "step interval"),
+        (dcd.with_step_sequence(10, INTERVAL).unwrap(), "first step"),
         (
-            dcd.with_step_sequence(0, INTERVAL).with_unit_cells(false),
+            dcd.with_step_sequence(0, INTERVAL)
+                .unwrap()
+                .with_unit_cells(false),
             "unit-cell flag",
         ),
     ] {
@@ -551,7 +554,7 @@ fn appending_with_settings_other_than_the_file_records_is_refused() {
         assert_refused(
             &path,
             KeepFrames::First(0),
-            options(TrajectoryFormat::Dcd).with_dcd_options(dcd.with_step_sequence(0, 5)),
+            options(TrajectoryFormat::Dcd).with_dcd_options(dcd.with_step_sequence(0, 5).unwrap()),
             mismatch,
             setting,
         );
@@ -615,20 +618,9 @@ fn appending_refuses_what_it_cannot_continue_and_leaves_the_file() {
     .unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::Io);
     assert!(!missing.exists());
-    // Invalid options fail before an unfinished header is replaced.
-    let path = directory.file(TrajectoryFormat::Dcd);
-    fs::write(
-        &path,
-        &straight_through(TrajectoryFormat::Dcd, &path, 1)[..100],
-    )
-    .unwrap();
-    let invalid = options(TrajectoryFormat::Dcd)
-        .with_dcd_options(DcdWriteOptions::default().with_step_sequence(0, 0));
-    assert_refused(
-        &path,
-        KeepFrames::First(0),
-        invalid,
-        TrajectoryIoErrorKind::InconsistentMetadata,
-        "DCD step interval 0",
-    );
+    // Invalid options cannot be built, so none reach an unfinished header.
+    let error = DcdWriteOptions::default()
+        .with_step_sequence(0, 0)
+        .unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::InconsistentMetadata);
 }

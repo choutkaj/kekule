@@ -75,11 +75,8 @@ impl<W: Write> XyzWriter<W> {
     ///
     /// # Errors
     ///
-    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the length
-    /// unit is not a length or the comment contains a line break,
-    /// [`TrajectoryIoErrorKind::InvalidPrecision`] for more than 17 decimal
-    /// places, and [`TrajectoryIoErrorKind::LimitExceeded`] for a comment over
-    /// 1 MiB or a topology without atoms.
+    /// Returns [`TrajectoryIoErrorKind::LimitExceeded`] for a topology without
+    /// atoms.
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
@@ -98,52 +95,6 @@ impl<W: Write> XyzWriter<W> {
         options: XyzWriteOptions,
         source_label: String,
     ) -> Result<Self, TrajectoryIoError> {
-        options
-            .length_unit
-            .conversion_factor_to(CANONICAL_LENGTH_UNIT)
-            .map_err(|error| {
-                codec_context(
-                    TrajectoryIoErrorKind::InconsistentMetadata,
-                    TrajectoryIoOperation::Open,
-                    Some(FORMAT),
-                    &source_label,
-                    "The XYZ length unit is not a length.",
-                )
-                .with_source(error)
-            })?;
-        if options.decimal_places > 17 {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InvalidPrecision,
-                TrajectoryIoOperation::Open,
-                Some(FORMAT),
-                &source_label,
-                format!(
-                    "The decimal precision is {} places, more than 17.",
-                    options.decimal_places
-                ),
-            ));
-        }
-        if options.comment.contains(['\r', '\n']) {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::Open,
-                Some(FORMAT),
-                &source_label,
-                "The comment contains a line break.",
-            ));
-        }
-        if options.comment.len() > MAX_WRITER_COMMENT_BYTES {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::LimitExceeded,
-                TrajectoryIoOperation::Open,
-                Some(FORMAT),
-                &source_label,
-                format!(
-                    "The comment has {} bytes, more than {MAX_WRITER_COMMENT_BYTES}.",
-                    options.comment.len()
-                ),
-            ));
-        }
         if topology.atom_count() == 0 {
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,

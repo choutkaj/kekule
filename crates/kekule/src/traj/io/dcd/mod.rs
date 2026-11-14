@@ -33,7 +33,7 @@
 //! let topology = Arc::new(Topology::from_molecule(molecule)?);
 //!
 //! // Frame steps must follow the writer's step sequence exactly.
-//! let options = DcdWriteOptions::default().with_step_sequence(10, 10);
+//! let options = DcdWriteOptions::default().with_step_sequence(10, 10)?;
 //! let stream = Cursor::new(Vec::new());
 //! let mut writer = DcdWriter::new(stream, Arc::clone(&topology), options)?;
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
@@ -215,10 +215,18 @@ impl Default for DcdReadOptions {
 
 impl DcdReadOptions {
     /// Sets [`Self::time_policy`].
-    #[must_use]
-    pub const fn with_time_policy(mut self, time_policy: DcdTimePolicy) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the
+    /// policy's unit is not a time.
+    pub fn with_time_policy(
+        mut self,
+        time_policy: DcdTimePolicy,
+    ) -> Result<Self, TrajectoryIoError> {
+        validate_time_policy(time_policy, "DCD reader options")?;
         self.time_policy = time_policy;
-        self
+        Ok(self)
     }
 
     /// How frame times are derived; [`DcdTimePolicy::Absent`] by default.
@@ -283,13 +291,28 @@ impl DcdWriteOptions {
 
     /// Sets the header step sequence: frame `n` must carry step
     /// `start_step + n * step_interval`, or is numbered with it under
-    /// [`FrameTimingPolicy::Number`]. Both must fit an `i32`, and the
-    /// interval must be positive; [`DcdWriter::new`] checks them.
-    #[must_use]
-    pub const fn with_step_sequence(mut self, start_step: u64, step_interval: u64) -> Self {
+    /// [`FrameTimingPolicy::Number`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when the
+    /// interval is zero or either exceeds the header's `i32`.
+    pub fn with_step_sequence(
+        mut self,
+        start_step: u64,
+        step_interval: u64,
+    ) -> Result<Self, TrajectoryIoError> {
+        if step_interval == 0 {
+            return Err(writer_option_error("The step interval is zero."));
+        }
+        if start_step > i32::MAX as u64 || step_interval > i32::MAX as u64 {
+            return Err(writer_option_error(
+                "The first step or the step interval exceeds the 32-bit header field.",
+            ));
+        }
         self.start_step = start_step;
         self.step_interval = step_interval;
-        self
+        Ok(self)
     }
 
     /// Stores `DELTA`, the duration of one step, as an `f32` in the time
@@ -301,7 +324,8 @@ impl DcdWriteOptions {
     /// # Errors
     ///
     /// Returns [`TrajectoryIoErrorKind::InconsistentMetadata`] when `delta`
-    /// is not a time.
+    /// is not a time, or not finite and nonnegative as an `f32`, or the
+    /// policy's unit is not a time.
     pub fn with_header_delta(
         mut self,
         delta: Quantity<f64>,
@@ -309,16 +333,14 @@ impl DcdWriteOptions {
     ) -> Result<Self, TrajectoryIoError> {
         let unit = header_delta_unit(time_policy);
         let delta = delta.value_in(unit).map_err(|error| {
-            codec_context(
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                TrajectoryIoOperation::Open,
-                Some(FORMAT),
-                "DCD writer options",
-                "The DCD DELTA is not a time.",
-            )
-            .with_source(error)
-        })?;
-        self.delta = delta as f32;
+            writer_option_error("The DCD DELTA is not a time.").with_source(error)
+        })? as f32;
+        if !delta.is_finite() || delta < 0.0 {
+            return Err(writer_option_error(format!(
+                "The time step DELTA is {delta}. It is not a finite, nonnegative number."
+            )));
+        }
+        self.delta = delta;
         self.time_policy = time_policy;
         Ok(self)
     }
@@ -494,6 +516,17 @@ fn validate_time_policy(
             })?;
     }
     Ok(())
+}
+
+/// An invalid DCD writer option.
+fn writer_option_error(detail: impl Into<String>) -> TrajectoryIoError {
+    codec_context(
+        TrajectoryIoErrorKind::InconsistentMetadata,
+        TrajectoryIoOperation::Open,
+        Some(FORMAT),
+        "DCD writer options",
+        detail,
+    )
 }
 
 fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, TrajectoryIoError> {

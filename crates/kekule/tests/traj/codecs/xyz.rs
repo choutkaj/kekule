@@ -142,9 +142,13 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     let mut reader = XyzReader::new(
         Cursor::new(input.as_bytes()),
         Arc::clone(&topology),
-        TrajectoryOpenOptions::from(XyzReadOptions::default().with_length_unit(NANOMETER))
-            .with_limits(TrajectoryIoLimits::default())
-            .with_source_label("nanometers.xyz"),
+        TrajectoryOpenOptions::from(
+            XyzReadOptions::default()
+                .with_length_unit(NANOMETER)
+                .unwrap(),
+        )
+        .with_limits(TrajectoryIoLimits::default())
+        .with_source_label("nanometers.xyz"),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
@@ -252,7 +256,9 @@ H 4.0 5.0 6.0
         &mut XyzReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
-            XyzReadOptions::default().with_length_unit(NANOMETER),
+            XyzReadOptions::default()
+                .with_length_unit(NANOMETER)
+                .unwrap(),
         )
         .unwrap(),
     );
@@ -266,7 +272,9 @@ H 4.0 5.0 6.0
     let mut indexed = IndexedXyzReader::new(
         support::cursor_after_leading_bytes(bytes),
         topology,
-        XyzReadOptions::default().with_length_unit(NANOMETER),
+        XyzReadOptions::default()
+            .with_length_unit(NANOMETER)
+            .unwrap(),
     )
     .unwrap();
     support::assert_indexes_every_frame_from_its_start(&mut indexed, &expected);
@@ -287,7 +295,9 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
         TrajectoryWriteOptions::from(
             XyzWriteOptions::default()
                 .with_decimal_places(4)
-                .with_comment("round trip"),
+                .unwrap()
+                .with_comment("round trip")
+                .unwrap(),
         )
         .with_source_label("memory.xyz"),
     )
@@ -860,7 +870,9 @@ fn write_one_frame(topology: Arc<Topology>) -> (String, WriteReport) {
         TrajectoryWriteOptions::from(
             XyzWriteOptions::default()
                 .with_decimal_places(1)
-                .with_comment("report"),
+                .unwrap()
+                .with_comment("report")
+                .unwrap(),
         )
         .with_source_label("report.xyz"),
     )
@@ -995,4 +1007,63 @@ H -0.24 0.927 0
     let saved = kekule::traj::io::write_structure_set(&path, &set, Default::default());
     let _ = std::fs::remove_file(&path);
     assert_eq!(saved.unwrap().omissions(), bonds);
+}
+
+#[test]
+fn xyz_options_refuse_invalid_values_when_set() {
+    let writer_error = |kind, detail: &str| {
+        codec_error(
+            kind,
+            TrajectoryIoOperation::Open,
+            TrajectoryFormat::Xyz,
+            "XYZ writer options",
+            None,
+            detail,
+        )
+    };
+    let options = XyzWriteOptions::default();
+    assert_eq!(
+        options.clone().with_decimal_places(18).map(|_| ()),
+        Err(writer_error(
+            TrajectoryIoErrorKind::InvalidPrecision,
+            "The decimal precision is 18 places, more than 17."
+        ))
+    );
+    assert!(options.clone().with_decimal_places(17).is_ok());
+    for comment in ["two\nlines", "two\rlines"] {
+        assert_eq!(
+            options.clone().with_comment(comment).map(|_| ()),
+            Err(writer_error(
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                "The comment contains a line break."
+            ))
+        );
+    }
+    assert_eq!(
+        options
+            .clone()
+            .with_comment("x".repeat(1_048_577))
+            .map(|_| ()),
+        Err(writer_error(
+            TrajectoryIoErrorKind::LimitExceeded,
+            "The comment has 1048577 bytes, more than 1048576."
+        ))
+    );
+    assert!(options.clone().with_comment("x".repeat(1_048_576)).is_ok());
+
+    let read = XyzReadOptions::default().with_length_unit(PICOSECOND);
+    let write = options.with_length_unit(PICOSECOND);
+    for (error, label) in [
+        (read.unwrap_err(), "XYZ reader options"),
+        (write.unwrap_err(), "XYZ writer options"),
+    ] {
+        assert_eq!(
+            (error.kind(), error.source_label(), error.detail()),
+            (
+                TrajectoryIoErrorKind::InconsistentMetadata,
+                Some(label),
+                Some("The XYZ length unit is not a length.")
+            )
+        );
+    }
 }
