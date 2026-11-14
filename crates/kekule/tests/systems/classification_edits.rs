@@ -621,12 +621,10 @@ fn explicit_classes_survive_changed_component_evidence_and_rebuilding() {
 #[test]
 fn no_op_and_append_preserve_untouched_classes_and_explicit_intent() {
     let source = Arc::new(water_builder("HOH").0.build().unwrap());
-    assert!(Arc::ptr_eq(
-        &source,
-        &TopologyEditor::from_topology(Arc::clone(&source))
-            .finish()
-            .unwrap()
-    ));
+    assert!(TopologyEditor::from_topology(Arc::clone(&source))
+        .finish()
+        .unwrap()
+        .shares_layout(&source));
     let mut editor = source.to_editor();
     editor.add_molecule(oxygen().clone()).unwrap();
     let appended = editor.finish().unwrap();

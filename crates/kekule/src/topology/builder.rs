@@ -1,5 +1,5 @@
 use crate::diagnostics::{CapacityExceeded, Countable, LengthMismatch};
-use crate::DraftError;
+use crate::draft::{Draft, DraftError};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
@@ -62,6 +62,14 @@ pub struct TopologyBuilder {
     source_hierarchy: Option<HierarchyBuilder>,
     source_instance_count: usize,
     extending_topology: bool,
+}
+
+impl Draft for TopologyBuilder {
+    type Published = Topology;
+    type Error = TopologyBuildError;
+    fn into_published(self) -> Result<Topology, TopologyBuildError> {
+        self.build()
+    }
 }
 
 impl TopologyBuilder {
@@ -228,16 +236,14 @@ impl TopologyBuilder {
         validate_hierarchy(self.hierarchy.storage(), &self.atoms)
     }
 
-    /// Validates a cloned snapshot without consuming staged state.
+    /// The error [`Self::build`] would return, leaving the builder unchanged.
     pub fn validate(&self) -> Result<(), TopologyBuildError> {
-        self.clone().build().map(|_| ())
+        self.check()
     }
     /// Builds the topology, or returns this builder for repair with the
     /// error.
     pub fn try_build(self) -> Result<Topology, DraftError<Self, TopologyBuildError>> {
-        self.clone()
-            .build()
-            .map_err(|error| DraftError::new(error, self))
+        self.attempt()
     }
 
     pub(super) fn from_topology(topology: Topology) -> Self {

@@ -425,7 +425,7 @@ mod allocation_tests {
                 ],
             )
             .unwrap();
-        let source = seeded.finish().unwrap();
+        let source = Arc::new(seeded.finish().unwrap());
 
         let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
         let atoms = editor.atom_ids().collect::<Vec<_>>();
@@ -440,7 +440,7 @@ mod allocation_tests {
         table.clear_value(tag.clone(), atoms[1]).unwrap();
         assert_eq!(table.remove(&key("absent")), None);
         properties.chains_mut().clear();
-        assert!(Arc::ptr_eq(&source, &editor.finish().unwrap()));
+        assert!(editor.finish().unwrap().shares_layout(&source));
 
         let mut editor = TopologyEditor::from_topology(source);
         let atoms = editor.atom_ids().collect::<Vec<_>>();

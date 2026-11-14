@@ -83,13 +83,14 @@ mod names;
 mod reports;
 mod sites;
 
+pub use crate::topology::editor::RemovedHydrogens;
 pub use domains::{ideal_bond_length, AtomDomains, AtomShape};
 pub(crate) use domains::{perceive_domains, DomainInput};
 pub use fragments::{fragment, fragments, Fragment, FragmentKind};
 pub(crate) use names::{fragment_names, name_prefix, next_free_number, NameAllocator};
 pub use reports::{
     AttachedAtom, AttachedFragment, AttachmentSite, PlacedFragment, PlacedHydrogens,
-    PlacedHydrogensReport, PlacementError, RemovedHydrogens, RemovedHydrogensReport,
+    PlacedHydrogensReport, PlacementError, RemovedHydrogensReport,
 };
 pub(crate) use sites::{free_sites, unit, Rotation, SiteQuery};
 

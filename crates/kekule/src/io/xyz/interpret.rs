@@ -715,6 +715,7 @@ impl Frame {
         let mut builder = StructureBuilder::new();
         let mut definitions = crate::io::definition_reuse::DefinitionReuse::new();
         let chain = builder
+            .topology_mut()
             .hierarchy_mut()
             .add_chain("A", None)
             .map_err(structure_error)?;
@@ -760,7 +761,7 @@ impl Frame {
                 .add_instance(definition, &positions)
                 .map_err(structure_error)?;
             let sequence = i32::try_from(component + 1).map_err(structure_error)?;
-            let hierarchy = builder.hierarchy_mut();
+            let hierarchy = builder.topology_mut().hierarchy_mut();
             let residue = hierarchy
                 .add_residue(
                     chain,

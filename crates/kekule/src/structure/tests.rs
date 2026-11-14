@@ -120,6 +120,7 @@ fn structure_builder_rejects_instance_position_mismatch_before_mutation() {
     let molecule = topology.instances().next().unwrap();
     let mut builder = StructureBuilder::new();
     let definition = builder
+        .topology_mut()
         .add_molecule_definition(molecule.molecule().clone())
         .unwrap();
     let before = builder.clone();

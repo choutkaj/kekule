@@ -390,9 +390,22 @@ through the workspace.
   structure drafts return `PropertyTableMut<'_, EditAtomId>` (and the other
   handles) for `EditPropertyTableMut`, and its row key `R: TableRow` sets the
   error type.
+- **Breaking:** `TopologyEditor::finish`, `try_finish`, and
+  `finish_with_correspondence` return a `Topology`, as the other drafts
+  return owned values; a no-op publication shares the source's layout.
+- **Breaking:** `StructureBuilder::topology_builder` and
+  `topology_builder_mut` are `topology` and `topology_mut`, as on
+  `StructureEditor`, and `StructureTopologyMut` is
+  `StructureBuilderTopologyMut`.
+- **Breaking:** `StructureBuilder`'s `hierarchy_mut`,
+  `add_molecule_definition`, `set_molecule_class`, and `clear_molecule_class`
+  move to `topology_mut()`, and return `TopologyBuildError`; read the staged
+  hierarchy, atoms, and bonds through `topology()`.
 
 ### Removed
 
+- **Breaking:** `TopologyEditor::new` and its `Default`; build a topology
+  from scratch with `TopologyBuilder`, or start an empty `StructureEditor`.
 - **Breaking:** `EnsembleMember`, its views, `EnsembleIter`, `EnsembleError`,
   `Ensemble::from_models`, and `from_molecule_positions`; build a
   `StructureSet` (`from_structures`, `from_geometries`), then `Ensemble::new`.

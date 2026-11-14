@@ -38,7 +38,7 @@ fn positions(xs: &[f64]) -> Positions {
 fn structure(text: &str) -> Structure {
     let mut builder = Structure::builder();
     for molecule in kekule::smiles::to_molecules(text).unwrap() {
-        let start = builder.atom_count();
+        let start = builder.topology().atom_count();
         builder
             .add_molecule(
                 molecule.clone(),
@@ -466,8 +466,8 @@ fn finish_and_try_finish_publish_the_same_split_structure_and_topology() {
         .unwrap();
     editor.delete_bond(bonds[0]).unwrap();
     let structural = editor.topology().clone();
-    let finished_topology: Arc<Topology> = structural.clone().finish().unwrap();
-    let recovered_topology: Arc<Topology> = structural.try_finish().unwrap();
+    let finished_topology: Topology = structural.clone().finish().unwrap();
+    let recovered_topology: Topology = structural.try_finish().unwrap();
     assert!(finished_topology.same_layout(&recovered_topology));
     assert_eq!(
         finished_topology.properties(),
@@ -605,7 +605,9 @@ fn merge_property_conflicts_roll_back_and_stereo_survives_unrelated_append() {
         .atoms_mut()
         .set_value(key("tag"), id, Some(PropertyValue::String("x".into())))
         .unwrap();
-    let mut editor = TopologyEditor::new();
+    let mut editor = Topology::from_molecule(molecule("O"))
+        .unwrap()
+        .into_editor();
     let left = *editor
         .add_molecule(left.clone())
         .unwrap()
@@ -1080,10 +1082,13 @@ fn recovery_keeps_builder_state_and_editor_handles() {
     use std::error::Error;
     let carbon = molecule("C");
     let mut builder = Structure::builder();
-    let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
+    let definition = builder
+        .topology_mut()
+        .add_molecule_definition(carbon.clone())
+        .unwrap();
     let failed = builder.try_build().unwrap_err();
     assert!(failed.source().is_some());
-    assert_eq!(failed.draft().topology_builder().definition_count(), 1);
+    assert_eq!(failed.draft().topology().definition_count(), 1);
     let mut builder = failed.into_draft();
     let instance = builder
         .add_instance(definition, &positions(&[3.0]))
@@ -1129,7 +1134,7 @@ fn recovery_keeps_builder_state_and_editor_handles() {
             .unwrap(),
         Some(PropertyValue::Int(7))
     );
-    assert_eq!(builder.atom_ids(), &[id]);
+    assert_eq!(builder.topology().atom_ids(), &[id]);
     builder.validate().unwrap();
     let source = builder.build().unwrap();
     let mut editor = source.into_editor();
@@ -1191,20 +1196,29 @@ fn resumed_structure_builder_retains_entity_state_and_extends_missing_rows() {
     let mut carbon = draft.finish().unwrap();
     carbon.perceive().unwrap();
     let mut builder = Structure::builder();
-    let definition = builder.add_molecule_definition(carbon.clone()).unwrap();
+    let definition = builder
+        .topology_mut()
+        .add_molecule_definition(carbon.clone())
+        .unwrap();
     let first = builder
         .add_instance(definition, &positions(&[2.0, 3.0]))
         .unwrap();
     builder
         .add_instance(definition, &positions(&[5.0, 6.0]))
         .unwrap();
-    let chain = builder.hierarchy_mut().add_chain("A", None).unwrap();
+    let chain = builder
+        .topology_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
     let residue = builder
+        .topology_mut()
         .hierarchy_mut()
         .add_residue(chain, "UNL", None, None, None)
         .unwrap();
     let a = InstanceAtomId::new(first, carbon.atom_ids().next().unwrap());
     builder
+        .topology_mut()
         .hierarchy_mut()
         .add_atom_site(residue, a, AtomSiteMetadata::default())
         .unwrap();
@@ -1216,7 +1230,7 @@ fn resumed_structure_builder_retains_entity_state_and_extends_missing_rows() {
         .set_value(key("dynamic"), row, Some(PropertyValue::Int(4)))
         .unwrap();
     builder
-        .topology_builder_mut()
+        .topology_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(
@@ -1232,7 +1246,7 @@ fn resumed_structure_builder_retains_entity_state_and_extends_missing_rows() {
         .insert(key("old_owner"), PropertyValue::Int(1))
         .unwrap();
     builder
-        .topology_builder_mut()
+        .topology_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("old_owner"), PropertyValue::Int(2))
@@ -1404,7 +1418,7 @@ fn unchanged_setters_keep_topology_snapshot_and_perception() {
         .properties_mut()
         .set_definition_bond_value(key("absent"), b, None)
         .unwrap();
-    assert!(Arc::ptr_eq(&source, &editor.finish().unwrap()));
+    assert!(editor.finish().unwrap().shares_layout(&source));
 }
 
 #[test]
@@ -1526,12 +1540,12 @@ fn no_op_publication_retains_snapshot_and_foreign_handles_do_not_map() {
         .atom_handle(structure.topology().atom_ids()[0])
         .unwrap();
     let (topology, map) = edit.finish_with_correspondence().unwrap();
-    assert!(Arc::ptr_eq(&source, &topology));
+    assert!(topology.shares_layout(&source));
     assert_eq!(
         map.atom(handle).unwrap().0,
         structure.topology().atom_ids()[0]
     );
-    let mut foreign = TopologyEditor::new();
+    let mut foreign = structure.topology().to_editor();
     let other = foreign.add_atom(bare_atom(2)).unwrap();
     assert!(map.atom(other).is_none());
 }
