@@ -49,8 +49,9 @@ through the workspace.
   `observe_samples(_with)`, `alignment::geometry_rmsd` and
   `geometry_aligned_rmsd` (`_with`), `clustering::pairwise_fitted_rmsd`.
 - `StructureSet` gains `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, contact
-  occupancy, and clustering, weighing every geometry 1; their errors gain
-  `Read`, `Cancelled`, and `ObservationsOutOfRange`.
+  occupancy, and clustering, weighing every geometry 1, and `Ensemble` gains
+  `superpose`; `rmsd` and `aligned_rmsd` measure a set of any storage. Their
+  errors gain `Read`, `Cancelled`, and `ObservationsOutOfRange`.
 - `interpret_structure_set` on `pdb::PdbDocument`, mmCIF documents and blocks,
   and `xyz::XyzDocument`; `sdf::structure_set` assembles records into a set;
   `traj::io::read_structure_set` reads a trajectory file as a time-ordered set.
@@ -184,6 +185,8 @@ through the workspace.
 - **Breaking:** The `kekule-traj` crate is now the `kekule::traj` module.
   Items keep their names under the new path; replace the `kekule-traj`
   dependency with `kekule`.
+- **Breaking:** `kekule_traj::analysis::FrameSuperposer` is
+  `traj::FrameSuperposer`; `traj` has no `analysis` module.
 - The default XYZ comment and DCD title name `kekule`, not `kekule-traj`.
 - Public modules are thin facades of docs and re-exports over private
   implementation modules; every public path is unchanged.

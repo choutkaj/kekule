@@ -608,10 +608,11 @@ of any storage through one loop over `StructureSetRead`; superposition changes
 a set in memory, or the set of an ensemble without touching its distribution.
 Geometric correspondence explicitly pairs selected atoms from two exact
 snapshots, one to one, without claiming chemical equivalence; pairing by
-hierarchy labels reads one namespace and reports unpaired atoms. Symmetry-corrected alignment keeps
-the smallest RMSD over the permutations of equivalent atoms, found by an exact,
-bounded automorphism search that never exchanges molecule instances; exceeding
-a bound is an error, never a truncated result. See
+hierarchy labels reads one namespace and reports unpaired atoms.
+Symmetry-corrected alignment keeps the smallest RMSD over the permutations of
+equivalent atoms, found by an exact, bounded automorphism search that never
+exchanges molecule instances; exceeding a bound is an error, never a truncated
+result. See
 [alignment](crates/kekule/src/alignment.rs),
 [correspondence](crates/kekule/src/alignment/correspondence.rs), and
 [symmetry permutations](crates/kekule/src/alignment/symmetry.rs).
