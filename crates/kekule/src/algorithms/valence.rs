@@ -183,13 +183,17 @@ pub(crate) fn rdkit_valence_assignments(
 /// non-strict valence perception. Aromaticity uses this only when the atom has
 /// no installed hydrogen assignment, and hydrogen collapse uses it to decide
 /// whether inference reproduces a collapsed count.
-pub(crate) fn rdkit_inferred_hydrogen_count(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> u8 {
+pub(crate) fn rdkit_inferred_hydrogen_count<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> u8 {
     rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
 
 /// The violation strict valence perception would report for one atom, if any.
-pub(crate) fn rdkit_valence_violation(
-    mol: &Molecule,
+pub(crate) fn rdkit_valence_violation<L: SlotLiveness>(
+    mol: &Graph<L>,
     atom_id: AtomId,
     atom: &Atom,
 ) -> Option<ValenceViolation> {
@@ -254,8 +258,8 @@ pub(crate) fn rdkit_bracket_radical_electrons(
     u8::try_from(electrons).expect("octet deficits with i8 charges fit in u8")
 }
 
-fn rdkit_atom_inferred_hydrogen_count(
-    mol: &Molecule,
+fn rdkit_atom_inferred_hydrogen_count<L: SlotLiveness>(
+    mol: &Graph<L>,
     atom_id: AtomId,
     atom: &Atom,
     strict: bool,
@@ -442,7 +446,7 @@ pub fn represented_valence(mol: &Molecule, atom: AtomId) -> Result<usize, Molecu
     Ok(explicit_valence(mol, atom) + usize::from(declaration))
 }
 
-pub(crate) fn explicit_valence(mol: &Molecule, atom: AtomId) -> usize {
+pub(crate) fn explicit_valence<L: SlotLiveness>(mol: &Graph<L>, atom: AtomId) -> usize {
     mol.incident_bonds(atom)
         .into_iter()
         .flatten()

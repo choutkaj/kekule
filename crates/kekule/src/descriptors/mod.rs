@@ -526,8 +526,8 @@ mod tests {
         graph
             .add_bond(carbon, carbon_12, BondOrder::Single)
             .expect("third connecting bond");
-        let formula =
-            molecular_formula(graph.working(), HydrogenCountPolicy::StoredOnly).expect("formula");
+        let graph = graph.into_unchecked();
+        let formula = molecular_formula(&graph, HydrogenCountPolicy::StoredOnly).expect("formula");
 
         assert_eq!(formula.to_string(), "C[12C][13C]O");
         assert_eq!(formula.count(element("C")), 3);
@@ -641,15 +641,16 @@ mod tests {
         carbon.radical = AtomRadical::new(1, Some(2));
         graph.add_atom(carbon).expect("atom identifier capacity");
         let molecule = graph;
+        let molecule = molecule.into_unchecked();
         assert_eq!(
-            molecular_formula(molecule.working(), HydrogenCountPolicy::StoredOnly)
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly)
                 .expect("formula")
                 .to_string(),
             "C"
         );
         assert_eq!(
             mass_value(
-                monoisotopic_mass(molecule.working(), HydrogenCountPolicy::StoredOnly)
+                monoisotopic_mass(&molecule, HydrogenCountPolicy::StoredOnly)
                     .expect("radical mass")
             ),
             12.0
@@ -692,8 +693,9 @@ mod tests {
         graph
             .add_atom(impossible)
             .expect("atom identifier capacity");
+        let graph = graph.into_unchecked();
         assert!(matches!(
-            monoisotopic_mass(graph.working(), HydrogenCountPolicy::StoredOnly),
+            monoisotopic_mass(&graph, HydrogenCountPolicy::StoredOnly),
             Err(MolecularDescriptorError::UnknownIsotope {
                 mass_number: 999,
                 ..
@@ -704,20 +706,18 @@ mod tests {
     #[test]
     fn empty_molecule_has_empty_formula_and_zero_masses() {
         let molecule = crate::molecule::MoleculeEditor::new();
-        let formula = molecular_formula(molecule.working(), HydrogenCountPolicy::StoredOnly)
-            .expect("formula");
+        let molecule = molecule.into_unchecked();
+        let formula =
+            molecular_formula(&molecule, HydrogenCountPolicy::StoredOnly).expect("formula");
         assert!(formula.is_empty());
         assert_eq!(formula.to_string(), "");
         assert_eq!(
-            mass_value(
-                average_mass(molecule.working(), HydrogenCountPolicy::StoredOnly).expect("mass")
-            ),
+            mass_value(average_mass(&molecule, HydrogenCountPolicy::StoredOnly).expect("mass")),
             0.0
         );
         assert_eq!(
             mass_value(
-                monoisotopic_mass(molecule.working(), HydrogenCountPolicy::StoredOnly)
-                    .expect("mass")
+                monoisotopic_mass(&molecule, HydrogenCountPolicy::StoredOnly).expect("mass")
             ),
             0.0
         );

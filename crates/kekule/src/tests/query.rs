@@ -949,8 +949,9 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     let second = raw.add_atom(carbon()).expect("atom identifier capacity");
     raw.add_bond(first, second, BondOrder::Single).unwrap();
     let elemental = manual_element_query("C");
+    let raw = raw.into_unchecked();
     assert_eq!(
-        substructure::PreparedTarget::new(raw.working())
+        substructure::PreparedTarget::new(&raw)
             .all(&elemental, Default::default())
             .unwrap()
             .len(),
@@ -968,7 +969,7 @@ fn matcher_requires_only_the_perception_used_by_the_ir() {
     ] {
         let query = smarts::parse_str(smarts, Default::default()).unwrap();
         assert_eq!(
-            substructure::PreparedTarget::new(raw.working()).all(&query, Default::default()),
+            substructure::PreparedTarget::new(&raw).all(&query, Default::default()),
             Err(SubstructureMatchError::MissingPerception(perception)),
             "{smarts}"
         );

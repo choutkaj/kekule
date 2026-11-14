@@ -36,14 +36,11 @@ fn fully_perceived_aromatic_stereo_fixture() -> Molecule {
 
 #[test]
 fn ring_membership_empty_and_linear_molecules_have_no_rings() {
-    let mut empty = crate::molecule::MoleculeEditor::new();
-    rings_api::perceive_rings(
-        empty.working_mut(),
-        RingPerceptionOptions::membership_only(),
-    )
-    .expect("membership perception cannot fail");
+    let empty = crate::molecule::MoleculeEditor::new();
+    let mut empty = empty.into_unchecked();
+    rings_api::perceive_rings(&mut empty, RingPerceptionOptions::membership_only())
+        .expect("membership perception cannot fail");
     let empty_membership = empty
-        .working()
         .perception()
         .rings()
         .map(|rings| rings.membership())
@@ -62,13 +59,10 @@ fn ring_membership_empty_and_linear_molecules_have_no_rings() {
     let bc = chain
         .add_bond(b, c, BondOrder::Single)
         .expect("bond should be valid");
-    rings_api::perceive_rings(
-        chain.working_mut(),
-        RingPerceptionOptions::membership_only(),
-    )
-    .expect("membership perception cannot fail");
+    let mut chain = chain.into_unchecked();
+    rings_api::perceive_rings(&mut chain, RingPerceptionOptions::membership_only())
+        .expect("membership perception cannot fail");
     let chain_membership = chain
-        .working()
         .perception()
         .rings()
         .map(|rings| rings.membership())
@@ -199,10 +193,10 @@ fn ring_membership_marks_triangle_atoms_and_bonds() {
     let bc = mol.add_bond(b, c, BondOrder::Single).expect("bond");
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
 
-    rings_api::perceive_rings(mol.working_mut(), RingPerceptionOptions::membership_only())
+    let mut mol = mol.into_unchecked();
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
     let membership = mol
-        .working()
         .perception()
         .rings()
         .map(|rings| rings.membership())
@@ -228,10 +222,10 @@ fn ring_membership_excludes_tail_from_ring() {
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
     let tail_bond = mol.add_bond(c, tail, BondOrder::Single).expect("bond");
 
-    rings_api::perceive_rings(mol.working_mut(), RingPerceptionOptions::membership_only())
+    let mut mol = mol.into_unchecked();
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
     let membership = mol
-        .working()
         .perception()
         .rings()
         .map(|rings| rings.membership())
@@ -268,10 +262,10 @@ fn ring_membership_handles_fused_rings_with_an_acyclic_tail() {
         .add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("bond");
 
-    rings_api::perceive_rings(mol.working_mut(), RingPerceptionOptions::membership_only())
+    let mut mol = mol.into_unchecked();
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
     let membership = mol
-        .working()
         .perception()
         .rings()
         .map(|rings| rings.membership())
@@ -301,10 +295,10 @@ fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
     let ca = mol.add_bond(c, a, BondOrder::Single).expect("bond");
     mol.delete_bond(ca).expect("bond should delete");
 
-    rings_api::perceive_rings(mol.working_mut(), RingPerceptionOptions::membership_only())
+    let mut mol = mol.into_unchecked();
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::membership_only())
         .expect("membership perception cannot fail");
     let membership = mol
-        .working()
         .perception()
         .rings()
         .map(|rings| rings.membership())
@@ -314,7 +308,11 @@ fn ring_membership_ignores_deleted_bonds_and_becomes_stale_after_mutation() {
     assert!(!membership.bond_in_ring(bc));
     assert!(!membership.bond_in_ring(ca));
 
-    mol.add_bond(c, a, BondOrder::Single).expect("bond");
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(c, a, BondOrder::Single)
+            .expect("bond");
+    });
     assert!(mol.perception().rings().is_none());
     assert!(mol
         .perception()
@@ -393,12 +391,14 @@ fn discrete_chemical_perception_changes_only_perception_state() {
         .stereo_element_ids()
         .next()
         .expect("direct SMILES stereo element");
-    molecule
-        .add_stereo_group(StereoGroup {
-            kind: StereoGroupKind::Absolute,
-            members: vec![stereo_element],
-        })
-        .expect("valid absolute stereo group");
+    crate::tests::edit(&mut molecule, |editor| {
+        editor
+            .add_stereo_group(StereoGroup {
+                kind: StereoGroupKind::Absolute,
+                members: vec![stereo_element],
+            })
+            .expect("valid absolute stereo group");
+    });
 
     assert_eq!(molecule.perception(), &Perception::default());
     let represented_before = represented_molecule_snapshot(&molecule);
@@ -504,15 +504,12 @@ fn default_perception_rolls_back_when_ring_perception_fails_after_valence() {
             )
             .expect("large ring bond");
     }
-    rings_api::perceive_rings(
-        molecule.working_mut(),
-        RingPerceptionOptions::membership_only(),
-    )
-    .expect("membership perception cannot fail");
+    let mut molecule = molecule.into_unchecked();
+    rings_api::perceive_rings(&mut molecule, RingPerceptionOptions::membership_only())
+        .expect("membership perception cannot fail");
     let original = molecule.clone();
 
     let error = molecule
-        .working_mut()
         .perceive()
         .expect_err("default ring cycle-size limit must fail");
 
@@ -633,13 +630,12 @@ fn perceive_rolls_back_failure_without_rewriting_canonical_representation() {
     }
     let mut molecule = graph;
     molecule
-        .working_mut()
         .canonicalize_fixture()
         .expect("fixture canonicalization should succeed");
+    let mut molecule = molecule.into_unchecked();
     let before = molecule.clone();
 
     let error = molecule
-        .working_mut()
         .perceive()
         .expect_err("default perception should reject pentavalent carbon");
 
@@ -781,12 +777,12 @@ fn aromaticity_supports_explicit_nitrogen_lone_pair_donor_ring() {
             BondOrder::Single,
         ],
     );
-    {
-        let mut nitrogen = pyrrole_like
+    crate::tests::edit(&mut pyrrole_like, |editor| {
+        let mut nitrogen = editor
             .atom_mut(atoms[0])
             .expect("ring nitrogen should exist");
         nitrogen.hydrogens = ImplicitHydrogens::Fixed(1);
-    }
+    });
     pyrrole_like.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(
@@ -841,9 +837,14 @@ fn aromaticity_rejects_ring_atom_above_rdkit_default_valence() {
             BondOrder::Single,
         ],
     );
-    let methyl = mol.add_atom(carbon()).expect("atom identifier capacity");
-    mol.add_bond(atoms[0], methyl, BondOrder::Single)
-        .expect("phosphorus substituent bond");
+    let methyl = crate::tests::edit(&mut mol, |editor| {
+        editor.add_atom(carbon()).expect("atom identifier capacity")
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(atoms[0], methyl, BondOrder::Single)
+            .expect("phosphorus substituent bond");
+    });
 
     aromaticity_api::perceive_aromaticity(
         &mut mol,
@@ -870,10 +871,9 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
             BondOrder::Single,
         ],
     );
-    neutral_carbon_radical
-        .atom_mut(atoms[0])
-        .expect("ring atom exists")
-        .radical = AtomRadical::new(1, Some(2));
+    crate::tests::edit(&mut neutral_carbon_radical, |editor| {
+        editor.atom_mut(atoms[0]).expect("ring atom exists").radical = AtomRadical::new(1, Some(2));
+    });
 
     aromaticity_api::perceive_aromaticity(
         &mut neutral_carbon_radical,
@@ -896,10 +896,9 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
             BondOrder::Single,
         ],
     );
-    oxygen_radical
-        .atom_mut(atoms[0])
-        .expect("ring atom exists")
-        .radical = AtomRadical::new(1, Some(2));
+    crate::tests::edit(&mut oxygen_radical, |editor| {
+        editor.atom_mut(atoms[0]).expect("ring atom exists").radical = AtomRadical::new(1, Some(2));
+    });
 
     aromaticity_api::perceive_aromaticity(
         &mut oxygen_radical,
@@ -923,13 +922,11 @@ fn aromaticity_applies_rdkit_radical_candidate_rules() {
             BondOrder::Single,
         ],
     );
-    {
-        let mut atom = charged_carbon_radical
-            .atom_mut(atoms[0])
-            .expect("ring atom exists");
+    crate::tests::edit(&mut charged_carbon_radical, |editor| {
+        let mut atom = editor.atom_mut(atoms[0]).expect("ring atom exists");
         atom.formal_charge = 1;
         atom.radical = AtomRadical::new(1, Some(2));
-    }
+    });
 
     aromaticity_api::perceive_aromaticity(
         &mut charged_carbon_radical,
@@ -955,15 +952,28 @@ fn aromaticity_rejects_tetracoordinate_ring_atom_candidate() {
             BondOrder::Single,
         ],
     );
-    mol.atom_mut(atoms[0])
-        .expect("ring atom exists")
-        .formal_charge = 1;
-    let methyl_a = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let methyl_b = mol.add_atom(carbon()).expect("atom identifier capacity");
-    mol.add_bond(atoms[0], methyl_a, BondOrder::Single)
-        .expect("first substituent bond");
-    mol.add_bond(atoms[0], methyl_b, BondOrder::Single)
-        .expect("second substituent bond");
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .atom_mut(atoms[0])
+            .expect("ring atom exists")
+            .formal_charge = 1;
+    });
+    let methyl_a = crate::tests::edit(&mut mol, |editor| {
+        editor.add_atom(carbon()).expect("atom identifier capacity")
+    });
+    let methyl_b = crate::tests::edit(&mut mol, |editor| {
+        editor.add_atom(carbon()).expect("atom identifier capacity")
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(atoms[0], methyl_a, BondOrder::Single)
+            .expect("first substituent bond");
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(atoms[0], methyl_b, BondOrder::Single)
+            .expect("second substituent bond");
+    });
 
     aromaticity_api::perceive_aromaticity(
         &mut mol,
@@ -988,11 +998,11 @@ fn aromaticity_rejects_protonated_saturated_ring_nitrogen_donor() {
             BondOrder::Single,
         ],
     );
-    {
-        let mut nitrogen = mol.atom_mut(atoms[0]).expect("ring atom exists");
+    crate::tests::edit(&mut mol, |editor| {
+        let mut nitrogen = editor.atom_mut(atoms[0]).expect("ring atom exists");
         nitrogen.formal_charge = 1;
         nitrogen.hydrogens = ImplicitHydrogens::Fixed(1);
-    }
+    });
     mol.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(
@@ -1012,11 +1022,11 @@ fn aromaticity_accepts_cyclopropenyl_cation_two_electron_ring() {
         &["C", "C", "C"],
         &[BondOrder::Single, BondOrder::Double, BondOrder::Single],
     );
-    {
-        let mut cation = mol.atom_mut(atoms[0]).expect("ring atom exists");
+    crate::tests::edit(&mut mol, |editor| {
+        let mut cation = editor.atom_mut(atoms[0]).expect("ring atom exists");
         cation.formal_charge = 1;
         cation.hydrogens = ImplicitHydrogens::Fixed(1);
-    }
+    });
     mol.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(
@@ -1043,10 +1053,10 @@ fn aromaticity_requires_every_atom_to_be_candidate_before_huckel_count() {
             BondOrder::Single,
         ],
     );
-    {
-        let mut saturated = mol.atom_mut(atoms[0]).expect("ring atom exists");
+    crate::tests::edit(&mut mol, |editor| {
+        let mut saturated = editor.atom_mut(atoms[0]).expect("ring atom exists");
         saturated.hydrogens = ImplicitHydrogens::Fixed(2);
-    }
+    });
     mol.set_inferred_hydrogens(atoms[0], 0);
 
     aromaticity_api::perceive_aromaticity(
@@ -1098,20 +1108,21 @@ fn aromaticity_marks_azulene_whole_including_its_fusion_bond() {
             .expect("perimeter bond"),
     );
 
+    let mut mol = mol.into_unchecked();
     aromaticity_api::perceive_aromaticity(
-        mol.working_mut(),
+        &mut mol,
         AromaticityModel::RdkitLike,
         Default::default(),
     )
     .expect("azulene-like fused system should be supported");
 
-    assert!(atoms.iter().all(|atom| aromatic_atom(mol.working(), *atom)));
+    assert!(atoms.iter().all(|atom| aromatic_atom(&mol, *atom)));
     assert!(perimeter_bonds
         .iter()
-        .all(|bond| aromatic_bond(mol.working(), *bond)));
+        .all(|bond| aromatic_bond(&mol, *bond)));
     // The rings are aromatic only together; their fusion bond is aromatic
     // with them (RDKit leaves it out).
-    assert!(aromatic_bond(mol.working(), shared));
+    assert!(aromatic_bond(&mol, shared));
 }
 
 #[test]
@@ -1157,8 +1168,9 @@ fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
             .expect("saturated ring bond"),
     ];
 
+    let mut mol = mol.into_unchecked();
     aromaticity_api::perceive_aromaticity(
-        mol.working_mut(),
+        &mut mol,
         AromaticityModel::RdkitLike,
         Default::default(),
     )
@@ -1166,13 +1178,13 @@ fn aromaticity_keeps_aromatic_heteroring_bond_shared_with_saturated_ring() {
 
     for bond_id in aromatic_bonds {
         assert!(
-            aromatic_bond(mol.working(), bond_id),
+            aromatic_bond(&mol, bond_id),
             "aromatic ring bond {bond_id} should be aromatic"
         );
     }
     for bond_id in saturated_bonds {
         assert!(
-            !aromatic_bond(mol.working(), bond_id),
+            !aromatic_bond(&mol, bond_id),
             "saturated fused-neighbor bond {bond_id} should stay aliphatic"
         );
     }
@@ -1191,17 +1203,25 @@ fn aromaticity_preserves_anionic_carbon_donor_with_explicit_hydrogen_bond() {
         ],
     );
     for atom_id in &atoms {
-        mol.atom_mut(*atom_id)
-            .expect("ring atom exists")
-            .formal_charge = -1;
+        crate::tests::edit(&mut mol, |editor| {
+            editor
+                .atom_mut(*atom_id)
+                .expect("ring atom exists")
+                .formal_charge = -1;
+        });
     }
-    let hydrogen = mol
-        .add_atom(Atom::new(
-            Element::from_symbol("H").expect("hydrogen should be available"),
-        ))
-        .expect("atom identifier capacity");
-    mol.add_bond(atoms[0], hydrogen, BondOrder::Single)
-        .expect("explicit hydrogen bond should be valid");
+    let hydrogen = crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_atom(Atom::new(
+                Element::from_symbol("H").expect("hydrogen should be available"),
+            ))
+            .expect("atom identifier capacity")
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(atoms[0], hydrogen, BondOrder::Single)
+            .expect("explicit hydrogen bond should be valid");
+    });
 
     aromaticity_api::perceive_aromaticity(
         &mut mol,
@@ -1247,15 +1267,16 @@ fn aromaticity_uses_ring_membership_not_acyclic_double_bonds() {
     mol.add_bond(a, b, BondOrder::Double).expect("bond");
     mol.add_bond(b, c, BondOrder::Single).expect("bond");
 
+    let mut mol = mol.into_unchecked();
     aromaticity_api::perceive_aromaticity(
-        mol.working_mut(),
+        &mut mol,
         AromaticityModel::RdkitLike,
         Default::default(),
     )
     .expect("acyclic molecule should be supported");
 
-    assert!(!aromatic_atom(mol.working(), a));
-    assert!(!aromatic_bond(mol.working(), BondId::new(0)));
+    assert!(!aromatic_atom(&mol, a));
+    assert!(!aromatic_bond(&mol, BondId::new(0)));
 }
 
 #[test]
@@ -1301,7 +1322,9 @@ fn aromaticity_becomes_stale_after_topology_mutation() {
     )
     .expect("benzene should be supported");
 
-    mol.add_atom(oxygen()).expect("atom identifier capacity");
+    crate::tests::edit(&mut mol, |editor| {
+        editor.add_atom(oxygen()).expect("atom identifier capacity");
+    });
     assert!(mol.perception().aromaticity().is_none());
     assert!(atoms.iter().all(|atom| mol
         .perception()

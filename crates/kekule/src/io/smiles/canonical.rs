@@ -213,7 +213,10 @@ fn canonical_projection_graph(
     for (atom_id, atom) in mol.atoms() {
         let (payload, _, inferred_hydrogens) =
             canonical_smiles_atom_representation(mol, atom_id, atom, atom_style)?;
-        projected.graph.atoms[atom_id.index()] = Some(payload);
+        *projected
+            .graph
+            .projected_atom_mut(atom_id)
+            .expect("projected atom is live") = payload;
         projected.set_inferred_hydrogens(atom_id, inferred_hydrogens);
     }
     restore_projection_aromaticity(&mut projected, mol.perception(), Some, Some);

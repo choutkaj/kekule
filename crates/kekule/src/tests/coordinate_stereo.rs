@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo() {
-    let (mut mol, center, carriers, _) = tetrahedral_marked_graph();
+    let (mol, center, carriers, _) = tetrahedral_marked_graph();
     let positions = test_positions(vec![
         Point3::new(0.0, 0.0, 0.0),
         Point3::new(1.0, 0.0, 0.0),
@@ -12,15 +12,13 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
         Point3::new(0.0, 0.0, 1.0),
         Point3::new(0.0, 0.0, -1.0),
     ]);
-    mark_all_fresh(mol.working_mut());
+    let mut mol = mol.into_unchecked();
+    mark_all_fresh(&mut mol);
     let before = mol.clone();
 
-    let inferred = stereo_api::coordinates::infer_coordinate_stereo(
-        mol.working(),
-        &positions,
-        Default::default(),
-    )
-    .expect("3D tetrahedral stereo should be inferred");
+    let inferred =
+        stereo_api::coordinates::infer_coordinate_stereo(&mol, &positions, Default::default())
+            .expect("3D tetrahedral stereo should be inferred");
     assert_eq!(mol, before);
     assert_eq!(inferred.elements.len(), 1);
     let proposed = &inferred.elements[0];
@@ -40,6 +38,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_tetrahedral_stereo(
         other => panic!("expected tetrahedral stereo, found {other:?}"),
     }
 
+    let mut mol = mol.into_editor();
     let report = stereo_api::coordinates::materialize_coordinate_stereo(
         &mut mol,
         &positions,
@@ -73,7 +72,6 @@ fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
             .expect("tetrahedral carrier bond");
     }
     molecule.delete_atom(tombstone).expect("isolated tombstone");
-    mark_all_fresh(molecule.working_mut());
     assert_eq!(center, AtomId::new(1));
     assert_eq!(molecule.atom_count(), 5);
 
@@ -84,16 +82,16 @@ fn coordinate_stereo_resolves_tombstoned_atom_ids_to_dense_positions() {
         Point3::new(0.0, 0.0, 1.0),
         Point3::new(0.0, 0.0, -1.0),
     ]);
-    let inferred = stereo_api::coordinates::infer_coordinate_stereo(
-        molecule.working(),
+    let report = stereo_api::coordinates::materialize_coordinate_stereo(
+        &mut molecule,
         &positions,
         Default::default(),
     )
     .expect("dense positions should resolve through non-contiguous atom IDs");
 
-    assert_eq!(inferred.elements.len(), 1);
+    assert_eq!(report.created_elements.len(), 1);
     assert!(matches!(
-        &inferred.elements[0].kind,
+        &molecule.stereo_element(report.created_elements[0]).unwrap().kind,
         StereoElementKind::Tetrahedral(stereo)
             if stereo.center == center
                 && stereo.carriers.to_vec()
@@ -130,7 +128,7 @@ fn coordinate_stereo_inference_is_read_only_and_materializes_double_bond_stereo(
     let before = mol.clone();
 
     let inferred = stereo_api::coordinates::infer_coordinate_stereo(
-        mol.working(),
+        &mol.snapshot().0,
         &positions,
         Default::default(),
     )
@@ -237,7 +235,7 @@ fn coordinate_stereo_does_not_duplicate_existing_represented_stereo() {
     .expect("represented source stereo");
 
     let inferred = stereo_api::coordinates::infer_coordinate_stereo(
-        mol.working(),
+        &mol.snapshot().0,
         &positions,
         Default::default(),
     )
@@ -607,7 +605,7 @@ fn coordinate_stereo_reports_asserted_configurations_the_coordinates_contradict(
         let asserted = molecule.stereo_element(id).unwrap().kind.clone();
         let infer = |molecule: &crate::molecule::MoleculeEditor| {
             stereo_api::coordinates::infer_coordinate_stereo(
-                molecule.working(),
+                &molecule.snapshot().0,
                 &positions,
                 options,
             )
@@ -685,7 +683,7 @@ fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_center
         .unwrap();
     let disagreements = |molecule: &crate::molecule::MoleculeEditor| {
         stereo_api::coordinates::infer_coordinate_stereo(
-            molecule.working(),
+            &molecule.snapshot().0,
             &trans,
             Default::default(),
         )
@@ -734,7 +732,7 @@ fn coordinate_stereo_compares_implicit_hydrogen_carriers_and_ignores_flat_center
             .unwrap();
         assert_eq!(
             stereo_api::coordinates::infer_coordinate_stereo(
-                flat.working(),
+                &flat.snapshot().0,
                 &drawing,
                 Default::default()
             )

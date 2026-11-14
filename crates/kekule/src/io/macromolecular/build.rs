@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::io::canonicalize_molecule_for_publication;
 use crate::math::{bounding_box, Point3, PointGrid};
-use crate::molecule::{Atom, AtomId, Element, Molecule, MoleculeEditor};
+use crate::molecule::{Atom, AtomId, Element, Graph, Molecule, MoleculeEditor, SlotLiveness};
 use crate::structure::Positions;
 use crate::topology::{AtomSiteMetadata, Hierarchy};
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
@@ -276,13 +276,13 @@ impl BuiltMolecule {
             .iter()
             .map(|atom| (atom.atom, atom.element, atom.point, atom.source_line))
             .collect::<Vec<_>>();
-        let candidates = count_bond_candidates(editor.working(), &sites, cancellation)?;
+        let candidates = count_bond_candidates(editor.graph(), &sites, cancellation)?;
         if candidates > 0 {
             report.connectivity_candidates += candidates;
             report
                 .issues
                 .push(StructureInterpretIssue::ConnectivityCandidatesInferred {
-                    atom_count: editor.working().atom_count(),
+                    atom_count: editor.graph().atom_count(),
                     candidate_count: candidates,
                 });
         }
@@ -300,7 +300,7 @@ impl BuiltMolecule {
             evidence,
             ..
         } = self;
-        let working = source.working();
+        let working = &source;
         let components = working.connected_components();
         if components.is_empty() {
             return Err(structure_error(
@@ -310,7 +310,7 @@ impl BuiltMolecule {
             ));
         }
         // Each source atom's component and its ID there.
-        let slots = working.graph.atom_slot_count();
+        let slots = working.atom_slot_count();
         let mut component_of = vec![usize::MAX; slots];
         let mut local = vec![AtomId::new(0); slots];
         let mut editors = Vec::with_capacity(components.len());
@@ -401,7 +401,7 @@ impl BuiltMolecule {
                 .raw()
                 .select_indices(&bond_sources)
                 .map_err(graph_error)?;
-            editor.working_mut().properties = properties;
+            *editor.properties_storage_mut() = properties;
             let mut coordinates =
                 StagedCoordinates::with_atom_capacity(component.len(), source_coordinates.unit())
                     .map_err(graph_error)?;
@@ -413,7 +413,7 @@ impl BuiltMolecule {
                 }
             }
             poll(cancellation)?;
-            canonicalize_molecule_for_publication(editor.working_mut(), Some(&coordinates), &[])
+            canonicalize_molecule_for_publication(&mut editor, Some(&coordinates), &[])
                 .map_err(graph_error)?;
             poll(cancellation)?;
             let molecule = editor.finish().map_err(graph_error)?;
@@ -559,7 +559,7 @@ pub(super) fn build_molecule(
         }
         record_evidence(&mut evidence, left, right, source);
         if editor
-            .working()
+            .graph()
             .require_bond_between(left, right)
             .map_err(graph_error)?
             .is_none()
@@ -569,12 +569,12 @@ pub(super) fn build_molecule(
                 .map_err(graph_error)?;
         } else {
             let existing = editor
-                .working()
+                .graph()
                 .require_bond_between(left, right)
                 .map_err(graph_error)?
                 .expect("existing bond was found");
             if editor
-                .working()
+                .graph()
                 .require_bond(existing)
                 .map_err(graph_error)?
                 .order
@@ -700,8 +700,8 @@ const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
 const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
 
 /// Counts atom pairs within covalent bonding distance that are not bonded.
-fn count_bond_candidates(
-    graph: &Molecule,
+fn count_bond_candidates<L: SlotLiveness>(
+    graph: &Graph<L>,
     sites: &[(AtomId, Element, Point3, usize)],
     cancellation: Option<&Cancellation>,
 ) -> Result<usize, FormatError> {
@@ -1076,7 +1076,7 @@ mod tests {
                 }
                 sites.push((atom, element, point, line));
             }
-            let graph = editor.working();
+            let graph = editor.graph();
             let mut expected = 0;
             for left in 0..sites.len() {
                 for right in left + 1..sites.len() {

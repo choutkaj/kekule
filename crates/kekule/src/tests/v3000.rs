@@ -1456,8 +1456,9 @@ fn mol_v3000_writer_round_trips_supported_metadata() {
         .add_bond(c, o, BondOrder::Double)
         .expect("double bond");
 
+    let molecule = molecule.into_unchecked();
     let written = molfile::write(
-        molecule.working(),
+        &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000),
     )
     .expect("V3000 should write")
@@ -1599,18 +1600,17 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .add_atom(carbon())
         .expect("atom identifier capacity");
     molecule
-        .working_mut()
-        .graph
-        .stereo_elements
-        .push(Some(StereoElement::new(StereoElementKind::Tetrahedral(
+        .graph_mut()
+        .push_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
             TetrahedralStereo {
                 center: a,
                 carriers: [StereoCarrier::ImplicitHydrogen; 4],
                 orientation: Some(TetrahedralOrientation::Clockwise),
             },
-        ))));
+        )));
+    let molecule = molecule.into_unchecked();
     assert!(molfile::write(
-        molecule.working(),
+        &molecule,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000)
     )
     .expect_err("invalid stereo element should be rejected")
@@ -1650,7 +1650,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         )))
         .expect("double-bond stereo");
     assert!(molfile::write(
-        molecule.working(),
+        &molecule.snapshot().0,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000)
     )
     .expect_err("specified double-bond stereo should be rejected")
@@ -1669,7 +1669,7 @@ fn mol_v3000_writer_rejects_unsupported_stereo_and_bonds() {
         .expect("bond")
         .set_order(BondOrder::Quadruple);
     assert!(molfile::write(
-        molecule.working(),
+        &molecule.snapshot().0,
         molfile::MolfileWriteOptions::default().with_version(molfile::MolfileWriteVersion::V3000)
     )
     .expect_err("quadruple should be rejected")

@@ -1095,7 +1095,7 @@ fn mmcif_connectivity_candidates_do_not_create_bonds() {
         .structure()
         .topology()
         .definitions()
-        .all(|definition| definition.molecule().validate_connected().is_ok()));
+        .all(|definition| definition.molecule().connected_components().len() == 1));
     assert_eq!(interpreted.report().connectivity_candidates(), 1);
 }
 

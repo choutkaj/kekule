@@ -277,7 +277,7 @@ fn stereo_projections(
     // A 3D Molfile implicitly asserts configurations even without wedges.
     // Add unknown annotations in detached writer state where the source graph
     // makes no assertion, so writing a conformation cannot invent chemistry.
-    let mut staged;
+    let staged;
     let molecule = if let Some(geometry) = geometry {
         let mut warnings = Vec::new();
         let inferred =
@@ -302,18 +302,19 @@ fn stereo_projections(
         if inferred.is_empty() {
             molecule
         } else {
-            staged = molecule.clone();
+            let mut editor = molecule.to_editor();
             for mut element in inferred {
                 if let StereoElementKind::Tetrahedral(stereo) = &mut element.kind {
-                    materialize_molfile_stereo_hydrogens(&mut staged, [stereo.center]);
+                    materialize_molfile_stereo_hydrogens(&mut editor, [stereo.center]);
                     stereo.orientation = None;
                 }
-                staged.add_stereo_element(element).map_err(|error| {
+                editor.add_stereo_element(element).map_err(|error| {
                     MOLFILE_WRITE
                         .invalid_structure("Cannot add the stereo of the 3D coordinates.")
                         .with_source(error)
                 })?;
             }
+            staged = editor.snapshot_keeping_ids();
             &staged
         }
     } else {
