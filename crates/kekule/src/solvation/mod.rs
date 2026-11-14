@@ -13,7 +13,7 @@
 mod solvent;
 
 pub use solvent::{
-    add_periodic_box, solvate, BoxShape, NegativeIon, PeriodicBoxError, PeriodicBoxOptions,
-    PositiveIon, SolvationChargeBasis, SolvationError, SolvationRadii, SolvationReport,
-    SolventOptions, WaterModel,
+    add_periodic_box, solvate, BoxShape, NegativeIon, PeriodicBoxOptions, PositiveIon,
+    SolvationChargeBasis, SolvationError, SolvationRadii, SolvationReport, SolventOptions,
+    WaterModel,
 };

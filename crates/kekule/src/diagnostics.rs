@@ -11,6 +11,11 @@
 //! Bounded operations, in formats and elsewhere, report an exhausted resource
 //! limit as a [`LimitExceeded`] naming the counted [`Resource`].
 //!
+//! Facts that errors of several areas report are shared payloads, each with
+//! one message: an [`IndexOutOfRange`], a [`LengthMismatch`] or a
+//! [`CapacityExceeded`] of a [`Countable`] item, a [`TopologyMismatch`], and
+//! an [`UnknownHydrogenCount`].
+//!
 //! Long-running operations that accept a [`Cancellation`] stop when its check
 //! turns true and report [`Cancelled`]; in a [`FormatError`] the kind is
 //! [`DiagnosticKind::Cancelled`].
@@ -31,6 +36,7 @@ mod chain;
 mod format;
 mod input;
 mod limits;
+mod payloads;
 mod wording;
 
 pub use self::cancellation::{Cancellation, Cancelled};
@@ -40,6 +46,10 @@ pub use self::format::{
     SourceLocation, UnsupportedContent,
 };
 pub use self::limits::{LimitExceeded, Resource};
+pub use self::payloads::{
+    CapacityExceeded, Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch,
+    UnknownHydrogenCount,
+};
 pub use crate::io::{UnrepresentablePolicy, WriteOmission, WriteReport};
 
 pub(crate) use self::input::{normalize_line_endings, read_bounded};

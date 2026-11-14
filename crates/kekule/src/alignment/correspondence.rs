@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::diagnostics::TopologyMismatch;
 use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
+
+use super::AlignmentError;
 
 mod labels;
 
@@ -40,14 +43,14 @@ impl AtomCorrespondence {
     ///
     /// # Errors
     ///
-    /// [`AtomCorrespondenceError::InvalidAtom`] when an atom is absent from its
-    /// side's topology, and [`AtomCorrespondenceError::DuplicateAtom`] when an
+    /// [`AlignmentError::InvalidAtom`] when an atom is absent from its
+    /// side's topology, and [`AlignmentError::DuplicateAtom`] when an
     /// atom repeats on its side; both name the first offending pair.
     pub fn from_pairs(
         moving: impl Into<Arc<Topology>>,
         reference: impl Into<Arc<Topology>>,
         pairs: impl IntoIterator<Item = (InstanceAtomId, InstanceAtomId)>,
-    ) -> Result<Self, AtomCorrespondenceError> {
+    ) -> Result<Self, AlignmentError> {
         let moving = &moving.into();
         let reference = &reference.into();
         let mut moving_seen = BTreeSet::new();
@@ -55,16 +58,15 @@ impl AtomCorrespondence {
         let mut indices = Vec::new();
         for (pair_index, (moving_atom, reference_atom)) in pairs.into_iter().enumerate() {
             let resolve = |side, topology: &Topology, atom, seen: &mut BTreeSet<_>| {
-                let index =
-                    topology
-                        .atom_index(atom)
-                        .ok_or(AtomCorrespondenceError::InvalidAtom {
-                            side,
-                            pair_index,
-                            atom,
-                        })?;
+                let index = topology
+                    .atom_index(atom)
+                    .ok_or(AlignmentError::InvalidAtom {
+                        side,
+                        pair_index,
+                        atom,
+                    })?;
                 if !seen.insert(index) {
-                    return Err(AtomCorrespondenceError::DuplicateAtom {
+                    return Err(AlignmentError::DuplicateAtom {
                         side,
                         pair_index,
                         atom,
@@ -101,16 +103,16 @@ impl AtomCorrespondence {
     ///
     /// # Errors
     ///
-    /// [`AtomCorrespondenceError::LayoutMismatch`] when the two topologies do
+    /// [`AlignmentError::LayoutMismatch`] when the two topologies do
     /// not have the same layout.
     pub fn from_same_layout(
         moving: impl Into<Arc<Topology>>,
         reference: impl Into<Arc<Topology>>,
-    ) -> Result<Self, AtomCorrespondenceError> {
+    ) -> Result<Self, AlignmentError> {
         let moving = &moving.into();
         let reference = &reference.into();
         if !moving.same_layout(reference) {
-            return Err(AtomCorrespondenceError::LayoutMismatch);
+            return Err(AlignmentError::LayoutMismatch);
         }
         Ok(Self {
             moving: Arc::clone(moving),
@@ -172,23 +174,24 @@ impl AtomCorrespondence {
     ///
     /// # Errors
     ///
-    /// [`AtomCorrespondenceError::TopologyMismatch`] naming the first side,
-    /// moving then reference, whose topology does not share the layout.
+    /// [`AlignmentError::TopologyMismatch`] naming the first side,
+    /// [`TopologyMismatch::Moving`] then [`TopologyMismatch::Reference`],
+    /// whose topology does not share the layout.
     pub fn ensure_compatible(
         &self,
         moving: &Topology,
         reference: &Topology,
-    ) -> Result<(), AtomCorrespondenceError> {
+    ) -> Result<(), AlignmentError> {
         for (side, expected, actual) in [
-            (CorrespondenceSide::Moving, self.moving.as_ref(), moving),
+            (TopologyMismatch::Moving, self.moving.as_ref(), moving),
             (
-                CorrespondenceSide::Reference,
+                TopologyMismatch::Reference,
                 self.reference.as_ref(),
                 reference,
             ),
         ] {
             if !expected.shares_layout(actual) {
-                return Err(AtomCorrespondenceError::TopologyMismatch { side });
+                return Err(AlignmentError::TopologyMismatch(side));
             }
         }
         Ok(())
@@ -214,95 +217,3 @@ impl fmt::Display for CorrespondenceSide {
         })
     }
 }
-
-/// Invalid atom pairs or use with different topology snapshots.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AtomCorrespondenceError {
-    /// Dense-order pairing was requested for topologies with different layouts.
-    LayoutMismatch,
-    /// A pair names an atom absent from that side's topology.
-    InvalidAtom {
-        /// The side whose atom is absent.
-        side: CorrespondenceSide,
-        /// The position of the pair in the input.
-        pair_index: usize,
-        /// The absent atom.
-        atom: InstanceAtomId,
-    },
-    /// A pair repeats an atom already paired on the same side.
-    DuplicateAtom {
-        /// The side with the repeated atom.
-        side: CorrespondenceSide,
-        /// The position of the repeating pair in the input.
-        pair_index: usize,
-        /// The repeated atom.
-        atom: InstanceAtomId,
-    },
-    /// A topology does not share the layout the correspondence was built for.
-    TopologyMismatch {
-        /// The side with the mismatched topology.
-        side: CorrespondenceSide,
-    },
-    /// Hierarchy labels name more than one selected atom on a side
-    /// ([`AtomCorrespondence::from_labels`]).
-    AmbiguousLabels {
-        /// The side whose selection repeats the labels.
-        side: CorrespondenceSide,
-        /// Every repeated label of that side, in the dense order of its first
-        /// atom.
-        labels: Vec<AmbiguousLabel>,
-    },
-}
-
-impl fmt::Display for AtomCorrespondenceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::LayoutMismatch => formatter.write_str(
-                "The moving and reference topologies have different layouts. Give explicit atom pairs.",
-            ),
-            Self::InvalidAtom {
-                side,
-                pair_index,
-                atom,
-            } => write!(
-                formatter,
-                "Atom pair {pair_index} names {atom}. The {side} topology has no such atom.",
-            ),
-            Self::DuplicateAtom {
-                side,
-                pair_index,
-                atom,
-            } => write!(
-                formatter,
-                "Atom pair {pair_index} repeats the {side} {atom}.",
-            ),
-            Self::TopologyMismatch { side } => write!(
-                formatter,
-                "The {side} topology has a different layout from the atom correspondence.",
-            ),
-            Self::AmbiguousLabels { side, labels } => {
-                match labels.len() {
-                    1 => write!(
-                        formatter,
-                        "A {side} label names more than one selected atom:"
-                    )?,
-                    count => write!(
-                        formatter,
-                        "{count} {side} labels name more than one selected atom:"
-                    )?,
-                }
-                for (position, label) in labels.iter().take(3).enumerate() {
-                    let separator = if position == 0 { " " } else { "; " };
-                    write!(formatter, "{separator}{label}")?;
-                }
-                if labels.len() > 3 {
-                    write!(formatter, "; and {} more", labels.len() - 3)?;
-                }
-                formatter.write_str(".")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AtomCorrespondenceError {}

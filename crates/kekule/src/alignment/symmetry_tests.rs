@@ -115,12 +115,12 @@ fn searches_beyond_their_limits_fail_instead_of_truncating() {
     let limits = SymmetryLimits::default().with_max_permutations(23);
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
-        SymmetryError::LimitExceeded(LimitExceeded::new(Resource::Permutations, 23, 24))
+        AlignmentError::SymmetryLimitExceeded(LimitExceeded::new(Resource::Permutations, 23, 24))
     );
     let limits = SymmetryLimits::default().with_max_search_steps(10);
     assert_eq!(
         SymmetricSelection::with_limits(&selection, limits).unwrap_err(),
-        SymmetryError::LimitExceeded(LimitExceeded::new(Resource::SearchStates, 10, 11))
+        AlignmentError::SymmetryLimitExceeded(LimitExceeded::new(Resource::SearchStates, 10, 11))
     );
     let exact = SymmetryLimits::default().with_max_permutations(24);
     assert_eq!(

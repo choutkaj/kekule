@@ -577,10 +577,12 @@ impl Lattice {
             .map_err(|error| geometry_error(error, self.frame))
     }
 }
-fn geometry_error(error: crate::math::LatticeError, frame: usize) -> PeriodicError {
+fn geometry_error(error: crate::math::PeriodicCellError, frame: usize) -> PeriodicError {
     match error {
-        crate::math::LatticeError::NumericalFailure => PeriodicError::NumericalFailure { frame },
-        crate::math::LatticeError::LimitExceeded(limit) => {
+        crate::math::PeriodicCellError::NumericalFailure => {
+            PeriodicError::NumericalFailure { frame }
+        }
+        crate::math::PeriodicCellError::LimitExceeded(limit) => {
             PeriodicError::LimitExceeded { frame, limit }
         }
         _ => PeriodicError::NumericalFailure { frame },

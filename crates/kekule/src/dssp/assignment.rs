@@ -254,9 +254,9 @@ impl DsspSecondaryStructure {
 
 /// Parses a one-character DSSP 4 code; `'-'` is accepted as an alias of
 /// [`DsspSecondaryStructure::Loop`]. Any other character fails with
-/// [`DsspCodeError`].
+/// [`DsspError::InvalidCode`].
 impl TryFrom<char> for DsspSecondaryStructure {
-    type Error = DsspCodeError;
+    type Error = DsspError;
 
     fn try_from(value: char) -> Result<Self, Self::Error> {
         match value {
@@ -269,35 +269,10 @@ impl TryFrom<char> for DsspSecondaryStructure {
             'P' => Ok(Self::PolyprolineIIHelix),
             'T' => Ok(Self::Turn),
             'S' => Ok(Self::Bend),
-            code => Err(DsspCodeError { code }),
+            code => Err(DsspError::InvalidCode { code }),
         }
     }
 }
-
-/// A character is not a DSSP secondary-structure code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DsspCodeError {
-    code: char,
-}
-
-impl DsspCodeError {
-    /// The rejected character.
-    pub const fn code(self) -> char {
-        self.code
-    }
-}
-
-impl fmt::Display for DsspCodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "The character \"{}\" is not a DSSP secondary-structure code.",
-            self.code.escape_debug()
-        )
-    }
-}
-
-impl std::error::Error for DsspCodeError {}
 
 /// Source hierarchy labels retained as metadata, not result identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -871,6 +846,11 @@ impl Default for DsspOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DsspError {
+    /// A character is not a DSSP secondary-structure code.
+    InvalidCode {
+        /// The rejected character.
+        code: char,
+    },
     /// [`DsspOptions::min_polyproline_stretch`] is neither 2 nor 3.
     InvalidPolyprolineStretch {
         /// The configured value.
@@ -914,6 +894,11 @@ pub enum DsspError {
 impl fmt::Display for DsspError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidCode { code } => write!(
+                f,
+                "The character \"{}\" is not a DSSP secondary-structure code.",
+                code.escape_debug()
+            ),
             Self::InvalidPolyprolineStretch { value } => write!(
                 f,
                 "The polyproline-II stretch is {value}. Use 2 or 3."

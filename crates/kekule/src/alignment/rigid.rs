@@ -3,15 +3,15 @@
 
 use std::fmt;
 
-use crate::diagnostics::Cancelled;
+use crate::diagnostics::{Cancelled, LimitExceeded, TopologyMismatch};
 use crate::math::{Matrix3, Point3, RigidTransform, RigidTransformError, Vector3};
 use crate::structure::{GeometryError, StructureSetReadError, StructureView};
-use crate::topology::{AtomSelection, TopologyAtomIndex};
+use crate::topology::{AtomSelection, InstanceAtomId, TopologyAtomIndex, TopologyPerceptionError};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::{
-    AlignedRmsdOptions, AtomCorrespondence, AtomCorrespondenceError, LabelCorrespondence,
-    SymmetricSelection,
+    AlignedRmsdOptions, AmbiguousLabel, AtomCorrespondence, CorrespondenceSide,
+    LabelCorrespondence, SymmetricSelection,
 };
 
 /// Moving/reference topology atom index pairs.
@@ -100,9 +100,7 @@ impl FitAtoms<'_> {
                     .collect()])
             }
             Self::Correspondence(correspondence) => {
-                correspondence
-                    .ensure_compatible(moving.topology(), reference.topology())
-                    .map_err(AlignmentError::Correspondence)?;
+                correspondence.ensure_compatible(moving.topology(), reference.topology())?;
                 Ok(vec![correspondence.index_pairs().to_vec()])
             }
             Self::Symmetric(symmetric) => {
@@ -119,11 +117,13 @@ fn check_selection(
     reference: StructureView<'_>,
 ) -> Result<(), AlignmentError> {
     if !moving.topology().shares_layout(reference.topology()) {
-        return Err(AlignmentError::TopologyMismatch);
+        return Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Reference,
+        ));
     }
     selection
         .ensure_compatible(moving.topology_arc())
-        .map_err(|_| AlignmentError::SelectionTopologyMismatch)
+        .map_err(|_| AlignmentError::TopologyMismatch(TopologyMismatch::Selection))
 }
 
 /// Fits `moving` onto `reference` with the Kabsch algorithm.
@@ -547,12 +547,57 @@ pub enum AlignmentGeometry {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum AlignmentError {
-    /// Moving and reference views do not share one topology layout.
-    TopologyMismatch,
-    /// The atom selection belongs to another topology layout.
-    SelectionTopologyMismatch,
-    /// An explicit correspondence belongs to a different topology snapshot.
-    Correspondence(AtomCorrespondenceError),
+    /// The reference does not share the moving structure's topology layout
+    /// ([`TopologyMismatch::Reference`]), the atom selection does not share
+    /// it ([`TopologyMismatch::Selection`]), or a structure does not share
+    /// the layout of its side of an explicit correspondence
+    /// ([`TopologyMismatch::Moving`] or [`TopologyMismatch::Reference`]).
+    TopologyMismatch(TopologyMismatch),
+    /// Dense-order pairing ([`AtomCorrespondence::from_same_layout`]) was
+    /// requested for topologies with different layouts.
+    LayoutMismatch,
+    /// A pair names an atom absent from that side's topology.
+    InvalidAtom {
+        /// The side whose atom is absent.
+        side: CorrespondenceSide,
+        /// The position of the pair in the input.
+        pair_index: usize,
+        /// The absent atom.
+        atom: InstanceAtomId,
+    },
+    /// A pair repeats an atom already paired on the same side.
+    DuplicateAtom {
+        /// The side with the repeated atom.
+        side: CorrespondenceSide,
+        /// The position of the repeating pair in the input.
+        pair_index: usize,
+        /// The repeated atom.
+        atom: InstanceAtomId,
+    },
+    /// Hierarchy labels name more than one selected atom on a side
+    /// ([`AtomCorrespondence::from_labels`]).
+    AmbiguousLabels {
+        /// The side whose selection repeats the labels.
+        side: CorrespondenceSide,
+        /// Every repeated label of that side, in the dense order of its first
+        /// atom.
+        labels: Vec<AmbiguousLabel>,
+    },
+    /// The selection admits more permutations ([`Resource::Permutations`]) or
+    /// the symmetry search examined more candidate mappings
+    /// ([`Resource::SearchStates`]) than [`SymmetryLimits`](super::SymmetryLimits) allows.
+    ///
+    /// [`Resource::Permutations`]: crate::diagnostics::Resource::Permutations
+    /// [`Resource::SearchStates`]: crate::diagnostics::Resource::SearchStates
+    SymmetryLimitExceeded(LimitExceeded),
+    /// Perceiving the inferred hydrogen counts a symmetry search needs failed.
+    Perception(TopologyPerceptionError),
+    /// An atom's hydrogen count is unknown even after perception, so the
+    /// symmetry search cannot compare it.
+    UnknownHydrogenCount {
+        /// The atom with the unknown count.
+        atom: TopologyAtomIndex,
+    },
     /// Fewer than three atoms were selected.
     InsufficientSelectedAtoms {
         /// Actual selected atom count.
@@ -622,12 +667,49 @@ pub enum AlignmentError {
 impl fmt::Display for AlignmentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TopologyMismatch => formatter
-                .write_str("The moving and reference structures have different topology layouts."),
-            Self::SelectionTopologyMismatch => {
-                formatter.write_str("The atom selection belongs to a different topology layout.")
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(formatter),
+            Self::LayoutMismatch => formatter.write_str(
+                "The moving and reference topologies have different layouts. Give explicit atom pairs.",
+            ),
+            Self::InvalidAtom {
+                side,
+                pair_index,
+                atom,
+            } => write!(
+                formatter,
+                "Atom pair {pair_index} names {atom}. The {side} topology has no such atom.",
+            ),
+            Self::DuplicateAtom {
+                side,
+                pair_index,
+                atom,
+            } => write!(formatter, "Atom pair {pair_index} repeats the {side} {atom}."),
+            Self::AmbiguousLabels { side, labels } => {
+                match labels.len() {
+                    1 => write!(formatter, "A {side} label names more than one selected atom:")?,
+                    count => write!(
+                        formatter,
+                        "{count} {side} labels name more than one selected atom:"
+                    )?,
+                }
+                for (position, label) in labels.iter().take(3).enumerate() {
+                    let separator = if position == 0 { " " } else { "; " };
+                    write!(formatter, "{separator}{label}")?;
+                }
+                if labels.len() > 3 {
+                    write!(formatter, "; and {} more", labels.len() - 3)?;
+                }
+                formatter.write_str(".")
             }
-            Self::Correspondence(error) => write!(formatter, "{error}"),
+            Self::SymmetryLimitExceeded(limit) => write!(
+                formatter,
+                "The symmetry search exceeded its {}.",
+                limit.describe()
+            ),
+            Self::Perception(_) => formatter.write_str("Cannot perceive hydrogen counts."),
+            Self::UnknownHydrogenCount { atom } => {
+                write!(formatter, "The hydrogen count of {atom} is unknown.")
+            }
             Self::InsufficientSelectedAtoms { selected, minimum } => write!(
                 formatter,
                 "The selection has {}. Rigid alignment needs at least {minimum}.",
@@ -699,7 +781,7 @@ impl fmt::Display for AlignmentGeometry {
 impl std::error::Error for AlignmentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Correspondence(error) => std::error::Error::source(error),
+            Self::Perception(error) => Some(error),
             Self::InvalidRigidTransform(error) => Some(error),
             Self::Item { source, .. } => Some(source.as_ref()),
             Self::Transform(error) => Some(error),
@@ -1779,7 +1861,9 @@ mod tests {
                 &all(&topology_a),
                 Default::default()
             ),
-            Err(AlignmentError::TopologyMismatch)
+            Err(AlignmentError::TopologyMismatch(
+                TopologyMismatch::Reference
+            ))
         );
         assert_eq!(
             crate::alignment::fit(
@@ -1788,7 +1872,9 @@ mod tests {
                 &all(&topology_b),
                 Default::default()
             ),
-            Err(AlignmentError::SelectionTopologyMismatch)
+            Err(AlignmentError::TopologyMismatch(
+                TopologyMismatch::Selection
+            ))
         );
     }
 

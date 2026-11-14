@@ -10,8 +10,8 @@ use kekule::{
         StereoDescriptor, StereoElementKind,
     },
     structure::{
-        measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck, MeasurementError},
-        Geometry, Positions, Structure, StructureSet,
+        measure::{self, BondDihedral, BondDihedralError, ConnectivityCheck},
+        CoordinateError, Geometry, Positions, Structure, StructureSet,
     },
     topology::{InstanceAtomId, InstanceBondId, MoleculeInstanceId},
     units::{Quantity, DEGREE, NANOMETER},
@@ -235,7 +235,7 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
     assert_eq!(
         selected.measure(structure.as_structure_view()),
         Err(BondDihedralError::Measurement(
-            MeasurementError::NumericalFailure
+            CoordinateError::NumericalFailure
         ))
     );
     for &id in &ids {

@@ -1,11 +1,11 @@
 use crate::support::{chain_record, residue_record};
 use kekule::{
-    math::{Lattice, LatticeError, PeriodicCell, Point3, Vector3},
+    math::{Lattice, PeriodicCell, PeriodicCellError, Point3, Vector3},
     molecule::{Element, VanDerWaalsRadiusSource},
     properties::{PropertyKey, PropertyValue},
     solvation::{
-        self, BoxShape, NegativeIon, PeriodicBoxError, PeriodicBoxOptions, PositiveIon,
-        SolvationChargeBasis, SolvationError, SolvationRadii, SolventOptions,
+        self, BoxShape, NegativeIon, PeriodicBoxOptions, PositiveIon, SolvationChargeBasis,
+        SolvationError, SolvationRadii, SolventOptions,
     },
     structure::{Positions, Structure},
     topology::{AtomSiteMetadata, MoleculeClass, ResidueClass},
@@ -138,7 +138,7 @@ fn invalid_box_inputs_are_atomic() {
     .unwrap();
     assert!(matches!(
         solvation::add_periodic_box(&mut m, &PeriodicBoxOptions::Cell(cell)),
-        Err(PeriodicBoxError::NotFullyPeriodic)
+        Err(SolvationError::NotFullyPeriodic)
     ));
     assert_eq!(m, before);
 }
@@ -556,7 +556,7 @@ fn core_periodic_kernel_checks_limits_and_shortest_skew_translation() {
     );
     assert!(matches!(
         geometry.minimum_image(Quantity::new(Vector3::new(f64::NAN, 0.0, 0.0), NANOMETER)),
-        Err(LatticeError::NumericalFailure)
+        Err(PeriodicCellError::NumericalFailure)
     ));
     let bad = PeriodicCell::new(
         Quantity::new(
@@ -572,7 +572,7 @@ fn core_periodic_kernel_checks_limits_and_shortest_skew_translation() {
     .unwrap();
     assert!(matches!(
         Lattice::new(bad).unwrap().shortest_translation(),
-        Err(LatticeError::LimitExceeded(limit))
+        Err(PeriodicCellError::LimitExceeded(limit))
             if limit.resource() == kekule::diagnostics::Resource::LatticeImages
                 && limit.limit() == kekule::math::MAX_LATTICE_IMAGES
                 && limit.observed() > limit.limit()
@@ -630,7 +630,7 @@ fn translation_that_loses_water_geometry_is_rejected_atomically() {
     let before = m.clone();
     assert!(matches!(
         solvation::solvate(&mut m, &options()),
-        Err(SolvationError::Lattice(LatticeError::NumericalFailure))
+        Err(SolvationError::Cell(PeriodicCellError::NumericalFailure))
     ));
     assert_eq!(m, before);
 }

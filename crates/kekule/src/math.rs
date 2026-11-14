@@ -32,11 +32,12 @@
 mod grid;
 mod periodic;
 pub(crate) use grid::{bounding_box, Cell, CellHasher, PointGrid};
-pub use periodic::{Lattice, LatticeError, MAX_LATTICE_IMAGES};
+pub use periodic::{Lattice, MAX_LATTICE_IMAGES};
 
 use std::fmt;
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
 
+use crate::diagnostics::LimitExceeded;
 use crate::units::{Quantity, ScaleValue, UnitError, CANONICAL_LENGTH_UNIT, CUBIC_NANOMETER};
 
 /// A Cartesian point.
@@ -504,12 +505,13 @@ impl Default for RigidTransform {
     }
 }
 
-/// Cell vectors or axis flags do not describe a valid periodic cell.
+/// Cell vectors or axis flags do not describe a valid periodic cell, or a
+/// calculation on the cell's [`Lattice`] failed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum PeriodicCellError {
-    /// The vectors could not be converted to the canonical length unit; see the
-    /// source.
+    /// Cell vectors or a Cartesian input of a lattice calculation could not be
+    /// converted to the canonical length unit; see the source.
     Unit(UnitError),
     /// No axis is marked periodic.
     NoPeriodicAxes,
@@ -519,12 +521,17 @@ pub enum PeriodicCellError {
     DegenerateVectors,
     /// An orthorhombic length is not finite and strictly positive.
     InvalidOrthorhombicLengths,
+    /// A lattice calculation exceeds numerical precision or range, such as
+    /// the reciprocal basis of a nearly degenerate cell.
+    NumericalFailure,
+    /// More than [`MAX_LATTICE_IMAGES`] lattice images would need examination.
+    LimitExceeded(LimitExceeded),
 }
 
 impl fmt::Display for PeriodicCellError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit(_) => formatter.write_str("The cell vectors are not lengths."),
+            Self::Unit(_) => formatter.write_str("A cell vector or position is not a length."),
             Self::NoPeriodicAxes => formatter.write_str("The cell has no periodic axis."),
             Self::NonFiniteVector => formatter.write_str("A cell vector is not finite."),
             Self::DegenerateVectors => {
@@ -533,6 +540,13 @@ impl fmt::Display for PeriodicCellError {
             Self::InvalidOrthorhombicLengths => {
                 formatter.write_str("An orthorhombic cell length is not finite and positive.")
             }
+            Self::NumericalFailure => formatter
+                .write_str("The periodic calculation exceeds the numerical precision or range."),
+            Self::LimitExceeded(limit) => write!(
+                formatter,
+                "The nearest-image search exceeded its {}.",
+                limit.describe()
+            ),
         }
     }
 }

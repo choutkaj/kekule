@@ -2,6 +2,7 @@
 //! over listed geometries of any [`StructureSetRead`], through one implementation.
 
 use crate::diagnostics::Cancellation;
+use crate::diagnostics::TopologyMismatch;
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
 use crate::structure::{
@@ -529,9 +530,7 @@ fn item_pair_sets(
                     .collect()])
             }
             FitAtoms::Correspondence(correspondence) => {
-                correspondence
-                    .ensure_compatible(topology, reference.topology())
-                    .map_err(AlignmentError::Correspondence)?;
+                correspondence.ensure_compatible(topology, reference.topology())?;
                 Ok(vec![correspondence.index_pairs().to_vec()])
             }
             FitAtoms::Symmetric(symmetric) => {
@@ -548,10 +547,14 @@ fn check_empty_selection(
     reference: StructureView<'_>,
 ) -> Result<(), AlignmentError> {
     if !topology.shares_layout(reference.topology()) {
-        return Err(AlignmentError::TopologyMismatch);
+        return Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Reference,
+        ));
     }
     if !selection.topology().shares_layout(topology) {
-        return Err(AlignmentError::SelectionTopologyMismatch);
+        return Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Selection,
+        ));
     }
     Ok(())
 }

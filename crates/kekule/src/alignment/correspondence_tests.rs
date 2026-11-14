@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::TopologyMismatch;
 use crate::math::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use crate::structure::{Positions, Structure};
@@ -75,7 +76,9 @@ fn independent_layouts_align_without_changing_identity_or_coordinates() {
             &selection,
             Default::default()
         ),
-        Err(AlignmentError::TopologyMismatch)
+        Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Reference
+        ))
     );
     let fit = crate::alignment::fit(
         moving.as_structure_view(),
@@ -115,7 +118,7 @@ fn explicit_pairs_preserve_order_and_fit_reordered_partial_structures_in_mixed_u
     .unwrap();
     assert!(matches!(
         AtomCorrespondence::from_same_layout(moving.shared_topology(), reference.shared_topology()),
-        Err(AtomCorrespondenceError::LayoutMismatch)
+        Err(AlignmentError::LayoutMismatch)
     ));
     let order = [(3, 3), (0, 1), (2, 0), (1, 4)];
     let correspondence = pairs(&moving, &reference, &order);
@@ -203,7 +206,7 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
                 input
             )
             .unwrap_err(),
-            AtomCorrespondenceError::InvalidAtom {
+            AlignmentError::InvalidAtom {
                 side,
                 pair_index: 0,
                 atom: invalid
@@ -221,7 +224,7 @@ fn correspondence_rejects_invalid_and_duplicate_atoms_on_each_side() {
         ),
     ] {
         assert!(
-            matches!(AtomCorrespondence::from_pairs(moving.shared_topology(), reference.shared_topology(), [(a,b), repeated]), Err(AtomCorrespondenceError::DuplicateAtom { side: actual, pair_index: 1, .. }) if actual == side)
+            matches!(AtomCorrespondence::from_pairs(moving.shared_topology(), reference.shared_topology(), [(a,b), repeated]), Err(AlignmentError::DuplicateAtom { side: actual, pair_index: 1, .. }) if actual == side)
         );
     }
 }
@@ -259,11 +262,7 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
             &correspondence,
             Default::default()
         ),
-        Err(AlignmentError::Correspondence(
-            AtomCorrespondenceError::TopologyMismatch {
-                side: CorrespondenceSide::Moving
-            }
-        ))
+        Err(AlignmentError::TopologyMismatch(TopologyMismatch::Moving))
     ));
     assert!(matches!(
         crate::alignment::fit(
@@ -272,10 +271,8 @@ fn correspondence_accepts_perceived_snapshots_but_rejects_independent_layouts() 
             &correspondence,
             Default::default()
         ),
-        Err(AlignmentError::Correspondence(
-            AtomCorrespondenceError::TopologyMismatch {
-                side: CorrespondenceSide::Reference
-            }
+        Err(AlignmentError::TopologyMismatch(
+            TopologyMismatch::Reference
         ))
     ));
 }

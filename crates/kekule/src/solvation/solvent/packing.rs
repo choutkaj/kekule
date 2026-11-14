@@ -440,7 +440,7 @@ fn translated(origin: Point3, local: Point3) -> Result<Point3, SolvationError> {
     let delta = local - Point3::origin();
     let placed = origin + delta;
     if !placed.is_finite() || ((placed - origin) - delta).norm() > 1e-8 {
-        return Err(LatticeError::NumericalFailure.into());
+        return Err(PeriodicCellError::NumericalFailure.into());
     }
     Ok(placed)
 }

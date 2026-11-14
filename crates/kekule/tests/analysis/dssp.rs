@@ -194,8 +194,8 @@ fn dssp_codes_cover_the_complete_dssp4_alphabet() {
         DsspSecondaryStructure::Loop
     );
     assert_eq!(
-        DsspSecondaryStructure::try_from('X').unwrap_err().code(),
-        'X'
+        DsspSecondaryStructure::try_from('X').unwrap_err(),
+        DsspError::InvalidCode { code: 'X' }
     );
 }
 

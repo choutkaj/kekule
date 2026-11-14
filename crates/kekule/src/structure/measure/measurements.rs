@@ -1,14 +1,12 @@
 //! Distance, angle, dihedral, and contact measurements over structure views,
 //! with the vector kernels that geometry edits share.
 
-use std::fmt;
-
-use crate::diagnostics::Capitalized;
+use crate::diagnostics::TopologyMismatch;
 use crate::math::{Point3, Vector3};
-use crate::topology::{AtomSelection, InstanceAtomId, SelectionError};
-use crate::units::{Quantity, UnitError, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
+use crate::topology::{AtomSelection, InstanceAtomId};
+use crate::units::{Quantity, CANONICAL_ANGLE_UNIT, CANONICAL_LENGTH_UNIT};
 
-use crate::structure::StructureView;
+use crate::structure::{CoordinateError, StructureView};
 
 /// Optional topology validation for Cartesian measurements.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -27,65 +25,11 @@ pub enum ConnectivityCheck {
     ConsecutiveBonds,
 }
 
-/// A failed Cartesian measurement or spatial selection.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum MeasurementError {
-    /// A measurement atom is not in the view's topology.
-    InvalidAtomId(InstanceAtomId),
-    /// Consecutive measurement atoms lack a direct bond, in argument order.
-    MissingBond {
-        /// The earlier atom of the pair.
-        a: InstanceAtomId,
-        /// The later atom of the pair.
-        b: InstanceAtomId,
-    },
-    /// A selection does not match the view's topology; see the source.
-    Selection(SelectionError),
-    /// The cutoff could not be converted to the canonical length unit; see
-    /// the source.
-    Unit(UnitError),
-    /// The cutoff is negative or not finite.
-    InvalidCutoff,
-    /// A direction needed by the measurement has zero length.
-    DegenerateGeometry,
-    /// An intermediate length is not finite.
-    NumericalFailure,
-}
-
-impl fmt::Display for MeasurementError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidAtomId(atom) => write!(f, "{} is not in the topology.", Capitalized(atom)),
-            Self::MissingBond { a, b } => write!(f, "{} and {b} are not bonded.", Capitalized(a)),
-            Self::Selection(error) => error.fmt(f),
-            Self::Unit(error) => error.fmt(f),
-            Self::InvalidCutoff => f.write_str("The distance cutoff is negative or not finite."),
-            Self::DegenerateGeometry => {
-                f.write_str("The atoms define no angle or dihedral: a direction has zero length.")
-            }
-            Self::NumericalFailure => {
-                f.write_str("The measurement exceeds the finite numerical range.")
-            }
-        }
-    }
-}
-
-impl std::error::Error for MeasurementError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Selection(error) => error.source(),
-            Self::Unit(error) => error.source(),
-            _ => None,
-        }
-    }
-}
-
-fn point(view: StructureView<'_>, atom: InstanceAtomId) -> Result<Point3, MeasurementError> {
+fn point(view: StructureView<'_>, atom: InstanceAtomId) -> Result<Point3, CoordinateError> {
     let index = view
         .topology()
         .atom_index(atom)
-        .ok_or(MeasurementError::InvalidAtomId(atom))?;
+        .ok_or(CoordinateError::InvalidAtomId(atom))?;
     Ok(view.positions().values().value()[index.index()])
 }
 
@@ -93,42 +37,42 @@ fn check_connectivity(
     view: StructureView<'_>,
     atoms: &[InstanceAtomId],
     connectivity: ConnectivityCheck,
-) -> Result<(), MeasurementError> {
+) -> Result<(), CoordinateError> {
     if connectivity == ConnectivityCheck::Unrestricted {
         return Ok(());
     }
     let topology = view.topology();
     for &atom in atoms {
         if topology.atom_index(atom).is_none() {
-            return Err(MeasurementError::InvalidAtomId(atom));
+            return Err(CoordinateError::InvalidAtomId(atom));
         }
     }
     for pair in atoms.windows(2) {
         let (a, b) = (pair[0], pair[1]);
         let bonded = topology
             .atom(a)
-            .ok_or(MeasurementError::InvalidAtomId(a))?
+            .ok_or(CoordinateError::InvalidAtomId(a))?
             .neighbors()
             .any(|neighbor| neighbor.id() == b);
         if !bonded {
-            return Err(MeasurementError::MissingBond { a, b });
+            return Err(CoordinateError::MissingBond { a, b });
         }
     }
     Ok(())
 }
 
-pub(in crate::structure) fn norm(vector: Vector3) -> Result<f64, MeasurementError> {
+pub(in crate::structure) fn norm(vector: Vector3) -> Result<f64, CoordinateError> {
     let value = vector.x.hypot(vector.y).hypot(vector.z);
     if !value.is_finite() {
-        return Err(MeasurementError::NumericalFailure);
+        return Err(CoordinateError::NumericalFailure);
     }
     Ok(value)
 }
 
-pub(in crate::structure) fn normalized(vector: Vector3) -> Result<Vector3, MeasurementError> {
+pub(in crate::structure) fn normalized(vector: Vector3) -> Result<Vector3, CoordinateError> {
     let length = norm(vector)?;
     if length == 0.0 {
-        return Err(MeasurementError::DegenerateGeometry);
+        return Err(CoordinateError::DegenerateGeometry);
     }
     // Divide components directly: forming 1 / length first can overflow for
     // finite subnormal vectors, even though the normalized vector is finite.
@@ -148,7 +92,7 @@ pub fn distance(
     a: InstanceAtomId,
     b: InstanceAtomId,
     connectivity: ConnectivityCheck,
-) -> Result<Quantity<f64>, MeasurementError> {
+) -> Result<Quantity<f64>, CoordinateError> {
     check_connectivity(view, &[a, b], connectivity)?;
     Ok(Quantity::new(
         norm(point(view, b)? - point(view, a)?)?,
@@ -167,7 +111,7 @@ pub fn angle(
     b: InstanceAtomId,
     c: InstanceAtomId,
     connectivity: ConnectivityCheck,
-) -> Result<Quantity<f64>, MeasurementError> {
+) -> Result<Quantity<f64>, CoordinateError> {
     check_connectivity(view, &[a, b, c], connectivity)?;
     Ok(Quantity::new(
         angle_points(point(view, a)?, point(view, b)?, point(view, c)?)?,
@@ -179,7 +123,7 @@ pub(in crate::structure) fn angle_points(
     a: Point3,
     b: Point3,
     c: Point3,
-) -> Result<f64, MeasurementError> {
+) -> Result<f64, CoordinateError> {
     let u = normalized(a - b)?;
     let v = normalized(c - b)?;
     Ok(norm(u.cross(v))?.atan2(u.dot(v)))
@@ -199,7 +143,7 @@ pub fn dihedral(
     c: InstanceAtomId,
     d: InstanceAtomId,
     connectivity: ConnectivityCheck,
-) -> Result<Quantity<f64>, MeasurementError> {
+) -> Result<Quantity<f64>, CoordinateError> {
     check_connectivity(view, &[a, b, c, d], connectivity)?;
     let [a, b, c, d] = [
         point(view, a)?,
@@ -218,7 +162,7 @@ pub(in crate::structure) fn dihedral_points(
     b: Point3,
     c: Point3,
     d: Point3,
-) -> Result<f64, MeasurementError> {
+) -> Result<f64, CoordinateError> {
     let u = normalized(b - a)?;
     let v = normalized(c - b)?;
     let w = normalized(d - c)?;
@@ -241,19 +185,18 @@ pub fn within(
     candidates: &AtomSelection,
     reference: &AtomSelection,
     cutoff: Quantity<f64>,
-) -> Result<AtomSelection, MeasurementError> {
+) -> Result<AtomSelection, CoordinateError> {
     let topology = view.shared_topology();
-    candidates
-        .ensure_compatible(&topology)
-        .map_err(MeasurementError::Selection)?;
-    reference
-        .ensure_compatible(&topology)
-        .map_err(MeasurementError::Selection)?;
+    for selection in [candidates, reference] {
+        selection
+            .ensure_compatible(&topology)
+            .map_err(|_| CoordinateError::TopologyMismatch(TopologyMismatch::Selection))?;
+    }
     let cutoff = cutoff
         .value_in(CANONICAL_LENGTH_UNIT)
-        .map_err(MeasurementError::Unit)?;
+        .map_err(CoordinateError::Unit)?;
     if !cutoff.is_finite() || cutoff < 0.0 {
-        return Err(MeasurementError::InvalidCutoff);
+        return Err(CoordinateError::InvalidCutoff);
     }
     let points = reference
         .atom_ids()
@@ -310,5 +253,6 @@ pub fn within(
             return Err(error);
         }
     }
-    AtomSelection::from_atoms(topology.clone(), selected).map_err(MeasurementError::Selection)
+    Ok(AtomSelection::from_atoms(topology.clone(), selected)
+        .expect("selected atoms are atoms of the view's topology"))
 }
