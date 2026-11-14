@@ -40,6 +40,18 @@ python -m unittest discover -s tools/components -p "test_*.py"
 python -m unittest discover -s benchmarks/tests -p "test_*.py"
 ```
 
+## Test layout
+
+Follow the "Tests" rules in `SPEC.md`:
+
+- Unit tests go in the module's `tests.rs` (`#[cfg(test)] mod tests;`), split
+  into `<module>/tests/<topic>.rs` when large. No inline test modules, no
+  `*_tests.rs` files.
+- Shared unit-test fixtures go in `crates/kekule/src/test_fixtures.rs`; import
+  them by name.
+- A test that needs only the public API goes in the integration binary of its
+  domain, `crates/kekule/tests/<domain>/`. Keep each topic in one tree.
+
 ## Branches and commits
 
 - Do not push feature work directly to `main`; use a short-lived branch based on current `main`.
