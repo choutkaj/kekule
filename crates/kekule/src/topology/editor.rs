@@ -1,4 +1,22 @@
 //! Transactional system edits, with molecular chemistry staged per affected occurrence.
+
+/// Evaluates `$body` with `$graph` bound to a group's graph, published or
+/// draft, so generic graph reads serve both.
+macro_rules! with_group_graph {
+    ($group:expr, |$graph:ident| $body:expr) => {
+        match $group {
+            GroupGraph::Published(molecule) => {
+                let $graph: &crate::molecule::Graph = molecule;
+                $body
+            }
+            GroupGraph::Draft(editor) => {
+                let $graph = editor.graph();
+                $body
+            }
+        }
+    };
+}
+
 mod append;
 mod error;
 mod hierarchy;
@@ -18,8 +36,8 @@ use super::{
     ResidueLabels, Topology, TopologyBuildError, TopologyBuilder,
 };
 use crate::molecule::{
-    Atom, AtomId, BondId, BondOrder, Molecule, MoleculeEditor, MoleculeError,
-    MoleculePublicationError,
+    Atom, AtomId, BondId, BondOrder, Molecule, MoleculeCorrespondence, MoleculeEditor,
+    MoleculeError, MoleculePublicationError,
 };
 use crate::properties::{
     OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyValue, RawPropertyTable,
@@ -45,6 +63,130 @@ enum GroupChemistry {
     Added(Arc<Molecule>, bool),
     Draft(Box<MoleculeEditor>),
 }
+/// One group's chemistry: published, or a draft being edited.
+#[derive(Clone, Copy)]
+enum GroupGraph<'a> {
+    Published(&'a Molecule),
+    Draft(&'a MoleculeEditor),
+}
+
+/// An iterator over a published or a draft group's graph.
+enum GroupIter<P, D> {
+    Published(P),
+    Draft(D),
+}
+
+impl<P: Iterator, D: Iterator<Item = P::Item>> Iterator for GroupIter<P, D> {
+    type Item = P::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Published(iter) => iter.next(),
+            Self::Draft(iter) => iter.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Published(iter) => iter.size_hint(),
+            Self::Draft(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl<'a> GroupGraph<'a> {
+    fn atom_count(self) -> usize {
+        with_group_graph!(self, |graph| graph.atom_count())
+    }
+
+    fn atom(self, id: AtomId) -> Option<&'a Atom> {
+        with_group_graph!(self, |graph| graph.atom(id))
+    }
+
+    fn bond(self, id: BondId) -> Option<&'a crate::molecule::Bond> {
+        with_group_graph!(self, |graph| graph.bond(id))
+    }
+
+    fn perception(self) -> &'a crate::molecule::Perception {
+        match self {
+            Self::Published(molecule) => molecule.perception(),
+            Self::Draft(editor) => editor.perception(),
+        }
+    }
+
+    fn properties(self) -> &'a crate::properties::MoleculeProperties {
+        match self {
+            Self::Published(molecule) => molecule.properties(),
+            Self::Draft(editor) => editor.properties(),
+        }
+    }
+
+    fn require_neighbors(
+        self,
+        id: AtomId,
+    ) -> Result<impl Iterator<Item = AtomId> + 'a, MoleculeError> {
+        Ok(match self {
+            Self::Published(molecule) => GroupIter::Published(molecule.require_neighbors(id)?),
+            Self::Draft(editor) => GroupIter::Draft(editor.graph().require_neighbors(id)?),
+        })
+    }
+
+    fn require_incident_bonds(
+        self,
+        id: AtomId,
+    ) -> Result<impl Iterator<Item = (BondId, &'a crate::molecule::Bond)> + 'a, MoleculeError> {
+        Ok(match self {
+            Self::Published(molecule) => GroupIter::Published(molecule.require_incident_bonds(id)?),
+            Self::Draft(editor) => GroupIter::Draft(editor.graph().require_incident_bonds(id)?),
+        })
+    }
+
+    fn require_bond_between(self, a: AtomId, b: AtomId) -> Result<Option<BondId>, MoleculeError> {
+        with_group_graph!(self, |graph| graph.require_bond_between(a, b))
+    }
+
+    fn stereo_elements(
+        self,
+    ) -> impl Iterator<
+        Item = (
+            crate::stereo::StereoElementId,
+            &'a crate::stereo::StereoElement,
+        ),
+    > {
+        match self {
+            Self::Published(molecule) => GroupIter::Published(molecule.stereo_elements()),
+            Self::Draft(editor) => GroupIter::Draft(editor.graph().stereo_elements()),
+        }
+    }
+
+    fn connected_components(self) -> Vec<Vec<AtomId>> {
+        with_group_graph!(self, |graph| graph.connected_components())
+    }
+
+    /// A draft to edit, with the group's IDs.
+    fn to_editor(self) -> MoleculeEditor {
+        match self {
+            Self::Published(molecule) => molecule.to_editor(),
+            Self::Draft(editor) => {
+                let mut draft = editor.clone();
+                draft.take_pruned_stereo_elements();
+                draft
+            }
+        }
+    }
+
+    /// Appends this group's chemistry to `target`.
+    fn append_to(
+        self,
+        target: &mut MoleculeEditor,
+    ) -> Result<MoleculeCorrespondence, MoleculeError> {
+        match self {
+            Self::Published(molecule) => target.append_molecule(molecule),
+            Self::Draft(editor) => target.append_draft(editor),
+        }
+    }
+}
+
 /// One staging group: an untouched source occurrence read from the source,
 /// a stored group, or a group merged into another.
 #[derive(Debug, Clone)]
@@ -652,7 +794,7 @@ impl TopologyEditor {
         let target = left.group.min(right.group);
         let other = left.group.max(right.group);
         let mut draft = self.molecule(target).to_editor();
-        let mapping = draft.append_working(self.molecule(other))?;
+        let mapping = self.molecule(other).append_to(&mut draft)?;
         let local_a = if left.group == target {
             left.local
         } else {
@@ -786,7 +928,7 @@ impl TopologyEditor {
                 let target = bond_group.min(atom_group);
                 let other = bond_group.max(atom_group);
                 let mut draft = self.molecule(target).to_editor();
-                let map = draft.append_working(self.molecule(other))?;
+                let map = self.molecule(other).append_to(&mut draft)?;
                 self.commit_merge(target, other, draft, &map);
             }
         }
@@ -1049,22 +1191,20 @@ impl TopologyEditor {
     fn group_atoms(&self, group: usize) -> Vec<(AtomId, EditAtomId)> {
         match &self.groups[group] {
             GroupSlot::Live(stored) => stored.atoms.iter().map(|(&l, &h)| (l, h)).collect(),
-            _ => self
-                .molecule(group)
+            _ => with_group_graph!(self.molecule(group), |graph| graph
                 .atom_ids()
                 .map(|local| (local, self.group_atom(group, local)))
-                .collect(),
+                .collect()),
         }
     }
     /// A live group's bonds with their handles, in local ID order.
     fn group_bonds(&self, group: usize) -> Vec<(BondId, EditBondId)> {
         match &self.groups[group] {
             GroupSlot::Live(stored) => stored.bonds.iter().map(|(&l, &h)| (l, h)).collect(),
-            _ => self
-                .molecule(group)
+            _ => with_group_graph!(self.molecule(group), |graph| graph
                 .bond_ids()
                 .map(|local| (local, self.group_bond(group, local)))
-                .collect(),
+                .collect()),
         }
     }
     /// The number of live atoms of a live group.
@@ -1095,15 +1235,18 @@ impl TopologyEditor {
             }
         }
     }
-    fn molecule(&self, group: usize) -> &Molecule {
+    fn molecule(&self, group: usize) -> GroupGraph<'_> {
         match &self.groups[group] {
-            GroupSlot::Source => self
-                .source_ref()
-                .definition_molecule(MoleculeInstanceId::new(group as u32)),
+            GroupSlot::Source => GroupGraph::Published(
+                self.source_ref()
+                    .definition_molecule(MoleculeInstanceId::new(group as u32)),
+            ),
             GroupSlot::Live(stored) => match &stored.chemistry {
-                GroupChemistry::Source(id) => self.source_ref().definition(*id).unwrap().molecule(),
-                GroupChemistry::Added(molecule, _) => molecule,
-                GroupChemistry::Draft(editor) => editor.working(),
+                GroupChemistry::Source(id) => {
+                    GroupGraph::Published(self.source_ref().definition(*id).unwrap().molecule())
+                }
+                GroupChemistry::Added(molecule, _) => GroupGraph::Published(molecule),
+                GroupChemistry::Draft(editor) => GroupGraph::Draft(editor),
             },
             GroupSlot::Merged => unreachable!("merged groups have no molecule"),
         }

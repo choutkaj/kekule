@@ -83,9 +83,13 @@ See the [crate overview](crates/kekule/src/lib.rs),
 ## Represented and derived chemistry
 
 `Graph` is authoritative atom, bond, connectivity, and represented stereo state.
-Local `AtomId` and `BondId` identify entities within one molecule. Published IDs
-are dense in every ID space; drafts may hold deleted slots, and publication
-renumbers survivors in draft order and reports the correspondence. Atom
+Local `AtomId` and `BondId` identify entities within one molecule. A published
+graph is dense in every ID space and never changes structure in place. Only a
+`MoleculeEditor` edits structure, on a `DraftGraph`: the same graph whose
+deleted entities leave empty slots. Publication renumbers survivors in draft
+order and reports the correspondence; a draft without deletions keeps its IDs.
+Whole-molecule transformations, such as hydrogen addition and removal, edit a
+draft and republish. Atom
 chemistry includes element, isotope, charge, radical, hydrogen declaration, and
 atom map; annotations use properties instead of extending every atom or bond
 with a map. Bonds carry localized orders. Aromaticity is perceived state, not a
@@ -225,8 +229,9 @@ depending on a mutation guard's destructor being called.
 | `TopologyEditor` | Instance-local atom, bond, component, and hierarchy changes | Repartitioned topology |
 | `StructureEditor` | Structural edits coordinated with one structure | Topology and coordinates together |
 
-`MoleculeEditor` is a draft, not a molecule view. Mutable chemistry access
-invalidates perception immediately; validated no-op replacements retain state.
+`MoleculeEditor` is a draft, not a molecule view: it owns its draft graph,
+perception, and properties. Mutable chemistry access invalidates perception
+immediately; validated no-op replacements retain state.
 Drafts copy on write: a draft reads its source snapshot until an edit changes,
 moves, or deletes an entity, publication shares every untouched definition and
 its perception with the source, and the source snapshot is never written, so an
@@ -306,8 +311,9 @@ every repeated entity.
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
 take the table's row type. Writes go through length-preserving `*Mut` guards:
 whole-column replacement or removal, single-cell writes, and transactional
-batches. A draft editor addresses allocated slots, and writing to a deleted
-slot fails. `StructureEditor` does not dereference to its topology draft:
+batches. Published tables have one row per entity. Draft tables have one row
+per slot, the draft graph decides which rows are live, and writing to a
+deleted slot fails. `StructureEditor` does not dereference to its topology draft:
 `topology()` reads it, `topology_mut()` reaches edits that need no geometry,
 and its own `properties_mut()` holds structure-scoped values, so the two scopes
 never shadow each other.

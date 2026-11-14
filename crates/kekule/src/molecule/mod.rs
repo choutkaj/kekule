@@ -10,9 +10,11 @@
 //! aromaticity, is reconstructible [`Perception`] installed by
 //! [`Molecule::perceive`].
 //!
-//! Use [`MoleculeEditor`] for construction and structural mutation so the
-//! non-empty, connected publication invariant is checked transactionally;
-//! [`AtomMut`] and [`BondMut`] are its checked mutable views, and
+//! A published molecule's structure never changes in place. Construction and
+//! structural mutation happen on a [`MoleculeEditor`], whose [`DraftGraph`] may
+//! be empty, disconnected, or hold deleted slots; publication checks the
+//! non-empty, connected invariant transactionally and renumbers IDs densely.
+//! [`AtomMut`] and [`BondMut`] are the editor's checked mutable views, and
 //! [`MoleculeCorrespondence`] maps IDs across appends and publication.
 //! Operations fail with [`MoleculeError`] or, at publication,
 //! [`MoleculePublicationError`].
@@ -58,16 +60,17 @@ pub(crate) use delocalization::{
     ConjugationModel, ConjugationPerception, ResonanceGroup, ResonanceModel, ResonancePerception,
 };
 pub(crate) use editor::{canonicalize_represented_chemistry, validate_represented_stereo};
-pub use editor::{MoleculeCorrespondence, MoleculeEditor};
+pub use editor::{AtomMut, BondMut, MoleculeCorrespondence, MoleculeEditor};
 pub use element::{Element, ElementError};
 pub use element_reference::VanDerWaalsRadiusSource;
 pub use error::{MoleculeError, MoleculePublicationError};
-pub use graph::Graph;
+pub(crate) use graph::SlotCompaction;
+pub use graph::{Dense, DraftGraph, Graph, SlotLiveness, Sparse};
 pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};
 pub use ids::{AtomId, BondId};
 pub(crate) use ids::{StereoElementId, StereoGroupId};
-pub(crate) use owner::SlotCompaction;
-pub use owner::{AtomMut, BondMut, Molecule};
+pub use owner::Molecule;
+pub(crate) use owner::{explicit_hydrogen_count, implicit_hydrogen_count};
 use perception::validate_perception;
 pub(crate) use perception::{
     AromaticityModel, AromaticityPerception, Ring, RingBasisModel, RingBasisState, RingMembership,

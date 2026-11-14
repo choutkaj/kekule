@@ -163,7 +163,6 @@ fn failed_source_stereo_normalization_is_transactional() {
     let before = molecule.clone();
 
     let error = molecule
-        .working_mut()
         .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect_err("unassembled stereo mark should fail normalization");
 
@@ -208,7 +207,6 @@ fn normalization_treats_conflicting_wedges_as_nonfatal_ambiguity() {
     let mut molecule = mol;
 
     let report = molecule
-        .working_mut()
         .canonicalize_fixture_with_source_stereo(&source_stereo)
         .expect("ambiguous drawing wedges should not reject valid chemistry");
     assert!(report
@@ -232,13 +230,13 @@ fn failed_default_valence_perception_is_transactional() {
         mol.add_bond(carbon, hydrogen, BondOrder::Single)
             .expect("bond");
     }
-    rings_api::perceive_rings(mol.working_mut(), RingPerceptionOptions::default())
+    let mut mol = mol.into_unchecked();
+    rings_api::perceive_rings(&mut mol, RingPerceptionOptions::default())
         .expect("ring perception should succeed");
     let mut molecule = mol;
     let before = molecule.clone();
 
     let error = molecule
-        .working_mut()
         .perceive()
         .expect_err("pentavalent carbon should fail valence");
 
@@ -306,15 +304,15 @@ fn normalization_cleanup_invalidates_preexisting_perception() {
         .expect("bond");
     mol.add_bond(chlorine, hydroxyl, BondOrder::Single)
         .expect("hydroxyl bond");
-    mark_all_fresh(mol.working_mut());
+    let mut mol = mol.into_unchecked();
+    mark_all_fresh(&mut mol);
     let mut molecule = mol;
 
     molecule
-        .working_mut()
         .canonicalize_fixture()
         .expect("representation cleanup");
 
-    assert_all_stale(molecule.working());
+    assert_all_stale(&molecule);
     assert_eq!(molecule.atom(chlorine).expect("chlorine").formal_charge, 1);
     assert_eq!(molecule.atom(oxo).expect("oxygen").formal_charge, -1);
     assert_eq!(
@@ -343,17 +341,15 @@ fn valence_reports_excess_common_valence() {
         mol.add_bond(c, h, BondOrder::Single).expect("bond");
     }
 
-    let error = valence_api::perceive_valence(
-        mol.working_mut(),
-        ValenceModel::RdkitLike,
-        Default::default(),
-    )
-    .expect_err("pentavalent carbon should fail strict perception");
+    let mut mol = mol.into_unchecked();
+    let error =
+        valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default())
+            .expect_err("pentavalent carbon should fail strict perception");
 
     assert_eq!(error.violations.len(), 1);
 
     valence_api::perceive_valence(
-        mol.working_mut(),
+        &mut mol,
         ValenceModel::RdkitLike,
         ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
     )
@@ -398,16 +394,13 @@ fn failed_strict_valence_perception_preserves_complete_previous_perception_state
         .with_aromaticity(AromaticityModel::RdkitLike, Vec::new(), Vec::new())
         .expect("previous aromaticity")
         .build();
-    mol.working_mut()
-        .install_perception(previous.clone())
+    let mut mol = mol.into_unchecked();
+    mol.install_perception(previous.clone())
         .expect("previous perception");
 
-    let error = valence_api::perceive_valence(
-        mol.working_mut(),
-        ValenceModel::RdkitLike,
-        Default::default(),
-    )
-    .expect_err("pentavalent carbon should fail strict perception");
+    let error =
+        valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default())
+            .expect_err("pentavalent carbon should fail strict perception");
 
     assert!(matches!(
         error.violations.as_slice(),
@@ -429,12 +422,9 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
         .add_atom(charged_atom("C", 7))
         .expect("atom identifier capacity");
 
-    valence_api::perceive_valence(
-        molecule.working_mut(),
-        ValenceModel::RdkitLike,
-        Default::default(),
-    )
-    .expect("RDKit UpdatePropertyCache clamps the effective atomic number even when strict");
+    let mut molecule = molecule.into_unchecked();
+    valence_api::perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default())
+        .expect("RDKit UpdatePropertyCache clamps the effective atomic number even when strict");
     assert_eq!(
         molecule
             .perception()
@@ -444,7 +434,7 @@ fn valence_charge_adjustment_clamps_to_the_rdkit_periodic_table() {
     );
 
     valence_api::perceive_valence(
-        molecule.working_mut(),
+        &mut molecule,
         ValenceModel::RdkitLike,
         ValenceOptions::default().with_validation(crate::molecule::ValenceValidation::Permissive),
     )
@@ -473,12 +463,10 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
             .expect("bond");
     }
 
-    let error = valence_api::perceive_valence(
-        mol.working_mut(),
-        ValenceModel::RdkitLike,
-        Default::default(),
-    )
-    .expect_err("high-degree carbon should fail strict perception");
+    let mut mol = mol.into_unchecked();
+    let error =
+        valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default())
+            .expect_err("high-degree carbon should fail strict perception");
 
     assert_eq!(
         error.violations,
@@ -517,11 +505,9 @@ fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
             .add_atom(element_atom(symbol))
             .expect("atom identifier capacity");
 
-        let report = valence_api::perceive_valence(
-            mol.working_mut(),
-            ValenceModel::RdkitLike,
-            Default::default(),
-        );
+        let mut mol = mol.into_unchecked();
+        let report =
+            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
 
         assert!(report.is_ok(), "neutral {symbol} should be supported");
         assert_eq!(
@@ -554,8 +540,9 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
                 .add_bond(accepted_center, hydrogen, BondOrder::Single)
                 .expect("bond");
         }
+        let mut accepted_mol = accepted_mol.into_unchecked();
         let accepted_report = valence_api::perceive_valence(
-            accepted_mol.working_mut(),
+            &mut accepted_mol,
             ValenceModel::RdkitLike,
             Default::default(),
         );
@@ -576,8 +563,9 @@ fn valence_keeps_rdkit_hypervalent_anion_limits() {
                 .add_bond(rejected_center, hydrogen, BondOrder::Single)
                 .expect("bond");
         }
+        let mut rejected_mol = rejected_mol.into_unchecked();
         let rejected_error = valence_api::perceive_valence(
-            rejected_mol.working_mut(),
+            &mut rejected_mol,
             ValenceModel::RdkitLike,
             Default::default(),
         )
@@ -606,8 +594,9 @@ fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() 
             .add_bond(phosphorus, fluorine, BondOrder::Single)
             .expect("P-F bond");
     }
+    let mut hexafluorophosphate = hexafluorophosphate.into_unchecked();
     assert!(valence_api::perceive_valence(
-        hexafluorophosphate.working_mut(),
+        &mut hexafluorophosphate,
         ValenceModel::RdkitLike,
         Default::default()
     )
@@ -631,8 +620,9 @@ fn valence_accepts_rdkit_phosphorus_minus_one_and_hydride_compatibility_cases() 
     bridged_hydride
         .add_bond(hydrogen, boron_b, BondOrder::Single)
         .expect("second hydride bond");
+    let mut bridged_hydride = bridged_hydride.into_unchecked();
     assert!(valence_api::perceive_valence(
-        bridged_hydride.working_mut(),
+        &mut bridged_hydride,
         ValenceModel::RdkitLike,
         Default::default()
     )
@@ -660,11 +650,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             .add_atom(charged_atom(symbol, charge))
             .expect("atom identifier capacity");
 
-        let report = valence_api::perceive_valence(
-            mol.working_mut(),
-            ValenceModel::RdkitLike,
-            Default::default(),
-        );
+        let mut mol = mol.into_unchecked();
+        let report =
+            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
 
         assert!(report.is_ok(), "{symbol}{charge:+} should be supported");
         assert_eq!(
@@ -682,11 +670,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             .add_atom(element_atom(symbol))
             .expect("atom identifier capacity");
 
-        let report = valence_api::perceive_valence(
-            mol.working_mut(),
-            ValenceModel::RdkitLike,
-            Default::default(),
-        );
+        let mut mol = mol.into_unchecked();
+        let report =
+            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
 
         assert!(
             report.is_ok(),
@@ -719,8 +705,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             .add_bond(carbon, nitrogen, BondOrder::Triple)
             .expect("cyanide bond");
     }
+    let mut mercury_cyanide = mercury_cyanide.into_unchecked();
     let report = valence_api::perceive_valence(
-        mercury_cyanide.working_mut(),
+        &mut mercury_cyanide,
         ValenceModel::RdkitLike,
         Default::default(),
     );
@@ -746,8 +733,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             .expect("bond");
     }
 
+    let mut covalent_aluminum = covalent_aluminum.into_unchecked();
     let report = valence_api::perceive_valence(
-        covalent_aluminum.working_mut(),
+        &mut covalent_aluminum,
         ValenceModel::RdkitLike,
         Default::default(),
     );
@@ -777,8 +765,9 @@ fn valence_supports_simple_pubchem_main_group_ions_and_salts() {
             .expect("bond");
     }
 
+    let mut neutral_magnesium = neutral_magnesium.into_unchecked();
     let report = valence_api::perceive_valence(
-        neutral_magnesium.working_mut(),
+        &mut neutral_magnesium,
         ValenceModel::RdkitLike,
         Default::default(),
     );

@@ -1,55 +1,27 @@
+//! [`MoleculeEditor`], the draft that owns every structural change to a
+//! molecule.
+//!
+//! The draft graph may be empty, disconnected, or hold deleted slots.
+//! Structural edits invalidate perception and clear owner properties while
+//! keeping annotations on surviving atoms and bonds; property edits leave
+//! perception intact. Graph edits prune the represented stereo they
+//! invalidate and record it ([`MoleculeEditor::pruned_stereo_elements`]).
+//! Publication validates the draft and renumbers it densely.
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::ops::{Deref, DerefMut};
 
-use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
-use crate::stereo::StereoViolation;
-use crate::DraftError;
+use crate::diagnostics::{CapacityExceeded, Countable};
+use crate::properties::{LiveRows, MoleculeProperties, MoleculePropertiesMut};
 
 use super::*;
 
-/// An internal graph-storage invariant violation. The public API cannot
-/// produce one, so publication checks it only in debug builds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GraphValidationError {
-    AdjacencySlotCount,
-    AtomPropertySlotCount { expected: usize, actual: usize },
-    BondPropertySlotCount { expected: usize, actual: usize },
-    TombstonedAtomHasAdjacency { atom: AtomId },
-    InvalidBondEndpoint { bond: BondId },
-    InvalidAdjacencyBond { atom: AtomId, bond: BondId },
-    AdjacencyEndpointMismatch { atom: AtomId, bond: BondId },
-    DuplicateAdjacencyEntry { atom: AtomId, bond: BondId },
-    MissingAdjacencyEntry { atom: AtomId, bond: BondId },
-}
+mod publication;
+mod stereo;
 
-impl Molecule {
-    /// Starts a detached transaction from this published molecule.
-    pub fn to_editor(&self) -> MoleculeEditor {
-        self.clone().into_editor()
-    }
+pub(crate) use publication::canonicalize_represented_chemistry;
+pub(crate) use stereo::validate_represented_stereo;
 
-    /// Moves this molecule into an editor without cloning its graph or properties.
-    pub fn into_editor(self) -> MoleculeEditor {
-        MoleculeEditor {
-            working: self,
-            pruned_stereo: Vec::new(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_connected(&self) -> bool {
-        self.validate_connected().is_ok()
-    }
-
-    /// Validates the public connectedness invariant.
-    pub(crate) fn validate_connected(&self) -> Result<(), MoleculePublicationError> {
-        let components = self.connected_components().len();
-        if components == 1 {
-            Ok(())
-        } else {
-            Err(MoleculePublicationError::Disconnected { components })
-        }
-    }
-}
 /// Transactional construction and structural editing state.
 ///
 /// The working graph may be empty, disconnected, or chemically incomplete.
@@ -61,17 +33,15 @@ impl Molecule {
 /// | Task | Operations |
 /// | --- | --- |
 /// | Start | [`Self::new`], [`Molecule::to_editor`], [`Molecule::into_editor`] |
-/// | Inspect | [`Graph`] reads through `Deref` ([`Graph::atoms`], [`Graph::bonds`], [`Graph::neighbors`]), [`Self::connected_components`] |
-/// | Change graph | [`Self::replace_atom`], [`Self::replace_bond`], [`Self::delete_atoms`], [`Self::retain_atoms`] |
+/// | Inspect | [`DraftGraph`] reads through `Deref` ([`Graph::atoms`], [`Graph::bonds`], [`Graph::neighbors`]), [`Self::connected_components`] |
+/// | Change graph | [`Self::add_atom`], [`Self::add_bond`], [`Self::replace_atom`], [`Self::replace_bond`], [`Self::delete_atoms`], [`Self::retain_atoms`] |
 /// | Combine fragments | [`Self::append_molecule`] with returned ID mappings |
 /// | Annotate | [`Self::properties_mut`] (rows are draft atom and bond slots) |
-/// | Edit stereo | [`Self::replace_stereo_element`], [`Self::replace_stereo_group`] |
+/// | Edit stereo | [`Self::add_stereo_element`], [`Self::replace_stereo_element`], [`Self::replace_stereo_group`] |
 ///
-/// Structural changes invalidate perception and clear owner properties while
-/// retaining annotations on surviving atom/bond identities. Generic property
-/// edits leave perception intact. Draft atom and bond IDs remain stable until
-/// [`Self::clear`]; iteration skips deleted slots. Publication renumbers every
-/// ID space densely, so a published [`Molecule`] never contains deleted slots;
+/// Draft atom and bond IDs remain stable until [`Self::clear`]; iteration
+/// skips deleted slots. Publication renumbers every ID space densely, so a
+/// published [`Molecule`] never contains deleted slots;
 /// [`Self::finish_with_correspondence`] maps draft IDs to published IDs.
 ///
 /// An unfinished editor cannot be passed to algorithms requiring a published molecule:
@@ -97,31 +67,173 @@ impl Molecule {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct MoleculeEditor {
-    pub(super) working: Molecule,
+    graph: DraftGraph,
+    perception: Perception,
+    properties: MoleculeProperties,
     /// Stereo elements that structural edits removed, in removal order.
-    pub(super) pruned_stereo: Vec<StereoElementId>,
+    pruned_stereo: Vec<StereoElementId>,
 }
 
-impl std::ops::Deref for MoleculeEditor {
-    type Target = Graph;
+impl Deref for MoleculeEditor {
+    type Target = DraftGraph;
 
-    /// Graph reads of the draft. Draft IDs may be sparse; the editor never
-    /// dereferences to a published [`Molecule`].
-    fn deref(&self) -> &Graph {
-        &self.working.graph
+    fn deref(&self) -> &DraftGraph {
+        &self.graph
     }
 }
 
 impl Default for MoleculeEditor {
     fn default() -> Self {
         Self {
-            working: Molecule {
-                graph: Graph::default(),
-                perception: Perception::default(),
-                properties: MoleculeProperties::new(0, 0),
-            },
+            graph: DraftGraph::default(),
+            perception: Perception::default(),
+            properties: MoleculeProperties::new(0, 0),
             pruned_stereo: Vec::new(),
         }
+    }
+}
+
+impl Molecule {
+    /// Starts a detached transaction from this published molecule.
+    pub fn to_editor(&self) -> MoleculeEditor {
+        self.clone().into_editor()
+    }
+
+    /// Moves this molecule into an editor whose draft IDs equal its IDs,
+    /// without cloning its atoms, bonds, or properties.
+    pub fn into_editor(self) -> MoleculeEditor {
+        MoleculeEditor {
+            graph: self.graph.into_draft(),
+            perception: self.perception,
+            properties: self.properties,
+            pruned_stereo: Vec::new(),
+        }
+    }
+}
+
+/// Mutable access to one live atom of a draft, from
+/// [`MoleculeEditor::atom_mut`].
+///
+/// Read the atom through `Deref` and change it with the setters or
+/// `DerefMut`. Mutable access clears installed perception and owner
+/// properties immediately, even if no change is made or the guard is then
+/// forgotten.
+pub struct AtomMut<'a> {
+    editor: &'a mut MoleculeEditor,
+    id: AtomId,
+}
+
+impl fmt::Debug for AtomMut<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AtomMut")
+            .field("id", &self.id)
+            .field("atom", &**self)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Deref for AtomMut<'_> {
+    type Target = Atom;
+
+    fn deref(&self) -> &Self::Target {
+        self.editor
+            .graph
+            .atom(self.id)
+            .expect("validated atom must remain live while borrowed")
+    }
+}
+
+impl DerefMut for AtomMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.editor.chemistry_changed();
+        self.editor
+            .graph
+            .atom_mut(self.id)
+            .expect("validated atom must remain live while borrowed")
+    }
+}
+
+impl AtomMut<'_> {
+    /// Changes the element.
+    pub fn set_element(&mut self, element: Element) {
+        self.element = element;
+    }
+
+    /// Changes the mass number, or natural abundance for `None`.
+    pub fn set_isotope(&mut self, isotope: Option<NonZeroU16>) {
+        self.isotope = isotope;
+    }
+
+    /// Changes the formal charge.
+    pub fn set_formal_charge(&mut self, formal_charge: i8) {
+        self.formal_charge = formal_charge;
+    }
+
+    /// Changes the radical electrons, or removes them for `None`.
+    pub fn set_radical(&mut self, radical: Option<AtomRadical>) {
+        self.radical = radical;
+    }
+
+    /// Changes the implicit-hydrogen declaration.
+    pub fn set_hydrogens(&mut self, hydrogens: ImplicitHydrogens) {
+        self.hydrogens = hydrogens;
+    }
+
+    /// Changes the reaction atom map, or removes it for `None`.
+    pub fn set_atom_map(&mut self, atom_map: Option<NonZeroU32>) {
+        self.atom_map = atom_map;
+    }
+}
+
+/// Order-only mutable access to one live bond of a draft, from
+/// [`MoleculeEditor::bond_mut`].
+///
+/// Endpoints stay fixed so adjacency remains consistent; read the bond
+/// through `Deref` and change its order with [`BondMut::set_order`].
+pub struct BondMut<'a> {
+    editor: &'a mut MoleculeEditor,
+    id: BondId,
+}
+
+impl fmt::Debug for BondMut<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BondMut")
+            .field("id", &self.id)
+            .field("bond", &**self)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Deref for BondMut<'_> {
+    type Target = Bond;
+
+    fn deref(&self) -> &Self::Target {
+        self.editor
+            .graph
+            .bond(self.id)
+            .expect("validated bond must remain live while borrowed")
+    }
+}
+
+impl BondMut<'_> {
+    /// Changes represented order without exposing mutable bond endpoints.
+    /// Use [`MoleculeEditor::set_bond_endpoints`] to maintain adjacency when rewiring.
+    /// A changed order removes stereo assertions focused on this bond, including
+    /// their relation-group memberships, and records them as pruned. Assigning
+    /// the current order is a no-op.
+    pub fn set_order(&mut self, order: BondOrder) {
+        if self.order == order {
+            return;
+        }
+        self.editor.chemistry_changed();
+        self.editor
+            .graph
+            .bond_mut(self.id)
+            .expect("validated bond must remain live while borrowed")
+            .order = order;
+        self.editor.prune_stereo_for_bond(self.id);
     }
 }
 
@@ -132,71 +244,111 @@ impl MoleculeEditor {
     }
 
     /// The draft graph, also reachable through `Deref`.
-    pub fn graph(&self) -> &Graph {
-        &self.working.graph
+    pub fn graph(&self) -> &DraftGraph {
+        &self.graph
     }
 
     /// Draft annotations; rows are draft atom and bond slots.
     pub fn properties(&self) -> &MoleculeProperties {
-        self.working.properties()
+        &self.properties
     }
 
     /// Length-preserving mutable access to draft annotations. Rows are draft
-    /// slots, so they follow draft IDs; deleted slots are dropped at publication.
+    /// slots, so they follow draft IDs; rows of deleted atoms and bonds accept
+    /// only missing values and are dropped at publication.
     pub fn properties_mut(&mut self) -> MoleculePropertiesMut<'_> {
-        self.working.properties_mut()
+        MoleculePropertiesMut::new(
+            &mut self.properties,
+            LiveRows::Slots(&self.graph.atoms),
+            LiveRows::Slots(&self.graph.bonds),
+        )
+    }
+
+    /// Whole-table access for interpreters and topology edits that assemble
+    /// draft annotations from another owner's rows.
+    pub(crate) fn properties_storage_mut(&mut self) -> &mut MoleculeProperties {
+        &mut self.properties
     }
 
     /// The draft's installed perception. Chemical edits clear it.
     pub fn perception(&self) -> &Perception {
-        self.working.perception()
+        &self.perception
     }
 
     /// See [`Molecule::explicit_hydrogens`].
     pub fn explicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
-        self.working.explicit_hydrogens(atom)
+        explicit_hydrogen_count(&self.graph, atom)
     }
 
     /// See [`Molecule::implicit_hydrogens`]. Chemical edits invalidate inference.
     pub fn implicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
-        self.working.implicit_hydrogens(atom)
+        implicit_hydrogen_count(&self.graph, &self.perception, atom)
     }
 
     /// See [`Molecule::total_hydrogens`].
     pub fn total_hydrogens(&self, atom: AtomId) -> Option<usize> {
-        self.working.total_hydrogens(atom)
+        Some(self.explicit_hydrogens(atom)? + self.implicit_hydrogens(atom)?)
     }
 
     /// Removes all installed perception without changing represented chemistry.
     pub fn clear_perception(&mut self) {
-        self.working.clear_perception()
+        self.perception = Perception::default();
     }
 
-    pub(crate) fn working(&self) -> &Molecule {
-        &self.working
+    fn invalidate_stereo(&mut self) {
+        self.perception.stereo = None;
     }
 
-    pub(crate) fn working_mut(&mut self) -> &mut Molecule {
-        &mut self.working
+    /// Records a chemical edit: perception and owner properties no longer
+    /// describe the draft.
+    fn chemistry_changed(&mut self) {
+        self.clear_perception();
+        self.properties.owner_mut().clear();
     }
-    /// Returns mutable represented atom state in this private working copy.
-    /// Obtaining mutable atom access invalidates perception and owner properties
-    /// immediately, even if the guard is forgotten. Use [`Self::replace_atom`]
-    /// when an identical replacement should preserve cached state.
+
+    /// Raw draft storage for interpreters that rewrite bond orders or atoms
+    /// in bulk. Obtaining it clears perception and owner properties; writes
+    /// skip stereo pruning, which publication's validation backs up.
+    pub(crate) fn graph_mut(&mut self) -> &mut DraftGraph {
+        self.chemistry_changed();
+        &mut self.graph
+    }
+
+    /// Whether the draft has no live atoms.
+    pub fn is_empty(&self) -> bool {
+        self.graph.atom_count() == 0
+    }
+
+    /// Live connected components in stable atom order, including isolated atoms.
+    pub fn connected_components(&self) -> Vec<Vec<AtomId>> {
+        self.graph.connected_components()
+    }
+
+    /// Empty editing state is not a connected molecule.
+    pub fn is_connected(&self) -> bool {
+        self.graph.connected_components().len() == 1
+    }
+
+    /// Mutable represented atom state. Mutable access through the guard
+    /// invalidates perception and owner properties immediately, even if the
+    /// guard is forgotten. Use [`Self::replace_atom`] when an identical
+    /// replacement should preserve cached state.
     ///
     /// Returns `None` when `atom` names no live atom of this draft.
-    pub fn atom_mut(&mut self, atom: AtomId) -> Option<super::AtomMut<'_>> {
-        self.working.atom_mut(atom)
+    pub fn atom_mut(&mut self, atom: AtomId) -> Option<AtomMut<'_>> {
+        self.graph.atom(atom)?;
+        Some(AtomMut {
+            editor: self,
+            id: atom,
+        })
     }
 
-    pub(crate) fn require_atom_mut(
-        &mut self,
-        atom: AtomId,
-    ) -> Result<super::AtomMut<'_>, MoleculeError> {
-        self.working.require_atom_mut(atom)
+    pub(crate) fn require_atom_mut(&mut self, atom: AtomId) -> Result<AtomMut<'_>, MoleculeError> {
+        self.atom_mut(atom)
+            .ok_or(MoleculeError::InvalidAtomId(atom))
     }
 
-    /// Borrows a bond with checked order editing through [`super::BondMut::set_order`].
+    /// Borrows a bond with checked order editing through [`BondMut::set_order`].
     /// Change connectivity with [`Self::set_bond_endpoints`] or [`Self::replace_bond`].
     ///
     /// ```compile_fail
@@ -207,15 +359,15 @@ impl MoleculeEditor {
     /// ```
     ///
     /// Returns `None` when `bond` names no live bond of this draft.
-    pub fn bond_mut(&mut self, bond: BondId) -> Option<super::BondMut<'_>> {
-        self.working
-            .bond_mut_recording(bond, &mut self.pruned_stereo)
+    pub fn bond_mut(&mut self, bond: BondId) -> Option<BondMut<'_>> {
+        self.graph.bond(bond)?;
+        Some(BondMut {
+            editor: self,
+            id: bond,
+        })
     }
 
-    pub(crate) fn require_bond_mut(
-        &mut self,
-        bond: BondId,
-    ) -> Result<super::BondMut<'_>, MoleculeError> {
+    pub(crate) fn require_bond_mut(&mut self, bond: BondId) -> Result<BondMut<'_>, MoleculeError> {
         self.bond_mut(bond)
             .ok_or(MoleculeError::InvalidBondId(bond))
     }
@@ -228,16 +380,39 @@ impl MoleculeEditor {
     /// [`MoleculeError::CapacityExceeded`] when the draft already
     /// holds the maximum number of atom slots.
     pub fn add_atom(&mut self, atom: Atom) -> Result<AtomId, MoleculeError> {
-        self.working.add_atom(atom)
+        self.add_atom_at_slot(atom, self.graph.atom_slot_count())
+    }
+
+    /// [`Self::add_atom`] into slot `slot`, which must be the next one; tests
+    /// pass a larger slot to reach the capacity bound without allocating it.
+    fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId, MoleculeError> {
+        checked_molecule_id(slot, Countable::Atom, AtomId::new)?;
+        debug_assert_eq!(slot, self.graph.atom_slot_count());
+        let id = self.graph.push_atom(atom);
+        self.properties
+            .atoms_mut()
+            .resize_missing(self.graph.atom_slot_count());
+        self.chemistry_changed();
+        Ok(id)
     }
 
     /// Deletes an atom and its bonds, removing every stereo element that
     /// references the atom and those its deleted bonds invalidate. See
     /// [`Self::pruned_stereo_elements`].
     pub fn delete_atom(&mut self, atom: AtomId) -> Result<Atom, MoleculeError> {
-        let (atom, pruned) = self.working.delete_atom(atom)?;
-        self.pruned_stereo.extend(pruned);
-        Ok(atom)
+        self.graph.require_atom(atom)?;
+        let incident = self.graph.adjacency[atom.index()].clone();
+        for bond in incident {
+            self.delete_bond(bond)?;
+        }
+        let removed = self
+            .graph
+            .take_atom(atom)
+            .ok_or(MoleculeError::InvalidAtomId(atom))?;
+        self.properties.atoms_mut().clear_index(atom.index());
+        self.prune_stereo_for_atom(atom);
+        self.chemistry_changed();
+        Ok(removed)
     }
 
     /// Adds a bond. Stereo elements it invalidates are removed, such as a
@@ -251,10 +426,34 @@ impl MoleculeEditor {
         b: AtomId,
         order: BondOrder,
     ) -> Result<BondId, MoleculeError> {
-        let bond = self.working.add_bond(a, b, order)?;
-        let pruned = self.working.prune_invalid_stereo_at([a, b], bond);
-        self.pruned_stereo.extend(pruned);
+        let bond = self.add_bond_unpruned(a, b, order)?;
+        self.prune_invalid_stereo_at([a, b], bond);
         Ok(bond)
+    }
+
+    /// [`Self::add_bond`] leaving existing stereo as it is, for transforms
+    /// that rewrite the carriers of the new bond's endpoints themselves.
+    pub(crate) fn add_bond_unpruned(
+        &mut self,
+        a: AtomId,
+        b: AtomId,
+        order: BondOrder,
+    ) -> Result<BondId, MoleculeError> {
+        self.graph.require_atom(a)?;
+        self.graph.require_atom(b)?;
+        if a == b {
+            return Err(MoleculeError::SelfBond(a));
+        }
+        if self.graph.bond_between(a, b).is_some() {
+            return Err(MoleculeError::DuplicateBond { a, b });
+        }
+        checked_molecule_id(self.graph.bond_slot_count(), Countable::Bond, BondId::new)?;
+        let id = self.graph.push_bond(Bond::new(a, b, order));
+        self.properties
+            .bonds_mut()
+            .resize_missing(self.graph.bond_slot_count());
+        self.chemistry_changed();
+        Ok(id)
     }
 
     /// Deletes a bond. As for [`Self::add_bond`], stereo elements it
@@ -262,9 +461,17 @@ impl MoleculeEditor {
     /// to the focus, and every other element is untouched. See
     /// [`Self::pruned_stereo_elements`].
     pub fn delete_bond(&mut self, bond: BondId) -> Result<Bond, MoleculeError> {
-        let (bond, pruned) = self.working.delete_bond(bond)?;
-        self.pruned_stereo.extend(pruned);
-        Ok(bond)
+        let removed = self
+            .graph
+            .take_bond(bond)
+            .ok_or(MoleculeError::InvalidBondId(bond))?;
+        // A deleted bond may connect a focus to a carrier even when it is not
+        // itself a stereo focus. Ring opening can leave both atoms alive and
+        // connected through another path, so live IDs alone are insufficient.
+        self.prune_invalid_stereo_at([removed.a, removed.b], bond);
+        self.properties.bonds_mut().clear_index(bond.index());
+        self.chemistry_changed();
+        Ok(removed)
     }
 
     /// Stereo elements that structural edits of this draft removed because
@@ -283,459 +490,226 @@ impl MoleculeEditor {
         std::mem::take(&mut self.pruned_stereo)
     }
 
-    /// Adds a represented stereo element after validating it against the draft
-    /// graph, and returns its draft ID. The element is stored in canonical
-    /// carrier order, and installed CIP descriptors are cleared.
-    ///
-    /// # Errors
-    ///
-    /// - [`MoleculeError::InvalidAtomId`] or [`MoleculeError::InvalidBondId`]
-    ///   when the element names a missing focus or carrier.
-    /// - [`MoleculeError::InvalidStereoReference`] when the element already
-    ///   names a group (use [`Self::add_stereo_group`]), its carriers are
-    ///   duplicated, non-adjacent or incomplete, its focus bond has the wrong
-    ///   order, or another element already describes the same focus.
-    /// - [`MoleculeError::CapacityExceeded`] when no stereo element
-    ///   ID is left.
-    pub fn add_stereo_element(
-        &mut self,
-        element: StereoElement,
-    ) -> Result<StereoElementId, MoleculeError> {
-        self.working.add_stereo_element(element)
-    }
-
-    /// Replaces a stereo element under the same validation as
-    /// [`Self::add_stereo_element`] and returns the previous element. Group
-    /// membership cannot change here: the replacement must name the same
-    /// group as the current element.
-    ///
-    /// # Errors
-    ///
-    /// [`MoleculeError::InvalidStereoElementId`] when `id` names no element;
-    /// otherwise as [`Self::add_stereo_element`], including
-    /// [`MoleculeError::InvalidStereoReference`] for a changed group.
-    pub fn replace_stereo_element(
-        &mut self,
-        id: StereoElementId,
-        replacement: StereoElement,
-    ) -> Result<StereoElement, MoleculeError> {
-        self.working.replace_stereo_element(id, replacement)
-    }
-
-    /// Removes a stereo element, drops it from its group, and returns it with
-    /// no group. The removal is not listed in
-    /// [`Self::pruned_stereo_elements`].
-    ///
-    /// # Errors
-    ///
-    /// [`MoleculeError::InvalidStereoElementId`] when `id` names no element.
-    pub fn remove_stereo_element(
-        &mut self,
-        id: StereoElementId,
-    ) -> Result<StereoElement, MoleculeError> {
-        self.working.remove_stereo_element(id)
-    }
-
-    /// Adds an enhanced stereo group, assigns its members to it, and returns
-    /// its draft ID.
-    ///
-    /// # Errors
-    ///
-    /// - [`MoleculeError::InvalidStereoReference`] when the group is empty,
-    ///   lists a member twice, or a member already belongs to a group.
-    /// - [`MoleculeError::InvalidStereoElementId`] when a member names no
-    ///   element.
-    /// - [`MoleculeError::CapacityExceeded`] when no stereo group ID
-    ///   is left.
-    pub fn add_stereo_group(&mut self, group: StereoGroup) -> Result<StereoGroupId, MoleculeError> {
-        self.working.add_stereo_group(group)
-    }
-
-    /// Removes an enhanced stereo group and returns it. Its member elements
-    /// remain, ungrouped.
-    ///
-    /// # Errors
-    ///
-    /// [`MoleculeError::InvalidStereoGroupId`] when `id` names no group.
-    pub fn remove_stereo_group(&mut self, id: StereoGroupId) -> Result<StereoGroup, MoleculeError> {
-        self.working.remove_stereo_group(id)
-    }
-
-    /// Publishes represented chemistry with dense IDs.
-    ///
-    /// Live atoms, bonds, stereo elements, and stereo groups are renumbered
-    /// `0..n` in their draft order, so deleted draft slots never survive
-    /// publication. Use [`Self::finish_with_correspondence`] to translate draft
-    /// IDs. Unchanged chemistry retains its installed perception; graph edits
-    /// invalidate affected perception when they occur. Install reconstructed
-    /// perception on the resulting [`Molecule::install_perception`].
-    ///
-    /// ```compile_fail
-    /// use kekule::{molecule::MoleculeEditor, perception::Perception};
-    /// let mut editor = MoleculeEditor::new();
-    /// editor.install_perception(Perception::default()).unwrap();
-    /// ```
-    pub fn finish(self) -> Result<Molecule, MoleculePublicationError> {
-        publish_molecule(self.working).map(|(molecule, _)| molecule)
-    }
-
-    /// Publishes like [`Self::finish`] and maps every surviving draft ID to its
-    /// published ID. Without deletions the correspondence is the identity.
-    ///
-    /// ```
-    /// use kekule::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
-    ///
-    /// let carbon = || Atom::new(Element::from_symbol("C").unwrap());
-    /// let mut editor = MoleculeEditor::new();
-    /// let first = editor.add_atom(carbon())?;
-    /// let removed = editor.add_atom(carbon())?;
-    /// let last = editor.add_atom(carbon())?;
-    /// editor.add_bond(first, last, BondOrder::Single)?;
-    /// editor.delete_atom(removed)?;
-    /// let (molecule, ids) = editor.finish_with_correspondence()?;
-    ///
-    /// assert_eq!(ids.atom(last), Some(AtomId::new(1)));
-    /// assert_eq!(ids.atom(removed), None);
-    /// assert_eq!(molecule.atom_ids().collect::<Vec<_>>(), [AtomId::new(0), AtomId::new(1)]);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn finish_with_correspondence(
-        self,
-    ) -> Result<(Molecule, MoleculeCorrespondence), MoleculePublicationError> {
-        publish_molecule(self.working).map(|(molecule, compaction)| {
-            let correspondence = MoleculeCorrespondence::from_compaction(&compaction);
-            (molecule, correspondence)
-        })
-    }
-
-    /// Applies Kekule's canonical oxohalogen representation (the RDKit halogen
-    /// cleanup): each neutral Cl, Br, or I with only oxygen neighbors and
-    /// explicit valence 3, 5, or 7 becomes `[X+n]` with its `n` oxo double
-    /// bonds rewritten as single bonds to `[O-]`. Returns the rewritten
-    /// halogens; a rewrite clears perception and owner annotations, like any
-    /// chemistry edit. Publication rejects unnormalized oxohalogens instead of
-    /// rewriting them silently.
-    ///
-    /// ```
-    /// use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor, MoleculePublicationError};
-    /// let mut editor = MoleculeEditor::new();
-    /// let chlorine = editor.add_atom(Atom::new(Element::from_symbol("Cl").unwrap()))?;
-    /// for order in [BondOrder::Single, BondOrder::Double, BondOrder::Double, BondOrder::Double] {
-    ///     let oxygen = editor.add_atom(Atom::new(Element::from_symbol("O").unwrap()))?;
-    ///     editor.add_bond(chlorine, oxygen, order)?;
-    /// }
-    /// assert!(matches!(
-    ///     editor.validate(),
-    ///     Err(MoleculePublicationError::UnnormalizedOxohalogen { .. })
-    /// ));
-    /// assert_eq!(editor.normalize_oxohalogens(), [chlorine]);
-    /// let perchlorate = editor.finish()?;
-    /// assert_eq!(perchlorate.atom(chlorine).map(|atom| atom.formal_charge()), Some(3));
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn normalize_oxohalogens(&mut self) -> Vec<AtomId> {
-        normalize_oxohalogens_recording(&mut self.working, &mut self.pruned_stereo)
-    }
-
-    /// Checks whether a snapshot would publish successfully, leaving this editor
-    /// unchanged. This clones the working state to check canonicalization too.
-    pub fn validate(&self) -> Result<(), MoleculePublicationError> {
-        publish_molecule(self.working.clone()).map(|_| ())
-    }
-
-    /// Publishes, or returns the original editor for repair through
-    /// [`DraftError::into_draft`]. Keeps a cloned rollback snapshot;
-    /// use [`Self::finish`] when recovery is unnecessary.
-    pub fn try_finish(self) -> Result<Molecule, DraftError<Self, MoleculePublicationError>> {
-        let snapshot = self.clone();
-        publish_molecule(self.working)
-            .map(|(molecule, _)| molecule)
-            .map_err(|error| DraftError::new(error, snapshot))
-    }
-}
-
-fn publish_molecule(
-    mut molecule: Molecule,
-) -> Result<(Molecule, super::SlotCompaction), MoleculePublicationError> {
-    if molecule.atom_count() == 0 {
-        return Err(MoleculePublicationError::EmptyGraph);
-    }
-    debug_assert_eq!(
-        validate_graph(&molecule),
-        Ok(()),
-        "editors keep graph storage consistent"
-    );
-    molecule.validate_connected()?;
-    if let Some(issue) = stereo_violations(&molecule).into_iter().next() {
-        return Err(MoleculePublicationError::InvalidStereo(issue));
-    }
-    if let Some(atom) = unnormalized_oxohalogens(&molecule).first() {
-        return Err(MoleculePublicationError::UnnormalizedOxohalogen { atom: *atom });
-    }
-    let perceived_graph =
-        (molecule.perception != Perception::default()).then(|| molecule.graph.clone());
-    molecule.canonicalize_stored_stereo_elements();
-    if perceived_graph.is_some_and(|graph| graph != molecule.graph) {
-        molecule.clear_perception();
-    }
-    let compaction = molecule.compact_ids();
-    Ok((molecule, compaction))
-}
-
-fn validate_graph(molecule: &Molecule) -> Result<(), GraphValidationError> {
-    if molecule.properties().atoms().len() != molecule.graph.atoms.len() {
-        return Err(GraphValidationError::AtomPropertySlotCount {
-            expected: molecule.graph.atoms.len(),
-            actual: molecule.properties().atoms().len(),
-        });
-    }
-    if molecule.properties().bonds().len() != molecule.graph.bonds.len() {
-        return Err(GraphValidationError::BondPropertySlotCount {
-            expected: molecule.graph.bonds.len(),
-            actual: molecule.properties().bonds().len(),
-        });
-    }
-    if molecule.graph.adjacency.len() != molecule.graph.atoms.len() {
-        return Err(GraphValidationError::AdjacencySlotCount);
-    }
-    for (index, atom) in molecule.graph.atoms.iter().enumerate() {
-        let atom_id = AtomId::new(index as u32);
-        let adjacency = &molecule.graph.adjacency[index];
-        if atom.is_none() && !adjacency.is_empty() {
-            return Err(GraphValidationError::TombstonedAtomHasAdjacency { atom: atom_id });
+    /// Replaces represented atom state while retaining its ID and properties.
+    pub fn replace_atom(&mut self, id: AtomId, atom: Atom) -> Result<Atom, MoleculeError> {
+        if self.graph.require_atom(id)? == &atom {
+            return Ok(atom);
         }
-        let mut seen = std::collections::BTreeSet::new();
-        for &bond_id in adjacency {
-            if !seen.insert(bond_id) {
-                return Err(GraphValidationError::DuplicateAdjacencyEntry {
-                    atom: atom_id,
-                    bond: bond_id,
-                });
-            }
-            let Some(Some(bond)) = molecule.graph.bonds.get(bond_id.index()) else {
-                return Err(GraphValidationError::InvalidAdjacencyBond {
-                    atom: atom_id,
-                    bond: bond_id,
-                });
-            };
-            if ![bond.a(), bond.b()].contains(&atom_id) {
-                return Err(GraphValidationError::AdjacencyEndpointMismatch {
-                    atom: atom_id,
-                    bond: bond_id,
-                });
-            }
-        }
+        Ok(std::mem::replace(&mut *self.require_atom_mut(id)?, atom))
     }
-    for (index, bond) in molecule.graph.bonds.iter().enumerate() {
-        let Some(bond) = bond else { continue };
-        let bond_id = BondId::new(index as u32);
-        for atom in [bond.a(), bond.b()] {
-            if molecule.atom(atom).is_none() {
-                return Err(GraphValidationError::InvalidBondEndpoint { bond: bond_id });
-            }
-            if !molecule.graph.adjacency[atom.index()].contains(&bond_id) {
-                return Err(GraphValidationError::MissingAdjacencyEntry {
-                    atom,
-                    bond: bond_id,
-                });
-            }
-        }
-    }
-    Ok(())
-}
 
-/// The one validator of represented stereo: every element's references and
-/// hydrogen declarations, unique foci, and consistent groups. Each element or
-/// group reports at most its first issue; the result lists every failing one
-/// in element order, then group order.
-pub(crate) fn stereo_violations(molecule: &Molecule) -> Vec<StereoViolation> {
-    let mut issues = Vec::new();
-    let mut foci = std::collections::BTreeMap::new();
-    for (element_id, element) in molecule.stereo_elements() {
-        if let Some(previous) = foci.insert(element.kind.focus(), element_id) {
-            issues.push(StereoViolation::DuplicateStereoFocus {
-                element: element_id,
-                previous,
-            });
-            continue;
+    /// Replaces a bond's endpoints and order, retaining its ID and properties.
+    /// Invalid endpoints, self-bonds, and duplicate bonds leave state unchanged.
+    /// Rewiring removes stereo assertions referencing the bond or changed
+    /// endpoints, whose chemical neighborhoods have changed.
+    /// Changing only the order removes assertions focused on this bond.
+    pub fn replace_bond(&mut self, id: BondId, replacement: Bond) -> Result<Bond, MoleculeError> {
+        let previous = self.graph.require_bond(id)?.clone();
+        let (a, b) = replacement.endpoints();
+        self.graph.require_atom(a)?;
+        self.graph.require_atom(b)?;
+        if a == b {
+            return Err(MoleculeError::SelfBond(a));
         }
-        if let Err(error) = molecule.validate_stereo_element(element_id, element) {
-            issues.push(match error {
-                MoleculeError::InvalidStereoReference(issue) => issue,
-                MoleculeError::InvalidBondId(bond) => StereoViolation::MissingStereoBond {
-                    element: element_id,
-                    bond,
-                },
-                MoleculeError::InvalidAtomId(atom) => StereoViolation::MissingStereoAtom {
-                    element: element_id,
-                    atom,
-                },
-                error => unreachable!("stereo references fail only on atoms and bonds: {error}"),
-            });
-            continue;
+        if self
+            .graph
+            .require_bond_between(a, b)?
+            .is_some_and(|other| other != id)
+        {
+            return Err(MoleculeError::DuplicateBond { a, b });
         }
-        if let Some(group_id) = element.group {
-            match molecule.stereo_group(group_id) {
-                None => issues.push(StereoViolation::MissingStereoGroup {
-                    element: element_id,
-                    group: group_id,
-                }),
-                Some(group) if !group.members.contains(&element_id) => {
-                    issues.push(StereoViolation::InconsistentStereoGroupMembership {
-                        group: group_id,
-                        element: element_id,
-                    });
-                }
-                Some(_) => {}
-            }
+        if previous == replacement {
+            return Ok(previous);
         }
+        if previous.connects(a, b) {
+            self.require_bond_mut(id)?.set_order(replacement.order);
+            return Ok(previous);
+        }
+        self.graph.rewire_bond(id, replacement);
+        let invalid = self
+            .graph
+            .stereo_elements()
+            .filter_map(|(element_id, element)| {
+                (element.references_bond(id)
+                    || [previous.a(), previous.b(), a, b]
+                        .into_iter()
+                        .any(|atom| element.references_atom(atom)))
+                .then_some(element_id)
+            })
+            .collect::<Vec<_>>();
+        for &element in &invalid {
+            self.remove_stereo_element(element)?;
+        }
+        self.pruned_stereo.extend(invalid);
+        self.chemistry_changed();
+        Ok(previous)
     }
-    for (group_id, group) in molecule.stereo_groups() {
-        if let Err(issue) = validate_stereo_group(molecule, group_id, group) {
-            issues.push(issue);
-        }
-    }
-    issues
-}
 
-fn validate_stereo_group(
-    molecule: &Molecule,
-    group_id: StereoGroupId,
-    group: &StereoGroup,
-) -> Result<(), StereoViolation> {
-    if group.members.is_empty() {
-        return Err(StereoViolation::EmptyStereoGroup { group: group_id });
-    }
-    let mut seen = std::collections::BTreeSet::new();
-    for &element_id in &group.members {
-        if !seen.insert(element_id) {
-            return Err(StereoViolation::DuplicateStereoGroupMember {
-                group: group_id,
-                element: element_id,
-            });
-        }
-        let element = molecule.stereo_element(element_id).ok_or({
-            StereoViolation::MissingStereoGroupMember {
-                group: group_id,
-                element: element_id,
-            }
-        })?;
-        if element.group != Some(group_id) {
-            return Err(StereoViolation::InconsistentStereoGroupMembership {
-                group: group_id,
-                element: element_id,
-            });
-        }
-    }
-    Ok(())
-}
-
-/// [`stereo_violations`] as a result for callers that need valid
-/// represented stereo.
-pub(crate) fn validate_represented_stereo(
-    molecule: &Molecule,
-) -> Result<(), crate::algorithms::StereoValidationError> {
-    let issues = stereo_violations(molecule);
-    if issues.is_empty() {
+    /// Changes represented order, removing stereo assertions focused on this bond.
+    /// Assigning the current order leaves chemistry, stereo, and annotations intact.
+    pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<(), MoleculeError> {
+        self.require_bond_mut(id)?.set_order(order);
         Ok(())
-    } else {
-        Err(crate::algorithms::StereoValidationError { violations: issues })
     }
-}
 
-/// Rewrites every in-model neutral oxohalogen and canonicalizes stored stereo.
-/// Format interpreters apply this to imported chemistry before publication.
-pub(crate) fn canonicalize_represented_chemistry(molecule: &mut Molecule) {
-    normalize_oxohalogens(molecule);
-    molecule.canonicalize_stored_stereo_elements();
-}
+    /// Rewires a bond to new endpoints, keeping its order; see
+    /// [`Self::replace_bond`] for the stereo it removes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::replace_bond`]: [`MoleculeError::InvalidBondId`],
+    /// [`MoleculeError::InvalidAtomId`], [`MoleculeError::SelfBond`], or
+    /// [`MoleculeError::DuplicateBond`], leaving the draft unchanged.
+    pub fn set_bond_endpoints(
+        &mut self,
+        id: BondId,
+        a: AtomId,
+        b: AtomId,
+    ) -> Result<(), MoleculeError> {
+        self.replace_bond(id, Bond::new(a, b, self.graph.require_bond(id)?.order))?;
+        Ok(())
+    }
 
-/// Neutral in-model oxohalogens that still carry oxo double bonds.
-fn unnormalized_oxohalogens(molecule: &Molecule) -> Vec<AtomId> {
-    molecule
-        .atoms()
-        .filter_map(|(atom_id, atom)| {
-            (atom.formal_charge == 0
-                && matches!(atom.element.symbol(), "Cl" | "Br" | "I")
-                && is_rdkit_oxohalogen(molecule, atom_id, atom)
-                && !oxo_bonds_to_oxygen(molecule, atom_id).is_empty())
-            .then_some(atom_id)
-        })
-        .collect()
-}
-
-/// Separates `X=O` bonds of neutral oxohalogens into `[X+]-[O-]`, returning
-/// the rewritten halogens.
-pub(crate) fn normalize_oxohalogens(molecule: &mut Molecule) -> Vec<AtomId> {
-    normalize_oxohalogens_recording(molecule, &mut Vec::new())
-}
-
-/// [`normalize_oxohalogens`], recording the stereo elements it prunes.
-fn normalize_oxohalogens_recording(
-    molecule: &mut Molecule,
-    pruned_stereo: &mut Vec<StereoElementId>,
-) -> Vec<AtomId> {
-    let halogens = unnormalized_oxohalogens(molecule);
-    for &atom_id in &halogens {
-        let oxo_bonds = oxo_bonds_to_oxygen(molecule, atom_id);
-        // Explicit valence is at most seven, hence at most three oxo bonds.
-        // Out-of-model graphs are left for valence validation.
-        let formal_charge = i8::try_from(oxo_bonds.len()).expect("at most three oxo bonds");
-
-        if let Some(atom) = molecule.graph.atoms[atom_id.index()].as_mut() {
-            atom.formal_charge = formal_charge;
+    /// Deletes a set of live atoms and their incident bonds. IDs are validated
+    /// before mutation; duplicates are ignored. Surviving IDs are never renumbered.
+    pub fn delete_atoms(
+        &mut self,
+        atoms: impl IntoIterator<Item = AtomId>,
+    ) -> Result<Vec<(AtomId, Atom)>, MoleculeError> {
+        let atoms = atoms.into_iter().collect::<BTreeSet<_>>();
+        for &id in &atoms {
+            self.graph.require_atom(id)?;
         }
-        for (oxygen_id, bond_id) in oxo_bonds {
-            if let Some(atom) = molecule.graph.atoms[oxygen_id.index()].as_mut() {
-                atom.formal_charge = -1;
-            }
-            if let Some(bond) = molecule.graph.bonds[bond_id.index()].as_mut() {
-                bond.order = BondOrder::Single;
-            }
-            pruned_stereo.extend(molecule.prune_stereo_for_bond(bond_id));
+        atoms
+            .into_iter()
+            .map(|id| self.delete_atom(id).map(|atom| (id, atom)))
+            .collect()
+    }
+
+    /// Deletes a set of live bonds after validating every ID. Duplicates are ignored.
+    pub fn delete_bonds(
+        &mut self,
+        bonds: impl IntoIterator<Item = BondId>,
+    ) -> Result<Vec<(BondId, Bond)>, MoleculeError> {
+        let bonds = bonds.into_iter().collect::<BTreeSet<_>>();
+        for &id in &bonds {
+            self.graph.require_bond(id)?;
         }
+        bonds
+            .into_iter()
+            .map(|id| self.delete_bond(id).map(|bond| (id, bond)))
+            .collect()
     }
-    if !halogens.is_empty() {
-        molecule.properties.owner_mut().clear();
-        molecule.clear_perception();
-    }
-    halogens
-}
 
-fn is_rdkit_oxohalogen(molecule: &Molecule, atom_id: AtomId, atom: &Atom) -> bool {
-    // RDKit 2026.03.3 halogenCleanup: oxygen-only neighbors and represented
-    // explicit valence 3, 5 or 7. Bridging ester oxygen is allowed. This reads
-    // represented bond/H contributions, never installed perception.
-    let explicit = crate::algorithms::explicit_valence(molecule, atom_id)
-        + usize::from(atom.hydrogens.represented_count());
-    if !matches!(explicit, 3 | 5 | 7) {
-        return false;
+    /// Retains the induced graph on these atoms; an empty set leaves an empty editor.
+    pub fn retain_atoms(
+        &mut self,
+        atoms: impl IntoIterator<Item = AtomId>,
+    ) -> Result<Vec<(AtomId, Atom)>, MoleculeError> {
+        let retained = atoms.into_iter().collect::<BTreeSet<_>>();
+        for &id in &retained {
+            self.graph.require_atom(id)?;
+        }
+        let removed = self
+            .graph
+            .atom_ids()
+            .filter(|id| !retained.contains(id))
+            .collect::<Vec<_>>();
+        self.delete_atoms(removed)
     }
-    molecule
-        .incident_bonds(atom_id)
-        .into_iter()
-        .flatten()
-        .all(|(_, bond)| {
-            molecule
-                .atom(bond.other_atom(atom_id))
-                .is_some_and(|neighbor| neighbor.element.symbol() == "O")
-        })
-}
 
-fn oxo_bonds_to_oxygen(molecule: &Molecule, atom_id: AtomId) -> Vec<(AtomId, BondId)> {
-    molecule
-        .incident_bonds(atom_id)
-        .into_iter()
-        .flatten()
-        .filter_map(|(bond_id, bond)| {
-            if bond.order != BondOrder::Double {
-                return None;
+    /// Clears graph, properties, and perception, restarting the local ID space.
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Appends a published fragment transactionally and returns semantic ID maps.
+    /// Copies live atom/bond properties and represented stereo, including groups.
+    /// Source owner properties and perception are not transferred. Successful
+    /// append clears target owner properties and perception as a structural edit.
+    /// A temporary disconnected result is allowed; connect it before finishing.
+    /// This compound operation stages a clone of the target for rollback on error.
+    pub fn append_molecule(
+        &mut self,
+        source: &Molecule,
+    ) -> Result<MoleculeCorrespondence, MoleculeError> {
+        self.append_graph(&source.graph, &source.properties)
+    }
+
+    /// Appends another draft, as topology edits do when they join two
+    /// occurrences that are both being edited.
+    pub(crate) fn append_draft(
+        &mut self,
+        source: &MoleculeEditor,
+    ) -> Result<MoleculeCorrespondence, MoleculeError> {
+        self.append_graph(&source.graph, &source.properties)
+    }
+
+    fn append_graph<L: SlotLiveness>(
+        &mut self,
+        source: &Graph<L>,
+        properties: &MoleculeProperties,
+    ) -> Result<MoleculeCorrespondence, MoleculeError> {
+        let mut staged = self.clone();
+        let mut map = MoleculeCorrespondence::default();
+        for (id, atom) in source.atoms() {
+            map.atoms.insert(id, staged.add_atom(atom.clone())?);
+        }
+        for (id, bond) in source.bonds() {
+            map.bonds.insert(
+                id,
+                staged.add_bond(map.atoms[&bond.a()], map.atoms[&bond.b()], bond.order)?,
+            );
+        }
+        // Property rows are slots. A draft source keeps rows for deleted slots,
+        // so copy only live rows.
+        let (live, atom_rows): (Vec<_>, Vec<_>) = map
+            .atoms
+            .iter()
+            .map(|(source, draft)| (source.index(), draft.index()))
+            .unzip();
+        let atoms = properties
+            .atoms()
+            .raw()
+            .select_indices(&live)
+            .map_err(MoleculeError::Property)?;
+        staged
+            .properties
+            .atoms_mut()
+            .copy_rows_from(&atoms, &atom_rows)
+            .map_err(MoleculeError::Property)?;
+        let (live, bond_rows): (Vec<_>, Vec<_>) = map
+            .bonds
+            .iter()
+            .map(|(source, draft)| (source.index(), draft.index()))
+            .unzip();
+        let bonds = properties
+            .bonds()
+            .raw()
+            .select_indices(&live)
+            .map_err(MoleculeError::Property)?;
+        staged
+            .properties
+            .bonds_mut()
+            .copy_rows_from(&bonds, &bond_rows)
+            .map_err(MoleculeError::Property)?;
+        for (id, element) in source.stereo_elements() {
+            let mut element = StereoElement::new(element.kind.clone());
+            element.map_references(|atom| map.atoms[&atom], |bond| map.bonds[&bond]);
+            map.stereo_elements
+                .insert(id, staged.add_stereo_element(element)?);
+        }
+        for (id, group) in source.stereo_groups() {
+            let mut group = group.clone();
+            for member in &mut group.members {
+                *member = map.stereo_elements[member];
             }
-            let oxygen_id = bond.other_atom(atom_id);
-            let oxygen = molecule.atom(oxygen_id)?;
-            (oxygen.element.symbol() == "O").then_some((oxygen_id, bond_id))
-        })
-        .collect()
+            map.stereo_groups
+                .insert(id, staged.add_stereo_group(group)?);
+        }
+        *self = staged;
+        Ok(map)
+    }
 }
 
 /// Identifier correspondence from one molecular graph to another.
@@ -772,7 +746,7 @@ impl MoleculeCorrespondence {
         }
     }
 
-    /// Maps every live entity of `molecule` to itself.
+    /// Maps every entity of `molecule` to itself.
     pub(crate) fn identity(molecule: &Molecule) -> Self {
         Self {
             atoms: molecule.atom_ids().map(|id| (id, id)).collect(),
@@ -816,320 +790,22 @@ impl MoleculeCorrespondence {
     }
 }
 
-impl MoleculeEditor {
-    /// Whether the draft has no live atoms.
-    pub fn is_empty(&self) -> bool {
-        self.atom_count() == 0
-    }
-
-    /// Live connected components in stable atom order, including isolated atoms.
-    pub fn connected_components(&self) -> Vec<Vec<AtomId>> {
-        self.working.connected_components()
-    }
-
-    /// Empty editing state is not a connected molecule.
-    pub fn is_connected(&self) -> bool {
-        self.working.validate_connected().is_ok()
-    }
-
-    /// Replaces represented atom state while retaining its ID and properties.
-    pub fn replace_atom(&mut self, id: AtomId, atom: Atom) -> Result<Atom, MoleculeError> {
-        if self.require_atom(id)? == &atom {
-            return Ok(atom);
-        }
-        Ok(std::mem::replace(&mut *self.require_atom_mut(id)?, atom))
-    }
-
-    /// Replaces a bond's endpoints and order, retaining its ID and properties.
-    /// Invalid endpoints, self-bonds, and duplicate bonds leave state unchanged.
-    /// Rewiring removes stereo assertions referencing the bond or changed
-    /// endpoints, whose chemical neighborhoods have changed.
-    /// Changing only the order removes assertions focused on this bond.
-    pub fn replace_bond(&mut self, id: BondId, replacement: Bond) -> Result<Bond, MoleculeError> {
-        let previous = self.require_bond(id)?.clone();
-        let (a, b) = replacement.endpoints();
-        self.require_atom(a)?;
-        self.require_atom(b)?;
-        if a == b {
-            return Err(MoleculeError::SelfBond(a));
-        }
-        if self
-            .require_bond_between(a, b)?
-            .is_some_and(|other| other != id)
-        {
-            return Err(MoleculeError::DuplicateBond { a, b });
-        }
-        if previous == replacement {
-            return Ok(previous);
-        }
-        if (previous.a() == a && previous.b() == b) || (previous.a() == b && previous.b() == a) {
-            self.require_bond_mut(id)?.set_order(replacement.order);
-            return Ok(previous);
-        }
-        for atom in [previous.a(), previous.b()] {
-            self.working.graph.adjacency[atom.index()].retain(|bond| *bond != id);
-        }
-        self.working.graph.adjacency[a.index()].push(id);
-        self.working.graph.adjacency[b.index()].push(id);
-        self.working.graph.bonds[id.index()] = Some(replacement);
-        let invalid = self
-            .stereo_elements()
-            .filter_map(|(element_id, element)| {
-                (element.references_bond(id)
-                    || [previous.a(), previous.b(), a, b]
-                        .into_iter()
-                        .any(|atom| element.references_atom(atom)))
-                .then_some(element_id)
-            })
-            .collect::<Vec<_>>();
-        for &element in &invalid {
-            self.remove_stereo_element(element)?;
-        }
-        self.pruned_stereo.extend(invalid);
-        self.working.clear_perception();
-        self.working.properties.owner_mut().clear();
-        Ok(previous)
-    }
-
-    /// Changes represented order, removing stereo assertions focused on this bond.
-    /// Assigning the current order leaves chemistry, stereo, and annotations intact.
-    pub fn set_bond_order(&mut self, id: BondId, order: BondOrder) -> Result<(), MoleculeError> {
-        if self.require_bond(id)?.order == order {
-            return Ok(());
-        }
-        self.require_bond_mut(id)?.set_order(order);
-        Ok(())
-    }
-
-    /// Rewires a bond to new endpoints, keeping its order; see
-    /// [`Self::replace_bond`] for the stereo it removes.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::replace_bond`]: [`MoleculeError::InvalidBondId`],
-    /// [`MoleculeError::InvalidAtomId`], [`MoleculeError::SelfBond`], or
-    /// [`MoleculeError::DuplicateBond`], leaving the draft unchanged.
-    pub fn set_bond_endpoints(
-        &mut self,
-        id: BondId,
-        a: AtomId,
-        b: AtomId,
-    ) -> Result<(), MoleculeError> {
-        self.replace_bond(id, Bond::new(a, b, self.require_bond(id)?.order))?;
-        Ok(())
-    }
-
-    /// Deletes a set of live atoms and their incident bonds. IDs are validated
-    /// before mutation; duplicates are ignored. Surviving IDs are never renumbered.
-    pub fn delete_atoms(
-        &mut self,
-        atoms: impl IntoIterator<Item = AtomId>,
-    ) -> Result<Vec<(AtomId, Atom)>, MoleculeError> {
-        let atoms = atoms.into_iter().collect::<BTreeSet<_>>();
-        for &id in &atoms {
-            self.require_atom(id)?;
-        }
-        atoms
-            .into_iter()
-            .map(|id| self.delete_atom(id).map(|atom| (id, atom)))
-            .collect()
-    }
-
-    /// Deletes a set of live bonds after validating every ID. Duplicates are ignored.
-    pub fn delete_bonds(
-        &mut self,
-        bonds: impl IntoIterator<Item = BondId>,
-    ) -> Result<Vec<(BondId, Bond)>, MoleculeError> {
-        let bonds = bonds.into_iter().collect::<BTreeSet<_>>();
-        for &id in &bonds {
-            self.require_bond(id)?;
-        }
-        bonds
-            .into_iter()
-            .map(|id| self.delete_bond(id).map(|bond| (id, bond)))
-            .collect()
-    }
-
-    /// Retains the induced graph on these atoms; an empty set leaves an empty editor.
-    pub fn retain_atoms(
-        &mut self,
-        atoms: impl IntoIterator<Item = AtomId>,
-    ) -> Result<Vec<(AtomId, Atom)>, MoleculeError> {
-        let retained = atoms.into_iter().collect::<BTreeSet<_>>();
-        for &id in &retained {
-            self.require_atom(id)?;
-        }
-        let removed = self
-            .atom_ids()
-            .filter(|id| !retained.contains(id))
-            .collect::<Vec<_>>();
-        self.delete_atoms(removed)
-    }
-
-    /// Clears graph, properties, and perception, restarting the local ID space.
-    pub fn clear(&mut self) {
-        *self = Self::new();
-    }
-
-    /// Replaces a relation group without changing its ID. All membership checks
-    /// precede mutation, and members already in another group are rejected.
-    pub fn replace_stereo_group(
-        &mut self,
-        id: StereoGroupId,
-        replacement: StereoGroup,
-    ) -> Result<StereoGroup, MoleculeError> {
-        let previous = self.require_stereo_group(id)?.clone();
-        super::owner::validate_group_members(id, &replacement)?;
-        for &member in &replacement.members {
-            if let Some(group) = self
-                .require_stereo_element(member)?
-                .group
-                .filter(|&group| group != id)
-            {
-                return Err(MoleculeError::InvalidStereoReference(
-                    crate::stereo::StereoViolation::StereoElementAlreadyGrouped {
-                        element: member,
-                        group,
-                    },
-                ));
-            }
-        }
-        if previous == replacement {
-            return Ok(previous);
-        }
-        for &member in &previous.members {
-            self.working.graph.stereo_elements[member.index()]
-                .as_mut()
-                .expect("validated group member")
-                .group = None;
-        }
-        for &member in &replacement.members {
-            self.working.graph.stereo_elements[member.index()]
-                .as_mut()
-                .expect("validated replacement member")
-                .group = Some(id);
-        }
-        self.working.graph.stereo_groups[id.index()] = Some(replacement);
-        self.working.properties.owner_mut().clear();
-        self.working.invalidate_stereo();
-        Ok(previous)
-    }
-
-    /// Appends a published fragment transactionally and returns semantic ID maps.
-    /// Copies live atom/bond properties and represented stereo, including groups.
-    /// Source owner properties and perception are not transferred. Successful
-    /// append clears target owner properties and perception as a structural edit.
-    /// A temporary disconnected result is allowed; connect it before finishing.
-    /// This compound operation stages a clone of the target for rollback on error.
-    pub fn append_molecule(
-        &mut self,
-        source: &Molecule,
-    ) -> Result<MoleculeCorrespondence, MoleculeError> {
-        self.append_working(source)
-    }
-
-    // System edits may combine disconnected private drafts before partitioning.
-    pub(crate) fn append_working(
-        &mut self,
-        source: &Molecule,
-    ) -> Result<MoleculeCorrespondence, MoleculeError> {
-        let mut staged = self.clone();
-        let mut map = MoleculeCorrespondence::default();
-        for (id, atom) in source.atoms() {
-            map.atoms.insert(id, staged.add_atom(atom.clone())?);
-        }
-        for (id, bond) in source.bonds() {
-            map.bonds.insert(
-                id,
-                staged.add_bond(map.atoms[&bond.a()], map.atoms[&bond.b()], bond.order)?,
-            );
-        }
-        // Property rows are slots. A source that is another draft's working
-        // molecule keeps rows for deleted slots, so copy only live rows.
-        let property_error = |error| MoleculeError::Property(error);
-        let (live, atom_rows): (Vec<_>, Vec<_>) = map
-            .atoms
-            .iter()
-            .map(|(source, draft)| (source.index(), draft.index()))
-            .unzip();
-        let atoms = source
-            .properties()
-            .atoms()
-            .raw()
-            .select_indices(&live)
-            .map_err(property_error)?;
-        staged
-            .working
-            .properties
-            .atoms_mut()
-            .copy_rows_from(&atoms, &atom_rows)
-            .map_err(property_error)?;
-        let (live, bond_rows): (Vec<_>, Vec<_>) = map
-            .bonds
-            .iter()
-            .map(|(source, draft)| (source.index(), draft.index()))
-            .unzip();
-        let bonds = source
-            .properties()
-            .bonds()
-            .raw()
-            .select_indices(&live)
-            .map_err(property_error)?;
-        staged
-            .working
-            .properties
-            .bonds_mut()
-            .copy_rows_from(&bonds, &bond_rows)
-            .map_err(property_error)?;
-        let carrier = |value| match value {
-            StereoCarrier::Atom(id) => StereoCarrier::Atom(map.atoms[&id]),
-            other => other,
-        };
-        for (id, element) in source.stereo_elements() {
-            let mut kind = element.kind.clone();
-            match &mut kind {
-                StereoElementKind::Tetrahedral(stereo) => {
-                    stereo.center = map.atoms[&stereo.center];
-                    for c in &mut stereo.carriers {
-                        *c = carrier(*c);
-                    }
-                }
-                StereoElementKind::DoubleBond(stereo) => {
-                    stereo.bond = map.bonds[&stereo.bond];
-                    stereo.left = map.atoms[&stereo.left];
-                    stereo.right = map.atoms[&stereo.right];
-                    stereo.left_carrier = carrier(stereo.left_carrier);
-                    stereo.right_carrier = carrier(stereo.right_carrier);
-                }
-                StereoElementKind::Axis(stereo) => {
-                    stereo.axis = map.bonds[&stereo.axis];
-                    for c in &mut stereo.carriers {
-                        *c = carrier(*c);
-                    }
-                }
-            }
-            map.stereo_elements
-                .insert(id, staged.add_stereo_element(StereoElement::new(kind))?);
-        }
-        for (id, group) in source.stereo_groups() {
-            let mut group = group.clone();
-            group.members = group
-                .members
-                .iter()
-                .map(|member| map.stereo_elements[member])
-                .collect();
-            map.stereo_groups
-                .insert(id, staged.add_stereo_group(group)?);
-        }
-        *self = staged;
-        Ok(map)
-    }
+/// The ID slot `length` receives, or the capacity error when it does not fit.
+fn checked_molecule_id<T>(
+    length: usize,
+    kind: Countable,
+    construct: impl FnOnce(u32) -> T,
+) -> Result<T, MoleculeError> {
+    checked_raw_id(length)
+        .map(construct)
+        .map_err(|_| MoleculeError::CapacityExceeded(CapacityExceeded::new(kind)))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::publication::{validate_graph, GraphValidationError};
     use super::*;
-    use crate::molecule::Element;
+    use crate::stereo::StereoViolation;
     use crate::stereo::{
         DoubleBondOrientation, DoubleBondStereo, StereoCarrier, StereoElement, StereoElementKind,
     };
@@ -1148,9 +824,9 @@ mod tests {
             let mut editor = MoleculeEditor::new();
             editor.add_atom(carbon()).unwrap();
             if bonds {
-                editor.working.properties.bonds_mut().resize_missing(1);
+                editor.properties.bonds_mut().resize_missing(1);
             } else {
-                editor.working.properties.atoms_mut().resize_missing(0);
+                editor.properties.atoms_mut().resize_missing(0);
             }
             let expected = if bonds {
                 GraphValidationError::BondPropertySlotCount {
@@ -1163,7 +839,7 @@ mod tests {
                     actual: 0,
                 }
             };
-            assert_eq!(validate_graph(&editor.working), Err(expected));
+            assert_eq!(validate_graph(&editor), Err(expected));
         }
     }
 
@@ -1199,7 +875,14 @@ mod tests {
         builder
             .add_bond(a, b, BondOrder::Single)
             .expect("connecting bond");
-        assert!(builder.finish().expect("connected molecule").is_connected());
+        assert_eq!(
+            builder
+                .finish()
+                .expect("connected molecule")
+                .connected_components()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1216,10 +899,7 @@ mod tests {
         let mut editor = molecule.into_editor();
         // Internal algorithms can touch graph storage directly; publication
         // must still reject an assertion invalidated outside the public setter.
-        editor.working.graph.bonds[bond.index()]
-            .as_mut()
-            .unwrap()
-            .order = BondOrder::Single;
+        editor.graph.bond_mut(bond).unwrap().order = BondOrder::Single;
         let error = editor.try_finish().unwrap_err();
         assert_eq!(
             error.error(),
@@ -1248,7 +928,7 @@ mod tests {
         let center = stereo.center;
         stereo.carriers[0] = StereoCarrier::Atom(center);
         let mut editor = molecule.into_editor();
-        editor.working.graph.stereo_elements[element.index()] = Some(invalid);
+        *editor.graph.stereo_element_mut(element).unwrap() = invalid;
         let failure = editor.try_finish().unwrap_err();
         assert_eq!(
             failure.error(),
@@ -1330,7 +1010,7 @@ mod tests {
         assert_eq!(molecule.atom(oxo).unwrap().formal_charge, -1);
         let oxo_bond = molecule.bond_between(chlorine, oxo).unwrap();
         assert_eq!(molecule.bond(oxo_bond).unwrap().order, BondOrder::Single);
-        assert_eq!(molecule.perception(), &super::super::Perception::default());
+        assert_eq!(molecule.perception(), &Perception::default());
     }
 
     #[test]
@@ -1373,7 +1053,7 @@ mod tests {
             .add_bond(a, c, BondOrder::Single)
             .expect("reconnect through another edge");
         let molecule = editor.finish().expect("connected final graph");
-        assert!(molecule.is_connected());
+        assert_eq!(molecule.connected_components().len(), 1);
     }
 
     #[test]
@@ -1505,6 +1185,75 @@ mod tests {
             .iter()
             .all(|&bond| edited.bond(bond).unwrap().order == BondOrder::Double));
         assert!(edited.perceive().is_err(), "valence must reject this graph");
+        assert_eq!(molecule, before);
+    }
+}
+
+#[cfg(all(test, target_pointer_width = "64"))]
+mod capacity_tests {
+    use super::*;
+
+    fn max_slot() -> usize {
+        usize::try_from(u64::from(u32::MAX)).expect("64-bit usize")
+    }
+
+    fn first_unsupported_slot() -> usize {
+        usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize")
+    }
+
+    #[test]
+    fn every_molecule_identifier_space_checks_its_boundary() {
+        assert_eq!(
+            checked_molecule_id(max_slot(), Countable::Atom, AtomId::new),
+            Ok(AtomId::new(u32::MAX))
+        );
+        assert_eq!(
+            checked_molecule_id(first_unsupported_slot(), Countable::Atom, AtomId::new,),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom
+            )))
+        );
+        assert_eq!(
+            checked_molecule_id(first_unsupported_slot(), Countable::Bond, BondId::new,),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Bond
+            )))
+        );
+        assert_eq!(
+            checked_molecule_id(
+                first_unsupported_slot(),
+                Countable::StereoElement,
+                StereoElementId::new,
+            ),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::StereoElement
+            )))
+        );
+        assert_eq!(
+            checked_molecule_id(
+                first_unsupported_slot(),
+                Countable::StereoGroup,
+                StereoGroupId::new,
+            ),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::StereoGroup
+            )))
+        );
+    }
+
+    #[test]
+    fn capacity_rejection_does_not_mutate_molecule_state() {
+        let mut molecule = crate::molecule::MoleculeEditor::new();
+        let before = molecule.clone();
+        assert_eq!(
+            molecule.add_atom_at_slot(
+                Atom::new(Element::from_atomic_number(6).expect("carbon")),
+                first_unsupported_slot(),
+            ),
+            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
+                Countable::Atom
+            )))
+        );
         assert_eq!(molecule, before);
     }
 }

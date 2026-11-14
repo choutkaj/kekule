@@ -51,7 +51,7 @@ pub(crate) enum SourceStereoBondMarkKind {
 /// drawing geometry decoded, including Molfile double bonds whose configuration
 /// is defined by the atom coordinates. It does not run general coordinate perception.
 pub(crate) fn normalize_source_stereo(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],
 ) -> Result<NormalizationReport, SourceStereoNormalizationError> {
@@ -170,7 +170,7 @@ pub(crate) fn remove_unkept_source_stereo(
 
 /// Whether the molecule has a specified double-bond configuration, the only
 /// stereo [`keeps_source_stereo`] can decline.
-pub(crate) fn has_specified_double_bond_stereo(molecule: &Molecule) -> bool {
+pub(crate) fn has_specified_double_bond_stereo<L: SlotLiveness>(molecule: &Graph<L>) -> bool {
     molecule.stereo_elements().any(|(_, element)| {
         matches!(&element.kind, StereoElementKind::DoubleBond(stereo) if stereo.orientation.is_some())
     })
@@ -193,13 +193,11 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     }
     let mut projected = BTreeMap::new();
     let mut added_unknown = BTreeSet::new();
-    let mut staged = molecule.clone();
-    staged.graph.stereo_groups.clear();
-    staged.perception = Perception::default();
+    let mut staged = molecule.to_editor();
     // Source decoding only appends stereo elements. Reuse the graph draft,
-    // clearing those elements before each independent projection attempt.
-    let decode = |staged: &mut Molecule, marks: &[SourceStereoBondMark]| {
-        staged.graph.stereo_elements.clear();
+    // clearing stereo before each independent projection attempt.
+    let decode = |staged: &mut MoleculeEditor, marks: &[SourceStereoBondMark]| {
+        staged.graph_mut().clear_stereo();
         normalize_source_stereo(staged, geometry, marks)
     };
     if geometry.is_some() {
@@ -327,8 +325,8 @@ pub(crate) fn project_molfile_stereo_bond_marks(
     Ok(projected)
 }
 
-pub(crate) fn molfile_double_bond_geometry_marks(
-    molecule: &Molecule,
+pub(crate) fn molfile_double_bond_geometry_marks<L: SlotLiveness>(
+    molecule: &Graph<L>,
     existing: &[SourceStereoBondMark],
 ) -> Vec<SourceStereoBondMark> {
     let already_marked = existing
@@ -353,8 +351,8 @@ pub(crate) fn molfile_double_bond_geometry_marks(
         .collect()
 }
 
-fn molfile_projection_candidates(
-    molecule: &Molecule,
+fn molfile_projection_candidates<L: SlotLiveness>(
+    molecule: &Graph<L>,
     element: &StereoElement,
 ) -> Result<Vec<(BondId, MolfileStereoBondProjection)>, FormatError> {
     match &element.kind {
@@ -436,8 +434,8 @@ fn molfile_projection_candidates(
     }
 }
 
-fn validate_source_stereo_marks(
-    molecule: &Molecule,
+fn validate_source_stereo_marks<L: SlotLiveness>(
+    molecule: &Graph<L>,
     source_marks: &[SourceStereoBondMark],
 ) -> Result<(), SourceStereoNormalizationError> {
     let issues = source_marks
@@ -470,8 +468,8 @@ fn source_validation_error(error: StereoValidationError) -> SourceStereoNormaliz
     }
 }
 
-fn assemble_tetrahedral_wedges(
-    molecule: &Molecule,
+fn assemble_tetrahedral_wedges<L: SlotLiveness>(
+    molecule: &Graph<L>,
     geometry: Option<&dyn AtomPositionSource>,
     source_marks: &[SourceStereoBondMark],
     warnings: &mut Vec<NormalizationWarning>,
@@ -560,8 +558,8 @@ struct TetrahedralWedgeMark<'a> {
     mark: &'a SourceStereoBondMark,
 }
 
-fn tetrahedral_carriers_from_wedge(
-    molecule: &Molecule,
+fn tetrahedral_carriers_from_wedge<L: SlotLiveness>(
+    molecule: &Graph<L>,
     center: AtomId,
     marked_carrier: AtomId,
 ) -> Option<Vec<StereoCarrier>> {
@@ -575,8 +573,8 @@ fn tetrahedral_carriers_from_wedge(
     Some(carriers)
 }
 
-pub(crate) fn source_tetrahedral_carriers(
-    molecule: &Molecule,
+pub(crate) fn source_tetrahedral_carriers<L: SlotLiveness>(
+    molecule: &Graph<L>,
     center: AtomId,
 ) -> Option<Vec<StereoCarrier>> {
     let atom = molecule.atom(center)?;
@@ -823,8 +821,8 @@ fn four_coordinate_drawing_orientation(
     })
 }
 
-fn assemble_atropisomeric_axes(
-    molecule: &Molecule,
+fn assemble_atropisomeric_axes<L: SlotLiveness>(
+    molecule: &Graph<L>,
     geometry: Option<&dyn AtomPositionSource>,
     ring_membership: &RingMembership,
     source_marks: &[SourceStereoBondMark],
@@ -876,8 +874,8 @@ fn assemble_atropisomeric_axes(
         .collect()
 }
 
-fn atropisomeric_axis_candidates(
-    molecule: &Molecule,
+fn atropisomeric_axis_candidates<L: SlotLiveness>(
+    molecule: &Graph<L>,
     geometry: Option<&dyn AtomPositionSource>,
     ring_membership: &RingMembership,
     mark: &SourceStereoBondMark,
@@ -919,8 +917,8 @@ fn atropisomeric_axis_candidates(
         .collect()
 }
 
-fn atropisomeric_axis_candidate(
-    molecule: &Molecule,
+fn atropisomeric_axis_candidate<L: SlotLiveness>(
+    molecule: &Graph<L>,
     geometry: Option<&dyn AtomPositionSource>,
     mark: &SourceStereoBondMark,
     axis: (BondId, &Bond),
@@ -1074,8 +1072,8 @@ fn axis_reference_z_offset(
     Some(marked_z * side_factor * endpoint_factor)
 }
 
-fn assemble_directional_double_bonds(
-    molecule: &Molecule,
+fn assemble_directional_double_bonds<L: SlotLiveness>(
+    molecule: &Graph<L>,
     source_marks: &[SourceStereoBondMark],
     issues: &mut Vec<SourceStereoNormalizationIssue>,
     used_marks: &mut Vec<BondId>,
@@ -1125,8 +1123,8 @@ fn assemble_directional_double_bonds(
     assembled
 }
 
-fn assemble_unknown_double_bonds(
-    molecule: &Molecule,
+fn assemble_unknown_double_bonds<L: SlotLiveness>(
+    molecule: &Graph<L>,
     source_marks: &[SourceStereoBondMark],
     used_marks: &mut Vec<BondId>,
 ) -> Vec<StereoElement> {
@@ -1178,8 +1176,8 @@ fn assemble_unknown_double_bonds(
     assembled
 }
 
-fn assemble_molfile_double_bonds(
-    molecule: &Molecule,
+fn assemble_molfile_double_bonds<L: SlotLiveness>(
+    molecule: &Graph<L>,
     geometry: Option<&dyn AtomPositionSource>,
     marks: &[SourceStereoBondMark],
     used_marks: &mut Vec<BondId>,
@@ -1276,8 +1274,8 @@ fn assemble_molfile_double_bonds(
     elements
 }
 
-fn source_double_bond_endpoint_carriers(
-    molecule: &Molecule,
+fn source_double_bond_endpoint_carriers<L: SlotLiveness>(
+    molecule: &Graph<L>,
     endpoint: AtomId,
     other_endpoint: AtomId,
     focus_bond: BondId,
@@ -1306,8 +1304,8 @@ fn source_double_bond_endpoint_carriers(
     carriers
 }
 
-fn select_directional_mark(
-    molecule: &Molecule,
+fn select_directional_mark<L: SlotLiveness>(
+    molecule: &Graph<L>,
     endpoint: AtomId,
     other_endpoint: AtomId,
     focus_bond: BondId,
@@ -1342,8 +1340,8 @@ fn select_directional_mark(
     }
 }
 
-fn redundant_endpoint_directional_marks(
-    molecule: &Molecule,
+fn redundant_endpoint_directional_marks<L: SlotLiveness>(
+    molecule: &Graph<L>,
     endpoint: AtomId,
     other_endpoint: AtomId,
     focus_bond: BondId,
@@ -1415,8 +1413,8 @@ struct EndpointMark {
     direction: SourceStereoBondMarkKind,
 }
 
-fn directional_marks_for_endpoint(
-    molecule: &Molecule,
+fn directional_marks_for_endpoint<L: SlotLiveness>(
+    molecule: &Graph<L>,
     source_marks: &[SourceStereoBondMark],
     endpoint: AtomId,
     focus_bond: BondId,

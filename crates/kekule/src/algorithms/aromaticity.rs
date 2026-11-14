@@ -550,7 +550,7 @@ fn mark_aromatic_subset(
         if (!whole && count != 1) || !done_bonds.insert(bond_id) {
             continue;
         }
-        let Some(bond) = mol.graph.bonds[bond_id.index()].as_ref() else {
+        let Some(bond) = mol.bond(bond_id) else {
             continue;
         };
         let order = bond.order;
@@ -918,10 +918,12 @@ mod tests {
     fn neutral_carbon_radical_can_complete_an_aromatic_sextet() {
         let mut molecule =
             crate::tests::read_smiles("C1=CC(=CC=[C]1)N").expect("aminophenyl radical parses");
-        molecule
-            .atom_mut(AtomId::new(5))
-            .expect("source-selected radical carbon")
-            .radical = AtomRadical::new(1, Some(2));
+        crate::tests::edit(&mut molecule, |editor| {
+            editor
+                .atom_mut(AtomId::new(5))
+                .expect("source-selected radical carbon")
+                .radical = AtomRadical::new(1, Some(2));
+        });
         let valence = perceive_valence(&mut molecule, ValenceModel::RdkitLike, Default::default());
         assert!(valence.is_ok(), "{valence:#?}");
         perceive_rings(&mut molecule, RingPerceptionOptions::default()).expect("ring perception");
@@ -1064,7 +1066,9 @@ mod tests {
     #[test]
     fn zero_electron_carbon_with_exocyclic_multiple_bond_is_vacant() {
         let mut molecule = crate::tests::read_smiles("C1(=O)C=CC=CC=C1").expect("tropone");
-        molecule.atom_mut(AtomId::new(0)).unwrap().radical = AtomRadical::new(1, Some(2));
+        crate::tests::edit(&mut molecule, |editor| {
+            editor.atom_mut(AtomId::new(0)).unwrap().radical = AtomRadical::new(1, Some(2));
+        });
         perceive_rings(&mut molecule, RingPerceptionOptions::default()).expect("rings");
         let atom = molecule.atom(AtomId::new(0)).unwrap();
         assert_eq!(
@@ -1108,12 +1112,15 @@ mod tests {
     #[test]
     fn zero_bond_contributes_to_rdkit_unsaturation_degree() {
         let mut molecule = crate::tests::read_smiles("C1=C=CC=C1").expect("cyclic allene");
-        let helium = molecule
-            .add_atom(Atom::new(Element::from_symbol("He").unwrap()))
-            .unwrap();
-        let zero = molecule
-            .add_bond(AtomId::new(1), helium, BondOrder::Zero)
-            .unwrap();
+        let (helium, zero) = crate::tests::edit(&mut molecule, |editor| {
+            let helium = editor
+                .add_atom(Atom::new(Element::from_symbol("He").unwrap()))
+                .unwrap();
+            let zero = editor
+                .add_bond_unpruned(AtomId::new(1), helium, BondOrder::Zero)
+                .unwrap();
+            (helium, zero)
+        });
         molecule.perceive().expect("zero bond model");
 
         // RDKit's raw graph degree includes the zero-order bond. The resulting

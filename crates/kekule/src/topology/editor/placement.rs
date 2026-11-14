@@ -2,7 +2,7 @@
 //! hydrogen materialization and collapse, attached atoms, and the atoms of an
 //! attached fragment, so represented stereo follows the hydrogens and the work
 //! scales with the edited atoms rather than the system.
-use super::{EditAtomId, EditBondId, Location, TopologyEditError, TopologyEditor};
+use super::{EditAtomId, EditBondId, GroupGraph, Location, TopologyEditError, TopologyEditor};
 use crate::algorithms::{
     assign_collapsed_hydrogen_counts, collapse_stereo_hydrogen_carrier,
     materialize_stereo_hydrogen_carriers, rdkit_inferred_hydrogen_count, rdkit_valence_violation,
@@ -92,15 +92,16 @@ impl TopologyEditor {
         atom: EditAtomId,
     ) -> Result<(usize, AddedHydrogenOrigin), TopologyEditError> {
         let loc = self.atom_location(atom)?;
-        let molecule = self.molecule(loc.group);
-        let value = molecule.atom(loc.local).expect("live draft atom");
-        Ok(match value.hydrogens {
-            ImplicitHydrogens::Fixed(count) => (usize::from(count), AddedHydrogenOrigin::Fixed),
-            ImplicitHydrogens::Inferred => (
-                usize::from(rdkit_inferred_hydrogen_count(molecule, loc.local, value)),
-                AddedHydrogenOrigin::Inferred,
-            ),
-        })
+        Ok(with_group_graph!(self.molecule(loc.group), |molecule| {
+            let value = molecule.atom(loc.local).expect("live draft atom");
+            match value.hydrogens {
+                ImplicitHydrogens::Fixed(count) => (usize::from(count), AddedHydrogenOrigin::Fixed),
+                ImplicitHydrogens::Inferred => (
+                    usize::from(rdkit_inferred_hydrogen_count(molecule, loc.local, value)),
+                    AddedHydrogenOrigin::Inferred,
+                ),
+            }
+        }))
     }
 
     /// Checks that materializing `count` hydrogens on `atom` keeps its
@@ -162,9 +163,7 @@ impl TopologyEditor {
             let atom = draft.add_atom(Atom::new(hydrogen))?;
             // The parent's stereo lists an implicit hydrogen until the carrier
             // is renamed below, so insert without pruning.
-            let bond = draft
-                .working_mut()
-                .add_bond(loc.local, atom, BondOrder::Single)?;
+            let bond = draft.add_bond_unpruned(loc.local, atom, BondOrder::Single)?;
             locals.push((atom, bond));
         }
         if origin == AddedHydrogenOrigin::Fixed {
@@ -200,10 +199,9 @@ impl TopologyEditor {
         let bond = if order == BondOrder::Single {
             // The new atom takes over a hydrogen's stereo role below, so
             // insert without pruning.
-            let bond = draft.working_mut().add_bond(loc.local, local, order)?;
+            let bond = draft.add_bond_unpruned(loc.local, local, order)?;
             let from = replaced_local.map_or(StereoCarrier::ImplicitHydrogen, StereoCarrier::Atom);
             let replacements = draft
-                .working()
                 .stereo_elements()
                 .filter_map(|(id, element)| {
                     let mut element = element.clone();
@@ -232,8 +230,7 @@ impl TopologyEditor {
             // so the new carrier is written without validation, as hydrogen
             // collapse does; publication validates the result.
             for (id, element) in replacements {
-                draft.working_mut().graph.stereo_elements[id.index()] = Some(element);
-                draft.working_mut().invalidate_stereo();
+                draft.set_stereo_element_unchecked(id, element);
             }
             bond
         } else {
@@ -257,9 +254,10 @@ impl TopologyEditor {
     /// strict rules.
     pub(crate) fn exceeds_valence(&self, atom: EditAtomId) -> Result<bool, TopologyEditError> {
         let loc = self.atom_location(atom)?;
-        let molecule = self.molecule(loc.group);
-        let value = molecule.atom(loc.local).expect("live draft atom");
-        Ok(rdkit_valence_violation(molecule, loc.local, value).is_some())
+        Ok(with_group_graph!(self.molecule(loc.group), |molecule| {
+            let value = molecule.atom(loc.local).expect("live draft atom");
+            rdkit_valence_violation(molecule, loc.local, value).is_some()
+        }))
     }
 
     /// Adds an unbonded atom to the occurrence draft that holds `anchor`, as
@@ -332,88 +330,97 @@ impl TopologyEditor {
         }
         let mut plans = Vec::with_capacity(groups.len());
         for (group, mut entries) in groups {
-            let molecule = self.molecule(group);
-            let mut candidates = BTreeSet::new();
-            for entry in &mut entries {
-                for hydrogen in molecule.require_neighbors(entry.local)? {
-                    let atom = molecule.atom(hydrogen).expect("neighbors are live");
-                    if atom.element.atomic_number() != 1 {
-                        continue;
-                    }
-                    let handle = self.group_atom(group, hydrogen);
-                    let outcome = removable_hydrogen(molecule, hydrogen, atom)
-                        .expect("neighbors are live")
-                        .and_then(|(_, bond)| {
-                            let atom_slot = self.atom_slot(handle).expect("live atom");
-                            let bond_slot = self
-                                .bond_slot(self.group_bond(group, bond))
-                                .expect("live bond");
-                            let has_data = |table: &crate::properties::RawPropertyTable, slot| {
-                                table.row_has_data(slot).expect("live rows")
-                            };
-                            if has_data(self.properties.atoms().raw(), atom_slot) {
-                                return Err(RetainedHydrogenReason::AtomProperties);
-                            }
-                            if has_data(self.properties.bonds().raw(), bond_slot) {
-                                return Err(RetainedHydrogenReason::BondProperties);
-                            }
-                            annotated(atom_slot, bond_slot).map_or(Ok(()), Err)
-                        });
-                    match outcome {
-                        Ok(()) => {
-                            candidates.insert(hydrogen);
-                            entry.removable.push(hydrogen);
+            let properties = self.molecule(group).properties();
+            let perception = self.molecule(group).perception();
+            with_group_graph!(self.molecule(group), |molecule| {
+                let mut candidates = BTreeSet::new();
+                for entry in &mut entries {
+                    for hydrogen in molecule.require_neighbors(entry.local)? {
+                        let atom = molecule.atom(hydrogen).expect("neighbors are live");
+                        if atom.element.atomic_number() != 1 {
+                            continue;
                         }
-                        Err(reason) => entry.retained.push((handle, reason)),
+                        let handle = self.group_atom(group, hydrogen);
+                        let outcome = removable_hydrogen(molecule, properties, hydrogen, atom)
+                            .expect("neighbors are live")
+                            .and_then(|(_, bond)| {
+                                let atom_slot = self.atom_slot(handle).expect("live atom");
+                                let bond_slot = self
+                                    .bond_slot(self.group_bond(group, bond))
+                                    .expect("live bond");
+                                let has_data =
+                                    |table: &crate::properties::RawPropertyTable, slot| {
+                                        table.row_has_data(slot).expect("live rows")
+                                    };
+                                if has_data(self.properties.atoms().raw(), atom_slot) {
+                                    return Err(RetainedHydrogenReason::AtomProperties);
+                                }
+                                if has_data(self.properties.bonds().raw(), bond_slot) {
+                                    return Err(RetainedHydrogenReason::BondProperties);
+                                }
+                                annotated(atom_slot, bond_slot).map_or(Ok(()), Err)
+                            });
+                        match outcome {
+                            Ok(()) => {
+                                candidates.insert(hydrogen);
+                                entry.removable.push(hydrogen);
+                            }
+                            Err(reason) => entry.retained.push((handle, reason)),
+                        }
                     }
                 }
-            }
-            let mut removable = BTreeSet::new();
-            for entry in &mut entries {
-                let mut kept = Vec::new();
-                for &hydrogen in &entry.removable {
-                    if stereo_hydrogen_is_collapsible(molecule, hydrogen, entry.local, &candidates)
-                    {
-                        removable.insert(hydrogen);
-                        kept.push(hydrogen);
-                    } else {
-                        entry.retained.push((
-                            self.group_atom(group, hydrogen),
-                            RetainedHydrogenReason::UnsupportedStereoRole,
-                        ));
+                let mut removable = BTreeSet::new();
+                for entry in &mut entries {
+                    let mut kept = Vec::new();
+                    for &hydrogen in &entry.removable {
+                        if stereo_hydrogen_is_collapsible(
+                            molecule,
+                            perception,
+                            hydrogen,
+                            entry.local,
+                            &candidates,
+                        ) {
+                            removable.insert(hydrogen);
+                            kept.push(hydrogen);
+                        } else {
+                            entry.retained.push((
+                                self.group_atom(group, hydrogen),
+                                RetainedHydrogenReason::UnsupportedStereoRole,
+                            ));
+                        }
                     }
+                    entry.removable = kept;
+                    entry.retained.sort_by_key(|(handle, _)| *handle);
                 }
-                entry.removable = kept;
-                entry.retained.sort_by_key(|(handle, _)| *handle);
-            }
-            let mut totals = BTreeMap::new();
-            let mut by_parent = BTreeMap::new();
-            for entry in entries.iter().filter(|entry| !entry.removable.is_empty()) {
-                let value = molecule.atom(entry.local).expect("live parent");
-                let implicit = match value.hydrogens {
-                    ImplicitHydrogens::Fixed(count) => usize::from(count),
-                    ImplicitHydrogens::Inferred => {
-                        usize::from(rdkit_inferred_hydrogen_count(molecule, entry.local, value))
+                let mut totals = BTreeMap::new();
+                let mut by_parent = BTreeMap::new();
+                for entry in entries.iter().filter(|entry| !entry.removable.is_empty()) {
+                    let value = molecule.atom(entry.local).expect("live parent");
+                    let implicit = match value.hydrogens {
+                        ImplicitHydrogens::Fixed(count) => usize::from(count),
+                        ImplicitHydrogens::Inferred => {
+                            usize::from(rdkit_inferred_hydrogen_count(molecule, entry.local, value))
+                        }
+                    };
+                    let total = implicit + entry.removable.len();
+                    if u8::try_from(total).is_err() {
+                        return Err(DraftHydrogenError::Overflow(entry.parent, total));
                     }
-                };
-                let total = implicit + entry.removable.len();
-                if u8::try_from(total).is_err() {
-                    return Err(DraftHydrogenError::Overflow(entry.parent, total));
+                    totals.insert(entry.local, total);
+                    by_parent.insert(entry.local, entry.removable.clone());
                 }
-                totals.insert(entry.local, total);
-                by_parent.insert(entry.local, entry.removable.clone());
-            }
-            plans.push(GroupCollapse {
-                group,
-                fixed: stereo_hydrogen_parents(molecule, &removable),
-                bindings: stereo_hydrogen_bindings(molecule, &removable),
-                handles: removable
-                    .iter()
-                    .map(|hydrogen| (*hydrogen, self.group_atom(group, *hydrogen)))
-                    .collect(),
-                entries,
-                totals,
-                by_parent,
+                plans.push(GroupCollapse {
+                    group,
+                    fixed: stereo_hydrogen_parents(molecule, &removable),
+                    bindings: stereo_hydrogen_bindings(molecule, &removable),
+                    handles: removable
+                        .iter()
+                        .map(|hydrogen| (*hydrogen, self.group_atom(group, *hydrogen)))
+                        .collect(),
+                    entries,
+                    totals,
+                    by_parent,
+                });
             });
         }
         let mut results = BTreeMap::new();
@@ -451,19 +458,18 @@ impl TopologyEditor {
                 if deleted.contains(&entry.parent) {
                     continue;
                 }
-                let molecule = self.molecule(group);
-                let value = molecule.atom(entry.local).expect("live parent");
                 let (hydrogens, implicit_hydrogens) = match adjustments.get(&entry.local) {
                     Some(adjustment) => (adjustment.hydrogens, adjustment.implicit_hydrogens),
-                    None => (
-                        value.hydrogens,
-                        match value.hydrogens {
+                    None => with_group_graph!(self.molecule(group), |molecule| {
+                        let value = molecule.atom(entry.local).expect("live parent");
+                        let implicit = match value.hydrogens {
                             ImplicitHydrogens::Fixed(count) => usize::from(count),
                             ImplicitHydrogens::Inferred => usize::from(
                                 rdkit_inferred_hydrogen_count(molecule, entry.local, value),
                             ),
-                        },
-                    ),
+                        };
+                        (value.hydrogens, implicit)
+                    }),
                 };
                 results.insert(
                     entry.parent,

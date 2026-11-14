@@ -236,26 +236,27 @@ pub fn cleanup_stereo(
     editor: &mut MoleculeEditor,
     options: StereoSearchOptions,
 ) -> Result<StereoCleanupReport, StereoSearchError> {
-    let candidates = detect_stereo_candidates(editor.working(), options)?;
-    let perceived = prepared(editor.working())?;
+    let (snapshot, compaction) = editor.snapshot();
+    let candidates = detect_stereo_candidates(&snapshot, options)?;
+    let perceived = prepared(&snapshot)?;
     let mut unclassified_elements = Vec::new();
     let removed_elements: Vec<_> = editor
         .stereo_elements()
         .filter_map(|(id, element)| {
             let eligible = match &element.kind {
                 StereoElementKind::Tetrahedral(stereo)
-                    if unclassified_tetrahedral_geometry(&perceived, stereo.center) =>
+                    if unclassified_tetrahedral_geometry(&perceived, compaction.atom(stereo.center)) =>
                 {
                     unclassified_elements.push(id);
                     true
                 }
                 StereoElementKind::Tetrahedral(stereo) => candidates.iter().any(|candidate| {
                     matches!(candidate,
-                StereoCandidate::Tetrahedral { center, .. } if *center == stereo.center)
+                StereoCandidate::Tetrahedral { center, .. } if *center == compaction.atom(stereo.center))
                 }),
                 StereoElementKind::DoubleBond(stereo) => candidates.iter().any(|candidate| {
                     matches!(candidate,
-                StereoCandidate::DoubleBond { bond, .. } if *bond == stereo.bond)
+                StereoCandidate::DoubleBond { bond, .. } if *bond == compaction.bond(stereo.bond))
                 }),
                 StereoElementKind::Axis(_) => {
                     unclassified_elements.push(id);

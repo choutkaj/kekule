@@ -259,6 +259,18 @@ impl Bond {
     pub const fn endpoints(&self) -> (AtomId, AtomId) {
         (self.a, self.b)
     }
+
+    pub(crate) fn connects(&self, a: AtomId, b: AtomId) -> bool {
+        (self.a == a && self.b == b) || (self.a == b && self.b == a)
+    }
+
+    pub(crate) fn other_atom(&self, atom: AtomId) -> AtomId {
+        if self.a == atom {
+            self.b
+        } else {
+            self.a
+        }
+    }
 }
 
 /// A canonical localized bond order stored in a [`Molecule`](super::Molecule).

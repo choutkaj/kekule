@@ -13,7 +13,7 @@ use crate::components::{
 };
 use crate::io::localize_source_aromatic_bonds;
 use crate::math::Point3;
-use crate::molecule::{AtomId, BondOrder, Element, Molecule, MoleculeEditor};
+use crate::molecule::{AtomId, BondOrder, Element, MoleculeEditor};
 
 use crate::io::macromolecular as raw;
 use crate::io::mmcif::category::MmcifCategory;
@@ -78,7 +78,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
     let mut source_aromatic_bonds = BTreeSet::new();
     let mut resolver = Resolver {
         catalog,
-        graph: editor.working_mut(),
+        graph: &mut *editor,
         source_aromatic_bonds: &mut source_aromatic_bonds,
         evidence,
         issues,
@@ -88,8 +88,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
     let residues = residue_atoms(atoms, cancellation)?;
     resolver.resolve(residues, listed)?;
     raw::poll(cancellation)?;
-    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds)
-        .map_err(interpret_error)
+    localize_source_aromatic_bonds(editor, &source_aromatic_bonds).map_err(interpret_error)
 }
 
 /// The linkage between two residues adjacent in a polymer chain.
@@ -540,7 +539,7 @@ fn is_carbon(element: Element) -> bool {
 
 struct Resolver<'r, 'g> {
     catalog: &'r ConnectivityCatalog,
-    graph: &'g mut Molecule,
+    graph: &'g mut MoleculeEditor,
     source_aromatic_bonds: &'g mut BTreeSet<crate::molecule::BondId>,
     evidence: &'g mut BondEvidenceMap,
     issues: &'g mut Vec<raw::StructureInterpretIssue>,
@@ -1262,7 +1261,7 @@ impl<'r> Resolver<'r, '_> {
 
     fn report_fragmented_residues(&mut self, residues: &BTreeMap<ResidueKey, ResidueAtoms>) {
         let components = self.graph.connected_components();
-        let mut component_of = vec![None; self.graph.graph.atom_slot_count()];
+        let mut component_of = vec![None; self.graph.atom_slot_count()];
         for (index, component) in components.iter().enumerate() {
             for atom in component {
                 component_of[atom.index()] = Some(index);
@@ -1489,7 +1488,7 @@ fn resolve_branch_residue<'a>(
 }
 
 fn add_bond_if_missing(
-    graph: &mut Molecule,
+    graph: &mut MoleculeEditor,
     left: AtomId,
     right: AtomId,
     source_order: SourceBondOrder,
@@ -1820,7 +1819,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .count(),
             2
         );
-        assert!(graph.is_connected());
+        assert!(graph.connected_components().len() == 1);
     }
 
     #[test]
@@ -1845,7 +1844,9 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
                 .instance(instance)
                 .expect("partitioned peptide instance")
                 .molecule()
-                .is_connected()));
+                .connected_components()
+                .len()
+                == 1));
     }
 
     #[test]
@@ -1864,7 +1865,7 @@ HETATM 4 O O5 GAL B 2 . 11 4.2 0.0 0.0
         assert!(graph
             .bonds()
             .all(|(_, bond)| bond.order == BondOrder::Single));
-        assert!(graph.is_connected());
+        assert!(graph.connected_components().len() == 1);
     }
 
     /// Two copies, B and C, of [`BRANCH`]'s NAG-GAL entity, which a covalent

@@ -14,13 +14,27 @@ fn ring_set_reports_symmetric_cycles_for_fused_rings() {
             BondOrder::Single,
         ],
     );
-    let a = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let b = mol.add_atom(carbon()).expect("atom identifier capacity");
-    mol.add_bond(AtomId::new(0), a, BondOrder::Single)
-        .expect("bond");
-    mol.add_bond(a, b, BondOrder::Single).expect("bond");
-    mol.add_bond(b, AtomId::new(3), BondOrder::Single)
-        .expect("bond");
+    let a = crate::tests::edit(&mut mol, |editor| {
+        editor.add_atom(carbon()).expect("atom identifier capacity")
+    });
+    let b = crate::tests::edit(&mut mol, |editor| {
+        editor.add_atom(carbon()).expect("atom identifier capacity")
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(AtomId::new(0), a, BondOrder::Single)
+            .expect("bond");
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(a, b, BondOrder::Single)
+            .expect("bond");
+    });
+    crate::tests::edit(&mut mol, |editor| {
+        editor
+            .add_bond_unpruned(b, AtomId::new(3), BondOrder::Single)
+            .expect("bond");
+    });
 
     let ring_options = RingPerceptionOptions::for_molecule(&mol);
     rings_api::perceive_rings(&mut mol, ring_options).expect("ring perception should succeed");
@@ -51,11 +65,11 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         previous = atom;
     }
 
-    let ring_options = RingPerceptionOptions::for_molecule(molecule.working());
-    rings_api::perceive_rings(molecule.working_mut(), ring_options)
+    let mut molecule = molecule.into_unchecked();
+    let ring_options = RingPerceptionOptions::for_molecule(&molecule);
+    rings_api::perceive_rings(&mut molecule, ring_options)
         .expect("long chain should perceive rings");
     let ring_set = molecule
-        .working()
         .perception()
         .rings()
         .and_then(|rings| rings.ring_set())
@@ -63,11 +77,8 @@ fn long_chain_ring_and_smiles_traversals_are_stack_safe() {
         .clone();
     assert!(ring_set.is_empty());
 
-    let written = smiles_api::write(
-        molecule.working(),
-        smiles_api::SmilesWriteOptions::default(),
-    )
-    .expect("long chain should write");
+    let written = smiles_api::write(&molecule, smiles_api::SmilesWriteOptions::default())
+        .expect("long chain should write");
     assert_eq!(written.matches('C').count(), 20_000);
 }
 
@@ -132,8 +143,9 @@ fn symmetric_cage_returns_named_candidate_limit_error() {
                 .expect("cage bond should be valid");
         }
     }
+    let mut mol = mol.into_unchecked();
     let error = rings_api::perceive_rings(
-        mol.working_mut(),
+        &mut mol,
         RingPerceptionOptions::default().with_max_candidates(2),
     )
     .expect_err("symmetric cage should hit candidate limit");
@@ -168,11 +180,10 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
     mol.add_bond(tail_a, tail_b, BondOrder::Single)
         .expect("tail bond");
 
-    let ring_options = RingPerceptionOptions::for_molecule(mol.working());
-    rings_api::perceive_rings(mol.working_mut(), ring_options)
-        .expect("theta graph should perceive rings");
+    let mut mol = mol.into_unchecked();
+    let ring_options = RingPerceptionOptions::for_molecule(&mol);
+    rings_api::perceive_rings(&mut mol, ring_options).expect("theta graph should perceive rings");
     let first = mol
-        .working()
         .perception()
         .rings()
         .and_then(|rings| rings.ring_set())
@@ -182,11 +193,9 @@ fn theta_graph_with_acyclic_tail_is_deterministic() {
     assert_eq!(first.len(), 3);
     assert!(first.rings().iter().all(|ring| ring.atoms.len() == 4));
 
-    let ring_options = RingPerceptionOptions::for_molecule(mol.working());
-    rings_api::perceive_rings(mol.working_mut(), ring_options)
-        .expect("repeat should perceive rings");
+    let ring_options = RingPerceptionOptions::for_molecule(&mol);
+    rings_api::perceive_rings(&mut mol, ring_options).expect("repeat should perceive rings");
     let second = mol
-        .working()
         .perception()
         .rings()
         .and_then(|rings| rings.ring_set())
@@ -218,11 +227,11 @@ fn decorated_theta_graph_does_not_overenumerate_equal_path_cycles() {
             .expect("decorated theta edge");
     }
 
-    let ring_options = RingPerceptionOptions::for_molecule(mol.working());
-    rings_api::perceive_rings(mol.working_mut(), ring_options)
+    let mut mol = mol.into_unchecked();
+    let ring_options = RingPerceptionOptions::for_molecule(&mol);
+    rings_api::perceive_rings(&mut mol, ring_options)
         .expect("decorated theta graph should perceive rings");
     let ring_set = mol
-        .working()
         .perception()
         .rings()
         .and_then(|rings| rings.ring_set())
@@ -282,9 +291,10 @@ fn focused_ring_resource_errors_are_transactional() {
             .add_bond(atoms[left], atoms[right], BondOrder::Single)
             .expect("triangle bond should be valid");
     }
+    let mut molecule = molecule.into_unchecked();
     let original = molecule.clone();
     let ring_options = RingPerceptionOptions::default().with_max_path_expansions(0);
-    let error = rings_api::perceive_rings(molecule.working_mut(), ring_options)
+    let error = rings_api::perceive_rings(&mut molecule, ring_options)
         .expect_err("ring limit should fail focused perception");
     assert!(matches!(error, RingPerceptionError::LimitExceeded(_)));
     assert_eq!(molecule, original);

@@ -4,8 +4,8 @@ use std::fmt;
 
 use crate::molecule::*;
 
-pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
-    let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.graph.atom_slot_count()];
+pub(crate) fn compute_ring_membership<L: SlotLiveness>(mol: &Graph<L>) -> RingMembership {
+    let mut graph = vec![Vec::<(AtomId, BondId)>::new(); mol.atom_slot_count()];
     let mut live_bonds = Vec::new();
     for (bond_id, bond) in mol.bonds() {
         if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
@@ -16,9 +16,9 @@ pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
         live_bonds.push(bond_id);
     }
 
-    let mut discovery = vec![None; mol.graph.atom_slot_count()];
-    let mut low = vec![0usize; mol.graph.atom_slot_count()];
-    let mut bridge = vec![false; mol.graph.bond_slot_count()];
+    let mut discovery = vec![None; mol.atom_slot_count()];
+    let mut low = vec![0usize; mol.atom_slot_count()];
+    let mut bridge = vec![false; mol.bond_slot_count()];
     let mut time = 0usize;
     for atom_id in mol.atom_ids() {
         if discovery[atom_id.index()].is_none() {
@@ -34,8 +34,8 @@ pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     }
 
     let mut membership = RingMembership {
-        atom_flags: vec![false; mol.graph.atom_slot_count()],
-        bond_flags: vec![false; mol.graph.bond_slot_count()],
+        atom_flags: vec![false; mol.atom_slot_count()],
+        bond_flags: vec![false; mol.bond_slot_count()],
     };
     for bond_id in live_bonds {
         if !bridge[bond_id.index()] {
@@ -48,7 +48,11 @@ pub(crate) fn compute_ring_membership(mol: &Molecule) -> RingMembership {
     membership
 }
 
-pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_size: usize) -> bool {
+pub(crate) fn bond_in_ring_smaller_than<L: SlotLiveness>(
+    mol: &Graph<L>,
+    bond_id: BondId,
+    ring_size: usize,
+) -> bool {
     let Some(bond) = mol.bond(bond_id) else {
         return false;
     };
@@ -56,7 +60,7 @@ pub(crate) fn bond_in_ring_smaller_than(mol: &Molecule, bond_id: BondId, ring_si
         return false;
     }
     let max_path_edges = ring_size - 2;
-    let mut seen = vec![false; mol.graph.atom_slot_count()];
+    let mut seen = vec![false; mol.atom_slot_count()];
     let mut queue = VecDeque::from([(bond.a(), 0usize)]);
     seen[bond.a().index()] = true;
     while let Some((atom, depth)) = queue.pop_front() {
@@ -448,8 +452,8 @@ pub(crate) fn perceive_rings_cancellable(
     }
     let mut tracker = RingWorkTracker::new(
         options,
-        mol.graph.atom_slot_count(),
-        mol.graph.bond_slot_count(),
+        mol.atom_slot_count(),
+        mol.bond_slot_count(),
         cancellation.cloned(),
     )?;
     let membership = compute_ring_membership(mol);
@@ -466,7 +470,7 @@ pub(crate) fn perceive_rings_cancellable(
             return Err(RingPerceptionError::IncompleteRingCoverage { uncovered_bonds });
         }
     }
-    let rings = symmetrize_ring_set(rings, extras, mol.graph.bond_slot_count(), &mut tracker)?;
+    let rings = symmetrize_ring_set(rings, extras, mol.bond_slot_count(), &mut tracker)?;
     let rings = RingSet::from_rings(rings);
     mol.install_ring_basis(
         membership,
@@ -495,9 +499,9 @@ impl ActiveRingGraph {
     }
 
     fn with_ring_bonds(mol: &Molecule, membership: &RingMembership) -> Self {
-        let mut adjacency = vec![Vec::new(); mol.graph.atom_slot_count()];
-        let mut active_bonds = vec![false; mol.graph.bond_slot_count()];
-        let mut atom_degrees = vec![0usize; mol.graph.atom_slot_count()];
+        let mut adjacency = vec![Vec::new(); mol.atom_slot_count()];
+        let mut active_bonds = vec![false; mol.bond_slot_count()];
+        let mut atom_degrees = vec![0usize; mol.atom_slot_count()];
         for (bond_id, bond) in mol.bonds() {
             if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
                 continue;
@@ -581,8 +585,8 @@ fn figueras_sssr_candidates(
     let mut all_sssr = Vec::new();
     let mut all_extras = Vec::new();
     let mut discovered = RingMembership {
-        atom_flags: vec![false; mol.graph.atom_slot_count()],
-        bond_flags: vec![false; mol.graph.bond_slot_count()],
+        atom_flags: vec![false; mol.atom_slot_count()],
+        bond_flags: vec![false; mol.bond_slot_count()],
     };
 
     for fragment in fragments {
@@ -603,7 +607,7 @@ fn figueras_sssr_candidates(
             .copied()
             .filter(|atom| graph.atom_degrees[atom.index()] < 2)
             .collect::<VecDeque<_>>();
-        let mut done = vec![false; mol.graph.atom_slot_count()];
+        let mut done = vec![false; mol.atom_slot_count()];
         let mut atoms_done = 0usize;
         let mut fragment_candidates = Vec::<Ring>::new();
 
@@ -675,7 +679,7 @@ fn figueras_sssr_candidates(
             }
         }
         let (kept, extras) = if fragment_candidates.len() > expected {
-            remove_extra_rings(fragment_candidates, mol.graph.bond_slot_count(), tracker)?
+            remove_extra_rings(fragment_candidates, mol.bond_slot_count(), tracker)?
         } else {
             (fragment_candidates, Vec::new())
         };
@@ -693,7 +697,7 @@ fn figueras_sssr_candidates(
 }
 
 fn active_fragments(mol: &Molecule, graph: &ActiveRingGraph) -> Vec<Vec<AtomId>> {
-    let mut seen = vec![false; mol.graph.atom_slot_count()];
+    let mut seen = vec![false; mol.atom_slot_count()];
     let mut fragments = Vec::new();
     for start in mol.atom_ids() {
         if seen[start.index()] {
@@ -1105,9 +1109,9 @@ fn recover_connecting_cycles(
 ) -> Result<(), RingPerceptionError> {
     let graph = ActiveRingGraph::new(mol);
     let fragment_atoms = fragment.iter().copied().collect::<BTreeSet<_>>();
-    let mut dead = vec![false; mol.graph.bond_slot_count()];
+    let mut dead = vec![false; mol.bond_slot_count()];
     loop {
-        tracker.add_work(mol.graph.bond_slot_count())?;
+        tracker.add_work(mol.bond_slot_count())?;
         let candidate = mol.bonds().find(|(id, bond)| {
             graph.active_bonds[id.index()]
                 && fragment_atoms.contains(&bond.a())
@@ -1177,8 +1181,8 @@ fn depth_first_ring_basis(
         next_edge: usize,
     }
     let graph = ActiveRingGraph::new(mol);
-    let mut colors = vec![0; mol.graph.atom_slot_count()];
-    let mut positions = vec![0; mol.graph.atom_slot_count()];
+    let mut colors = vec![0; mol.atom_slot_count()];
+    let mut positions = vec![0; mol.atom_slot_count()];
     let mut rings = Vec::new();
     let mut stack = Vec::<Frame>::new();
     for root in mol.atom_ids() {

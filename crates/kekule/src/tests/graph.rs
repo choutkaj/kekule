@@ -304,27 +304,29 @@ fn adding_after_deletion_allocates_new_ids() {
 #[test]
 fn every_topology_mutation_invalidates_fresh_perception() {
     let mut mol = crate::molecule::MoleculeEditor::new();
-    mark_all_fresh(mol.working_mut());
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
-    assert_all_stale(mol.working());
+    assert_draft_stale(&mol);
 
-    mark_all_fresh(mol.working_mut());
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
     let b = mol.add_atom(oxygen()).expect("atom identifier capacity");
-    assert_all_stale(mol.working());
+    assert_draft_stale(&mol);
 
-    mark_all_fresh(mol.working_mut());
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
     let bond = mol
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
-    assert_all_stale(mol.working());
+    assert_draft_stale(&mol);
 
-    mark_all_fresh(mol.working_mut());
+    // Perception installs only on drafts without deleted slots, so each
+    // deletion starts from its own fresh copy.
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
+    let mut atom_deleted = mol.clone();
     mol.delete_bond(bond).expect("bond should delete");
-    assert_all_stale(mol.working());
+    assert_draft_stale(&mol);
 
-    mark_all_fresh(mol.working_mut());
-    mol.delete_atom(a).expect("atom should delete");
-    assert_all_stale(mol.working());
+    atom_deleted.delete_atom(a).expect("atom should delete");
+    assert_draft_stale(&atom_deleted);
 }
 
 #[test]

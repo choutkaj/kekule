@@ -93,7 +93,7 @@ fn alternate_directional_source_carriers_publish_identical_double_bond_stereo() 
     };
 
     let canonicalize = |mut molecule: MoleculeEditor, marks: &[SourceStereoBondMark]| {
-        let report = canonicalize_molecule_for_publication(molecule.working_mut(), None, marks)
+        let report = canonicalize_molecule_for_publication(&mut molecule, None, marks)
             .expect("paired directional source marks should canonicalize");
         assert_eq!(report.created_stereo_elements.len(), 1);
         molecule
@@ -351,7 +351,7 @@ fn normalization_assembles_wedge_either_as_explicit_unknown() {
         kind: SourceStereoBondMarkKind::WedgeEither,
     }];
 
-    let report = canonicalize_molecule_for_publication(mol.working_mut(), None, &source_stereo)
+    let report = canonicalize_molecule_for_publication(&mut mol, None, &source_stereo)
         .expect("wedge/either should assemble as unknown stereo");
     assert_eq!(report.created_stereo_elements.len(), 1);
     let element = mol
@@ -386,7 +386,7 @@ fn alternate_tetrahedral_wedge_carriers_publish_identical_canonical_stereo() {
             Point3::new(0.0, -1.0, 0.0),
         ]);
         let report = canonicalize_molecule_for_publication(
-            molecule.working_mut(),
+            &mut molecule,
             Some(&points),
             &[SourceStereoBondMark {
                 bond,
@@ -435,7 +435,7 @@ fn source_stereo_rejects_an_origin_outside_the_marked_bond() {
         kind: SourceStereoBondMarkKind::WedgeUp,
     }];
 
-    let error = canonicalize_molecule_for_publication(molecule.working_mut(), None, &source_stereo)
+    let error = canonicalize_molecule_for_publication(&mut molecule, None, &source_stereo)
         .expect_err("the marked origin must be an endpoint of its bond");
 
     assert!(matches!(
@@ -465,7 +465,7 @@ fn normalization_reports_ambiguous_tetrahedral_wedge_marks() {
         },
     ];
 
-    let report = canonicalize_molecule_for_publication(mol.working_mut(), None, &source_stereo)
+    let report = canonicalize_molecule_for_publication(&mut mol, None, &source_stereo)
         .expect("ambiguous wedges should warn without failing");
 
     assert!(report
@@ -486,7 +486,7 @@ fn a_wedge_without_coordinates_does_not_define_atom_order_parity() {
     ] {
         let (mut molecule, center, _, bond) = tetrahedral_marked_graph();
         let report = canonicalize_molecule_for_publication(
-            molecule.working_mut(),
+            &mut molecule,
             None,
             &[SourceStereoBondMark {
                 bond,
@@ -521,7 +521,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
 
     let positions = crate::structure::Positions::zeros(marked.atom_count());
     let coordinate_result = stereo_api::coordinates::infer_coordinate_stereo(
-        marked.working(),
+        &marked.snapshot().0,
         &positions,
         Default::default(),
     )
@@ -529,9 +529,8 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
     assert!(coordinate_result.elements.is_empty());
     let marked_before = marked.clone();
 
-    let marked_error =
-        canonicalize_molecule_for_publication(marked.working_mut(), None, &marked_source)
-            .expect_err("unassembled tetrahedral mark should fail");
+    let marked_error = canonicalize_molecule_for_publication(&mut marked, None, &marked_source)
+        .expect_err("unassembled tetrahedral mark should fail");
     assert!(matches!(
         marked_error,
         NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
@@ -557,7 +556,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
         kind: SourceStereoBondMarkKind::DoubleBondEither,
     }];
     let unsupported_error =
-        canonicalize_molecule_for_publication(unsupported.working_mut(), None, &unsupported_source)
+        canonicalize_molecule_for_publication(&mut unsupported, None, &unsupported_source)
             .expect_err("unsupported double-bond mark should fail");
     assert!(matches!(
         unsupported_error,
@@ -596,9 +595,8 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
         kind: SourceStereoBondMarkKind::DoubleBondEither,
     }];
 
-    let unknown_report =
-        canonicalize_molecule_for_publication(unknown.working_mut(), None, &unknown_source)
-            .expect("double-bond either should assemble as unknown stereo");
+    let unknown_report = canonicalize_molecule_for_publication(&mut unknown, None, &unknown_source)
+        .expect("double-bond either should assemble as unknown stereo");
     assert_eq!(unknown_report.created_stereo_elements.len(), 1);
     let (_, element) = unknown.stereo_elements().next().expect("unknown element");
     assert!(matches!(
@@ -611,7 +609,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
     let x = absent.add_atom(carbon()).expect("atom identifier capacity");
     let y = absent.add_atom(carbon()).expect("atom identifier capacity");
     absent.add_bond(x, y, BondOrder::Single).expect("bond");
-    let absent_report = canonicalize_molecule_for_publication(absent.working_mut(), None, &[])
+    let absent_report = canonicalize_molecule_for_publication(&mut absent, None, &[])
         .expect("unmarked molecule should normalize");
     assert!(absent_report.created_stereo_elements.is_empty());
     assert!(absent.stereo_elements().next().is_none());
@@ -871,16 +869,18 @@ fn reverse_bond_endpoint_storage(molecule: &Molecule) -> Molecule {
 }
 
 fn reverse_bond_endpoint_storage_except(molecule: &Molecule, excluded: &[BondId]) -> Molecule {
-    let mut reversed = molecule.clone();
-    for (index, bond) in reversed.graph.bonds.iter_mut().enumerate() {
-        if excluded.contains(&BondId::new(index as u32)) {
+    let mut editor = molecule.to_editor();
+    for id in molecule.bond_ids() {
+        if excluded.contains(&id) {
             continue;
         }
-        let Some(bond) = bond else {
-            continue;
-        };
+        let bond = editor.graph_mut().bond_mut(id).expect("live bond");
         std::mem::swap(&mut bond.a, &mut bond.b);
     }
+    let mut reversed = editor.into_unchecked();
+    reversed
+        .install_perception(molecule.perception().clone())
+        .expect("endpoint order does not change perception");
     reversed
 }
 

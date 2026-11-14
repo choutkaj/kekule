@@ -1,7 +1,9 @@
 //! Shared connected-component publication for subsets and structural editors.
 use super::TopologyBuilder;
-use crate::molecule::{AtomId, BondId, MoleculeEditor, MoleculeError, MoleculePublicationError};
-use crate::properties::PropertyError;
+use crate::molecule::{
+    AtomId, BondId, Graph, MoleculeEditor, MoleculeError, MoleculePublicationError, SlotLiveness,
+};
+use crate::properties::{MoleculeProperties, PropertyError};
 use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -12,8 +14,9 @@ pub(super) struct ComponentDefinition {
 }
 
 /// Fails with the caller's own error, which wraps each cause.
-pub(super) fn build_component_definitions<E>(
-    source_molecule: &crate::molecule::Molecule,
+pub(super) fn build_component_definitions<E, L: SlotLiveness>(
+    source_molecule: &Graph<L>,
+    source_properties: &MoleculeProperties,
     selected_local: &BTreeSet<AtomId>,
     class: Option<(super::MoleculeClass, bool)>,
     builder: &mut TopologyBuilder,
@@ -105,15 +108,15 @@ where
     }
 
     for mut component in components {
-        let properties = &mut component.editor.working_mut().properties;
-        *properties.atoms_mut() = source_molecule.properties().atoms().raw().select_indices(
+        let properties = component.editor.properties_storage_mut();
+        *properties.atoms_mut() = source_properties.atoms().raw().select_indices(
             &component
                 .source_atoms
                 .iter()
                 .map(|atom| atom.index())
                 .collect::<Vec<_>>(),
         )?;
-        *properties.bonds_mut() = source_molecule.properties().bonds().raw().select_indices(
+        *properties.bonds_mut() = source_properties.bonds().raw().select_indices(
             &component
                 .source_bonds
                 .iter()
@@ -121,7 +124,7 @@ where
                 .collect::<Vec<_>>(),
         )?;
         if whole_instance_selected {
-            for (key, value) in source_molecule.properties().owner().iter() {
+            for (key, value) in source_properties.owner().iter() {
                 properties.owner_mut().insert(key.clone(), value.clone())?;
             }
         }

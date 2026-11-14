@@ -14,8 +14,8 @@ use crate::io::{
 };
 use crate::math::Point3;
 use crate::molecule::{
-    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,
-    MoleculeEditor,
+    Atom, AtomId, AtomRadical, BondId, BondOrder, Element, Graph, ImplicitHydrogens, Molecule,
+    MoleculeEditor, SlotLiveness,
 };
 use crate::stereo::{
     StereoElement, StereoElementId, StereoElementKind, StereoGroup, StereoGroupKind,
@@ -134,7 +134,7 @@ fn molfile_atom(atom: &MolfileAtom) -> Result<Atom, FormatError> {
 }
 
 fn apply_molfile_declared_valence(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     atom: AtomId,
     declaration: &MolfileAtom,
     declared_valence: u8,
@@ -278,7 +278,7 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
     for (atom, &id) in document.atoms().iter().zip(&atom_ids) {
         if let Some(valence) = atom.valence {
             apply_molfile_declared_valence(
-                editor.working_mut(),
+                &mut editor,
                 id,
                 atom,
                 valence,
@@ -287,16 +287,14 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
             )?;
         }
     }
-    localize_source_aromatic_bonds(editor.working_mut(), &source_aromatic_bonds).map_err(
-        |error| {
-            interpret_error(
-                DiagnosticKind::Chemistry,
-                first_aromatic,
-                "Cannot assign single and double bonds to the aromatic bonds.",
-            )
-            .with_source(error)
-        },
-    )?;
+    localize_source_aromatic_bonds(&mut editor, &source_aromatic_bonds).map_err(|error| {
+        interpret_error(
+            DiagnosticKind::Chemistry,
+            first_aromatic,
+            "Cannot assign single and double bonds to the aromatic bonds.",
+        )
+        .with_source(error)
+    })?;
     Ok(StagedMolfile {
         editor,
         geometry,
@@ -590,9 +588,9 @@ pub(crate) fn interpret_molfile_document(
         })
         .map(|mark| mark.from)
         .chain(atom_cfg.iter().map(|(atom, _, _)| *atom));
-    materialize_molfile_stereo_hydrogens(staging.working_mut(), tetrahedral_centers);
+    materialize_molfile_stereo_hydrogens(&mut staging, tetrahedral_centers);
     source_stereo.extend(crate::io::molfile_double_bond_geometry_marks(
-        staging.working(),
+        staging.graph(),
         &source_stereo,
     ));
     let mut components = Vec::new();
@@ -605,7 +603,7 @@ pub(crate) fn interpret_molfile_document(
         let mut editor = raw.editor;
         let mut contradicted_parities = Vec::new();
         let mut publication_report = canonicalize_molecule_for_publication(
-            editor.working_mut(),
+            &mut editor,
             Some(&raw.geometry),
             &raw.source_stereo,
         )
@@ -620,8 +618,8 @@ pub(crate) fn interpret_molfile_document(
         // A drawn configuration the coordinates do not specify was never
         // asserted, so nothing reports its removal. Classifying the double
         // bonds perceives the graph, which a drawing without E/Z skips.
-        let double_bonds = if crate::io::has_specified_double_bond_stereo(editor.working()) {
-            molfile_coordinate_double_bonds(editor.working(), &raw.geometry)?
+        let double_bonds = if crate::io::has_specified_double_bond_stereo(&editor) {
+            molfile_coordinate_double_bonds(&editor.snapshot_keeping_ids(), &raw.geometry)?
         } else {
             None
         };
@@ -635,7 +633,7 @@ pub(crate) fn interpret_molfile_document(
         publication_report
             .created_stereo_elements
             .extend(install_v3000_atom_cfg(
-                editor.working_mut(),
+                &mut editor,
                 &raw.atom_map,
                 &atom_cfg,
                 &raw.geometry,
@@ -643,7 +641,7 @@ pub(crate) fn interpret_molfile_document(
             )?);
         let mut coordinate_warnings = Vec::new();
         let inferred = molfile_coordinate_tetrahedra(
-            editor.working(),
+            &editor.snapshot_keeping_ids(),
             &raw.geometry,
             &mut coordinate_warnings,
         )?;
@@ -651,7 +649,7 @@ pub(crate) fn interpret_molfile_document(
             StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
             _ => None,
         });
-        materialize_molfile_stereo_hydrogens(editor.working_mut(), centers);
+        materialize_molfile_stereo_hydrogens(&mut editor, centers);
         for element in inferred {
             publication_report.created_stereo_elements.push(
                 editor.add_stereo_element(element).map_err(|error| {
@@ -664,11 +662,7 @@ pub(crate) fn interpret_molfile_document(
                 })?,
             );
         }
-        install_molfile_stereo_groups(
-            editor.working_mut(),
-            &raw.atom_map,
-            document.stereo_groups(),
-        )?;
+        install_molfile_stereo_groups(&mut editor, &raw.atom_map, document.stereo_groups())?;
         let (molecule, ids) = editor.finish_with_correspondence().map_err(|error| {
             interpret_error(
                 DiagnosticKind::Chemistry,
@@ -781,7 +775,7 @@ pub(crate) fn interpret_molfile_document(
 /// atom's 3D coordinates is skipped and recorded in `contradicted`, leaving the
 /// center to coordinate inference; flat drawings never contradict a parity.
 fn install_v3000_atom_cfg(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     atom_map: &BTreeMap<AtomId, AtomId>,
     declarations: &[(AtomId, MolfileAtomParity, SourceLocation)],
     geometry: &dyn crate::io::AtomPositionSource,
@@ -891,7 +885,7 @@ fn install_v3000_atom_cfg(
 }
 
 fn install_molfile_stereo_groups(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     atom_map: &BTreeMap<AtomId, AtomId>,
     groups: &[MolfileStereoGroup],
 ) -> Result<(), FormatError> {
@@ -955,8 +949,8 @@ fn install_molfile_stereo_groups(
     Ok(())
 }
 
-pub(super) fn molfile_stereo_group_members_at_atom(
-    molecule: &Molecule,
+pub(super) fn molfile_stereo_group_members_at_atom<L: SlotLiveness>(
+    molecule: &Graph<L>,
     atom: AtomId,
 ) -> Vec<StereoElementId> {
     molecule
@@ -975,7 +969,7 @@ pub(super) fn molfile_stereo_group_members_at_atom(
 }
 
 pub(super) fn materialize_molfile_stereo_hydrogens(
-    molecule: &mut Molecule,
+    molecule: &mut MoleculeEditor,
     centers: impl IntoIterator<Item = AtomId>,
 ) {
     for center in centers {
@@ -1007,8 +1001,8 @@ pub(super) fn molfile_coordinates_are_flat(points: &[Point3]) -> bool {
         .is_none_or(|first| points.iter().all(|point| point.z == first.z))
 }
 
-fn molfile_points(
-    molecule: &Molecule,
+fn molfile_points<L: SlotLiveness>(
+    molecule: &Graph<L>,
     geometry: &dyn crate::io::AtomPositionSource,
 ) -> Result<Vec<Point3>, FormatError> {
     molecule
@@ -1112,7 +1106,7 @@ fn partition_molfile_staging(
     geometry: &StagedCoordinates,
     source_stereo: &[SourceStereoBondMark],
 ) -> Result<Vec<RawMolfileComponent>, FormatError> {
-    let graph = staging.working();
+    let graph = &staging;
     let mut result = Vec::new();
     for old_atoms in graph.connected_components() {
         let atom_set = old_atoms.iter().copied().collect::<BTreeSet<_>>();
@@ -1155,7 +1149,7 @@ fn partition_molfile_staging(
             .raw()
             .select_indices(&bond_map.keys().map(|id| id.index()).collect::<Vec<_>>())
             .map_err(chemistry)?;
-        editor.working_mut().properties = properties;
+        *editor.properties_storage_mut() = properties;
         let remapped_stereo = source_stereo
             .iter()
             .filter_map(|mark| {
@@ -1233,7 +1227,7 @@ mod stereo_group_tests {
                     .unwrap(),
             );
         }
-        let mut molecule = editor.finish().unwrap();
+        let mut molecule = editor.finish().unwrap().into_editor();
         assert_eq!(
             molfile_stereo_group_members_at_atom(&molecule, atoms[2]),
             axes

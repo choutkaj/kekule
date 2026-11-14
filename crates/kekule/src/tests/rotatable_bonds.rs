@@ -18,8 +18,9 @@ fn detected_with_options(smiles: &str, options: RotatableBondOptions) -> Vec<Bon
 #[test]
 fn rdkit_strict_handles_empty_single_and_linear_molecules() {
     let empty = crate::molecule::MoleculeEditor::new();
+    let empty = empty.into_unchecked();
     assert!(
-        descriptors::rotatable_bonds(empty.working(), RotatableBondOptions::STRICT)
+        descriptors::rotatable_bonds(&empty, RotatableBondOptions::STRICT)
             .unwrap()
             .is_empty()
     );

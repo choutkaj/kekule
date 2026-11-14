@@ -707,20 +707,26 @@ pub fn materialize_coordinate_stereo(
     positions: &Positions,
     options: CoordinateStereoOptions,
 ) -> Result<CoordinateStereoMaterializationReport, CoordinateStereoError> {
-    let inferred = infer_coordinate_stereo(editor.working(), positions, options)?;
+    let (snapshot, compaction) = editor.snapshot();
+    let inferred = infer_coordinate_stereo(&snapshot, positions, options)?;
     let mut staged = editor.clone();
     let mut created_elements = Vec::with_capacity(inferred.elements.len());
-    for element in inferred.elements {
+    for mut element in inferred.elements {
+        compaction.restore_draft_references(&mut element);
         let id = staged
             .add_stereo_element(element)
             .map_err(CoordinateStereoError::CouldNotCreateElement)?;
         created_elements.push(id);
     }
-    crate::molecule::validate_represented_stereo(staged.working())?;
+    crate::molecule::validate_represented_stereo(staged.graph())?;
     *editor = staged;
     Ok(CoordinateStereoMaterializationReport {
         created_elements,
-        disagreements: inferred.disagreements,
+        disagreements: inferred
+            .disagreements
+            .into_iter()
+            .map(|id| compaction.draft_stereo_element(id))
+            .collect(),
     })
 }
 
@@ -794,8 +800,8 @@ pub(crate) fn locally_eligible_double_bonds(
 /// Shared represented-graph geometry bounds for source decoding and perception.
 /// Ring size is graph-theoretic and independent of the selected ring basis.
 /// A heteroatom endpoint does not by itself exclude cis/trans stereochemistry.
-pub(crate) fn double_bond_geometry_is_supported(
-    mol: &Molecule,
+pub(crate) fn double_bond_geometry_is_supported<L: SlotLiveness>(
+    mol: &Graph<L>,
     bond_id: BondId,
     bond: &Bond,
 ) -> bool {
@@ -833,8 +839,8 @@ pub(crate) fn double_bond_endpoint_carriers(
     carriers
 }
 
-pub(crate) fn atom_axis_carriers(
-    mol: &Molecule,
+pub(crate) fn atom_axis_carriers<L: SlotLiveness>(
+    mol: &Graph<L>,
     endpoint: AtomId,
     axis: BondId,
 ) -> Option<Vec<AtomId>> {
@@ -1201,10 +1207,19 @@ fn normalized_direction(vector: Vector3) -> Option<Vector3> {
 /// annotations decode the same nitrogen centers that coordinate inference
 /// finds. Without installed perception it is read from a detached perceived
 /// copy; a graph outside the valence model has no such nitrogen.
-pub(crate) fn nitrogen_lone_pair_is_stereogenic(mol: &Molecule, center: AtomId) -> bool {
-    mol.atom(center)
-        .is_some_and(|atom| atom.element.symbol() == "N")
-        && prepared(mol).is_ok_and(|mol| nitrogen::lone_pair_is_stereogenic(&mol, center))
+pub(crate) fn nitrogen_lone_pair_is_stereogenic<L: SlotLiveness>(
+    mol: &Graph<L>,
+    center: AtomId,
+) -> bool {
+    if mol
+        .atom(center)
+        .is_none_or(|atom| atom.element.symbol() != "N")
+    {
+        return false;
+    }
+    let (molecule, compaction) = mol.to_molecule();
+    prepared(&molecule)
+        .is_ok_and(|mol| nitrogen::lone_pair_is_stereogenic(&mol, compaction.atom(center)))
 }
 
 pub(crate) fn atom_hydrogen_count(mol: &Molecule, atom: AtomId) -> u8 {

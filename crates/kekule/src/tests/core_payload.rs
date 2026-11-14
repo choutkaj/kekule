@@ -176,7 +176,7 @@ fn stereo_elements_and_groups_live_on_molecule() {
     mol.add_bond(center, a, BondOrder::Single).expect("bond");
     mol.add_bond(center, b, BondOrder::Single).expect("bond");
     mol.add_bond(center, c, BondOrder::Single).expect("bond");
-    mark_all_fresh(mol.working_mut());
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
 
     let element = mol
         .add_stereo_element(StereoElement::new(StereoElementKind::Tetrahedral(
@@ -390,7 +390,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
             .expect("substituent bond");
     }
 
-    let add = |mol: &mut Molecule,
+    let add = |mol: &mut MoleculeEditor,
                left_endpoint,
                right_endpoint,
                left_carrier,
@@ -412,7 +412,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         variant.stereo_element(id).unwrap().clone()
     };
     let canonical = add(
-        mol.working_mut(),
+        &mut mol,
         left,
         right,
         left_reference,
@@ -420,7 +420,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         Some(DoubleBondOrientation::Together),
     );
     let alternate_left = add(
-        mol.working_mut(),
+        &mut mol,
         left,
         right,
         left_alternative,
@@ -428,7 +428,7 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         Some(DoubleBondOrientation::Opposite),
     );
     let reversed_and_alternate = add(
-        mol.working_mut(),
+        &mut mol,
         right,
         left,
         right_alternative,
@@ -439,16 +439,9 @@ fn double_bond_stereo_storage_canonicalizes_endpoints_and_references() {
         assert_eq!(canonical, equivalent);
     }
 
-    let unknown = add(
-        mol.working_mut(),
-        left,
-        right,
-        left_reference,
-        right_reference,
-        None,
-    );
+    let unknown = add(&mut mol, left, right, left_reference, right_reference, None);
     let unknown_alternatives = add(
-        mol.working_mut(),
+        &mut mol,
         right,
         left,
         right_alternative,
@@ -488,7 +481,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
             .expect("axis substituent bond");
     }
 
-    let add = |mol: &mut Molecule, carriers, orientation| {
+    let add = |mol: &mut MoleculeEditor, carriers, orientation| {
         let mut variant = mol.clone();
         let id = variant
             .add_stereo_element(StereoElement::new(StereoElementKind::Axis(AxisStereo {
@@ -500,7 +493,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         variant.stereo_element(id).unwrap().clone()
     };
     let canonical = add(
-        mol.working_mut(),
+        &mut mol,
         [
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
@@ -508,7 +501,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         Some(AxisOrientation::Clockwise),
     );
     let reversed = add(
-        mol.working_mut(),
+        &mut mol,
         [
             StereoCarrier::Atom(right_reference),
             StereoCarrier::Atom(left_reference),
@@ -516,7 +509,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         Some(AxisOrientation::Clockwise),
     );
     let alternate_left = add(
-        mol.working_mut(),
+        &mut mol,
         [
             StereoCarrier::Atom(left_alternative),
             StereoCarrier::Atom(right_reference),
@@ -524,7 +517,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         Some(AxisOrientation::CounterClockwise),
     );
     let both_alternatives = add(
-        mol.working_mut(),
+        &mut mol,
         [
             StereoCarrier::Atom(right_alternative),
             StereoCarrier::Atom(left_alternative),
@@ -536,7 +529,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
     }
 
     let unknown = add(
-        mol.working_mut(),
+        &mut mol,
         [
             StereoCarrier::Atom(left_reference),
             StereoCarrier::Atom(right_reference),
@@ -544,7 +537,7 @@ fn axis_stereo_storage_canonicalizes_reference_carriers() {
         None,
     );
     let unknown_alternatives = add(
-        mol.working_mut(),
+        &mut mol,
         [
             StereoCarrier::Atom(right_alternative),
             StereoCarrier::Atom(left_alternative),
@@ -589,29 +582,33 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
         .with_cip_descriptors(vec![(element, StereoDescriptor::R)])
         .expect("unique CIP assignment")
         .build();
-    mol.working_mut()
-        .install_perception(perception.clone())
-        .expect("valid perception");
+    crate::tests::on_draft(&mut mol, |molecule| {
+        molecule.install_perception(perception.clone())
+    })
+    .expect("valid perception");
 
     let mut pre_grouped = mol.stereo_element(element).expect("element").clone();
     let StereoElementKind::Tetrahedral(stereo) = &mut pre_grouped.kind else {
         unreachable!("test element is tetrahedral");
     };
     stereo.center = AtomId::new(999);
-    let slots_before = mol.working().graph.stereo_elements.clone();
+    let elements = |mol: &MoleculeEditor| {
+        mol.stereo_elements()
+            .map(|(id, element)| (id, element.clone()))
+            .collect::<Vec<_>>()
+    };
+    let elements_before = elements(&mol);
+    let next_before = mol.next_stereo_element_id();
     assert_eq!(
         mol.add_stereo_element(pre_grouped),
         Err(MoleculeError::InvalidStereoReference(
             StereoViolation::GroupMembershipOutsideGroupEdit {
-                element: StereoElementId::new(slots_before.len() as u32),
+                element: next_before,
             }
         ))
     );
-    assert_eq!(
-        mol.working().graph.stereo_elements.len(),
-        slots_before.len()
-    );
-    assert_eq!(mol.working().graph.stereo_elements, slots_before);
+    assert_eq!(mol.next_stereo_element_id(), next_before);
+    assert_eq!(elements(&mol), elements_before);
     assert_eq!(mol.perception(), &perception);
 
     let removed = mol
@@ -721,7 +718,7 @@ fn checked_stereo_rejects_duplicate_tetrahedral_carriers_transactionally() {
         assert_eq!(editor.perception(), before.perception());
 
         let mut unchecked = before.clone();
-        unchecked.working_mut().graph.stereo_elements[id.index()] = Some(invalid);
+        *unchecked.graph_mut().stereo_element_mut(id).unwrap() = invalid;
         assert!(matches!(
             unchecked.finish(),
             Err(MoleculePublicationError::InvalidStereo(_))
@@ -755,12 +752,8 @@ fn axis_stereo_rejects_duplicate_and_same_endpoint_references() {
             Err(MoleculeError::InvalidStereoReference(_))
         ));
         assert_eq!(editor, before);
-        editor
-            .working_mut()
-            .graph
-            .stereo_elements
-            .push(Some(invalid));
-        assert!(crate::molecule::validate_represented_stereo(editor.working()).is_err());
+        editor.graph_mut().push_stereo_element(invalid);
+        assert!(crate::molecule::validate_represented_stereo(editor.graph()).is_err());
         assert!(matches!(
             editor.finish(),
             Err(MoleculePublicationError::InvalidStereo(_))
@@ -782,8 +775,10 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
             members: ids.clone(),
         })
         .unwrap();
-    perceive(editor.working_mut()).unwrap();
-    stereo_api::cip::assign_cip_descriptors(editor.working_mut(), Default::default()).unwrap();
+    crate::tests::on_draft(&mut editor, |molecule| {
+        perceive(molecule).unwrap();
+        stereo_api::cip::assign_cip_descriptors(molecule, Default::default()).unwrap();
+    });
     let first = editor.stereo_element(ids[0]).unwrap().clone();
     for unknown in [false, true] {
         let mut duplicate = first.clone();
@@ -809,13 +804,13 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
         assert_eq!(editor.stereo_group(group).unwrap().members, ids);
 
         let mut unchecked = editor.clone();
-        unchecked.working_mut().graph.stereo_elements[ids[1].index()] = Some(duplicate);
+        *unchecked.graph_mut().stereo_element_mut(ids[1]).unwrap() = duplicate;
         let issue = StereoViolation::DuplicateStereoFocus {
             element: ids[1],
             previous: ids[0],
         };
         assert!(
-            crate::molecule::validate_represented_stereo(unchecked.working())
+            crate::molecule::validate_represented_stereo(unchecked.graph())
                 .unwrap_err()
                 .violations
                 .contains(&issue)
@@ -885,7 +880,7 @@ fn axis_reference_canonicalization_preserves_exclusive_endpoint_adjacency() {
     }));
     let id = editor.add_stereo_element(element.clone()).unwrap();
     assert_eq!(editor.stereo_element(id).unwrap(), &element);
-    crate::molecule::validate_represented_stereo(editor.working()).unwrap();
+    crate::molecule::validate_represented_stereo(editor.graph()).unwrap();
     editor.finish().unwrap();
 }
 
@@ -912,8 +907,7 @@ fn tetrahedral_stereo_requires_complete_explicit_neighbor_coverage() {
     // Crate-internal insertion keeps the assertion for transforms that
     // rewrite carriers themselves; validation and publication catch it.
     editor
-        .working_mut()
-        .add_bond(center, extra, BondOrder::Single)
+        .add_bond_unpruned(center, extra, BondOrder::Single)
         .unwrap();
     let before = editor.clone();
     assert!(matches!(
@@ -921,16 +915,14 @@ fn tetrahedral_stereo_requires_complete_explicit_neighbor_coverage() {
         Err(MoleculeError::InvalidStereoReference(_))
     ));
     assert_eq!(editor, before);
-    assert!(
-        crate::molecule::validate_represented_stereo(editor.working())
-            .unwrap_err()
-            .violations
-            .contains(&StereoViolation::UnrepresentedTetrahedralNeighbor {
-                element: id,
-                center,
-                neighbor: extra
-            })
-    );
+    assert!(crate::molecule::validate_represented_stereo(editor.graph())
+        .unwrap_err()
+        .violations
+        .contains(&StereoViolation::UnrepresentedTetrahedralNeighbor {
+            element: id,
+            center,
+            neighbor: extra
+        }));
     assert!(matches!(
         editor.clone().finish(),
         Err(MoleculePublicationError::InvalidStereo(_))
@@ -986,12 +978,8 @@ fn stereo_bond_endpoints_reject_more_than_two_explicit_substituents() {
             Err(MoleculeError::InvalidStereoReference(_))
         ));
         assert_eq!(editor, before);
-        editor
-            .working_mut()
-            .graph
-            .stereo_elements
-            .push(Some(element));
-        let issues = crate::molecule::validate_represented_stereo(editor.working())
+        editor.graph_mut().push_stereo_element(element);
+        let issues = crate::molecule::validate_represented_stereo(editor.graph())
             .unwrap_err()
             .violations;
         assert!(issues.iter().any(|issue| matches!(issue,
@@ -1015,15 +1003,15 @@ fn mutable_payload_access_invalidates_fresh_perception() {
         .add_bond(a, b, BondOrder::Single)
         .expect("bond should be valid");
 
-    mark_all_fresh(mol.working_mut());
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
     mol.atom_mut(a).expect("atom exists").formal_charge = 1;
-    assert_all_stale(mol.working());
+    assert_draft_stale(&mol);
 
-    mark_all_fresh(mol.working_mut());
+    crate::tests::on_draft(&mut mol, mark_all_fresh);
     mol.bond_mut(bond)
         .expect("bond exists")
         .set_order(BondOrder::Double);
-    assert_all_stale(mol.working());
+    assert_draft_stale(&mol);
 }
 
 #[test]
@@ -1041,11 +1029,11 @@ fn atom_map_only_mutation_invalidates_perception_and_owner_properties() {
             PropertyValue::String("before mutation".to_owned()),
         )
         .unwrap();
-    mark_all_fresh(molecule.working_mut());
+    crate::tests::on_draft(&mut molecule, mark_all_fresh);
 
     molecule.atom_mut(atom).unwrap().atom_map = NonZeroU32::new(7);
 
-    assert_all_stale(molecule.working());
+    assert_draft_stale(&molecule);
     assert_eq!(molecule.properties().owner().get(&owner_key), None);
 }
 
@@ -1055,13 +1043,11 @@ fn perception_owned_chemistry_edits_invalidate_dependent_state() {
     methane
         .add_atom(carbon())
         .expect("atom identifier capacity");
-    mark_all_fresh(methane.working_mut());
+    crate::tests::on_draft(&mut methane, mark_all_fresh);
 
-    let report = valence_api::perceive_valence(
-        methane.working_mut(),
-        ValenceModel::RdkitLike,
-        Default::default(),
-    );
+    let report = crate::tests::on_draft(&mut methane, |molecule| {
+        valence_api::perceive_valence(molecule, ValenceModel::RdkitLike, Default::default())
+    });
 
     assert!(report.is_ok());
     assert!(methane.perception().valence().is_some());

@@ -80,7 +80,8 @@ pub enum MoleculePublicationError {
     /// A neutral chlorine, bromine, or iodine with only oxygen neighbors and
     /// explicit valence 3, 5, or 7 still has `X=O` bonds. Canonical chemistry
     /// separates them as `[X+]-[O-]`; call
-    /// [`MoleculeEditor::normalize_oxohalogens`] before publishing.
+    /// [`MoleculeEditor::normalize_oxohalogens`](super::MoleculeEditor::normalize_oxohalogens)
+    /// before publishing.
     UnnormalizedOxohalogen {
         /// The halogen.
         atom: AtomId,

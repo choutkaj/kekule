@@ -3,9 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::molecule::{
-    Atom, AtomId, BondId, BondOrder, Element, ImplicitHydrogens, Molecule, MoleculeCorrespondence,
-    MoleculeEditor, MoleculeError, MoleculePublicationError,
+    implicit_hydrogen_count, Atom, AtomId, BondId, BondOrder, Element, Graph, ImplicitHydrogens,
+    Molecule, MoleculeCorrespondence, MoleculeEditor, MoleculeError, MoleculePublicationError,
+    Perception, SlotLiveness,
 };
+use crate::properties::MoleculeProperties;
 use crate::stereo::{StereoCarrier, StereoElementId, StereoElementKind};
 
 use super::rdkit_inferred_hydrogen_count;
@@ -404,9 +406,7 @@ pub(crate) fn add_hydrogens_to_molecule(
             // The parent's stereo still lists an implicit hydrogen until
             // materialize_stereo_hydrogen_carriers names this atom instead,
             // so insert without pruning.
-            editor
-                .working_mut()
-                .add_bond(parent, hydrogen_id, BondOrder::Single)?;
+            editor.add_bond_unpruned(parent, hydrogen_id, BondOrder::Single)?;
             added_by_parent.entry(parent).or_default().push(hydrogen_id);
             report.added.push(AddedHydrogen {
                 hydrogen: hydrogen_id,
@@ -455,7 +455,7 @@ pub(crate) fn remove_hydrogens_keeping(
             });
             continue;
         }
-        match removable_hydrogen(molecule, hydrogen, atom)? {
+        match removable_hydrogen(molecule, molecule.properties(), hydrogen, atom)? {
             Ok((parent, bond)) => candidates.push((hydrogen, parent, bond)),
             Err(reason) => report.retained.push(RetainedHydrogen { hydrogen, reason }),
         }
@@ -467,8 +467,13 @@ pub(crate) fn remove_hydrogens_keeping(
         .collect::<BTreeSet<_>>();
     let mut removable = BTreeSet::new();
     for (hydrogen, parent, _) in &candidates {
-        let stereo_is_collapsible =
-            stereo_hydrogen_is_collapsible(molecule, *hydrogen, *parent, &candidate_ids);
+        let stereo_is_collapsible = stereo_hydrogen_is_collapsible(
+            molecule,
+            molecule.perception(),
+            *hydrogen,
+            *parent,
+            &candidate_ids,
+        );
         if stereo_is_collapsible {
             removable.insert(*hydrogen);
         } else {
@@ -624,7 +629,6 @@ pub(crate) fn materialize_stereo_hydrogen_carriers(
     added_by_parent: &BTreeMap<AtomId, Vec<AtomId>>,
 ) -> Result<(), MoleculeError> {
     let replacements = editor
-        .working()
         .stereo_elements()
         .filter_map(|(id, element)| {
             let mut replacement = element.clone();
@@ -674,8 +678,9 @@ pub(crate) fn materialize_stereo_hydrogen_carriers(
     Ok(())
 }
 
-pub(crate) fn removable_hydrogen(
-    molecule: &Molecule,
+pub(crate) fn removable_hydrogen<L: SlotLiveness>(
+    molecule: &Graph<L>,
+    properties: &MoleculeProperties,
     hydrogen: AtomId,
     atom: &Atom,
 ) -> Result<Result<(AtomId, BondId), RetainedHydrogenReason>, MoleculeError> {
@@ -694,8 +699,7 @@ pub(crate) fn removable_hydrogen(
     if atom.hydrogens.represented_count() != 0 {
         return Ok(Err(RetainedHydrogenReason::EncodedHydrogenCount));
     }
-    if molecule
-        .properties()
+    if properties
         .atoms()
         .row_has_data(hydrogen)
         .expect("live atom has a property-table row")
@@ -719,8 +723,7 @@ pub(crate) fn removable_hydrogen(
     if bond.order != BondOrder::Single {
         return Ok(Err(RetainedHydrogenReason::NonSingleBond));
     }
-    if molecule
-        .properties()
+    if properties
         .bonds()
         .row_has_data(bond_id)
         .expect("live bond has a property-table row")
@@ -730,8 +733,9 @@ pub(crate) fn removable_hydrogen(
     Ok(Ok((parent, bond_id)))
 }
 
-pub(crate) fn stereo_hydrogen_is_collapsible(
-    molecule: &Molecule,
+pub(crate) fn stereo_hydrogen_is_collapsible<L: SlotLiveness>(
+    molecule: &Graph<L>,
+    perception: &Perception,
     hydrogen: AtomId,
     parent: AtomId,
     candidates: &BTreeSet<AtomId>,
@@ -773,13 +777,13 @@ pub(crate) fn stereo_hydrogen_is_collapsible(
                 (true, false) => {
                     stereo.left == parent
                         && collapses_to_sole_implicit_hydrogen(
-                            molecule, hydrogen, parent, candidates,
+                            molecule, perception, hydrogen, parent, candidates,
                         )
                 }
                 (false, true) => {
                     stereo.right == parent
                         && collapses_to_sole_implicit_hydrogen(
-                            molecule, hydrogen, parent, candidates,
+                            molecule, perception, hydrogen, parent, candidates,
                         )
                 }
                 (true, true) => false,
@@ -797,20 +801,23 @@ pub(crate) fn stereo_hydrogen_is_collapsible(
 /// implicit or collapsible hydrogen, as on a terminal `=CH2`, would lose which
 /// ligand the assertion names, so that reference stays a graph atom. An
 /// unknown count is rejected afterwards as missing valence perception.
-fn collapses_to_sole_implicit_hydrogen(
-    molecule: &Molecule,
+fn collapses_to_sole_implicit_hydrogen<L: SlotLiveness>(
+    molecule: &Graph<L>,
+    perception: &Perception,
     hydrogen: AtomId,
     parent: AtomId,
     candidates: &BTreeSet<AtomId>,
 ) -> bool {
-    matches!(molecule.implicit_hydrogens(parent), None | Some(0))
-        && molecule.neighbors(parent).is_some_and(|mut neighbors| {
-            neighbors.all(|neighbor| neighbor == hydrogen || !candidates.contains(&neighbor))
-        })
+    matches!(
+        implicit_hydrogen_count(molecule, perception, parent),
+        None | Some(0)
+    ) && molecule.neighbors(parent).is_some_and(|mut neighbors| {
+        neighbors.all(|neighbor| neighbor == hydrogen || !candidates.contains(&neighbor))
+    })
 }
 
-pub(crate) fn stereo_hydrogen_bindings(
-    molecule: &Molecule,
+pub(crate) fn stereo_hydrogen_bindings<L: SlotLiveness>(
+    molecule: &Graph<L>,
     removable: &BTreeSet<AtomId>,
 ) -> BTreeMap<AtomId, Vec<StereoElementId>> {
     let mut bindings = BTreeMap::<AtomId, Vec<StereoElementId>>::new();
@@ -862,14 +869,13 @@ pub(crate) fn collapse_stereo_hydrogen_carrier(
         // The caller deletes this H immediately, restoring complete carrier
         // coverage before any other graph edit can prune incomplete stereo.
         // Publication then performs normal canonicalization and validation.
-        editor.working_mut().graph.stereo_elements[id.index()] = Some(replacement);
-        editor.working_mut().invalidate_stereo();
+        editor.set_stereo_element_unchecked(id, replacement);
     }
     Ok(())
 }
 
-pub(crate) fn stereo_hydrogen_parents(
-    molecule: &Molecule,
+pub(crate) fn stereo_hydrogen_parents<L: SlotLiveness>(
+    molecule: &Graph<L>,
     removable: &BTreeSet<AtomId>,
 ) -> BTreeSet<AtomId> {
     let mut parents = BTreeSet::new();
@@ -912,11 +918,10 @@ pub(crate) fn assign_collapsed_hydrogen_counts(
 ) -> Result<Vec<HydrogenCountAdjustment>, HydrogenTransformError> {
     let mut adjustments = Vec::with_capacity(expected_totals.len());
     for (parent, expected) in expected_totals {
-        let working = editor.working();
-        let atom = working.require_atom(*parent)?;
+        let atom = editor.require_atom(*parent)?;
         let keeps_inference = atom.hydrogens.is_inferred()
             && !fixed_count_parents.contains(parent)
-            && usize::from(rdkit_inferred_hydrogen_count(working, *parent, atom)) == *expected;
+            && usize::from(rdkit_inferred_hydrogen_count(editor, *parent, atom)) == *expected;
         let hydrogens = if keeps_inference {
             ImplicitHydrogens::Inferred
         } else {
@@ -928,7 +933,7 @@ pub(crate) fn assign_collapsed_hydrogen_counts(
             })?;
             ImplicitHydrogens::Fixed(count)
         };
-        let explicit_hydrogens = working
+        let explicit_hydrogens = editor
             .explicit_hydrogens(*parent)
             .ok_or(MoleculeError::InvalidAtomId(*parent))?;
         editor.require_atom_mut(*parent)?.hydrogens = hydrogens;

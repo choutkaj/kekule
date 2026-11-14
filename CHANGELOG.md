@@ -351,6 +351,12 @@ through the workspace.
   `Property`, `SolvationError`'s `Unit`, `Cell`, `Position`, and `Build`, and
   `kekule-potentials`' `MinimizationError`'s `Evaluation`, `Position`, and
   `Unit` are boxed.
+- **Breaking:** `MoleculeEditor` edits a `DraftGraph`, which
+  `MoleculeEditor::graph` returns and the editor dereferences to; a published
+  `Molecule`'s graph is dense and never changes structure. `Graph` is generic
+  over `SlotLiveness` (`Dense` by default, `Sparse` for drafts), so its counts
+  take constant time and its atom, bond, and stereo iterators are exact-size
+  and double-ended.
 
 ### Removed
 
