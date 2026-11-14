@@ -16,6 +16,10 @@
 //! standard letter case only, while interpretation also accepts other cases
 //! and atomic numbers.
 //!
+//! The scratch limit bounds the dense position array, one point per atom,
+//! and the reusable line buffer, which grows to hold the longest line read so
+//! far, terminator included.
+//!
 //! # Examples
 //!
 //! ```
@@ -34,7 +38,7 @@
 //! frame.geometry_mut().set_positions(Quantity::new(vec![Point3::new(1.5, 0.0, 0.0)], ANGSTROM))?;
 //!
 //! let options = XyzWriteOptions::default().with_decimal_places(3).with_comment("helium");
-//! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! let mut writer = XyzWriter::new(Vec::new(), Arc::clone(&topology), options)?;
 //! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //! assert_eq!(String::from_utf8(bytes.clone())?, "1\nhelium\nHe 1.500 0.000 0.000\n");
@@ -73,9 +77,12 @@ use super::codec::frame_error;
 use super::frame_state::{check_frame_state, record, writer_field_error};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
+use super::options::ReadSource;
+use super::TrajectoryWriteOptions;
 use super::{
     codec_context, io_context, projected_index_limit, require_no_partial_frame,
     require_nonempty_writer, FrameOffsets, FrameStamp, IndexBuildControl, TrajectoryIoLimits,
+    TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.
@@ -118,39 +125,17 @@ const MAX_WRITER_COMMENT_BYTES: usize = 1_048_576;
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzReadOptions {
     length_unit: Unit,
-    limits: TrajectoryIoLimits,
-    source_label: String,
 }
 
 impl Default for XyzReadOptions {
     fn default() -> Self {
         Self {
-            limits: TrajectoryIoLimits::default(),
-            source_label: "xyz stream".into(),
             length_unit: ANGSTROM,
         }
     }
 }
 
 impl XyzReadOptions {
-    /// Sets limits applied before allocation, scanning, and seeking.
-    /// `max_scratch_bytes` bounds the dense position array, one point per
-    /// atom, and the reusable line buffer, which grows to hold the longest
-    /// line read so far, terminator included, in both sequential and indexed
-    /// modes. The frame index has its own `max_index_bytes` limit.
-    #[must_use]
-    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Sets the source label used in decoding errors.
-    #[must_use]
-    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
-        self.source_label = source_label.into();
-        self
-    }
-
     /// Sets [`Self::length_unit`].
     #[must_use]
     pub const fn with_length_unit(mut self, length_unit: Unit) -> Self {
@@ -162,16 +147,6 @@ impl XyzReadOptions {
     /// converted to the canonical length unit on publication.
     pub const fn length_unit(&self) -> Unit {
         self.length_unit
-    }
-
-    /// Limits applied before allocation, scanning, and seeking.
-    pub const fn limits(&self) -> &TrajectoryIoLimits {
-        &self.limits
-    }
-
-    /// The source label used in decoding errors.
-    pub fn source_label(&self) -> &str {
-        &self.source_label
     }
 }
 

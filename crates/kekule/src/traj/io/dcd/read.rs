@@ -5,6 +5,7 @@ pub struct DcdReader<R> {
     pub(super) reader: R,
     pub(super) topology: Arc<Topology>,
     pub(super) options: DcdReadOptions,
+    pub(super) source: ReadSource,
     pub(super) header: DcdHeader,
     pub(super) free_indices: Vec<usize>,
     pub(super) fixed_indices: Vec<usize>,
@@ -23,6 +24,7 @@ impl<R> fmt::Debug for DcdReader<R> {
             .debug_struct("DcdReader")
             .field("atom_count", &self.topology.atom_count())
             .field("options", &self.options)
+            .field("source_label", &self.source.label)
             .field("frame_cursor", &self.frame_cursor)
             .finish_non_exhaustive()
     }
@@ -53,13 +55,25 @@ impl<R: Read + Seek> DcdReader<R> {
     /// [`TrajectoryIoErrorKind::LimitExceeded`] when it exceeds the limits, and
     /// [`TrajectoryIoErrorKind::Io`] when reading fails.
     pub fn new(
-        mut reader: R,
+        reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: DcdReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = &options.source_label;
-        let limits = &options.limits;
+        let options = options.into();
+        let source = options.read_source(FORMAT);
+        Self::open(reader, topology.into(), options.dcd, source)
+    }
+
+    /// Opens the stream like [`Self::new`] with the format options and
+    /// source taken apart.
+    pub(crate) fn open(
+        mut reader: R,
+        topology: Arc<Topology>,
+        options: DcdReadOptions,
+        source: ReadSource,
+    ) -> Result<Self, TrajectoryIoError> {
+        let source_label = &source.label;
+        let limits = &source.limits;
         validate_time_policy(options.time_policy, source_label)?;
         let atom_count = topology.atom_count();
         validate_atom_count(FORMAT, atom_count, i32::MAX as usize, limits, source_label)?;
@@ -342,6 +356,7 @@ impl<R: Read + Seek> DcdReader<R> {
             reader,
             topology,
             options,
+            source,
             header,
             free_indices,
             fixed_indices,
@@ -368,7 +383,7 @@ impl<R: Read + Seek> DcdReader<R> {
             TrajectoryIoOperation::ReadFrame,
             Some(FORMAT),
         )
-        .with_source_label(&self.options.source_label)
+        .with_source_label(&self.source.label)
         .with_frame(self.frame_cursor)
         .with_byte_offset(frame_start)
         .with_counts(self.header.declared_frames as u64, self.frame_cursor as u64)
@@ -389,7 +404,7 @@ impl<R: Read + Seek> DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;
@@ -399,7 +414,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
                 TrajectoryFormat::Dcd,
-                &self.options.source_label,
+                &self.source.label,
             )? {
                 return Ok(None);
             }
@@ -408,7 +423,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
                 TrajectoryFormat::Dcd,
-                &self.options.source_label,
+                &self.source.label,
             )? {
                 return Ok(None);
             }
@@ -417,7 +432,7 @@ impl<R: Read + Seek> DcdReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
             )
-            .with_source_label(&self.options.source_label)
+            .with_source_label(&self.source.label)
             .with_frame(self.frame_cursor)
             .with_byte_offset(frame_start)
             .with_counts(
@@ -426,25 +441,25 @@ impl<R: Read + Seek> DcdReader<R> {
             )
             .with_detail("The file holds more frames than the frame count NSET in its header."));
         }
-        if self.frame_cursor >= self.options.limits.max_frames() {
+        if self.frame_cursor >= self.source.limits.max_frames() {
             if probe_seekable_eof(
                 &mut self.reader,
                 TrajectoryIoOperation::ReadFrame,
                 TrajectoryFormat::Dcd,
-                &self.options.source_label,
+                &self.source.label,
             )? {
                 return Err(self.early_eof_error(frame_start));
             }
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "",
             )
             .exceeding(
                 "The trajectory",
-                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+                LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
         let mut cell = None;
@@ -454,8 +469,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 self.header.endian,
                 &mut self.record,
                 other_scratch_bytes,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 TrajectoryIoOperation::ReadFrame,
                 Some(self.frame_cursor),
                 true,
@@ -469,7 +484,7 @@ impl<R: Read + Seek> DcdReader<R> {
             cell = Some(decode_cell(
                 &self.record,
                 self.header.endian,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
             )?);
         }
@@ -493,20 +508,19 @@ impl<R: Read + Seek> DcdReader<R> {
             Some(self.free_indices.as_slice())
         };
         let coordinate_count = coordinate_indices.map_or(self.header.atom_count, <[usize]>::len);
-        let coordinate_bytes =
-            checked_coordinate_bytes(coordinate_count, &self.options.source_label)?;
-        if coordinate_bytes as u64 > self.options.limits.max_frame_bytes() {
+        let coordinate_bytes = checked_coordinate_bytes(coordinate_count, &self.source.label)?;
+        if coordinate_bytes as u64 > self.source.limits.max_frame_bytes() {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "",
             )
             .exceeding(
                 "A coordinate record",
                 exceeded_bytes(
-                    self.options.limits.max_frame_bytes(),
+                    self.source.limits.max_frame_bytes(),
                     coordinate_bytes as u64,
                 ),
             ));
@@ -518,8 +532,8 @@ impl<R: Read + Seek> DcdReader<R> {
                 self.header.endian,
                 &mut self.record,
                 other_scratch_bytes,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 TrajectoryIoOperation::ReadFrame,
                 Some(self.frame_cursor),
                 clean_frame_eof,
@@ -534,7 +548,7 @@ impl<R: Read + Seek> DcdReader<R> {
                         FORMAT,
                         TrajectoryIoErrorKind::InvalidFrame,
                         TrajectoryIoOperation::ReadFrame,
-                        &self.options.source_label,
+                        &self.source.label,
                         self.frame_cursor,
                         "A coordinate is not finite.",
                     ));
@@ -555,7 +569,7 @@ impl<R: Read + Seek> DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;
@@ -564,22 +578,22 @@ impl<R: Read + Seek> DcdReader<R> {
                 FORMAT,
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "The frame ends before it starts.",
             )
         })?;
-        if frame_bytes > self.options.limits.max_frame_bytes() {
+        if frame_bytes > self.source.limits.max_frame_bytes() {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "",
             )
             .exceeding(
                 "The frame",
-                exceeded_bytes(self.options.limits.max_frame_bytes(), frame_bytes),
+                exceeded_bytes(self.source.limits.max_frame_bytes(), frame_bytes),
             ));
         }
         if capture_fixed_reference && self.frame_cursor == 0 && self.header.fixed_count > 0 {
@@ -595,7 +609,7 @@ impl<R: Read + Seek> DcdReader<R> {
             limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "The frame number exceeds this platform's address range.",
             )
@@ -620,7 +634,7 @@ impl<R: Read + Seek> DcdReader<R> {
                             FORMAT,
                             TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                             TrajectoryIoOperation::ReadFrame,
-                            &self.options.source_label,
+                            &self.source.label,
                             frame,
                             "The frame's step exceeds the 64-bit step range.",
                         )
@@ -631,7 +645,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
                     TrajectoryIoOperation::ReadFrame,
-                    &self.options.source_label,
+                    &self.source.label,
                     frame,
                     "The frame's step exceeds the 64-bit step range.",
                 )
@@ -646,7 +660,7 @@ impl<R: Read + Seek> DcdReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     TrajectoryIoOperation::ReadFrame,
-                    &self.options.source_label,
+                    &self.source.label,
                     frame,
                     "The frame's time is not finite.",
                 ));
@@ -708,7 +722,7 @@ impl<R: Read + Seek> DcdReader<R> {
     ) -> Result<u64, TrajectoryIoError> {
         self.reader
             .stream_position()
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 
     pub(super) fn seek_to(
@@ -718,7 +732,7 @@ impl<R: Read + Seek> DcdReader<R> {
     ) -> Result<u64, TrajectoryIoError> {
         self.reader
             .seek(offset)
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 
     /// Reads the header's `NSET` again, which a writer appending frames may
@@ -728,7 +742,7 @@ impl<R: Read + Seek> DcdReader<R> {
         let count_offset = self.header.header_start.checked_add(8).ok_or_else(|| {
             header_error(
                 FORMAT,
-                &self.options.source_label,
+                &self.source.label,
                 "The header's byte offset exceeds the 64-bit range.",
             )
         })?;
@@ -742,17 +756,13 @@ impl<R: Read + Seek> DcdReader<R> {
             &mut self.reader,
             &mut count,
             TrajectoryIoOperation::ReadHeader,
-            &self.options.source_label,
+            &self.source.label,
             None,
             "The DCD NSET is truncated.",
         );
         self.seek_to(SeekFrom::Start(position), TrajectoryIoOperation::ReadHeader)?;
         read?;
-        let declared = nonnegative_u64(
-            self.header.endian.i32(count),
-            "NSET",
-            &self.options.source_label,
-        )?;
+        let declared = nonnegative_u64(self.header.endian.i32(count), "NSET", &self.source.label)?;
         Ok(declared as usize)
     }
 }
@@ -776,7 +786,7 @@ impl<R: Read + Seek> TrajectoryReader for DcdReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;

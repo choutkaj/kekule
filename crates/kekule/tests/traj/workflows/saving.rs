@@ -836,8 +836,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
         create_trajectory_stream_writer(
             io::Cursor::new(Vec::new()),
             source.shared_topology(),
-            TrajectoryWriteOptions::default(),
-            "host stream",
+            TrajectoryWriteOptions::default().with_source_label("host stream")
         )
         .map(|_| ()),
         Err(TrajectoryIoError::codec(
@@ -853,8 +852,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
     let mut writer = create_trajectory_stream_writer(
         io::Cursor::new(Vec::new()),
         source.shared_topology(),
-        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
-        "host stream",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label("host stream"),
     )
     .unwrap();
     assert_eq!(writer.format(), TrajectoryFormat::Xyz);

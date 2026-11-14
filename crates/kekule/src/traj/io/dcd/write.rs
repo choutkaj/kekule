@@ -33,7 +33,7 @@ impl<W> fmt::Debug for DcdWriter<W> {
 
 impl<W: Write + Seek> DcdWriter<W> {
     /// A writer of `topology` frames that writes the header at the stream's
-    /// current position; `source_label` names the destination in errors.
+    /// current position.
     ///
     /// # Errors
     ///
@@ -43,13 +43,23 @@ impl<W: Write + Seek> DcdWriter<W> {
     /// atom count is zero or exceeds `i32::MAX` or scratch cannot be reserved,
     /// and [`TrajectoryIoErrorKind::Io`] when writing the header fails.
     pub fn new(
-        mut writer: W,
+        writer: W,
         topology: impl Into<Arc<Topology>>,
-        options: DcdWriteOptions,
-        source_label: impl Into<String>,
+        options: impl Into<TrajectoryWriteOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = source_label.into();
+        let options = options.into();
+        let source_label = options.stream_label(FORMAT);
+        Self::open(writer, topology.into(), options.dcd, source_label)
+    }
+
+    /// Opens the writer like [`Self::new`] with the format options and
+    /// label taken apart.
+    pub(crate) fn open(
+        mut writer: W,
+        topology: Arc<Topology>,
+        options: DcdWriteOptions,
+        source_label: String,
+    ) -> Result<Self, TrajectoryIoError> {
         let header = header_records(options, topology.atom_count(), &source_label)?;
         let io = |error| {
             io_context(

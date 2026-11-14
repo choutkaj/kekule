@@ -12,6 +12,9 @@
 //! [`TrrWriteOptions::properties`] omit them, as [`TrrWriter::report`] then
 //! reports.
 //!
+//! The scratch limit bounds the three dense decode arrays, one vector per
+//! atom each, and the reusable raw record buffer.
+//!
 //! # Examples
 //!
 //! ```
@@ -38,7 +41,7 @@
 //!
 //! // Frames without a lambda property need the RequireZero policy.
 //! let options = TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero);
-//! let mut writer = TrrWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! let mut writer = TrrWriter::new(Vec::new(), Arc::clone(&topology), options)?;
 //! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //!
@@ -87,10 +90,13 @@ use super::codec::{
 use super::frame_state::{check_frame_state, frame_interval, record, writer_field_error};
 use super::limits::{exceeded_bytes, filled_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
+use super::options::ReadSource;
+use super::TrajectoryWriteOptions;
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
     FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
+    TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.
@@ -163,53 +169,22 @@ pub enum TrrLambdaPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrrReadOptions {
     lambda_policy: TrrLambdaPolicy,
-    limits: TrajectoryIoLimits,
-    source_label: String,
 }
 
 impl Default for TrrReadOptions {
     fn default() -> Self {
         Self {
-            limits: TrajectoryIoLimits::default(),
-            source_label: "trr stream".into(),
             lambda_policy: TrrLambdaPolicy::FrameProperty,
         }
     }
 }
 
 impl TrrReadOptions {
-    /// Sets limits applied before allocation, scanning, and seeking.
-    /// `max_scratch_bytes` bounds the three dense decode arrays, one vector
-    /// per atom each, and the reusable raw record buffer, in both sequential
-    /// and indexed modes. The frame index has its own `max_index_bytes` limit.
-    #[must_use]
-    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Sets the source label used in decoding errors.
-    #[must_use]
-    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
-        self.source_label = source_label.into();
-        self
-    }
-
     /// Sets [`Self::lambda_policy`].
     #[must_use]
     pub const fn with_lambda_policy(mut self, lambda_policy: TrrLambdaPolicy) -> Self {
         self.lambda_policy = lambda_policy;
         self
-    }
-
-    /// Limits applied before allocation, scanning, and seeking.
-    pub const fn limits(&self) -> &TrajectoryIoLimits {
-        &self.limits
-    }
-
-    /// The source label used in decoding errors.
-    pub fn source_label(&self) -> &str {
-        &self.source_label
     }
 
     /// How lambda is published; [`TrrLambdaPolicy::FrameProperty`] by default.

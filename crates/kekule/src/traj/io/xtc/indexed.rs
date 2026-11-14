@@ -40,12 +40,15 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: XtcReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
+        let options = options.into();
+        let source = options.read_source(FORMAT);
         Self::build(
             reader,
             topology.into(),
-            options,
+            options.xtc,
+            source,
             false,
             &IndexBuildControl::default(),
         )
@@ -57,10 +60,11 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: XtcReadOptions,
+        source: ReadSource,
         growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
-        XtcReader::new(reader, topology, options)?.index_frames(growing, control)
+        XtcReader::open(reader, topology, options, source)?.index_frames(growing, control)
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -69,13 +73,14 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: XtcReadOptions,
+        source: ReadSource,
         offsets: Arc<FrameOffsets>,
     ) -> Result<Self, TrajectoryIoError> {
-        let inner = XtcReader::new(reader, topology, options)?;
+        let inner = XtcReader::open(reader, topology, options, source)?;
         offsets.verify_start(
             inner.stream_start,
             TrajectoryFormat::Xtc,
-            &inner.options.source_label,
+            &inner.source.label,
         )?;
         Ok(Self {
             inner,
@@ -112,6 +117,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
             stream,
             Arc::clone(&self.inner.topology),
             self.inner.options.clone(),
+            self.inner.source.clone(),
             Arc::clone(&self.offsets),
         )
     }
@@ -210,7 +216,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let label = self.inner.options.source_label.clone();
+        let label = self.inner.source.label.clone();
         control.checkpoint(
             self.offsets.len(),
             self.offsets.end(),
@@ -219,7 +225,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
         )?;
         loop {
             if let Some(limit) =
-                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+                projected_index_limit(self.offsets.len(), &self.inner.source.limits)
             {
                 let clean_eof = self.inner.pending_info.is_none()
                     && probe_seekable_eof(
@@ -262,7 +268,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 offset,
                 end,
                 info.stamp(),
-                &self.inner.options.limits,
+                &self.inner.source.limits,
                 TrajectoryFormat::Xtc,
                 &label,
             )?;
@@ -339,7 +345,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             })?;
@@ -353,7 +359,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             })?;
@@ -370,14 +376,14 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                     index,
                     &mut self.inner.adapter.reader,
                     TrajectoryFormat::Xtc,
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                 )?;
                 self.offsets.verify_stamp(
                     index,
                     info.stamp(),
                     TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Xtc,
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                 )?;
                 Ok(info)
             });
@@ -390,7 +396,7 @@ impl<R: Read + Seek> IndexedXtcReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             });

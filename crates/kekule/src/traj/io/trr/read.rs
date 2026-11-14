@@ -5,6 +5,7 @@ pub struct TrrReader<R> {
     pub(super) reader: R,
     pub(super) topology: Arc<Topology>,
     pub(super) options: TrrReadOptions,
+    pub(super) source: ReadSource,
     pub(super) stream_start: u64,
     pub(super) current_header_offset: u64,
     pub(super) first_header: TrrFrameHeader,
@@ -24,6 +25,7 @@ impl<R> fmt::Debug for TrrReader<R> {
             .debug_struct("TrrReader")
             .field("atom_count", &self.topology.atom_count())
             .field("options", &self.options)
+            .field("source_label", &self.source.label)
             .field("frame_cursor", &self.frame_cursor)
             .finish_non_exhaustive()
     }
@@ -54,13 +56,25 @@ impl<R: Read + Seek> TrrReader<R> {
     /// [`TrajectoryIoErrorKind::LimitExceeded`] when the limits are exceeded,
     /// and [`TrajectoryIoErrorKind::Io`] when reading fails.
     pub fn new(
-        mut reader: R,
+        reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: TrrReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = &options.source_label;
-        let limits = &options.limits;
+        let options = options.into();
+        let source = options.read_source(FORMAT);
+        Self::open(reader, topology.into(), options.trr, source)
+    }
+
+    /// Opens the stream like [`Self::new`] with the format options and
+    /// source taken apart.
+    pub(crate) fn open(
+        mut reader: R,
+        topology: Arc<Topology>,
+        options: TrrReadOptions,
+        source: ReadSource,
+    ) -> Result<Self, TrajectoryIoError> {
+        let source_label = &source.label;
+        let limits = &source.limits;
         let atom_count = topology.atom_count();
         validate_atom_count(
             FORMAT,
@@ -152,6 +166,7 @@ impl<R: Read + Seek> TrrReader<R> {
             reader,
             topology,
             options,
+            source,
             stream_start,
             current_header_offset: stream_start,
             first_header: first_header.clone(),
@@ -187,15 +202,15 @@ impl<R: Read + Seek> TrrReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;
         let atom_count = self.topology.as_ref().atom_count();
         read_header(
             &mut self.reader,
-            &self.options.limits,
-            &self.options.source_label,
+            &self.source.limits,
+            &self.source.label,
             Some(atom_count),
             true,
         )
@@ -203,7 +218,7 @@ impl<R: Read + Seek> TrrReader<R> {
     }
 
     pub(super) fn parse_next(&mut self) -> Result<Option<TrrDecodedFrame>, TrajectoryIoError> {
-        if self.frame_cursor >= self.options.limits.max_frames() {
+        if self.frame_cursor >= self.source.limits.max_frames() {
             let clean_eof = if self.pending_header.is_some() {
                 false
             } else {
@@ -211,7 +226,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     &mut self.reader,
                     TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Trr,
-                    &self.options.source_label,
+                    &self.source.label,
                 )?
             };
             if clean_eof {
@@ -220,13 +235,13 @@ impl<R: Read + Seek> TrrReader<R> {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "",
             )
             .exceeding(
                 "The trajectory",
-                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+                LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
         let Some(header) = self.next_header()? else {
@@ -236,7 +251,7 @@ impl<R: Read + Seek> TrrReader<R> {
         validate_lambda(
             header.lambda,
             self.options.lambda_policy,
-            &self.options.source_label,
+            &self.source.label,
             self.frame_cursor,
         )?;
         let payload_bytes = header
@@ -248,7 +263,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 limit_error(
                     FORMAT,
                     TrajectoryIoOperation::ReadFrame,
-                    &self.options.source_label,
+                    &self.source.label,
                     Some(self.frame_cursor),
                     "The frame's size exceeds this platform's address range.",
                 )
@@ -260,22 +275,22 @@ impl<R: Read + Seek> TrrReader<R> {
                 limit_error(
                     FORMAT,
                     TrajectoryIoOperation::ReadFrame,
-                    &self.options.source_label,
+                    &self.source.label,
                     Some(self.frame_cursor),
                     "The frame's size exceeds the 64-bit range.",
                 )
             })?;
-        if frame_bytes > self.options.limits.max_frame_bytes() {
+        if frame_bytes > self.source.limits.max_frame_bytes() {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "",
             )
             .exceeding(
                 "The frame",
-                exceeded_bytes(self.options.limits.max_frame_bytes(), frame_bytes),
+                exceeded_bytes(self.source.limits.max_frame_bytes(), frame_bytes),
             ));
         }
 
@@ -295,15 +310,15 @@ impl<R: Read + Seek> TrrReader<R> {
             .and_then(|bytes| bytes.checked_add(filled_bytes(&self.velocities, atom_count)?))
             .and_then(|bytes| bytes.checked_add(filled_bytes(&self.forces, atom_count)?))
             .and_then(|bytes| bytes.checked_add(raw_bytes));
-        if scratch_bytes.is_none_or(|bytes| bytes > self.options.limits.max_scratch_bytes()) {
+        if scratch_bytes.is_none_or(|bytes| bytes > self.source.limits.max_scratch_bytes()) {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 format!(
                     "The frame's buffers exceed the buffer limit of {} bytes.",
-                    self.options.limits.max_scratch_bytes()
+                    self.source.limits.max_scratch_bytes()
                 ),
             ));
         }
@@ -313,15 +328,15 @@ impl<R: Read + Seek> TrrReader<R> {
                 &mut self.reader,
                 &mut self.raw,
                 header.box_size,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 self.frame_cursor,
                 "box",
             )?;
             Some(decode_cell(
                 &self.raw,
                 header.precision,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
             )?)
         } else {
@@ -331,8 +346,8 @@ impl<R: Read + Seek> TrrReader<R> {
             &mut self.reader,
             &mut self.raw,
             header.x_size,
-            &self.options.limits,
-            &self.options.source_label,
+            &self.source.limits,
+            &self.source.label,
             self.frame_cursor,
             "position",
         )?;
@@ -341,7 +356,7 @@ impl<R: Read + Seek> TrrReader<R> {
             header.precision,
             &mut self.positions,
             Point3::new,
-            &self.options.source_label,
+            &self.source.label,
             self.frame_cursor,
             "position",
         )?;
@@ -350,8 +365,8 @@ impl<R: Read + Seek> TrrReader<R> {
                 &mut self.reader,
                 &mut self.raw,
                 header.v_size,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 self.frame_cursor,
                 "velocity",
             )?;
@@ -360,7 +375,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 header.precision,
                 &mut self.velocities,
                 Vector3::new,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "velocity",
             )?;
@@ -370,8 +385,8 @@ impl<R: Read + Seek> TrrReader<R> {
                 &mut self.reader,
                 &mut self.raw,
                 header.f_size,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 self.frame_cursor,
                 "force",
             )?;
@@ -380,7 +395,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 header.precision,
                 &mut self.forces,
                 Vector3::new,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "force",
             )?;
@@ -399,7 +414,7 @@ impl<R: Read + Seek> TrrReader<R> {
                         FORMAT,
                         TrajectoryIoErrorKind::InvalidFrame,
                         TrajectoryIoOperation::ReadFrame,
-                        &self.options.source_label,
+                        &self.source.label,
                         self.frame_cursor,
                         "The lambda value is not a valid frame property.",
                     )
@@ -409,7 +424,7 @@ impl<R: Read + Seek> TrrReader<R> {
             limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "The frame number exceeds this platform's address range.",
             )
@@ -464,7 +479,7 @@ impl<R: Read + Seek> TrrReader<R> {
     ) -> Result<u64, TrajectoryIoError> {
         self.reader
             .stream_position()
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 
     pub(super) fn seek_to(
@@ -474,7 +489,7 @@ impl<R: Read + Seek> TrrReader<R> {
     ) -> Result<u64, TrajectoryIoError> {
         self.reader
             .seek(offset)
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 }
 
@@ -500,7 +515,7 @@ impl<R: Read + Seek> TrajectoryReader for TrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
                     Some(FORMAT),
-                    &self.options.source_label,
+                    &self.source.label,
                     error,
                 )
             })?

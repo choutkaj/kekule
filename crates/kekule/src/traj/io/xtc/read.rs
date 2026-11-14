@@ -21,12 +21,13 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         &mut self,
         topology: &Topology,
         options: &XtcReadOptions,
+        source: &ReadSource,
         frame_index: usize,
         clean_eof: bool,
         positions_capacity: usize,
     ) -> Result<Option<XtcFrameInfo>, TrajectoryIoError> {
-        let limits = &options.limits;
-        let source_label = &options.source_label;
+        let limits = &source.limits;
+        let source_label = &source.label;
         self.decoded_start = None;
         let start = self.reader.stream_position().map_err(|error| {
             io_context(
@@ -589,6 +590,7 @@ pub struct XtcReader<R> {
     pub(super) adapter: CheckedXtcReaderAdapter<R>,
     pub(super) topology: Arc<Topology>,
     pub(super) options: XtcReadOptions,
+    pub(super) source: ReadSource,
     pub(super) stream_start: u64,
     pub(super) first_info: XtcFrameInfo,
     pub(super) pending_info: Option<XtcFrameInfo>,
@@ -602,6 +604,7 @@ impl<R> fmt::Debug for XtcReader<R> {
             .debug_struct("XtcReader")
             .field("atom_count", &self.topology.atom_count())
             .field("options", &self.options)
+            .field("source_label", &self.source.label)
             .field("frame_cursor", &self.frame_cursor)
             .finish_non_exhaustive()
     }
@@ -627,11 +630,23 @@ impl<R: Read + Seek> XtcReader<R> {
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: XtcReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = &options.source_label;
-        let limits = &options.limits;
+        let options = options.into();
+        let source = options.read_source(FORMAT);
+        Self::open(reader, topology.into(), options.xtc, source)
+    }
+
+    /// Opens the stream like [`Self::new`] with the format options and
+    /// source taken apart.
+    pub(crate) fn open(
+        reader: R,
+        topology: Arc<Topology>,
+        options: XtcReadOptions,
+        source: ReadSource,
+    ) -> Result<Self, TrajectoryIoError> {
+        let source_label = &source.label;
+        let limits = &source.limits;
         validate_atom_count(
             FORMAT,
             topology.atom_count(),
@@ -666,13 +681,14 @@ impl<R: Read + Seek> XtcReader<R> {
             )
         })?;
         let first_info = adapter
-            .preflight(&topology, &options, 0, false, positions.capacity())
+            .preflight(&topology, &options, &source, 0, false, positions.capacity())
             .map_err(|error| frame_offset_context(error, 0, stream_start))?
             .ok_or_else(|| header_error(FORMAT, source_label, "The stream is empty."))?;
         Ok(Self {
             adapter,
             topology,
             options,
+            source,
             stream_start,
             first_info: first_info.clone(),
             pending_info: Some(first_info),
@@ -698,7 +714,7 @@ impl<R: Read + Seek> XtcReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;
@@ -706,6 +722,7 @@ impl<R: Read + Seek> XtcReader<R> {
             .preflight(
                 &self.topology,
                 &self.options,
+                &self.source,
                 self.frame_cursor,
                 true,
                 self.positions.capacity(),
@@ -714,7 +731,7 @@ impl<R: Read + Seek> XtcReader<R> {
     }
 
     pub(super) fn parse_next(&mut self) -> Result<Option<XtcFrameInfo>, TrajectoryIoError> {
-        if self.frame_cursor >= self.options.limits.max_frames() {
+        if self.frame_cursor >= self.source.limits.max_frames() {
             let clean_eof = if self.pending_info.is_some() {
                 false
             } else {
@@ -722,7 +739,7 @@ impl<R: Read + Seek> XtcReader<R> {
                     &mut self.adapter.reader,
                     TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Xtc,
-                    &self.options.source_label,
+                    &self.source.label,
                 )?
             };
             if clean_eof {
@@ -731,13 +748,13 @@ impl<R: Read + Seek> XtcReader<R> {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "",
             )
             .exceeding(
                 "The trajectory",
-                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+                LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
         let Some(info) = self.next_info()? else {
@@ -749,7 +766,7 @@ impl<R: Read + Seek> XtcReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
             )
-            .with_source_label(&self.options.source_label)
+            .with_source_label(&self.source.label)
             .with_frame(self.frame_cursor)
             .with_byte_offset(info.start)
             .with_detail("The frame's magic number or precision differs from the first frame's."));
@@ -762,7 +779,7 @@ impl<R: Read + Seek> XtcReader<R> {
                     io_context(
                         TrajectoryIoOperation::ReadFrame,
                         Some(FORMAT),
-                        &self.options.source_label,
+                        &self.source.label,
                         error,
                     )
                 })?;
@@ -771,6 +788,7 @@ impl<R: Read + Seek> XtcReader<R> {
                 .preflight(
                     &self.topology,
                     &self.options,
+                    &self.source,
                     self.frame_cursor,
                     false,
                     self.positions.capacity(),
@@ -780,7 +798,7 @@ impl<R: Read + Seek> XtcReader<R> {
                         FORMAT,
                         TrajectoryIoErrorKind::TruncatedRecord,
                         TrajectoryIoOperation::ReadFrame,
-                        &self.options.source_label,
+                        &self.source.label,
                         Some(self.frame_cursor),
                         "An indexed frame is no longer in the file.",
                     )
@@ -790,14 +808,14 @@ impl<R: Read + Seek> XtcReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::CorruptCompressedData,
                     TrajectoryIoOperation::ReadFrame,
-                    &self.options.source_label,
+                    &self.source.label,
                     self.frame_cursor,
                     "The frame changed between its first and second reading.",
                 ));
             }
         }
         self.adapter
-            .decode(&info, &self.options.source_label, self.frame_cursor)?;
+            .decode(&info, &self.source.label, self.frame_cursor)?;
         // Written once. The indexed reader hands the buffer over, so the
         // next read allocates its own on the thread that reads.
         self.positions.clear();
@@ -821,7 +839,7 @@ impl<R: Read + Seek> XtcReader<R> {
             limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 Some(self.frame_cursor),
                 "The frame number exceeds this platform's address range.",
             )
@@ -866,7 +884,7 @@ impl<R: Read + Seek> XtcReader<R> {
         self.adapter
             .reader
             .stream_position()
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 
     pub(super) fn seek_to(
@@ -877,7 +895,7 @@ impl<R: Read + Seek> XtcReader<R> {
         self.adapter
             .reader
             .seek(offset)
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 }
 
@@ -902,7 +920,7 @@ impl<R: Read + Seek> TrajectoryReader for XtcReader<R> {
                     io_context(
                         TrajectoryIoOperation::ReadFrame,
                         Some(FORMAT),
-                        &self.options.source_label,
+                        &self.source.label,
                         error,
                     )
                 })

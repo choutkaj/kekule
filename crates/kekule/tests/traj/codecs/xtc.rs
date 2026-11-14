@@ -10,6 +10,8 @@ use kekule::traj::io::xtc::{
     XtcWriter,
 };
 use kekule::traj::io::TrajectoryIoLimits;
+use kekule::traj::io::TrajectoryOpenOptions;
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
@@ -80,8 +82,7 @@ fn encoded(atom_count: usize, magic: XtcMagic) -> (Arc<Topology>, Vec<u8>) {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        options,
-        "memory.xtc",
+        TrajectoryWriteOptions::from(options).with_source_label("memory.xtc"),
     )
     .unwrap();
     let first = source_frame(&topology, 0.0, 4);
@@ -105,8 +106,7 @@ fn encoded_frame(
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(topology),
-        options,
-        "one-frame.xtc",
+        TrajectoryWriteOptions::from(options).with_source_label("one-frame.xtc"),
     )
     .unwrap();
     writer
@@ -121,8 +121,7 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default(),
-        "box-rounding.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("box-rounding.xtc"),
     )
     .unwrap();
     let mut frame = source_frame(&topology, 0.0, 0);
@@ -206,8 +205,8 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
                 let mut writer = XtcWriter::new(
                     Cursor::new(Vec::new()),
                     Arc::clone(&topology),
-                    XtcWriteOptions::default().with_magic(magic),
-                    "scratch.xtc",
+                    TrajectoryWriteOptions::from(XtcWriteOptions::default().with_magic(magic))
+                        .with_source_label("scratch.xtc"),
                 )
                 .unwrap();
                 writer.write_frame(frame.frame_view()).unwrap();
@@ -234,7 +233,7 @@ fn xtc_aggregate_scratch_is_bounded_for_small_compressed_and_indexed_reads() {
             let first_total = dense_bytes + raw_sizes[0];
             let total = dense_bytes + raw_sizes.iter().max().unwrap();
             let options = |limit| {
-                XtcReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit))
             };
             let open = |limit| {
@@ -331,8 +330,7 @@ fn indexed_xtc_addresses_frames_from_the_stream_position_it_was_opened_at() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default(),
-        "memory.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("memory.xtc"),
     )
     .unwrap();
     for step in 0..3 {
@@ -376,7 +374,7 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         let mut reader = XtcReader::new(
             Cursor::new(bytes.clone()),
             Arc::clone(&topology),
-            XtcReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.xtc"),
         )
@@ -403,7 +401,7 @@ fn xtc_round_trips_small_and_compressed_frames_with_both_magic_variants() {
         let mut indexed = IndexedXtcReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
-            XtcReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.xtc"),
         )
@@ -445,8 +443,7 @@ fn xtc_round_trips_frames_whose_packed_integers_exceed_64_bits() {
         let mut writer = XtcWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            options,
-            "wide.xtc",
+            TrajectoryWriteOptions::from(options).with_source_label("wide.xtc"),
         )
         .unwrap();
         writer.write_frame(frame.frame_view()).unwrap();
@@ -477,7 +474,7 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let mut reader = XtcReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits.clone())
             .with_source_label("exact-limit.xtc"),
     )
@@ -490,7 +487,7 @@ fn xtc_exact_frame_and_index_limits_still_allow_clean_eof() {
     let indexed = IndexedXtcReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.xtc"),
     )
@@ -512,7 +509,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
         let error = XtcReader::new(
             Cursor::new(negative),
             Arc::clone(&topology),
-            XtcReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label(label),
         )
@@ -532,7 +529,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     let error = XtcReader::new(
         Cursor::new(negative_step),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("negative-step.xtc"),
     )
@@ -551,7 +548,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     let mut reader = XtcReader::new(
         Cursor::new(maximum_step),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("maximum-step.xtc"),
     )
@@ -566,7 +563,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     let error = XtcReader::new(
         Cursor::new(maximum_count),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_atoms(i32::MAX as usize))
             .with_source_label("maximum-count.xtc"),
     )
@@ -580,8 +577,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default(),
-        "signed-writer.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("signed-writer.xtc"),
     )
     .unwrap();
     let maximum = source_frame(&topology, 0.0, i32::MAX as u64);
@@ -595,8 +591,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default(),
-        "overflow-writer.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("overflow-writer.xtc"),
     )
     .unwrap();
     let overflow = source_frame(&topology, 0.0, i32::MAX as u64 + 1);
@@ -621,7 +616,7 @@ fn indexed_xtc_restoration_failure_does_not_publish_or_change_destination() {
     let mut indexed = IndexedXtcReader::new(
         stream,
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("restore-failure.xtc"),
     )
@@ -652,8 +647,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        options,
-        "guarded.xtc",
+        TrajectoryWriteOptions::from(options).with_source_label("guarded.xtc"),
     )
     .unwrap();
     writer
@@ -669,7 +663,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let mut reader = XtcReader::new(
         stream,
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.xtc"),
     )
@@ -692,7 +686,7 @@ fn xtc_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         let error = IndexedXtcReader::new(
             stream,
             Arc::clone(&topology),
-            XtcReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.xtc"),
         )
@@ -726,7 +720,7 @@ fn xtc_fuzz_regression_rejects_compressed_bitstream_underflow_without_panic() {
     let error = XtcReader::new(
         Cursor::new(fuzz_artifact),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("fuzz-underflow.xtc"),
     )
@@ -746,7 +740,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let error = XtcReader::new(
         Cursor::new(repeated),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("count.xtc"),
     )
@@ -762,7 +756,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let error = XtcReader::new(
         Cursor::new(precision),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("precision.xtc"),
     )
@@ -778,7 +772,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let error = XtcReader::new(
         Cursor::new(small_index),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("corrupt.xtc"),
     )
@@ -794,7 +788,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let error = IndexedXtcReader::new(
         Cursor::new(truncated),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("truncated.xtc"),
     )
@@ -809,7 +803,7 @@ fn xtc_preflight_rejects_header_precision_truncation_corruption_and_limits() {
     let error = XtcReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("limited.xtc"),
     )
@@ -836,7 +830,7 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
     let error = XtcReader::new(
         Cursor::new(trailing),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("trailing.xtc"),
     )
@@ -859,7 +853,7 @@ fn xtc_rejects_trailing_compressed_data_and_mixed_file_profiles() {
         let mut reader = XtcReader::new(
             Cursor::new(mixed),
             Arc::clone(&topology),
-            XtcReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("mixed-profile.xtc"),
         )
@@ -897,8 +891,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default(),
-        "strict.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("strict.xtc"),
     )
     .unwrap();
     let mut frame = source_frame(&topology, 0.0, 0);
@@ -997,8 +990,7 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
         let mut writer = XtcWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            options,
-            "span.xtc",
+            TrajectoryWriteOptions::from(options).with_source_label("span.xtc"),
         )
         .unwrap();
         let frame = frame_with_x(first, rest);
@@ -1053,8 +1045,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     let mut strict = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default(),
-        "vacuum.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("vacuum.xtc"),
     )
     .unwrap();
     assert_eq!(
@@ -1072,8 +1063,10 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
-        "vacuum.xtc",
+        TrajectoryWriteOptions::from(
+            XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent),
+        )
+        .with_source_label("vacuum.xtc"),
     )
     .unwrap();
     for (_, _, frame) in &frames {
@@ -1120,7 +1113,7 @@ fn independently_generated_mdanalysis_xtc_matches_lossy_profile() {
     let mut reader = XtcReader::new(
         Cursor::new(fixture),
         Arc::clone(&topology),
-        XtcReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("mdanalysis-2.9.0-twelve-atoms.xtc"),
     )

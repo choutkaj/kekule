@@ -14,6 +14,9 @@
 //! frames whose steps or times are missing or off the header's sequence, and
 //! reports the steps and times it replaced.
 //!
+//! The scratch limit bounds the combined capacities of the coordinates, the
+//! record bytes, and the fixed-atom buffers.
+//!
 //! # Examples
 //!
 //! ```
@@ -32,7 +35,7 @@
 //! // Frame steps must follow the writer's step sequence exactly.
 //! let options = DcdWriteOptions::default().with_step_sequence(10, 10);
 //! let stream = Cursor::new(Vec::new());
-//! let mut writer = DcdWriter::new(stream, Arc::clone(&topology), options, "memory")?;
+//! let mut writer = DcdWriter::new(stream, Arc::clone(&topology), options)?;
 //! let mut frame = FrameBuffer::new(Arc::clone(&topology));
 //! for step in [10, 20] {
 //!     let x = step as f64;
@@ -83,10 +86,13 @@ use super::codec::{
 use super::frame_state::{check_frame_state, record};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch, scratch_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
+use super::options::ReadSource;
+use super::TrajectoryWriteOptions;
 use super::{
     codec_context, frame_offset_context, index_mismatch, io_context, probe_seekable_eof,
     projected_index_limit, require_no_partial_frame, require_nonempty_writer, validation_cause,
     FrameOffsets, FrameStamp, FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
+    TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.
@@ -197,39 +203,17 @@ pub enum DcdTimePolicy {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DcdReadOptions {
     time_policy: DcdTimePolicy,
-    limits: TrajectoryIoLimits,
-    source_label: String,
 }
 
 impl Default for DcdReadOptions {
     fn default() -> Self {
         Self {
-            limits: TrajectoryIoLimits::default(),
-            source_label: "dcd stream".into(),
             time_policy: DcdTimePolicy::Absent,
         }
     }
 }
 
 impl DcdReadOptions {
-    /// Sets limits applied before allocation, scanning, and seeking.
-    ///
-    /// The scratch limit covers the combined retained capacities of coordinates,
-    /// record bytes, and fixed-atom reconstruction/validation buffers. Indexed
-    /// and sequential reads share those buffers; index offsets have a separate limit.
-    #[must_use]
-    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Sets the source label used in decoding errors.
-    #[must_use]
-    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
-        self.source_label = source_label.into();
-        self
-    }
-
     /// Sets [`Self::time_policy`].
     #[must_use]
     pub const fn with_time_policy(mut self, time_policy: DcdTimePolicy) -> Self {
@@ -240,16 +224,6 @@ impl DcdReadOptions {
     /// How frame times are derived; [`DcdTimePolicy::Absent`] by default.
     pub const fn time_policy(&self) -> DcdTimePolicy {
         self.time_policy
-    }
-
-    /// Limits applied before allocation, scanning, and seeking.
-    pub const fn limits(&self) -> &TrajectoryIoLimits {
-        &self.limits
-    }
-
-    /// The source label used in decoding errors.
-    pub fn source_label(&self) -> &str {
-        &self.source_label
     }
 }
 

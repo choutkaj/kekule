@@ -12,6 +12,9 @@
 //! [`XtcWriteOptions::properties`] omit them, as [`XtcWriter::report`] then
 //! reports.
 //!
+//! The scratch limit bounds the combined capacities of the encoded bytes,
+//! the decoded scalar coordinates, and the dense positions.
+//!
 //! # Examples
 //!
 //! ```
@@ -36,7 +39,7 @@
 //!
 //! // A frame without a cell is written as the GROMACS zero box.
 //! let options = XtcWriteOptions::default().with_cell_policy(XtcCellPolicy::ZeroMatrixAsAbsent);
-//! let mut writer = XtcWriter::new(Vec::new(), Arc::clone(&topology), options, "memory")?;
+//! let mut writer = XtcWriter::new(Vec::new(), Arc::clone(&topology), options)?;
 //! writer.write_frame(frame.frame_view())?;
 //! let bytes = writer.finish()?;
 //!
@@ -76,10 +79,12 @@ use super::codec::{
 use super::frame_state::{check_frame_state, frame_interval, record};
 use super::limits::{exceeded_bytes, reserve_scratch, scratch_bytes};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
+use super::options::ReadSource;
+use super::TrajectoryWriteOptions;
 use super::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, projected_index_limit,
     require_no_partial_frame, require_nonempty_writer, validation_cause, FrameOffsets, FrameStamp,
-    FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits,
+    FrameTimingPolicy, IndexBuildControl, TrajectoryIoLimits, TrajectoryOpenOptions,
 };
 
 /// The format of this codec's streams.
@@ -168,39 +173,17 @@ pub enum XtcCellPolicy {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XtcReadOptions {
     cell_policy: XtcCellPolicy,
-    limits: TrajectoryIoLimits,
-    source_label: String,
 }
 
 impl Default for XtcReadOptions {
     fn default() -> Self {
         Self {
-            limits: TrajectoryIoLimits::default(),
-            source_label: "xtc stream".into(),
             cell_policy: XtcCellPolicy::RequirePeriodic,
         }
     }
 }
 
 impl XtcReadOptions {
-    /// Sets limits applied before allocation, scanning, and seeking.
-    ///
-    /// The scratch limit covers the combined retained capacities of encoded
-    /// bytes, decoded scalar coordinates, and dense positions. Indexed and
-    /// sequential access share these buffers; index offsets have a separate limit.
-    #[must_use]
-    pub fn with_limits(mut self, limits: TrajectoryIoLimits) -> Self {
-        self.limits = limits;
-        self
-    }
-
-    /// Sets the source label used in decoding errors.
-    #[must_use]
-    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
-        self.source_label = source_label.into();
-        self
-    }
-
     /// Sets [`Self::cell_policy`].
     #[must_use]
     pub const fn with_cell_policy(mut self, cell_policy: XtcCellPolicy) -> Self {
@@ -212,16 +195,6 @@ impl XtcReadOptions {
     /// by default.
     pub const fn cell_policy(&self) -> XtcCellPolicy {
         self.cell_policy
-    }
-
-    /// Limits applied before allocation, scanning, and seeking.
-    pub const fn limits(&self) -> &TrajectoryIoLimits {
-        &self.limits
-    }
-
-    /// The source label used in decoding errors.
-    pub fn source_label(&self) -> &str {
-        &self.source_label
     }
 }
 

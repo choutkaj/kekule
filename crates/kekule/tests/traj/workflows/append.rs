@@ -141,9 +141,12 @@ fn write_frames(writer: &mut impl TrajectoryWriter, frames: impl IntoIterator<It
 /// The file one uninterrupted run writes of frames `0..count`.
 fn straight_through(format: TrajectoryFormat, path: &Path, count: u64) -> Vec<u8> {
     let file = File::create(path).unwrap();
-    let mut writer =
-        create_trajectory_stream_writer(BufWriter::new(file), topology(), options(format), "run")
-            .unwrap();
+    let mut writer = create_trajectory_stream_writer(
+        BufWriter::new(file),
+        topology(),
+        options(format).with_source_label("run"),
+    )
+    .unwrap();
     write_frames(&mut writer, (0..count).map(frame));
     drop(writer.finish().unwrap());
     fs::read(path).unwrap()
@@ -299,8 +302,7 @@ fn a_non_periodic_xtc_run_continues_under_the_writer_cell_policy() {
         let mut writer = create_trajectory_stream_writer(
             BufWriter::new(file),
             topology(),
-            zero_boxes.clone(),
-            "run",
+            zero_boxes.clone().with_source_label("run"),
         )
         .unwrap();
         write_frames(&mut writer, (0..count).map(open_frame));
@@ -511,9 +513,12 @@ fn appending_with_settings_other_than_the_file_records_is_refused() {
         frame
     };
     let file = File::create(&path).unwrap();
-    let mut writer =
-        create_trajectory_stream_writer(BufWriter::new(file), topology(), lambdas.clone(), "run")
-            .unwrap();
+    let mut writer = create_trajectory_stream_writer(
+        BufWriter::new(file),
+        topology(),
+        lambdas.clone().with_source_label("run"),
+    )
+    .unwrap();
     write_frames(&mut writer, (0..3).map(lambda));
     drop(writer.finish().unwrap());
     assert_refused(

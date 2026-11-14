@@ -17,6 +17,7 @@ use crate::traj::{
 use crate::traj::trajectory::COLUMN_MISMATCH;
 
 use super::limits::index_hard_capacity;
+use super::options::ReadSource;
 use super::{
     dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata, FrameOffsets,
     IndexBuildControl, SharedFile, TrajectoryFileFingerprint, TrajectoryFrameIndex,
@@ -321,6 +322,8 @@ pub struct IndexedFileTrajectoryReader {
     /// last indexed frame.
     fingerprint: TrajectoryFileFingerprint,
     path: PathBuf,
+    /// The name of the file in errors: the caller's label, or the path.
+    label: String,
     growing: bool,
 }
 
@@ -379,6 +382,7 @@ impl IndexedFileTrajectoryReader {
             open_report: self.open_report.clone(),
             fingerprint: self.fingerprint.clone(),
             path: self.path.clone(),
+            label: self.label.clone(),
             growing: self.growing,
         })
     }
@@ -417,7 +421,7 @@ impl IndexedFileTrajectoryReader {
                 TrajectoryIoOperation::ReadFrame,
                 Some(self.metadata.format()),
             )
-            .with_source_label(self.path.display().to_string())
+            .with_source_label(self.label.clone())
             .with_frame(index)
             .with_detail(format!(
                 "The file no longer holds frame {index}: it is {length} bytes, and the frame ends at byte {end}. Open the file again."
@@ -499,7 +503,7 @@ impl IndexedFileTrajectoryReader {
     /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::traj::TrajectoryIoErrorKind::LimitExceeded
     /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
     pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
-        let label = self.path.display().to_string();
+        let label = self.label.clone();
         let format = self.metadata.format();
         let mut file = File::open(&self.path).map_err(|error| {
             io_context(TrajectoryIoOperation::Index, Some(format), &label, error)
@@ -559,7 +563,7 @@ impl IndexedFileTrajectoryReader {
         &mut self,
         options: &TrajectoryWriteOptions,
     ) -> Result<(), TrajectoryIoError> {
-        let label = self.path.display().to_string();
+        let label = self.label.clone();
         match &self.inner {
             IndexedReaderInner::Xyz(_) => Ok(()),
             IndexedReaderInner::Xtc(reader) => {
@@ -707,6 +711,7 @@ pub fn read_structure_set(
     options: TrajectoryOpenOptions,
 ) -> Result<StructureSet, TrajectoryIoError> {
     let path = path.as_ref();
+    let label = options.path_label(path);
     let mut reader = open_trajectory(path, topology, options)?;
     let mut buffer = reader.frame_buffer();
     let mut writer = MemoryTrajectoryWriter::new(reader.shared_topology());
@@ -719,7 +724,7 @@ pub fn read_structure_set(
                 TrajectoryIoOperation::ReadFrame,
                 Some(format),
             )
-            .with_source_label(path.display().to_string())
+            .with_source_label(&label)
             .with_frame(index)
             .with_detail(COLUMN_MISMATCH)
             .with_source(error)
@@ -771,7 +776,11 @@ pub fn open_trajectory(
 ) -> Result<SequentialFileTrajectoryReader, TrajectoryIoError> {
     let topology = topology.into();
     let path = path.as_ref();
-    let label = path.display().to_string();
+    let label = options.path_label(path);
+    let source = ReadSource {
+        label: label.clone(),
+        limits: options.limits.clone(),
+    };
     let file = File::open(path)
         .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
     let mut reader = BufReader::new(file);
@@ -785,14 +794,7 @@ pub fn open_trajectory(
     )?;
     let (inner, metadata, notes) = match detection.format {
         TrajectoryFormat::Xyz => {
-            let mut reader = xyz::XyzReader::new(
-                reader,
-                topology,
-                options
-                    .xyz
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let mut reader = xyz::XyzReader::open(reader, topology, options.xyz, source)?;
             reader.validate_first_frame()?;
             let atom_count = reader.topology().atom_count();
             (
@@ -802,14 +804,7 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Dcd => {
-            let reader = dcd::DcdReader::new(
-                reader,
-                topology,
-                options
-                    .dcd
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let reader = dcd::DcdReader::open(reader, topology, options.dcd, source)?;
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), None);
             (
                 SequentialReaderInner::Dcd(reader),
@@ -821,14 +816,7 @@ pub fn open_trajectory(
             )
         }
         TrajectoryFormat::Trr => {
-            let reader = trr::TrrReader::new(
-                reader,
-                topology,
-                options
-                    .trr
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let reader = trr::TrrReader::open(reader, topology, options.trr, source)?;
             let metadata = FileTrajectoryMetadata::trr(reader.first_header(), None, false);
             (
                 SequentialReaderInner::Trr(Box::new(reader)),
@@ -841,14 +829,7 @@ pub fn open_trajectory(
         }
         TrajectoryFormat::Xtc => {
             let cell_policy = options.xtc.cell_policy();
-            let xtc_options = options.xtc;
-            let reader = xtc::XtcReader::new(
-                reader,
-                topology,
-                xtc_options
-                    .with_limits(options.limits)
-                    .with_source_label(label),
-            )?;
+            let reader = xtc::XtcReader::open(reader, topology, options.xtc, source)?;
             let metadata = FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, None);
             (
                 SequentialReaderInner::Xtc(reader),
@@ -1028,7 +1009,11 @@ fn open_indexed(
     options: TrajectoryOpenOptions,
     run: Run<'_>,
 ) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
-    let label = path.display().to_string();
+    let label = options.path_label(path);
+    let source = ReadSource {
+        label: label.clone(),
+        limits: options.limits.clone(),
+    };
     let growing = options.growing;
     let mut file = File::open(path)
         .map_err(|error| io_context(TrajectoryIoOperation::Open, None, &label, error))?;
@@ -1116,26 +1101,29 @@ fn open_indexed(
     };
     let (mut inner, metadata, note) = match format {
         TrajectoryFormat::Xyz => {
-            let xyz_options = options
-                .xyz
-                .with_limits(options.limits)
-                .with_source_label(label.clone());
+            let xyz_options = options.xyz;
             let reader = match imported {
                 Some((offsets, _)) => {
                     let mut reader = xyz::IndexedXyzReader::from_offsets(
                         reader,
                         topology,
                         xyz_options,
+                        source,
                         offsets,
                         growing,
                     )?;
                     reader.extend(growing, &control)?;
                     reader
                 }
-                None => {
-                    xyz::IndexedXyzReader::build(reader, topology, xyz_options, growing, &control)
-                        .map_err(unfinished)?
-                }
+                None => xyz::IndexedXyzReader::build(
+                    reader,
+                    topology,
+                    xyz_options,
+                    source,
+                    growing,
+                    &control,
+                )
+                .map_err(unfinished)?,
             };
             let count = reader.frame_count().unwrap_or(0);
             let atom_count = reader.topology().atom_count();
@@ -1146,16 +1134,14 @@ fn open_indexed(
             )
         }
         TrajectoryFormat::Dcd => {
-            let dcd_options = options
-                .dcd
-                .with_limits(options.limits)
-                .with_source_label(label.clone());
+            let dcd_options = options.dcd;
             let reader = match imported {
                 Some((offsets, _)) => {
                     let mut reader = dcd::IndexedDcdReader::from_offsets(
                         reader,
                         topology,
                         dcd_options,
+                        source,
                         offsets,
                         growing,
                     )?;
@@ -1181,10 +1167,15 @@ fn open_indexed(
                     })?;
                     reader
                 }
-                None => {
-                    dcd::IndexedDcdReader::build(reader, topology, dcd_options, growing, &control)
-                        .map_err(unfinished)?
-                }
+                None => dcd::IndexedDcdReader::build(
+                    reader,
+                    topology,
+                    dcd_options,
+                    source,
+                    growing,
+                    &control,
+                )
+                .map_err(unfinished)?,
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
@@ -1195,26 +1186,29 @@ fn open_indexed(
             )
         }
         TrajectoryFormat::Trr => {
-            let trr_options = options
-                .trr
-                .with_limits(options.limits)
-                .with_source_label(label.clone());
+            let trr_options = options.trr;
             let reader = match imported {
                 Some((offsets, precision_mixed)) => {
                     let mut reader = trr::IndexedTrrReader::from_offsets(
                         reader,
                         topology,
                         trr_options,
+                        source,
                         offsets,
                         precision_mixed,
                     )?;
                     reader.extend(growing, &control)?;
                     reader
                 }
-                None => {
-                    trr::IndexedTrrReader::build(reader, topology, trr_options, growing, &control)
-                        .map_err(unfinished)?
-                }
+                None => trr::IndexedTrrReader::build(
+                    reader,
+                    topology,
+                    trr_options,
+                    source,
+                    growing,
+                    &control,
+                )
+                .map_err(unfinished)?,
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::trr(
@@ -1230,25 +1224,28 @@ fn open_indexed(
         }
         TrajectoryFormat::Xtc => {
             let cell_policy = options.xtc.cell_policy();
-            let xtc_options = options
-                .xtc
-                .with_limits(options.limits)
-                .with_source_label(label.clone());
+            let xtc_options = options.xtc;
             let reader = match imported {
                 Some((offsets, _)) => {
                     let mut reader = xtc::IndexedXtcReader::from_offsets(
                         reader,
                         topology,
                         xtc_options,
+                        source,
                         offsets,
                     )?;
                     reader.extend(growing, &control)?;
                     reader
                 }
-                None => {
-                    xtc::IndexedXtcReader::build(reader, topology, xtc_options, growing, &control)
-                        .map_err(unfinished)?
-                }
+                None => xtc::IndexedXtcReader::build(
+                    reader,
+                    topology,
+                    xtc_options,
+                    source,
+                    growing,
+                    &control,
+                )
+                .map_err(unfinished)?,
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata =
@@ -1309,6 +1306,7 @@ fn open_indexed(
         open_report: report,
         fingerprint,
         path: path.to_path_buf(),
+        label,
         growing,
     })
 }

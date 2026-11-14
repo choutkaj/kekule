@@ -84,7 +84,7 @@ fn sequential_xyz_is_transactional_reuses_positions_and_clears_stale_state() {
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("memory.xyz"),
     )
@@ -142,8 +142,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     let mut reader = XyzReader::new(
         Cursor::new(input.as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
-            .with_length_unit(NANOMETER)
+        TrajectoryOpenOptions::from(XyzReadOptions::default().with_length_unit(NANOMETER))
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("nanometers.xyz"),
     )
@@ -170,7 +169,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
         let mut reader = XyzReader::new(
             Cursor::new(input.as_bytes()),
             Arc::clone(&topology),
-            XyzReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("bad.xyz"),
         )
@@ -192,7 +191,7 @@ fn xyz_units_elements_limits_and_late_failures_are_explicit() {
     let mut reader = XyzReader::new(
         Cursor::new("2\ncomment\nC 000000000 0 0\nH 1 1 1\n".as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("limited.xyz"),
     )
@@ -213,7 +212,7 @@ fn indexed_xyz_matches_sequential_and_random_reads_preserve_cursor() {
     let mut reader = IndexedXyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("indexed.xyz"),
     )
@@ -285,10 +284,12 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     let mut writer = XyzWriter::new(
         Vec::new(),
         Arc::clone(&topology),
-        XyzWriteOptions::default()
-            .with_decimal_places(4)
-            .with_comment("round trip"),
-        "memory.xyz",
+        TrajectoryWriteOptions::from(
+            XyzWriteOptions::default()
+                .with_decimal_places(4)
+                .with_comment("round trip"),
+        )
+        .with_source_label("memory.xyz"),
     )
     .unwrap();
     writer.write_frame(buffer.frame_view()).unwrap();
@@ -298,7 +299,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     let mut reader = XyzReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("round-trip.xyz"),
     )
@@ -316,8 +317,7 @@ fn xyz_writer_is_strict_and_round_trips_without_owned_frames() {
     let mut strict = XyzWriter::new(
         Vec::new(),
         topology,
-        XyzWriteOptions::default(),
-        "strict.xyz",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label("strict.xyz"),
     )
     .unwrap();
     assert_eq!(
@@ -492,7 +492,7 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits.clone())
             .with_source_label("exact-limit.xyz"),
     )
@@ -505,7 +505,7 @@ fn xyz_exact_frame_and_index_limits_still_allow_clean_eof() {
     let indexed = IndexedXyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.xyz"),
     )
@@ -528,7 +528,7 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
             let mut reader = XyzReader::new(
                 Cursor::new(input.as_bytes()),
                 Arc::clone(&topology),
-                XyzReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(
                         TrajectoryIoLimits::default().with_max_frame_bytes(max_frame_bytes),
                     )
@@ -577,7 +577,7 @@ fn read_first_xyz_frame<R: BufRead>(
     let mut reader = XyzReader::new(
         stream,
         Arc::clone(topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(max_scratch_bytes))
             .with_source_label("scratch.xyz"),
     )
@@ -634,7 +634,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
         let indexed = IndexedXyzReader::new(
             Cursor::new(input.clone()),
             Arc::clone(&topology),
-            XyzReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(
                     TrajectoryIoLimits::default().with_max_scratch_bytes(max_scratch_bytes),
                 )
@@ -665,7 +665,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
     let mut reader = XyzReader::new(
         stream,
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.xyz"),
     )
@@ -688,7 +688,7 @@ fn xyz_limits_probe_but_do_not_parse_or_consume_frame_n_plus_one() {
         let error = IndexedXyzReader::new(
             stream,
             Arc::clone(&topology),
-            XyzReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.xyz"),
         )
@@ -740,7 +740,7 @@ fn independently_generated_ase_fixture_matches_expected_frames() {
     let mut reader = XyzReader::new(
         Cursor::new(fixture.as_bytes()),
         Arc::clone(&topology),
-        XyzReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("ase-3.26.0-water.xyz"),
     )
@@ -761,31 +761,35 @@ fn assert_path_is_inside_temp(path: &Path) {
 #[test]
 fn xyz_streams_debug_their_options_and_progress_without_their_stream() {
     let topology = topology();
-    let options = XyzReadOptions::default().with_source_label("memory.xyz");
+    let options = XyzReadOptions::default();
+    let open_options = TrajectoryOpenOptions::from(options.clone()).with_source_label("memory.xyz");
     let mut reader = XyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
-        options.clone(),
+        open_options.clone(),
     )
     .unwrap();
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     assert!(reader.read_next(&mut buffer).unwrap());
     assert_eq!(
         format!("{reader:?}"),
-        format!("XyzReader {{ atom_count: 2, options: {options:?}, frame_cursor: 1, .. }}")
+        format!(
+            "XyzReader {{ atom_count: 2, options: {options:?}, source_label: \"memory.xyz\", \
+             frame_cursor: 1, .. }}"
+        )
     );
 
     let indexed = IndexedXyzReader::new(
         Cursor::new(TWO_FRAMES.as_bytes()),
         Arc::clone(&topology),
-        options.clone(),
+        open_options,
     )
     .unwrap();
     assert_eq!(
         format!("{indexed:?}"),
         format!(
             "IndexedXyzReader {{ reader: XyzReader {{ atom_count: 2, options: {options:?}, \
-             frame_cursor: 0, .. }}, frame_count: 2, .. }}"
+             source_label: \"memory.xyz\", frame_cursor: 0, .. }}, frame_count: 2, .. }}"
         )
     );
 
@@ -793,8 +797,7 @@ fn xyz_streams_debug_their_options_and_progress_without_their_stream() {
     let writer = XyzWriter::new(
         Vec::new(),
         Arc::clone(&topology),
-        write_options.clone(),
-        "out.xyz",
+        TrajectoryWriteOptions::from(write_options.clone()).with_source_label("out.xyz"),
     )
     .unwrap();
     assert_eq!(
@@ -854,10 +857,12 @@ fn write_one_frame(topology: Arc<Topology>) -> (String, WriteReport) {
     let mut writer = XyzWriter::new(
         Vec::new(),
         topology,
-        XyzWriteOptions::default()
-            .with_decimal_places(1)
-            .with_comment("report"),
-        "report.xyz",
+        TrajectoryWriteOptions::from(
+            XyzWriteOptions::default()
+                .with_decimal_places(1)
+                .with_comment("report"),
+        )
+        .with_source_label("report.xyz"),
     )
     .unwrap();
     writer.write_frame(buffer.frame_view()).unwrap();

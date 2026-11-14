@@ -71,8 +71,7 @@ impl<W> fmt::Debug for XyzWriter<W> {
 }
 
 impl<W: Write> XyzWriter<W> {
-    /// A writer of `topology` frames to `writer`; `source_label` names the
-    /// destination in errors. Nothing is written until the first frame.
+    /// A writer of `topology` frames to `writer`. Nothing is written until the first frame.
     ///
     /// # Errors
     ///
@@ -84,11 +83,21 @@ impl<W: Write> XyzWriter<W> {
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
-        options: XyzWriteOptions,
-        source_label: impl Into<String>,
+        options: impl Into<TrajectoryWriteOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = source_label.into();
+        let options = options.into();
+        let source_label = options.stream_label(FORMAT);
+        Self::open(writer, topology.into(), options.xyz, source_label)
+    }
+
+    /// Opens the writer like [`Self::new`] with the format options and
+    /// label taken apart.
+    pub(crate) fn open(
+        writer: W,
+        topology: Arc<Topology>,
+        options: XyzWriteOptions,
+        source_label: String,
+    ) -> Result<Self, TrajectoryIoError> {
         options
             .length_unit
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)

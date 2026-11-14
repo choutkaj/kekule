@@ -41,12 +41,15 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: DcdReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
+        let options = options.into();
+        let source = options.read_source(FORMAT);
         Self::build(
             reader,
             topology.into(),
-            options,
+            options.dcd,
+            source,
             false,
             &IndexBuildControl::default(),
         )
@@ -60,10 +63,11 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: DcdReadOptions,
+        source: ReadSource,
         growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
-        DcdReader::new(reader, topology, options)?.index_frames(growing, control)
+        DcdReader::open(reader, topology, options, source)?.index_frames(growing, control)
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -76,12 +80,13 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: DcdReadOptions,
+        source: ReadSource,
         offsets: Arc<FrameOffsets>,
         growing: bool,
     ) -> Result<Self, TrajectoryIoError> {
-        let mut inner = DcdReader::new(reader, topology, options)?;
+        let mut inner = DcdReader::open(reader, topology, options, source)?;
         inner.growing = growing;
-        let label = inner.options.source_label.clone();
+        let label = inner.source.label.clone();
         if !growing && offsets.len() > inner.header.declared_frames {
             return Err(index_mismatch(
                 TrajectoryIoOperation::Open,
@@ -152,6 +157,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             stream,
             Arc::clone(&self.inner.topology),
             self.inner.options.clone(),
+            self.inner.source.clone(),
             Arc::clone(&self.offsets),
             self.inner.growing,
         )?;
@@ -268,7 +274,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
         &mut self,
         control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let label = self.inner.options.source_label.clone();
+        let label = self.inner.source.label.clone();
         let growing = self.inner.growing;
         let declared = self.inner.header.declared_frames;
         control.checkpoint(
@@ -312,7 +318,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 ));
             }
             if let Some(limit) =
-                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+                projected_index_limit(self.offsets.len(), &self.inner.source.limits)
             {
                 if probe_seekable_eof(
                     &mut self.inner.reader,
@@ -357,7 +363,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 offset,
                 end,
                 stamp,
-                &self.inner.options.limits,
+                &self.inner.source.limits,
                 TrajectoryFormat::Dcd,
                 &label,
             )?;
@@ -432,7 +438,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
             io_context(
                 TrajectoryIoOperation::Index,
                 Some(FORMAT),
-                &self.inner.options.source_label,
+                &self.inner.source.label,
                 error,
             )
         })?;
@@ -444,7 +450,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             })?;
@@ -459,7 +465,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                     index,
                     &mut self.inner.reader,
                     TrajectoryFormat::Dcd,
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                 )?;
                 Ok(decoded)
             });
@@ -471,7 +477,7 @@ impl<R: Read + Seek> IndexedDcdReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             });

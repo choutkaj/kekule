@@ -153,7 +153,12 @@ fn write_all<W: TrajectoryWriter>(
 }
 
 fn xyz(options: XyzWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
-    let writer = XyzWriter::new(Vec::new(), topology(), options, "state.xyz").unwrap();
+    let writer = XyzWriter::new(
+        Vec::new(),
+        topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("state.xyz"),
+    )
+    .unwrap();
     write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap(), report)
@@ -161,7 +166,12 @@ fn xyz(options: XyzWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
 }
 
 fn dcd(options: DcdWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
-    let writer = DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
+    let writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("state.dcd"),
+    )
+    .unwrap();
     write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap().into_inner(), report)
@@ -169,7 +179,12 @@ fn dcd(options: DcdWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
 }
 
 fn trr(options: TrrWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
-    let writer = TrrWriter::new(Vec::new(), topology(), options, "state.trr").unwrap();
+    let writer = TrrWriter::new(
+        Vec::new(),
+        topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("state.trr"),
+    )
+    .unwrap();
     write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap(), report)
@@ -177,7 +192,12 @@ fn trr(options: TrrWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
 }
 
 fn xtc(options: XtcWriteOptions, frames: &[Frame]) -> (Vec<u8>, WriteReport) {
-    let writer = XtcWriter::new(Vec::new(), topology(), options, "state.xtc").unwrap();
+    let writer = XtcWriter::new(
+        Vec::new(),
+        topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("state.xtc"),
+    )
+    .unwrap();
     write_all(writer, frames, |writer| {
         let report = writer.report().clone();
         (writer.finish().unwrap(), report)
@@ -238,8 +258,7 @@ fn xyz_omits_and_reports_every_frame_state_it_cannot_carry() {
     let writer = XyzWriter::new(
         Vec::new(),
         topology(),
-        XyzWriteOptions::default(),
-        "state.xyz",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label("state.xyz"),
     );
     assert_eq!(
         writer.unwrap().write_frame(view(&rich[0])),
@@ -298,8 +317,7 @@ fn dcd_omits_and_reports_times_under_the_absent_policy_and_frame_state() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         topology(),
-        DcdWriteOptions::default(),
-        "state.dcd",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("state.dcd"),
     )
     .unwrap();
     assert_eq!(
@@ -341,8 +359,7 @@ fn dcd_without_unit_cells_omits_and_reports_cells_under_the_cell_policy() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         topology(),
-        DcdWriteOptions::default(),
-        "state.dcd",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("state.dcd"),
     )
     .unwrap();
     assert_eq!(
@@ -370,8 +387,7 @@ fn dcd_without_unit_cells_omits_and_reports_cells_under_the_cell_policy() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         topology(),
-        unit_cells.with_cell(OMIT),
-        "state.dcd",
+        TrajectoryWriteOptions::from(unit_cells.with_cell(OMIT)).with_source_label("state.dcd"),
     )
     .unwrap();
     assert_eq!(
@@ -432,7 +448,12 @@ fn xtc_omits_and_reports_velocities_forces_and_properties() {
             GeometryField::Velocities,
         ),
     ] {
-        let mut writer = XtcWriter::new(Vec::new(), topology(), options, "state.xtc").unwrap();
+        let mut writer = XtcWriter::new(
+            Vec::new(),
+            topology(),
+            TrajectoryWriteOptions::from(options).with_source_label("state.xtc"),
+        )
+        .unwrap();
         assert_eq!(
             writer.write_frame(view(&rich[0])),
             Err(codec_error(
@@ -499,8 +520,8 @@ fn trr_omits_properties_but_keeps_its_lambda() {
     let mut writer = TrrWriter::new(
         Vec::new(),
         topology(),
-        TrrWriteOptions::default().with_properties(OMIT),
-        "state.trr",
+        TrajectoryWriteOptions::from(TrrWriteOptions::default().with_properties(OMIT))
+            .with_source_label("state.trr"),
     )
     .unwrap();
     assert_eq!(
@@ -580,7 +601,12 @@ fn xtc_and_trr_number_frames_without_a_time_or_step() {
     assert_eq!(bytes, expected);
 
     // By default such frames still fail.
-    let mut writer = XtcWriter::new(Vec::new(), topology(), xtc_options, "state.xtc").unwrap();
+    let mut writer = XtcWriter::new(
+        Vec::new(),
+        topology(),
+        TrajectoryWriteOptions::from(xtc_options).with_source_label("state.xtc"),
+    )
+    .unwrap();
     assert_eq!(
         writer.write_frame(view(&unnumbered[0])),
         Err(codec_error(
@@ -638,8 +664,12 @@ fn dcd_numbers_frames_on_the_step_sequence() {
     // By default such frames still fail.
     let options = numbered.with_frame_timing(FrameTimingPolicy::Require);
     for frame in [unstepped[0].clone(), stepped([90, 110, 120])[0].clone()] {
-        let mut writer =
-            DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
+        let mut writer = DcdWriter::new(
+            Cursor::new(Vec::new()),
+            topology(),
+            TrajectoryWriteOptions::from(options).with_source_label("state.dcd"),
+        )
+        .unwrap();
         assert_eq!(
             writer.write_frame(view(&frame)),
             Err(codec_error(
@@ -722,8 +752,12 @@ fn dcd_numbering_times_frames_with_the_header_delta() {
     assert_eq!(timing, [(Some(0), 0.0), (Some(5), 2.5), (Some(10), 5.0)]);
 
     // By default a frame on the sequence without a time still fails.
-    let mut writer =
-        DcdWriter::new(Cursor::new(Vec::new()), topology(), options, "state.dcd").unwrap();
+    let mut writer = DcdWriter::new(
+        Cursor::new(Vec::new()),
+        topology(),
+        TrajectoryWriteOptions::from(options).with_source_label("state.dcd"),
+    )
+    .unwrap();
     assert_eq!(
         writer.write_frame(view(&timed([None; 3], [Some(0), Some(5), Some(10)])[0])),
         Err(codec_error(
@@ -775,7 +809,12 @@ fn frame_numbering_needs_a_finite_nonnegative_time_interval() {
         .with_frame_timing(FrameTimingPolicy::Number)
         .with_frame_interval(zero)
         .unwrap();
-    assert!(XtcWriter::new(Vec::new(), topology(), xtc, "state").is_ok());
+    assert!(XtcWriter::new(
+        Vec::new(),
+        topology(),
+        TrajectoryWriteOptions::from(xtc).with_source_label("state")
+    )
+    .is_ok());
 }
 
 fn set_occupancies(frame: &mut Frame) {
@@ -860,8 +899,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         let mut writer = XyzWriter::new(
             Vec::new(),
             topology(),
-            XyzWriteOptions::default(),
-            "state.xyz",
+            TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label("state.xyz"),
         )
         .unwrap();
         assert_eq!(
@@ -891,8 +929,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         let mut writer = DcdWriter::new(
             Cursor::new(Vec::new()),
             topology(),
-            DcdWriteOptions::default(),
-            "state.dcd",
+            TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("state.dcd"),
         )
         .unwrap();
         assert_eq!(
@@ -917,7 +954,12 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         (&sited, GeometryField::Occupancies),
         (&b_only, GeometryField::BFactors),
     ] {
-        let mut writer = TrrWriter::new(Vec::new(), topology(), zero, "state.trr").unwrap();
+        let mut writer = TrrWriter::new(
+            Vec::new(),
+            topology(),
+            TrajectoryWriteOptions::from(zero).with_source_label("state.trr"),
+        )
+        .unwrap();
         assert_eq!(
             writer.write_frame(view(&first(frames))),
             Err(refused(TrajectoryFormat::Trr, "state.trr", field))
@@ -945,8 +987,7 @@ fn every_codec_refuses_occupancies_and_b_factors_or_reports_them() {
         let mut writer = XtcWriter::new(
             Vec::new(),
             topology(),
-            XtcWriteOptions::default(),
-            "state.xtc",
+            TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("state.xtc"),
         )
         .unwrap();
         assert_eq!(

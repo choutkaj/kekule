@@ -29,8 +29,7 @@ impl<W> fmt::Debug for TrrWriter<W> {
 }
 
 impl<W: Write> TrrWriter<W> {
-    /// A writer of `topology` frames to `writer`; `source_label` names the
-    /// destination in errors. Nothing is written until the first frame.
+    /// A writer of `topology` frames to `writer`. Nothing is written until the first frame.
     ///
     /// # Errors
     ///
@@ -39,11 +38,21 @@ impl<W: Write> TrrWriter<W> {
     pub fn new(
         writer: W,
         topology: impl Into<Arc<Topology>>,
-        options: TrrWriteOptions,
-        source_label: impl Into<String>,
+        options: impl Into<TrajectoryWriteOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = source_label.into();
+        let options = options.into();
+        let source_label = options.stream_label(FORMAT);
+        Self::open(writer, topology.into(), options.trr, source_label)
+    }
+
+    /// Opens the writer like [`Self::new`] with the format options and
+    /// label taken apart.
+    pub(crate) fn open(
+        writer: W,
+        topology: Arc<Topology>,
+        options: TrrWriteOptions,
+        source_label: String,
+    ) -> Result<Self, TrajectoryIoError> {
         if topology.atom_count() == 0 || topology.atom_count() > i32::MAX as usize / 3 {
             return Err(codec_context(
                 TrajectoryIoErrorKind::LimitExceeded,

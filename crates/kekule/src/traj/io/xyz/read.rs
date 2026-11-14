@@ -5,6 +5,7 @@ pub struct XyzReader<R> {
     pub(super) reader: R,
     pub(super) topology: Arc<Topology>,
     pub(super) options: XyzReadOptions,
+    pub(super) source: ReadSource,
     pub(super) frame_cursor: usize,
     pub(super) line: Vec<u8>,
     pub(super) positions: Vec<Point3>,
@@ -19,6 +20,7 @@ impl<R> fmt::Debug for XyzReader<R> {
             .debug_struct("XyzReader")
             .field("atom_count", &self.topology.atom_count())
             .field("options", &self.options)
+            .field("source_label", &self.source.label)
             .field("frame_cursor", &self.frame_cursor)
             .finish_non_exhaustive()
     }
@@ -40,11 +42,23 @@ impl<R: BufRead> XyzReader<R> {
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: XyzReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
-        let topology = topology.into();
-        let source_label = &options.source_label;
-        let limits = &options.limits;
+        let options = options.into();
+        let source = options.read_source(FORMAT);
+        Self::open(reader, topology.into(), options.xyz, source)
+    }
+
+    /// Opens the stream like [`Self::new`] with the format options and
+    /// source taken apart.
+    pub(crate) fn open(
+        reader: R,
+        topology: Arc<Topology>,
+        options: XyzReadOptions,
+        source: ReadSource,
+    ) -> Result<Self, TrajectoryIoError> {
+        let source_label = &source.label;
+        let limits = &source.limits;
         options
             .length_unit
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)
@@ -74,6 +88,7 @@ impl<R: BufRead> XyzReader<R> {
             reader,
             topology,
             options,
+            source,
             frame_cursor: 0,
             line: Vec::new(),
             positions,
@@ -92,13 +107,11 @@ impl<R: BufRead> XyzReader<R> {
         } else {
             TrajectoryIoOperation::ReadFrame
         };
-        if self.frame_cursor >= self.options.limits.max_frames() {
+        if self.frame_cursor >= self.source.limits.max_frames() {
             if self
                 .reader
                 .fill_buf()
-                .map_err(|error| {
-                    io_context(operation, Some(FORMAT), &self.options.source_label, error)
-                })?
+                .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))?
                 .is_empty()
             {
                 return Ok(false);
@@ -107,13 +120,13 @@ impl<R: BufRead> XyzReader<R> {
                 FORMAT,
                 TrajectoryIoErrorKind::LimitExceeded,
                 operation,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "",
             )
             .exceeding(
                 "The trajectory",
-                LimitExceeded::first_beyond(Resource::Frames, self.options.limits.max_frames()),
+                LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
         // The position array holds one point per atom, whether it is kept or
@@ -124,10 +137,10 @@ impl<R: BufRead> XyzReader<R> {
         let Some((count_line, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
-            self.options.limits.max_text_line_bytes(),
+            self.source.limits.max_text_line_bytes(),
             position_bytes,
-            &self.options.limits,
-            &self.options.source_label,
+            &self.source.limits,
+            &self.source.label,
             self.frame_cursor,
             operation,
             growing,
@@ -138,14 +151,14 @@ impl<R: BufRead> XyzReader<R> {
         let mut frame_bytes = checked_frame_add(
             0,
             consumed,
-            &self.options.source_label,
+            &self.source.label,
             self.frame_cursor,
             operation,
         )?;
         validate_frame_bytes(
             frame_bytes,
-            &self.options.limits,
-            &self.options.source_label,
+            &self.source.limits,
+            &self.source.label,
             self.frame_cursor,
             operation,
         )?;
@@ -154,7 +167,7 @@ impl<R: BufRead> XyzReader<R> {
                 FORMAT,
                 TrajectoryIoErrorKind::InvalidFrame,
                 operation,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "The atom-count line is not one nonnegative whole number.",
             )
@@ -164,29 +177,29 @@ impl<R: BufRead> XyzReader<R> {
                 FORMAT,
                 TrajectoryIoErrorKind::InvalidFrame,
                 operation,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "The frame has zero atoms.",
             ));
         }
-        validate_atom_limit(atom_count, &self.options.limits, &self.options.source_label)?;
+        validate_atom_limit(atom_count, &self.source.limits, &self.source.label)?;
         if atom_count != self.topology().atom_count() {
             return Err(TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::InconsistentAtomCount,
                 operation,
                 Some(FORMAT),
             )
-            .with_source_label(&self.options.source_label)
+            .with_source_label(&self.source.label)
             .with_frame(self.frame_cursor)
             .with_counts(self.topology().atom_count() as u64, atom_count as u64));
         }
         let Some((_, consumed)) = read_line(
             &mut self.reader,
             &mut self.line,
-            self.options.limits.max_comment_bytes(),
+            self.source.limits.max_comment_bytes(),
             position_bytes,
-            &self.options.limits,
-            &self.options.source_label,
+            &self.source.limits,
+            &self.source.label,
             self.frame_cursor,
             operation,
             growing,
@@ -196,7 +209,7 @@ impl<R: BufRead> XyzReader<R> {
                 FORMAT,
                 TrajectoryIoErrorKind::TruncatedRecord,
                 operation,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "The frame has no comment line.",
             ));
@@ -204,14 +217,14 @@ impl<R: BufRead> XyzReader<R> {
         frame_bytes = checked_frame_add(
             frame_bytes,
             consumed,
-            &self.options.source_label,
+            &self.source.label,
             self.frame_cursor,
             operation,
         )?;
         validate_frame_bytes(
             frame_bytes,
-            &self.options.limits,
-            &self.options.source_label,
+            &self.source.limits,
+            &self.source.label,
             self.frame_cursor,
             operation,
         )?;
@@ -230,10 +243,10 @@ impl<R: BufRead> XyzReader<R> {
             let Some((line, consumed)) = read_line(
                 &mut self.reader,
                 &mut self.line,
-                self.options.limits.max_text_line_bytes(),
+                self.source.limits.max_text_line_bytes(),
                 position_bytes,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 self.frame_cursor,
                 operation,
                 growing,
@@ -243,7 +256,7 @@ impl<R: BufRead> XyzReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::TruncatedRecord,
                     operation,
-                    &self.options.source_label,
+                    &self.source.label,
                     self.frame_cursor,
                     format!("The frame ends before atom line {atom_index}."),
                 ));
@@ -251,14 +264,14 @@ impl<R: BufRead> XyzReader<R> {
             frame_bytes = checked_frame_add(
                 frame_bytes,
                 consumed,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 operation,
             )?;
             validate_frame_bytes(
                 frame_bytes,
-                &self.options.limits,
-                &self.options.source_label,
+                &self.source.limits,
+                &self.source.label,
                 self.frame_cursor,
                 operation,
             )?;
@@ -274,7 +287,7 @@ impl<R: BufRead> XyzReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
-                    &self.options.source_label,
+                    &self.source.label,
                     self.frame_cursor,
                     format!("Atom line {atom_index} does not have four fields."),
                 ));
@@ -284,7 +297,7 @@ impl<R: BufRead> XyzReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
-                    &self.options.source_label,
+                    &self.source.label,
                     self.frame_cursor,
                     format!("Atom line {atom_index} has the unknown element symbol {symbol:?}."),
                 )
@@ -294,7 +307,7 @@ impl<R: BufRead> XyzReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::InconsistentMetadata,
                     operation,
-                    &self.options.source_label,
+                    &self.source.label,
                     self.frame_cursor,
                     format!(
                         "Atom {atom_index} is {}. The topology has {} there.",
@@ -309,7 +322,7 @@ impl<R: BufRead> XyzReader<R> {
                         FORMAT,
                         TrajectoryIoErrorKind::InvalidFrame,
                         operation,
-                        &self.options.source_label,
+                        &self.source.label,
                         self.frame_cursor,
                         format!("Atom line {atom_index} has a coordinate that is not a number."),
                     )
@@ -323,7 +336,7 @@ impl<R: BufRead> XyzReader<R> {
                     FORMAT,
                     TrajectoryIoErrorKind::InvalidFrame,
                     operation,
-                    &self.options.source_label,
+                    &self.source.label,
                     self.frame_cursor,
                     format!("Atom line {atom_index} has a coordinate that is not finite."),
                 ));
@@ -369,7 +382,7 @@ impl<R: BufRead> TrajectoryReader for XyzReader<R> {
                 FORMAT,
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::ReadFrame,
-                &self.options.source_label,
+                &self.source.label,
                 self.frame_cursor,
                 "The frame number exceeds this platform's address range.",
             )
@@ -393,7 +406,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;
@@ -402,7 +415,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 error,
             )
         })?;
@@ -412,7 +425,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::ReadHeader,
                 Some(FORMAT),
-                &self.options.source_label,
+                &self.source.label,
                 "The file holds no frame.",
             ));
         }
@@ -439,7 +452,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
                 TrajectoryIoErrorKind::InvalidHeader,
                 TrajectoryIoOperation::Index,
                 Some(FORMAT),
-                &indexed.reader.options.source_label,
+                &indexed.reader.source.label,
                 "The file holds no frame.",
             ));
         }
@@ -452,7 +465,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
     ) -> Result<u64, TrajectoryIoError> {
         self.reader
             .stream_position()
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 
     pub(super) fn seek_to(
@@ -462,7 +475,7 @@ impl<R: BufRead + Seek> XyzReader<R> {
     ) -> Result<u64, TrajectoryIoError> {
         self.reader
             .seek(offset)
-            .map_err(|error| io_context(operation, Some(FORMAT), &self.options.source_label, error))
+            .map_err(|error| io_context(operation, Some(FORMAT), &self.source.label, error))
     }
 }
 

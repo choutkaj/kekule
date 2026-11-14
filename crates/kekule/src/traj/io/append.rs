@@ -221,8 +221,8 @@ pub fn append_trajectory_with(
 > {
     let path = path.as_ref();
     let topology = topology.into();
-    let label = path.display().to_string();
-    let format = resolve_format(path, options.format())?;
+    let label = options.path_label(path);
+    let format = resolve_format(path, &options)?;
     if matches!(keep, KeepFrames::ThroughStep(_)) && format == TrajectoryFormat::Xyz {
         return Err(codec_context(
             TrajectoryIoErrorKind::UnsupportedVariant,
@@ -242,6 +242,7 @@ pub fn append_trajectory_with(
         .with_format_hint(TrajectoryFormatHint::Explicit(format))
         .with_xtc_options(xtc)
         .with_trr_options(trr)
+        .with_source_label(label.clone())
         .with_growing(true);
     let kept = kept_frames(
         path,

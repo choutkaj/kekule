@@ -11,6 +11,7 @@ use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdReadOptions, DcdTimePolicy};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions, TrrWriter};
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index,
     open_indexed_trajectory_from_index_with, open_indexed_trajectory_with, CoordinateEncoding,
@@ -726,10 +727,12 @@ fn mixed_precision_trr(path: &Path) -> Arc<Topology> {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default()
-                .with_precision(precision)
-                .with_lambda_policy(TrrLambdaPolicy::RequireZero),
-            "mixed.trr",
+            TrajectoryWriteOptions::from(
+                TrrWriteOptions::default()
+                    .with_precision(precision)
+                    .with_lambda_policy(TrrLambdaPolicy::RequireZero),
+            )
+            .with_source_label("mixed.trr"),
         )
         .unwrap();
         let mut frame = Frame::new(

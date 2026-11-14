@@ -41,12 +41,15 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: TrrReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
+        let options = options.into();
+        let source = options.read_source(FORMAT);
         Self::build(
             reader,
             topology.into(),
-            options,
+            options.trr,
+            source,
             false,
             &IndexBuildControl::default(),
         )
@@ -58,10 +61,11 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: TrrReadOptions,
+        source: ReadSource,
         growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
-        TrrReader::new(reader, topology, options)?.index_frames(growing, control)
+        TrrReader::open(reader, topology, options, source)?.index_frames(growing, control)
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -71,14 +75,15 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         reader: R,
         topology: Arc<Topology>,
         options: TrrReadOptions,
+        source: ReadSource,
         offsets: Arc<FrameOffsets>,
         precision_mixed: bool,
     ) -> Result<Self, TrajectoryIoError> {
-        let mut inner = TrrReader::new(reader, topology, options)?;
+        let mut inner = TrrReader::open(reader, topology, options, source)?;
         offsets.verify_start(
             inner.stream_start,
             TrajectoryFormat::Trr,
-            &inner.options.source_label,
+            &inner.source.label,
         )?;
         inner.precision_mixed = precision_mixed;
         Ok(Self {
@@ -118,6 +123,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             stream,
             Arc::clone(&self.inner.topology),
             self.inner.options.clone(),
+            self.inner.source.clone(),
             Arc::clone(&self.offsets),
             self.precision_mixed,
         )
@@ -240,7 +246,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let label = self.inner.options.source_label.clone();
+        let label = self.inner.source.label.clone();
         control.checkpoint(
             self.offsets.len(),
             self.offsets.end(),
@@ -249,7 +255,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
         )?;
         loop {
             if let Some(limit) =
-                projected_index_limit(self.offsets.len(), &self.inner.options.limits)
+                projected_index_limit(self.offsets.len(), &self.inner.source.limits)
             {
                 let clean_eof = self.inner.pending_header.is_none()
                     && probe_seekable_eof(
@@ -293,7 +299,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 offset,
                 end,
                 decoded.header.stamp(),
-                &self.inner.options.limits,
+                &self.inner.source.limits,
                 TrajectoryFormat::Trr,
                 &label,
             )?;
@@ -378,7 +384,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
             io_context(
                 TrajectoryIoOperation::Index,
                 Some(FORMAT),
-                &self.inner.options.source_label,
+                &self.inner.source.label,
                 error,
             )
         })?;
@@ -393,7 +399,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             })?;
@@ -410,14 +416,14 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                     index,
                     &mut self.inner.reader,
                     TrajectoryFormat::Trr,
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                 )?;
                 self.offsets.verify_stamp(
                     index,
                     decoded.header.stamp(),
                     TrajectoryIoOperation::ReadFrame,
                     TrajectoryFormat::Trr,
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                 )?;
                 if !self.precision_mixed
                     && decoded.header.precision != self.inner.first_header.precision
@@ -425,7 +431,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                     return Err(index_mismatch(
                         TrajectoryIoOperation::ReadFrame,
                         TrajectoryFormat::Trr,
-                        &self.inner.options.source_label,
+                        &self.inner.source.label,
                         "The frame's scalar width differs from the first frame's.",
                     )
                     .with_frame(index));
@@ -440,7 +446,7 @@ impl<R: Read + Seek> IndexedTrrReader<R> {
                 io_context(
                     TrajectoryIoOperation::Index,
                     Some(FORMAT),
-                    &self.inner.options.source_label,
+                    &self.inner.source.label,
                     error,
                 )
             });

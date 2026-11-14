@@ -36,12 +36,15 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
     pub fn new(
         reader: R,
         topology: impl Into<Arc<Topology>>,
-        options: XyzReadOptions,
+        options: impl Into<TrajectoryOpenOptions>,
     ) -> Result<Self, TrajectoryIoError> {
+        let options = options.into();
+        let source = options.read_source(FORMAT);
         Self::build(
             reader,
             topology.into(),
-            options,
+            options.xyz,
+            source,
             false,
             &IndexBuildControl::default(),
         )
@@ -54,6 +57,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         mut reader: R,
         topology: Arc<Topology>,
         options: XyzReadOptions,
+        source: ReadSource,
         growing: bool,
         control: &IndexBuildControl<'_>,
     ) -> Result<Self, TrajectoryIoError> {
@@ -61,11 +65,15 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             io_context(
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
-                &options.source_label,
+                &source.label,
                 error,
             )
         })?;
-        XyzReader::new(reader, topology, options)?.index_frames(stream_start, growing, control)
+        XyzReader::open(reader, topology, options, source)?.index_frames(
+            stream_start,
+            growing,
+            control,
+        )
     }
 
     /// Opens the stream with previously verified `offsets` instead of
@@ -76,6 +84,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         mut reader: R,
         topology: Arc<Topology>,
         options: XyzReadOptions,
+        source: ReadSource,
         offsets: Arc<FrameOffsets>,
         growing: bool,
     ) -> Result<Self, TrajectoryIoError> {
@@ -83,17 +92,13 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             io_context(
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
-                &options.source_label,
+                &source.label,
                 error,
             )
         })?;
-        let mut reader = XyzReader::new(reader, topology, options)?;
+        let mut reader = XyzReader::open(reader, topology, options, source)?;
         reader.growing = growing;
-        offsets.verify_start(
-            stream_start,
-            TrajectoryFormat::Xyz,
-            &reader.options.source_label,
-        )?;
+        offsets.verify_start(stream_start, TrajectoryFormat::Xyz, &reader.source.label)?;
         reader.validate_first_frame()?;
         Ok(Self {
             reader,
@@ -130,6 +135,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             stream,
             Arc::clone(&self.reader.topology),
             self.reader.options.clone(),
+            self.reader.source.clone(),
             Arc::clone(&self.offsets),
             self.reader.growing,
         )
@@ -227,7 +233,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         &mut self,
         control: &IndexBuildControl<'_>,
     ) -> Result<u64, TrajectoryIoError> {
-        let label = self.reader.options.source_label.clone();
+        let label = self.reader.source.label.clone();
         control.checkpoint(
             self.offsets.len(),
             self.offsets.end(),
@@ -236,7 +242,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
         )?;
         loop {
             if let Some(limit) =
-                projected_index_limit(self.offsets.len(), &self.reader.options.limits)
+                projected_index_limit(self.offsets.len(), &self.reader.source.limits)
             {
                 if self
                     .reader
@@ -278,7 +284,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 offset,
                 end,
                 FrameStamp::default(),
-                &self.reader.options.limits,
+                &self.reader.source.limits,
                 TrajectoryFormat::Xyz,
                 &label,
             )?;
@@ -351,7 +357,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
             io_context(
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
-                &self.reader.options.source_label,
+                &self.reader.source.label,
                 error,
             )
         })?;
@@ -363,7 +369,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
                     Some(FORMAT),
-                    &self.reader.options.source_label,
+                    &self.reader.source.label,
                     error,
                 )
             })?;
@@ -374,7 +380,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                     index,
                     &mut self.reader.reader,
                     TrajectoryFormat::Xyz,
-                    &self.reader.options.source_label,
+                    &self.reader.source.label,
                 )?;
             }
             Ok(parsed)
@@ -387,7 +393,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 io_context(
                     TrajectoryIoOperation::ReadFrame,
                     Some(FORMAT),
-                    &self.reader.options.source_label,
+                    &self.reader.source.label,
                     error,
                 )
             });
