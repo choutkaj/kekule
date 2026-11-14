@@ -7,7 +7,8 @@ use crate::structure::{
 use crate::topology::Topology;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
 
-use super::{TrajectoryField, TrajectoryIoError};
+use super::TrajectoryIoError;
+use crate::diagnostics::GeometryField;
 
 /// One trajectory frame as codecs read and write it: a topology-bound
 /// [`Geometry`] with its time and MD step, borrowed without copying.
@@ -103,8 +104,8 @@ impl<'a> FrameView<'a> {
     /// # Errors
     ///
     /// [`TrajectoryIoErrorKind::UnsupportedField`](super::TrajectoryIoErrorKind::UnsupportedField)
-    /// for a geometry that has a place on a step or coordinate order ([`TrajectoryField::OrderStep`],
-    /// [`TrajectoryField::OrderCoordinate`]): a frame cannot hold them.
+    /// for a geometry that has a place on a step or coordinate order ([`GeometryField::OrderStep`],
+    /// [`GeometryField::OrderCoordinate`]): a frame cannot hold them.
     pub fn from_geometry<R: ?Sized>(view: GeometryView<'a, R>) -> Result<Self, TrajectoryIoError> {
         let view = view.as_dyn();
         let (time, step) = match view.place() {
@@ -112,12 +113,12 @@ impl<'a> FrameView<'a> {
             Some(Place::Time { time, step }) => (time, step),
             Some(Place::Step(_)) => {
                 return Err(TrajectoryIoError::unsupported_field(
-                    TrajectoryField::OrderStep,
+                    GeometryField::OrderStep,
                 ))
             }
             Some(Place::Coordinate(_)) => {
                 return Err(TrajectoryIoError::unsupported_field(
-                    TrajectoryField::OrderCoordinate,
+                    GeometryField::OrderCoordinate,
                 ))
             }
         };

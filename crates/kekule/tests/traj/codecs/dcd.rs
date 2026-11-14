@@ -1,17 +1,18 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
+use kekule::diagnostics::GeometryField;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{
-    DcdCellPolicy, DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
+    DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
     IndexedDcdReader,
 };
 use kekule::traj::io::TrajectoryIoLimits;
 use kekule::traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
-    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM, PICOSECOND};
 use sha2::{Digest, Sha256};
@@ -64,7 +65,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
             Arc::clone(&topology),
             DcdWriteOptions::default()
                 .with_endian(endian)
-                .with_cell_policy(DcdCellPolicy::Write),
+                .with_unit_cells(true),
             "acute.dcd",
         )
         .unwrap();
@@ -302,7 +303,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default().with_cell_policy(DcdCellPolicy::Write),
+        DcdWriteOptions::default().with_unit_cells(true),
         "oriented.dcd",
     )
     .unwrap();
@@ -405,7 +406,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         let topology = topology();
         let options = DcdWriteOptions::default()
             .with_endian(endian)
-            .with_cell_policy(DcdCellPolicy::Write)
+            .with_unit_cells(true)
             .with_step_sequence(10, 2)
             .with_header_delta(
                 Quantity::new(0.5, PICOSECOND),
@@ -877,7 +878,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
 fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     let topology = topology();
     let options = DcdWriteOptions::default()
-        .with_cell_policy(DcdCellPolicy::Write)
+        .with_unit_cells(true)
         .with_step_sequence(0, 1);
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
@@ -941,9 +942,9 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
             TrajectoryFormat::Dcd,
             "late-invalid.dcd",
             Some(0),
-            "DCD cannot store the bond properties.",
+            "DCD cannot store the per-bond geometry properties.",
         )
-        .with_field(TrajectoryField::BondProperties))
+        .with_field(GeometryField::BondProperties))
     );
     assert_eq!(writer.writer().get_ref().len(), header_bytes);
 }
