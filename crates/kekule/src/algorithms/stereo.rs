@@ -163,7 +163,7 @@ pub enum StereoCandidate {
 /// named by the ID it would receive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum StereoValidationIssue {
+pub enum StereoViolation {
     /// Two elements assert the same focus.
     DuplicateStereoFocus {
         /// The later element.
@@ -387,7 +387,7 @@ pub enum StereoValidationIssue {
     },
 }
 
-impl fmt::Display for StereoValidationIssue {
+impl fmt::Display for StereoViolation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DuplicateStereoFocus { element, previous } => write!(
@@ -573,14 +573,14 @@ impl fmt::Display for StereoValidationIssue {
 /// The molecule's represented stereo elements and groups are inconsistent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StereoValidationError {
-    /// Every validation issue found.
-    pub issues: Vec<StereoValidationIssue>,
+    /// Every violation found.
+    pub violations: Vec<StereoViolation>,
 }
 
-/// Writes the first issue; [`Self::issues`] holds them all.
+/// Writes the first violation; [`Self::violations`] holds them all.
 impl fmt::Display for StereoValidationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.first() {
+        match self.violations.first() {
             None => formatter.write_str("The represented stereo is invalid."),
             Some(issue) => write!(formatter, "{issue}"),
         }

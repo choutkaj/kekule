@@ -42,7 +42,11 @@ pub(crate) fn bond_reference_atoms(
     }
     if let Err(error) = crate::molecule::validate_represented_stereo(mol) {
         return Err(CipRankingError::InvalidStereo {
-            issue: error.issues.into_iter().next().expect("validation issue"),
+            violation: error
+                .violations
+                .into_iter()
+                .next()
+                .expect("validation violation"),
         });
     }
     // A single available reference needs no ranking. Otherwise ligand expansion

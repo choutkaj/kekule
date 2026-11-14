@@ -7,7 +7,7 @@ use std::ops::{Deref, DerefMut};
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut, PropertyError};
 
 use super::*;
-use crate::stereo::StereoValidationIssue;
+use crate::stereo::StereoViolation;
 
 /// One published, non-empty, connected, geometry-independent molecular entity.
 ///
@@ -462,15 +462,13 @@ impl Molecule {
     ) -> Result<[StereoCarrier; 4], MoleculeError> {
         let carrier_count = carriers.len();
         carriers.try_into().map_err(|_| {
-            MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::InvalidTetrahedralCarrierCount {
-                    element: StereoElementId::new(
-                        u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
-                    ),
-                    center,
-                    carrier_count,
-                },
-            )
+            MoleculeError::InvalidStereoReference(StereoViolation::InvalidTetrahedralCarrierCount {
+                element: StereoElementId::new(
+                    u32::try_from(self.graph.stereo_elements.len()).unwrap_or(u32::MAX),
+                ),
+                center,
+                carrier_count,
+            })
         })
     }
 
@@ -484,7 +482,7 @@ impl Molecule {
         );
         if element.group.is_some() {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: pending },
+                StereoViolation::GroupMembershipOutsideGroupEdit { element: pending },
             ));
         }
         self.validate_stereo_element(pending, &element)?;
@@ -518,7 +516,7 @@ impl Molecule {
         };
         if replacement.group != current.group {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::GroupMembershipOutsideGroupEdit { element: id },
+                StereoViolation::GroupMembershipOutsideGroupEdit { element: id },
             ));
         }
         self.validate_stereo_element(id, &replacement)?;
@@ -566,7 +564,7 @@ impl Molecule {
             let element = self.require_stereo_element(member)?;
             if let Some(group) = element.group {
                 return Err(MoleculeError::InvalidStereoReference(
-                    StereoValidationIssue::StereoElementAlreadyGrouped {
+                    StereoViolation::StereoElementAlreadyGrouped {
                         element: member,
                         group,
                     },
@@ -900,7 +898,7 @@ impl Molecule {
                     self.require_atom(center)?.hydrogens()
                 {
                     if usize::from(fixed_hydrogens) != carried {
-                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                        return invalid(StereoViolation::ImplicitHydrogenCarrierMismatch {
                             element: id,
                             atom: center,
                             fixed_hydrogens,
@@ -916,7 +914,7 @@ impl Molecule {
                     if carrier == StereoCarrier::ImplicitHydrogen
                         && self.require_atom(endpoint)?.hydrogens() == ImplicitHydrogens::Fixed(0)
                     {
-                        return invalid(StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+                        return invalid(StereoViolation::ImplicitHydrogenCarrierMismatch {
                             element: id,
                             atom: endpoint,
                             fixed_hydrogens: 0,
@@ -943,7 +941,7 @@ impl Molecule {
                 self.require_atom(center)?;
                 for (index, &carrier) in stereo.carriers.iter().enumerate() {
                     if stereo.carriers[..index].contains(&carrier) {
-                        return invalid(StereoValidationIssue::DuplicateTetrahedralCarrier {
+                        return invalid(StereoViolation::DuplicateTetrahedralCarrier {
                             element: id,
                             center,
                             carrier,
@@ -953,7 +951,7 @@ impl Molecule {
                 self.validate_stereo_carriers(&stereo.carriers)?;
                 for &carrier in &stereo.carriers {
                     if !self.carrier_is_adjacent(center, None, carrier)? {
-                        return invalid(StereoValidationIssue::TetrahedralCarrierNotAdjacent {
+                        return invalid(StereoViolation::TetrahedralCarrierNotAdjacent {
                             element: id,
                             center,
                             carrier,
@@ -964,7 +962,7 @@ impl Molecule {
                     .require_neighbors(center)?
                     .find(|neighbor| !stereo.carriers.contains(&StereoCarrier::Atom(*neighbor)))
                 {
-                    return invalid(StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
+                    return invalid(StereoViolation::UnrepresentedTetrahedralNeighbor {
                         element: id,
                         center,
                         neighbor,
@@ -974,14 +972,14 @@ impl Molecule {
             StereoElementKind::DoubleBond(stereo) => {
                 let bond = self.require_bond(stereo.bond)?;
                 if bond.order != BondOrder::Double {
-                    return invalid(StereoValidationIssue::InvalidDoubleBondOrder {
+                    return invalid(StereoViolation::InvalidDoubleBondOrder {
                         element: id,
                         bond: stereo.bond,
                         order: bond.order,
                     });
                 }
                 if !bond.connects(stereo.left, stereo.right) {
-                    return invalid(StereoValidationIssue::DoubleBondFocusMismatch {
+                    return invalid(StereoViolation::DoubleBondFocusMismatch {
                         element: id,
                         bond: stereo.bond,
                         left: stereo.left,
@@ -993,7 +991,7 @@ impl Molecule {
                     (stereo.right, stereo.right_carrier),
                 ] {
                     if carrier == StereoCarrier::ImplicitLonePair {
-                        return invalid(StereoValidationIssue::UnsupportedDoubleBondCarrier {
+                        return invalid(StereoViolation::UnsupportedDoubleBondCarrier {
                             element: id,
                             endpoint,
                             carrier,
@@ -1006,14 +1004,14 @@ impl Molecule {
                     (stereo.right, stereo.left, stereo.right_carrier),
                 ] {
                     if carrier == StereoCarrier::Atom(other) {
-                        return invalid(StereoValidationIssue::DoubleBondCarrierIsFocusAtom {
+                        return invalid(StereoViolation::DoubleBondCarrierIsFocusAtom {
                             element: id,
                             endpoint,
                             carrier: other,
                         });
                     }
                     if !self.carrier_is_adjacent(endpoint, Some(other), carrier)? {
-                        return invalid(StereoValidationIssue::DoubleBondCarrierNotAdjacent {
+                        return invalid(StereoViolation::DoubleBondCarrierNotAdjacent {
                             element: id,
                             endpoint,
                             carrier,
@@ -1027,7 +1025,7 @@ impl Molecule {
                         .filter(|neighbor| *neighbor != other)
                         .count();
                     if substituent_count > 2 {
-                        return invalid(StereoValidationIssue::DoubleBondEndpointOvercoordinated {
+                        return invalid(StereoViolation::DoubleBondEndpointOvercoordinated {
                             element: id,
                             endpoint,
                             substituent_count,
@@ -1041,7 +1039,7 @@ impl Molecule {
                 let mut endpoints = [false; 2];
                 for &carrier in &stereo.carriers {
                     let StereoCarrier::Atom(atom) = carrier else {
-                        return invalid(StereoValidationIssue::UnsupportedAxisCarrier {
+                        return invalid(StereoViolation::UnsupportedAxisCarrier {
                             element: id,
                             axis: stereo.axis,
                             carrier,
@@ -1052,7 +1050,7 @@ impl Molecule {
                         atom != axis.a() && self.require_bond_between(axis.b(), atom)?.is_some(),
                     ];
                     if adjacent[0] == adjacent[1] {
-                        return invalid(StereoValidationIssue::AxisCarrierNotAdjacent {
+                        return invalid(StereoViolation::AxisCarrierNotAdjacent {
                             element: id,
                             axis: stereo.axis,
                             carrier,
@@ -1060,7 +1058,7 @@ impl Molecule {
                     }
                     let endpoint = usize::from(adjacent[1]);
                     if endpoints[endpoint] {
-                        return invalid(StereoValidationIssue::AxisCarrierEndpointMismatch {
+                        return invalid(StereoViolation::AxisCarrierEndpointMismatch {
                             element: id,
                             axis: stereo.axis,
                         });
@@ -1073,7 +1071,7 @@ impl Molecule {
                         .filter(|neighbor| *neighbor != other)
                         .count();
                     if substituent_count > 2 {
-                        return invalid(StereoValidationIssue::AxisEndpointOvercoordinated {
+                        return invalid(StereoViolation::AxisEndpointOvercoordinated {
                             element: id,
                             endpoint,
                             substituent_count,
@@ -1095,7 +1093,7 @@ impl Molecule {
             Some(*stored_id) != replacing && stored.kind.focus() == element.kind.focus()
         }) {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::DuplicateStereoFocus {
+                StereoViolation::DuplicateStereoFocus {
                     element: id,
                     previous,
                 },
@@ -1504,7 +1502,7 @@ pub enum MoleculeError {
     InvalidStereoGroupId(StereoGroupId),
     /// A stereo element or group is inconsistent with the graph or with the
     /// other stereo assertions.
-    InvalidStereoReference(StereoValidationIssue),
+    InvalidStereoReference(StereoViolation),
     /// A bond would join an atom to itself.
     SelfBond(AtomId),
     /// A bond between these atoms already exists.
@@ -1556,14 +1554,14 @@ pub(crate) fn validate_group_members(
 ) -> Result<(), MoleculeError> {
     if group.members.is_empty() {
         return Err(MoleculeError::InvalidStereoReference(
-            StereoValidationIssue::EmptyStereoGroup { group: group_id },
+            StereoViolation::EmptyStereoGroup { group: group_id },
         ));
     }
     let mut seen = BTreeSet::new();
     for &member in &group.members {
         if !seen.insert(member) {
             return Err(MoleculeError::InvalidStereoReference(
-                StereoValidationIssue::DuplicateStereoGroupMember {
+                StereoViolation::DuplicateStereoGroupMember {
                     group: group_id,
                     element: member,
                 },

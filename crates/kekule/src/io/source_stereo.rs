@@ -463,7 +463,7 @@ fn validate_source_stereo_marks(
 fn source_validation_error(error: StereoValidationError) -> SourceStereoNormalizationError {
     SourceStereoNormalizationError {
         issues: error
-            .issues
+            .violations
             .into_iter()
             .map(SourceStereoNormalizationIssue::InvalidStereo)
             .collect(),

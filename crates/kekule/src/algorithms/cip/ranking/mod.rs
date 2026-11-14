@@ -9,7 +9,7 @@ use crate::molecule::*;
 use super::super::rings::compute_ring_membership;
 use super::super::{atom_hydrogen_count, double_bond_endpoint_carriers};
 use super::{
-    CipAssignment, CipAssignmentError, CipAssignmentIssue, CipAssignmentOptions,
+    CipAssignment, CipAssignmentError, CipAssignmentFailure, CipAssignmentOptions,
     CipAssignmentReport, CipRankingError, CipResult, CipSkipped, CipSkippedReason, RankingResult,
 };
 
@@ -33,10 +33,10 @@ pub(super) fn assign_cip_descriptors(
 ) -> Result<CipAssignmentReport, CipAssignmentError> {
     if let Err(error) = validate_represented_stereo(mol) {
         return Err(CipAssignmentError {
-            issues: error
-                .issues
+            failures: error
+                .violations
                 .into_iter()
-                .map(|issue| CipAssignmentIssue::InvalidStereo { issue })
+                .map(|violation| CipAssignmentFailure::InvalidStereo { violation })
                 .collect(),
         });
     }
@@ -45,11 +45,11 @@ pub(super) fn assign_cip_descriptors(
     let unknown_hydrogens = mol
         .atom_ids()
         .filter(|&atom| mol.implicit_hydrogens(atom).is_none())
-        .map(|atom| CipAssignmentIssue::UnknownHydrogenCount { atom })
+        .map(|atom| CipAssignmentFailure::UnknownHydrogenCount { atom })
         .collect::<Vec<_>>();
     if !unknown_hydrogens.is_empty() {
         return Err(CipAssignmentError {
-            issues: unknown_hydrogens,
+            failures: unknown_hydrogens,
         });
     }
 
@@ -76,7 +76,7 @@ pub(super) fn assign_cip_descriptors(
                         reason: CipSkippedReason::NotStereogenic,
                     }),
                     Ok(false) => {
-                        issues.push(CipAssignmentIssue::UnresolvedPriority { element: id })
+                        issues.push(CipAssignmentFailure::UnresolvedPriority { element: id })
                     }
                     Err(issue) => issues.push(issue),
                 }
@@ -91,7 +91,7 @@ pub(super) fn assign_cip_descriptors(
         }
         Ok(report)
     } else {
-        Err(CipAssignmentError { issues })
+        Err(CipAssignmentError { failures: issues })
     }
 }
 
@@ -1644,7 +1644,7 @@ fn auxiliary_descriptor_for_occurrence(
         auxiliary_tetrahedral_signatures(&aux_context, graph, occurrence.node, stereo).ok()?;
     let ranked = match rank_carrier_signatures(occurrence.key.element, &signatures, None) {
         Ok(ranked) => ranked,
-        Err(CipAssignmentIssue::UnresolvedPriority { .. }) if stereo.carriers.len() == 4 => {
+        Err(CipAssignmentFailure::UnresolvedPriority { .. }) if stereo.carriers.len() == 4 => {
             rank_tetrahedral_signatures_with_rule6(occurrence.key.element, &signatures).ok()?
         }
         Err(_) => return None,
@@ -1672,7 +1672,7 @@ fn auxiliary_bond_descriptor(
             let bond = context
                 .mol
                 .bond(stereo.axis)
-                .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+                .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
             let (left, right) = bond.endpoints();
             let (left_reference, right_reference) =
                 axis_reference_carriers(context.mol, element, stereo, left, right)?;
@@ -1686,11 +1686,11 @@ fn auxiliary_bond_descriptor(
             )
         }
         StereoElementKind::Tetrahedral(_) => {
-            return Err(CipAssignmentIssue::UnresolvedPriority { element })
+            return Err(CipAssignmentFailure::UnresolvedPriority { element })
         }
     };
     let (left_node, right_node) = auxiliary_bond_nodes(graph, node, left, right)
-        .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?;
+        .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?;
     let rank_endpoint = |root, carriers: Vec<StereoCarrier>| {
         let traversal = AuxiliaryTraversal::new(graph, root);
         let signatures = auxiliary_carrier_signatures(context, &traversal, &carriers)
@@ -1704,7 +1704,7 @@ fn auxiliary_bond_descriptor(
             element,
             stereo
                 .orientation
-                .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?,
+                .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?,
             (left_reference, right_reference),
             &left_ranked,
             &right_ranked,
@@ -1713,7 +1713,7 @@ fn auxiliary_bond_descriptor(
             element,
             stereo
                 .orientation
-                .ok_or(CipAssignmentIssue::UnresolvedPriority { element })?,
+                .ok_or(CipAssignmentFailure::UnresolvedPriority { element })?,
             (left_reference, right_reference),
             &left_ranked,
             &right_ranked,

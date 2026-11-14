@@ -45,15 +45,15 @@ pub(crate) use mmcif::{parse_mmcif_reader, parse_mmcif_str, write_mmcif, write_m
 pub use mmcif::{
     MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
     MmcifEntityClassifications, MmcifEntry, MmcifGeometryField, MmcifItem, MmcifLoopTable,
-    MmcifParseOptions, MmcifValue, MmcifWriteIssue, MmcifWriteOptions,
+    MmcifParseOptions, MmcifValue, MmcifWriteErrorKind, MmcifWriteOptions,
 };
 pub(crate) use molfile::{
     parse_molfile_document, parse_molfile_reader, write_molfile, write_molfile_to,
 };
 pub use molfile::{
     MolfileAtom, MolfileAtomMapping, MolfileAtomParity, MolfileBond, MolfileBondMapping,
-    MolfileBondOrder, MolfileBondStereo, MolfileDocument, MolfileHeader, MolfileInterpretOptions,
-    MolfileInterpretation, MolfileInterpretationReport, MolfileInterpretationWarning,
+    MolfileBondOrder, MolfileBondStereo, MolfileDocument, MolfileHeader, MolfileInterpretIssue,
+    MolfileInterpretOptions, MolfileInterpretation, MolfileInterpretationReport,
     MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup, MolfileStereoGroupKind,
     MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion, MolfileWriteOptions,
     MolfileWriteVersion,
@@ -77,7 +77,7 @@ pub(crate) use pdb::{parse_pdb_reader, parse_pdb_str, write_pdb, write_pdb_to};
 pub use pdb::{
     PdbAtom, PdbAtomField, PdbAtomKind, PdbCellReason, PdbChainIdPolicy, PdbConect, PdbCryst1,
     PdbDocument, PdbLink, PdbModel, PdbParseOptions, PdbPartner, PdbRecord, PdbSource, PdbSsbond,
-    PdbTer, PdbWriteIssue, PdbWriteOptions,
+    PdbTer, PdbWriteErrorKind, PdbWriteOptions,
 };
 pub(crate) use sdf::{
     parse_sdf_document, parse_sdf_reader, sdf_structure_set, write_sdf, write_sdf_to,

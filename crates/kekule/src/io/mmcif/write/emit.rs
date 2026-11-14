@@ -1,6 +1,6 @@
 //! Emit prepared rows with format-specific quoting and numeric formatting.
 use super::prepare::{AtomRow, PreparedModel};
-use super::{fail, sink, MmcifWriteIssue, MmcifWriteOptions};
+use super::{fail, sink, MmcifWriteErrorKind, MmcifWriteOptions};
 use crate::diagnostics::FormatError;
 use crate::io::macromolecular::cell::CellParameters;
 use crate::molecule::BondOrder;
@@ -269,7 +269,7 @@ fn optional_cif_value(value: Option<&str>, field: &'static str) -> Result<String
 
 fn cif_value(value: &str, field: &'static str) -> Result<String, FormatError> {
     if value.is_empty() || value.contains(['\n', '\r']) {
-        return Err(fail(MmcifWriteIssue::UnsupportedTextValue {
+        return Err(fail(MmcifWriteErrorKind::UnsupportedTextValue {
             item: field.to_owned(),
         }));
     }
@@ -300,7 +300,7 @@ fn cif_value(value: &str, field: &'static str) -> Result<String, FormatError> {
     if !value.contains('"') {
         return Ok(format!("\"{value}\""));
     }
-    Err(fail(MmcifWriteIssue::UnsupportedTextValue {
+    Err(fail(MmcifWriteErrorKind::UnsupportedTextValue {
         item: field.to_owned(),
     }))
 }

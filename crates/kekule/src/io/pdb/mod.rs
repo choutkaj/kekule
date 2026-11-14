@@ -12,5 +12,5 @@ pub use document::{
 };
 pub(crate) use write::{write_pdb, write_pdb_to};
 pub use write::{
-    PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteIssue, PdbWriteOptions,
+    PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteErrorKind, PdbWriteOptions,
 };

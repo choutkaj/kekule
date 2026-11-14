@@ -1,4 +1,4 @@
-use super::graph::QueryStereoIssue;
+use super::graph::QueryStereoViolation;
 use crate::stereo::{DoubleBondOrientation, TetrahedralOrientation};
 
 use super::{QueryAtomId, QueryBond, QueryBondId, QueryGraphError};
@@ -83,14 +83,14 @@ impl QueryStereoConstraint {
                 atom(*center)?;
                 if carriers.len() > 4 || carriers.len() != adjacency[center.index()].len() {
                     return Err(QueryGraphError::InvalidStereo(
-                        QueryStereoIssue::IncompleteTetrahedralCarriers,
+                        QueryStereoViolation::IncompleteTetrahedralCarriers,
                     ));
                 }
                 for (index, carrier) in carriers.iter().enumerate() {
                     atom(*carrier)?;
                     if !adjacent(*center, *carrier) || carriers[..index].contains(carrier) {
                         return Err(QueryGraphError::InvalidStereo(
-                            QueryStereoIssue::DuplicateTetrahedralCarrier,
+                            QueryStereoViolation::DuplicateTetrahedralCarrier,
                         ));
                     }
                 }
@@ -113,7 +113,7 @@ impl QueryStereoConstraint {
                     || !adjacent(bond.b(), *right_carrier)
                 {
                     return Err(QueryGraphError::InvalidStereo(
-                        QueryStereoIssue::InvalidDoubleBondCarriers,
+                        QueryStereoViolation::InvalidDoubleBondCarriers,
                     ));
                 }
             }

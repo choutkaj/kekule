@@ -133,8 +133,8 @@ fn disabling_inferred_hydrogens_skips_radical_occupancy_checks() {
             );
         } else {
             assert_eq!(
-                result.unwrap_err().issues,
-                [ValenceIssue::ValenceOccupancyExceeded {
+                result.unwrap_err().violations,
+                [ValenceViolation::ValenceOccupancyExceeded {
                     atom,
                     explicit_valence: 4,
                     radical_electrons: 1,
@@ -168,8 +168,8 @@ fn strict_valence_rejects_excess_occupancy_even_without_bonds_or_declared_hydrog
         )
         .expect_err("RDKit rejects the occupancy even when represented valence is zero");
         assert_eq!(
-            error.issues,
-            [ValenceIssue::ValenceOccupancyExceeded {
+            error.violations,
+            [ValenceViolation::ValenceOccupancyExceeded {
                 atom,
                 explicit_valence: 0,
                 radical_electrons: radical.map_or(0, |state| usize::from(state.electron_count())),
@@ -226,8 +226,8 @@ fn isolated_hydrogen_charge_validation_is_specific_to_hydrogen_inference() {
         )
         .unwrap_err();
         assert_eq!(
-            error.issues,
-            [ValenceIssue::InvalidFormalCharge {
+            error.violations,
+            [ValenceViolation::InvalidFormalCharge {
                 atom,
                 formal_charge: charge
             }]

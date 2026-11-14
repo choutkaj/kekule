@@ -1,6 +1,8 @@
 //! Entity classification and source-provenance planning before row preparation.
 use super::one_based_serial;
-use super::{fail, invalid_structure, MmcifAtomField, MmcifEntityClassifications, MmcifWriteIssue};
+use super::{
+    fail, invalid_structure, MmcifAtomField, MmcifEntityClassifications, MmcifWriteErrorKind,
+};
 use crate::diagnostics::FormatError;
 use crate::io::macromolecular::{EntityKind, StructureInterpretationReport};
 use crate::structure::StructureView;
@@ -204,7 +206,7 @@ pub(super) fn generic_entity_plan(
                 [kind] => entity_kind_from_source(sites[0].atom().instance(), kind)?,
                 _ => {
                     return Err(fail(
-                        MmcifWriteIssue::ConflictingAsymEntityClassifications {
+                        MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
                             asym_id: chain.label_id().to_owned(),
                             classifications: molecule_kinds,
                         },
@@ -249,7 +251,7 @@ pub(super) fn generic_entity_plan(
                     .into_iter()
                     .find(|atom| !atoms.contains_key(atom))
                     .expect("partially assigned molecule has a missing atom site");
-                return Err(fail(MmcifWriteIssue::MissingAtomSite(missing)));
+                return Err(fail(MmcifWriteErrorKind::MissingAtomSite(missing)));
             }
             continue;
         }
@@ -302,12 +304,12 @@ fn report_entity_plan(
     let mut reserved_entity_ids = BTreeSet::new();
     for instance in report.instances() {
         if structure.topology().instance(instance.instance()).is_none() {
-            return Err(fail(MmcifWriteIssue::UnknownClassifiedMolecule(
+            return Err(fail(MmcifWriteErrorKind::UnknownClassifiedMolecule(
                 instance.instance(),
             )));
         }
         if !seen_instances.insert(instance.instance()) {
-            return Err(fail(MmcifWriteIssue::DuplicateEntityClassification(
+            return Err(fail(MmcifWriteErrorKind::DuplicateEntityClassification(
                 instance.instance(),
             )));
         }
@@ -315,13 +317,17 @@ fn report_entity_plan(
             if atom.atom().instance() != instance.instance()
                 || structure.topology().atom(atom.atom()).is_none()
             {
-                return Err(fail(MmcifWriteIssue::UnknownAtomProvenance(atom.atom())));
+                return Err(fail(MmcifWriteErrorKind::UnknownAtomProvenance(
+                    atom.atom(),
+                )));
             }
             if let Some(entity_id) = atom.entity_id() {
                 reserved_entity_ids.insert(entity_id.to_owned());
             }
             if provenance.insert(atom.atom(), atom).is_some() {
-                return Err(fail(MmcifWriteIssue::DuplicateAtomProvenance(atom.atom())));
+                return Err(fail(MmcifWriteErrorKind::DuplicateAtomProvenance(
+                    atom.atom(),
+                )));
             }
         }
     }
@@ -337,15 +343,14 @@ fn report_entity_plan(
             let source_atoms = sites
                 .iter()
                 .map(|site| {
-                    provenance
-                        .get(&site.atom())
-                        .copied()
-                        .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomProvenance(site.atom())))
+                    provenance.get(&site.atom()).copied().ok_or_else(|| {
+                        fail(MmcifWriteErrorKind::MissingAtomProvenance(site.atom()))
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             for atom in &source_atoms {
                 if atom.asym_id() != chain.label_id() {
-                    return Err(fail(MmcifWriteIssue::InconsistentAtomSite {
+                    return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                         atom: atom.atom(),
                         field: MmcifAtomField::SourceAsymId,
                     }));
@@ -358,7 +363,7 @@ fn report_entity_plan(
                 .into_iter()
                 .collect::<Vec<_>>();
             if source_entity_ids.len() > 1 {
-                return Err(fail(MmcifWriteIssue::ConflictingAsymEntityIds {
+                return Err(fail(MmcifWriteErrorKind::ConflictingAsymEntityIds {
                     asym_id: chain.label_id().to_owned(),
                     entity_ids: source_entity_ids,
                 }));
@@ -373,7 +378,7 @@ fn report_entity_plan(
                 [kind] => entity_kind_from_source(source_atoms[0].atom().instance(), kind)?,
                 _ => {
                     return Err(fail(
-                        MmcifWriteIssue::ConflictingAsymEntityClassifications {
+                        MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
                             asym_id: chain.label_id().to_owned(),
                             classifications: source_kinds,
                         },
@@ -398,7 +403,7 @@ fn report_entity_plan(
             if let Some(existing) = entity_kinds.get(&entity_id) {
                 if *existing != segment.kind {
                     return Err(fail(
-                        MmcifWriteIssue::ConflictingSourceEntityClassifications {
+                        MmcifWriteErrorKind::ConflictingSourceEntityClassifications {
                             entity_id,
                             classifications: vec![existing.as_source(), segment.kind.as_source()],
                         },
@@ -421,12 +426,12 @@ fn report_entity_plan(
 
     for atom in structure.topology().atom_ids() {
         if !atoms.contains_key(atom) {
-            return Err(fail(MmcifWriteIssue::MissingAtomProvenance(*atom)));
+            return Err(fail(MmcifWriteErrorKind::MissingAtomProvenance(*atom)));
         }
     }
     for atom in provenance.keys() {
         if !atoms.contains_key(atom) {
-            return Err(fail(MmcifWriteIssue::UnknownAtomProvenance(*atom)));
+            return Err(fail(MmcifWriteErrorKind::UnknownAtomProvenance(*atom)));
         }
     }
 
@@ -518,12 +523,12 @@ fn chain_segments<'h>(
             .map(|segment| segment.kind.as_source())
             .collect::<BTreeSet<_>>();
         return Err(if classifications.len() > 1 {
-            fail(MmcifWriteIssue::ConflictingAsymEntityClassifications {
+            fail(MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
                 asym_id: chain.label_id().to_owned(),
                 classifications: classifications.into_iter().collect(),
             })
         } else {
-            fail(MmcifWriteIssue::ConflictingAsymEntityIds {
+            fail(MmcifWriteErrorKind::ConflictingAsymEntityIds {
                 asym_id: chain.label_id().to_owned(),
                 entity_ids: segments
                     .iter()
@@ -582,7 +587,7 @@ fn assign_sites(
             )
             .is_some()
         {
-            return Err(fail(MmcifWriteIssue::DuplicateAtomSite(atom)));
+            return Err(fail(MmcifWriteErrorKind::DuplicateAtomSite(atom)));
         }
     }
     Ok(())
@@ -613,7 +618,11 @@ fn entity_kind(
     classifications
         .get(&molecule.id())
         .map(|classification| classification.kind)
-        .ok_or_else(|| fail(MmcifWriteIssue::MissingEntityClassification(molecule.id())))
+        .ok_or_else(|| {
+            fail(MmcifWriteErrorKind::MissingEntityClassification(
+                molecule.id(),
+            ))
+        })
 }
 
 fn entity_kind_from_source(
@@ -626,7 +635,7 @@ fn entity_kind_from_source(
         EntityKind::NonPolymer => Ok(AssignedEntityKind::NonPolymer),
         EntityKind::Water => Ok(AssignedEntityKind::Water),
         EntityKind::Other(classification) => {
-            Err(fail(MmcifWriteIssue::UnsupportedEntityClassification {
+            Err(fail(MmcifWriteErrorKind::UnsupportedEntityClassification {
                 molecule,
                 classification: classification.clone(),
             }))
@@ -641,10 +650,12 @@ pub(super) fn normalize_entity_classifications(
     let mut explicit = BTreeMap::new();
     for (molecule, source_kinds) in entries {
         if structure.topology().instance(molecule).is_none() {
-            return Err(fail(MmcifWriteIssue::UnknownClassifiedMolecule(molecule)));
+            return Err(fail(MmcifWriteErrorKind::UnknownClassifiedMolecule(
+                molecule,
+            )));
         }
         if explicit.contains_key(&molecule) {
-            return Err(fail(MmcifWriteIssue::DuplicateEntityClassification(
+            return Err(fail(MmcifWriteErrorKind::DuplicateEntityClassification(
                 molecule,
             )));
         }
@@ -655,12 +666,18 @@ pub(super) fn normalize_entity_classifications(
             .collect::<Vec<_>>();
         let kind = match kinds.as_slice() {
             [kind] => entity_kind_from_source(molecule, kind)?,
-            [] => return Err(fail(MmcifWriteIssue::MissingEntityClassification(molecule))),
-            _ => {
-                return Err(fail(MmcifWriteIssue::ConflictingEntityClassifications {
+            [] => {
+                return Err(fail(MmcifWriteErrorKind::MissingEntityClassification(
                     molecule,
-                    classifications: kinds,
-                }));
+                )))
+            }
+            _ => {
+                return Err(fail(
+                    MmcifWriteErrorKind::ConflictingEntityClassifications {
+                        molecule,
+                        classifications: kinds,
+                    },
+                ));
             }
         };
         explicit.insert(molecule, kind);
@@ -700,7 +717,7 @@ fn canonical_entity_kind(
         MoleculeClass::Ion | MoleculeClass::SmallMolecule => Ok(AssignedEntityKind::NonPolymer),
         MoleculeClass::Carbohydrate => carbohydrate_entity_kind(topology, molecule),
         MoleculeClass::Other => Err(fail(
-            MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
+            MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
                 molecule,
                 classification: class,
             },
@@ -724,7 +741,7 @@ fn carbohydrate_entity_kind(
         return Ok(AssignedEntityKind::NonPolymer);
     }
     Err(fail(
-        MmcifWriteIssue::UnresolvedCanonicalEntityClassification {
+        MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
             molecule,
             classification: MoleculeClass::Carbohydrate,
         },

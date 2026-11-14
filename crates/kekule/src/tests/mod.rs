@@ -63,7 +63,7 @@ pub(super) fn chain_text(error: &(dyn std::error::Error + 'static)) -> String {
 /// The mmCIF writer issue of a failed format operation.
 pub(super) fn mmcif_issue<T>(
     result: Result<T, crate::diagnostics::FormatError>,
-) -> Option<crate::mmcif::MmcifWriteIssue> {
+) -> Option<crate::mmcif::MmcifWriteErrorKind> {
     match error_detail(result)? {
         crate::diagnostics::FormatErrorDetail::MmcifWrite(issue) => Some(issue),
         _ => None,

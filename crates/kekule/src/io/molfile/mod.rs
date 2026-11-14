@@ -15,8 +15,8 @@ pub use document::{
     MolfileStereoGroupKind, MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion,
 };
 pub use interpret::{
-    MolfileAtomMapping, MolfileBondMapping, MolfileInterpretOptions, MolfileInterpretation,
-    MolfileInterpretationReport, MolfileInterpretationWarning,
+    MolfileAtomMapping, MolfileBondMapping, MolfileInterpretIssue, MolfileInterpretOptions,
+    MolfileInterpretation, MolfileInterpretationReport,
 };
 pub(crate) use write::{write_molfile, write_molfile_to};
 pub use write::{MolfileSource, MolfileWriteOptions, MolfileWriteVersion};

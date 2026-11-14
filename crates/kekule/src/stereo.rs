@@ -30,7 +30,7 @@
 //! ```
 
 pub use crate::algorithms::{
-    StereoSearchError, StereoSearchOptions, StereoValidationError, StereoValidationIssue,
+    StereoSearchError, StereoSearchOptions, StereoValidationError, StereoViolation,
 };
 pub use crate::molecule::ids::{StereoElementId, StereoGroupId};
 pub use crate::molecule::stereo::{
@@ -43,12 +43,12 @@ pub use crate::molecule::stereo::{
 ///
 /// CIP descriptors remain opt-in derived state. Assignment requires known
 /// implicit hydrogen counts: run valence perception first, or it reports
-/// [`CipAssignmentIssue::UnknownHydrogenCount`](crate::stereo::cip::CipAssignmentIssue::UnknownHydrogenCount)
+/// [`CipAssignmentFailure::UnknownHydrogenCount`](crate::stereo::cip::CipAssignmentFailure::UnknownHydrogenCount)
 /// instead of ranking with
 /// none.
 pub mod cip {
     pub use crate::algorithms::{
-        assign_cip_descriptors, CipAssignment, CipAssignmentError, CipAssignmentIssue,
+        assign_cip_descriptors, CipAssignment, CipAssignmentError, CipAssignmentFailure,
         CipAssignmentOptions, CipAssignmentReport, CipRankingError, CipSkipped, CipSkippedReason,
     };
     pub use crate::molecule::perception::CipPerception;

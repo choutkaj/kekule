@@ -11,7 +11,8 @@ use kekule::macromolecular::{
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{AtomId, BondOrder};
 use kekule::pdb::{
-    self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteIssue, PdbWriteOptions,
+    self, PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteErrorKind,
+    PdbWriteOptions,
 };
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
@@ -48,7 +49,7 @@ fn bonds(topology: &Topology) -> BTreeSet<(usize, usize, String)> {
         .collect()
 }
 
-fn issue(error: &kekule::diagnostics::FormatError) -> &PdbWriteIssue {
+fn issue(error: &kekule::diagnostics::FormatError) -> &PdbWriteErrorKind {
     match error.detail() {
         Some(FormatErrorDetail::PdbWrite(issue)) => issue,
         other => panic!("not a PDB write issue: {other:?}"),
@@ -148,7 +149,7 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
     let error = pdb::write(&reread, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "PROA"
+        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "PROA"
     ));
     assert!(error.message().contains("does not fit PDB's chain columns"));
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
@@ -209,7 +210,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
     let error = pdb::write(&structure, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "SOL1"
+        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "SOL1"
     ));
 
     // PDB writes the solvent chains as segments, which read back as chains.
@@ -277,7 +278,7 @@ fn chain_ids_longer_than_a_segment_fail_under_the_segment_policy() {
     let error = pdb::write(&renamed, options).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "SOLVENT"
+        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "SOLVENT"
     ));
 }
 
@@ -378,14 +379,14 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::ChainIdTooLong { chain_id, .. } if chain_id == "AB"
+        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "AB"
     ));
     let error = pdb::write(&structure(&cif("A", "LONG")), Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::ResidueNameTooLong { name, .. } if name == "LONG"
+        PdbWriteErrorKind::ResidueNameTooLong { name, .. } if name == "LONG"
     ));
     // Omitting chemistry does not relax identifiers.
     let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
@@ -404,7 +405,7 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnsupportedAtomField {
+        PdbWriteErrorKind::UnsupportedAtomField {
             field: PdbAtomField::Hydrogens,
             ..
         }
@@ -426,7 +427,7 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnsupportedBondOrder {
+        PdbWriteErrorKind::UnsupportedBondOrder {
             order: BondOrder::Quadruple,
             ..
         }
@@ -463,7 +464,7 @@ fn residues_must_be_consecutive_in_dense_order() {
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::NonContiguousResidue { .. }
+        PdbWriteErrorKind::NonContiguousResidue { .. }
     ));
 }
 
@@ -533,7 +534,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     let error = pdb::write(&scan, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableGeometry {
+        PdbWriteErrorKind::UnrepresentableGeometry {
             geometry: 1,
             field: GeometryField::OrderCoordinate
         }
@@ -582,7 +583,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     let error = pdb::write(&history, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteIssue::UnrepresentableGeometry {
+        PdbWriteErrorKind::UnrepresentableGeometry {
             geometry: 1,
             field: GeometryField::OrderStep
         }
@@ -633,7 +634,10 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     let empty = StructureSet::new(smiles::to_topology("C").unwrap());
     let error = pdb::write(&empty, options).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
-    assert!(matches!(issue(&error), PdbWriteIssue::EmptyStructureSet));
+    assert!(matches!(
+        issue(&error),
+        PdbWriteErrorKind::EmptyStructureSet
+    ));
 }
 
 #[test]
@@ -673,7 +677,7 @@ fn cells_crystal_records_cannot_carry_fail_unless_omitted() {
             .unwrap_err();
         assert_eq!(
             issue(&error),
-            &PdbWriteIssue::UnrepresentableCell { reason },
+            &PdbWriteErrorKind::UnrepresentableCell { reason },
             "{reason:?}"
         );
         let options = PdbWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
@@ -991,7 +995,7 @@ metalc1 metalc A ZN ZN B ZN ZN
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         issue(&error),
-        &PdbWriteIssue::ReportCountMismatch {
+        &PdbWriteErrorKind::ReportCountMismatch {
             expected: 1,
             actual: 0
         }
@@ -1140,7 +1144,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     .unwrap_err();
     assert_eq!(
         issue(&error),
-        &PdbWriteIssue::ReportCountMismatch {
+        &PdbWriteErrorKind::ReportCountMismatch {
             expected: 2,
             actual: 1
         }

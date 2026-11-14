@@ -14,7 +14,7 @@ use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::molfile::interpret::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_double_bonds,
     molfile_coordinate_tetrahedra, molfile_coordinates_are_flat,
-    molfile_stereo_group_members_at_atom, MolfileInterpretationWarning,
+    molfile_stereo_group_members_at_atom, MolfileInterpretIssue,
 };
 use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::MolfileVersion;
@@ -291,9 +291,7 @@ fn stereo_projections(
                 "Cannot check that the 3D coordinates keep the stereo of the molecule.",
             );
             let valence = warnings.into_iter().find_map(|warning| match warning {
-                MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { error } => {
-                    Some(error)
-                }
+                MolfileInterpretIssue::CoordinateStereoValenceUnsupported { error } => Some(error),
                 _ => None,
             });
             return Err(match valence {

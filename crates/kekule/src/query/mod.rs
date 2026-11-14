@@ -60,7 +60,7 @@ pub use expression::{
 };
 pub use graph::{
     QueryAtom, QueryAtomId, QueryBond, QueryBondId, QueryGraph, QueryGraphBuilder, QueryGraphError,
-    QueryStereoIssue, MAX_QUERY_RECURSION_DEPTH, MAX_QUERY_TOTAL_ATOMS,
+    QueryStereoViolation, MAX_QUERY_RECURSION_DEPTH, MAX_QUERY_TOTAL_ATOMS,
     MAX_QUERY_TOTAL_EXPRESSION_NODES,
 };
 pub use stereo::{QueryStereoConstraint, QueryStereoGroup};

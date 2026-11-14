@@ -2,7 +2,7 @@
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
-use super::{fail, invalid_structure, MmcifAtomField, MmcifGeometryField, MmcifWriteIssue};
+use super::{fail, invalid_structure, MmcifAtomField, MmcifGeometryField, MmcifWriteErrorKind};
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::UnrepresentablePolicy;
@@ -214,27 +214,27 @@ fn validate_graph_chemistry(
     if molecule_definition.stereo_elements().next().is_some()
         || molecule_definition.stereo_groups().next().is_some()
     {
-        return Err(fail(MmcifWriteIssue::UnsupportedStereo(molecule.id())));
+        return Err(fail(MmcifWriteErrorKind::UnsupportedStereo(molecule.id())));
     }
     for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
         if structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
             .is_none()
         {
-            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
+            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                 atom: atom_id,
                 field: MmcifAtomField::Isotope,
             }));
         }
         if atom.radical.is_some() {
-            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
+            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                 atom: atom_id,
                 field: MmcifAtomField::Radical,
             }));
         }
         if atom.hydrogens != ImplicitHydrogens::default() {
             if implicit_hydrogens == UnrepresentablePolicy::Fail {
-                return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
+                return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                     atom: atom_id,
                     field: MmcifAtomField::Hydrogens,
                 }));
@@ -242,13 +242,13 @@ fn validate_graph_chemistry(
             omitted_hydrogens += 1;
         }
         if atom.atom_map.is_some() {
-            return Err(fail(MmcifWriteIssue::UnsupportedAtomField {
+            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                 atom: atom_id,
                 field: MmcifAtomField::AtomMap,
             }));
         }
         if !(-8..=8).contains(&atom.formal_charge) {
-            return Err(fail(MmcifWriteIssue::FormalChargeOutOfRange {
+            return Err(fail(MmcifWriteErrorKind::FormalChargeOutOfRange {
                 atom: atom_id,
                 charge: atom.formal_charge,
             }));
@@ -270,7 +270,7 @@ fn collect_macro_rows(
         let site = structure
             .topology()
             .atom_site_of(qualified)
-            .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
+            .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomSite(qualified)))?;
         let residue = hierarchy
             .require_residue(site.residue())
             .map_err(|error| invalid_hierarchy(qualified).with_source(error))?;
@@ -279,14 +279,14 @@ fn collect_macro_rows(
             .map_err(|error| invalid_hierarchy(qualified).with_source(error))?;
         let assignment = assignments
             .get(&qualified)
-            .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
+            .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomSite(qualified)))?;
         if site
             .metadata()
             .label_asym_id
             .as_deref()
             .is_some_and(|value| value != chain.label_id)
         {
-            return Err(fail(MmcifWriteIssue::InconsistentAtomSite {
+            return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                 atom: qualified,
                 field: MmcifAtomField::LabelAsymId,
             }));
@@ -297,7 +297,7 @@ fn collect_macro_rows(
             .as_deref()
             .is_some_and(|value| !value.eq_ignore_ascii_case(type_symbol(atom)))
         {
-            return Err(fail(MmcifWriteIssue::InconsistentAtomSite {
+            return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                 atom: qualified,
                 field: MmcifAtomField::TypeSymbol,
             }));
@@ -370,7 +370,7 @@ fn collect_small_rows(
         let qualified = molecule.qualify_atom(atom_id);
         let assignment = assignments
             .get(&qualified)
-            .ok_or_else(|| fail(MmcifWriteIssue::MissingAtomSite(qualified)))?;
+            .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomSite(qualified)))?;
         let component_id = if assignment.kind == AssignedEntityKind::Water {
             "HOH"
         } else {
@@ -444,7 +444,10 @@ fn supported_bond_order(bond: InstanceBondId, order: BondOrder) -> Result<BondOr
         | BondOrder::Triple
         | BondOrder::Quadruple
         | BondOrder::Dative => Ok(order),
-        BondOrder::Zero => Err(fail(MmcifWriteIssue::UnsupportedBondOrder { bond, order })),
+        BondOrder::Zero => Err(fail(MmcifWriteErrorKind::UnsupportedBondOrder {
+            bond,
+            order,
+        })),
     }
 }
 
@@ -497,7 +500,7 @@ impl<'a> ConnectionSelectors<'a> {
                     .count()
             });
         if matches != 1 {
-            return Err(fail(MmcifWriteIssue::AmbiguousConnectionSelector(atom)));
+            return Err(fail(MmcifWriteErrorKind::AmbiguousConnectionSelector(atom)));
         }
         Ok(())
     }
@@ -575,7 +578,7 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {
             format!("unsequenced:{:?}", row.residue)
         };
         if !identities.insert((row.asym_id.clone(), residue, row.label_atom_id.clone())) {
-            return Err(fail(MmcifWriteIssue::DuplicateAtomIdentity(row.atom)));
+            return Err(fail(MmcifWriteErrorKind::DuplicateAtomIdentity(row.atom)));
         }
     }
     Ok(())
@@ -603,13 +606,13 @@ pub(super) fn validate_geometry(
     geometry: usize,
 ) -> Result<(), FormatError> {
     if candidate.entities != model.entities {
-        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+        return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
             field: MmcifGeometryField::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
-        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+        return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
             field: MmcifGeometryField::StructuralAsymmetry,
         }));
@@ -622,7 +625,7 @@ pub(super) fn validate_geometry(
             .collect::<Vec<_>>()
     };
     if bonds(candidate) != bonds(model) {
-        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+        return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
             field: MmcifGeometryField::Connectivity,
         }));
@@ -634,7 +637,7 @@ pub(super) fn validate_geometry(
             .zip(&model.atoms)
             .any(|(left, right)| !same_static_atom_row(left, right))
     {
-        return Err(fail(MmcifWriteIssue::IncompatibleGeometry {
+        return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
             field: MmcifGeometryField::AtomSites,
         }));

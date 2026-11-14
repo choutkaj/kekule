@@ -40,8 +40,8 @@ fn stereo_validation_reports_invalid_local_elements_without_mutating() {
     assert!(mol.stereo_elements().next().is_some());
     // The one validator reports each element's first issue.
     assert_eq!(
-        error.issues,
-        [StereoValidationIssue::DuplicateTetrahedralCarrier {
+        error.violations,
+        [StereoViolation::DuplicateTetrahedralCarrier {
             element,
             center,
             carrier: StereoCarrier::Atom(a),
@@ -125,8 +125,8 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
     let error = crate::molecule::validate_represented_stereo(double_bond.working())
         .expect_err("unavailable double-bond carriers should be reported");
     assert_eq!(
-        error.issues,
-        vec![StereoValidationIssue::UnsupportedDoubleBondCarrier {
+        error.violations,
+        vec![StereoViolation::UnsupportedDoubleBondCarrier {
             element: double_element,
             endpoint: right,
             carrier: StereoCarrier::ImplicitLonePair,
@@ -154,8 +154,8 @@ fn stereo_validation_checks_implicit_carrier_form_without_perception_state() {
     let error = crate::molecule::validate_represented_stereo(axis.working())
         .expect_err("implicit axis carriers should be unsupported");
     assert_eq!(
-        error.issues,
-        vec![StereoValidationIssue::UnsupportedAxisCarrier {
+        error.violations,
+        vec![StereoViolation::UnsupportedAxisCarrier {
             element: axis_element,
             axis: axis_bond,
             carrier: StereoCarrier::ImplicitHydrogen,
@@ -410,8 +410,8 @@ fn stereo_validation_accepts_structural_axis_elements() {
         .expect_err("axis should be invalid");
 
     assert_eq!(
-        error.issues,
-        vec![StereoValidationIssue::AxisCarrierNotAdjacent {
+        error.violations,
+        vec![StereoViolation::AxisCarrierNotAdjacent {
             element: invalid_axis,
             axis,
             carrier: StereoCarrier::Atom(left),
@@ -451,7 +451,7 @@ fn implicit_hydrogen_carriers_must_match_fixed_hydrogen_declarations() {
         .atom_mut(center)
         .unwrap()
         .set_hydrogens(ImplicitHydrogens::Fixed(0));
-    let mismatch = StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+    let mismatch = StereoViolation::ImplicitHydrogenCarrierMismatch {
         element: id,
         atom: center,
         fixed_hydrogens: 0,
@@ -463,7 +463,7 @@ fn implicit_hydrogen_carriers_must_match_fixed_hydrogen_declarations() {
     assert_eq!(
         crate::molecule::validate_represented_stereo(editor.working())
             .unwrap_err()
-            .issues,
+            .violations,
         [mismatch]
     );
 
@@ -473,7 +473,7 @@ fn implicit_hydrogen_carriers_must_match_fixed_hydrogen_declarations() {
     assert_eq!(
         editor.add_stereo_element(element),
         Err(MoleculeError::InvalidStereoReference(
-            StereoValidationIssue::ImplicitHydrogenCarrierMismatch {
+            StereoViolation::ImplicitHydrogenCarrierMismatch {
                 element: StereoElementId::new(1),
                 atom: center,
                 fixed_hydrogens: 0,

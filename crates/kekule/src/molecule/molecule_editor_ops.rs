@@ -252,7 +252,7 @@ impl MoleculeEditor {
                 .filter(|&group| group != id)
             {
                 return Err(MoleculeError::InvalidStereoReference(
-                    crate::stereo::StereoValidationIssue::StereoElementAlreadyGrouped {
+                    crate::stereo::StereoViolation::StereoElementAlreadyGrouped {
                         element: member,
                         group,
                     },

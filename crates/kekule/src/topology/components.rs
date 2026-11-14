@@ -92,9 +92,7 @@ where
         if members_by_component.len() > 1 && group.kind != crate::stereo::StereoGroupKind::Absolute
         {
             return Err(MoleculeError::InvalidStereoReference(
-                crate::stereo::StereoValidationIssue::SplitCorrelatedStereoGroup {
-                    group: group_id,
-                },
+                crate::stereo::StereoViolation::SplitCorrelatedStereoGroup { group: group_id },
             )
             .into());
         }

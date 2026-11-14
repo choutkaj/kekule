@@ -948,7 +948,7 @@ fn molfile_unmarked_3d_tetrahedra_use_shared_geometry_without_installing_percept
                 let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
                 assert_eq!(report.created_stereo_elements().len(), 1);
                 assert!(molecule.perception().valence().is_none());
-                assert!(report.warnings().is_empty());
+                assert!(report.issues().is_empty());
                 if explicit_count == 3 {
                     assert_eq!(
                         molecule.atom(AtomId::new(0)).unwrap().hydrogens,
@@ -1162,7 +1162,7 @@ fn molfile_ambiguous_wedge_geometry_never_invents_a_configuration() {
                     let source = wedge_drawing(&points, scale, mirror, v3000);
                     let (molecule, report) = read_molfile_with_report(&source).unwrap();
                     assert!(molecule.stereo_elements().next().is_none(), "{source}");
-                    assert_eq!(report.warnings().len(), 1, "{source}");
+                    assert_eq!(report.issues().len(), 1, "{source}");
                     assert!(report.created_stereo_elements().is_empty());
                     assert!(molecule.perception().valence().is_none());
                 }
@@ -1260,7 +1260,7 @@ fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
                 for mirror in [-1.0, 1.0] {
                     let source = wedge_drawing(&points, scale, mirror, v3000);
                     let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
-                    assert!(report.warnings().is_empty(), "{source}");
+                    assert!(report.issues().is_empty(), "{source}");
                     perceive(&mut molecule).unwrap();
                     let assignment =
                         stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
@@ -1468,7 +1468,7 @@ fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
     let redundant = source.replace("  1  3  1  0", "  1  3  1  1");
     let (molecule, report) =
         read_molfile_with_report(&redundant).expect("redundant wedges interpret");
-    assert!(report.warnings().is_empty());
+    assert!(report.issues().is_empty());
     assert_eq!(
         molecule.stereo_elements().next().unwrap().1.kind,
         original.stereo_elements().next().unwrap().1.kind
@@ -1488,7 +1488,7 @@ fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
         .replace("   -0.5000    0.8660", "    0.0000    0.0000")
         .replace("   -0.5000   -0.8660", "    0.0000    0.0000");
     let (molecule, report) = read_molfile_with_report(&degenerate).unwrap();
-    assert!(report.warnings().is_empty());
+    assert!(report.issues().is_empty());
     assert!(molecule
         .stereo_elements()
         .next()
@@ -1498,7 +1498,7 @@ fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
 
     let conflicting = source.replace("  1  3  1  0", "  1  3  1  6");
     let (molecule, report) = read_molfile_with_report(&conflicting).expect("conflict is reported");
-    assert_eq!(report.warnings().len(), 1);
+    assert_eq!(report.issues().len(), 1);
     assert!(molecule.stereo_elements().next().is_none());
 }
 
@@ -1732,11 +1732,11 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         assert!(molecule.stereo_elements().next().is_none());
         assert!(molecule.perception().valence().is_none());
         assert!(report.created_stereo_elements().is_empty());
-        let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
+        let [molfile::MolfileInterpretIssue::ConflictingAtropisomericWedgeMarks {
             axis,
             location,
             mark_count,
-        }] = report.warnings()
+        }] = report.issues()
         else {
             panic!("missing conflict diagnostic")
         };
@@ -1780,11 +1780,11 @@ fn molfile_atropisomeric_wedges_validate_all_marks_and_preserve_unknown_stereo()
         let interpretation = document.interpret(Default::default()).unwrap();
         assert_eq!(interpretation.molecules().next().unwrap(), &unmarked_v3000);
         let report = &interpretation.reports()[0];
-        let [molfile::MolfileInterpretationWarning::ConflictingAtropisomericWedgeMarks {
+        let [molfile::MolfileInterpretIssue::ConflictingAtropisomericWedgeMarks {
             axis,
             location,
             mark_count,
-        }] = report.warnings()
+        }] = report.issues()
         else {
             panic!("missing V3000 conflict diagnostic")
         };

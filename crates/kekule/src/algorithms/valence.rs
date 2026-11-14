@@ -33,7 +33,7 @@ impl ValenceOptions {
 /// One atom's invalid valence state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ValenceIssue {
+pub enum ValenceViolation {
     /// In strict mode, an unbonded hydrogen with inferred hydrogens has a
     /// formal charge other than -1, 0 or +1.
     InvalidFormalCharge {
@@ -70,11 +70,11 @@ pub enum ValenceIssue {
 /// Valence perception found atoms whose valence state is invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValenceError {
-    /// One issue per offending atom.
-    pub issues: Vec<ValenceIssue>,
+    /// One violation per offending atom.
+    pub violations: Vec<ValenceViolation>,
 }
 
-impl fmt::Display for ValenceIssue {
+impl fmt::Display for ValenceViolation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidFormalCharge {
@@ -110,17 +110,17 @@ impl fmt::Display for ValenceIssue {
     }
 }
 
-/// Writes the first issue, then the number of atoms with issues when there
+/// Writes the first violation, then the number of atoms with violations when there
 /// are several.
 impl fmt::Display for ValenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.issues.as_slice() {
+        match self.violations.as_slice() {
             [] => formatter.write_str("The valence state is invalid."),
             [issue] => write!(formatter, "{issue}"),
             [issue, ..] => write!(
                 formatter,
                 "{issue} In all, {} atoms have an invalid valence state.",
-                self.issues.len()
+                self.violations.len()
             ),
         }
     }
@@ -140,7 +140,7 @@ impl std::error::Error for ValenceError {}
 ///
 /// # Errors
 ///
-/// Only strict validation fails: [`ValenceError`] with one [`ValenceIssue`]
+/// Only strict validation fails: [`ValenceError`] with one [`ValenceViolation`]
 /// per atom whose valence or hydrogen state is invalid.
 pub fn perceive_valence(
     mol: &mut Molecule,
@@ -174,7 +174,7 @@ pub(crate) fn rdkit_valence_assignments(
         assignments.insert(atom_id, implicit);
     }
     if !issues.is_empty() {
-        return Err(ValenceError { issues });
+        return Err(ValenceError { violations: issues });
     }
     Ok(assignments)
 }
@@ -187,12 +187,12 @@ pub(crate) fn rdkit_inferred_hydrogen_count(mol: &Molecule, atom_id: AtomId, ato
     rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, false).unwrap_or(0)
 }
 
-/// The issue strict valence perception would report for one atom, if any.
-pub(crate) fn rdkit_valence_issue(
+/// The violation strict valence perception would report for one atom, if any.
+pub(crate) fn rdkit_valence_violation(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,
-) -> Option<ValenceIssue> {
+) -> Option<ValenceViolation> {
     rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, true).err()
 }
 
@@ -259,7 +259,7 @@ fn rdkit_atom_inferred_hydrogen_count(
     atom_id: AtomId,
     atom: &Atom,
     strict: bool,
-) -> Result<u8, ValenceIssue> {
+) -> Result<u8, ValenceViolation> {
     let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.represented_count());
     let radical_electrons = atom
         .radical
@@ -307,7 +307,7 @@ fn rdkit_atom_inferred_hydrogen_count(
         explicit_limit.filter(|maximum| strict && explicit + charge_offset > *maximum)
     {
         if charge_offset != 0 {
-            return Err(ValenceIssue::ValenceOccupancyExceeded {
+            return Err(ValenceViolation::ValenceOccupancyExceeded {
                 atom: atom_id,
                 explicit_valence: explicit,
                 radical_electrons: 0,
@@ -315,7 +315,7 @@ fn rdkit_atom_inferred_hydrogen_count(
                 max_allowed: maximum,
             });
         }
-        return Err(ValenceIssue::ValenceExceeded {
+        return Err(ValenceViolation::ValenceExceeded {
             atom: atom_id,
             explicit_valence: explicit,
             max_allowed: maximum,
@@ -331,7 +331,7 @@ fn rdkit_atom_inferred_hydrogen_count(
         return match atom.formal_charge {
             0 => Ok(1),
             -1 | 1 => Ok(0),
-            _ if strict => Err(ValenceIssue::InvalidFormalCharge {
+            _ if strict => Err(ValenceViolation::InvalidFormalCharge {
                 atom: atom_id,
                 formal_charge: atom.formal_charge,
             }),
@@ -368,7 +368,7 @@ fn rdkit_atom_inferred_hydrogen_count(
         && !original_rule.unrestricted_above
         && original_rule.max_fixed().is_some_and(|maximum| maximum > 0)
     {
-        return Err(ValenceIssue::ValenceOccupancyExceeded {
+        return Err(ValenceViolation::ValenceOccupancyExceeded {
             atom: atom_id,
             explicit_valence: explicit,
             radical_electrons,

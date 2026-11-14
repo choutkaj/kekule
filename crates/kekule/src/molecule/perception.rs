@@ -728,7 +728,7 @@ impl fmt::Display for MalformedRingReason {
 /// Why installed conjugation or resonance groups are inconsistent.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DelocalizationIssue {
+pub enum DelocalizationViolation {
     /// Resonance delocalization is installed without aromaticity.
     ResonanceWithoutAromaticity,
     /// Conjugation is installed without aromaticity.
@@ -771,7 +771,7 @@ pub enum DelocalizationIssue {
     },
 }
 
-impl fmt::Display for DelocalizationIssue {
+impl fmt::Display for DelocalizationViolation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ResonanceWithoutAromaticity => {
@@ -813,7 +813,7 @@ impl fmt::Display for DelocalizationIssue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PerceptionInstallError {
     /// Conjugation or its group partition is structurally inconsistent.
-    InvalidDelocalization(DelocalizationIssue),
+    InvalidDelocalization(DelocalizationViolation),
     /// One component exceeds the fixed-width stable-ID capacity.
     ComponentCapacityExceeded(PerceptionComponent),
     /// An atom reference is not live.
@@ -1042,7 +1042,7 @@ fn validate_delocalization(
         let aromaticity = state
             .aromaticity
             .as_ref()
-            .ok_or(bad(DelocalizationIssue::ConjugationWithoutAromaticity))?;
+            .ok_or(bad(DelocalizationViolation::ConjugationWithoutAromaticity))?;
         let mut endpoints = BTreeSet::new();
         for &atom in &conjugation.atoms {
             mol.atom(atom)
@@ -1055,10 +1055,12 @@ fn validate_delocalization(
             endpoints.extend([bond.a(), bond.b()]);
         }
         if endpoints != conjugation.atoms {
-            return Err(bad(DelocalizationIssue::ConjugatedAtomsNotBondEndpoints));
+            return Err(bad(
+                DelocalizationViolation::ConjugatedAtomsNotBondEndpoints,
+            ));
         }
         if !aromaticity.bonds.is_subset(&conjugation.bonds) {
-            return Err(bad(DelocalizationIssue::AromaticBondNotConjugated));
+            return Err(bad(DelocalizationViolation::AromaticBondNotConjugated));
         }
     }
     let Some(resonance) = &state.resonance else {
@@ -1067,12 +1069,12 @@ fn validate_delocalization(
     let aromaticity = state
         .aromaticity
         .as_ref()
-        .ok_or(bad(DelocalizationIssue::ResonanceWithoutAromaticity))?;
+        .ok_or(bad(DelocalizationViolation::ResonanceWithoutAromaticity))?;
     let mut atoms = BTreeSet::new();
     let mut bonds = BTreeSet::new();
     for (index, group) in resonance.groups.iter().enumerate() {
         if group.bonds.is_empty() {
-            return Err(bad(DelocalizationIssue::EmptyGroup { group: index }));
+            return Err(bad(DelocalizationViolation::EmptyGroup { group: index }));
         }
         let mut group_ends = BTreeSet::new();
         for &id in &group.bonds {
@@ -1080,22 +1082,26 @@ fn validate_delocalization(
                 .bond(id)
                 .ok_or(PerceptionInstallError::InvalidBondId(id))?;
             if !bonds.insert(id) {
-                return Err(bad(DelocalizationIssue::RepeatedGroupBond { group: index }));
+                return Err(bad(DelocalizationViolation::RepeatedGroupBond {
+                    group: index,
+                }));
             }
             if aromaticity.bonds.contains(&id) {
-                return Err(bad(DelocalizationIssue::AromaticGroupBond { group: index }));
+                return Err(bad(DelocalizationViolation::AromaticGroupBond {
+                    group: index,
+                }));
             }
             group_ends.extend([bond.a(), bond.b()]);
         }
         for &id in &group.atoms {
             if !atoms.insert(id) {
-                return Err(bad(DelocalizationIssue::OverlappingGroupAtom {
+                return Err(bad(DelocalizationViolation::OverlappingGroupAtom {
                     group: index,
                 }));
             }
         }
         if group_ends != group.atoms.iter().copied().collect() {
-            return Err(bad(DelocalizationIssue::GroupAtomsNotBondEndpoints {
+            return Err(bad(DelocalizationViolation::GroupAtomsNotBondEndpoints {
                 group: index,
             }));
         }
@@ -1112,7 +1118,9 @@ fn validate_delocalization(
             }
         }
         if reached != group_ends {
-            return Err(bad(DelocalizationIssue::DisconnectedGroup { group: index }));
+            return Err(bad(DelocalizationViolation::DisconnectedGroup {
+                group: index,
+            }));
         }
     }
     Ok(())

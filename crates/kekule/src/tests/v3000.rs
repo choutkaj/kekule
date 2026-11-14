@@ -250,7 +250,7 @@ fn v3000_atom_cfg_yields_to_contradicting_3d_coordinates() {
     let source = |cfg: u8| {
         format!("parity\n  kekule            3D\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 5 4 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG={cfg}\nM  V30 2 F 0.6 0.6 0.6 0\nM  V30 3 Cl 0.6 -0.6 -0.6 0\nM  V30 4 Br -0.6 0.6 -0.6 0\nM  V30 5 H -0.6 -0.6 0.6 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 2 1 1 3\nM  V30 3 1 1 4\nM  V30 4 1 1 5\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n")
     };
-    let contradiction = molfile::MolfileInterpretationWarning::AtomParityContradictsCoordinates {
+    let contradiction = molfile::MolfileInterpretIssue::AtomParityContradictsCoordinates {
         center: AtomId::new(0),
         location: crate::diagnostics::SourceLocation::at_line(8),
     };
@@ -262,7 +262,7 @@ fn v3000_atom_cfg_yields_to_contradicting_3d_coordinates() {
         (3, None, vec![]),
     ] {
         let (mut molecule, report) = read_molfile_with_report(&source(cfg)).unwrap();
-        assert_eq!(report.warnings(), warnings, "CFG={cfg}");
+        assert_eq!(report.issues(), warnings, "CFG={cfg}");
         perceive(&mut molecule).unwrap();
         let assigned =
             stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
@@ -929,8 +929,8 @@ M  END
 
     let (small, report) = read_molfile_with_report(input).expect("V3000 should parse");
     assert!(matches!(
-        report.warnings(),
-        [molfile::MolfileInterpretationWarning::CoordinateStereoValenceUnsupported { .. }]
+        report.issues(),
+        [molfile::MolfileInterpretIssue::CoordinateStereoValenceUnsupported { .. }]
     ));
     assert!(small.stereo_elements().next().is_none());
     assert!(small.perception().valence().is_none());

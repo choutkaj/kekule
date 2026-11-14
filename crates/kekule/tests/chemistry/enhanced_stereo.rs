@@ -207,7 +207,7 @@ fn topology_edits_reject_separating_correlated_groups() {
                 result.unwrap_err(),
                 kekule::topology::edit::TopologyEditError::Molecule(
                     kekule::molecule::MoleculeError::InvalidStereoReference(
-                        kekule::stereo::StereoValidationIssue::SplitCorrelatedStereoGroup { .. }
+                        kekule::stereo::StereoViolation::SplitCorrelatedStereoGroup { .. }
                     )
                 )
             ));

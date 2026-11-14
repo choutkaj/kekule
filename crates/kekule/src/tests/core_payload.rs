@@ -602,7 +602,7 @@ fn stereo_element_group_membership_is_transactional_and_relation_owned() {
     assert_eq!(
         mol.add_stereo_element(pre_grouped),
         Err(MoleculeError::InvalidStereoReference(
-            StereoValidationIssue::GroupMembershipOutsideGroupEdit {
+            StereoViolation::GroupMembershipOutsideGroupEdit {
                 element: StereoElementId::new(slots_before.len() as u32),
             }
         ))
@@ -810,14 +810,14 @@ fn stereo_focus_is_unique_and_rejection_preserves_groups_and_perception() {
 
         let mut unchecked = editor.clone();
         unchecked.working_mut().graph.stereo_elements[ids[1].index()] = Some(duplicate);
-        let issue = StereoValidationIssue::DuplicateStereoFocus {
+        let issue = StereoViolation::DuplicateStereoFocus {
             element: ids[1],
             previous: ids[0],
         };
         assert!(
             crate::molecule::validate_represented_stereo(unchecked.working())
                 .unwrap_err()
-                .issues
+                .violations
                 .contains(&issue)
         );
         assert_eq!(
@@ -924,8 +924,8 @@ fn tetrahedral_stereo_requires_complete_explicit_neighbor_coverage() {
     assert!(
         crate::molecule::validate_represented_stereo(editor.working())
             .unwrap_err()
-            .issues
-            .contains(&StereoValidationIssue::UnrepresentedTetrahedralNeighbor {
+            .violations
+            .contains(&StereoViolation::UnrepresentedTetrahedralNeighbor {
                 element: id,
                 center,
                 neighbor: extra
@@ -993,10 +993,10 @@ fn stereo_bond_endpoints_reject_more_than_two_explicit_substituents() {
             .push(Some(element));
         let issues = crate::molecule::validate_represented_stereo(editor.working())
             .unwrap_err()
-            .issues;
+            .violations;
         assert!(issues.iter().any(|issue| matches!(issue,
-            StereoValidationIssue::DoubleBondEndpointOvercoordinated { endpoint, substituent_count: 3, .. }
-                | StereoValidationIssue::AxisEndpointOvercoordinated { endpoint, substituent_count: 3, .. }
+            StereoViolation::DoubleBondEndpointOvercoordinated { endpoint, substituent_count: 3, .. }
+                | StereoViolation::AxisEndpointOvercoordinated { endpoint, substituent_count: 3, .. }
                 if *endpoint == atoms[0]
         )));
         assert!(matches!(

@@ -2,7 +2,7 @@ use crate::DraftError;
 use std::fmt;
 
 use super::MoleculeError;
-use crate::stereo::StereoValidationIssue;
+use crate::stereo::StereoViolation;
 
 use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
 
@@ -23,7 +23,7 @@ pub enum MoleculePublicationError {
         components: usize,
     },
     /// Represented stereo is inconsistent with the graph or with itself.
-    InvalidStereo(StereoValidationIssue),
+    InvalidStereo(StereoViolation),
     /// A neutral chlorine, bromine, or iodine with only oxygen neighbors and
     /// explicit valence 3, 5, or 7 still has `X=O` bonds. Canonical chemistry
     /// separates them as `[X+]-[O-]`; call
@@ -513,7 +513,7 @@ fn publish_molecule(
         "editors keep graph storage consistent"
     );
     molecule.validate_connected()?;
-    if let Some(issue) = stereo_validation_issues(&molecule).into_iter().next() {
+    if let Some(issue) = stereo_violations(&molecule).into_iter().next() {
         return Err(MoleculePublicationError::InvalidStereo(issue));
     }
     if let Some(atom) = unnormalized_oxohalogens(&molecule).first() {
@@ -595,12 +595,12 @@ fn validate_graph(molecule: &Molecule) -> Result<(), GraphValidationError> {
 /// hydrogen declarations, unique foci, and consistent groups. Each element or
 /// group reports at most its first issue; the result lists every failing one
 /// in element order, then group order.
-pub(crate) fn stereo_validation_issues(molecule: &Molecule) -> Vec<StereoValidationIssue> {
+pub(crate) fn stereo_violations(molecule: &Molecule) -> Vec<StereoViolation> {
     let mut issues = Vec::new();
     let mut foci = std::collections::BTreeMap::new();
     for (element_id, element) in molecule.stereo_elements() {
         if let Some(previous) = foci.insert(element.kind.focus(), element_id) {
-            issues.push(StereoValidationIssue::DuplicateStereoFocus {
+            issues.push(StereoViolation::DuplicateStereoFocus {
                 element: element_id,
                 previous,
             });
@@ -609,11 +609,11 @@ pub(crate) fn stereo_validation_issues(molecule: &Molecule) -> Vec<StereoValidat
         if let Err(error) = molecule.validate_stereo_element(element_id, element) {
             issues.push(match error {
                 MoleculeError::InvalidStereoReference(issue) => issue,
-                MoleculeError::InvalidBondId(bond) => StereoValidationIssue::MissingStereoBond {
+                MoleculeError::InvalidBondId(bond) => StereoViolation::MissingStereoBond {
                     element: element_id,
                     bond,
                 },
-                MoleculeError::InvalidAtomId(atom) => StereoValidationIssue::MissingStereoAtom {
+                MoleculeError::InvalidAtomId(atom) => StereoViolation::MissingStereoAtom {
                     element: element_id,
                     atom,
                 },
@@ -623,12 +623,12 @@ pub(crate) fn stereo_validation_issues(molecule: &Molecule) -> Vec<StereoValidat
         }
         if let Some(group_id) = element.group {
             match molecule.stereo_group(group_id) {
-                None => issues.push(StereoValidationIssue::MissingStereoGroup {
+                None => issues.push(StereoViolation::MissingStereoGroup {
                     element: element_id,
                     group: group_id,
                 }),
                 Some(group) if !group.members.contains(&element_id) => {
-                    issues.push(StereoValidationIssue::InconsistentStereoGroupMembership {
+                    issues.push(StereoViolation::InconsistentStereoGroupMembership {
                         group: group_id,
                         element: element_id,
                     });
@@ -649,26 +649,26 @@ fn validate_stereo_group(
     molecule: &Molecule,
     group_id: StereoGroupId,
     group: &StereoGroup,
-) -> Result<(), StereoValidationIssue> {
+) -> Result<(), StereoViolation> {
     if group.members.is_empty() {
-        return Err(StereoValidationIssue::EmptyStereoGroup { group: group_id });
+        return Err(StereoViolation::EmptyStereoGroup { group: group_id });
     }
     let mut seen = std::collections::BTreeSet::new();
     for &element_id in &group.members {
         if !seen.insert(element_id) {
-            return Err(StereoValidationIssue::DuplicateStereoGroupMember {
+            return Err(StereoViolation::DuplicateStereoGroupMember {
                 group: group_id,
                 element: element_id,
             });
         }
         let element = molecule.stereo_element(element_id).ok_or({
-            StereoValidationIssue::MissingStereoGroupMember {
+            StereoViolation::MissingStereoGroupMember {
                 group: group_id,
                 element: element_id,
             }
         })?;
         if element.group != Some(group_id) {
-            return Err(StereoValidationIssue::InconsistentStereoGroupMembership {
+            return Err(StereoViolation::InconsistentStereoGroupMembership {
                 group: group_id,
                 element: element_id,
             });
@@ -677,16 +677,16 @@ fn validate_stereo_group(
     Ok(())
 }
 
-/// [`stereo_validation_issues`] as a result for callers that need valid
+/// [`stereo_violations`] as a result for callers that need valid
 /// represented stereo.
 pub(crate) fn validate_represented_stereo(
     molecule: &Molecule,
 ) -> Result<(), crate::algorithms::StereoValidationError> {
-    let issues = stereo_validation_issues(molecule);
+    let issues = stereo_violations(molecule);
     if issues.is_empty() {
         Ok(())
     } else {
-        Err(crate::algorithms::StereoValidationError { issues })
+        Err(crate::algorithms::StereoValidationError { violations: issues })
     }
 }
 
@@ -828,12 +828,11 @@ mod tests {
 
     #[test]
     fn stereo_publication_issues_have_diagnostic_display_messages() {
-        let error = MoleculePublicationError::InvalidStereo(
-            StereoValidationIssue::DuplicateStereoGroupMember {
+        let error =
+            MoleculePublicationError::InvalidStereo(StereoViolation::DuplicateStereoGroupMember {
                 group: StereoGroupId::new(2),
                 element: StereoElementId::new(7),
-            },
-        );
+            });
         assert_eq!(
             error.to_string(),
             "Stereo group 2 lists stereo element 7 twice."
@@ -883,13 +882,11 @@ mod tests {
         let error = editor.try_finish().unwrap_err();
         assert_eq!(
             error.error(),
-            &MoleculePublicationError::InvalidStereo(
-                StereoValidationIssue::InvalidDoubleBondOrder {
-                    element,
-                    bond,
-                    order: BondOrder::Single,
-                }
-            )
+            &MoleculePublicationError::InvalidStereo(StereoViolation::InvalidDoubleBondOrder {
+                element,
+                bond,
+                order: BondOrder::Single,
+            })
         );
         let mut repaired = error.into_draft();
         repaired.remove_stereo_element(element).unwrap();
@@ -915,7 +912,7 @@ mod tests {
         assert_eq!(
             failure.error(),
             &MoleculePublicationError::InvalidStereo(
-                StereoValidationIssue::TetrahedralCarrierNotAdjacent {
+                StereoViolation::TetrahedralCarrierNotAdjacent {
                     element,
                     center,
                     carrier: StereoCarrier::Atom(center),
