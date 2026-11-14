@@ -1,6 +1,7 @@
 //! Read-only CIP reference selection; atom IDs resolve only complete ties.
 
 use super::*;
+use crate::diagnostics::UnknownHydrogenCount;
 
 /// The caller supplies a live bond. Missing coordinate-bearing neighbors are
 /// normal absence; implicit hydrogens and phantom atoms are never references.
@@ -53,7 +54,9 @@ pub(crate) fn bond_reference_atoms(
     // must know the implicit hydrogens: missing perception is not zero H.
     for atom in mol.atom_ids() {
         if mol.implicit_hydrogens(atom).is_none() {
-            return Err(CipRankingError::UnknownHydrogenCount { atom });
+            return Err(CipRankingError::UnknownHydrogenCount(
+                UnknownHydrogenCount::new(atom),
+            ));
         }
     }
     let fractions = cip_atomic_number_fractions(mol);

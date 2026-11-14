@@ -1,4 +1,4 @@
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{LimitExceeded, Resource, UnknownHydrogenCount};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
@@ -45,7 +45,7 @@ pub(super) fn assign_cip_descriptors(
     let unknown_hydrogens = mol
         .atom_ids()
         .filter(|&atom| mol.implicit_hydrogens(atom).is_none())
-        .map(|atom| CipAssignmentFailure::UnknownHydrogenCount { atom })
+        .map(|atom| CipAssignmentFailure::UnknownHydrogenCount(UnknownHydrogenCount::new(atom)))
         .collect::<Vec<_>>();
     if !unknown_hydrogens.is_empty() {
         return Err(CipAssignmentError {

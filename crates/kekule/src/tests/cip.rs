@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::UnknownHydrogenCount;
 use std::num::NonZeroU16;
 
 fn assign_cip(mol: &mut Molecule) -> CipAssignmentReport {
@@ -1862,9 +1863,9 @@ fn cip_requires_known_implicit_hydrogen_counts() {
                 Err(CipAssignmentError {
                     failures: unknown
                         .iter()
-                        .map(|&atom| CipAssignmentFailure::UnknownHydrogenCount {
-                            atom: AtomId::new(atom),
-                        })
+                        .map(|&atom| CipAssignmentFailure::UnknownHydrogenCount(
+                            UnknownHydrogenCount::new(AtomId::new(atom)),
+                        ))
                         .collect(),
                 }),
                 "{source}"

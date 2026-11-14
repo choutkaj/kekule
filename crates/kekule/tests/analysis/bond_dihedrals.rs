@@ -374,7 +374,7 @@ fn incomplete_ranking_is_an_error_not_an_atom_id_tie() {
             Default::default()
         ),
         Err(BondDihedralError::Ranking {
-            error: CipRankingError::UnknownHydrogenCount { .. },
+            error: CipRankingError::UnknownHydrogenCount(_),
             ..
         })
     ));

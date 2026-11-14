@@ -1,4 +1,4 @@
-use crate::diagnostics::LimitExceeded;
+use crate::diagnostics::{LimitExceeded, UnknownHydrogenCount};
 use std::fmt;
 
 use crate::algorithms::StereoViolation;
@@ -29,10 +29,7 @@ pub enum CipRankingError {
     },
     /// Run valence perception explicitly before ranking ligands whose inferred
     /// hydrogen counts are unknown. No perception is installed by ranking.
-    UnknownHydrogenCount {
-        /// The atom whose implicit hydrogen count is unknown.
-        atom: AtomId,
-    },
+    UnknownHydrogenCount(UnknownHydrogenCount),
 }
 
 impl fmt::Display for CipRankingError {
@@ -43,10 +40,7 @@ impl fmt::Display for CipRankingError {
             }
             Self::UnresolvedPriority => f.write_str("CIP ranking cannot order the ligands."),
             Self::InvalidStereo { violation } => write!(f, "{violation}"),
-            Self::UnknownHydrogenCount { atom } => write!(
-                f,
-                "The hydrogen count of {atom} is unknown. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
         }
     }
 }
@@ -58,9 +52,7 @@ impl CipRankingError {
         match self {
             Self::LimitExceeded(limit) => CipAssignmentFailure::LimitExceeded { element, limit },
             Self::InvalidStereo { violation } => CipAssignmentFailure::InvalidStereo { violation },
-            Self::UnknownHydrogenCount { atom } => {
-                CipAssignmentFailure::UnknownHydrogenCount { atom }
-            }
+            Self::UnknownHydrogenCount(error) => CipAssignmentFailure::UnknownHydrogenCount(error),
             Self::UnresolvedPriority => CipAssignmentFailure::UnresolvedPriority { element },
         }
     }
@@ -234,12 +226,9 @@ pub enum CipAssignmentFailure {
         /// The exceeded bound.
         limit: LimitExceeded,
     },
-    /// The atom's implicit hydrogen count is inferred but not yet perceived.
+    /// An atom's implicit hydrogen count is inferred but not yet perceived.
     /// Missing valence perception is not zero hydrogens, so no ranking ran.
-    UnknownHydrogenCount {
-        /// The atom whose implicit hydrogen count is unknown.
-        atom: AtomId,
-    },
+    UnknownHydrogenCount(UnknownHydrogenCount),
 }
 
 impl fmt::Display for CipAssignmentFailure {
@@ -254,10 +243,7 @@ impl fmt::Display for CipAssignmentFailure {
                 "CIP ranking of {element} exceeded its {}.",
                 limit.describe()
             ),
-            Self::UnknownHydrogenCount { atom } => write!(
-                f,
-                "The hydrogen count of {atom} is unknown. Perceive valence first."
-            ),
+            Self::UnknownHydrogenCount(error) => error.fmt(f),
         }
     }
 }

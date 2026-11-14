@@ -1,6 +1,4 @@
-use crate::diagnostics::Capitalized;
-use crate::diagnostics::Countable;
-use crate::diagnostics::LengthMismatch;
+use crate::diagnostics::{Capitalized, Countable, LengthMismatch};
 use crate::io::AtomPositionSource;
 use crate::math::{Point3, Vector3};
 use crate::molecule::*;
