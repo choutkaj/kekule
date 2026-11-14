@@ -54,7 +54,7 @@ mod classification;
 mod components;
 mod dense_map;
 mod dense_order;
-mod editor;
+pub(crate) mod editor;
 mod entity_views;
 mod hierarchy;
 mod hierarchy_index;

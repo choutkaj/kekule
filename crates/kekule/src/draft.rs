@@ -1,5 +1,30 @@
-//! The recoverable-draft failure shared by builders and editors.
+//! Recoverable publication, written once for every builder and editor.
 use std::fmt;
+
+/// A builder or editor whose publication can be attempted without losing it.
+///
+/// `validate`, `try_build` and `try_finish` of every draft are [`Self::check`]
+/// and [`Self::attempt`]: by default they publish a copy, so a failure leaves
+/// the draft exactly as it was.
+pub(crate) trait Draft: Clone {
+    type Published;
+    type Error;
+
+    /// Publishes, consuming the draft.
+    fn into_published(self) -> Result<Self::Published, Self::Error>;
+
+    /// The error publication would return, leaving the draft unchanged.
+    fn check(&self) -> Result<(), Self::Error> {
+        self.clone().into_published().map(drop)
+    }
+
+    /// Publishes, or returns the draft with the error.
+    fn attempt(self) -> Result<Self::Published, DraftError<Self, Self::Error>> {
+        self.clone()
+            .into_published()
+            .map_err(|error| DraftError::new(error, self))
+    }
+}
 
 /// A failed recoverable publication that returns the unmodified draft with
 /// the error.

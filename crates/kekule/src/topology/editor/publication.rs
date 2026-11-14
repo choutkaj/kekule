@@ -1,11 +1,19 @@
 use super::overlay::{Entry, Run};
 use super::*;
+use crate::draft::{Draft, DraftError};
 use crate::topology::dense_order::{DenseOrder, ABSENT};
 use crate::topology::hierarchy::HierarchyColumns;
 use crate::topology::hierarchy_index::HierarchyIndex;
 use crate::topology::shared_rows::SharedRows;
 use crate::topology::{Hierarchy, MoleculeInstance, TopologyAtomIndex, TopologyBondIndex};
-use crate::DraftError;
+
+impl Draft for TopologyEditor {
+    type Published = Topology;
+    type Error = TopologyEditError;
+    fn into_published(self) -> Result<Topology, TopologyEditError> {
+        self.finish()
+    }
+}
 
 /// Internal row projection needed to publish a structure's arrays.
 pub(crate) struct TopologyPublication {
@@ -241,9 +249,9 @@ impl TopologyEditor {
     /// As for [`Self::finish`].
     pub fn finish_with_correspondence(
         self,
-    ) -> Result<(Arc<Topology>, EditCorrespondence), TopologyEditError> {
+    ) -> Result<(Topology, EditCorrespondence), TopologyEditError> {
         let (published, correspondence) = self.into_mapped_publication()?;
-        Ok((published.topology, correspondence))
+        Ok((Arc::unwrap_or_clone(published.topology), correspondence))
     }
 
     pub(crate) fn into_mapped_publication(
@@ -309,10 +317,10 @@ impl TopologyEditor {
         Ok((published, correspondence))
     }
 
-    /// Checks full component publication, classification, hierarchy and properties.
-    /// This evaluates a snapshot and leaves all draft state and handles unchanged.
+    /// The error [`Self::finish`] would return, leaving the draft and its
+    /// handles unchanged.
     pub fn validate(&self) -> Result<(), TopologyEditError> {
-        self.publish().map(|_| ())
+        self.check()
     }
     /// Publishes an immutable topology, moving owned molecular drafts. Source
     /// definitions no edit touched are shared with the source snapshot, with
@@ -332,18 +340,13 @@ impl TopologyEditor {
     /// [`TopologyEditError::Topology`], or [`TopologyEditError::Property`]
     /// error when a component, the topology, or its properties cannot be
     /// published.
-    pub fn finish(self) -> Result<Arc<Topology>, TopologyEditError> {
-        self.into_publication().map(|r| r.topology)
+    pub fn finish(self) -> Result<Topology, TopologyEditError> {
+        self.into_publication()
+            .map(|published| Arc::unwrap_or_clone(published.topology))
     }
     /// Publishes a topology, returning the draft with any publication error.
-    pub fn try_finish(self) -> Result<Arc<Topology>, DraftError<Self, TopologyEditError>> {
-        match self.publish() {
-            Ok(result) => Ok(result.topology),
-            Err(error) => Err(DraftError::new(error, self)),
-        }
-    }
-    pub(crate) fn publish(&self) -> Result<TopologyPublication, TopologyEditError> {
-        self.clone().into_publication()
+    pub fn try_finish(self) -> Result<Topology, DraftError<Self, TopologyEditError>> {
+        self.attempt()
     }
 
     pub(crate) fn into_publication(mut self) -> Result<TopologyPublication, TopologyEditError> {

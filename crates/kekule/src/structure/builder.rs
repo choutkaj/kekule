@@ -1,13 +1,13 @@
 use crate::diagnostics::{CapacityExceeded, Countable, LengthMismatch};
-use crate::DraftError;
+use crate::draft::{Draft, DraftError};
 use std::fmt;
 use std::sync::Arc;
 
 use crate::math::Point3;
 use crate::molecule::Molecule;
 use crate::topology::{
-    HierarchyBuilder, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeDefinitionId,
-    MoleculeInstanceId, Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder,
+    HierarchyBuilder, InstanceAtomId, MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId,
+    Topology, TopologyAtomIndex, TopologyBuildError, TopologyBuilder,
 };
 use crate::units::Quantity;
 
@@ -42,6 +42,14 @@ impl Default for StructureBuilder {
     }
 }
 
+impl Draft for StructureBuilder {
+    type Published = Structure;
+    type Error = StructureBuildError;
+    fn into_published(self) -> Result<Structure, StructureBuildError> {
+        self.build()
+    }
+}
+
 impl StructureBuilder {
     /// An empty builder with no molecules or positions.
     pub fn new() -> Self {
@@ -68,59 +76,28 @@ impl StructureBuilder {
         GeometryMut::new(&mut self.geometry)
     }
 
-    /// The staged topology, for read-only inspection.
-    pub fn topology_builder(&self) -> &TopologyBuilder {
+    /// The staged topology.
+    pub fn topology(&self) -> &TopologyBuilder {
         &self.topology
     }
 
-    /// A restricted static-annotation view. It cannot replace topology or add
-    /// instances independently of their coordinates.
+    /// The staged topology edits that add no atoms. It cannot replace the
+    /// topology or add instances without their coordinates.
     ///
     /// ```compile_fail
     /// use kekule::{structure::StructureBuilder, topology::TopologyBuilder};
     /// let mut builder = StructureBuilder::new();
-    /// *builder.topology_builder_mut() = TopologyBuilder::new();
+    /// *builder.topology_mut() = TopologyBuilder::new();
     /// ```
     /// ```compile_fail
     /// use kekule::{structure::StructureBuilder, topology::MoleculeDefinitionId};
     /// let mut builder = StructureBuilder::new();
-    /// builder.topology_builder_mut().add_instance(MoleculeDefinitionId::new(0));
+    /// builder.topology_mut().add_instance(MoleculeDefinitionId::new(0));
     /// ```
-    pub fn topology_builder_mut(&mut self) -> StructureTopologyMut<'_> {
-        StructureTopologyMut {
+    pub fn topology_mut(&mut self) -> StructureBuilderTopologyMut<'_> {
+        StructureBuilderTopologyMut {
             topology: &mut self.topology,
         }
-    }
-
-    /// The staged hierarchy.
-    pub fn hierarchy(&self) -> &HierarchyBuilder {
-        self.topology.hierarchy()
-    }
-
-    /// The staged hierarchy, for adding chains, residues, and atom sites and
-    /// assigning residue classes; see [`TopologyBuilder::hierarchy_mut`].
-    pub fn hierarchy_mut(&mut self) -> &mut HierarchyBuilder {
-        self.topology.hierarchy_mut()
-    }
-
-    /// Number of staged atoms.
-    pub fn atom_count(&self) -> usize {
-        self.topology.atom_count()
-    }
-
-    /// Number of staged bonds.
-    pub fn bond_count(&self) -> usize {
-        self.topology.bond_count()
-    }
-
-    /// Staged qualified atom IDs in current dense order.
-    pub fn atom_ids(&self) -> &[InstanceAtomId] {
-        self.topology.atom_ids()
-    }
-
-    /// Staged qualified bond IDs in dense order.
-    pub fn bond_ids(&self) -> &[InstanceBondId] {
-        self.topology.bond_ids()
     }
 
     /// Staged dense index of one atom, valid until the atom order changes.
@@ -189,20 +166,14 @@ impl StructureBuilder {
             .set_canonical_batch(&staged)?)
     }
 
-    /// Checks that [`Self::build`] would succeed, without consuming the builder.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error [`Self::build`] would return.
+    /// The error [`Self::build`] would return, leaving the builder unchanged.
     pub fn validate(&self) -> Result<(), StructureBuildError> {
-        self.clone().build().map(|_| ())
+        self.check()
     }
 
     /// Builds the structure, or returns this builder for repair with the error.
     pub fn try_build(self) -> Result<Structure, DraftError<Self, StructureBuildError>> {
-        self.clone()
-            .build()
-            .map_err(|error| DraftError::new(error, self))
+        self.attempt()
     }
 
     /// Replaces the dense atom order with a permutation of every staged atom.
@@ -217,32 +188,6 @@ impl StructureBuilder {
         let previous = self.topology.reorder_atoms(order)?;
         self.geometry.data_in_place().reorder_atoms(&previous);
         Ok(())
-    }
-
-    /// Stages a reusable definition; the molecule moves into the topology.
-    pub fn add_molecule_definition(
-        &mut self,
-        molecule: Molecule,
-    ) -> Result<MoleculeDefinitionId, StructureBuildError> {
-        Ok(self.topology.add_molecule_definition(molecule)?)
-    }
-
-    /// Overrides automatic classification for one staged molecule definition.
-    pub fn set_molecule_class(
-        &mut self,
-        definition: MoleculeDefinitionId,
-        class: MoleculeClass,
-    ) -> Result<(), StructureBuildError> {
-        Ok(self.topology.set_molecule_class(definition, class)?)
-    }
-
-    /// Clears one staged definition's explicit class, so publication infers
-    /// it afresh.
-    pub fn clear_molecule_class(
-        &mut self,
-        definition: MoleculeDefinitionId,
-    ) -> Result<(), StructureBuildError> {
-        Ok(self.topology.clear_molecule_class(definition)?)
     }
 
     /// Adds an instance with dense positions in its definition's atom order.
@@ -366,17 +311,45 @@ impl From<GeometryError> for StructureBuildError {
     }
 }
 
-/// Restricted mutable access to static structure-builder annotations. Each method
-/// consumes the view, so references remain bound to the original builder borrow.
+/// The edits of a [`StructureBuilder`]'s staged topology that add no atoms:
+/// definitions, classes, hierarchy and static annotations. Accessors consume
+/// the view, so what they return stays bound to the builder borrow.
 #[derive(Debug)]
-pub struct StructureTopologyMut<'a> {
+pub struct StructureBuilderTopologyMut<'a> {
     topology: &'a mut TopologyBuilder,
 }
 
-impl<'a> StructureTopologyMut<'a> {
+impl<'a> StructureBuilderTopologyMut<'a> {
     /// Length-preserving mutable access to staged static topology annotations.
     pub fn properties_mut(self) -> crate::properties::TopologyPropertiesMut<'a> {
         self.topology.properties_mut()
+    }
+    /// See [`TopologyBuilder::hierarchy_mut`].
+    pub fn hierarchy_mut(self) -> &'a mut HierarchyBuilder {
+        self.topology.hierarchy_mut()
+    }
+    /// Stages a reusable definition without an instance; see
+    /// [`StructureBuilder::add_instance`].
+    pub fn add_molecule_definition(
+        &mut self,
+        molecule: Molecule,
+    ) -> Result<MoleculeDefinitionId, TopologyBuildError> {
+        self.topology.add_molecule_definition(molecule)
+    }
+    /// See [`TopologyBuilder::set_molecule_class`].
+    pub fn set_molecule_class(
+        &mut self,
+        definition: MoleculeDefinitionId,
+        class: MoleculeClass,
+    ) -> Result<(), TopologyBuildError> {
+        self.topology.set_molecule_class(definition, class)
+    }
+    /// See [`TopologyBuilder::clear_molecule_class`].
+    pub fn clear_molecule_class(
+        &mut self,
+        definition: MoleculeDefinitionId,
+    ) -> Result<(), TopologyBuildError> {
+        self.topology.clear_molecule_class(definition)
     }
 }
 

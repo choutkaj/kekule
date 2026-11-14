@@ -236,10 +236,17 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
 
     let mut structure = crambin_structure().into_builder();
     let water = kekule::smiles::to_molecules("O").unwrap().pop().unwrap();
-    let definition = structure.add_molecule_definition(water.clone()).unwrap();
+    let definition = structure
+        .topology_mut()
+        .add_molecule_definition(water.clone())
+        .unwrap();
     let water_position =
         Positions::new(Quantity::new(vec![Point3::new(100., 100., 100.)], ANGSTROM)).unwrap();
-    let chain = structure.hierarchy_mut().add_chain("water", None).unwrap();
+    let chain = structure
+        .topology_mut()
+        .hierarchy_mut()
+        .add_chain("water", None)
+        .unwrap();
     let mut ignored = Vec::new();
     let count = 10_000;
     for index in 0..count {
@@ -248,10 +255,12 @@ fn dssp_instance_membership_handles_many_reused_solvent_instances() {
             ignored.push(instance);
         } else {
             let residue = structure
+                .topology_mut()
                 .hierarchy_mut()
                 .add_residue(chain, "HOH", None, None, None)
                 .unwrap();
             structure
+                .topology_mut()
                 .hierarchy_mut()
                 .add_atom_site(
                     residue,

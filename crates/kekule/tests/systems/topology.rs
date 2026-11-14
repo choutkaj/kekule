@@ -6,7 +6,7 @@ use std::error::Error;
 use kekule::molecule::{Atom, Element, Molecule, MoleculeEditor, MoleculePublicationError};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::topology::TopologySubsetError;
-use kekule::topology::{edit::TopologyEditor, SelectionError, Topology};
+use kekule::topology::{SelectionError, Topology};
 
 fn atom(symbol: &str) -> Atom {
     Atom::new(Element::from_symbol(symbol).unwrap())
@@ -76,7 +76,10 @@ fn consuming_publication_moves_unique_source_definitions_and_modified_drafts() {
 
 #[test]
 fn consuming_publication_moves_added_molecules_and_preserves_owner_annotations() {
-    let mut editor = TopologyEditor::new();
+    let mut editor = Topology::from_molecule(oxygen().clone())
+        .unwrap()
+        .into_editor();
+    editor.clear();
     editor.add_molecule(oxygen().clone()).unwrap();
     let atom = editor.atom_ids().next().unwrap();
     let pointer = editor.atom(atom).unwrap() as *const Atom;

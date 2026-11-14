@@ -1,11 +1,12 @@
 //! What placement edits report: attachment sites, placed and removed atoms
 //! and hydrogens, and the placement error type.
 
-use crate::algorithms::{AddedHydrogenOrigin, RetainedHydrogenReason};
+use crate::algorithms::AddedHydrogenOrigin;
 use crate::diagnostics::LimitExceeded;
-use crate::molecule::{Element, ImplicitHydrogens};
+use crate::molecule::Element;
 use crate::structure::StructureEditError;
 use crate::topology::edit::{EditAtomId, EditBondId};
+use crate::topology::editor::RemovedHydrogens;
 use std::fmt;
 
 #[cfg(doc)]
@@ -132,41 +133,6 @@ impl PlacedHydrogensReport {
     }
 }
 
-/// The explicit hydrogens [`StructureEditor::remove_hydrogens`] collapsed on one
-/// atom.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemovedHydrogens {
-    pub(crate) atom: EditAtomId,
-    pub(crate) removed: Vec<EditAtomId>,
-    pub(crate) retained: Vec<(EditAtomId, RetainedHydrogenReason)>,
-    pub(crate) hydrogens: ImplicitHydrogens,
-    pub(crate) implicit_hydrogens: usize,
-}
-
-impl RemovedHydrogens {
-    /// The atom whose hydrogens were collapsed.
-    pub const fn atom(&self) -> EditAtomId {
-        self.atom
-    }
-    /// The deleted hydrogens, which no longer name draft atoms.
-    pub fn removed(&self) -> &[EditAtomId] {
-        &self.removed
-    }
-    /// Explicit hydrogens kept, with why, in handle order.
-    pub fn retained(&self) -> &[(EditAtomId, RetainedHydrogenReason)] {
-        &self.retained
-    }
-    /// The atom's resulting declaration: inference is kept only when it
-    /// reproduces the complete implicit count, which is otherwise fixed.
-    pub const fn declaration(&self) -> ImplicitHydrogens {
-        self.hydrogens
-    }
-    /// The atom's complete implicit hydrogen count afterwards.
-    pub const fn implicit_hydrogens(&self) -> usize {
-        self.implicit_hydrogens
-    }
-}
-
 /// What [`StructureEditor::remove_hydrogens`] collapsed: one entry per distinct
 /// atom asked for, in request order, except hydrogens asked for that were
 /// collapsed into another atom asked for, which its entry lists as removed.
@@ -182,7 +148,7 @@ impl RemovedHydrogensReport {
     }
     /// The number of hydrogens deleted.
     pub fn removed_count(&self) -> usize {
-        self.atoms.iter().map(|atom| atom.removed.len()).sum()
+        self.atoms.iter().map(|atom| atom.removed().len()).sum()
     }
 }
 

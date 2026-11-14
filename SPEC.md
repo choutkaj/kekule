@@ -217,11 +217,17 @@ metadata owned by the interpretation report. See
 ## Construction, editing, and subsets
 
 Published structural state changes through builders, editors, or explicit
-transformations. Drafts may temporarily violate connectedness; publication may
-not. Checked boundaries reject invalid references, dimensions, and empty
-systems. `validate`, `try_build`, and `try_finish` support recovery without
-consuming the draft. Mutable access must preserve safety immediately, without
-depending on a mutation guard's destructor being called.
+transformations. Builders construct from scratch and editors start from a
+published value; the exceptions are `MoleculeEditor`, which builds a molecule
+atom by atom, and an empty `StructureEditor`, which builds a structure atom by
+atom with derived coordinates. Every draft publishes an owned value. Drafts may
+temporarily violate connectedness; publication may not. Checked boundaries
+reject invalid references, dimensions, and empty systems. `validate`,
+`try_build`, and `try_finish` support recovery without consuming the draft.
+Mutable access must preserve safety immediately, without depending on a
+mutation guard's destructor being called. A structure draft reads its topology
+draft through `topology()`, and `topology_mut()` reaches the topology edits
+that need no coordinates.
 
 | Surface | Scope of work | Publication |
 | --- | --- | --- |

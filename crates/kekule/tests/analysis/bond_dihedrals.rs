@@ -417,7 +417,10 @@ fn references_preserve_instance_identity_and_work_on_ensemble_views() {
     let source = make_structure("CCCC", true);
     let molecule = source.topology().instances().next().unwrap().molecule();
     let mut builder = Structure::builder();
-    let definition_id = builder.add_molecule_definition(molecule.clone()).unwrap();
+    let definition_id = builder
+        .topology_mut()
+        .add_molecule_definition(molecule.clone())
+        .unwrap();
     let first = builder
         .add_instance(definition_id, source.positions())
         .unwrap();

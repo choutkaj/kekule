@@ -241,7 +241,7 @@ fn unedited_and_sourceless_drafts_report_identity_and_empty_maps() {
     let editor = TopologyEditor::from_topology(Arc::clone(&source));
     let handles = source_handles(&source, &editor);
     let (published, correspondence) = editor.finish_with_correspondence().unwrap();
-    assert!(Arc::ptr_eq(&published, &source));
+    assert!(published.shares_layout(&source));
     assert_dense_maps_agree(&source, &published, &handles, &correspondence);
     let identity = (0..source.atom_count() as u32)
         .map(|index| Some(TopologyAtomIndex::new(index)))
@@ -249,16 +249,19 @@ fn unedited_and_sourceless_drafts_report_identity_and_empty_maps() {
     assert_eq!(correspondence.atoms().to_published(), identity);
     assert_eq!(correspondence.atoms().to_source(), identity);
 
-    let mut editor = TopologyEditor::new();
+    let mut editor = StructureEditor::new();
     editor
-        .add_molecule(kekule::smiles::to_molecules("CO").unwrap().remove(0))
+        .add_molecule(
+            kekule::smiles::to_molecules("CO").unwrap().remove(0),
+            &Positions::zeros(2),
+        )
         .unwrap();
     let (published, correspondence) = editor.finish_with_correspondence().unwrap();
     assert!(correspondence.atoms().to_published().is_empty());
     assert_eq!(correspondence.atoms().to_source(), [None, None]);
     assert_eq!(
         correspondence.bonds().to_source().len(),
-        published.bond_count()
+        published.topology().bond_count()
     );
 
     // A cleared draft keeps its source but none of its entities.

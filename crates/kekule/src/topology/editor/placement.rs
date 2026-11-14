@@ -13,21 +13,47 @@ use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens};
 use crate::stereo::{StereoCarrier, StereoElementKind};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The explicit hydrogens collapsed into one parent's implicit count.
+/// The explicit hydrogens
+/// [`StructureEditor::remove_hydrogens`](crate::structure::StructureEditor::remove_hydrogens)
+/// collapsed on one atom.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CollapsedHydrogens {
-    pub(crate) parent: EditAtomId,
-    pub(crate) removed: Vec<EditAtomId>,
-    pub(crate) retained: Vec<(EditAtomId, RetainedHydrogenReason)>,
-    pub(crate) hydrogens: ImplicitHydrogens,
-    pub(crate) implicit_hydrogens: usize,
+pub struct RemovedHydrogens {
+    atom: EditAtomId,
+    removed: Vec<EditAtomId>,
+    retained: Vec<(EditAtomId, RetainedHydrogenReason)>,
+    hydrogens: ImplicitHydrogens,
+    implicit_hydrogens: usize,
+}
+
+impl RemovedHydrogens {
+    /// The atom whose hydrogens were collapsed.
+    pub const fn atom(&self) -> EditAtomId {
+        self.atom
+    }
+    /// The deleted hydrogens, which no longer name draft atoms.
+    pub fn removed(&self) -> &[EditAtomId] {
+        &self.removed
+    }
+    /// Explicit hydrogens kept, with why, in handle order.
+    pub fn retained(&self) -> &[(EditAtomId, RetainedHydrogenReason)] {
+        &self.retained
+    }
+    /// The atom's resulting declaration: inference is kept only when it
+    /// reproduces the complete implicit count, which is otherwise fixed.
+    pub const fn declaration(&self) -> ImplicitHydrogens {
+        self.hydrogens
+    }
+    /// The atom's complete implicit hydrogen count afterwards.
+    pub const fn implicit_hydrogens(&self) -> usize {
+        self.implicit_hydrogens
+    }
 }
 
 /// The outcome of [`TopologyEditor::collapse_hydrogens`]: one entry per
 /// parent, and the storage slots of the deleted atoms and bonds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CollapsedHydrogenSet {
-    pub(crate) parents: Vec<CollapsedHydrogens>,
+    pub(crate) parents: Vec<RemovedHydrogens>,
     pub(crate) dead_atom_slots: Vec<usize>,
     pub(crate) dead_bond_slots: Vec<usize>,
 }
@@ -473,8 +499,8 @@ impl TopologyEditor {
                 };
                 results.insert(
                     entry.parent,
-                    CollapsedHydrogens {
-                        parent: entry.parent,
+                    RemovedHydrogens {
+                        atom: entry.parent,
                         removed: entry
                             .removable
                             .iter()

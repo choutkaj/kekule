@@ -1,6 +1,6 @@
 //! Publication of a draft as a [`Molecule`], and the canonical oxohalogen
 //! representation it requires.
-use crate::DraftError;
+use crate::draft::{Draft, DraftError};
 
 use super::super::*;
 use super::stereo::stereo_violations;
@@ -71,9 +71,29 @@ impl MoleculeEditor {
         })
     }
 
-    /// Checks whether the draft would publish successfully, leaving it
-    /// unchanged.
+    /// The error [`Self::finish`] would return, leaving the draft unchanged.
     pub fn validate(&self) -> Result<(), MoleculePublicationError> {
+        self.check()
+    }
+
+    /// Publishes, or returns the original editor for repair through
+    /// [`DraftError::into_draft`].
+    pub fn try_finish(self) -> Result<Molecule, DraftError<Self, MoleculePublicationError>> {
+        self.attempt()
+    }
+}
+
+// Validation is cheaper than publication, so recovery checks the draft
+// instead of publishing a copy.
+impl Draft for MoleculeEditor {
+    type Published = Molecule;
+    type Error = MoleculePublicationError;
+
+    fn into_published(self) -> Result<Molecule, MoleculePublicationError> {
+        self.finish()
+    }
+
+    fn check(&self) -> Result<(), MoleculePublicationError> {
         if self.graph.atom_count() == 0 {
             return Err(MoleculePublicationError::EmptyGraph);
         }
@@ -95,15 +115,15 @@ impl MoleculeEditor {
         Ok(())
     }
 
-    /// Publishes, or returns the original editor for repair through
-    /// [`DraftError::into_draft`].
-    pub fn try_finish(self) -> Result<Molecule, DraftError<Self, MoleculePublicationError>> {
-        match self.validate() {
+    fn attempt(self) -> Result<Molecule, DraftError<Self, MoleculePublicationError>> {
+        match self.check() {
             Ok(()) => Ok(self.publish_validated().0),
             Err(error) => Err(DraftError::new(error, self)),
         }
     }
+}
 
+impl MoleculeEditor {
     /// Applies Kekule's canonical oxohalogen representation (the RDKit halogen
     /// cleanup): each neutral Cl, Br, or I with only oxygen neighbors and
     /// explicit valence 3, 5, or 7 becomes `[X+n]` with its `n` oxo double

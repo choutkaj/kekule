@@ -15,9 +15,11 @@
 //!   together; [`StructureEditor`] edits a detached draft of a structure whose
 //!   positions follow atoms through structural edits, and
 //!   [`StructureEditor::append_structure`] imports another structure
-//!   ([`StructureAppend`], [`StructureAppendReport`]). [`StructureEditor::topology_mut`]
-//!   ([`StructureEditorTopologyMut`]) and [`StructureEditor::properties_mut`]
-//!   ([`StructureEditorPropertiesMut`]) reach annotations without geometry.
+//!   ([`StructureAppend`], [`StructureAppendReport`]). Both drafts read their
+//!   topology draft through `topology()`, and `topology_mut()`
+//!   ([`StructureBuilderTopologyMut`], [`StructureEditorTopologyMut`]) reaches
+//!   the topology edits that need no coordinates; [`StructureEditor::properties_mut`]
+//!   ([`StructureEditorPropertiesMut`]) edits structure annotations.
 //! - [`StructureSet`]: many geometries of one shared topology, with an
 //!   optional [`Order`] that places every geometry ([`TimeAxis`], steps, or
 //!   coordinate values; [`Place`]). A trajectory, a scan, and the conformers of
@@ -138,7 +140,7 @@ mod structure_editor;
 mod structure_set;
 mod view;
 
-pub use builder::{StructureBuildError, StructureBuilder, StructureTopologyMut};
+pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopologyMut};
 pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
 pub(crate) use ensemble::log_sum_exp;
