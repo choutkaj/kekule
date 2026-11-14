@@ -2,7 +2,7 @@ use crate::algorithms::{
     add_hydrogens_to_molecule, remove_hydrogens_from_molecule, AddHydrogensOptions,
     AddHydrogensReport, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::chemistry::{perceive_molecule, PerceptionError};
+use crate::algorithms::{perceive_molecule, PerceptionError};
 
 use super::Molecule;
 

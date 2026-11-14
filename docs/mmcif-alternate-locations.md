@@ -82,5 +82,5 @@ Dense atom and hierarchy order follow the first source occurrence of each site,
 so selecting another alternative does not itself reorder identities. True source
 model ordering differences remain subject to the existing structure set checks.
 
-The API contract lives beside [alternate-location types](../crates/kekule/src/io/structure_interpret/altloc.rs)
-and [structure set interpretation](../crates/kekule/src/io/structure_interpret/structure_set.rs).
+The API contract lives beside [alternate-location types](../crates/kekule/src/io/macromolecular/altloc.rs)
+and [structure set interpretation](../crates/kekule/src/io/macromolecular/structure_set.rs).

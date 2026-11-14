@@ -5,13 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 use std::ops::Range;
 
-use crate::chemistry::{
+use crate::diagnostics::{
+    DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation, UnsupportedContent,
+};
+use crate::io::{
     canonicalize_molecule_for_publication, has_specified_double_bond_stereo,
     localize_source_aromatic_bonds, remove_unkept_source_stereo, NormalizationError,
     SourceStereoBondMark, SourceStereoBondMarkKind,
-};
-use crate::diagnostics::{
-    DiagnosticKind, Format, FormatError, FormatErrorDetail, SourceLocation, UnsupportedContent,
 };
 use crate::molecule::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, ImplicitHydrogens, Molecule,

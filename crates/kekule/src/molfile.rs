@@ -17,7 +17,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::molfile_entry_points::{parse_reader, parse_str, write, write_to};
+pub use crate::io::molfile::entry_points::{parse_reader, parse_str, write, write_to};
 pub use crate::io::{
     MolfileAtom, MolfileAtomMapping, MolfileAtomParity, MolfileBond, MolfileBondMapping,
     MolfileBondOrder, MolfileBondStereo, MolfileDocument, MolfileHeader, MolfileInterpretOptions,

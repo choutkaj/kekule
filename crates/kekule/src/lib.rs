@@ -117,7 +117,6 @@ mod fixed_u32_id;
 
 mod algorithms;
 pub mod alignment;
-mod chemistry;
 pub mod clustering;
 pub mod components;
 pub mod descriptors;

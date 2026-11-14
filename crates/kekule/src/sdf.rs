@@ -25,7 +25,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::sdf_entry_points::{
+pub use crate::io::sdf::entry_points::{
     parse_reader, parse_str, records, structure_set, write, write_to,
 };
 pub use crate::io::{

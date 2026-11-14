@@ -3,6 +3,7 @@ mod canonical;
 mod cip;
 mod conjugation;
 mod hydrogens;
+mod perception;
 mod resonance;
 mod rings;
 mod rotatable_bonds;
@@ -31,6 +32,8 @@ pub use hydrogens::{
     HydrogenCountAdjustment, HydrogenTransformError, RemoveHydrogensReport, RemovedHydrogen,
     RetainedHydrogen, RetainedHydrogenReason,
 };
+pub use perception::PerceptionError;
+pub(crate) use perception::{perceive_molecule, perceive_molecule_cancellable};
 pub(crate) use resonance::perceive_resonance_cancellable;
 pub use resonance::{
     enumerate_resonance, perceive_resonance, ResonanceContributor, ResonanceError, ResonanceFlags,

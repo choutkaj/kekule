@@ -42,7 +42,7 @@ pub mod conjugation {
     pub use crate::algorithms::{perceive_conjugation, ConjugationError};
     pub use crate::molecule::delocalization::{ConjugationModel, ConjugationPerception};
 }
-pub use crate::chemistry::PerceptionError;
+pub use crate::algorithms::PerceptionError;
 pub use crate::molecule::perception::{
     DelocalizationIssue, Perception, PerceptionBuildError, PerceptionBuilder, PerceptionComponent,
     PerceptionInstallError,

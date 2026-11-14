@@ -47,7 +47,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::mmcif_entry_points::{parse_reader, parse_str, write, write_to};
+pub use crate::io::mmcif::entry_points::{parse_reader, parse_str, write, write_to};
 pub use crate::io::{
     MmcifAtomField, MmcifBlock, MmcifBlockSource, MmcifCellReason, MmcifDocument,
     MmcifEntityClassifications, MmcifEntry, MmcifGeometryField, MmcifItem, MmcifLoopTable,

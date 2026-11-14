@@ -51,7 +51,7 @@
 use crate::diagnostics::{
     LimitExceeded, Resource, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
-use crate::io::write_error::{record_multi_model_structure_set, Omissions};
+use crate::io::write_policy::{record_multi_model_structure_set, Omissions};
 use crate::traj::{FrameView, TrajectoryField};
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};

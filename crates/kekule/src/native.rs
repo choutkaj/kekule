@@ -50,7 +50,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::native_entry_points::{read, write, write_to};
+pub use crate::io::native::entry_points::{read, write, write_to};
 pub use crate::io::{
     EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, NativeSource,
     NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,

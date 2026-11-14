@@ -1,7 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::chemistry::{perceive_molecule_cancellable, PerceptionError};
+use crate::algorithms::{perceive_molecule_cancellable, PerceptionError};
 use crate::diagnostics::Cancellation;
 
 use crate::molecule::Molecule;

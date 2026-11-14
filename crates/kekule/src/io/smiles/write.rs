@@ -8,7 +8,7 @@ use crate::diagnostics::{Capitalized, FormatError, LimitExceeded, Resource};
 pub const MAX_DIRECTIONAL_COMBINATIONS: usize = 4_096;
 /// Maximum graph visits of isomeric SMILES directional encoding.
 pub const MAX_DIRECTIONAL_VISITS: usize = 50_000_000;
-use crate::io::write_error::SMILES_WRITE;
+use crate::io::write_policy::SMILES_WRITE;
 use crate::molecule::Molecule;
 use crate::molecule::*;
 
@@ -520,9 +520,7 @@ fn validate_directional_projection(
     mol: &Molecule,
     directional: &BTreeMap<BondId, DirectionalSmilesConstraint>,
 ) -> std::result::Result<(), FormatError> {
-    use crate::chemistry::{
-        normalize_source_stereo, SourceStereoBondMark, SourceStereoBondMarkKind,
-    };
+    use crate::io::{normalize_source_stereo, SourceStereoBondMark, SourceStereoBondMarkKind};
     let expected = mol
         .stereo_elements()
         .filter_map(|(_, element)| match &element.kind {

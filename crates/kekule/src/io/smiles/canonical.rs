@@ -4,7 +4,7 @@ use crate::algorithms::{
     allowed_valences, rdkit_default_valence, HydrogenTransformError, RemoveHydrogensReport,
 };
 use crate::diagnostics::{Capitalized, FormatError, LimitExceeded, Resource};
-use crate::io::write_error::SMILES_WRITE;
+use crate::io::write_policy::SMILES_WRITE;
 use crate::molecule::Molecule;
 use crate::molecule::*;
 

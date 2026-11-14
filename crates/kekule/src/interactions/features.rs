@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::chemistry::perceive_molecule;
+use crate::algorithms::perceive_molecule;
 use crate::io::is_metal;
 use crate::math::{Point3, Vector3};
 use crate::molecule::{

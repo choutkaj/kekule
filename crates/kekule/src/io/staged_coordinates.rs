@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::chemistry::AtomPositionSource;
+use crate::io::AtomPositionSource;
 use crate::math::Point3;
 use crate::molecule::{AtomId, Molecule};
 use crate::structure::{DenseArrayError, Positions};

@@ -319,7 +319,7 @@ fn strict_detection_reports_valence_failures_even_with_permissive_cached_state()
     let error = descriptors::rotatable_bonds(&molecule, RotatableBondOptions::STRICT).unwrap_err();
     assert!(matches!(
         error,
-        crate::chemistry::PerceptionError::Valence(_)
+        crate::algorithms::PerceptionError::Valence(_)
     ));
     crate::algorithms::perceive_valence(
         &mut molecule,
