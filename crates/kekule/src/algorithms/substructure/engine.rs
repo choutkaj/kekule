@@ -1,5 +1,6 @@
 use super::*;
 use crate::diagnostics::{LimitExceeded, Resource};
+use crate::fixed_u32_id::FixedId;
 use crate::molecule::{BondId, RingBasisState, RingPerception};
 use crate::query::{AtomPredicate, BondPredicate, QueryBond, QueryStereoConstraint};
 use crate::stereo::{DoubleBondOrientation, StereoElementKind};
@@ -617,7 +618,7 @@ impl Context<'_, '_> {
                         target.local,
                         target.occurrence,
                         state.query,
-                        crate::query::QueryAtomId::new(focus as u32),
+                        crate::query::QueryAtomId::from_index(focus),
                         (matches != inverse_matches).then_some(!matches),
                     )
                 {

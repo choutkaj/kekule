@@ -1,5 +1,6 @@
 //! Hierarchy lookups derived once per published topology.
 
+use crate::fixed_u32_id::FixedId;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
@@ -50,7 +51,7 @@ impl HierarchyIndex {
                 let index = atoms
                     .index(atom)
                     .expect("published atom sites name topology atoms");
-                TopologyAtomIndex::new(index as u32)
+                TopologyAtomIndex::from_index(index)
             })
             .collect();
         Self::from_site_atoms(site_atoms, atoms.len(), instance_count)
@@ -98,7 +99,7 @@ impl HierarchyIndex {
                     site_instances
                         .iter()
                         .enumerate()
-                        .map(|(site, &instance)| (instance, AtomSiteId::new(site as u32))),
+                        .map(|(site, &instance)| (instance, AtomSiteId::from_index(site))),
                 ),
                 residues: Groups::new(
                     instance_count,

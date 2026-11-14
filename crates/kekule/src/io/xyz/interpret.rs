@@ -6,6 +6,7 @@ use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
     SourceLocation, UnsupportedContent,
 };
+use crate::fixed_u32_id::FixedId;
 use crate::math::{bounding_box, Point3, PointGrid};
 use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
 use crate::structure::{Geometry, Positions, Structure, StructureBuilder, StructureSet};
@@ -791,7 +792,7 @@ impl Frame {
 }
 
 fn dense_index(row: usize) -> TopologyAtomIndex {
-    TopologyAtomIndex::new(u32::try_from(row).expect("atom lines are bounded below u32::MAX"))
+    TopologyAtomIndex::from_index(row)
 }
 
 /// Atom lines grouped into connected components, each in line order, ordered

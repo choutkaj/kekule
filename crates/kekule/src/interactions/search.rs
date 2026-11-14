@@ -1,6 +1,7 @@
 //! The geometric search of one structure, or two.
 
 use crate::diagnostics::TopologyMismatch;
+use crate::fixed_u32_id::FixedId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -655,7 +656,7 @@ impl<'a> Search<'a> {
                 .filter(|(_, point)| {
                     contains(&joint, point) && regions.iter().any(|region| contains(region, point))
                 })
-                .map(|(index, _)| TopologyAtomIndex::new(index as u32))
+                .map(|(index, _)| TopologyAtomIndex::from_index(index))
                 .collect(),
             None => Vec::new(),
         });

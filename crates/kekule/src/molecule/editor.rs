@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
-use crate::diagnostics::{CapacityExceeded, Countable};
+use crate::diagnostics::Countable;
+use crate::fixed_u32_id::checked_id;
 use crate::properties::{LiveRows, MoleculeProperties, MoleculePropertiesMut};
 
 use super::*;
@@ -386,7 +387,7 @@ impl MoleculeEditor {
     /// [`Self::add_atom`] into slot `slot`, which must be the next one; tests
     /// pass a larger slot to reach the capacity bound without allocating it.
     fn add_atom_at_slot(&mut self, atom: Atom, slot: usize) -> Result<AtomId, MoleculeError> {
-        checked_molecule_id(slot, Countable::Atom, AtomId::new)?;
+        checked_id::<AtomId>(slot, Countable::Atom).map_err(MoleculeError::CapacityExceeded)?;
         debug_assert_eq!(slot, self.graph.atom_slot_count());
         let id = self.graph.push_atom(atom);
         self.properties
@@ -447,7 +448,8 @@ impl MoleculeEditor {
         if self.graph.bond_between(a, b).is_some() {
             return Err(MoleculeError::DuplicateBond { a, b });
         }
-        checked_molecule_id(self.graph.bond_slot_count(), Countable::Bond, BondId::new)?;
+        checked_id::<BondId>(self.graph.bond_slot_count(), Countable::Bond)
+            .map_err(MoleculeError::CapacityExceeded)?;
         let id = self.graph.push_bond(Bond::new(a, b, order));
         self.properties
             .bonds_mut()
@@ -788,17 +790,6 @@ impl MoleculeCorrespondence {
     pub fn stereo_groups(&self) -> &BTreeMap<StereoGroupId, StereoGroupId> {
         &self.stereo_groups
     }
-}
-
-/// The ID slot `length` receives, or the capacity error when it does not fit.
-fn checked_molecule_id<T>(
-    length: usize,
-    kind: Countable,
-    construct: impl FnOnce(u32) -> T,
-) -> Result<T, MoleculeError> {
-    checked_raw_id(length)
-        .map(construct)
-        .map_err(|_| MoleculeError::CapacityExceeded(CapacityExceeded::new(kind)))
 }
 
 #[cfg(test)]
@@ -1192,53 +1183,10 @@ mod tests {
 #[cfg(all(test, target_pointer_width = "64"))]
 mod capacity_tests {
     use super::*;
-
-    fn max_slot() -> usize {
-        usize::try_from(u64::from(u32::MAX)).expect("64-bit usize")
-    }
+    use crate::diagnostics::CapacityExceeded;
 
     fn first_unsupported_slot() -> usize {
         usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize")
-    }
-
-    #[test]
-    fn every_molecule_identifier_space_checks_its_boundary() {
-        assert_eq!(
-            checked_molecule_id(max_slot(), Countable::Atom, AtomId::new),
-            Ok(AtomId::new(u32::MAX))
-        );
-        assert_eq!(
-            checked_molecule_id(first_unsupported_slot(), Countable::Atom, AtomId::new,),
-            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
-                Countable::Atom
-            )))
-        );
-        assert_eq!(
-            checked_molecule_id(first_unsupported_slot(), Countable::Bond, BondId::new,),
-            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
-                Countable::Bond
-            )))
-        );
-        assert_eq!(
-            checked_molecule_id(
-                first_unsupported_slot(),
-                Countable::StereoElement,
-                StereoElementId::new,
-            ),
-            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
-                Countable::StereoElement
-            )))
-        );
-        assert_eq!(
-            checked_molecule_id(
-                first_unsupported_slot(),
-                Countable::StereoGroup,
-                StereoGroupId::new,
-            ),
-            Err(MoleculeError::CapacityExceeded(CapacityExceeded::new(
-                Countable::StereoGroup
-            )))
-        );
     }
 
     #[test]

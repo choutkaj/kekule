@@ -66,7 +66,6 @@ pub use element_reference::VanDerWaalsRadiusSource;
 pub use error::{MoleculeError, MoleculePublicationError};
 pub(crate) use graph::SlotCompaction;
 pub use graph::{Dense, DraftGraph, Graph, SlotLiveness, Sparse};
-pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};
 pub use ids::{AtomId, BondId};
 pub(crate) use ids::{StereoElementId, StereoGroupId};
 pub use owner::Molecule;

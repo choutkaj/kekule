@@ -2,11 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::diagnostics::Capitalized;
+use crate::fixed_u32_id::ids_fit;
 
-use super::{
-    checked_fixed_id_collection_len, AtomId, BondId, Molecule, StereoDescriptor, StereoElementId,
-    StereoElementKind,
-};
+use super::{AtomId, BondId, Molecule, StereoDescriptor, StereoElementId, StereoElementKind};
 use super::{
     ConjugationModel, ConjugationPerception, ResonanceGroup, ResonanceModel, ResonancePerception,
 };
@@ -930,16 +928,18 @@ fn check_perception_component_capacity(
     length: usize,
     component: PerceptionComponent,
 ) -> Result<(), PerceptionBuildError> {
-    checked_fixed_id_collection_len(0, length)
-        .map_err(|_| PerceptionBuildError::ComponentCapacityExceeded(component))
+    ids_fit(length)
+        .then_some(())
+        .ok_or(PerceptionBuildError::ComponentCapacityExceeded(component))
 }
 
 fn check_install_component_capacity(
     length: usize,
     component: PerceptionComponent,
 ) -> Result<(), PerceptionInstallError> {
-    checked_fixed_id_collection_len(0, length)
-        .map_err(|_| PerceptionInstallError::ComponentCapacityExceeded(component))
+    ids_fit(length)
+        .then_some(())
+        .ok_or(PerceptionInstallError::ComponentCapacityExceeded(component))
 }
 
 pub(super) fn validate_perception(

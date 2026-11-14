@@ -1,4 +1,5 @@
 use crate::diagnostics::{CapacityExceeded, Countable};
+use crate::fixed_u32_id::{checked_id, checked_len, FixedId};
 use std::fmt;
 use std::sync::Arc;
 
@@ -371,7 +372,7 @@ impl Hierarchy {
             .site_atoms
             .iter()
             .enumerate()
-            .map(|(index, &atom)| (atom, AtomSiteId::new(index as u32)))
+            .map(|(index, &atom)| (atom, AtomSiteId::from_index(index)))
             .collect::<Vec<_>>();
         entries.sort_unstable();
         entries
@@ -468,7 +469,7 @@ impl HierarchyBuilder {
             .site_atoms
             .iter()
             .enumerate()
-            .map(|(index, &atom)| (atom, AtomSiteId::new(index as u32)))
+            .map(|(index, &atom)| (atom, AtomSiteId::from_index(index)))
             .collect();
         Self {
             hierarchy,
@@ -523,7 +524,8 @@ impl HierarchyBuilder {
         author_id: Option<String>,
     ) -> Result<ChainId, HierarchyError> {
         let hierarchy = &mut self.hierarchy;
-        let id = checked_hierarchy_id(hierarchy.chain_count(), Countable::Chain, ChainId::new)?;
+        let id = checked_id::<ChainId>(hierarchy.chain_count(), Countable::Chain)
+            .map_err(HierarchyError::CapacityExceeded)?;
         hierarchy.chain_label_ids.push(label_id.into());
         hierarchy.chain_author_ids.push(author_id);
         hierarchy.chain_residues.push(Vec::new());
@@ -542,11 +544,8 @@ impl HierarchyBuilder {
     ) -> Result<ResidueId, HierarchyError> {
         let hierarchy = &mut self.hierarchy;
         hierarchy.require_chain(chain)?;
-        let id = checked_hierarchy_id(
-            hierarchy.residue_count(),
-            Countable::Residue,
-            ResidueId::new,
-        )?;
+        let id = checked_id::<ResidueId>(hierarchy.residue_count(), Countable::Residue)
+            .map_err(HierarchyError::CapacityExceeded)?;
         let labels = ResidueLabels::new(name.into(), label_seq_id, author_seq_id, insertion_code);
         let key = hierarchy.labels.push(labels);
         hierarchy.residue_chains.push(chain);
@@ -595,11 +594,8 @@ impl HierarchyBuilder {
         if self.atom_sites.contains_key(&atom) {
             return Err(HierarchyError::DuplicateAtomPlacement(atom));
         }
-        checked_hierarchy_id(
-            self.hierarchy.atom_site_count(),
-            Countable::AtomSite,
-            AtomSiteId::new,
-        )
+        checked_id(self.hierarchy.atom_site_count(), Countable::AtomSite)
+            .map_err(HierarchyError::CapacityExceeded)
     }
 
     fn push_site(&mut self, id: AtomSiteId, residue: ResidueId, atom: InstanceAtomId, key: u32) {
@@ -677,16 +673,16 @@ impl HierarchyBuilder {
         residues: Vec<RawResidue>,
         sites: Vec<RawAtomSite>,
     ) -> Result<Self, RawHierarchyError> {
-        let id = |index: usize, kind| {
-            crate::molecule::checked_raw_id(index)
-                .map_err(|_| RawHierarchyError::CapacityExceeded(CapacityExceeded::new(kind)))
-        };
-        id(chains.len().saturating_sub(1), Countable::Chain)?;
-        id(residues.len().saturating_sub(1), Countable::Residue)?;
-        id(sites.len().saturating_sub(1), Countable::AtomSite)?;
+        for (len, kind) in [
+            (chains.len(), Countable::Chain),
+            (residues.len(), Countable::Residue),
+            (sites.len(), Countable::AtomSite),
+        ] {
+            checked_len(0, len, kind).map_err(RawHierarchyError::CapacityExceeded)?;
+        }
         let mut residue_chain = vec![None; residues.len()];
         for (index, chain) in chains.iter().enumerate() {
-            let chain_id = ChainId::new(index as u32);
+            let chain_id = ChainId::from_index(index);
             for &residue in &chain.residues {
                 let slot = residue_chain
                     .get_mut(residue.index())
@@ -698,7 +694,7 @@ impl HierarchyBuilder {
         }
         let mut site_residue = vec![None; sites.len()];
         for (index, residue) in residues.iter().enumerate() {
-            let residue_id = ResidueId::new(index as u32);
+            let residue_id = ResidueId::from_index(index);
             for &site in &residue.atom_sites {
                 let slot = site_residue
                     .get_mut(site.index())
@@ -717,7 +713,7 @@ impl HierarchyBuilder {
         let mut lists = Vec::with_capacity(residues.len());
         let mut labels = Vec::with_capacity(residues.len());
         for (index, (residue, chain)) in residues.into_iter().zip(residue_chain).enumerate() {
-            let id = ResidueId::new(index as u32);
+            let id = ResidueId::from_index(index);
             hierarchy
                 .residue_chains
                 .push(chain.ok_or(RawHierarchyError::ResidueUnlisted(id))?);
@@ -741,7 +737,7 @@ impl HierarchyBuilder {
         let mut lookup = Vec::with_capacity(sites.len());
         let mut metadata = Vec::with_capacity(sites.len());
         for (index, (site, residue)) in sites.into_iter().zip(site_residue).enumerate() {
-            let id = AtomSiteId::new(index as u32);
+            let id = AtomSiteId::from_index(index);
             let residue = residue.ok_or(RawHierarchyError::AtomSiteUnlisted(id))?;
             lookup.push((site.atom, id));
             hierarchy.site_residues.push(residue);
@@ -1055,13 +1051,3 @@ impl fmt::Display for HierarchyError {
 }
 
 impl std::error::Error for HierarchyError {}
-
-fn checked_hierarchy_id<T>(
-    length: usize,
-    kind: Countable,
-    construct: impl FnOnce(u32) -> T,
-) -> Result<T, HierarchyError> {
-    crate::molecule::checked_raw_id(length)
-        .map(construct)
-        .map_err(|_| HierarchyError::CapacityExceeded(CapacityExceeded::new(kind)))
-}

@@ -1,6 +1,7 @@
 //! Publication of a draft as a [`Molecule`], and the canonical oxohalogen
 //! representation it requires.
 use crate::draft::{Draft, DraftError};
+use crate::fixed_u32_id::FixedId;
 
 use super::super::*;
 use super::stereo::stereo_violations;
@@ -268,7 +269,7 @@ pub(super) fn validate_graph(editor: &MoleculeEditor) -> Result<(), GraphValidat
         return Err(GraphValidationError::AdjacencySlotCount);
     }
     for (index, adjacency) in graph.adjacency.iter().enumerate() {
-        let atom_id = AtomId::new(index as u32);
+        let atom_id = AtomId::from_index(index);
         if graph.atom(atom_id).is_none() && !adjacency.is_empty() {
             return Err(GraphValidationError::TombstonedAtomHasAdjacency { atom: atom_id });
         }

@@ -1,5 +1,6 @@
 use crate::diagnostics::{CapacityExceeded, Countable, LengthMismatch};
 use crate::draft::{Draft, DraftError};
+use crate::fixed_u32_id::FixedId;
 use std::fmt;
 use std::sync::Arc;
 
@@ -104,7 +105,7 @@ impl StructureBuilder {
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
         self.topology
             .atom_index(atom)
-            .map(|index| TopologyAtomIndex::new(index as u32))
+            .map(TopologyAtomIndex::from_index)
     }
 
     /// The staged position of one atom, or `None` when `atom` is not in the

@@ -4,10 +4,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::Countable;
+use crate::fixed_u32_id::checked_id;
 use crate::stereo::StereoViolation;
 
 use super::super::*;
-use super::{checked_molecule_id, MoleculeEditor};
+use super::MoleculeEditor;
 
 impl MoleculeEditor {
     /// Adds a represented stereo element after validating it against the draft
@@ -38,11 +39,11 @@ impl MoleculeEditor {
         self.graph
             .validate_unique_stereo_focus(pending, &element, None)?;
         self.graph.canonicalize_stereo_element(&mut element);
-        checked_molecule_id(
+        checked_id::<StereoElementId>(
             self.graph.stereo_elements.slot_count(),
             Countable::StereoElement,
-            StereoElementId::new,
-        )?;
+        )
+        .map_err(MoleculeError::CapacityExceeded)?;
         let id = self.graph.push_stereo_element(element);
         self.properties.owner_mut().clear();
         self.invalidate_stereo();
@@ -145,11 +146,11 @@ impl MoleculeEditor {
                 ));
             }
         }
-        checked_molecule_id(
+        checked_id::<StereoGroupId>(
             self.graph.stereo_groups.slot_count(),
             Countable::StereoGroup,
-            StereoGroupId::new,
-        )?;
+        )
+        .map_err(MoleculeError::CapacityExceeded)?;
         let members = group.members.clone();
         let id = self.graph.push_stereo_group(group);
         for member in members {
