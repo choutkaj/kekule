@@ -865,6 +865,20 @@ Every operation has exactly one home.
   A wrapper keeps its cause as a typed value, never as text. A variant that
   adds nothing to its cause is transparent: it displays the cause and returns
   the cause's own source.
+- A fact that several areas report has one payload in `diagnostics`, with one
+  message: `IndexOutOfRange` (`Geometry 7 does not exist. There are 5
+  geometries.`), `LengthMismatch` (`There are 4 weights instead of 5.`),
+  `TopologyMismatch`, `CapacityExceeded`, and `UnknownHydrogenCount`. A
+  `Countable` names what is counted. An area error holds the payload in a
+  tuple variant and displays it unchanged.
+- An error is at most 120 bytes, so a `Result` that carries it stays under
+  the 128-byte `clippy::result_large_err` threshold, in Kekule and in
+  callers. An error keeps at most one large payload inline and boxes the
+  others; a variant whose fields would pass the limit boxes its payload;
+  recursive payloads are boxed. Nothing else is boxed.
+- "Issue" names only a non-fatal entry of a report. The entries of a failure
+  that lists several problems are violations or failures, and a writer's
+  fatal problems are its `*WriteErrorKind`.
 - `diagnostics::ErrorChain` writes an error and its source chain as
   consecutive sentences: `Cannot build the solvated structure. Atom 12 overlaps
   atom 3.`
