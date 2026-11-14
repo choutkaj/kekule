@@ -5,7 +5,7 @@ use crate::diagnostics::{Countable, IndexOutOfRange};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-use crate::alignment::{self, AlignmentOptions};
+use crate::alignment::{self, AlignmentError, AlignmentOptions};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::OwnerProperties;
 use crate::structure::{
@@ -317,6 +317,36 @@ impl From<StructureSetReadError> for ProcessingError {
     }
 }
 
+/// A step's failure on one geometry: the source of the
+/// [`StructureSetReadError::Reader`] a [`Processed`] reader returns for it.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ProcessingStepError {
+    /// Making the molecules whole or imaging them, to wrap or to smooth,
+    /// failed; see the source.
+    Periodic(PeriodicError),
+    /// Fitting the geometry onto its reference failed; see the source.
+    Fit(Box<AlignmentError>),
+}
+
+impl fmt::Display for ProcessingStepError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Periodic(_) => "Cannot image the molecules across the cell.",
+            Self::Fit(_) => "Cannot fit the geometry onto its reference.",
+        })
+    }
+}
+
+impl std::error::Error for ProcessingStepError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Periodic(error) => Some(error),
+            Self::Fit(error) => Some(error.as_ref()),
+        }
+    }
+}
+
 /// The geometries of another reader with [`ProcessingSteps`] run on each as it
 /// is read.
 ///
@@ -598,9 +628,8 @@ impl<R: StructureSetRead> Processed<R> {
                 atoms,
                 AlignmentOptions::default(),
             )
-            .map_err(|source| StructureSetReadError::Alignment {
-                geometry: index,
-                source: Box::new(source),
+            .map_err(|source| {
+                StructureSetReadError::reader(index, ProcessingStepError::Fit(Box::new(source)))
             })?;
             geometry
                 .transform_in_place(&fitted.transform())
@@ -720,10 +749,7 @@ impl<R: StructureSetRead> StructureSetRead for Processed<R> {
 
 /// Reports a periodic step's failure on geometry `geometry`.
 fn periodic(geometry: usize) -> impl FnOnce(PeriodicError) -> StructureSetReadError {
-    move |source| StructureSetReadError::Periodic {
-        geometry,
-        source: Box::new(source),
-    }
+    move |source| StructureSetReadError::reader(geometry, ProcessingStepError::Periodic(source))
 }
 
 /// Reports a step's failure to store its result in geometry `geometry`.

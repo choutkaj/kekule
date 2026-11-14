@@ -27,7 +27,7 @@ use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::{
     open_indexed_structure_set, write_structure_set, IndexedFile, TrajectoryWriteOptions,
 };
-use kekule::traj::{FitReference, Processed, ProcessingSteps, TrajectoryFormat};
+use kekule::traj::{FitReference, Processed, ProcessingSteps, TrajectoryFormat, TrajectoryIoError};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
 const ATOMS: usize = 6;
@@ -652,11 +652,11 @@ fn a_reduction_over_a_cut_file_names_the_geometry_it_cannot_read() {
             Run::new().with_cancellation(&Cancellation::new(|| false)),
         )
         .unwrap_err();
-    let StatisticsError::Read(StructureSetReadError::Trajectory { geometry, source }) = &error
-    else {
+    let StatisticsError::Read(StructureSetReadError::Reader { geometry, source }) = &error else {
         panic!("{error:?}");
     };
     assert_eq!(*geometry, 7);
+    let source = source.downcast_ref::<TrajectoryIoError>().unwrap();
     assert_eq!(source.frame(), Some(7));
     assert_eq!(error.to_string(), "Cannot read geometry 7.");
 }

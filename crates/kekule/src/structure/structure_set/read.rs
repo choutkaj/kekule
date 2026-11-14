@@ -4,12 +4,9 @@ use crate::diagnostics::IndexOutOfRange;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::alignment::AlignmentError;
 use crate::properties::OwnerProperties;
 use crate::structure::GeometryError;
 use crate::topology::Topology;
-use crate::traj::periodic::PeriodicError;
-use crate::traj::TrajectoryIoError;
 
 use super::{Geometry, GeometryView, Order};
 use crate::structure::StructureView;
@@ -150,34 +147,13 @@ pub(crate) fn visit_geometry<T, E>(
 
 /// Failure to read a geometry from a [`StructureSetRead`].
 ///
-/// Two errors are equal when they report the same failure; a host's own
+/// Two errors are equal when they report the same failure; a reader's own
 /// failures ([`Self::Reader`]) are equal only to their clones.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum StructureSetReadError {
     /// No geometry has this index.
     IndexOutOfRange(IndexOutOfRange),
-    /// A geometry cannot be read from its trajectory file; see the source.
-    Trajectory {
-        /// The geometry index.
-        geometry: usize,
-        /// The failure.
-        source: TrajectoryIoError,
-    },
-    /// A periodic processing step failed on a geometry; see the source.
-    Periodic {
-        /// The geometry index.
-        geometry: usize,
-        /// The failure.
-        source: Box<PeriodicError>,
-    },
-    /// Fitting a geometry onto its reference failed; see the source.
-    Alignment {
-        /// The geometry index.
-        geometry: usize,
-        /// The failure.
-        source: Box<AlignmentError>,
-    },
     /// A geometry does not fit the reader's topology, or a step cannot store
     /// its result; see the source.
     Geometry {
@@ -186,21 +162,27 @@ pub enum StructureSetReadError {
         /// The failure.
         source: GeometryError,
     },
-    /// A host's reader cannot provide the geometry, for its own reason, such
-    /// as a cache whose source is gone; see the source. Made with
-    /// [`Self::reader`].
+    /// The reader cannot provide the geometry, for its own reason; see the
+    /// source. Made with [`Self::reader`].
+    ///
+    /// Kekule's readers report here too: a set over a trajectory file
+    /// ([`IndexedFile`](crate::traj::io::IndexedFile)) gives a
+    /// [`TrajectoryIoError`](crate::traj::TrajectoryIoError), and a
+    /// [`Processed`](crate::traj::Processed) reader a
+    /// [`ProcessingStepError`](crate::traj::ProcessingStepError). Downcast
+    /// the source to read it typed.
     Reader {
         /// The geometry index.
         geometry: usize,
-        /// The host's failure, shared so that the error stays cheap to
+        /// The reader's failure, shared so that the error stays cheap to
         /// clone.
         source: Arc<dyn std::error::Error + Send + Sync>,
     },
 }
 
 impl StructureSetReadError {
-    /// A host reader's own failure to provide geometry `geometry`, such as a
-    /// cache that cannot reach the reader below it.
+    /// A reader's own failure to provide geometry `geometry`, such as a
+    /// host's cache that cannot reach the reader below it.
     ///
     /// ```
     /// use kekule::structure::StructureSetReadError;
@@ -226,27 +208,6 @@ impl PartialEq for StructureSetReadError {
         match (self, other) {
             (Self::IndexOutOfRange(error), Self::IndexOutOfRange(other)) => error == other,
             (
-                Self::Trajectory { geometry, source },
-                Self::Trajectory {
-                    geometry: other_geometry,
-                    source: other_source,
-                },
-            ) => geometry == other_geometry && source == other_source,
-            (
-                Self::Periodic { geometry, source },
-                Self::Periodic {
-                    geometry: other_geometry,
-                    source: other_source,
-                },
-            ) => geometry == other_geometry && source == other_source,
-            (
-                Self::Alignment { geometry, source },
-                Self::Alignment {
-                    geometry: other_geometry,
-                    source: other_source,
-                },
-            ) => geometry == other_geometry && source == other_source,
-            (
                 Self::Geometry { geometry, source },
                 Self::Geometry {
                     geometry: other_geometry,
@@ -269,13 +230,10 @@ impl fmt::Display for StructureSetReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IndexOutOfRange(error) => error.fmt(formatter),
-            Self::Periodic { geometry, .. } | Self::Geometry { geometry, .. } => {
+            Self::Geometry { geometry, .. } => {
                 write!(formatter, "Cannot process geometry {geometry}.")
             }
-            Self::Alignment { geometry, .. } => {
-                write!(formatter, "Cannot fit geometry {geometry}.")
-            }
-            Self::Trajectory { geometry, .. } | Self::Reader { geometry, .. } => {
+            Self::Reader { geometry, .. } => {
                 write!(formatter, "Cannot read geometry {geometry}.")
             }
         }
@@ -286,9 +244,6 @@ impl std::error::Error for StructureSetReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::IndexOutOfRange { .. } => None,
-            Self::Trajectory { source, .. } => Some(source),
-            Self::Periodic { source, .. } => Some(source.as_ref()),
-            Self::Alignment { source, .. } => Some(source.as_ref()),
             Self::Geometry { source, .. } => Some(source),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }

@@ -406,9 +406,6 @@ impl StructureSetRead for StructureSet<IndexedFile> {
         }
         self.storage()
             .read(index)
-            .map_err(|source| StructureSetReadError::Trajectory {
-                geometry: index,
-                source,
-            })
+            .map_err(|source| StructureSetReadError::reader(index, source))
     }
 }
