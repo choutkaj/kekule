@@ -1,10 +1,15 @@
-use crate::diagnostics::{CapacityExceeded, Capitalized, Countable};
+use crate::algorithms::{
+    add_hydrogens_to_molecule, remove_hydrogens_from_molecule, AddHydrogensOptions,
+    AddHydrogensReport, HydrogenTransformError, RemoveHydrogensReport,
+};
+use crate::algorithms::{perceive_molecule, perceive_molecule_with, PerceptionError};
+use crate::diagnostics::{CapacityExceeded, Countable};
+use crate::parallel::Run;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-
 use std::ops::{Deref, DerefMut};
 
-use crate::properties::{MoleculeProperties, MoleculePropertiesMut, PropertyError};
+use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
 
 use super::*;
 use crate::stereo::StereoViolation;
@@ -1463,64 +1468,6 @@ impl Bond {
     }
 }
 
-/// Why a molecule or editor operation was rejected.
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq)]
-pub enum MoleculeError {
-    /// The atom does not exist.
-    InvalidAtomId(AtomId),
-    /// The bond does not exist.
-    InvalidBondId(BondId),
-    /// The stereo element does not exist.
-    InvalidStereoElementId(StereoElementId),
-    /// The stereo group does not exist.
-    InvalidStereoGroupId(StereoGroupId),
-    /// A stereo element or group is inconsistent with the graph or with the
-    /// other stereo assertions.
-    InvalidStereoReference(StereoViolation),
-    /// A bond would join an atom to itself.
-    SelfBond(AtomId),
-    /// A bond between these atoms already exists.
-    DuplicateBond {
-        /// One endpoint.
-        a: AtomId,
-        /// The other endpoint.
-        b: AtomId,
-    },
-    /// A new atom, bond, stereo element or stereo group cannot be given a
-    /// fixed-width ID.
-    CapacityExceeded(CapacityExceeded),
-    /// A property operation failed.
-    Property(PropertyError),
-}
-
-impl fmt::Display for MoleculeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidAtomId(id) => write!(f, "{} does not exist.", Capitalized(id)),
-            Self::InvalidBondId(id) => write!(f, "{} does not exist.", Capitalized(id)),
-            Self::InvalidStereoElementId(id) => write!(f, "{} does not exist.", Capitalized(id)),
-            Self::InvalidStereoGroupId(id) => write!(f, "{} does not exist.", Capitalized(id)),
-            Self::InvalidStereoReference(issue) => write!(f, "{issue}"),
-            Self::SelfBond(id) => write!(f, "Cannot bond {id} to itself."),
-            Self::DuplicateBond { a, b } => {
-                write!(f, "{} and {b} are already bonded.", Capitalized(a))
-            }
-            Self::CapacityExceeded(error) => error.fmt(f),
-            Self::Property(_) => f.write_str("The molecule property is invalid."),
-        }
-    }
-}
-
-impl std::error::Error for MoleculeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Property(error) => Some(error),
-            _ => None,
-        }
-    }
-}
-
 /// Checks that a group's members are present and unique; `group` names it.
 pub(crate) fn validate_group_members(
     group_id: StereoGroupId,
@@ -1553,6 +1500,53 @@ fn checked_molecule_id<T>(
     checked_raw_id(length)
         .map(construct)
         .map_err(|_| MoleculeError::CapacityExceeded(CapacityExceeded::new(kind)))
+}
+
+impl Molecule {
+    /// Install default valence, rings, aromaticity, conjugation and resonance
+    /// delocalization transactionally.
+    ///
+    /// This derives perception from the canonical represented chemistry and
+    /// never rewrites atoms, bonds, or represented stereochemistry.
+    ///
+    /// Interpretation publishes canonical represented chemistry directly;
+    /// there is no separate public normalization step before perception.
+    pub fn perceive(&mut self) -> Result<(), PerceptionError> {
+        perceive_molecule(self)
+    }
+
+    /// [`Self::perceive`] under a [`Run`], on the calling thread. Its
+    /// cancellation is also polled during ring and resonance perception,
+    /// which dominate on large molecules. Progress counts the stages done,
+    /// of five: valence, rings, aromaticity, conjugation, and resonance.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::perceive`], and [`PerceptionError::Cancelled`] once `run`'s
+    /// cancellation is requested.
+    pub fn perceive_with(&mut self, run: Run<'_>) -> Result<(), PerceptionError> {
+        perceive_molecule_with(self, run)
+    }
+
+    /// Convert resolved implicit hydrogens into explicit graph atoms under the
+    /// count and growth policy of `options`.
+    /// Fixed counts require no perception; inference-enabled counts must be
+    /// perceived first. Success invalidates perception but preserves composition.
+    pub fn add_hydrogens(
+        &mut self,
+        options: AddHydrogensOptions,
+    ) -> Result<AddHydrogensReport, HydrogenTransformError> {
+        add_hydrogens_to_molecule(self, options)
+    }
+
+    /// Collapse ordinary graph hydrogens and report retained protected atoms.
+    /// Parents that permit inference require an installed hydrogen count; fixed
+    /// declarations need no perception. A graph with nothing removable is unchanged.
+    /// The result has dense IDs, so atoms after a removed hydrogen are renumbered;
+    /// [`RemoveHydrogensReport::correspondence`] translates the input IDs.
+    pub fn remove_hydrogens(&mut self) -> Result<RemoveHydrogensReport, HydrogenTransformError> {
+        remove_hydrogens_from_molecule(self)
+    }
 }
 
 #[cfg(test)]

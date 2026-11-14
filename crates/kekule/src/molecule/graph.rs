@@ -1,4 +1,4 @@
-use super::owner::MoleculeError;
+use super::MoleculeError;
 use super::{
     Atom, AtomId, Bond, BondId, StereoElement, StereoElementId, StereoGroup, StereoGroupId,
 };

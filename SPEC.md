@@ -279,7 +279,7 @@ changing them, and reads coordinates only when evaluated on a structure, so
 the language through the `SelectionResolver` extension trait, whose answers
 must bind to the evaluated layout or be points.
 
-See [molecular editing](crates/kekule/src/molecule/molecule_edit.rs),
+See [molecular editing](crates/kekule/src/molecule/editor.rs),
 [system editing](crates/kekule/src/topology/editor.rs),
 [structure editing](crates/kekule/src/structure/structure_editor.rs),
 [selections](crates/kekule/src/topology/selection.rs),

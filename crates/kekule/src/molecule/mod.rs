@@ -43,13 +43,12 @@
 
 mod atom_bond;
 pub(crate) mod delocalization;
+mod editor;
 mod element;
 mod element_reference;
+mod error;
 mod graph;
 pub(crate) mod ids;
-mod molecule_edit;
-mod molecule_editor_ops;
-mod molecule_workflows;
 mod owner;
 pub(crate) mod perception;
 pub(crate) mod stereo;
@@ -58,17 +57,17 @@ pub use atom_bond::{Atom, AtomRadical, Bond, BondOrder, ImplicitHydrogens};
 pub(crate) use delocalization::{
     ConjugationModel, ConjugationPerception, ResonanceGroup, ResonanceModel, ResonancePerception,
 };
+pub(crate) use editor::{canonicalize_represented_chemistry, validate_represented_stereo};
+pub use editor::{MoleculeCorrespondence, MoleculeEditor};
 pub use element::{Element, ElementError};
 pub use element_reference::VanDerWaalsRadiusSource;
+pub use error::{MoleculeError, MoleculePublicationError};
 pub use graph::Graph;
 pub(crate) use ids::{checked_fixed_id_collection_len, checked_raw_id};
 pub use ids::{AtomId, BondId};
 pub(crate) use ids::{StereoElementId, StereoGroupId};
-pub(crate) use molecule_edit::{canonicalize_represented_chemistry, validate_represented_stereo};
-pub use molecule_edit::{MoleculeEditor, MoleculePublicationError};
-pub use molecule_editor_ops::MoleculeCorrespondence;
 pub(crate) use owner::SlotCompaction;
-pub use owner::{AtomMut, BondMut, Molecule, MoleculeError};
+pub use owner::{AtomMut, BondMut, Molecule};
 use perception::validate_perception;
 pub(crate) use perception::{
     AromaticityModel, AromaticityPerception, Ring, RingBasisModel, RingBasisState, RingMembership,
