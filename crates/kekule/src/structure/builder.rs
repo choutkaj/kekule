@@ -10,21 +10,35 @@ use crate::topology::{
 };
 use crate::units::Quantity;
 
-use super::draft_geometry::DraftGeometry;
-use super::state::{geometry_mutators, geometry_readers, site_mutators, site_readers};
-use super::{DenseArrayError, GeometryError, Positions, Structure, StructureError};
+use super::{
+    DenseArrayError, Geometry, GeometryData, GeometryError, GeometryMut, Positions, Structure,
+    StructureError,
+};
 
 /// Convenience builder that assembles topology and one complete structure.
 ///
 /// Each call to [`Self::add_molecule`] adds one molecule occurrence and its
 /// dense positions. [`Self::build`] publishes the coordinate-free topology and
-/// the matching structure transactionally. Staged geometry state follows staged
-/// dense atom order; use [`Self::atom_index`] to address it by atom ID.
-#[derive(Debug, Clone, PartialEq, Default)]
+/// the matching structure transactionally. The staged [`Geometry`] follows
+/// staged dense atom order: [`Self::geometry`] reads it and
+/// [`Self::geometry_mut`] edits it; use [`Self::atom_index`] to address it by
+/// atom ID. Adding atoms clears staged velocities and forces, which cover the
+/// earlier atoms only.
+#[derive(Debug, Clone, PartialEq)]
 pub struct StructureBuilder {
     topology: TopologyBuilder,
-    state: DraftGeometry,
+    geometry: Geometry,
     extending_structure: bool,
+}
+
+impl Default for StructureBuilder {
+    fn default() -> Self {
+        Self {
+            topology: TopologyBuilder::default(),
+            geometry: Geometry::from_data(GeometryData::default()),
+            extending_structure: false,
+        }
+    }
 }
 
 impl StructureBuilder {
@@ -33,14 +47,24 @@ impl StructureBuilder {
         Self::default()
     }
 
-    /// A builder that extends `topology` and its geometry `state`, as
+    /// A builder that extends `topology` and its bound `geometry`, as
     /// [`Structure::into_builder`] returns.
-    pub(super) fn extending(topology: Arc<Topology>, state: DraftGeometry) -> Self {
+    pub(super) fn extending(topology: Arc<Topology>, geometry: Geometry) -> Self {
         Self {
             topology: TopologyBuilder::from_shared(topology),
-            state,
+            geometry,
             extending_structure: true,
         }
+    }
+
+    /// The staged geometry, in staged dense atom order.
+    pub fn geometry(&self) -> &Geometry {
+        &self.geometry
+    }
+
+    /// Dimension-preserving mutable access to the staged geometry.
+    pub fn geometry_mut(&mut self) -> GeometryMut<'_> {
+        GeometryMut::new(&mut self.geometry)
     }
 
     /// The staged topology, for read-only inspection.
@@ -108,7 +132,9 @@ impl StructureBuilder {
     /// The staged position of one atom, or `None` when `atom` is not in the
     /// staged topology.
     pub fn position(&self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
-        self.state.positions.get(self.atom_index(atom)?.index())
+        self.geometry
+            .positions()
+            .get(self.atom_index(atom)?.index())
     }
 
     /// Replaces the staged position of one atom, accepting any length unit.
@@ -127,6 +153,7 @@ impl StructureBuilder {
     ) -> Result<(), StructureBuildError> {
         let index = self.checked_atom_index(atom)?;
         Ok(self
+            .geometry
             .set_position_at(index, position)
             .map_err(StructureError::from)?)
     }
@@ -151,7 +178,14 @@ impl StructureBuilder {
                 Ok((index, point))
             })
             .collect::<Result<Vec<_>, StructureBuildError>>()?;
-        Ok(self.state.positions.set_canonical_batch(&staged)?)
+        if staged.is_empty() {
+            return Ok(());
+        }
+        Ok(self
+            .geometry
+            .data_in_place()
+            .positions
+            .set_canonical_batch(&staged)?)
     }
 
     /// Checks that [`Self::build`] would succeed, without consuming the builder.
@@ -180,7 +214,7 @@ impl StructureBuilder {
         order: impl IntoIterator<Item = InstanceAtomId>,
     ) -> Result<(), StructureBuildError> {
         let previous = self.topology.reorder_atoms(order)?;
-        self.state.reorder_atoms(&previous);
+        self.geometry.data_in_place().reorder_atoms(&previous);
         Ok(())
     }
 
@@ -242,7 +276,7 @@ impl StructureBuilder {
     /// Validates and publishes the staged topology and structure.
     pub fn build(self) -> Result<Structure, StructureBuildError> {
         let topology = Arc::new(self.topology.build()?);
-        Ok(Structure::from_state(topology, self.state)?)
+        Ok(Structure::from_parts(topology, self.geometry)?)
     }
 
     fn checked_atom_index(
@@ -254,30 +288,19 @@ impl StructureBuilder {
     }
 
     fn reserve(&mut self, additional: usize) -> Result<(), StructureBuildError> {
-        self.state
+        self.geometry
+            .data_in_place()
             .try_reserve_atoms(additional)
             .map_err(|_| StructureBuildError::CapacityOverflow)
     }
 
     fn extend(&mut self, positions: &Positions, added_bonds: usize) {
-        self.state.extend(positions, added_bonds);
+        let data = self.geometry.data_in_place();
+        data.extend(positions, added_bonds);
         if self.extending_structure {
-            self.state.properties.owner_mut().clear();
+            data.properties.owner_mut().clear();
         }
     }
-
-    fn storage_ref(&self) -> &DraftGeometry {
-        &self.state
-    }
-
-    fn storage(&mut self) -> &mut DraftGeometry {
-        &mut self.state
-    }
-
-    geometry_readers!();
-    site_readers!();
-    geometry_mutators!();
-    site_mutators!();
 }
 
 fn validate_position_count(expected: usize, actual: usize) -> Result<(), StructureBuildError> {

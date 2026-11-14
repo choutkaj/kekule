@@ -578,6 +578,17 @@ impl From<GeometryError> for TrajectoryIoError {
     }
 }
 
+/// An invalid frame: a geometry error keeps the geometry error as the source,
+/// and a frame time that is not finite keeps the set error.
+impl From<crate::structure::StructureSetError> for TrajectoryIoError {
+    fn from(error: crate::structure::StructureSetError) -> Self {
+        match error {
+            crate::structure::StructureSetError::Geometry(error) => error.into(),
+            error => Self::new(TrajectoryIoErrorKind::InvalidGeometry).with_source(error),
+        }
+    }
+}
+
 impl From<crate::structure::DenseArrayError> for TrajectoryIoError {
     fn from(error: crate::structure::DenseArrayError) -> Self {
         GeometryError::from(error).into()

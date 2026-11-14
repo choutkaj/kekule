@@ -108,7 +108,7 @@ impl StructureEditor {
         let moved = atom_rows
             .iter()
             .copied()
-            .zip(source.positions.values().value().iter())
+            .zip(source.positions().values().value().iter())
             .map(|(row, point)| {
                 let turned = rotation.transform_vector(Vector3::new(point.x, point.y, point.z));
                 (
@@ -153,7 +153,8 @@ impl StructureEditor {
             .iter()
             .map(|id| self.topology.bond_slot(mapping.bonds[id]))
             .collect::<Result<Vec<_>, _>>()?;
-        self.slots.copy_atom_state_from(source, &atom_rows);
+        self.slots
+            .copy_atom_state_from(source.payload().data(), &atom_rows);
         let properties = &mut self.slots.properties;
         properties
             .atoms_raw_mut()

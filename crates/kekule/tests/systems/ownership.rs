@@ -46,6 +46,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     )
     .unwrap();
     structure
+        .geometry_mut()
         .set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
@@ -61,7 +62,7 @@ fn bulk_positions_copy_the_exact_slice_that_was_validated() {
     calls.set(0);
     let before = structure.positions().clone();
     assert!(matches!(
-        structure.set_positions(Quantity::new(
+        structure.geometry_mut().set_positions(Quantity::new(
             Alternating {
                 calls: &calls,
                 first: &invalid,

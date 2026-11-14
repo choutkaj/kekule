@@ -1,11 +1,14 @@
+use std::sync::Arc;
+
 use crate::math::Vector3;
 use crate::structure::DenseArrayError;
 use crate::units::{Quantity, Unit, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT};
 
+/// Dense vectors in one canonical unit, shared by clones until one is
+/// written.
 #[derive(Debug, Clone, PartialEq)]
 struct DenseVectors {
-    values: Vec<Vector3>,
-    unit: Unit,
+    values: Arc<Vec<Vector3>>,
 }
 
 impl DenseVectors {
@@ -16,16 +19,18 @@ impl DenseVectors {
             if let Some(index) = values.iter().position(|vector| !vector.is_finite()) {
                 return Err(DenseArrayError::NonFinite { index });
             }
-            return Ok(Self { values, unit });
-        }
-        for (index, vector) in values.iter_mut().enumerate() {
-            let converted = *vector * factor;
-            if !converted.is_finite() {
-                return Err(DenseArrayError::NonFinite { index });
+        } else {
+            for (index, vector) in values.iter_mut().enumerate() {
+                let converted = *vector * factor;
+                if !converted.is_finite() {
+                    return Err(DenseArrayError::NonFinite { index });
+                }
+                *vector = converted;
             }
-            *vector = converted;
         }
-        Ok(Self { values, unit })
+        Ok(Self {
+            values: Arc::new(values),
+        })
     }
 
     fn new<T>(values: Quantity<T>, unit: Unit) -> Result<Self, DenseArrayError>
@@ -37,18 +42,20 @@ impl DenseVectors {
     }
 
     fn select(&self, rows: &[usize]) -> Self {
+        if crate::structure::positions::is_identity(rows, self.values.len()) {
+            return self.clone();
+        }
         Self {
-            values: rows.iter().map(|row| self.values[*row]).collect(),
-            unit: self.unit,
+            values: Arc::new(rows.iter().map(|row| self.values[*row]).collect()),
         }
     }
 
-    fn set_all<T>(&mut self, values: Quantity<T>) -> Result<(), DenseArrayError>
+    fn set_all<T>(&mut self, values: Quantity<T>, unit: Unit) -> Result<(), DenseArrayError>
     where
         T: AsRef<[Vector3]>,
     {
         // AsRef may use interior state. Validate and copy the same borrowed slice.
-        let factor = values.unit().conversion_factor_to(self.unit)?;
+        let factor = values.unit().conversion_factor_to(unit)?;
         let source = values.value().as_ref();
         if source.len() != self.values.len() {
             return Err(DenseArrayError::CountMismatch {
@@ -62,22 +69,26 @@ impl DenseVectors {
         {
             return Err(DenseArrayError::NonFinite { index });
         }
-        for (destination, source) in self.values.iter_mut().zip(source) {
+        let values = Arc::make_mut(&mut self.values);
+        for (destination, source) in values.iter_mut().zip(source) {
             *destination = *source * factor;
         }
         Ok(())
     }
 
     fn rotated(&self, rotate: impl Fn(Vector3) -> Vector3) -> Result<Self, DenseArrayError> {
-        let values = self.values.iter().map(|vector| rotate(*vector)).collect();
-        Self::from_vec(Quantity::new(values, self.unit), self.unit)
+        let mut rotated = Self {
+            values: Arc::new(self.values.as_ref().clone()),
+        };
+        rotated.rotate_in_place(rotate)?;
+        Ok(rotated)
     }
 
     fn rotate_in_place(
         &mut self,
         rotate: impl Fn(Vector3) -> Vector3,
     ) -> Result<(), DenseArrayError> {
-        for (index, vector) in self.values.iter_mut().enumerate() {
+        for (index, vector) in Arc::make_mut(&mut self.values).iter_mut().enumerate() {
             *vector = rotate(*vector);
             if !vector.is_finite() {
                 return Err(DenseArrayError::NonFinite { index });
@@ -92,12 +103,13 @@ macro_rules! vector_array {
         #[doc = $doc]
         ///
         /// Values are stored in the canonical unit in dense atom order and carry
-        /// no topology.
+        /// no topology. Clones share the values until one of them is written,
+        /// as for [`Positions`](super::Positions).
         #[derive(Debug, Clone, PartialEq)]
         pub struct $name(DenseVectors);
 
         impl $name {
-            /// Copies dense vectors and converts them to canonical units.
+            /// Copies dense vectors and converts them to the canonical unit.
             ///
             /// # Errors
             ///
@@ -120,11 +132,10 @@ macro_rules! vector_array {
                 Ok(Self(DenseVectors::from_vec(values, $unit)?))
             }
 
-            /// Creates `len` zero vectors in the canonical unit.
+            /// Creates `len` zero vectors.
             pub fn zeros(len: usize) -> Self {
                 Self(DenseVectors {
-                    values: vec![Vector3::zero(); len],
-                    unit: $unit,
+                    values: Arc::new(vec![Vector3::zero(); len]),
                 })
             }
 
@@ -140,12 +151,13 @@ macro_rules! vector_array {
 
             /// Borrows the dense vectors in the canonical unit.
             pub fn values(&self) -> Quantity<&[Vector3]> {
-                Quantity::new(self.0.values.as_slice(), self.0.unit)
+                Quantity::new(self.0.values.as_slice(), $unit)
             }
 
-            /// Consumes the container, returning its canonical-unit vector without copying.
+            /// Consumes the container, returning its canonical-unit vector,
+            /// without copying unless a clone shares it.
             pub fn into_values(self) -> Quantity<Vec<Vector3>> {
-                Quantity::new(self.0.values, self.0.unit)
+                Quantity::new(Arc::unwrap_or_clone(self.0.values), $unit)
             }
 
             /// Replaces every vector without changing the length.
@@ -161,7 +173,7 @@ macro_rules! vector_array {
             where
                 T: AsRef<[Vector3]>,
             {
-                self.0.set_all(values)
+                self.0.set_all(values, $unit)
             }
 
             pub(crate) fn select(&self, rows: &[usize]) -> Self {

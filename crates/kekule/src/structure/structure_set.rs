@@ -5,13 +5,14 @@ use crate::math::RigidTransform;
 use crate::properties::{OwnerProperties, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
-use super::state::subset_rows;
-use super::{DenseArrayError, GeometryError, Positions, Structure};
+use super::subset_rows;
+use super::{
+    DenseArrayError, Geometry, GeometryData, GeometryError, GeometryMut, Positions, Structure,
+};
 
 mod context;
 mod decoded;
 mod error;
-mod geometry;
 mod order;
 mod read;
 mod storage;
@@ -20,8 +21,6 @@ mod views;
 pub use context::SetContext;
 pub(crate) use decoded::DecodedGeometry;
 pub use error::{Requirement, StructureSetError};
-pub(crate) use geometry::GeometryState;
-pub use geometry::{Geometry, GeometryMut};
 pub use order::{Order, Place, TimeAxis};
 pub(crate) use read::visit_geometry;
 pub use read::{StructureSetRead, StructureSetReadError};
@@ -510,7 +509,7 @@ impl StructureSet {
             }
         }
         for (geometry, positions) in self.storage.geometries.iter_mut().zip(positions) {
-            GeometryState::replace_positions(geometry.state_mut(), positions);
+            GeometryData::replace_positions(geometry.data_mut(), positions);
         }
         Ok(())
     }
@@ -546,9 +545,9 @@ impl StructureSet {
             .geometries
             .iter()
             .map(|geometry| {
-                Ok(Geometry::from_state(Arc::new(
-                    geometry.state().project(&atoms, &bonds)?,
-                )))
+                Ok(Geometry::from_data(
+                    geometry.data().project(&atoms, &bonds)?,
+                ))
             })
             .collect::<Result<Vec<_>, GeometryError>>()?;
         Ok(Self {
@@ -587,9 +586,9 @@ impl StructureSet {
             .iter()
             .zip(transforms)
             .map(|(geometry, transform)| {
-                Ok(Geometry::from_state(Arc::new(
-                    geometry.state().transformed(*transform)?,
-                )))
+                Ok(Geometry::from_data(
+                    geometry.data().transformed(*transform)?,
+                ))
             })
             .collect::<Result<Vec<_>, GeometryError>>()?;
         self.storage.geometries = geometries;
@@ -644,7 +643,7 @@ impl StructureSet {
     }
 
     fn bind(&self, geometry: &mut Geometry) -> Result<(), StructureSetError> {
-        Ok(GeometryState::bind(geometry.state_mut(), &self.topology)?)
+        Ok(GeometryData::bind(geometry.data_mut(), &self.topology)?)
     }
 }
 

@@ -63,7 +63,7 @@ fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
         && a.iter()
             .zip(b.iter())
-            .all(|(a, b)| Arc::ptr_eq(a.payload().state(), b.payload().state()))
+            .all(|(a, b)| Arc::ptr_eq(a.payload().data(), b.payload().data()))
 }
 
 #[test]
@@ -281,16 +281,21 @@ fn any_geometry_may_carry_site_fields_and_dynamics() {
         panic!("a geometry's view is a geometry");
     };
     assert_eq!(context.place(), Some(Place::Step(0)));
-    assert_eq!(context.velocities(), Some(&velocities(1.0)));
-    assert_eq!(context.forces(), None);
+    assert_eq!(
+        view.as_structure_view().velocities(),
+        Some(&velocities(1.0))
+    );
+    assert_eq!(view.as_structure_view().forces(), None);
     assert_eq!(view.as_structure_view().occupancy(ATOM0), Some(0.5));
-    // A structure keeps the structure and drops the geometry's context.
+    // A structure keeps the geometry, velocities included, and drops its
+    // context.
     let structure = view.to_structure();
     assert_eq!(
         structure.as_structure_view().kind(),
         StructureKind::Standalone
     );
     assert_eq!(structure.occupancy(ATOM0), Some(0.5));
+    assert_eq!(structure.velocities(), Some(&velocities(1.0)));
     // A rigid motion rotates the velocities with the positions.
     use crate::math::{Matrix3, RigidTransform};
     let turn = Matrix3::from_columns(
@@ -587,8 +592,8 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 
     let selected = shared.select([2, 0]).unwrap();
     assert!(Arc::ptr_eq(
-        selected.set().get(0).unwrap().payload().state(),
-        shared.set().get(2).unwrap().payload().state()
+        selected.set().get(0).unwrap().payload().data(),
+        shared.set().get(2).unwrap().payload().data()
     ));
     // Each state of one sample keeps its log weight as its log population.
     let collapsed = regrouped.collapse();
@@ -597,8 +602,8 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     assert!(shares_every_geometry(collapsed.set(), regrouped.set()));
     let states = regrouped.select_states([1]).unwrap();
     assert!(Arc::ptr_eq(
-        states.set().get(0).unwrap().payload().state(),
-        shared.set().get(1).unwrap().payload().state()
+        states.set().get(0).unwrap().payload().data(),
+        shared.set().get(1).unwrap().payload().data()
     ));
 
     // Editing one geometry of a clone copies that geometry alone.
@@ -609,8 +614,8 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
         .set_position_at(ATOM0, Quantity::new(Point3::new(9.0, 0.0, 0.0), NANOMETER))
         .unwrap();
     assert!(Arc::ptr_eq(
-        edited.set().get(0).unwrap().payload().state(),
-        shared.set().get(0).unwrap().payload().state()
+        edited.set().get(0).unwrap().payload().data(),
+        shared.set().get(0).unwrap().payload().data()
     ));
     assert!(!edited
         .set()
@@ -1420,8 +1425,10 @@ fn every_error_reads_as_a_sentence() {
             E::InvalidFraction,
             "The population fraction is not greater than 0 and at most 1.",
         ),
+        (E::NonFiniteTime, "The time is not finite."),
+        (E::NonFiniteEnergy, "The state energy is not finite."),
         (
-            E::Geometry(GeometryError::NonFiniteTime),
+            E::Geometry(GeometryError::CapacityOverflow),
             "A geometry is invalid.",
         ),
         (
@@ -1435,7 +1442,9 @@ fn every_error_reads_as_a_sentence() {
     assert_eq!(E::from(unit).to_string(), unit.to_string());
     // Wrapped causes are the error's source.
     use std::error::Error;
-    assert!(E::Geometry(GeometryError::NonFiniteTime).source().is_some());
+    assert!(E::Geometry(GeometryError::CapacityOverflow)
+        .source()
+        .is_some());
     assert!(E::EmptySource.source().is_none());
 }
 

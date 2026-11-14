@@ -146,7 +146,9 @@ fn structure_builder_rejects_excess_replacement_positions_before_mutation() {
         .unwrap();
     let before = builder.clone();
     assert_eq!(
-        builder.set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
+        builder
+            .geometry_mut()
+            .set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
         Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 1,
             actual: 2
@@ -577,6 +579,7 @@ fn structure_view_materialization_clones_geometry_and_shares_topology() {
     let score = key("score");
     let atom = topology.atom_ids()[0];
     source
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(4)))
@@ -586,6 +589,7 @@ fn structure_view_materialization_clones_geometry_and_shares_topology() {
     assert!(Arc::ptr_eq(&owned.shared_topology(), &topology));
     assert_eq!(owned, source);
     source
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(8)))
@@ -603,12 +607,17 @@ fn structure_view_materialization_clones_geometry_and_shares_topology() {
 #[test]
 fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
     let (mut structure, _, _) = structure_fixture();
-    structure.set_occupancy(ATOM0, Some(0.75)).unwrap();
     structure
+        .geometry_mut()
+        .set_occupancy(ATOM0, Some(0.75))
+        .unwrap();
+    structure
+        .geometry_mut()
         .set_b_factor(ATOM0, Some(Quantity::new(12.5, SQUARE_ANGSTROM)))
         .unwrap();
     // No reserved names: a generic property may use the same key.
     structure
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(key("occupancy"), ATOM0, Some(PropertyValue::Int(1)))
@@ -629,24 +638,32 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
 
     let before = structure.clone();
     assert_eq!(
-        structure.set_occupancy(ATOM0, Some(f64::NAN)),
+        structure
+            .geometry_mut()
+            .set_occupancy(ATOM0, Some(f64::NAN)),
         Err(GeometryError::Array(DenseArrayError::NonFinite {
             index: 0
         }))
     );
     assert!(matches!(
-        structure.set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
+        structure
+            .geometry_mut()
+            .set_b_factor(ATOM0, Some(Quantity::new(1.0, KELVIN))),
         Err(GeometryError::Unit(_))
     ));
     assert_eq!(
-        structure.set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
+        structure
+            .geometry_mut()
+            .set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
         Err(GeometryError::Array(DenseArrayError::IndexOutOfRange {
             index: 2,
             len: 2
         }))
     );
     assert_eq!(
-        structure.set_occupancies(Some(vec![Some(1.0)])),
+        structure
+            .geometry_mut()
+            .set_occupancies(Some(vec![Some(1.0)])),
         Err(GeometryError::Array(DenseArrayError::CountMismatch {
             expected: 2,
             actual: 1
@@ -656,16 +673,20 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
 
     // Clearing every value compares equal to never recording any.
     let mut cleared = structure.clone();
-    cleared.set_occupancy(ATOM0, None).unwrap();
-    cleared.set_occupancies(None).unwrap();
+    cleared.geometry_mut().set_occupancy(ATOM0, None).unwrap();
+    cleared.geometry_mut().set_occupancies(None).unwrap();
     assert_eq!(cleared.occupancies(), None);
 }
 
 #[test]
 fn structure_subset_projects_entity_state_and_drops_owner_properties() {
     let (mut structure, atom, bond) = structure_fixture();
-    structure.set_occupancy(ATOM0, Some(0.5)).unwrap();
-    let mut properties = structure.properties_mut();
+    structure
+        .geometry_mut()
+        .set_occupancy(ATOM0, Some(0.5))
+        .unwrap();
+    let mut geometry = structure.geometry_mut();
+    let mut properties = geometry.properties_mut();
     properties
         .owner_mut()
         .insert(key("energy"), PropertyValue::Int(3))
@@ -713,7 +734,8 @@ fn structure_subset_projects_entity_state_and_drops_owner_properties() {
 #[test]
 fn set_and_geometry_properties_are_separate() {
     let (mut structure, atom, _) = structure_fixture();
-    let mut properties = structure.properties_mut();
+    let mut geometry = structure.geometry_mut();
+    let mut properties = geometry.properties_mut();
     properties
         .atoms_mut()
         .set_value(key("member_atom"), ATOM0, Some(PropertyValue::Int(1)))
@@ -993,11 +1015,15 @@ fn clearing_velocities_and_forces_keeps_geometries_without_them_shared() {
 #[test]
 fn occupancies_and_b_factors_follow_structures_into_geometries() {
     let (mut structure, _, _) = structure_fixture();
-    structure.set_occupancy(ATOM0, Some(0.5)).unwrap();
     structure
+        .geometry_mut()
+        .set_occupancy(ATOM0, Some(0.5))
+        .unwrap();
+    structure
+        .geometry_mut()
         .set_b_factor(ATOM0, Some(Quantity::new(20.0, SQUARE_ANGSTROM)))
         .unwrap();
-    structure.set_cell(Some(cell()));
+    structure.geometry_mut().set_cell(Some(cell()));
 
     // Structures become geometries with their occupancies, B-factors, cell, and rows.
     let set = StructureSet::from_structures([structure.clone()]).unwrap();
@@ -1021,11 +1047,16 @@ fn occupancies_and_b_factors_follow_structures_into_geometries() {
 #[test]
 fn structure_atom_views_join_topology_identity_with_geometry_state() {
     let (mut structure, carbon, _) = structure_fixture();
-    structure.set_occupancy(ATOM0, Some(0.5)).unwrap();
     structure
+        .geometry_mut()
+        .set_occupancy(ATOM0, Some(0.5))
+        .unwrap();
+    structure
+        .geometry_mut()
         .set_b_factor(ATOM0, Some(Quantity::new(20.0, SQUARE_ANGSTROM)))
         .unwrap();
     structure
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .set_value(key("charge"), ATOM0, Some(PropertyValue::Int(-1)))
@@ -1251,12 +1282,12 @@ fn state_energies_are_canonical_finite_and_never_on_geometries() {
     for value in [f64::NAN, f64::INFINITY] {
         assert_eq!(
             state.set_energy(Some(Quantity::new(value, KILOJOULE_PER_MOLE))),
-            Err(GeometryError::NonFiniteEnergy)
+            Err(StructureSetError::NonFiniteEnergy)
         );
     }
     assert_eq!(
         state.set_energy(Some(Quantity::new(1.0, KELVIN))),
-        Err(GeometryError::Unit(Box::new(
+        Err(StructureSetError::Unit(Box::new(
             UnitError::IncompatibleUnits {
                 from: KELVIN,
                 to: KILOJOULE_PER_MOLE,
@@ -2015,21 +2046,26 @@ fn structure_views_report_which_structure_they_borrow() {
         [Geometry::new(single_position(0.0)), geometry],
     )
     .unwrap();
-    let StructureKind::InSet(context) = set.get(1).unwrap().as_structure_view().kind() else {
+    let view = set.get(1).unwrap().as_structure_view();
+    let StructureKind::InSet(context) = view.kind() else {
         panic!("a geometry of a set is in the set");
     };
     assert_eq!(context.place(), None);
-    assert_eq!(context.velocities(), Some(&Velocities::zeros(1)));
-    assert_eq!(context.forces(), None);
+    assert_eq!(view.velocities(), Some(&Velocities::zeros(1)));
+    assert_eq!(view.forces(), None);
     let geometry = set.get(0).unwrap();
-    let StructureKind::InSet(context) = geometry.as_structure_view().kind() else {
-        panic!("a geometry of a set is in the set");
-    };
-    assert_eq!(context.velocities(), None);
-    // Materializing a geometry as a structure drops its geometry state.
+    assert_eq!(geometry.as_structure_view().velocities(), None);
+    // Materializing a geometry as a structure drops its set context and
+    // keeps its velocities.
     assert_eq!(
         geometry.to_structure().as_structure_view().kind(),
         StructureKind::Standalone
+    );
+    let structure = set.get(1).unwrap().to_structure();
+    assert_eq!(structure.velocities(), Some(&Velocities::zeros(1)));
+    assert_eq!(
+        structure.as_structure_view().velocities(),
+        Some(&Velocities::zeros(1))
     );
 
     let mut trajectory = StructureSet::new(topology);
@@ -2050,7 +2086,7 @@ fn structure_views_report_which_structure_they_borrow() {
         panic!("a frame is a geometry");
     };
     assert_eq!(context.place(), Some(place));
-    assert_eq!(context.forces(), None);
+    assert_eq!(frame.as_structure_view().forces(), None);
 }
 
 #[test]
@@ -2063,7 +2099,7 @@ fn rigid_transforms_move_structures_and_geometries_with_their_cells() {
     )
     .unwrap();
     let mut structure = Structure::new(Arc::clone(&topology), single_position(1.0)).unwrap();
-    structure.set_cell(Some(box_cell));
+    structure.geometry_mut().set_cell(Some(box_cell));
     // A quarter turn about z followed by a 2 nm shift along x.
     let turn = Matrix3::from_columns(
         Vector3::new(0.0, 1.0, 0.0),
@@ -2081,7 +2117,10 @@ fn rigid_transforms_move_structures_and_geometries_with_their_cells() {
         .set_order(Some(Order::Time(TimeAxis::default())))
         .unwrap();
 
-    structure.apply_rigid_transform(&transform).unwrap();
+    structure
+        .geometry_mut()
+        .apply_rigid_transform(&transform)
+        .unwrap();
     for set in [&mut members, &mut trajectory] {
         set.get_mut(0)
             .unwrap()

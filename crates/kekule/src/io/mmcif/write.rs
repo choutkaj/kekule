@@ -95,12 +95,13 @@ impl MmcifWriteOptions {
         Ok(self)
     }
 
-    /// The state of geometries that mmCIF cannot carry, whether of a structure set
-    /// or a trajectory frame. An mmCIF reader gives geometries without an
-    /// order, so by default a set fails to write when a geometry has a place
-    /// in its order (a frame's time and MD step among them), velocities, or
-    /// forces, or when its time order has neither times nor steps; so does a
-    /// structure block of one geometry with a place, velocities, or forces.
+    /// The state of geometries that mmCIF cannot carry, whether of a structure,
+    /// a structure set, or a trajectory frame. An mmCIF reader gives geometries
+    /// without an order, so by default a set fails to write when a geometry has
+    /// a place in its order (a frame's time and MD step among them),
+    /// velocities, or forces, or when its time order has neither times nor
+    /// steps; so does a structure block of a geometry with a place, or of a
+    /// geometry or structure with velocities or forces.
     /// [`UnrepresentablePolicy::Omit`] writes the models without them and
     /// reports a [`WriteOmission::GeometryState`] for each field.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
@@ -779,8 +780,8 @@ impl MmcifEntityClassifications {
 /// `&StructureInterpretation`, or `&StructureSetInterpretation`;
 /// interpretations keep their source reports. [`Self::structure`] accepts any
 /// borrowed structure view, such as a geometry or a trajectory frame; a
-/// geometry's place, velocities, and forces fail to write unless
-/// the write options omit them.
+/// geometry's place, and the velocities and forces of a geometry or
+/// structure, fail to write unless the write options omit them.
 ///
 /// A block is named by [`MmcifWriteOptions::block_name`] unless
 /// [`Self::with_block_name`] names it.

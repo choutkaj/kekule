@@ -4,7 +4,7 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::structure::state::{is_bound, validate_binding};
+use crate::structure::geometry_validation::{is_bound, validate_binding};
 use crate::structure::view::sealed::Sealed;
 use crate::structure::{AsStructureView, GeometryError, Structure, StructureKind, StructureView};
 use crate::topology::Topology;
@@ -153,14 +153,14 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
     /// Borrows the geometry as the common kernel input, with the view's full
     /// lifetime.
     pub fn as_structure_view(self) -> StructureView<'a> {
-        self.geometry.state().structure_view(
+        self.geometry.structure_view(
             self.reader.topology(),
             StructureKind::InSet(SetContext::of_view(self.as_dyn())),
         )
     }
 
-    /// Materializes the geometry as an owned structure, dropping its place,
-    /// velocities, and forces.
+    /// Materializes the geometry as an owned structure, dropping its place
+    /// and keeping its velocities and forces.
     pub fn to_structure(self) -> Structure {
         self.as_structure_view().to_structure()
     }
@@ -168,13 +168,13 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
 
 /// Fails unless `geometry` is bound to `topology`.
 pub(crate) fn check_bound(topology: &Topology, geometry: &Geometry) -> Result<(), GeometryError> {
-    let state = geometry.state();
-    let atoms = state.positions.len();
-    validate_binding(atoms, &state.properties, topology)?;
-    if !is_bound(atoms, &state.properties, topology) {
+    let atoms = geometry.atom_count();
+    let properties = geometry.properties();
+    validate_binding(atoms, properties, topology)?;
+    if !is_bound(atoms, properties, topology) {
         return Err(GeometryError::BondCountMismatch {
             expected: topology.bond_count(),
-            actual: state.properties.bonds().len(),
+            actual: properties.bonds().len(),
         });
     }
     Ok(())

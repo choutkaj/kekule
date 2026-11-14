@@ -885,7 +885,7 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
 #[test]
 fn a_standalone_geometry_bound_to_a_solvated_topology_writes_as_a_frame() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
-    use kekule::structure::{Geometry, GeometryError};
+    use kekule::structure::{Geometry, GeometryError, StructureSetError};
     use kekule::topology::TopologyBuilder;
     use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -916,10 +916,10 @@ fn a_standalone_geometry_bound_to_a_solvated_topology_writes_as_a_frame() {
     let mut geometry = Geometry::new(positions.clone()).with_cell(cell);
     assert_eq!(
         FrameView::new(&topology, &geometry, None, Some(5)).unwrap_err(),
-        GeometryError::BondCountMismatch {
+        StructureSetError::Geometry(GeometryError::BondCountMismatch {
             expected: 2 * waters,
             actual: 0,
-        }
+        })
     );
     let stored = geometry.positions().values().value().as_ptr();
     geometry.bind(&topology).unwrap();
@@ -961,7 +961,7 @@ fn a_standalone_geometry_bound_to_a_solvated_topology_writes_as_a_frame() {
 
 #[test]
 fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_geometry() {
-    use kekule::structure::{Geometry, GeometryError};
+    use kekule::structure::{Geometry, GeometryError, StructureSetError};
     use kekule::units::{Quantity, NANOMETER};
 
     let ethanol = kekule::smiles::to_topology("CCO").unwrap();
@@ -1008,10 +1008,10 @@ fn a_failed_binding_changes_nothing_and_a_binding_copies_a_shared_geometry() {
     assert_eq!(copy.positions(), before.positions());
     assert_eq!(
         FrameView::new(&ethanol, &before, None, None).unwrap_err(),
-        GeometryError::BondCountMismatch {
+        StructureSetError::Geometry(GeometryError::BondCountMismatch {
             expected: ethanol.bond_count(),
             actual: 0,
-        }
+        })
     );
     assert!(FrameView::new(&ethanol, &copy, None, None).is_ok());
     assert_eq!(before.positions().values().value().as_ptr(), stored);

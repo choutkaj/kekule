@@ -417,8 +417,9 @@ impl Minimization {
 
     /// Copies `source` with the minimized coordinates.
     ///
-    /// `source` must share the minimized topology snapshot. Its cell and
-    /// structure properties are retained unchanged.
+    /// `source` must share the minimized topology snapshot. Its cell, site
+    /// values, and geometry properties are retained unchanged; its velocities
+    /// and forces, which belong to the source coordinates, are dropped.
     ///
     /// # Errors
     ///
@@ -430,7 +431,10 @@ impl Minimization {
             return Err(MinimizationError::IncompatibleTopology);
         }
         let mut structure = source.to_structure();
-        structure.set_positions(self.positions.values())?;
+        let mut geometry = structure.geometry_mut();
+        geometry.set_positions(self.positions.values())?;
+        geometry.take_velocities();
+        geometry.take_forces();
         Ok(structure)
     }
 }
@@ -834,7 +838,9 @@ impl<P: Potential + ?Sized> Search<'_, P> {
             self.objective.positions(&x),
             CANONICAL_LENGTH_UNIT,
         ))?;
-        self.trial.set_positions(positions.values())?;
+        self.trial
+            .geometry_mut()
+            .set_positions(positions.values())?;
         let view = self.trial.as_structure_view();
         self.evaluations += 1;
         match self

@@ -1,5 +1,5 @@
 //! Builder placement on a structure draft; see [`crate::structure::placement`].
-use super::{atom_row, checked_point, StructureEditor};
+use super::{checked_point, StructureEditor};
 use crate::algorithms::{
     AddHydrogensOptions, AddHydrogensScope, AddedHydrogenOrigin, RetainedHydrogenReason,
 };
@@ -868,7 +868,8 @@ impl StructureEditor {
     fn place_row(&mut self, atom: EditAtomId, point: Point3) {
         let slot = self.topology.atom_slot(atom).expect("live atom");
         self.slots
-            .set_position(atom_row(slot), Quantity::new(point, CANONICAL_LENGTH_UNIT))
+            .positions
+            .set(slot, Quantity::new(point, CANONICAL_LENGTH_UNIT))
             .expect("placed positions are finite");
     }
 

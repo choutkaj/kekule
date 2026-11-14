@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use crate::math::{PeriodicCell, Point3};
-use crate::properties::GeometryProperties;
+use crate::math::Point3;
 use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::Quantity;
 
-use super::scalars::{b_factor_quantities, b_factor_quantity, AtomScalars};
-use super::state::is_bound;
-use super::{Positions, SetContext, Structure};
+use super::geometry_validation::is_bound;
+use super::{Geometry, SetContext, Structure};
 
 pub(crate) mod sealed {
     /// Restricts [`super::AsStructureView`] to Kekule's structure owners and views.
@@ -51,8 +49,8 @@ impl<'a> From<&'a Structure> for StructureView<'a> {
 /// set or trajectory frame source with what its source records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
-/// it so that a geometry's place, velocities, and forces are
-/// written, rejected, or deliberately omitted, never silently dropped.
+/// it so that a geometry's place and its set's properties are written,
+/// rejected, or deliberately omitted, never silently dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum StructureKind<'a> {
@@ -64,50 +62,50 @@ pub enum StructureKind<'a> {
     InSet(SetContext<'a>),
 }
 
-/// A borrowed topology plus the geometry state bound to it: the common
-/// input contract of coordinate-dependent kernels.
+/// A borrowed topology plus the [`Geometry`] bound to it: the common input
+/// contract of coordinate-dependent kernels.
 ///
 /// Structures, geometries, trajectory frames, and frame buffers all borrow as a
 /// view, and [`Self::kind`] says whether it is a structure or a geometry.
-/// Accessors return borrows with the view's full lifetime. A view of a
-/// trajectory frame has no occupancies or B-factors. Views preserve exact
-/// topology identity.
+/// Geometry state reads through `Deref` (`view.positions()`,
+/// `view.velocities()`, ...), and [`Self::payload`] lends the geometry with
+/// the view's full lifetime. Views preserve exact topology identity.
 #[derive(Debug, Clone, Copy)]
 pub struct StructureView<'a> {
     topology: &'a Arc<Topology>,
-    positions: &'a Positions,
-    cell: Option<&'a PeriodicCell>,
-    occupancies: &'a AtomScalars,
-    b_factors: &'a AtomScalars,
-    properties: &'a GeometryProperties,
+    geometry: &'a Geometry,
     kind: StructureKind<'a>,
+}
+
+impl std::ops::Deref for StructureView<'_> {
+    type Target = Geometry;
+
+    fn deref(&self) -> &Self::Target {
+        self.geometry
+    }
 }
 
 impl<'a> StructureView<'a> {
     /// Only owners that already enforce binding may use this.
     pub(crate) fn bound(
         topology: &'a Arc<Topology>,
-        positions: &'a Positions,
-        cell: Option<&'a PeriodicCell>,
-        occupancies: &'a AtomScalars,
-        b_factors: &'a AtomScalars,
-        properties: &'a GeometryProperties,
+        geometry: &'a Geometry,
         kind: StructureKind<'a>,
     ) -> Self {
-        debug_assert!(is_bound(positions.len(), properties, topology));
+        debug_assert!(is_bound(
+            geometry.atom_count(),
+            geometry.properties(),
+            topology
+        ));
         Self {
             topology,
-            positions,
-            cell,
-            occupancies,
-            b_factors,
-            properties,
+            geometry,
             kind,
         }
     }
 
     /// Whether this view borrows a structure or a geometry, with the geometry's
-    /// place, velocities, and forces.
+    /// place.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Structure, Positions, StructureKind}};
@@ -133,61 +131,16 @@ impl<'a> StructureView<'a> {
         Arc::clone(self.topology)
     }
 
-    /// Number of atoms, equal to the topology's atom count.
-    pub fn atom_count(self) -> usize {
-        self.positions.len()
-    }
-
-    /// Positions in dense topology atom order.
-    pub fn positions(self) -> &'a Positions {
-        self.positions
-    }
-
-    /// The periodic cell, or `None` for a non-periodic structure.
-    pub fn cell(self) -> Option<&'a PeriodicCell> {
-        self.cell
-    }
-
-    /// Structure annotations: owner values plus one row per dense atom and bond.
-    pub fn properties(self) -> &'a GeometryProperties {
-        self.properties
-    }
-
-    /// Occupancy of one atom; `None` when it was never recorded, which is
-    /// always the case for a trajectory frame, or when `atom` is out of range.
-    pub fn occupancy(self, atom: TopologyAtomIndex) -> Option<f64> {
-        self.occupancies.get(atom)
-    }
-
-    /// Every occupancy in dense atom order, or `None` when none was recorded.
-    pub fn occupancies(self) -> Option<&'a [Option<f64>]> {
-        self.occupancies.values()
-    }
-
-    /// Isotropic B-factor of one atom; `None` when it was never recorded,
-    /// which is always the case for a trajectory frame, or when `atom` is out
-    /// of range.
-    pub fn b_factor(self, atom: TopologyAtomIndex) -> Option<Quantity<f64>> {
-        b_factor_quantity(self.b_factors.get(atom))
-    }
-
-    /// Every B-factor in dense atom order and square nanometres, or `None`
-    /// when none was recorded.
-    pub fn b_factors(self) -> Option<Quantity<&'a [Option<f64>]>> {
-        b_factor_quantities(self.b_factors)
-    }
-
-    pub(crate) fn occupancy_column(self) -> &'a AtomScalars {
-        self.occupancies
-    }
-
-    pub(crate) fn b_factor_column(self) -> &'a AtomScalars {
-        self.b_factors
+    /// The borrowed geometry with the view's full lifetime.
+    pub const fn payload(self) -> &'a Geometry {
+        self.geometry
     }
 
     /// The position of one atom, or `None` when `atom` is not in the topology.
     pub fn position(self, atom: InstanceAtomId) -> Option<Quantity<Point3>> {
-        self.positions.get(self.topology.atom_index(atom)?.index())
+        self.geometry
+            .positions()
+            .get(self.topology.atom_index(atom)?.index())
     }
 
     /// One atom with its topology identity and geometry state.
@@ -216,18 +169,11 @@ impl<'a> StructureView<'a> {
         })
     }
 
-    /// Materializes this borrowed structure as an owned structure, dropping the
-    /// set context reported by [`Self::kind`]. A view of a
-    /// trajectory frame yields a structure without occupancies or B-factors.
+    /// Materializes this borrowed structure as an owned structure sharing the
+    /// topology and the geometry's storage, dropping the set context reported
+    /// by [`Self::kind`].
     pub fn to_structure(self) -> Structure {
-        Structure {
-            topology: Arc::clone(self.topology),
-            positions: self.positions.clone(),
-            cell: self.cell.copied(),
-            occupancies: self.occupancies.clone(),
-            b_factors: self.b_factors.clone(),
-            properties: self.properties.clone(),
-        }
+        Structure::bound(Arc::clone(self.topology), self.geometry.clone())
     }
 }
 
@@ -265,6 +211,7 @@ impl<'a> StructureAtomView<'a> {
     /// The atom's stored position in the canonical length unit (nm).
     pub fn position(self) -> Quantity<Point3> {
         self.structure
+            .payload()
             .positions()
             .get(self.atom.index().index())
             .expect("bound structures cover every atom")
@@ -288,6 +235,7 @@ impl<'a> StructureAtomView<'a> {
         key: &crate::properties::PropertyKey,
     ) -> Option<crate::properties::PropertyValue> {
         self.structure
+            .payload()
             .properties()
             .atoms()
             .value(key, self.atom.index())

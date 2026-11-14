@@ -777,7 +777,7 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         .collect::<Vec<_>>(),
         [ids[1], ids[2]]
     );
-    structure.set_cell(Some(
+    structure.geometry_mut().set_cell(Some(
         PeriodicCell::orthorhombic(
             Quantity::new(Vector3::new(10.0, 10.0, 10.0), NANOMETER),
             [true; 3],

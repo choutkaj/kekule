@@ -2095,11 +2095,16 @@ covale A N 1 A CA 1 doub
         .unwrap()
         .into_parts();
     let first_atom = TopologyAtomIndex::new(0);
-    original.set_occupancy(first_atom, Some(0.625)).unwrap();
     original
+        .geometry_mut()
+        .set_occupancy(first_atom, Some(0.625))
+        .unwrap();
+    original
+        .geometry_mut()
         .set_b_factor(first_atom, Some(Quantity::new(0.125, SQUARE_NANOMETER)))
         .unwrap();
     original
+        .geometry_mut()
         .properties_mut()
         .atoms_mut()
         .insert(

@@ -4,8 +4,8 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{GeometryProperties, GeometryPropertiesMut, OwnerProperties};
 use crate::structure::scalars::AtomScalars;
 use crate::structure::{
-    DenseArrayError, Forces, Geometry, GeometryError, GeometryMut, Place, Positions, StructureView,
-    Velocities,
+    DenseArrayError, Forces, Geometry, GeometryError, GeometryMut, Place, Positions,
+    StructureSetError, StructureView, Velocities,
 };
 use crate::topology::Topology;
 use crate::traj::TrajectoryIoErrorKind;
@@ -56,7 +56,7 @@ impl<'a> FrameData<'a> {
     /// geometry properties, from a topology-bound frame.
     pub fn from_frame_view(frame: FrameView<'a>) -> Self {
         let geometry = frame.payload();
-        let state = geometry.state();
+        let data = geometry.data();
         Self {
             positions: geometry.positions().values(),
             cell: geometry.cell().copied(),
@@ -66,7 +66,7 @@ impl<'a> FrameData<'a> {
             step: frame.step(),
             owner: None,
             annotations: Some(geometry.properties()),
-            sites: Some((&state.occupancies, &state.b_factors)),
+            sites: Some((&data.occupancies, &data.b_factors)),
         }
     }
 
@@ -240,9 +240,9 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
-    /// invalid time; the buffer is then unchanged.
-    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), GeometryError> {
+    /// [`StructureSetError::NonFiniteTime`] or [`StructureSetError::Unit`]
+    /// for an invalid time; the buffer is then unchanged.
+    pub fn set_time(&mut self, time: Option<Quantity<f64>>) -> Result<(), StructureSetError> {
         self.time = canonical_time(time)?;
         Ok(())
     }
@@ -307,7 +307,7 @@ impl FrameBuffer {
         self.publish_forces(None);
         self.step = None;
         self.time = None;
-        let state = self.geometry.state_in_place();
+        let state = self.geometry.data_in_place();
         state.cell = None;
         state.occupancies = AtomScalars::default();
         state.b_factors = AtomScalars::default();
@@ -322,27 +322,32 @@ impl FrameBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::Array`] when positions, velocities, forces or
-    /// atom annotations have the wrong count, a non-finite value or a unit of
-    /// the wrong dimension, [`GeometryError::BondCountMismatch`] when bond
-    /// annotations have the wrong row count, and
-    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
-    /// invalid time. On error the buffer is unchanged.
-    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), GeometryError> {
-        self.positions().validate_all(&data.positions)?;
+    /// Returns [`StructureSetError::Geometry`] with
+    /// [`GeometryError::Array`] when positions, velocities, forces or atom
+    /// annotations have the wrong count, a non-finite value or a unit of the
+    /// wrong dimension, or with [`GeometryError::BondCountMismatch`] when
+    /// bond annotations have the wrong row count, and
+    /// [`StructureSetError::NonFiniteTime`] or [`StructureSetError::Unit`]
+    /// for an invalid time. On error the buffer is unchanged.
+    pub fn replace_from_data(&mut self, data: FrameData<'_>) -> Result<(), StructureSetError> {
+        self.positions()
+            .validate_all(&data.positions)
+            .map_err(GeometryError::from)?;
         let time = canonical_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
                 return Err(GeometryError::Array(DenseArrayError::CountMismatch {
                     expected: self.atom_count(),
                     actual: source.atoms().len(),
-                }));
+                })
+                .into());
             }
             if source.bonds().len() != self.properties().bonds().len() {
                 return Err(GeometryError::BondCountMismatch {
                     expected: self.properties().bonds().len(),
                     actual: source.bonds().len(),
-                });
+                }
+                .into());
             }
         }
         let velocities = data
@@ -357,7 +362,7 @@ impl FrameBuffer {
             Ok(forces) => forces,
             Err(error) => {
                 self.spare_velocities = velocities.or(self.spare_velocities.take());
-                return Err(error);
+                return Err(error.into());
             }
         };
 
@@ -366,7 +371,7 @@ impl FrameBuffer {
         self.publish_forces(forces);
         self.step = data.step;
         self.time = time;
-        let state = self.geometry.state_in_place();
+        let state = self.geometry.data_in_place();
         state
             .positions
             .set_all(data.positions)
@@ -453,8 +458,7 @@ impl FrameBuffer {
         if velocities.is_none() && self.geometry.velocities().is_none() {
             return;
         }
-        let previous =
-            std::mem::replace(&mut self.geometry.state_in_place().velocities, velocities);
+        let previous = std::mem::replace(&mut self.geometry.data_in_place().velocities, velocities);
         if previous.is_some() {
             self.spare_velocities = previous;
         }
@@ -464,7 +468,7 @@ impl FrameBuffer {
         if forces.is_none() && self.geometry.forces().is_none() {
             return;
         }
-        let previous = std::mem::replace(&mut self.geometry.state_in_place().forces, forces);
+        let previous = std::mem::replace(&mut self.geometry.data_in_place().forces, forces);
         if previous.is_some() {
             self.spare_forces = previous;
         }

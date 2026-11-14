@@ -23,7 +23,7 @@ use crate::properties::{
     GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
 };
 use crate::structure::{
-    Distribution, Members, Order, Structure, StructureKind, StructureSet, StructureView,
+    Distribution, Geometry, GeometryView, Members, Order, Structure, StructureSet,
 };
 
 use super::StructureSetDescription;
@@ -93,7 +93,7 @@ pub(crate) fn write_native_to<'a>(
             let set = ensemble.set();
             encoder.structure_set_head(SetHead::of_set(set))?;
             encoder.distribution(ensemble.distribution())?;
-            encoder.geometries(set.iter().map(|geometry| geometry.as_structure_view()))?;
+            encoder.geometries(set.iter().map(GeometryView::payload))?;
         }
         NativeContent::EnsembleDescription(description) => {
             encoder.structure_set_head(SetHead::of_description(description.set()))?;
@@ -722,18 +722,38 @@ impl<W: Write> Encoder<'_, W> {
 
     fn structure(&mut self, structure: &Structure) -> Result {
         self.topology(structure.topology())?;
-        self.points(structure.positions().values().value())?;
-        self.cell(structure.cell())?;
-        self.scalars(structure.occupancies())?;
-        self.scalars(structure.b_factors().map(|values| *values.value()))?;
-        self.geometry_properties(structure.properties())
+        self.geometry(structure)
+    }
+
+    /// One geometry: its positions, cell, site values, properties,
+    /// velocities, and forces.
+    fn geometry(&mut self, geometry: &Geometry) -> Result {
+        self.points(geometry.positions().values().value())?;
+        self.cell(geometry.cell())?;
+        self.scalars(geometry.occupancies())?;
+        self.scalars(geometry.b_factors().map(|values| *values.value()))?;
+        self.geometry_properties(geometry.properties())?;
+        match geometry.velocities() {
+            None => self.u8(0)?,
+            Some(velocities) => {
+                self.u8(1)?;
+                self.vectors(velocities.values().value())?;
+            }
+        }
+        match geometry.forces() {
+            None => self.u8(0),
+            Some(forces) => {
+                self.u8(1)?;
+                self.vectors(forces.values().value())
+            }
+        }
     }
 
     // Structure sets.
 
     fn structure_set(&mut self, set: &StructureSet) -> Result {
         self.structure_set_head(SetHead::of_set(set))?;
-        self.geometries(set.iter().map(|geometry| geometry.as_structure_view()))
+        self.geometries(set.iter().map(GeometryView::payload))
     }
 
     fn reports(&mut self, reports: &[StructureInterpretationReport]) -> Result {
@@ -821,34 +841,11 @@ impl<W: Write> Encoder<'_, W> {
         )
     }
 
-    /// The inline geometries section: each geometry's positions, cell, site
-    /// values, properties, velocities, and forces.
-    fn geometries<'v>(&mut self, geometries: impl Iterator<Item = StructureView<'v>>) -> Result {
+    /// The inline geometries section: each geometry in set order.
+    fn geometries<'g>(&mut self, geometries: impl Iterator<Item = &'g Geometry>) -> Result {
         self.u8(GEOMETRIES_INLINE)?;
-        for view in geometries {
-            let (velocities, forces) = match view.kind() {
-                StructureKind::InSet(context) => (context.velocities(), context.forces()),
-                _ => (None, None),
-            };
-            self.points(view.positions().values().value())?;
-            self.cell(view.cell())?;
-            self.scalars(view.occupancies())?;
-            self.scalars(view.b_factors().map(|values| *values.value()))?;
-            self.geometry_properties(view.properties())?;
-            match velocities {
-                None => self.u8(0)?,
-                Some(velocities) => {
-                    self.u8(1)?;
-                    self.vectors(velocities.values().value())?;
-                }
-            }
-            match forces {
-                None => self.u8(0)?,
-                Some(forces) => {
-                    self.u8(1)?;
-                    self.vectors(forces.values().value())?;
-                }
-            }
+        for geometry in geometries {
+            self.geometry(geometry)?;
         }
         Ok(())
     }

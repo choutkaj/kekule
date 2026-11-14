@@ -247,6 +247,7 @@ fn tiled_round_trip(copies: u32) {
         );
         let mut shifted = kras.clone();
         shifted
+            .geometry_mut()
             .apply_rigid_transform(
                 &RigidTransform::new(Matrix3::identity(), Quantity::new(offset, ANGSTROM)).unwrap(),
             )
