@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use kekule::diagnostics::{Countable, LengthMismatch, TopologyMismatch};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Ensemble, Positions, Structure, StructureView};
 use kekule::structure::{Geometry, Order, StructureSet, TimeAxis};
@@ -14,8 +15,8 @@ use kekule::units::{Quantity, ELEMENTARY_CHARGE, NANOMETER};
 use kekule_openff::{ForceField, ParameterizedTopology, VdwMethod};
 use kekule_potentials::openff::{OpenFfPotential, OpenFfPotentialError};
 use kekule_potentials::{
-    minimize, minimize_scoped, ComponentKind, EvaluationError, InteractionKind, MinimizationScope,
-    MinimizationStatus, MinimizeOptions, Potential, SingularGeometry,
+    minimize, minimize_scoped, ComponentKind, EvaluationError, MinimizationScope,
+    MinimizationStatus, MinimizeOptions, Potential, SingularGeometry, TermKind,
 };
 
 // Deliberately simple, distinct numbers make every handler visible in the
@@ -304,7 +305,9 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
     let other = self::structure(&self::topology(1));
     assert_eq!(
         potential.energy(other.as_structure_view()),
-        Err(EvaluationError::IncompatibleTopology)
+        Err(EvaluationError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     // Reperception publishes a new snapshot of the same layout, so the
     // prepared potential evaluates both identically.
@@ -388,7 +391,7 @@ fn singular_coordinates_name_the_qualified_atoms() {
     let carbon = structure.position(ids[1]).unwrap();
     structure.set_position(ids[13], carbon).unwrap();
     let expected = EvaluationError::InvalidGeometry {
-        interaction: InteractionKind::NonbondedPair,
+        term: TermKind::NonbondedPair,
         atoms: vec![ids[1], ids[13]],
         kind: SingularGeometry::CoincidentAtoms,
     };
@@ -430,11 +433,8 @@ fn replacement_charges_change_only_electrostatics() {
         OpenFfPotential::new(&p)
             .unwrap()
             .with_charges(Quantity::new(vec![0.0; 6], ELEMENTARY_CHARGE)),
-        Err(OpenFfPotentialError::AtomCountMismatch {
-            expected: 7,
-            actual: 6,
-            ..
-        })
+        Err(OpenFfPotentialError::ParameterCountMismatch(mismatch))
+            if mismatch == LengthMismatch::new(Countable::PartialCharge, 7, 6)
     ));
     assert!(OpenFfPotential::new(&p)
         .unwrap()

@@ -76,6 +76,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use kekule::diagnostics::{Countable, LengthMismatch, TopologyMismatch};
 use kekule::math::Vector3;
 use kekule::structure::StructureView;
 use kekule::topology::{InstanceAtomId, Topology};
@@ -84,14 +85,14 @@ use kekule::units::{
     CANONICAL_FORCE_CONSTANT_UNIT, CANONICAL_GRADIENT_UNIT, CANONICAL_LENGTH_UNIT,
 };
 use kekule_openff::{
-    ElectrostaticsMethod, Interaction, ParameterizedTopology, TorsionParameter, VdwMethod,
+    ElectrostaticsMethod, ParameterAssignment, ParameterizedTopology, TorsionParameter, VdwMethod,
 };
 
 use crate::mm::{
     self, FourierTerm, Gradients, HarmonicAngle, HarmonicBond, Nonbonded, PeriodicTorsion, Singular,
 };
 use crate::potential::{
-    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, InteractionKind, Potential,
+    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, Potential, TermKind,
 };
 
 const KINDS: [ComponentKind; mm::COMPONENTS] = [
@@ -155,7 +156,7 @@ impl OpenFfPotential {
     ///   [`OpenFfPotentialError::ZeroTorsionDivisor`] or
     ///   [`OpenFfPotentialError::Unit`] for a parameter that cannot be lowered.
     /// - [`OpenFfPotentialError::InvalidAtom`],
-    ///   [`OpenFfPotentialError::AtomCountMismatch`],
+    ///   [`OpenFfPotentialError::ParameterCountMismatch`],
     ///   [`OpenFfPotentialError::SelfPairException`] or
     ///   [`OpenFfPotentialError::DuplicatePairException`] for an assignment
     ///   inconsistent with its topology.
@@ -208,11 +209,9 @@ impl OpenFfPotential {
 
         let n = topology.atom_count();
         if parameters.vdw().len() != n {
-            return Err(OpenFfPotentialError::AtomCountMismatch {
-                array: PerAtomArray::VdwParameters,
-                expected: n,
-                actual: parameters.vdw().len(),
-            });
+            return Err(OpenFfPotentialError::ParameterCountMismatch(
+                LengthMismatch::new(Countable::VdwParameter, n, parameters.vdw().len()),
+            ));
         }
         let mut sigma = Vec::with_capacity(n);
         let mut epsilon = Vec::with_capacity(n);
@@ -273,7 +272,7 @@ impl OpenFfPotential {
     /// # Errors
     ///
     /// [`OpenFfPotentialError::Unit`] if `charges` are not charges,
-    /// [`OpenFfPotentialError::AtomCountMismatch`] unless there is one per
+    /// [`OpenFfPotentialError::ParameterCountMismatch`] unless there is one per
     /// atom, and [`OpenFfPotentialError::InvalidParameter`] for a nonfinite
     /// charge.
     pub fn with_charges(
@@ -287,11 +286,13 @@ impl OpenFfPotential {
     fn set_charges(&mut self, charges: Quantity<Vec<f64>>) -> Result<(), OpenFfPotentialError> {
         let charges = charges.into_unit(CANONICAL_CHARGE_UNIT)?.into_value();
         if charges.len() != self.topology.atom_count() {
-            return Err(OpenFfPotentialError::AtomCountMismatch {
-                array: PerAtomArray::Charges,
-                expected: self.topology.atom_count(),
-                actual: charges.len(),
-            });
+            return Err(OpenFfPotentialError::ParameterCountMismatch(
+                LengthMismatch::new(
+                    Countable::PartialCharge,
+                    self.topology.atom_count(),
+                    charges.len(),
+                ),
+            ));
         }
         for &charge in &charges {
             finite(OpenFfParameter::Charge, charge)?;
@@ -312,7 +313,7 @@ impl OpenFfPotential {
     ///
     /// # Errors
     ///
-    /// As [`Potential::evaluate`]: [`EvaluationError::IncompatibleTopology`],
+    /// As [`Potential::evaluate`]: [`EvaluationError::TopologyMismatch`],
     /// [`EvaluationError::UnsupportedPeriodicCell`],
     /// [`EvaluationError::InvalidGeometry`], or a nonfinite energy or gradient.
     pub fn evaluate_components(
@@ -349,14 +350,16 @@ impl OpenFfPotential {
         mut gradients: Gradients,
     ) -> Result<([f64; mm::COMPONENTS], Gradients), EvaluationError> {
         if !self.topology.shares_layout(structure.topology()) {
-            return Err(EvaluationError::IncompatibleTopology);
+            return Err(EvaluationError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
         }
         if structure.cell().is_some() {
             return Err(EvaluationError::UnsupportedPeriodicCell);
         }
         let x = structure.positions().values().into_value();
         let located = |error: Singular| EvaluationError::InvalidGeometry {
-            interaction: error.interaction,
+            term: error.interaction,
             atoms: error
                 .atoms
                 .iter()
@@ -369,7 +372,7 @@ impl OpenFfPotential {
         energies[mm::ANGLES] = mm::angles(&self.angles, x, &mut gradients).map_err(located)?;
         energies[mm::PROPER_TORSIONS] = mm::torsions(
             mm::PROPER_TORSIONS,
-            InteractionKind::ProperTorsion,
+            TermKind::ProperTorsion,
             &self.propers,
             x,
             &mut gradients,
@@ -377,7 +380,7 @@ impl OpenFfPotential {
         .map_err(located)?;
         energies[mm::IMPROPER_TORSIONS] = mm::torsions(
             mm::IMPROPER_TORSIONS,
-            InteractionKind::ImproperTorsion,
+            TermKind::ImproperTorsion,
             &self.impropers,
             x,
             &mut gradients,
@@ -452,7 +455,7 @@ fn dense<const N: usize>(
 
 fn torsions(
     topology: &Topology,
-    interactions: &[Interaction<4, TorsionParameter>],
+    interactions: &[ParameterAssignment<4, TorsionParameter>],
 ) -> Result<Vec<PeriodicTorsion>, OpenFfPotentialError> {
     let mut result = Vec::with_capacity(interactions.len());
     for term in interactions {
@@ -564,25 +567,6 @@ impl OpenFfParameter {
     }
 }
 
-/// A per-atom parameter array that must cover the bound topology.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PerAtomArray {
-    /// The assigned van der Waals parameters.
-    VdwParameters,
-    /// The partial charges.
-    Charges,
-}
-
-impl fmt::Display for PerAtomArray {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::VdwParameters => "vdW parameters",
-            Self::Charges => "charges",
-        })
-    }
-}
-
 /// A parameterization that cannot be lowered into an evaluable potential.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -593,17 +577,12 @@ pub enum OpenFfPotentialError {
     /// The nonperiodic electrostatics method has no implementation in this
     /// potential; only [`ElectrostaticsMethod::Coulomb`] is implemented.
     UnsupportedElectrostaticsMethod(ElectrostaticsMethod),
-    /// An interaction refers to an atom outside the bound topology.
+    /// A term refers to an atom outside the bound topology.
     InvalidAtom(InstanceAtomId),
-    /// A per-atom array does not cover the topology.
-    AtomCountMismatch {
-        /// The array that does not cover the topology.
-        array: PerAtomArray,
-        /// The topology's atom count.
-        expected: usize,
-        /// The array's length.
-        actual: usize,
-    },
+    /// A per-atom parameter array, of [`Countable::VdwParameter`]s or
+    /// [`Countable::PartialCharge`]s, does not have one entry per topology
+    /// atom.
+    ParameterCountMismatch(LengthMismatch),
     /// A parameter is not finite, or a Lennard-Jones parameter is negative.
     InvalidParameter {
         /// The parameter at fault.
@@ -639,18 +618,9 @@ impl fmt::Display for OpenFfPotentialError {
             ),
             Self::InvalidAtom(atom) => write!(
                 f,
-                "An interaction names {atom}. The topology has no such atom."
+                "A force-field term names {atom}. The topology has no such atom."
             ),
-            Self::AtomCountMismatch {
-                array,
-                expected,
-                actual,
-            } => write!(
-                f,
-                "The {array} cover {} {}, but the topology has {expected}.",
-                actual,
-                if *actual == 1 { "atom" } else { "atoms" }
-            ),
+            Self::ParameterCountMismatch(mismatch) => mismatch.fmt(f),
             Self::InvalidParameter { parameter, value } => {
                 let article = if parameter.to_string().starts_with(['a', 'e', 'i', 'o', 'u']) {
                     "An"

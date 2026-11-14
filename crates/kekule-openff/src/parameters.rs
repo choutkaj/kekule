@@ -167,23 +167,24 @@ impl ConstraintParameter {
         self.distance
     }
 }
-/// Parameter assignment on atoms qualified by an instance in the owning topology.
+/// One force-field term: a parameter assigned to atoms qualified by an
+/// instance in the owning topology.
 ///
-/// Interactions assigned by the same rule share one parameter allocation, so
-/// rule identities are not copied for every interaction of a large system.
+/// Terms assigned by the same rule share one parameter allocation, so rule
+/// identities are not copied for every term of a large system.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Interaction<const N: usize, P> {
+pub struct ParameterAssignment<const N: usize, P> {
     pub(crate) atoms: [InstanceAtomId; N],
     pub(crate) parameter: Arc<P>,
 }
 
-impl<const N: usize, P> Interaction<N, P> {
-    /// The interacting atoms, in the order the parameter's functional form uses.
+impl<const N: usize, P> ParameterAssignment<N, P> {
+    /// The term's atoms, in the order the parameter's functional form uses.
     pub const fn atoms(&self) -> [InstanceAtomId; N] {
         self.atoms
     }
 
-    /// The assigned parameter, shared by every interaction of the same rule.
+    /// The assigned parameter, shared by every term of the same rule.
     pub fn parameter(&self) -> &Arc<P> {
         &self.parameter
     }
@@ -337,11 +338,11 @@ impl NonbondedSettings {
 #[derive(Debug, Clone)]
 pub struct ParameterizedTopology {
     pub(crate) topology: Arc<Topology>,
-    pub(crate) bonds: Vec<Interaction<2, BondParameter>>,
-    pub(crate) angles: Vec<Interaction<3, AngleParameter>>,
-    pub(crate) propers: Vec<Interaction<4, TorsionParameter>>,
-    pub(crate) impropers: Vec<Interaction<4, TorsionParameter>>,
-    pub(crate) constraints: Vec<Interaction<2, ConstraintParameter>>,
+    pub(crate) bonds: Vec<ParameterAssignment<2, BondParameter>>,
+    pub(crate) angles: Vec<ParameterAssignment<3, AngleParameter>>,
+    pub(crate) propers: Vec<ParameterAssignment<4, TorsionParameter>>,
+    pub(crate) impropers: Vec<ParameterAssignment<4, TorsionParameter>>,
+    pub(crate) constraints: Vec<ParameterAssignment<2, ConstraintParameter>>,
     pub(crate) vdw: Vec<Arc<VdwParameter>>,
     pub(crate) charges: Quantity<Vec<f64>>,
     pub(crate) charge_sources: Vec<crate::ChargeSource>,
@@ -361,28 +362,28 @@ impl ParameterizedTopology {
     }
 
     /// Harmonic bond terms, including bonds that are also constrained.
-    pub fn bonds(&self) -> &[Interaction<2, BondParameter>] {
+    pub fn bonds(&self) -> &[ParameterAssignment<2, BondParameter>] {
         &self.bonds
     }
 
     /// Harmonic angle terms.
-    pub fn angles(&self) -> &[Interaction<3, AngleParameter>] {
+    pub fn angles(&self) -> &[ParameterAssignment<3, AngleParameter>] {
         &self.angles
     }
 
     /// Proper torsion terms, with `auto` divisors resolved.
-    pub fn proper_torsions(&self) -> &[Interaction<4, TorsionParameter>] {
+    pub fn proper_torsions(&self) -> &[ParameterAssignment<4, TorsionParameter>] {
         &self.propers
     }
 
     /// Improper torsion terms: three trefoil interactions per matched improper,
     /// each with the central atom first.
-    pub fn improper_torsions(&self) -> &[Interaction<4, TorsionParameter>] {
+    pub fn improper_torsions(&self) -> &[ParameterAssignment<4, TorsionParameter>] {
         &self.impropers
     }
 
     /// Distance constraints.
-    pub fn constraints(&self) -> &[Interaction<2, ConstraintParameter>] {
+    pub fn constraints(&self) -> &[ParameterAssignment<2, ConstraintParameter>] {
         &self.constraints
     }
 

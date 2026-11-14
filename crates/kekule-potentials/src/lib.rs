@@ -82,6 +82,6 @@ pub use minimize::{
     MinimizeOptions, NumericalFailure, PositionRestraint, RestraintProblem,
 };
 pub use potential::{
-    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, InteractionKind,
-    Potential, SingularGeometry,
+    ComponentKind, Energy, EnergyComponent, Evaluation, EvaluationError, Potential,
+    SingularGeometry, TermKind,
 };
