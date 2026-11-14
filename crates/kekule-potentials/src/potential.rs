@@ -11,6 +11,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use kekule::diagnostics::{Countable, LengthMismatch, TopologyMismatch};
 use kekule::math::Vector3;
 use kekule::structure::StructureView;
 use kekule::topology::{InstanceAtomId, Topology};
@@ -36,7 +37,7 @@ use kekule::units::{Quantity, UnitError, CANONICAL_ENERGY_UNIT, CANONICAL_GRADIE
 ///   unchanged for the potential's whole life.
 /// - [`Self::evaluate`] and [`Self::energy`] accept every view whose topology
 ///   shares that layout, including perceived snapshots, and return
-///   [`EvaluationError::IncompatibleTopology`] for any other view, including
+///   [`EvaluationError::TopologyMismatch`] for any other view, including
 ///   one of an independently equal topology.
 /// - State the potential cannot evaluate, such as an unsupported periodic
 ///   cell, is rejected with an error rather than ignored.
@@ -231,7 +232,7 @@ impl Evaluation {
     /// # Errors
     ///
     /// - [`EvaluationError::Unit`] if `gradient` is not an energy per length.
-    /// - [`EvaluationError::GradientLengthMismatch`] if it does not have one
+    /// - [`EvaluationError::GradientCountMismatch`] if it does not have one
     ///   vector per atom of `structure`.
     /// - [`EvaluationError::NonFiniteGradient`] naming the first atom whose
     ///   gradient is not finite.
@@ -242,10 +243,11 @@ impl Evaluation {
     ) -> Result<Self, EvaluationError> {
         let gradient = gradient.into_unit(CANONICAL_GRADIENT_UNIT)?.into_value();
         if gradient.len() != structure.atom_count() {
-            return Err(EvaluationError::GradientLengthMismatch {
-                expected: structure.atom_count(),
-                actual: gradient.len(),
-            });
+            return Err(EvaluationError::GradientCountMismatch(LengthMismatch::new(
+                Countable::Gradient,
+                structure.atom_count(),
+                gradient.len(),
+            )));
         }
         if let Some(index) = gradient.iter().position(|g| !g.is_finite()) {
             return Err(EvaluationError::NonFiniteGradient {
@@ -337,10 +339,10 @@ impl fmt::Display for SingularGeometry {
     }
 }
 
-/// The kind of interaction whose coordinates are singular.
+/// The kind of energy term whose coordinates are singular.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum InteractionKind {
+pub enum TermKind {
     /// A harmonic bond stretch.
     Bond,
     /// A harmonic angle bend.
@@ -355,7 +357,7 @@ pub enum InteractionKind {
     Restraint,
 }
 
-impl fmt::Display for InteractionKind {
+impl fmt::Display for TermKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Bond => "harmonic bond",
@@ -372,30 +374,27 @@ impl fmt::Display for InteractionKind {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum EvaluationError {
-    /// The evaluated view does not share the potential's topology layout.
-    IncompatibleTopology,
+    /// The evaluated view ([`TopologyMismatch::Structure`]) does not share the
+    /// potential's topology layout.
+    TopologyMismatch(TopologyMismatch),
     /// The potential has no evaluation policy for periodic cells.
     UnsupportedPeriodicCell,
-    /// The coordinates are singular for a required interaction.
+    /// The coordinates are singular for a required term.
     InvalidGeometry {
-        /// The interaction that is undefined.
-        interaction: InteractionKind,
-        /// The atoms of the interaction.
+        /// The term that is undefined.
+        term: TermKind,
+        /// The atoms of the term.
         atoms: Vec<InstanceAtomId>,
-        /// Why the interaction is undefined.
+        /// Why the term is undefined.
         kind: SingularGeometry,
     },
     /// The potential produced a non-finite energy.
     NonFiniteEnergy,
     /// An energy decomposition named one component twice.
     DuplicateComponent(ComponentKind),
-    /// The potential produced a gradient array of the wrong length.
-    GradientLengthMismatch {
-        /// The structure's atom count.
-        expected: usize,
-        /// The number of gradients produced.
-        actual: usize,
-    },
+    /// The potential produced a number of [`Countable::Gradient`]s other than
+    /// the structure's atom count.
+    GradientCountMismatch(LengthMismatch),
     /// The potential produced a non-finite gradient.
     NonFiniteGradient {
         /// The atom whose gradient is not finite.
@@ -412,29 +411,21 @@ impl PartialEq for EvaluationError {
     /// Backend failures compare equal when their messages are equal.
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::IncompatibleTopology, Self::IncompatibleTopology)
-            | (Self::UnsupportedPeriodicCell, Self::UnsupportedPeriodicCell)
+            (Self::UnsupportedPeriodicCell, Self::UnsupportedPeriodicCell)
             | (Self::NonFiniteEnergy, Self::NonFiniteEnergy) => true,
+            (Self::TopologyMismatch(subject), Self::TopologyMismatch(other)) => subject == other,
             (
+                Self::InvalidGeometry { term, atoms, kind },
                 Self::InvalidGeometry {
-                    interaction,
-                    atoms,
-                    kind,
-                },
-                Self::InvalidGeometry {
-                    interaction: other_interaction,
+                    term: other_term,
                     atoms: other_atoms,
                     kind: other_kind,
                 },
-            ) => interaction == other_interaction && atoms == other_atoms && kind == other_kind,
+            ) => term == other_term && atoms == other_atoms && kind == other_kind,
             (Self::DuplicateComponent(kind), Self::DuplicateComponent(other)) => kind == other,
-            (
-                Self::GradientLengthMismatch { expected, actual },
-                Self::GradientLengthMismatch {
-                    expected: other_expected,
-                    actual: other_actual,
-                },
-            ) => expected == other_expected && actual == other_actual,
+            (Self::GradientCountMismatch(mismatch), Self::GradientCountMismatch(other)) => {
+                mismatch == other
+            }
             (Self::NonFiniteGradient { atom }, Self::NonFiniteGradient { atom: other }) => {
                 atom == other
             }
@@ -462,18 +453,12 @@ impl EvaluationError {
 impl fmt::Display for EvaluationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IncompatibleTopology => f.write_str(
-                "The structure view has a different topology layout from the potential.",
-            ),
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::UnsupportedPeriodicCell => {
                 f.write_str("The potential does not support periodic cells.")
             }
-            Self::InvalidGeometry {
-                interaction,
-                atoms,
-                kind,
-            } => {
-                write!(f, "The {interaction} of ")?;
+            Self::InvalidGeometry { term, atoms, kind } => {
+                write!(f, "The {term} of ")?;
                 for (index, atom) in atoms.iter().enumerate() {
                     if index + 1 == atoms.len() && index != 0 {
                         f.write_str(" and ")?;
@@ -488,10 +473,7 @@ impl fmt::Display for EvaluationError {
             Self::DuplicateComponent(kind) => {
                 write!(f, "The energy decomposition repeats the {kind} component.")
             }
-            Self::GradientLengthMismatch { expected, actual } => write!(
-                f,
-                "The potential produced {actual} gradients for a structure with {expected} atoms."
-            ),
+            Self::GradientCountMismatch(mismatch) => mismatch.fmt(f),
             Self::NonFiniteGradient { atom } => {
                 write!(f, "The gradient on {atom} is not finite.")
             }

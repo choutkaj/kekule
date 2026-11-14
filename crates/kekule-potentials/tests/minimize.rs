@@ -4,6 +4,7 @@
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
+use kekule::diagnostics::TopologyMismatch;
 use kekule::math::{Point3, Vector3};
 use kekule::parallel::Run;
 use kekule::structure::{Positions, Structure, StructureView};
@@ -14,8 +15,8 @@ use kekule::units::{
 };
 use kekule_potentials::{
     minimize, minimize_scoped, minimize_scoped_with, minimize_with, Energy, Evaluation,
-    EvaluationError, InteractionKind, MinimizationError, MinimizationScope, MinimizationStatus,
-    MinimizeOption, MinimizeOptions, Potential, RestraintProblem, SingularGeometry,
+    EvaluationError, MinimizationError, MinimizationScope, MinimizationStatus, MinimizeOption,
+    MinimizeOptions, Potential, RestraintProblem, SingularGeometry, TermKind,
 };
 
 /// `sum_i sum_axis k_axis * scale * (x - center_i)^2`, optionally singular
@@ -49,7 +50,9 @@ impl Potential for Bowl {
 
     fn evaluate(&self, structure: StructureView<'_>) -> Result<Evaluation, EvaluationError> {
         if !self.topology.shares_layout(structure.topology()) {
-            return Err(EvaluationError::IncompatibleTopology);
+            return Err(EvaluationError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
         }
         let x = structure.positions().values().into_value();
         let mut energy = 0.0;
@@ -57,7 +60,7 @@ impl Potential for Bowl {
         for (index, (p, c)) in x.iter().zip(&self.centers).enumerate() {
             if p.x > self.wall {
                 return Err(EvaluationError::InvalidGeometry {
-                    interaction: InteractionKind::Restraint,
+                    term: TermKind::Restraint,
                     atoms: vec![structure.topology().atom_ids()[index]],
                     kind: SingularGeometry::CoincidentAtoms,
                 });
@@ -215,7 +218,9 @@ fn singular_trials_are_backtracked_but_other_failures_abort() {
     .unwrap_err();
     assert_eq!(
         error,
-        MinimizationError::Evaluation(Box::new(EvaluationError::IncompatibleTopology))
+        MinimizationError::Evaluation(Box::new(EvaluationError::TopologyMismatch(
+            TopologyMismatch::Structure
+        )))
     );
 }
 
@@ -321,7 +326,9 @@ impl Potential for Chain {
 
     fn evaluate(&self, structure: StructureView<'_>) -> Result<Evaluation, EvaluationError> {
         if !self.topology.shares_layout(structure.topology()) {
-            return Err(EvaluationError::IncompatibleTopology);
+            return Err(EvaluationError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
         }
         let x = structure.positions().values().into_value();
         let mut energy = 0.0;
@@ -533,7 +540,7 @@ fn invalid_scopes_and_restraints_are_rejected() {
     let foreign = MinimizationScope::all(other.shared_topology());
     assert_eq!(
         minimize_scoped(&bowl, structure.as_structure_view(), &foreign, &tight(1e-6)).unwrap_err(),
-        MinimizationError::IncompatibleTopology
+        MinimizationError::TopologyMismatch(TopologyMismatch::Selection)
     );
 
     let atom = structure.topology().atom_ids()[0];

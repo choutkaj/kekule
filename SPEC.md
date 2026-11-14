@@ -1027,9 +1027,11 @@ in this result rather than in molecule properties. The crate is pure Rust.
 Model bundles own feature ordering, network configuration, and lookup data;
 OFFXML keeps the required checkpoint identity, which parameterization checks
 against the supplied model. The converted Ash model the bundled Rosemary preset
-requires ships as data in the separate `kekule-openff-ash` crate, a default
-feature, so the preset works without external files while the main crate stays
-within the crates.io size limit. Every failure is one typed error with a stable
+requires ships as data in the separate `kekule-openff-ash` crate, behind the
+default `ash` feature, so the preset works without external files while the
+main crate stays within the crates.io size limit. Dependents within the
+workspace disable `kekule-openff`'s default features and enable `ash` through
+a feature of their own. Every failure is one typed error with a stable
 kind, the failing molecule definition, and every atom it concerns. Checkpoint
 conversion and the provenance of shipped data live in `tools/openff`.
 

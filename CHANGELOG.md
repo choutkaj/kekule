@@ -353,6 +353,19 @@ through the workspace.
 - **Breaking:** `kekule-potentials`' `minimize_with_observer` is
   `minimize_with(potential, structure, options, observer, run)`, whose
   `parallel::Run` can cancel (`MinimizationError::Cancelled`).
+- **Breaking:** `kekule-potentials`' `openff` feature no longer bundles the
+  Ash charge model; its new default `ash` feature does.
+- **Breaking:** `kekule-potentials`' `InteractionKind` is `TermKind`, and
+  `EvaluationError::InvalidGeometry`'s `interaction` is `term`;
+  `kekule-openff`'s `Interaction` is `ParameterAssignment`.
+- **Breaking:** `kekule-potentials`' errors hold the shared payloads:
+  `EvaluationError` and `MinimizationError` `IncompatibleTopology` are
+  `TopologyMismatch(TopologyMismatch)`,
+  `EvaluationError::GradientLengthMismatch` is
+  `GradientCountMismatch(LengthMismatch)`, and
+  `OpenFfPotentialError::AtomCountMismatch` is
+  `ParameterCountMismatch(LengthMismatch)`, counted by the new `Countable`
+  `Gradient`, `PartialCharge`, and `VdwParameter`; `PerAtomArray` is removed.
 - **Breaking:** Facts that several errors report are shared payloads in
   `diagnostics`, with one message each: `IndexOutOfRange`, `LengthMismatch`,
   `TopologyMismatch`, `CapacityExceeded`, and `UnknownHydrogenCount`, counted

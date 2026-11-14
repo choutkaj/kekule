@@ -58,6 +58,12 @@ pub enum Countable {
     Report,
     /// Values of a property column.
     Value,
+    /// Energy gradients, one per atom.
+    Gradient,
+    /// Partial charges, one per atom.
+    PartialCharge,
+    /// Van der Waals parameters, one per atom.
+    VdwParameter,
 }
 
 impl Countable {
@@ -87,6 +93,9 @@ impl Countable {
             Self::Water => "water molecule",
             Self::Report => "interpretation report",
             Self::Value => "value",
+            Self::Gradient => "gradient",
+            Self::PartialCharge => "partial charge",
+            Self::VdwParameter => "vdW parameter",
         }
     }
 
@@ -116,6 +125,9 @@ impl Countable {
             Self::Water => "water molecules",
             Self::Report => "interpretation reports",
             Self::Value => "values",
+            Self::Gradient => "gradients",
+            Self::PartialCharge => "partial charges",
+            Self::VdwParameter => "vdW parameters",
         }
     }
 
