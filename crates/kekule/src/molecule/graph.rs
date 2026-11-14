@@ -248,3 +248,9 @@ impl Graph {
             .filter_map(|(raw, group)| group.as_ref().map(|group| (StereoGroupId::new(raw), group)))
     }
 }
+
+impl<T> crate::properties::RowLiveness for Vec<Option<T>> {
+    fn is_live(&self, row: usize) -> bool {
+        self.get(row).is_none_or(Option::is_some)
+    }
+}

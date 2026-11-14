@@ -597,26 +597,36 @@ pub struct PropertyTableMut<'a, R> {
     live: LiveRows<'a>,
 }
 
-/// Which rows of a table may receive values; editor drafts keep the rows of
-/// removed atoms and bonds allocated but writable only as missing.
-#[derive(Debug, Clone, Copy)]
+/// The row-liveness policy of a table: every row of a published owner, or
+/// only the live slots of an editor draft, whose removed rows accept missing
+/// values alone.
+#[derive(Clone, Copy)]
 pub(crate) enum LiveRows<'a> {
     All,
-    Atoms(&'a [Option<crate::molecule::Atom>]),
-    Bonds(&'a [Option<crate::molecule::Bond>]),
+    Slots(&'a dyn RowLiveness),
+}
+
+/// Which slots of a draft identifier space are live.
+pub(crate) trait RowLiveness {
+    fn is_live(&self, row: usize) -> bool;
+}
+
+impl fmt::Debug for LiveRows<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::All => "All",
+            Self::Slots(_) => "Slots",
+        })
+    }
 }
 
 impl LiveRows<'_> {
     fn check(self, row: usize) -> Result<(), PropertyError> {
-        let live = match self {
-            Self::All => true,
-            Self::Atoms(slots) => slots.get(row).is_none_or(Option::is_some),
-            Self::Bonds(slots) => slots.get(row).is_none_or(Option::is_some),
-        };
-        if live {
-            Ok(())
-        } else {
-            Err(PropertyError::RemovedRow { index: row })
+        match self {
+            Self::Slots(slots) if !slots.is_live(row) => {
+                Err(PropertyError::RemovedRow { index: row })
+            }
+            _ => Ok(()),
         }
     }
 
@@ -1247,16 +1257,15 @@ impl std::ops::Deref for MoleculePropertiesMut<'_> {
 }
 
 impl<'a> MoleculePropertiesMut<'a> {
-    /// Rows of removed draft atoms and bonds reject values.
     pub(crate) fn new(
         properties: &'a mut MoleculeProperties,
-        atoms: &'a [Option<crate::molecule::Atom>],
-        bonds: &'a [Option<crate::molecule::Bond>],
+        atoms_live: LiveRows<'a>,
+        bonds_live: LiveRows<'a>,
     ) -> Self {
         Self {
             properties,
-            atoms_live: LiveRows::Atoms(atoms),
-            bonds_live: LiveRows::Bonds(bonds),
+            atoms_live,
+            bonds_live,
         }
     }
 
@@ -1851,7 +1860,7 @@ mod tests {
     fn typed_tables_address_rows_and_batch_updates_are_transactional() {
         let tag = key("tag");
         let mut properties = MoleculeProperties::new(3, 0);
-        let mut guard = MoleculePropertiesMut::new(&mut properties, &[], &[]);
+        let mut guard = MoleculePropertiesMut::new(&mut properties, LiveRows::All, LiveRows::All);
         guard
             .atoms_mut()
             .set_values(

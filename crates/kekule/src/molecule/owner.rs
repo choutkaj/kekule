@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
-use crate::properties::{MoleculeProperties, MoleculePropertiesMut};
+use crate::properties::{LiveRows, MoleculeProperties, MoleculePropertiesMut};
 
 use super::*;
 use crate::stereo::StereoViolation;
@@ -371,7 +371,11 @@ impl Molecule {
     /// Length-preserving mutable access to the annotations. Property edits
     /// never invalidate perception or change molecular equality.
     pub fn properties_mut(&mut self) -> MoleculePropertiesMut<'_> {
-        MoleculePropertiesMut::new(&mut self.properties, &self.graph.atoms, &self.graph.bonds)
+        MoleculePropertiesMut::new(
+            &mut self.properties,
+            LiveRows::Slots(&self.graph.atoms),
+            LiveRows::Slots(&self.graph.bonds),
+        )
     }
 
     /// The installed derived chemistry; sections not yet perceived are absent.
