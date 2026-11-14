@@ -1,6 +1,7 @@
 //! Interaction features perceived once per topology.
 
 use crate::diagnostics::TopologyMismatch;
+use crate::fixed_u32_id::FixedId;
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
@@ -615,7 +616,7 @@ impl Local {
         }
 
         for (index, atom) in sites.iter().enumerate() {
-            let id = AtomId::new(index as u32);
+            let id = AtomId::from_index(index);
             let element = atom.element;
             if element == Element::H {
                 continue;
@@ -767,7 +768,7 @@ fn charged_groups(sites: &[Site]) -> Vec<(ChargeSign, ChargedGroupKind, Vec<Atom
     };
     // Acids first, then bases, then the remaining formal charges.
     for (index, atom) in sites.iter().enumerate() {
-        let id = AtomId::new(index as u32);
+        let id = AtomId::from_index(index);
         let oxygens = terminal_oxygens(atom);
         // An acid has an oxo or deprotonated oxygen, unlike a geminal diol.
         let acid = atom.heavy.iter().any(|(other, order)| {
@@ -800,7 +801,7 @@ fn charged_groups(sites: &[Site]) -> Vec<(ChargeSign, ChargedGroupKind, Vec<Atom
         }
     }
     for (index, atom) in sites.iter().enumerate() {
-        let id = AtomId::new(index as u32);
+        let id = AtomId::from_index(index);
         if atom.element != Element::C || atom.aromatic {
             continue;
         }
@@ -837,7 +838,7 @@ fn charged_groups(sites: &[Site]) -> Vec<(ChargeSign, ChargedGroupKind, Vec<Atom
         }
     }
     for (index, atom) in sites.iter().enumerate() {
-        let id = AtomId::new(index as u32);
+        let id = AtomId::from_index(index);
         let amine = atom.element == Element::N
             && !atom.aromatic
             && atom.charge >= 0
@@ -858,7 +859,7 @@ fn charged_groups(sites: &[Site]) -> Vec<(ChargeSign, ChargedGroupKind, Vec<Atom
         }
     }
     for (index, atom) in sites.iter().enumerate() {
-        let id = AtomId::new(index as u32);
+        let id = AtomId::from_index(index);
         if atom.charge == 0 || atom.element == Element::H || is_metal(atom.element) {
             continue;
         }

@@ -1,4 +1,5 @@
 use crate::diagnostics::TopologyMismatch;
+use crate::fixed_u32_id::FixedId;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
@@ -341,7 +342,7 @@ impl AtomSelection {
                 .into_iter()
                 .enumerate()
                 .filter(|(_, selected)| *selected)
-                .map(|(index, _)| TopologyAtomIndex::new(index as u32))
+                .map(|(index, _)| TopologyAtomIndex::from_index(index))
                 .collect(),
         }
     }
@@ -413,7 +414,7 @@ impl AtomSelection {
         Self {
             topology: Arc::clone(topology),
             indices: (0..topology.atom_count())
-                .map(|index| TopologyAtomIndex::new(index as u32))
+                .map(TopologyAtomIndex::from_index)
                 .collect(),
         }
     }

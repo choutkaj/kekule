@@ -73,6 +73,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::fixed_u32_id::FixedId;
 use crate::molecule::{AtomId, BondId, Molecule};
 use crate::properties::{
     PropertyKey, PropertyValue, PropertyValueRef, TopologyProperties, TopologyPropertiesMut,
@@ -1181,13 +1182,13 @@ impl Topology {
     /// Atoms in authoritative dense order.
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = AtomView<'_>> + DoubleEndedIterator {
         (0..self.atom_count())
-            .map(|index| AtomView::new(self, TopologyAtomIndex::new(index as u32)))
+            .map(|index| AtomView::new(self, TopologyAtomIndex::from_index(index)))
     }
 
     /// Bonds in authoritative dense order.
     pub fn bonds(&self) -> impl ExactSizeIterator<Item = BondView<'_>> + DoubleEndedIterator {
         (0..self.bond_count())
-            .map(|index| BondView::new(self, TopologyBondIndex::new(index as u32)))
+            .map(|index| BondView::new(self, TopologyBondIndex::from_index(index)))
     }
 
     /// The number of atoms across all instances.
@@ -1215,7 +1216,7 @@ impl Topology {
     pub fn atom_index(&self, atom: InstanceAtomId) -> Option<TopologyAtomIndex> {
         self.atom_order
             .index(atom)
-            .map(|index| TopologyAtomIndex::new(index as u32))
+            .map(TopologyAtomIndex::from_index)
     }
 
     /// The qualified atom at a dense index, or `None` when `index` is not below
@@ -1229,7 +1230,7 @@ impl Topology {
     pub fn bond_index(&self, bond: InstanceBondId) -> Option<TopologyBondIndex> {
         self.bond_order
             .index(bond)
-            .map(|index| TopologyBondIndex::new(index as u32))
+            .map(TopologyBondIndex::from_index)
     }
 
     /// The qualified bond at a dense index, or `None` when `index` is not below

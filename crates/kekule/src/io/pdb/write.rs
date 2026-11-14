@@ -16,6 +16,7 @@
 //! the `SOL1` and `ION1` chains [`crate::solvation::solvate`] adds, is
 //! written as a segment identifier under [`PdbChainIdPolicy::SegmentId`].
 use crate::diagnostics::{Countable, LengthMismatch};
+use crate::fixed_u32_id::FixedId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
@@ -1515,9 +1516,7 @@ fn template_conflict(
             continue;
         };
         let order = topology
-            .atom_at(TopologyAtomIndex::new(
-                u32::try_from(left).expect("dense indices fit u32"),
-            ))
+            .atom_at(TopologyAtomIndex::from_index(left))
             .expect("records follow dense atoms")
             .bonds()
             .find(|candidate| {
@@ -1593,7 +1592,7 @@ fn structure_values(view: StructureView<'_>, plan: &Plan) -> Result<Vec<SiteValu
     };
     let mut rows = Vec::with_capacity(plan.records.len());
     for (index, record) in plan.records.iter().enumerate() {
-        let dense = TopologyAtomIndex::new(u32::try_from(index).expect("dense indices fit u32"));
+        let dense = TopologyAtomIndex::from_index(index);
         let position = view
             .positions()
             .get(index)

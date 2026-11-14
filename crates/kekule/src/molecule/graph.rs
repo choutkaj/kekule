@@ -1,5 +1,6 @@
 //! Graph storage for published molecules ([`Graph`]) and editor drafts
 //! ([`DraftGraph`]).
+use crate::fixed_u32_id::FixedId;
 use std::fmt;
 use std::iter::{DoubleEndedIterator, Enumerate};
 
@@ -243,11 +244,6 @@ impl<T: Value, L: SlotLiveness> DoubleEndedIterator for LiveSlots<'_, T, L> {
 
 impl<T: Value, L: SlotLiveness> ExactSizeIterator for LiveSlots<'_, T, L> {}
 
-/// The identifier of slot `index`; insertion checked that it fits.
-fn id_at<Id>(index: usize, id: impl FnOnce(u32) -> Id) -> Id {
-    id(u32::try_from(index).expect("slot indices fit their identifier width"))
-}
-
 /// Authoritative represented chemistry: atoms, bonds, adjacency, and
 /// represented stereochemistry.
 ///
@@ -356,7 +352,7 @@ impl<L: SlotLiveness> Graph<L> {
     ) -> impl ExactSizeIterator<Item = (AtomId, &Atom)> + DoubleEndedIterator + '_ {
         self.atoms
             .iter()
-            .map(|(index, atom)| (id_at(index, AtomId::new), atom))
+            .map(|(index, atom)| (AtomId::from_index(index), atom))
     }
 
     /// Atom IDs.
@@ -375,7 +371,7 @@ impl<L: SlotLiveness> Graph<L> {
     ) -> impl ExactSizeIterator<Item = (BondId, &Bond)> + DoubleEndedIterator + '_ {
         self.bonds
             .iter()
-            .map(|(index, bond)| (id_at(index, BondId::new), bond))
+            .map(|(index, bond)| (BondId::from_index(index), bond))
     }
 
     /// Bond IDs.
@@ -428,7 +424,7 @@ impl<L: SlotLiveness> Graph<L> {
     {
         self.stereo_elements
             .iter()
-            .map(|(index, element)| (id_at(index, StereoElementId::new), element))
+            .map(|(index, element)| (StereoElementId::from_index(index), element))
     }
 
     /// Represented stereo element IDs.
@@ -450,7 +446,7 @@ impl<L: SlotLiveness> Graph<L> {
     {
         self.stereo_groups
             .iter()
-            .map(|(index, group)| (id_at(index, StereoGroupId::new), group))
+            .map(|(index, group)| (StereoGroupId::from_index(index), group))
     }
 
     /// Connected components in ascending order of their smallest atom, each
@@ -595,7 +591,7 @@ impl Graph {
 impl DraftGraph {
     pub(crate) fn push_atom(&mut self, atom: Atom) -> AtomId {
         self.adjacency.push(Vec::new());
-        id_at(self.atoms.push(atom), AtomId::new)
+        AtomId::from_index(self.atoms.push(atom))
     }
 
     /// Removes an atom whose bonds are already deleted.
@@ -612,7 +608,7 @@ impl DraftGraph {
     /// Stores a bond between live, distinct, unbonded atoms.
     pub(crate) fn push_bond(&mut self, bond: Bond) -> BondId {
         let (a, b) = bond.endpoints();
-        let id = id_at(self.bonds.push(bond), BondId::new);
+        let id = BondId::from_index(self.bonds.push(bond));
         self.adjacency[a.index()].push(id);
         self.adjacency[b.index()].push(id);
         id
@@ -654,7 +650,7 @@ impl DraftGraph {
     }
 
     pub(crate) fn push_stereo_element(&mut self, element: StereoElement) -> StereoElementId {
-        id_at(self.stereo_elements.push(element), StereoElementId::new)
+        StereoElementId::from_index(self.stereo_elements.push(element))
     }
 
     pub(crate) fn stereo_element_mut(&mut self, id: StereoElementId) -> Option<&mut StereoElement> {
@@ -678,7 +674,7 @@ impl DraftGraph {
     }
 
     pub(crate) fn push_stereo_group(&mut self, group: StereoGroup) -> StereoGroupId {
-        id_at(self.stereo_groups.push(group), StereoGroupId::new)
+        StereoGroupId::from_index(self.stereo_groups.push(group))
     }
 
     pub(crate) fn stereo_group_mut(&mut self, id: StereoGroupId) -> Option<&mut StereoGroup> {
@@ -789,10 +785,7 @@ impl SlotCompaction {
 
     /// The draft ID of published stereo element `published`.
     pub(crate) fn draft_stereo_element(&self, published: StereoElementId) -> StereoElementId {
-        id_at(
-            live_slots(&self.stereo_elements)[published.index()],
-            StereoElementId::new,
-        )
+        StereoElementId::from_index(live_slots(&self.stereo_elements)[published.index()])
     }
 
     /// Rewrites `element`'s atom and bond references from published IDs back
@@ -801,8 +794,8 @@ impl SlotCompaction {
         let atoms = self.live_atom_slots();
         let bonds = self.live_bond_slots();
         element.map_references(
-            |id| id_at(atoms[id.index()], AtomId::new),
-            |id| id_at(bonds[id.index()], BondId::new),
+            |id| AtomId::from_index(atoms[id.index()]),
+            |id| BondId::from_index(bonds[id.index()]),
         );
     }
 }

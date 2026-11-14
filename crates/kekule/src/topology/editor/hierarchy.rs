@@ -1,4 +1,5 @@
 use super::*;
+use crate::fixed_u32_id::FixedId;
 
 /// Coordinate-free chain metadata in a draft. Use editor methods to change it.
 #[derive(Debug, Clone)]
@@ -142,7 +143,7 @@ impl<'a> SourceHierarchy<'a> {
     }
 
     pub(super) fn chain(self, index: usize) -> EditChain {
-        let (hierarchy, chain) = (self.source().hierarchy(), ChainId::new(index as u32));
+        let (hierarchy, chain) = (self.source().hierarchy(), ChainId::from_index(index));
         EditChain {
             label: hierarchy.chain_label_id(chain).to_owned(),
             author: hierarchy.chain_author_id(chain).map(str::to_owned),
@@ -151,7 +152,7 @@ impl<'a> SourceHierarchy<'a> {
     }
 
     pub(super) fn residue(self, index: usize) -> EditResidue {
-        let (hierarchy, residue) = (self.source().hierarchy(), ResidueId::new(index as u32));
+        let (hierarchy, residue) = (self.source().hierarchy(), ResidueId::from_index(index));
         EditResidue {
             chain: self.chains.handle(hierarchy.residue_chain(residue).index()),
             labels: hierarchy.shared_residue_labels(residue),
@@ -163,7 +164,7 @@ impl<'a> SourceHierarchy<'a> {
 
     pub(super) fn site(self, index: usize) -> EditAtomSite {
         let source = self.source();
-        let site = AtomSiteId::new(index as u32);
+        let site = AtomSiteId::from_index(index);
         EditAtomSite {
             residue: self
                 .residues

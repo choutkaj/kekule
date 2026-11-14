@@ -20,6 +20,7 @@ use super::{
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
 };
+use crate::fixed_u32_id::FixedId;
 use crate::io::{StructureInterpretation, StructureSetInterpretation};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{
@@ -574,7 +575,7 @@ impl<R: Read> Decoder<'_, R> {
         })?;
         if let Some(lists) = adjacency {
             for (index, list) in lists.into_iter().enumerate() {
-                if !molecule.restore_adjacency_order(AtomId::new(index as u32), list) {
+                if !molecule.restore_adjacency_order(AtomId::from_index(index), list) {
                     return Err(self.rejected(
                         DiagnosticKind::Inconsistent,
                         format!(

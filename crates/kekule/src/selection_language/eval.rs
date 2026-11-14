@@ -13,6 +13,7 @@ use super::{
     SelectEvaluateOptions, SelectionExpr,
 };
 use crate::diagnostics::{Cancellation, Cancelled};
+use crate::fixed_u32_id::FixedId;
 use crate::math::Point3;
 use crate::molecule::{Element, Molecule};
 use crate::parallel::Run;
@@ -570,7 +571,7 @@ impl<'a> Evaluator<'a> {
                 let mut residues = vec![false; topology.residues().len()];
                 let mut chains = vec![false; topology.chains().len()];
                 for index in inner.ones() {
-                    let index = TopologyAtomIndex::new(index as u32);
+                    let index = TopologyAtomIndex::from_index(index);
                     if let Some(site) = topology.atom_site_at(index) {
                         let residue = site.residue();
                         residues[residue.id().index()] = true;

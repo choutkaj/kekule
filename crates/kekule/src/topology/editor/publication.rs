@@ -1,6 +1,7 @@
 use super::overlay::{Entry, Run};
 use super::*;
 use crate::draft::{Draft, DraftError};
+use crate::fixed_u32_id::FixedId;
 use crate::topology::dense_order::{DenseOrder, ABSENT};
 use crate::topology::hierarchy::HierarchyColumns;
 use crate::topology::hierarchy_index::HierarchyIndex;
@@ -48,9 +49,7 @@ impl StagedInstances {
         definition: MoleculeDefinitionId,
         source: Option<usize>,
     ) -> MoleculeInstanceId {
-        let id = MoleculeInstanceId::new(
-            u32::try_from(self.instances.len()).expect("published instances fit their IDs"),
-        );
+        let id = MoleculeInstanceId::from_index(self.instances.len());
         self.instances.push(MoleculeInstance { id, definition });
         self.sources.push(source);
         id
@@ -384,7 +383,7 @@ impl TopologyEditor {
         let definition_count = source.map_or(0, Topology::definition_count);
         let source_definition = |group: usize| {
             source
-                .and_then(|source| source.instance_record(MoleculeInstanceId::new(group as u32)))
+                .and_then(|source| source.instance_record(MoleculeInstanceId::from_index(group)))
                 .expect("source groups name source instances")
                 .definition()
         };
@@ -416,7 +415,7 @@ impl TopologyEditor {
                 .collect::<Vec<_>>();
             for (target, definition) in kept.iter().enumerate() {
                 source_definitions[definition.id().index()] =
-                    Some(MoleculeDefinitionId::new(target as u32));
+                    Some(MoleculeDefinitionId::from_index(target));
             }
             builder.extend_shared_definitions(kept.into_iter().map(|definition| {
                 let id = definition.id();
@@ -448,7 +447,7 @@ impl TopologyEditor {
                         if dense != ABSENT {
                             staged
                                 .bonds
-                                .push(InstanceBondId::new(instance, BondId::new(local as u32)));
+                                .push(InstanceBondId::new(instance, BondId::from_index(local)));
                             staged.bond_slots.push(dense as usize);
                         }
                     }
@@ -562,12 +561,12 @@ impl TopologyEditor {
                                 .source_atoms
                                 .into_iter()
                                 .enumerate()
-                                .map(|(i, s)| (s, AtomId::new(i as u32))),
+                                .map(|(i, s)| (s, AtomId::from_index(i))),
                             component
                                 .source_bonds
                                 .into_iter()
                                 .enumerate()
-                                .map(|(i, s)| (s, BondId::new(i as u32))),
+                                .map(|(i, s)| (s, BondId::from_index(i))),
                             instance,
                             &mut staged,
                         );
@@ -594,8 +593,8 @@ impl TopologyEditor {
                 } else {
                     continue;
                 };
-                atom_published[slot] = Some(TopologyAtomIndex::new(order.len() as u32));
-                atom_sources.push(Some(TopologyAtomIndex::new(slot as u32)));
+                atom_published[slot] = Some(TopologyAtomIndex::from_index(order.len()));
+                atom_sources.push(Some(TopologyAtomIndex::from_index(slot)));
                 order.push(target);
                 atom_slots.push(slot);
             }
@@ -633,8 +632,8 @@ impl TopologyEditor {
             .enumerate()
             .map(|(published, &slot)| {
                 (sourced && slot < bond_block.len).then(|| {
-                    bond_published[slot] = Some(TopologyBondIndex::new(published as u32));
-                    TopologyBondIndex::new(slot as u32)
+                    bond_published[slot] = Some(TopologyBondIndex::from_index(published));
+                    TopologyBondIndex::from_index(slot)
                 })
             })
             .collect();
@@ -701,7 +700,7 @@ impl TopologyEditor {
             let id = chain_label_ids.len() as u32;
             let (label_id, author_id, slot) = match entry {
                 Entry::Source(index) => {
-                    let chain = ChainId::new(index as u32);
+                    let chain = ChainId::from_index(index);
                     chain_ids[index] = id;
                     (
                         source_of().chain_label_id(chain).to_owned(),
@@ -745,7 +744,7 @@ impl TopologyEditor {
             let id = residue_chains.len() as u32;
             let (chain, class, explicit, key, slot) = match entry {
                 Entry::Source(index) => {
-                    let (source, residue) = (source_of(), ResidueId::new(index as u32));
+                    let (source, residue) = (source_of(), ResidueId::from_index(index));
                     residue_ids[index] = id;
                     (
                         chain_ids[source.residue_chain(residue).index()],
@@ -820,7 +819,7 @@ impl TopologyEditor {
                         .expect("site atoms are published");
                     site_residues.push(ResidueId::new(residue_of(site.residue)));
                     site_atoms.push(order[dense]);
-                    site_dense.push(TopologyAtomIndex::new(dense as u32));
+                    site_dense.push(TopologyAtomIndex::from_index(dense));
                     site_metadata.push(metadata.key(&site.metadata));
                     site_slots.push(site.slot);
                 }
@@ -837,7 +836,7 @@ impl TopologyEditor {
         let mut next = residue_site_starts.clone();
         let mut residue_site_items = vec![AtomSiteId::new(0); site_residues.len()];
         for (site, residue) in site_residues.iter().enumerate() {
-            residue_site_items[next[residue.index()] as usize] = AtomSiteId::new(site as u32);
+            residue_site_items[next[residue.index()] as usize] = AtomSiteId::from_index(site);
             next[residue.index()] += 1;
         }
         PublishedHierarchy {

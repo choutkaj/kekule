@@ -35,6 +35,7 @@ use super::{
     MoleculeClass, MoleculeDefinitionId, MoleculeInstanceId, ResidueClass, ResidueId,
     ResidueLabels, Topology, TopologyBuildError, TopologyBuilder,
 };
+use crate::fixed_u32_id::FixedId;
 use crate::molecule::{
     Atom, AtomId, BondId, BondOrder, Molecule, MoleculeCorrespondence, MoleculeEditor,
     MoleculeError, MoleculePublicationError,
@@ -1176,7 +1177,7 @@ impl TopologyEditor {
     /// The source definition of an untouched source occurrence.
     fn source_definition(&self, group: usize) -> MoleculeDefinitionId {
         self.source_ref()
-            .instance_record(MoleculeInstanceId::new(group as u32))
+            .instance_record(MoleculeInstanceId::from_index(group))
             .expect("source group")
             .definition()
     }
@@ -1184,7 +1185,7 @@ impl TopologyEditor {
     fn group_atom(&self, group: usize, local: AtomId) -> EditAtomId {
         match &self.groups[group] {
             GroupSlot::Source => {
-                let instance = MoleculeInstanceId::new(group as u32);
+                let instance = MoleculeInstanceId::from_index(group);
                 let index = self
                     .source_ref()
                     .atom_index(InstanceAtomId::new(instance, local))
@@ -1199,7 +1200,7 @@ impl TopologyEditor {
     fn group_bond(&self, group: usize, local: BondId) -> EditBondId {
         match &self.groups[group] {
             GroupSlot::Source => {
-                let instance = MoleculeInstanceId::new(group as u32);
+                let instance = MoleculeInstanceId::from_index(group);
                 let index = self
                     .source_ref()
                     .bond_index(InstanceBondId::new(instance, local))
@@ -1262,7 +1263,7 @@ impl TopologyEditor {
         match &self.groups[group] {
             GroupSlot::Source => GroupGraph::Published(
                 self.source_ref()
-                    .definition_molecule(MoleculeInstanceId::new(group as u32)),
+                    .definition_molecule(MoleculeInstanceId::from_index(group)),
             ),
             GroupSlot::Live(stored) => match &stored.chemistry {
                 GroupChemistry::Source(id) => {
