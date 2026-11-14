@@ -35,10 +35,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             f64::from(copy / 25) * SPACING,
         );
         let mut shifted = kras.clone();
-        shifted.apply_rigid_transform(&RigidTransform::new(
-            Matrix3::identity(),
-            Quantity::new(offset, ANGSTROM),
-        )?)?;
+        shifted
+            .geometry_mut()
+            .apply_rigid_transform(&RigidTransform::new(
+                Matrix3::identity(),
+                Quantity::new(offset, ANGSTROM),
+            )?)?;
         editor.append_structure(&shifted)?;
     }
     let structure = editor.finish()?;

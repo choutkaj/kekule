@@ -2,7 +2,7 @@
 //! are samples, their log weights, and their grouping into states.
 
 use crate::properties::OwnerProperties;
-use crate::structure::{GeometryError, Partition, Requirement, StructureSetError};
+use crate::structure::{Partition, Requirement, StructureSetError};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
 /// Which geometries of a set a [`Distribution`] covers: its samples.
@@ -34,7 +34,7 @@ impl State {
     }
 
     /// Returns this state with a finite energy.
-    pub fn with_energy(mut self, energy: Quantity<f64>) -> Result<Self, GeometryError> {
+    pub fn with_energy(mut self, energy: Quantity<f64>) -> Result<Self, StructureSetError> {
         self.set_energy(Some(energy))?;
         Ok(self)
     }
@@ -52,12 +52,12 @@ impl State {
 
     /// Sets or clears a finite energy, converted to the canonical energy
     /// unit. No weight changes.
-    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), GeometryError> {
+    pub fn set_energy(&mut self, energy: Option<Quantity<f64>>) -> Result<(), StructureSetError> {
         self.energy = energy
             .map(|energy| {
                 let energy = energy.into_unit(CANONICAL_ENERGY_UNIT)?;
                 if !energy.value().is_finite() {
-                    return Err(GeometryError::NonFiniteEnergy);
+                    return Err(StructureSetError::NonFiniteEnergy);
                 }
                 Ok(energy)
             })

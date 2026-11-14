@@ -117,6 +117,15 @@ fn bits(points: &[Point3]) -> Vec<[u64; 3]> {
         .collect()
 }
 
+fn vector_bits(vectors: Option<&[Vector3]>) -> Option<Vec<[u64; 3]>> {
+    vectors.map(|vectors| {
+        vectors
+            .iter()
+            .map(|vector| [vector.x.to_bits(), vector.y.to_bits(), vector.z.to_bits()])
+            .collect()
+    })
+}
+
 fn scalar_bits(values: Option<&[Option<f64>]>) -> Option<Vec<Option<u64>>> {
     values.map(|values| values.iter().map(|value| value.map(f64::to_bits)).collect())
 }
@@ -137,6 +146,14 @@ fn assert_same_structure(decoded: &Structure, source: &Structure) {
         scalar_bits(source.b_factors().map(|values| *values.value()))
     );
     assert_eq!(decoded.properties(), source.properties());
+    assert_eq!(
+        vector_bits(decoded.velocities().map(|values| *values.values().value())),
+        vector_bits(source.velocities().map(|values| *values.values().value()))
+    );
+    assert_eq!(
+        vector_bits(decoded.forces().map(|values| *values.values().value())),
+        vector_bits(source.forces().map(|values| *values.values().value()))
+    );
 }
 
 fn perceived(input: &str) -> Molecule {
@@ -360,6 +377,7 @@ fn macromolecular_structures_round_trip_bitwise() {
             .into_structure();
         structure.perceive().unwrap();
         structure
+            .geometry_mut()
             .properties_mut()
             .owner_mut()
             .insert(key("source"), PropertyValue::String(name.into()))
@@ -502,8 +520,8 @@ fn reports_are_stored_only_when_given() {
         .unwrap();
     let plain = native::write(interpretation.structure(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    // Both are format version 6: a structure with its report is kind 7.
-    assert_eq!(NATIVE_FORMAT_VERSION, 6);
+    // Both are format version 7: a structure with its report is kind 7.
+    assert_eq!(NATIVE_FORMAT_VERSION, 7);
     for bytes in [&plain, &interpreted] {
         assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
     }
@@ -595,11 +613,11 @@ fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
     assert_same_distribution(decoded.distribution(), source.distribution());
 }
 
-/// Asserts that the native header of `bytes` is version 6 of `kind`, with
+/// Asserts that the native header of `bytes` is version 7 of `kind`, with
 /// no flag but the perception flag and a zero reserved field.
 fn assert_header(bytes: &[u8], kind: u8) {
     assert_eq!(bytes[..8], [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0A]);
-    assert_eq!(bytes[8..12], 6u32.to_le_bytes());
+    assert_eq!(bytes[8..12], 7u32.to_le_bytes());
     assert_eq!(bytes[12], kind);
     assert_eq!(bytes[13] & !1, 0);
     assert_eq!(bytes[14..16], [0, 0]);
@@ -1384,8 +1402,9 @@ fn structures_keep_cells_occupancies_b_factors_and_geometry_properties() {
         Positions::new(Quantity::new(points, ANGSTROM)).unwrap(),
     )
     .unwrap();
-    structure.set_cell(Some(cell()));
+    structure.geometry_mut().set_cell(Some(cell()));
     structure
+        .geometry_mut()
         .set_occupancies(Some(vec![
             Some(1.0),
             None,
@@ -1397,12 +1416,14 @@ fn structures_keep_cells_occupancies_b_factors_and_geometry_properties() {
         ]))
         .unwrap();
     structure
+        .geometry_mut()
         .set_b_factors(Some(Quantity::new(
             vec![Some(20.0); 7],
             kekule::units::SQUARE_ANGSTROM,
         )))
         .unwrap();
     structure
+        .geometry_mut()
         .properties_mut()
         .bonds_mut()
         .set_value(
@@ -1413,6 +1434,51 @@ fn structures_keep_cells_occupancies_b_factors_and_geometry_properties() {
         .unwrap();
     let decoded = round_trip(&structure).into_structure().unwrap();
     assert_same_structure(&decoded, &structure);
+}
+
+#[test]
+fn structures_keep_velocities_and_forces_only_when_they_have_them() {
+    let bare = Structure::new(water_topology(), positions(0.25)).unwrap();
+    let decoded = round_trip(&bare).into_structure().unwrap();
+    assert_same_structure(&decoded, &bare);
+    assert!(decoded.velocities().is_none() && decoded.forces().is_none());
+
+    let mut moving = bare.clone();
+    let mut geometry = moving.geometry_mut();
+    geometry
+        .set_velocities(Some(
+            Velocities::from_vec(Quantity::new(
+                vec![
+                    Vector3::new(1.0, -0.0, 1e-300),
+                    Vector3::new(-2.5, 0.5, 3.0),
+                ],
+                kekule::units::NANOMETER_PER_PICOSECOND,
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    geometry
+        .set_forces(Some(
+            Forces::from_vec(Quantity::new(
+                vec![
+                    Vector3::new(-1.0, 0.5, 0.0),
+                    Vector3::new(f64::MIN_POSITIVE, 0.0, 7.0),
+                ],
+                kekule::units::KILOJOULE_PER_MOLE_PER_NANOMETER,
+            ))
+            .unwrap(),
+        ))
+        .unwrap();
+    let decoded = round_trip(&moving).into_structure().unwrap();
+    assert_same_structure(&decoded, &moving);
+    // A decoded topology is a new layout, so compare the geometries alone.
+    assert_eq!(*decoded, *moving);
+
+    // Velocities without forces keep having no forces.
+    moving.geometry_mut().take_forces();
+    let decoded = round_trip(&moving).into_structure().unwrap();
+    assert_same_structure(&decoded, &moving);
+    assert!(decoded.velocities().is_some() && decoded.forces().is_none());
 }
 
 #[test]
@@ -1490,10 +1556,10 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
     assert_eq!(error.byte_offset(), Some(12));
 
     // Version 4, whose ensemble, trajectory, and series kinds version 5
-    // replaced with structure sets, and version 5, whose structure set
-    // records version 6 split from ensemble records, are rejected with no
-    // migration.
-    for version in [2u32, 4, 5] {
+    // replaced with structure sets, version 5, whose structure set records
+    // version 6 split from ensemble records, and version 6, whose structure
+    // records carry no velocities or forces, are rejected with no migration.
+    for version in [2u32, 4, 5, 6] {
         let mut older = bytes.clone();
         older[8..12].copy_from_slice(&version.to_le_bytes());
         let error = native::read(older.as_slice(), NativeReadOptions::default()).unwrap_err();

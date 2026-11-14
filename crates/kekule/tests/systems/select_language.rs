@@ -1393,6 +1393,7 @@ fn copies_in_one_structure(structure: &Structure, copies: usize, apart: bool) ->
             [copy % side, copy / side % side, copy / side / side].map(|step| step as f64 * spacing);
         let mut moved = structure.clone();
         moved
+            .geometry_mut()
             .set_positions(structure.positions().values().map(|points| {
                 points
                     .iter()
@@ -1534,7 +1535,10 @@ fn shared_references_over_stacked_copies_run_within_a_frame() {
     // holds duplicated objects; the reference points are built for each pass.
     let base = structure("mmcif/6OIM.cif");
     let structures = vec![base; 66];
-    let atoms = structures.iter().map(Structure::atom_count).sum::<usize>();
+    let atoms = structures
+        .iter()
+        .map(|structure| structure.atom_count())
+        .sum::<usize>();
     let mut report = format!("66 stacked copies ({atoms} atoms), best and median of 15:");
     for text in ["within 5 of protein", "within 5 of #2"] {
         let expression = select::parse(text, host_options()).unwrap();

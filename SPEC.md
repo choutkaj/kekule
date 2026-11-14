@@ -18,9 +18,9 @@ cross-module rule.
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
 | `Hierarchy` | Chains, residues, and atom sites over live instance atoms, with source labels and author identifiers | Atoms, bonds, or molecule boundaries |
-| `Geometry` | One arrangement of a topology's atoms, in dense atom order: positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight |
-| `Structure` | One shared `Topology` and one arrangement of it: positions, optional cell, occupancies, B factors, and `GeometryProperties` | A second chemical or hierarchy model; temporal state |
-| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order (each shared and copied on write), and an optional `Order` with one value per geometry | An order value on a geometry; a weight, a state, or a distribution |
+| `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight |
+| `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
+| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, and an optional `Order` with one value per geometry | An order value on a geometry; a weight, a state, or a distribution |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
 | `Distribution` | Samples (every geometry of the set or a sorted subset), one log weight per sample, one `Partition` of the samples into states, one `State` per state, and a temperature | Geometries; per-geometry energies |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
@@ -40,7 +40,7 @@ periodic cell, occupancies, B factors, velocities, forces, and geometry
 properties. A geometry carries no topology; it is *bound* to one when it has a
 property row per atom and bond of that topology.
 
-A **structure** is a topology and one arrangement of it. The topology stays
+A **structure** is a topology and one geometry of it. The topology stays
 coordinate-free and may be shared with other structures, sets, frames,
 selections, and prepared potentials.
 
@@ -330,31 +330,39 @@ checked numerical storage rejects nonfinite values. See
 
 ## Geometries and structures
 
-A `Geometry` holds all the coordinates and per-atom state of one arrangement.
-A `Structure` holds one arrangement as fields of its own — positions, cell,
-occupancies, B factors, and geometry properties — and carries no velocities or
-forces. A place in an order belongs to the set and a weight to the ensemble,
-never to a geometry; an energy belongs to a state, except as a geometry's own
-property. Coordinate kernels share code through the borrowed `StructureView`.
+A `Geometry` holds all the coordinates and per-atom state of one arrangement,
+and it is the one owned coordinate payload: a structure is a topology plus one
+geometry, a structure set is a topology plus many, and a frame buffer holds
+one for a stream. A geometry is shared and copied on write, so moving one
+between owners (`Structure::into_parts`, `from_parts`, `to_structure`,
+`from_structures`) copies no coordinates. A place in an order belongs to the
+set and a weight to the ensemble, never to a geometry; an energy belongs to a
+state, except as a geometry's own property. Coordinate kernels share code
+through the borrowed `StructureView`.
 
 A structure or structure set owns its shared topology once. A detached
-geometry has atom rows only and acquires bond rows when a set or frame buffer
-binds it. `StructureView`, obtained through the sealed `AsStructureView` or a
-frame buffer, lets coordinate algorithms and writers share kernels across
-structures, geometries, frames, and buffers. A view's `kind()` is
-`StructureKind::Standalone` or `StructureKind::InSet` with a `SetContext`
-reporting the geometry's place, velocities, and forces, so writers and
-reductions never lose that state silently. Structure writers hold that state to
+geometry has atom rows only and acquires bond rows when a structure, set, or
+frame buffer binds it. `StructureView`, obtained through the sealed
+`AsStructureView` or a frame buffer, borrows a topology and a geometry, so
+coordinate algorithms and writers share kernels across structures,
+geometries, frames, and buffers, and read the geometry's velocities and forces
+from the view. A view's `kind()` is `StructureKind::Standalone` or
+`StructureKind::InSet` with a `SetContext` reporting the geometry's place and
+its set's properties, so writers and reductions never lose that state
+silently. Structure writers hold a geometry's place, velocities, and forces to
 one policy, `geometry_metadata`, and per-atom, per-bond, own, and set
 properties to a second, `properties`; each fails by default. Owned projections
-(`to_structure`) materialize a structure while sharing the topology. A set
-built from structures (`from_structures`) consumes them and requires equal
-layouts (`same_layout`), keeping the first structure's topology.
+(`to_structure`) materialize a structure with the whole geometry while sharing
+the topology. A set built from structures (`from_structures`) consumes them
+and requires equal layouts (`same_layout`), keeping the first structure's
+topology.
 
-Reads go through views: `Topology` lookups return `Option` views, and
-`Structure::atom` joins an `AtomView` with that atom's geometry state. Mutation
-goes through explicit, dimension-preserving setters on structures and detached
-geometries, the guards returned by `get_mut()`, and `properties_mut()`
+Reads go through views: `Topology` lookups return `Option` views, a structure
+reads its geometry through `Deref`, and `Structure::atom` joins an `AtomView`
+with that atom's geometry state. Mutation goes through explicit,
+dimension-preserving setters on detached geometries, the `GeometryMut` guard
+an owner lends for a geometry it keeps bound (`Structure::geometry_mut`,
+`StructureSet::get_mut`, `FrameBuffer::geometry_mut`), and `properties_mut()`
 (`topology_properties_mut()` on structures and sets, which replaces a shared
 topology with a snapshot of it). The owner checks lengths, property domains,
 and table dimensions on insertion, replacement, or publication. Empty property

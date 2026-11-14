@@ -1252,25 +1252,58 @@ impl<R: Read> Decoder<'_, R> {
 
     fn structure(&mut self) -> Result<Structure> {
         let topology = Arc::new(self.topology()?);
+        let geometry = self.geometry(&topology)?;
+        Structure::from_parts(topology, geometry).map_err(|error| self.structure_error(error))
+    }
+
+    /// One geometry bound to `topology`: its positions, cell, site values,
+    /// properties, velocities, and forces.
+    fn geometry(&mut self, topology: &Topology) -> Result<Geometry> {
         let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let positions = self.positions(atoms)?;
         let cell = self.cell()?;
         let occupancies = self.scalars(atoms)?;
         let b_factors = self.scalars(atoms)?;
         let properties = self.geometry_properties(atoms, bonds)?;
-        let mut structure =
-            Structure::new(topology, positions).map_err(|error| self.structure_error(error))?;
-        structure.set_cell(cell);
-        structure
+        let velocities = if self.tag("velocities")? {
+            let values = self.vectors(atoms)?;
+            Some(
+                Velocities::from_vec(Quantity::new(values, CANONICAL_VELOCITY_UNIT))
+                    .map_err(|error| self.structure_error(error))?,
+            )
+        } else {
+            None
+        };
+        let forces = if self.tag("forces")? {
+            let values = self.vectors(atoms)?;
+            Some(
+                Forces::from_vec(Quantity::new(values, CANONICAL_FORCE_UNIT))
+                    .map_err(|error| self.structure_error(error))?,
+            )
+        } else {
+            None
+        };
+        let mut geometry = Geometry::new(positions);
+        geometry
+            .bind(topology)
+            .map_err(|error| self.structure_error(error))?;
+        geometry.set_cell(cell);
+        geometry
             .set_occupancies(occupancies)
             .map_err(|error| self.structure_error(error))?;
-        structure
+        geometry
             .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
             .map_err(|error| self.structure_error(error))?;
-        structure
+        geometry
             .set_properties(properties)
             .map_err(|error| self.structure_error(error))?;
-        Ok(structure)
+        geometry
+            .set_velocities(velocities)
+            .map_err(|error| self.structure_error(error))?;
+        geometry
+            .set_forces(forces)
+            .map_err(|error| self.structure_error(error))?;
+        Ok(geometry)
     }
 
     /// A structure set record, or with `ensemble` an ensemble record and its
@@ -1282,7 +1315,6 @@ impl<R: Read> Decoder<'_, R> {
         ensemble: bool,
     ) -> Result<(Decoded, Option<Distribution>)> {
         let topology = Arc::new(self.topology()?);
-        let (atoms, bonds) = (topology.atom_count(), topology.bond_count());
         let owner = self.owner()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
         let order = self.order(count)?;
@@ -1310,56 +1342,12 @@ impl<R: Read> Decoder<'_, R> {
             }
         }
         let mut geometries = Vec::with_capacity(count.min(CHUNK_BYTES));
-        let mut properties = Vec::with_capacity(count.min(CHUNK_BYTES));
         for _ in 0..count {
-            let positions = self.positions(atoms)?;
-            let cell = self.cell()?;
-            let occupancies = self.scalars(atoms)?;
-            let b_factors = self.scalars(atoms)?;
-            properties.push(self.geometry_properties(atoms, bonds)?);
-            let velocities = if self.tag("velocities")? {
-                let values = self.vectors(atoms)?;
-                Some(
-                    Velocities::from_vec(Quantity::new(values, CANONICAL_VELOCITY_UNIT))
-                        .map_err(|error| self.structure_error(error))?,
-                )
-            } else {
-                None
-            };
-            let forces = if self.tag("forces")? {
-                let values = self.vectors(atoms)?;
-                Some(
-                    Forces::from_vec(Quantity::new(values, CANONICAL_FORCE_UNIT))
-                        .map_err(|error| self.structure_error(error))?,
-                )
-            } else {
-                None
-            };
-            let mut geometry = Geometry::new(positions);
-            geometry.set_cell(cell);
-            geometry
-                .set_occupancies(occupancies)
-                .map_err(|error| self.structure_error(error))?;
-            geometry
-                .set_b_factors(b_factors.map(|values| Quantity::new(values, SQUARE_NANOMETER)))
-                .map_err(|error| self.structure_error(error))?;
-            geometry
-                .set_velocities(velocities)
-                .map_err(|error| self.structure_error(error))?;
-            geometry
-                .set_forces(forces)
-                .map_err(|error| self.structure_error(error))?;
-            geometries.push(geometry);
+            geometries.push(self.geometry(&topology)?);
         }
         let mut set = StructureSet::from_geometries(topology, geometries)
             .map_err(|error| self.structure_error(error))?;
         *set.properties_mut() = owner;
-        for (index, properties) in properties.into_iter().enumerate() {
-            set.get_mut(index)
-                .expect("every decoded geometry was added")
-                .set_properties(properties)
-                .map_err(|error| self.structure_error(error))?;
-        }
         set.set_order(order)
             .map_err(|error| self.structure_error(error))?;
         Ok((Decoded::Inline(Box::new(set)), distribution))

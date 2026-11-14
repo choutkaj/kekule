@@ -58,7 +58,7 @@ through the workspace.
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
 - The `kekule::native` binary format stores a `Molecule`, `Topology`,
   `Structure`, `StructureSet`, or `Ensemble` exactly (`native::write_to`,
-  `native::read`; format version 6, specified in `docs/native-format.md`).
+  `native::read`; format version 7, specified in `docs/native-format.md`).
 - Native decoding validates untrusted input within `NativeReadOptions` and
   fails with a `FormatError` of `Format::Native`, never a panic.
 - Native files keep interpretation reports (`NativeSource::interpreted_structure`,
@@ -193,8 +193,22 @@ through the workspace.
   `PeriodicGeometry` becomes `Lattice` (`LatticeError`;
   `SolvationError::Lattice`, `PeriodicBoxError::Lattice`).
 - **Breaking:** `StructureKind` is `Standalone` or `InSet(SetContext)`, whose
-  context gives the geometry's `Place`, velocities, and forces; match
-  `InSet` where code matched `Model`, `Member`, or `Frame`.
+  context gives the geometry's `Place`; match `InSet` where code matched
+  `Model`, `Member`, or `Frame`.
+- **Breaking:** A `Structure` is a topology and one `Geometry`. It reads the
+  geometry through `Deref` and writes it through `geometry_mut()`
+  (`structure.geometry_mut().set_cell(..)`), and `into_parts` and `from_parts`
+  move both out and back; `StructureBuilder` has `geometry` and `geometry_mut`.
+- **Breaking:** Structures keep velocities and forces: `to_structure` and
+  `Geometry::from_structure` carry them, structure writers refuse them unless
+  `geometry_metadata` omits them, and the native structure record stores them
+  (format version 7). Read them from the `StructureView`, not the `SetContext`.
+- `Velocities` and `Forces` share storage between clones, as `Positions`
+  does, and store no runtime unit; their values are in the canonical unit.
+- **Breaking:** `GeometryError::NonFiniteEnergy` and `NonFiniteTime` are
+  `StructureSetError::NonFiniteEnergy` and `NonFiniteTime`; `State::set_energy`,
+  `FrameView::new`, `FrameBuffer::set_time`, and `replace_from_data` return
+  `StructureSetError`.
 - **Breaking:** `Ensemble` now owns one `StructureSet` and one `Distribution`
   (`Ensemble::new`, `uniform`, `weighted`, `into_parts`); geometry edits,
   `select_states`, `collapse`, and `state`/`states` go through it.

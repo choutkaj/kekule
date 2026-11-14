@@ -53,11 +53,10 @@ impl SdfWriteOptions {
         self
     }
 
-    /// The state that an SDF record cannot carry of a geometry, whether of a
-    /// structure set or a trajectory frame: its time and MD step in a time
-    /// order, its velocities and forces, and a coordinate unit that is not a
-    /// unit constant; and the occupancies and
-    /// B factors of any structure. By default writing a structure with any of
+    /// The state that an SDF record cannot carry: a geometry's time and MD
+    /// step in a time order and a coordinate unit that is not a unit
+    /// constant, and the velocities, forces, occupancies, and B factors of a
+    /// geometry or structure. By default writing a structure with any of
     /// them fails. Under [`UnrepresentablePolicy::Omit`] the report counts
     /// the records written without each ([`WriteOmission::GeometryState`],
     /// [`WriteOmission::Occupancies`], [`WriteOmission::BFactors`]). A
@@ -122,8 +121,8 @@ const PLACE_FIELDS: [&str; 3] = [
 /// unit must be one of the unit constants of [`crate::units`], which the
 /// reader knows by symbol; another fails to write unless
 /// [`SdfWriteOptions::geometry_metadata`] omits the coordinate. A geometry's
-/// time, MD step, velocities, and forces, and a structure's
-/// occupancies and B factors, fail to write unless
+/// time and MD step, and the velocities, forces, occupancies, and B factors
+/// of a geometry or structure, fail to write unless
 /// [`SdfWriteOptions::geometry_metadata`] omits them; structure and set
 /// properties fail unless [`SdfWriteOptions::properties`] omits them. Add
 /// the values a record should carry, such as a geometry's energy, as data

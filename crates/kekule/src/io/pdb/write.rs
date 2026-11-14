@@ -88,12 +88,13 @@ pub struct PdbWriteOptions {
 }
 
 impl PdbWriteOptions {
-    /// The state of geometries that PDB cannot carry, whether of a structure set
-    /// or a trajectory frame. A PDB reader gives geometries without an order,
-    /// so by default a set fails to write when a geometry has a place in its
-    /// order (a frame's time and MD step among them), velocities, or forces,
-    /// or when its time order has neither times nor steps; so does a single
-    /// geometry with a place, velocities, or forces.
+    /// The state of geometries that PDB cannot carry, whether of a structure,
+    /// a structure set, or a trajectory frame. A PDB reader gives geometries
+    /// without an order, so by default a set fails to write when a geometry
+    /// has a place in its order (a frame's time and MD step among them),
+    /// velocities, or forces, or when its time order has neither times nor
+    /// steps; so does a single geometry with a place, or a geometry or
+    /// structure with velocities or forces.
     /// [`UnrepresentablePolicy::Omit`] writes the models without them and
     /// reports a [`WriteOmission::GeometryState`] for each field.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {

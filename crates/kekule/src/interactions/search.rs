@@ -226,7 +226,7 @@ impl<'a> Side<'a> {
         Self {
             features: side.features,
             topology: side.features.topology(),
-            positions: side.structure.positions().values().value(),
+            positions: side.structure.payload().positions().values().value(),
             mask: side.atoms.to_mask(),
             count: side.atoms.len(),
             lists: Default::default(),

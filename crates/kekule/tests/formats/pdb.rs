@@ -2118,6 +2118,7 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
     let bond = TopologyBondIndex::new(7);
     let note = PropertyKey::new("note").unwrap();
     second
+        .geometry_mut()
         .set_position_at(atom, Quantity::new(Point3::new(1.0, 2.0, 3.0), ANGSTROM))
         .unwrap();
     let cell = PeriodicCell::orthorhombic(
@@ -2125,12 +2126,17 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
         [true; 3],
     )
     .unwrap();
-    second.set_cell(Some(cell));
-    second.set_occupancy(atom, Some(0.25)).unwrap();
+    second.geometry_mut().set_cell(Some(cell));
     second
+        .geometry_mut()
+        .set_occupancy(atom, Some(0.25))
+        .unwrap();
+    second
+        .geometry_mut()
         .set_b_factor(atom, Some(Quantity::new(0.5, SQUARE_NANOMETER)))
         .unwrap();
-    let mut properties = second.properties_mut();
+    let mut geometry = second.geometry_mut();
+    let mut properties = geometry.properties_mut();
     properties
         .owner_mut()
         .insert(note.clone(), PropertyValue::Int(1))

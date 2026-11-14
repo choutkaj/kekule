@@ -442,7 +442,7 @@ fn publish_structure(
     poll(cancellation)?;
     let mut structure = builder.build().map_err(graph_error)?;
     poll(cancellation)?;
-    structure.set_cell(cell);
+    structure.geometry_mut().set_cell(cell);
     let mut occupancies = vec![None; structure.atom_count()];
     let mut b_factors = vec![None; structure.atom_count()];
     let b_factor_scale = SQUARE_ANGSTROM
@@ -460,9 +460,11 @@ fn publish_structure(
         b_factors[index.index()] = b_factor.map(|value| value * b_factor_scale);
     }
     structure
+        .geometry_mut()
         .set_occupancies(Some(occupancies))
         .map_err(graph_error)?;
     structure
+        .geometry_mut()
         .set_b_factors(Some(crate::units::Quantity::new(
             b_factors,
             SQUARE_NANOMETER,

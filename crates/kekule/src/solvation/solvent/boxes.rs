@@ -141,6 +141,6 @@ pub fn add_periodic_box(
         return Err(PeriodicBoxError::NotFullyPeriodic);
     }
     Lattice::new(cell).map_err(PeriodicBoxError::Lattice)?;
-    structure.set_cell(Some(cell));
+    structure.geometry_mut().set_cell(Some(cell));
     Ok(())
 }

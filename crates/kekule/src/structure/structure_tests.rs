@@ -227,7 +227,9 @@ fn position_updates_are_complete_finite_and_transactional() {
     let mut structure = Structure::from_molecule(small.clone(), &positions).unwrap();
     let original = structure.positions().values().value().to_vec();
     assert!(matches!(
-        structure.set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
+        structure
+            .geometry_mut()
+            .set_positions(Quantity::new(&[Point3::default()], ANGSTROM)),
         Err(GeometryError::Array(DenseArrayError::CountMismatch { .. }))
     ));
     assert_eq!(
@@ -237,7 +239,9 @@ fn position_updates_are_complete_finite_and_transactional() {
     let mut invalid = original.clone();
     invalid[0] = Point3::new(f64::INFINITY, 0.0, 0.0);
     assert!(matches!(
-        structure.set_positions(Quantity::new(&invalid, ANGSTROM)),
+        structure
+            .geometry_mut()
+            .set_positions(Quantity::new(&invalid, ANGSTROM)),
         Err(GeometryError::Array(DenseArrayError::NonFinite {
             index: 0
         }))

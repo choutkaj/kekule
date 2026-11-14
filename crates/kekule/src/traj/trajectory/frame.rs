@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::structure::{
-    check_bound, AsStructureView, Geometry, GeometryError, GeometryView, Place, SetContext,
-    Structure, StructureKind, StructureView, StructureViewSealed,
+    check_bound, AsStructureView, Geometry, GeometryView, Place, SetContext, Structure,
+    StructureKind, StructureSetError, StructureView, StructureViewSealed,
 };
 use crate::topology::Topology;
 use crate::units::{Quantity, CANONICAL_TIME_UNIT};
@@ -66,18 +66,18 @@ impl<'a> FrameView<'a> {
     ///
     /// # Errors
     ///
-    /// [`GeometryError`] when the geometry does not have a position per atom
-    /// and a property row per atom and bond of `topology`, such as an
-    /// unbound geometry of a topology with bonds
-    /// ([`GeometryError::BondCountMismatch`]), and
-    /// [`GeometryError::NonFiniteTime`] or [`GeometryError::Unit`] for an
-    /// invalid time.
+    /// [`StructureSetError::Geometry`] when the geometry does not have a
+    /// position per atom and a property row per atom and bond of `topology`,
+    /// such as an unbound geometry of a topology with bonds
+    /// ([`GeometryError::BondCountMismatch`](crate::structure::GeometryError::BondCountMismatch)),
+    /// and [`StructureSetError::NonFiniteTime`] or [`StructureSetError::Unit`]
+    /// for an invalid time.
     pub fn new(
         topology: &'a Arc<Topology>,
         geometry: &'a Geometry,
         time: Option<Quantity<f64>>,
         step: Option<u64>,
-    ) -> Result<Self, GeometryError> {
+    ) -> Result<Self, StructureSetError> {
         check_bound(topology, geometry)?;
         Ok(Self::bound(topology, geometry, canonical_time(time)?, step))
     }
@@ -165,9 +165,9 @@ impl<'a> FrameView<'a> {
     /// Borrows the frame as the common kernel input, with the view's full
     /// lifetime: a geometry at its time place, without a membership.
     pub fn as_structure_view(self) -> StructureView<'a> {
-        self.geometry.state().structure_view(
+        self.geometry.structure_view(
             self.topology,
-            StructureKind::InSet(SetContext::of_frame(self.geometry, self.place())),
+            StructureKind::InSet(SetContext::of_frame(self.place())),
         )
     }
 
@@ -180,11 +180,11 @@ impl<'a> FrameView<'a> {
 /// `time` in [`CANONICAL_TIME_UNIT`], checked finite.
 pub(super) fn canonical_time(
     time: Option<Quantity<f64>>,
-) -> Result<Option<Quantity<f64>>, GeometryError> {
+) -> Result<Option<Quantity<f64>>, StructureSetError> {
     time.map(|time| {
         let time = time.into_unit(CANONICAL_TIME_UNIT)?;
         if !time.value().is_finite() {
-            return Err(GeometryError::NonFiniteTime);
+            return Err(StructureSetError::NonFiniteTime);
         }
         Ok(time)
     })

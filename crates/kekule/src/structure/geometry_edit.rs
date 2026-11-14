@@ -475,7 +475,12 @@ fn stage(
 }
 
 fn publish(structure: &mut Structure, staged: &[(usize, Point3)]) -> Result<(), GeometryEditError> {
+    if staged.is_empty() {
+        return Ok(());
+    }
     structure
+        .geometry
+        .data_in_place()
         .positions
         .set_canonical_batch(staged)
         .map_err(|_| GeometryEditError::NumericalFailure)
@@ -562,9 +567,11 @@ impl Structure {
 
     /// Applies a validated rigid transform atomically to a selection's atoms.
     /// Translation is in canonical length units, as in [`RigidTransform`]. The
-    /// cell, topology, and properties are preserved, including for an all-atom
-    /// selection; [`Structure::apply_rigid_transform`] moves the whole structure with
-    /// its cell.
+    /// cell, topology, properties, velocities, and forces are preserved,
+    /// including for an all-atom selection;
+    /// [`GeometryMut::apply_rigid_transform`](super::GeometryMut::apply_rigid_transform)
+    /// through [`Structure::geometry_mut`] moves the whole structure and rotates
+    /// its cell, velocities, and forces.
     pub fn transform_atoms(
         &mut self,
         selection: &AtomSelection,
