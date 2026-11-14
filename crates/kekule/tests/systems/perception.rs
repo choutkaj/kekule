@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::error::Error;
 
 use crate::support::hierarchy_record;
@@ -256,7 +257,9 @@ fn structure_perception_changes_snapshot_preserving_geometry_and_existing_bindin
     let independent = smiles::to_topology("c1ccccc1").unwrap();
     assert_eq!(
         selection.ensure_compatible(&independent),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
     assert!(installed(&topology)
         .iter()
@@ -460,7 +463,9 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     ));
     assert_eq!(
         ring.union(&AtomSelection::all(Arc::clone(&rebuilt))),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 
     // Perception-dependent matches keep their exact snapshot but select atoms
@@ -479,7 +484,9 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     );
     assert_eq!(
         AtomSelection::from_topology_query_matches(Arc::clone(&rebuilt), &matches),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 

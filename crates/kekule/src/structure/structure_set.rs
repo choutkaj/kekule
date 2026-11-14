@@ -1,3 +1,4 @@
+use crate::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use crate::math::RigidTransform;
@@ -370,7 +371,9 @@ impl StructureSet {
         set.storage.geometries.push(Geometry::from_structure(first));
         for structure in structures {
             if !structure.topology().same_layout(&set.topology) {
-                return Err(StructureSetError::TopologyMismatch);
+                return Err(StructureSetError::TopologyMismatch(
+                    TopologyMismatch::Structure,
+                ));
             }
             set.storage
                 .geometries

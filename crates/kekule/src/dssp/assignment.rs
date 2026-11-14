@@ -1,6 +1,7 @@
 //! Secondary-structure assignment: the entry points, the reusable plan, its
 //! options and limits, and the per-residue result, report, and error types.
 
+use crate::diagnostics::TopologyMismatch;
 use crate::diagnostics::{Cancelled, LimitExceeded};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -191,7 +192,7 @@ impl DsspPlan {
     ) -> Result<DsspResult, DsspError> {
         let structure = structure.as_structure_view();
         if !structure.topology().shares_layout(&self.topology) {
-            return Err(DsspError::TopologyMismatch);
+            return Err(DsspError::TopologyMismatch(TopologyMismatch::Structure));
         }
         run.check().map_err(DsspError::Cancelled)?;
         super::kernel::assign(&self.prepared, structure, self.options, run)
@@ -884,8 +885,8 @@ pub enum DsspError {
     /// The structure exceeds a bound of [`DsspLimits`].
     LimitExceeded(LimitExceeded),
     /// The structure does not share the layout of the topology a
-    /// [`DsspPlan`] was prepared for.
-    TopologyMismatch,
+    /// [`DsspPlan`] was prepared for ([`TopologyMismatch::Structure`]).
+    TopologyMismatch(TopologyMismatch),
     /// The run's [`Cancellation`](crate::diagnostics::Cancellation) stopped
     /// [`assign_with`] or [`DsspPlan::assign_with`].
     Cancelled(Cancelled),
@@ -926,9 +927,7 @@ impl fmt::Display for DsspError {
             Self::LimitExceeded(limit) => {
                 write!(f, "DSSP exceeded its {}.", limit.describe())
             }
-            Self::TopologyMismatch => {
-                f.write_str("The structure's topology layout differs from the DSSP plan's.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::Cancelled(_) => f.write_str("DSSP assignment stopped."),
         }
     }

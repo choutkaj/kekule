@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagnostics::TopologyMismatch;
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
@@ -271,7 +272,7 @@ fn sets_from_structures_accept_equal_layouts_and_refuse_others() {
     ] {
         assert_eq!(
             StructureSet::from_structures(structures).unwrap_err(),
-            StructureSetError::TopologyMismatch
+            StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
         );
     }
 }

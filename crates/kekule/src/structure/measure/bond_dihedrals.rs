@@ -1,7 +1,7 @@
 use std::{fmt, sync::Arc};
 
 use crate::algorithms::{bond_reference_atoms, CipAssignmentOptions, CipRankingError};
-use crate::diagnostics::Capitalized;
+use crate::diagnostics::{Capitalized, TopologyMismatch};
 use crate::structure::StructureView;
 use crate::topology::{InstanceAtomId, InstanceBondId, Topology};
 use crate::units::Quantity;
@@ -15,8 +15,9 @@ use crate::structure::CoordinateError;
 pub enum BondDihedralError {
     /// The bond is not in the topology.
     InvalidBondId(InstanceBondId),
-    /// A prepared definition can only measure views sharing its topology layout.
-    TopologyMismatch,
+    /// A prepared definition can only measure views sharing its topology
+    /// layout ([`TopologyMismatch::Structure`]).
+    TopologyMismatch(TopologyMismatch),
     /// Ranking the bond's neighbours to choose reference atoms failed.
     Ranking {
         /// The central bond.
@@ -32,9 +33,7 @@ impl fmt::Display for BondDihedralError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBondId(bond) => write!(f, "{} is not in the topology.", Capitalized(bond)),
-            Self::TopologyMismatch => {
-                f.write_str("The bond dihedral belongs to a different topology.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::Ranking { bond, .. } => write!(
                 f,
                 "Cannot choose the reference atoms of the dihedral of {bond}."
@@ -141,7 +140,9 @@ impl BondDihedral {
         view: StructureView<'_>,
     ) -> Result<Option<Quantity<f64>>, BondDihedralError> {
         if !self.topology.shares_layout(view.topology()) {
-            return Err(BondDihedralError::TopologyMismatch);
+            return Err(BondDihedralError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ));
         }
         let Some([a, b, c, d]) = self.atoms else {
             return Ok(None);

@@ -1,5 +1,6 @@
 use super::builder::{checked_future_len, checked_id, TopologyHierarchyError};
 use super::*;
+use crate::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use crate::molecule::{Atom, BondOrder, Element};
@@ -529,7 +530,9 @@ fn property_edits_and_clones_keep_layout_identity_while_publication_mints_one() 
     assert!(republished.same_layout(&source));
     assert_eq!(
         selection.ensure_compatible(&republished),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 
@@ -887,7 +890,9 @@ fn selections_distinguish_instances_elements_and_queries() {
     let independent = Arc::new(independent_builder.build().unwrap());
     assert_eq!(
         selected.ensure_compatible(&independent),
-        Err(SelectionError::TopologyMismatch)
+        Err(SelectionError::TopologyMismatch(
+            TopologyMismatch::Selection
+        ))
     );
 }
 

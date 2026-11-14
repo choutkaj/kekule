@@ -138,7 +138,7 @@ fn check_selection(
 /// # Errors
 ///
 /// - [`AlignmentError::TopologyMismatch`] or
-///   [`AlignmentError::SelectionTopologyMismatch`] when a selection's views or
+///   [`AlignmentError::TopologyMismatch`] when a selection's views or
 ///   the selection itself do not share one topology layout, and
 ///   [`AlignmentError::Correspondence`] when a correspondence belongs to other
 ///   topologies.
@@ -172,7 +172,7 @@ pub fn fit<'a>(
 /// # Errors
 ///
 /// - [`AlignmentError::TopologyMismatch`] or
-///   [`AlignmentError::SelectionTopologyMismatch`] when a selection's views or
+///   [`AlignmentError::TopologyMismatch`] when a selection's views or
 ///   the selection itself do not share one topology layout, and
 ///   [`AlignmentError::Correspondence`] when a correspondence belongs to other
 ///   topologies.

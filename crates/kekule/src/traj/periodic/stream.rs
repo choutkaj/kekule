@@ -1,3 +1,4 @@
+use crate::diagnostics::TopologyMismatch;
 use std::fmt;
 use std::sync::Arc;
 
@@ -63,7 +64,7 @@ impl MoleculeImager {
     ///
     /// # Errors
     ///
-    /// Returns [`PeriodicError::SelectionTopologyMismatch`],
+    /// Returns [`PeriodicError::TopologyMismatch`],
     /// [`PeriodicError::EmptyAnchors`] or [`PeriodicError::TopologyMismatch`]
     /// for mismatched inputs, and otherwise the per-frame errors of
     /// [`super::image_molecules`]. On error the buffer is unchanged.
@@ -144,10 +145,12 @@ impl MoleculeImager {
         reference: StructureView<'_>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(reference.topology()) {
-            return Err(PeriodicError::ReferenceTopologyMismatch);
+            return Err(PeriodicError::TopologyMismatch(TopologyMismatch::Reference));
         }
         if !self.topology().shares_layout(source.topology()) {
-            return Err(PeriodicError::TopologyMismatch { frame: frame_index });
+            return Err(PeriodicError::TopologyMismatch(TopologyMismatch::Frame(
+                frame_index,
+            )));
         }
         let lattice = Lattice::new(source.cell().copied(), frame_index)?;
         let source = source.positions().values();
@@ -163,7 +166,7 @@ impl MoleculeImager {
         anchors: &AtomSelection,
     ) -> Result<Vec<bool>, PeriodicError> {
         if !self.topology().shares_layout(anchors.topology()) {
-            return Err(PeriodicError::SelectionTopologyMismatch);
+            return Err(PeriodicError::TopologyMismatch(TopologyMismatch::Selection));
         }
         if anchors.indices().is_empty() {
             return Err(PeriodicError::EmptyAnchors);
@@ -182,7 +185,9 @@ impl MoleculeImager {
         anchors: Option<&[bool]>,
     ) -> Result<Positions, PeriodicError> {
         if !self.topology().shares_layout(source.topology()) {
-            return Err(PeriodicError::TopologyMismatch { frame: frame_index });
+            return Err(PeriodicError::TopologyMismatch(TopologyMismatch::Frame(
+                frame_index,
+            )));
         }
         let lattice = Lattice::new(source.cell().copied(), frame_index)?;
         let mut points = self
@@ -343,7 +348,9 @@ impl TrajectoryUnwrapper {
         source: FrameView<'_>,
     ) -> Result<UnwrapStep, PeriodicError> {
         if !self.topology().shares_layout(source.topology()) {
-            return Err(PeriodicError::TopologyMismatch { frame: frame_index });
+            return Err(PeriodicError::TopologyMismatch(TopologyMismatch::Frame(
+                frame_index,
+            )));
         }
         if let Some(previous) = &self.previous {
             if previous.index.checked_add(1) != Some(frame_index) {

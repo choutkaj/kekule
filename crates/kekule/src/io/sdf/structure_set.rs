@@ -1,4 +1,5 @@
 //! Explicit assembly of interpreted SDF records into one structure set.
+use crate::diagnostics::TopologyMismatch;
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
 use crate::structure::{Geometry, Order, StructureSet, StructureSetError};
 use crate::units::named_unit;
@@ -74,7 +75,10 @@ pub(crate) fn sdf_structure_set<'a>(
     let mut geometries = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
         if !record.structure().topology().same_layout(&topology) {
-            return Err(set_error(StructureSetError::TopologyMismatch).in_record(index + 1));
+            return Err(set_error(StructureSetError::TopologyMismatch(
+                TopologyMismatch::Structure,
+            ))
+            .in_record(index + 1));
         }
         geometries.push(Geometry::new(record.structure().positions().clone()));
     }

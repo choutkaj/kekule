@@ -3,7 +3,7 @@ mod neighbors;
 mod packing;
 pub use boxes::{add_periodic_box, BoxShape, PeriodicBoxOptions};
 
-use crate::diagnostics::{LimitExceeded, Resource};
+use crate::diagnostics::{LimitExceeded, Resource, TopologyMismatch};
 use crate::structure::{DenseArrayError, Structure, StructureBuildError};
 use crate::{
     math::{PeriodicCellError, Point3},
@@ -371,8 +371,9 @@ pub enum SolvationError {
     NotFullyPeriodic,
     /// The box padding is not finite and positive.
     InvalidPadding,
-    /// The supplied solute radii belong to a different topology layout.
-    RadiusTopologyMismatch,
+    /// The supplied solute radii belong to a different topology layout
+    /// ([`TopologyMismatch::SoluteRadii`]).
+    TopologyMismatch(TopologyMismatch),
     /// The number of radii differs from the topology's atom count.
     RadiusCountMismatch,
     /// A radius is negative or not finite.
@@ -417,9 +418,7 @@ impl fmt::Display for SolvationError {
                 f.write_str("The cell is not periodic along all three axes.")
             }
             Self::InvalidPadding => f.write_str("The padding is not finite and positive."),
-            Self::RadiusTopologyMismatch => {
-                f.write_str("The solute radii belong to a different topology.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::RadiusCountMismatch => {
                 f.write_str("The number of solute radii differs from the number of atoms.")
             }
@@ -525,7 +524,7 @@ impl From<HierarchyError> for SolvationError {
 /// ([`SolvationError::MissingCell`]) and be periodic along all three axes
 /// ([`SolvationError::NotFullyPeriodic`]). Invalid options return
 /// [`SolvationError::InvalidIonicStrength`], [`SolvationError::InvalidIonSeparation`],
-/// [`SolvationError::Unit`] or [`SolvationError::RadiusTopologyMismatch`];
+/// [`SolvationError::Unit`] or [`SolvationError::TopologyMismatch`];
 /// a solute element without a reference radius returns
 /// [`SolvationError::MissingElementRadius`]. A cell with no room for water returns
 /// [`SolvationError::NoSolventSpace`], too few separated sites for the ions

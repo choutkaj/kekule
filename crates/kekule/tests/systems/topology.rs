@@ -1,5 +1,6 @@
 //! Topology publication: consuming builders and editors, and subset errors.
 
+use kekule::diagnostics::TopologyMismatch;
 use std::error::Error;
 
 use kekule::molecule::{Atom, Element, Molecule, MoleculeEditor, MoleculePublicationError};
@@ -99,10 +100,12 @@ fn consuming_publication_moves_added_molecules_and_preserves_owner_annotations()
 #[test]
 fn topology_subset_errors_expose_wrapped_causes() {
     // A selection error is shown as it is, without an outer sentence.
-    let error = TopologySubsetError::Selection(SelectionError::TopologyMismatch);
+    let error = TopologySubsetError::Selection(SelectionError::TopologyMismatch(
+        TopologyMismatch::Selection,
+    ));
     assert_eq!(
         error.to_string(),
-        SelectionError::TopologyMismatch.to_string()
+        SelectionError::TopologyMismatch(TopologyMismatch::Selection).to_string()
     );
     assert!(error.source().is_none());
     let error = TopologySubsetError::Publication(MoleculePublicationError::EmptyGraph);

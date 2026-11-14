@@ -1,3 +1,4 @@
+use crate::diagnostics::TopologyMismatch;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
@@ -851,7 +852,9 @@ impl AtomSelection {
         let topology = &topology.into();
         for matched in matches {
             if !topology.shares_layout(matched.topology()) {
-                return Err(SelectionError::TopologyMismatch);
+                return Err(SelectionError::TopologyMismatch(
+                    TopologyMismatch::Selection,
+                ));
             }
         }
         Self::from_atoms(
@@ -870,7 +873,9 @@ impl AtomSelection {
     /// [`SelectionError::TopologyMismatch`] when the layouts differ.
     pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
         if !self.topology.shares_layout(topology) {
-            return Err(SelectionError::TopologyMismatch);
+            return Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection,
+            ));
         }
         Ok(())
     }
@@ -914,8 +919,9 @@ impl AtomSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SelectionError {
-    /// The selection belongs to a different topology layout.
-    TopologyMismatch,
+    /// The selection belongs to a different topology layout
+    /// ([`TopologyMismatch::Selection`]).
+    TopologyMismatch(TopologyMismatch),
     /// A molecule definition is not in the topology.
     InvalidMoleculeDefinitionId(MoleculeDefinitionId),
     /// A molecule instance is not in the topology.
@@ -950,9 +956,7 @@ impl fmt::Display for SelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         use crate::diagnostics::Capitalized;
         match self {
-            Self::TopologyMismatch => {
-                formatter.write_str("The selection belongs to a different topology.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(formatter),
             Self::InvalidMoleculeDefinitionId(id) => {
                 write!(formatter, "Molecule {id} is not in the topology.")
             }

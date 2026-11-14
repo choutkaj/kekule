@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
@@ -167,7 +168,9 @@ fn distribution_statistics_use_sample_weights_not_states() {
     ));
     assert!(matches!(
         ensemble.rmsf(&AtomSelection::all(linear_carbon_topology())),
-        Err(StatisticsError::Selection(SelectionError::TopologyMismatch))
+        Err(StatisticsError::Selection(
+            SelectionError::TopologyMismatch(TopologyMismatch::Selection)
+        ))
     ));
 }
 
@@ -309,11 +312,15 @@ fn failed_observations_are_atomic_and_retryable_for_both_accumulators() {
     contacts.observe(10, &good.get(0).unwrap(), 1.0).unwrap();
     assert_eq!(
         rmsf.observe(11, &unrelated.get(0).unwrap(), 1.0),
-        Err(StatisticsError::TopologyMismatch { index: 11 })
+        Err(StatisticsError::TopologyMismatch(
+            TopologyMismatch::Observation(11)
+        ))
     );
     assert_eq!(
         contacts.observe(11, &unrelated.get(0).unwrap(), 1.0),
-        Err(StatisticsError::TopologyMismatch { index: 11 })
+        Err(StatisticsError::TopologyMismatch(
+            TopologyMismatch::Observation(11)
+        ))
     );
     assert!(matches!(
         rmsf.observe(11, &bad.get(0).unwrap(), 1.0),
@@ -438,7 +445,9 @@ fn statistics_reject_empty_or_ambiguous_inputs_and_handle_single_observations() 
     let foreign = AtomSelection::all(linear_carbon_topology());
     assert!(matches!(
         one.rmsf(&foreign),
-        Err(StatisticsError::Selection(SelectionError::TopologyMismatch))
+        Err(StatisticsError::Selection(
+            SelectionError::TopologyMismatch(TopologyMismatch::Selection)
+        ))
     ));
 }
 
@@ -696,7 +705,9 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
             vec![AtomSelection::all(linear_carbon_topology())],
             vec![(0, 0)]
         ),
-        Err(StatisticsError::Selection(SelectionError::TopologyMismatch))
+        Err(StatisticsError::Selection(
+            SelectionError::TopologyMismatch(TopologyMismatch::Selection)
+        ))
     ));
     for value in [-1.0, f64::NAN, f64::INFINITY] {
         assert!(matches!(
@@ -736,7 +747,9 @@ fn group_contacts_reject_invalid_inputs_and_fail_atomically() {
     contacts.observe(0, &good.get(0).unwrap(), 1.0).unwrap();
     assert_eq!(
         contacts.observe(1, &unrelated.get(0).unwrap(), 1.0),
-        Err(StatisticsError::TopologyMismatch { index: 1 })
+        Err(StatisticsError::TopologyMismatch(
+            TopologyMismatch::Observation(1)
+        ))
     );
     assert_eq!(
         contacts.observe(1, &bad.get(0).unwrap(), 1.0),

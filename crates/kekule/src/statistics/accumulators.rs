@@ -1,6 +1,7 @@
 //! Weighted accumulators of per-atom statistics over geometries, their results
 //! and errors, and the structure-set and ensemble methods that run them.
 
+use crate::diagnostics::TopologyMismatch;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::ops::Range;
@@ -56,11 +57,10 @@ pub enum StatisticsError {
         /// The index of the pair in the input.
         pair: usize,
     },
-    /// An observed structure belongs to a different topology snapshot.
-    TopologyMismatch {
-        /// The caller's index of the observation.
-        index: usize,
-    },
+    /// An observed structure does not share the accumulator's topology
+    /// layout ([`TopologyMismatch::Observation`] with the caller's index of
+    /// the observation).
+    TopologyMismatch(TopologyMismatch),
     /// An observation weight is not finite and positive.
     InvalidWeight {
         /// The caller's index of the observation.
@@ -151,9 +151,7 @@ impl fmt::Display for StatisticsError {
                     "Contact pair {pair} names two groups that share an atom."
                 )
             }
-            Self::TopologyMismatch { index } => {
-                write!(f, "Observation {index} has a different topology layout.")
-            }
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(f),
             Self::InvalidWeight { index } => write!(
                 f,
                 "The weight of observation {index} is not positive or not finite."
@@ -706,7 +704,7 @@ impl RmsfAccumulator {
         let total = next_total(index, self.total_weight, weight)?;
         self.selection
             .ensure_compatible(&structure.shared_topology())
-            .map_err(|_| StatisticsError::TopologyMismatch { index })?;
+            .map_err(|_| StatisticsError::TopologyMismatch(TopologyMismatch::Observation(index)))?;
         let positions = structure.positions().values();
         let positions = *positions.value();
         let atoms = self.selection.indices();
@@ -992,7 +990,9 @@ impl ContactOccupancyAccumulator {
         let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         if !self.topology.shares_layout(structure.topology()) {
-            return Err(StatisticsError::TopologyMismatch { index });
+            return Err(StatisticsError::TopologyMismatch(
+                TopologyMismatch::Observation(index),
+            ));
         }
         let positions = structure.positions().values();
         let positions = *positions.value();
@@ -1436,7 +1436,9 @@ impl GroupContactOccupancyAccumulator {
         let structure = structure.as_structure_view();
         let total = next_total(index, self.total_weight, weight)?;
         if !self.topology.shares_layout(structure.topology()) {
-            return Err(StatisticsError::TopologyMismatch { index });
+            return Err(StatisticsError::TopologyMismatch(
+                TopologyMismatch::Observation(index),
+            ));
         }
         let positions = structure.positions().values();
         let positions = positions.value();

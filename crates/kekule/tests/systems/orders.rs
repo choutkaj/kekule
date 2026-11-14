@@ -1,6 +1,7 @@
 //! Structure sets on a step or a coordinate order: optimization histories,
 //! relaxed scans, and paths.
 
+use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use kekule::alignment::AlignmentOptions;
@@ -275,7 +276,7 @@ fn sets_from_structures_take_a_step_order_and_require_one_layout() {
     let other = Structure::new(chain(4), Positions::zeros(4)).unwrap();
     assert_eq!(
         StructureSet::from_structures([structures[0].clone(), other]).unwrap_err(),
-        StructureSetError::TopologyMismatch
+        StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
     assert_eq!(
         StructureSet::from_structures(Vec::new()).unwrap_err(),

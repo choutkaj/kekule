@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use kekule::diagnostics::{DiagnosticKind, SourceLocation};
 use kekule::macromolecular::{
     AltLocPolicy, BondEvidence, CellOmissionReason, ConnectionResolutionReason, EntityKind,
@@ -2188,6 +2189,6 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
     assert_eq!(
         StructureSet::from_structures([read_structure(CRAMBIN), read_structure(ADENYLATE_KINASE)])
             .unwrap_err(),
-        StructureSetError::TopologyMismatch
+        StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
 }

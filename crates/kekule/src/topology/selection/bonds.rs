@@ -1,3 +1,4 @@
+use crate::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use crate::topology::{
@@ -349,7 +350,9 @@ impl BondSelection {
     /// Rejects even layout-equal snapshots unless the shared owner is identical.
     pub fn ensure_compatible(&self, topology: &Topology) -> Result<(), SelectionError> {
         if !self.topology.shares_layout(topology) {
-            return Err(SelectionError::TopologyMismatch);
+            return Err(SelectionError::TopologyMismatch(
+                TopologyMismatch::Selection,
+            ));
         }
         Ok(())
     }

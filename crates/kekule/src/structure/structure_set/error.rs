@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use crate::diagnostics::TopologyMismatch;
 use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
@@ -75,8 +76,9 @@ pub enum StructureSetError {
         geometry: usize,
     },
     /// A structure's topology layout differs from the others'
-    /// ([`Topology::same_layout`](crate::topology::Topology::same_layout)).
-    TopologyMismatch,
+    /// ([`Topology::same_layout`](crate::topology::Topology::same_layout),
+    /// [`TopologyMismatch::Structure`]).
+    TopologyMismatch(TopologyMismatch),
     /// A set-wide replacement has the wrong number of geometries.
     GeometryCountMismatch {
         /// The set's geometry count.
@@ -237,8 +239,7 @@ impl fmt::Display for StructureSetError {
             Self::NotSample { geometry } => {
                 write!(formatter, "Geometry {geometry} is not a sample of the distribution.")
             }
-            Self::TopologyMismatch => formatter
-                .write_str("The structure has a different topology layout from the structure set."),
+            Self::TopologyMismatch(mismatch) => mismatch.fmt(formatter),
             Self::GeometryCountMismatch { expected, actual } => write!(
                 formatter,
                 "The structure set has {}, but {} given.",

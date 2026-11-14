@@ -1,3 +1,4 @@
+use kekule::diagnostics::TopologyMismatch;
 use kekule::diagnostics::{LimitExceeded, Resource};
 use std::sync::Arc;
 
@@ -250,13 +251,17 @@ fn geometry_absence_is_distinct_from_overflow_and_foreign_topologies() {
     let foreign = make_structure("CCCC", true);
     assert_eq!(
         selected.measure(foreign.as_structure_view()),
-        Err(BondDihedralError::TopologyMismatch)
+        Err(BondDihedralError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     let absent = definition(&structure, 0, 1);
     assert_eq!(absent.atoms(), None);
     assert_eq!(
         absent.measure(foreign.as_structure_view()),
-        Err(BondDihedralError::TopologyMismatch)
+        Err(BondDihedralError::TopologyMismatch(
+            TopologyMismatch::Structure
+        ))
     );
     for invalid in [
         InstanceBondId::new(ids[0].instance(), BondId::new(99)),

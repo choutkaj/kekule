@@ -1,6 +1,7 @@
 //! Focused regressions: feature classification and every interaction type at
 //! the edges of its criteria, on toy molecules placed by hand.
 
+use crate::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
 use super::*;
@@ -736,7 +737,7 @@ fn disabled_types_and_invalid_criteria() {
             &InteractionCriteria::default()
         )
         .unwrap_err(),
-        InteractionError::TopologyMismatch
+        InteractionError::TopologyMismatch(TopologyMismatch::Structure)
     );
 }
 

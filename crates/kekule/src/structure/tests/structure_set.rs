@@ -2,6 +2,7 @@
 //! copy on write.
 
 use super::*;
+use crate::diagnostics::TopologyMismatch;
 use crate::units::{DEGREE, PICOSECOND};
 
 /// Geometries of a one-atom topology at these x positions, unordered and
@@ -1258,7 +1259,7 @@ fn constructors_refuse_mismatched_geometries_and_layouts() {
     let other = Structure::new(Arc::new(single_atom_topology()), single_position(0.0)).unwrap();
     assert_eq!(
         StructureSet::from_structures([structure, other]).unwrap_err(),
-        StructureSetError::TopologyMismatch
+        StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
 }
 
@@ -1306,8 +1307,8 @@ fn every_error_reads_as_a_sentence() {
             "Geometry 4 is not a sample of the distribution.",
         ),
         (
-            E::TopologyMismatch,
-            "The structure has a different topology layout from the structure set.",
+            E::TopologyMismatch(TopologyMismatch::Structure),
+            "The structure has a different topology layout.",
         ),
         (
             E::GeometryCountMismatch {

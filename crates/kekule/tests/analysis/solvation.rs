@@ -1,4 +1,5 @@
 use crate::support::{chain_record, residue_record};
+use kekule::diagnostics::TopologyMismatch;
 use kekule::{
     math::{Lattice, PeriodicCell, PeriodicCellError, Point3, Vector3},
     molecule::{Element, VanDerWaalsRadiusSource},
@@ -290,7 +291,9 @@ fn overrides_validate_topology_units_charge_and_ion_species() {
             &mut m,
             &SolventOptions::default().with_solute_radii(Some(wrong))
         ),
-        Err(SolvationError::RadiusTopologyMismatch)
+        Err(SolvationError::TopologyMismatch(
+            TopologyMismatch::SoluteRadii
+        ))
     ));
     assert_eq!(m, before);
     assert!(SolvationRadii::new(m.shared_topology(), Quantity::new(vec![], NANOMETER)).is_err());
@@ -594,7 +597,9 @@ fn absent_elemental_radius_requires_an_explicit_override() {
     let after = m.clone();
     assert!(matches!(
         solvation::solvate(&mut m, &options().with_solute_radii(Some(radii))),
-        Err(SolvationError::RadiusTopologyMismatch)
+        Err(SolvationError::TopologyMismatch(
+            TopologyMismatch::SoluteRadii
+        ))
     ));
     assert_eq!(m, after);
 }

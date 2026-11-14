@@ -3,6 +3,7 @@
 //! [`Topology::subset`] returns the subset together with its narrow
 //! dense-state correspondence.
 
+use crate::diagnostics::TopologyMismatch;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -110,7 +111,7 @@ impl Topology {
         let source: Arc<Self> = source.into();
         let this = &source;
         if !this.shares_layout(selection.topology()) {
-            return Err(SelectionError::TopologyMismatch.into());
+            return Err(SelectionError::TopologyMismatch(TopologyMismatch::Selection).into());
         }
         if selection.indices().is_empty() {
             return Err(TopologySubsetError::EmptySelection);

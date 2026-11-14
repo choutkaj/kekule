@@ -60,7 +60,9 @@ pub(super) fn solvate(
     let radii = match &options.solute_radii {
         Some(radii) => {
             if !radii.topology.shares_layout(structure.topology()) {
-                return Err(SolvationError::RadiusTopologyMismatch);
+                return Err(SolvationError::TopologyMismatch(
+                    TopologyMismatch::SoluteRadii,
+                ));
             }
             radii.radii.clone()
         }
