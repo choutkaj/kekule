@@ -18,7 +18,7 @@ use super::atom_site::AtomRow;
 use super::connections::{DeclaredConnection, InstanceUnion};
 use super::connectivity::{
     covalent_bonding_radius, record_evidence, BondEvidenceMap, ListedBond,
-    COVALENT_BOND_TOLERANCE_ANGSTROM, MIN_COVALENT_BOND_DISTANCE_SQUARED,
+    COVALENT_BOND_TOLERANCE_ANGSTROM, MIN_COVALENT_BOND_DISTANCE_ANGSTROM,
 };
 use super::types::{
     AtomProvenance, BondEvidence, BondProvenance, EntityKind, InstanceProvenance,
@@ -725,7 +725,7 @@ fn count_bond_candidates<L: SlotLiveness>(
         let (left, left_element, left_point, _) = sites[left];
         let (right, right_element, right_point, _) = sites[right];
         let distance_squared = point_distance_squared(left_point, right_point);
-        if distance_squared <= MIN_COVALENT_BOND_DISTANCE_SQUARED {
+        if distance_squared <= MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2) {
             return Ok(());
         }
         let left_radius = covalent_bonding_radius(left_element).0;

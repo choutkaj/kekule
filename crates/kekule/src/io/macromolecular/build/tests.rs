@@ -60,7 +60,7 @@ fn bond_candidates_match_every_pair() {
                     + radius(right_element)
                     + COVALENT_BOND_TOLERANCE_ANGSTROM)
                     .min(COVALENT_BOND_CELL_ANGSTROM);
-                if distance_squared > MIN_COVALENT_BOND_DISTANCE_SQUARED
+                if distance_squared > MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2)
                     && distance_squared <= cutoff * cutoff
                     && graph.bond_between(left, right).is_none()
                 {
