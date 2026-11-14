@@ -516,10 +516,7 @@ impl IndexedFileTrajectoryReader {
                 "The file's indexed bytes changed since they were indexed. Open the file again.",
             )
         };
-        if !self
-            .fingerprint
-            .is_prefix_of_labelled_file(&mut file, &label)?
-        {
+        if !self.fingerprint.is_prefix_of_file(&mut file, &label)? {
             return Err(changed());
         }
         // The scan, the checks, and the fingerprint all read the file
@@ -534,8 +531,8 @@ impl IndexedFileTrajectoryReader {
             .and_then(|_| {
                 let end = self.inner.offsets().end();
                 self.inner.check_file(format, &label, |file| {
-                    if indexed.is_prefix_of_labelled_file(file, &label)? {
-                        TrajectoryFileFingerprint::of_labelled_file_prefix(file, end, &label)
+                    if indexed.is_prefix_of_file(file, &label)? {
+                        TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
                     } else {
                         Err(changed())
                     }
@@ -938,7 +935,7 @@ pub fn open_indexed_trajectory_with(
 ///
 /// The topology order contract and `options` are those of
 /// [`open_indexed_trajectory`]. Opening checks that the file begins with the
-/// bytes the index covers ([`TrajectoryFileFingerprint::is_prefix_of_file`]),
+/// bytes the index covers ([`TrajectoryFileFingerprint::is_prefix_of_path`]),
 /// that its format, header, and first frame agree with the index, and reads
 /// the frame offsets, times, and steps from the index alone. A file that
 /// grew by appending since the index was exported is the same file with
@@ -1027,9 +1024,7 @@ fn open_indexed(
     // A scan must not see the bytes the file holds now change.
     let scanned_from = match index {
         Some(_) => None,
-        None => Some(TrajectoryFileFingerprint::of_labelled_file(
-            &mut file, &label,
-        )?),
+        None => Some(TrajectoryFileFingerprint::of_file(&mut file, &label)?),
     };
     let mut reader = BufReader::new(SharedFile::new(file));
     let detection = detect::select_format(
@@ -1054,7 +1049,7 @@ fn open_indexed(
             // Detection left the reader at the start with an empty buffer.
             if !index
                 .fingerprint()
-                .is_prefix_of_labelled_file(reader.get_mut(), &label)?
+                .is_prefix_of_file(reader.get_mut(), &label)?
             {
                 return Err(index_mismatch(
                     TrajectoryIoOperation::Open,
@@ -1270,7 +1265,7 @@ fn open_indexed(
         // In the file that was scanned, whatever the path names now.
         let end = inner.offsets().end();
         inner.check_file(format, &label, |file| {
-            if !opened.is_prefix_of_labelled_file(file, &label)? {
+            if !opened.is_prefix_of_file(file, &label)? {
                 return Err(index_mismatch(
                     TrajectoryIoOperation::Index,
                     format,
@@ -1281,7 +1276,7 @@ fn open_indexed(
             if end == opened.byte_count() {
                 Ok(opened)
             } else {
-                TrajectoryFileFingerprint::of_labelled_file_prefix(file, end, &label)
+                TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
             }
         })?
     };

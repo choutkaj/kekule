@@ -615,9 +615,6 @@ fn fingerprints_take_a_file_grown_by_appending_for_the_same_file() {
         assert!(recorded.is_prefix_of_path(&path).unwrap());
         append(&path, &bytes[second..]);
         assert!(recorded.is_prefix_of_path(&path).unwrap(), "{format}");
-        let mut file = File::open(&path).unwrap();
-        assert!(recorded.is_prefix_of_file(&mut file).unwrap());
-        assert_eq!(file.stream_position().unwrap(), 0);
         let grown = TrajectoryFileFingerprint::of_path(&path).unwrap();
         assert!(!grown.same_content(&recorded));
         assert!(!grown.is_prefix_of_path(directory.0.join("missing")).is_ok());

@@ -271,7 +271,7 @@ pub fn append_trajectory_with(
         .open(path)
         .map_err(io)?;
     if let Some(fingerprint) = &kept.fingerprint {
-        if !fingerprint.is_prefix_of_file(&mut file)? {
+        if !fingerprint.is_prefix_of_file(&mut file, &label)? {
             return Err(index_mismatch(
                 TrajectoryIoOperation::Open,
                 format,
