@@ -1,5 +1,7 @@
 //! The failures of [`super::StructureSet`] operations.
 
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use std::fmt;
 
 use crate::diagnostics::TopologyMismatch;
@@ -57,19 +59,9 @@ pub enum StructureSetError {
     /// Probabilities were asked of a distribution without samples.
     EmptyDistribution,
     /// A geometry index is outside the set.
-    IndexOutOfRange {
-        /// The requested geometry index.
-        index: usize,
-        /// The number of geometries.
-        len: usize,
-    },
+    IndexOutOfRange(IndexOutOfRange),
     /// A state index is outside the distribution.
-    StateOutOfRange {
-        /// The requested state index.
-        state: usize,
-        /// The number of states.
-        states: usize,
-    },
+    StateOutOfRange(IndexOutOfRange),
     /// A geometry is not a sample of the distribution.
     NotSample {
         /// The geometry's index.
@@ -80,19 +72,9 @@ pub enum StructureSetError {
     /// [`TopologyMismatch::Structure`]).
     TopologyMismatch(TopologyMismatch),
     /// A set-wide replacement has the wrong number of geometries.
-    GeometryCountMismatch {
-        /// The set's geometry count.
-        expected: usize,
-        /// The number of replacements supplied.
-        actual: usize,
-    },
+    GeometryCountMismatch(LengthMismatch),
     /// An order has a different number of values than the set has geometries.
-    OrderLengthMismatch {
-        /// The set's geometry count.
-        expected: usize,
-        /// The number of values.
-        actual: usize,
-    },
+    OrderLengthMismatch(LengthMismatch),
     /// A time axis has a different number of times and steps.
     TimeAxisMismatch {
         /// The number of times.
@@ -154,27 +136,12 @@ pub enum StructureSetError {
     /// A partition groups another number of samples than the distribution
     /// lists ([`Distribution::new`](crate::structure::Distribution::new),
     /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)).
-    PartitionMismatch {
-        /// The number of samples.
-        expected: usize,
-        /// The partition's sample count.
-        actual: usize,
-    },
+    PartitionMismatch(LengthMismatch),
     /// Log weights were given in a different number than the distribution
     /// has samples.
-    LogWeightCountMismatch {
-        /// The number of samples.
-        expected: usize,
-        /// The number of log weights.
-        actual: usize,
-    },
+    LogWeightCountMismatch(LengthMismatch),
     /// States were given in a different number than the partition has.
-    StateCountMismatch {
-        /// The partition's state count.
-        expected: usize,
-        /// The number of states.
-        actual: usize,
-    },
+    StateCountMismatch(LengthMismatch),
     /// A log weight is not finite.
     NonFiniteLogWeight {
         /// The index of the geometry the log weight belongs to.
@@ -226,32 +193,14 @@ impl fmt::Display for StructureSetError {
             Self::Missing(requirement) => write!(formatter, "The structure set {requirement}."),
             Self::EmptySource => formatter.write_str("There are no structures to collect."),
             Self::EmptyDistribution => formatter.write_str("The distribution has no samples."),
-            Self::IndexOutOfRange { index, len } => write!(
-                formatter,
-                "Geometry {index} is outside the structure set of {}.",
-                counted(*len, "geometry", "geometries")
-            ),
-            Self::StateOutOfRange { state, states } => write!(
-                formatter,
-                "State {state} is outside the distribution of {}.",
-                counted(*states, "state", "states")
-            ),
+            Self::IndexOutOfRange(error) => error.fmt(formatter),
+            Self::StateOutOfRange(error) => error.fmt(formatter),
             Self::NotSample { geometry } => {
                 write!(formatter, "Geometry {geometry} is not a sample of the distribution.")
             }
             Self::TopologyMismatch(mismatch) => mismatch.fmt(formatter),
-            Self::GeometryCountMismatch { expected, actual } => write!(
-                formatter,
-                "The structure set has {}, but {} given.",
-                counted(*expected, "geometry", "geometries"),
-                given(*actual, "replacement", "replacements")
-            ),
-            Self::OrderLengthMismatch { expected, actual } => write!(
-                formatter,
-                "The order has {}, but the structure set has {}.",
-                counted(*actual, "value", "values"),
-                counted(*expected, "geometry", "geometries")
-            ),
+            Self::GeometryCountMismatch(error) => error.fmt(formatter),
+            Self::OrderLengthMismatch(error) => error.fmt(formatter),
             Self::TimeAxisMismatch { times, steps } => write!(
                 formatter,
                 "The time axis has {} and {}.",
@@ -297,24 +246,9 @@ impl fmt::Display for StructureSetError {
                 "The distribution covers {}, but the structure set has {geometries}.",
                 counted(*covered, "geometry", "geometries")
             ),
-            Self::PartitionMismatch { expected, actual } => write!(
-                formatter,
-                "The partition covers {}, but the distribution has {}.",
-                counted(*actual, "sample", "samples"),
-                counted(*expected, "sample", "samples")
-            ),
-            Self::LogWeightCountMismatch { expected, actual } => write!(
-                formatter,
-                "The distribution has {}, but {} given.",
-                counted(*expected, "sample", "samples"),
-                given(*actual, "log weight", "log weights")
-            ),
-            Self::StateCountMismatch { expected, actual } => write!(
-                formatter,
-                "The partition has {}, but {} given.",
-                counted(*expected, "state", "states"),
-                given(*actual, "state", "states")
-            ),
+            Self::PartitionMismatch(error) => error.fmt(formatter),
+            Self::LogWeightCountMismatch(error) => error.fmt(formatter),
+            Self::StateCountMismatch(error) => error.fmt(formatter),
             Self::NonFiniteLogWeight { geometry } => write!(
                 formatter,
                 "The log weight of geometry {geometry} is not finite."
@@ -345,12 +279,6 @@ impl fmt::Display for StructureSetError {
             Self::Unit(error) => error.fmt(formatter),
         }
     }
-}
-
-/// "1 log weight was" or "2 log weights were".
-fn given(count: usize, one: &str, many: &str) -> String {
-    let verb = if count == 1 { "was" } else { "were" };
-    format!("{} {verb}", crate::diagnostics::counted(count, one, many))
 }
 
 impl std::error::Error for StructureSetError {

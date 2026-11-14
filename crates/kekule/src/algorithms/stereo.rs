@@ -1,4 +1,6 @@
 use crate::diagnostics::Capitalized;
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use crate::io::AtomPositionSource;
 use crate::math::{Point3, Vector3};
 use crate::molecule::*;
@@ -596,12 +598,7 @@ pub enum CoordinateStereoError {
     /// Stereo candidate detection failed; see the source.
     Perception(StereoSearchError),
     /// `positions` does not hold one position per atom.
-    PositionCountMismatch {
-        /// The molecule's atom count.
-        expected: usize,
-        /// The number of positions supplied.
-        actual: usize,
-    },
+    PositionCountMismatch(LengthMismatch),
     /// Represented stereo fails validation before or after materialization;
     /// see the source.
     InvalidStereo(StereoValidationError),
@@ -615,12 +612,7 @@ impl fmt::Display for CoordinateStereoError {
             Self::Perception(_) => {
                 formatter.write_str("Cannot find the stereo elements of the molecule.")
             }
-            Self::PositionCountMismatch { expected, actual } => write!(
-                formatter,
-                "The molecule has {} and {}. Give one position per atom.",
-                crate::diagnostics::counted(*expected, "atom", "atoms"),
-                crate::diagnostics::counted(*actual, "position", "positions")
-            ),
+            Self::PositionCountMismatch(error) => error.fmt(formatter),
             Self::InvalidStereo(_) => formatter.write_str("The represented stereo is invalid."),
             Self::CouldNotCreateElement(_) => {
                 formatter.write_str("Cannot add a stereo element perceived from coordinates.")
@@ -673,10 +665,9 @@ pub fn infer_coordinate_stereo(
     options: CoordinateStereoOptions,
 ) -> Result<CoordinateStereoResult, CoordinateStereoError> {
     if positions.len() != mol.atom_count() {
-        return Err(CoordinateStereoError::PositionCountMismatch {
-            expected: mol.atom_count(),
-            actual: positions.len(),
-        });
+        return Err(CoordinateStereoError::PositionCountMismatch(
+            LengthMismatch::new(Countable::Position, mol.atom_count(), positions.len()),
+        ));
     }
     crate::molecule::validate_represented_stereo(mol)?;
     let perceived = perception::prepared(mol).map_err(CoordinateStereoError::Perception)?;

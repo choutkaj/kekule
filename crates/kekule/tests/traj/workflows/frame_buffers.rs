@@ -3,6 +3,8 @@
 //! without a copy, and error chains of streamed trajectory frames. Collection behavior itself is covered by the `kekule`
 //! crate.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::error::Error;
 use std::io::Cursor;
 use std::sync::Arc;
@@ -215,10 +217,9 @@ fn buffers_from_geometries_validate_them_against_the_topology() {
     assert_eq!(buffer.properties().bonds().len(), 1);
     assert_eq!(
         FrameBuffer::from_geometry(topology, Geometry::new(Positions::zeros(3))).unwrap_err(),
-        TrajectoryIoError::from(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 2,
-            actual: 3,
-        }))
+        TrajectoryIoError::from(GeometryError::Array(DenseArrayError::CountMismatch(
+            LengthMismatch::new(Countable::Row, 2, 3)
+        )))
     );
 }
 

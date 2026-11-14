@@ -1,3 +1,5 @@
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use crate::structure::DenseArrayError;
@@ -56,10 +58,9 @@ impl AtomScalars {
     ) -> Result<(), GeometryError> {
         if let Some(values) = &values {
             if values.len() != len {
-                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                    expected: len,
-                    actual: values.len(),
-                }));
+                return Err(GeometryError::Array(DenseArrayError::CountMismatch(
+                    LengthMismatch::new(Countable::Row, len, values.len()),
+                )));
             }
             if let Some(index) = values
                 .iter()

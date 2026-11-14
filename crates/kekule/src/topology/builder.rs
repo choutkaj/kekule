@@ -1,3 +1,5 @@
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use crate::DraftError;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -199,9 +201,9 @@ impl TopologyBuilder {
     ) -> Result<Vec<usize>, TopologyBuildError> {
         let mut atoms = self.atoms.clone();
         let previous = atoms.reorder(order).map_err(|error| match error {
-            OrderError::Length { expected, actual } => {
-                TopologyBuildError::AtomOrderLengthMismatch { expected, actual }
-            }
+            OrderError::Length { expected, actual } => TopologyBuildError::AtomOrderLengthMismatch(
+                LengthMismatch::new(Countable::Atom, expected, actual),
+            ),
             OrderError::Unknown(atom) => TopologyBuildError::InvalidAtomOrderEntry(atom),
             OrderError::Duplicate(atom) => TopologyBuildError::DuplicateAtomOrderEntry(atom),
         })?;
@@ -1159,12 +1161,7 @@ pub enum TopologyBuildError {
     /// A topology collection exceeded the fixed-width identifier space for `kind`.
     IdentifierCapacityExceeded(TopologyIdKind),
     /// A replacement dense atom order does not list every staged atom once.
-    AtomOrderLengthMismatch {
-        /// The number of staged atoms.
-        expected: usize,
-        /// The number of atoms in the replacement order.
-        actual: usize,
-    },
+    AtomOrderLengthMismatch(LengthMismatch),
     /// A replacement dense atom order names an atom that is not staged.
     InvalidAtomOrderEntry(InstanceAtomId),
     /// A replacement dense atom order lists one atom more than once.
@@ -1196,10 +1193,7 @@ impl fmt::Display for TopologyBuildError {
             Self::IdentifierCapacityExceeded(kind) => {
                 write!(formatter, "The topology has run out of {kind} identifiers.")
             }
-            Self::AtomOrderLengthMismatch { expected, actual } => write!(
-                formatter,
-                "The atom order lists {actual} atoms, but the topology has {expected}."
-            ),
+            Self::AtomOrderLengthMismatch(error) => error.fmt(formatter),
             Self::InvalidAtomOrderEntry(atom) => {
                 write!(
                     formatter,

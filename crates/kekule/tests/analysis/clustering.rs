@@ -2,6 +2,8 @@
 //! distance matrices, and regrouping and collapsing distributions by the
 //! partitions.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use kekule::alignment::{
@@ -384,10 +386,7 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             .distribution_mut()
             .regroup(partition(&[0, 0, 0], &[0]))
             .unwrap_err(),
-        StructureSetError::PartitionMismatch {
-            expected: 4,
-            actual: 3,
-        }
+        StructureSetError::PartitionMismatch(LengthMismatch::new(Countable::Sample, 4, 3))
     );
     let topology = ensemble.set().shared_topology();
     let set = StructureSet::from_geometries(

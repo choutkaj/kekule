@@ -1,3 +1,5 @@
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use crate::math::Vector3;
@@ -58,10 +60,11 @@ impl DenseVectors {
         let factor = values.unit().conversion_factor_to(unit)?;
         let source = values.value().as_ref();
         if source.len() != self.values.len() {
-            return Err(DenseArrayError::CountMismatch {
-                expected: self.values.len(),
-                actual: source.len(),
-            });
+            return Err(DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                self.values.len(),
+                source.len(),
+            )));
         }
         if let Some(index) = source
             .iter()

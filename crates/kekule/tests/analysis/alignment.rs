@@ -1,6 +1,9 @@
 //! Superposition and RMSD over structure sets, against geometries of the set or
 //! independent references.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use kekule::alignment::{
@@ -327,7 +330,11 @@ fn superposition_failure_leaves_the_complete_collection_unchanged() {
 
     assert_eq!(
         trajectory.superpose(3, &all, Default::default()),
-        Err(AlignmentError::ReferenceOutOfRange { index: 3, len: 3 })
+        Err(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+            Countable::Structure,
+            3,
+            3
+        )))
     );
     // The last item fails after earlier items fitted; nothing is published.
     assert_eq!(
@@ -365,7 +372,11 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
 
     assert_eq!(
         trajectory.rmsd(1, &all, Default::default()),
-        Err(AlignmentError::ReferenceOutOfRange { index: 1, len: 1 })
+        Err(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+            Countable::Structure,
+            1,
+            1
+        )))
     );
     // Collection-wide failures are reported once, not per item.
     assert_eq!(
@@ -391,10 +402,11 @@ fn rmsd_reports_reference_selection_weight_and_periodic_failures() {
     };
     assert_eq!(
         with_weights(&[1.0]),
-        Err(AlignmentError::WeightCountMismatch {
-            expected: 4,
-            actual: 1,
-        })
+        Err(AlignmentError::WeightCountMismatch(LengthMismatch::new(
+            Countable::Weight,
+            4,
+            1
+        )))
     );
     assert_eq!(
         with_weights(&[1.0, 1.0, f64::NAN, 1.0]),

@@ -1,6 +1,9 @@
 //! The log-weight arithmetic of [`Distribution`] and the bookkeeping of
 //! [`Ensemble`], checked against values worked out by hand.
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use super::{log_sum_exp, Distribution, Ensemble, Samples, StateData};
@@ -390,10 +393,7 @@ fn invalid_log_weights_are_refused() -> Result<(), StructureSetError> {
             .clone()
             .with_log_weights(vec![0.0])
             .unwrap_err(),
-        StructureSetError::LogWeightCountMismatch {
-            expected: 2,
-            actual: 1
-        }
+        StructureSetError::LogWeightCountMismatch(LengthMismatch::new(Countable::LogWeight, 2, 1))
     );
     for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         assert_eq!(
@@ -410,7 +410,7 @@ fn invalid_log_weights_are_refused() -> Result<(), StructureSetError> {
     let outside = Distribution::new(Samples::Subset(vec![0, 5]), Partition::one_state(2))?;
     assert!(matches!(
         Ensemble::new(set_of(3), outside),
-        Err(StructureSetError::IndexOutOfRange { index: 5, len: 3 })
+        Err(StructureSetError::IndexOutOfRange(payload)) if payload == IndexOutOfRange::new(Countable::Geometry, 5, 3)
     ));
     Ok(())
 }

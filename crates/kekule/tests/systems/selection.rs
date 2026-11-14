@@ -558,14 +558,14 @@ fn dense_index_and_mask_constructors_refuse_invalid_input() {
         AtomSelection::from_mask(Arc::clone(&top), &[0, 0]),
         Err(SelectionError::AtomMaskLength {
             expected: 3,
-            found: 2
+            actual: 2
         })
     );
     assert_eq!(
         AtomSelection::from_mask(Arc::clone(&top), &[0, 0, 0, 0]),
         Err(SelectionError::AtomMaskLength {
             expected: 3,
-            found: 4
+            actual: 4
         })
     );
     assert_eq!(

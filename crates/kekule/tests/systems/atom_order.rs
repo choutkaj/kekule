@@ -1,5 +1,7 @@
 //! Explicit dense atom order: construction, interpretation, editing, subsets.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use kekule::math::Point3;
@@ -94,10 +96,7 @@ fn builder_order_is_a_validated_permutation_carrying_atom_rows() {
     for (order, error) in [
         (
             vec![carbon, water_oxygen],
-            TopologyBuildError::AtomOrderLengthMismatch {
-                expected: 3,
-                actual: 2,
-            },
+            TopologyBuildError::AtomOrderLengthMismatch(LengthMismatch::new(Countable::Atom, 3, 2)),
         ),
         (
             vec![carbon, water_oxygen, atom(water, 1)],

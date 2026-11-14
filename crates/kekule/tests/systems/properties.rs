@@ -1,3 +1,5 @@
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use kekule::molecule::Molecule;
@@ -49,10 +51,7 @@ fn owner_sized_tables_reject_wrong_columns_and_extend_with_instances() {
             .properties_mut()
             .atoms_mut()
             .insert(key(), PropertyColumn::Int(vec![Some(22), Some(33)])),
-        Err(PropertyError::LengthMismatch {
-            expected: 1,
-            actual: 2
-        })
+        Err(PropertyError::LengthMismatch(payload)) if payload == LengthMismatch::new(Countable::Value, 1, 2)
     ));
     let molecule = kekule::smiles::to_molecules("C").unwrap().pop().unwrap();
     builder.add_molecule(molecule.clone()).unwrap();
@@ -78,7 +77,7 @@ fn replacing_hierarchy_cannot_silently_truncate_populated_columns() {
     );
     assert!(matches!(
         builder.build(),
-        Err(TopologyBuildError::Property(error)) if matches!(*error, PropertyError::LengthMismatch { expected: 0, actual: 1 })
+        Err(TopologyBuildError::Property(error)) if matches!(*error, PropertyError::LengthMismatch(payload) if payload == LengthMismatch::new(Countable::Value, 0, 1))
     ));
 }
 
@@ -159,10 +158,11 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     assert_eq!(
         structure.geometry_mut().set_properties(bound.clone()),
         Err(GeometryError::Array(
-            kekule::structure::DenseArrayError::CountMismatch {
-                expected: 1,
-                actual: 2
-            }
+            kekule::structure::DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                1,
+                2
+            ))
         ))
     );
     assert_eq!(structure.properties(), &original);
@@ -172,10 +172,11 @@ fn structures_reject_mismatched_property_rows_transactionally() {
     let detached = member.properties().clone();
     assert_eq!(
         member.set_properties(bound.clone()),
-        Err(GeometryError::BondCountMismatch {
-            expected: 0,
-            actual: 1
-        })
+        Err(GeometryError::BondCountMismatch(LengthMismatch::new(
+            Countable::Row,
+            0,
+            1
+        )))
     );
     assert_eq!(member.properties(), &detached);
 

@@ -1,4 +1,7 @@
 use super::*;
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use crate::diagnostics::TopologyMismatch;
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
@@ -125,10 +128,9 @@ fn structure_builder_rejects_instance_position_mismatch_before_mutation() {
     let before = builder.clone();
     assert_eq!(
         builder.add_instance(definition, &Positions::zeros(0)),
-        Err(StructureBuildError::InstancePositionCountMismatch {
-            expected: 1,
-            actual: 0
-        })
+        Err(StructureBuildError::InstancePositionCountMismatch(
+            LengthMismatch::new(Countable::Position, 1, 0)
+        ))
     );
     assert_eq!(builder, before);
     builder
@@ -150,10 +152,9 @@ fn structure_builder_rejects_excess_replacement_positions_before_mutation() {
         builder
             .geometry_mut()
             .set_positions(Quantity::new(vec![Point3::origin(); 2], NANOMETER)),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 1,
-            actual: 2
-        }))
+        Err(GeometryError::Array(DenseArrayError::CountMismatch(
+            LengthMismatch::new(Countable::Row, 1, 2)
+        )))
     );
     assert_eq!(builder, before);
     assert_eq!(builder.build().unwrap().positions(), &single_position(1.0));
@@ -164,10 +165,9 @@ fn structures_reject_rows_of_other_dimensions() {
     let (structure, _, _) = structure_fixture();
     assert_eq!(
         Structure::new(structure.shared_topology(), single_position(1.0)).unwrap_err(),
-        StructureError::Geometry(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 2,
-            actual: 1
-        }))
+        StructureError::Geometry(GeometryError::Array(DenseArrayError::CountMismatch(
+            LengthMismatch::new(Countable::Row, 2, 1)
+        )))
     );
     // A geometry bound to a topology with one bond cannot bind to one with no
     // bonds: populated bond rows never resize silently.
@@ -196,10 +196,11 @@ fn structures_reject_rows_of_other_dimensions() {
     assert_eq!(bound.properties().bonds().len(), 1);
     assert_eq!(
         StructureSet::from_geometries(two_atoms, [bound]).unwrap_err(),
-        StructureSetError::Geometry(GeometryError::BondCountMismatch {
-            expected: 0,
-            actual: 1
-        })
+        StructureSetError::Geometry(GeometryError::BondCountMismatch(LengthMismatch::new(
+            Countable::Row,
+            0,
+            1
+        )))
     );
 }
 
@@ -209,18 +210,14 @@ fn geometry_position_replacement_checks_the_count_transactionally() {
     let mut set = StructureSet::from_structures([structure.clone(), structure.clone()]).unwrap();
     assert_eq!(
         set.replace_positions([Positions::zeros(2)]),
-        Err(StructureSetError::GeometryCountMismatch {
-            expected: 2,
-            actual: 1
-        })
+        Err(StructureSetError::GeometryCountMismatch(
+            LengthMismatch::new(Countable::Geometry, 2, 1)
+        ))
     );
     assert_eq!(
         set.replace_positions([Positions::zeros(2), Positions::zeros(3)]),
         Err(StructureSetError::Geometry(GeometryError::Array(
-            DenseArrayError::CountMismatch {
-                expected: 2,
-                actual: 3
-            }
+            DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 3))
         )))
     );
     assert!(set
@@ -351,7 +348,7 @@ fn detached_geometries_get_bond_rows_only_when_bound() {
             BOND0,
             Some(PropertyValue::Int(1))
         ),
-        Err(PropertyError::InvalidIndex { len: 0, index: 0 })
+        Err(PropertyError::InvalidIndex(payload)) if payload == IndexOutOfRange::new(Countable::Row, 0, 0)
     ));
     member
         .properties_mut()
@@ -423,11 +420,9 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
         .unwrap();
 
     let replacement = Geometry::new(Positions::zeros(1));
-    let expected =
-        StructureSetError::Geometry(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 2,
-            actual: 1,
-        }));
+    let expected = StructureSetError::Geometry(GeometryError::Array(
+        DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1)),
+    ));
     assert_eq!(set.replace(0, replacement.clone()), Err(expected.clone()));
     assert_eq!(
         set.push_state(replacement, None, StateData::new(), Some(0.0)),
@@ -451,14 +446,22 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
     for index in [1, usize::MAX] {
         assert_eq!(
             set.replace(index, original.clone()),
-            Err(StructureSetError::IndexOutOfRange { index, len: 1 })
+            Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Geometry,
+                index,
+                1
+            )))
         );
         assert!(set.get_mut(index).is_none());
     }
     let mut empty = StructureSet::new(topology);
     assert_eq!(
         empty.replace(0, original.clone()),
-        Err(StructureSetError::IndexOutOfRange { index: 0, len: 0 })
+        Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+            Countable::Geometry,
+            0,
+            0
+        )))
     );
     assert!(empty.is_empty());
     assert_eq!(set.replace(0, original.clone()).unwrap(), original);
@@ -544,26 +547,25 @@ fn geometry_editor_preserves_dimensions_and_validated_values() {
         let detached = Geometry::new(Positions::zeros(2)).properties().clone();
         assert_eq!(
             member.set_properties(detached),
-            Err(GeometryError::BondCountMismatch {
-                expected: 1,
-                actual: 0
-            })
+            Err(GeometryError::BondCountMismatch(LengthMismatch::new(
+                Countable::Row,
+                1,
+                0
+            )))
         );
         let wrong_atoms = Geometry::new(Positions::zeros(1)).properties().clone();
         assert_eq!(
             member.set_properties(wrong_atoms),
-            Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                expected: 2,
-                actual: 1
-            }))
+            Err(GeometryError::Array(DenseArrayError::CountMismatch(
+                LengthMismatch::new(Countable::Row, 2, 1)
+            )))
         );
         assert_eq!(member.properties(), &properties);
         assert_eq!(
             member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
-            Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                expected: 2,
-                actual: 3
-            }))
+            Err(GeometryError::Array(DenseArrayError::CountMismatch(
+                LengthMismatch::new(Countable::Row, 2, 3)
+            )))
         );
         assert_eq!(member.positions().len(), 2);
     }
@@ -656,19 +658,17 @@ fn occupancies_and_b_factors_are_typed_and_independent_of_generic_properties() {
         structure
             .geometry_mut()
             .set_occupancy(TopologyAtomIndex::new(2), Some(1.0)),
-        Err(GeometryError::Array(DenseArrayError::IndexOutOfRange {
-            index: 2,
-            len: 2
-        }))
+        Err(GeometryError::Array(DenseArrayError::IndexOutOfRange(
+            IndexOutOfRange::new(Countable::Row, 2, 2)
+        )))
     );
     assert_eq!(
         structure
             .geometry_mut()
             .set_occupancies(Some(vec![Some(1.0)])),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 2,
-            actual: 1
-        }))
+        Err(GeometryError::Array(DenseArrayError::CountMismatch(
+            LengthMismatch::new(Countable::Row, 2, 1)
+        )))
     );
     assert_eq!(structure, before);
 
@@ -791,10 +791,9 @@ fn ordered_geometries_join_a_distribution_without_copying_positions() {
     geometry.set_velocities(Some(Velocities::zeros(2))).unwrap();
     assert_eq!(
         geometry.set_forces(Some(Forces::zeros(3))),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 2,
-            actual: 3
-        }))
+        Err(GeometryError::Array(DenseArrayError::CountMismatch(
+            LengthMismatch::new(Countable::Row, 2, 3)
+        )))
     );
     let mut set = StructureSet::from_geometries(structure.shared_topology(), [geometry]).unwrap();
     set.set_order(Some(Order::Step(vec![4]))).unwrap();
@@ -865,7 +864,7 @@ fn sets_read_chosen_geometries_of_another_set_without_consuming_it() {
 
     assert_eq!(
         StructureSet::from_reader(&trajectory, [5]).unwrap_err(),
-        StructureSetReadError::IndexOutOfRange { index: 5, len: 5 }
+        StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 5, 5))
     );
 }
 
@@ -965,7 +964,7 @@ fn sets_read_from_a_reader_are_faithful_copies_reading_each_geometry_once() {
     // values it does not have.
     assert_eq!(
         StructureSet::from_reader(&reader, [1, 4]).unwrap_err(),
-        StructureSetReadError::IndexOutOfRange { index: 4, len: 3 }
+        StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 4, 3))
     );
     assert_eq!(reader.reads(), 5);
 
@@ -1334,10 +1333,11 @@ fn every_sample_is_in_one_state_that_contains_its_representative() {
     let geometry = |x| Geometry::new(single_position(x));
     assert_eq!(
         set.push_sample(geometry(0.0), None, 0, None),
-        Err(StructureSetError::StateOutOfRange {
-            state: 0,
-            states: 0
-        })
+        Err(StructureSetError::StateOutOfRange(IndexOutOfRange::new(
+            Countable::State,
+            0,
+            0
+        )))
     );
     set.push_state(geometry(0.0), None, StateData::new(), None)
         .unwrap();
@@ -1803,10 +1803,11 @@ fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
     let snapshot = set.clone();
     assert_eq!(
         set.distribution_mut().regroup(Partition::one_state(3)),
-        Err(StructureSetError::PartitionMismatch {
-            expected: 4,
-            actual: 3
-        })
+        Err(StructureSetError::PartitionMismatch(LengthMismatch::new(
+            Countable::Sample,
+            4,
+            3
+        )))
     );
     assert_eq!(set.distribution(), snapshot.distribution());
 
@@ -1904,10 +1905,7 @@ fn selection_copies_geometries_and_whole_or_partial_states() {
     assert_eq!(energies(&states), [kj(2.0), kj(1.0)]);
     assert_eq!(
         set.select_states([2]).unwrap_err(),
-        StructureSetError::StateOutOfRange {
-            state: 2,
-            states: 2
-        }
+        StructureSetError::StateOutOfRange(IndexOutOfRange::new(Countable::State, 2, 2))
     );
 }
 

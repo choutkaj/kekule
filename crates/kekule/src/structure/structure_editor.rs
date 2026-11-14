@@ -7,6 +7,8 @@ use super::scalars::{b_factor_quantity, canonical_b_factor};
 use super::{
     DenseArrayError, Geometry, GeometryData, GeometryError, Positions, Structure, StructureError,
 };
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{OwnerProperties, PropertyError};
@@ -154,10 +156,11 @@ impl StructureEditor {
         positions: &Positions,
     ) -> Result<EditMolecule, StructureEditError> {
         if positions.len() != molecule.atom_count() {
-            return Err(DenseArrayError::CountMismatch {
-                expected: molecule.atom_count(),
-                actual: positions.len(),
-            }
+            return Err(DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                molecule.atom_count(),
+                positions.len(),
+            ))
             .into());
         }
         self.slots.try_reserve_atoms(positions.len())?;
@@ -333,10 +336,11 @@ impl StructureEditor {
     ) -> Result<(), StructureEditError> {
         let positions = Positions::new(positions)?;
         if positions.len() != self.topology.atom_count() {
-            return Err(DenseArrayError::CountMismatch {
-                expected: self.topology.atom_count(),
-                actual: positions.len(),
-            }
+            return Err(DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                self.topology.atom_count(),
+                positions.len(),
+            ))
             .into());
         }
         let staged = self

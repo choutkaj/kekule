@@ -3,6 +3,8 @@
 //!
 //! The enumeration search follows RDKit 2026.03.3 (Paolo Tosco, 2015), distributed under
 //! the BSD 3-Clause license reproduced in LICENSE-RDKit in this crate.
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
 use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded};
 use crate::molecule::{
     AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule, MoleculeError,
@@ -190,12 +192,7 @@ pub enum ResonanceError {
     /// The enumeration exceeded [`ResonanceOptions::max_total_work`].
     LimitExceeded(LimitExceeded),
     /// No contributor has this index.
-    ContributorOutOfRange {
-        /// The requested index.
-        index: usize,
-        /// The number of contributors.
-        count: usize,
-    },
+    ContributorOutOfRange(IndexOutOfRange),
     /// Editing the contributor molecule failed; see the source.
     Molecule(MoleculeError),
     /// Publishing the contributor molecule failed; see the source.
@@ -227,11 +224,7 @@ impl fmt::Display for ResonanceError {
                     limit.describe()
                 )
             }
-            Self::ContributorOutOfRange { index, count } => write!(
-                f,
-                "Resonance contributor {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*count, "contributor", "contributors")
-            ),
+            Self::ContributorOutOfRange(error) => error.fmt(f),
             Self::Molecule(_) => f.write_str("Cannot edit the resonance contributor."),
             Self::Publication(_) => f.write_str("Cannot publish the resonance contributor."),
         }
@@ -400,10 +393,11 @@ impl ResonanceStructures<'_> {
         let contributor =
             self.contributors
                 .get(index)
-                .ok_or(ResonanceError::ContributorOutOfRange {
+                .ok_or(ResonanceError::ContributorOutOfRange(IndexOutOfRange::new(
+                    Countable::ResonanceContributor,
                     index,
-                    count: self.contributors.len(),
-                })?;
+                    self.contributors.len(),
+                )))?;
         let mut editor = self.source.to_editor();
         for (id, _) in self.source.atoms() {
             let h = self

@@ -1,3 +1,5 @@
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::sync::Arc;
 use std::{io, io::Write};
 
@@ -1900,15 +1902,12 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     assert_eq!(
         structure_error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteErrorKind::ReportCountMismatch {
-                expected: 1,
-                actual: 0
-            }
+            MmcifWriteErrorKind::ReportCountMismatch(LengthMismatch::new(Countable::Report, 1, 0))
         ))
     );
     assert_eq!(
         structure_error.to_string(),
-        "Cannot write the mmCIF output. The block has 1 structure and 0 interpretation reports."
+        "Cannot write the mmCIF output. There are 0 interpretation reports instead of 1."
     );
 
     let set = StructureSet::from_structures([first, second]).unwrap();
@@ -1921,15 +1920,12 @@ fn mmcif_report_count_mismatch_is_context_neutral() {
     assert_eq!(
         set_error.detail(),
         Some(&FormatErrorDetail::MmcifWrite(
-            MmcifWriteErrorKind::ReportCountMismatch {
-                expected: 2,
-                actual: 0
-            }
+            MmcifWriteErrorKind::ReportCountMismatch(LengthMismatch::new(Countable::Report, 2, 0))
         ))
     );
     assert_eq!(
         set_error.to_string(),
-        "Cannot write the mmCIF output. The block has 2 structures and 0 interpretation reports."
+        "Cannot write the mmCIF output. There are 0 interpretation reports instead of 2."
     );
 }
 
@@ -2605,10 +2601,7 @@ fn mmcif_structure_sets_check_the_report_count_before_their_state() {
     .unwrap_err();
     assert!(matches!(
         mmcif_issue::<()>(Err(error)),
-        Some(MmcifWriteErrorKind::ReportCountMismatch {
-            expected: 2,
-            actual: 0
-        })
+        Some(MmcifWriteErrorKind::ReportCountMismatch(payload)) if payload == LengthMismatch::new(Countable::Report, 2, 0)
     ),);
 }
 

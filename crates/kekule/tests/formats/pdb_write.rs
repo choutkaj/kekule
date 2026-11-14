@@ -1,3 +1,5 @@
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::LengthMismatch;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -995,14 +997,11 @@ metalc1 metalc A ZN ZN B ZN ZN
     assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
     assert_eq!(
         issue(&error),
-        &PdbWriteErrorKind::ReportCountMismatch {
-            expected: 1,
-            actual: 0
-        }
+        &PdbWriteErrorKind::ReportCountMismatch(LengthMismatch::new(Countable::Report, 1, 0))
     );
     assert_eq!(
         error.message(),
-        "The entry has 1 structure and 0 interpretation reports."
+        "There are 0 interpretation reports instead of 1."
     );
 }
 
@@ -1144,9 +1143,6 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     .unwrap_err();
     assert_eq!(
         issue(&error),
-        &PdbWriteErrorKind::ReportCountMismatch {
-            expected: 2,
-            actual: 1
-        }
+        &PdbWriteErrorKind::ReportCountMismatch(LengthMismatch::new(Countable::Report, 2, 1))
     );
 }

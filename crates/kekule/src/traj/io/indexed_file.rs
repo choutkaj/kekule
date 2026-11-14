@@ -1,5 +1,7 @@
 //! A structure set over an indexed trajectory file: [`IndexedFile`].
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -417,7 +419,9 @@ impl StructureSetRead for StructureSet<IndexedFile> {
     fn read(&self, index: usize) -> Result<Geometry, StructureSetReadError> {
         let len = StructureSet::len(self);
         if index >= len {
-            return Err(StructureSetReadError::IndexOutOfRange { index, len });
+            return Err(StructureSetReadError::IndexOutOfRange(
+                IndexOutOfRange::new(Countable::Geometry, index, len),
+            ));
         }
         self.storage()
             .read(index)

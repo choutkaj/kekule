@@ -1,6 +1,9 @@
 //! Rigid superposition of paired atoms: fitting, RMSD, the weighted Kabsch
 //! kernel, and their options and errors.
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use std::fmt;
 
 use crate::diagnostics::{Cancelled, LimitExceeded, TopologyMismatch};
@@ -612,12 +615,7 @@ pub enum AlignmentError {
         geometry: AlignmentGeometry,
     },
     /// The explicit weight count does not match selection length.
-    WeightCountMismatch {
-        /// Selected atom count.
-        expected: usize,
-        /// Supplied weight count.
-        actual: usize,
-    },
+    WeightCountMismatch(LengthMismatch),
     /// One explicit weight is NaN or infinite.
     NonFiniteWeight {
         /// Zero-based position in selection order.
@@ -643,12 +641,7 @@ pub enum AlignmentError {
     /// RMSD requires at least one atom pair.
     EmptySelection,
     /// A collection reference index does not exist.
-    ReferenceOutOfRange {
-        /// The requested reference index.
-        index: usize,
-        /// The number of items in the collection.
-        len: usize,
-    },
+    ReferenceOutOfRange(IndexOutOfRange),
     /// One collection item failed.
     Item {
         /// The index of the failed item.
@@ -719,10 +712,7 @@ impl fmt::Display for AlignmentError {
                 formatter,
                 "The {geometry} geometry does not span two dimensions."
             ),
-            Self::WeightCountMismatch { expected, actual } => write!(
-                formatter,
-                "The selection has {expected} atoms and {actual} weights. Give one weight per atom."
-            ),
+            Self::WeightCountMismatch(error) => error.fmt(formatter),
             Self::NonFiniteWeight { selection_index } => write!(
                 formatter,
                 "The alignment weight at selection index {selection_index} is not finite."
@@ -755,11 +745,7 @@ impl fmt::Display for AlignmentError {
             Self::EmptySelection => {
                 formatter.write_str("The selection is empty. RMSD needs at least one atom pair.")
             }
-            Self::ReferenceOutOfRange { index, len } => write!(
-                formatter,
-                "Reference structure {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*len, "structure", "structures")
-            ),
+            Self::ReferenceOutOfRange(error) => error.fmt(formatter),
             Self::Item { index, .. } => write!(formatter, "Cannot align structure {index}."),
             Self::Transform(_) => formatter.write_str("Cannot apply the fitted transform."),
             Self::Read(error) => fmt::Display::fmt(error, formatter),
@@ -806,10 +792,11 @@ impl<'a> NormalizedWeights<'a> {
             Weighting::Uniform => Ok(Self::Uniform),
             Weighting::Explicit(values) => {
                 if values.len() != selected_atom_count {
-                    return Err(AlignmentError::WeightCountMismatch {
-                        expected: selected_atom_count,
-                        actual: values.len(),
-                    });
+                    return Err(AlignmentError::WeightCountMismatch(LengthMismatch::new(
+                        Countable::Weight,
+                        selected_atom_count,
+                        values.len(),
+                    )));
                 }
                 let mut maximum = 0.0_f64;
                 for (selection_index, weight) in values.iter().copied().enumerate() {
@@ -1896,10 +1883,11 @@ mod tests {
         };
         assert_eq!(
             fit(&[1.0]),
-            Err(AlignmentError::WeightCountMismatch {
-                expected: points.len(),
-                actual: 1,
-            })
+            Err(AlignmentError::WeightCountMismatch(LengthMismatch::new(
+                Countable::Weight,
+                points.len(),
+                1
+            )))
         );
         for (weight, expected) in [
             (

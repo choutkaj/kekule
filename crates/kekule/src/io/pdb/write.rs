@@ -15,13 +15,14 @@
 //! A chain identifier longer than the one-character chain column, such as
 //! the `SOL1` and `ION1` chains [`crate::solvation::solvate`] adds, is
 //! written as a segment identifier under [`PdbChainIdPolicy::SegmentId`].
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
 
 use crate::diagnostics::{
-    counted, Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail,
-    GeometryField,
+    Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
@@ -418,12 +419,7 @@ pub enum PdbWriteErrorKind {
     EmptyStructureSet,
     /// The number of interpretation reports does not match the number of
     /// structures: one for a structure, one per geometry or item.
-    ReportCountMismatch {
-        /// The number of structures.
-        expected: usize,
-        /// The number of reports.
-        actual: usize,
-    },
+    ReportCountMismatch(LengthMismatch),
 }
 
 impl PdbWriteErrorKind {
@@ -433,9 +429,7 @@ impl PdbWriteErrorKind {
     /// [`DiagnosticKind::Unsupported`] otherwise.
     pub const fn kind(&self) -> DiagnosticKind {
         match self {
-            Self::EmptyStructureSet | Self::ReportCountMismatch { .. } => {
-                DiagnosticKind::Inconsistent
-            }
+            Self::EmptyStructureSet | Self::ReportCountMismatch(_) => DiagnosticKind::Inconsistent,
             _ => DiagnosticKind::Unsupported,
         }
     }
@@ -534,12 +528,7 @@ impl fmt::Display for PdbWriteErrorKind {
                 f.write_str(&unrepresentable_state("PDB", *field, Some(*geometry)))
             }
             Self::EmptyStructureSet => f.write_str("The structure set has no geometries."),
-            Self::ReportCountMismatch { expected, actual } => write!(
-                f,
-                "The entry has {} and {}.",
-                counted(*expected, "structure", "structures"),
-                counted(*actual, "interpretation report", "interpretation reports")
-            ),
+            Self::ReportCountMismatch(error) => error.fmt(f),
         }
     }
 }
@@ -708,10 +697,9 @@ pub(crate) fn write_pdb_to<'a>(
     let plan = Plan::new(views[0].topology(), &options, &mut omissions)?;
     let links = match source.reports {
         Some(reports) if reports.len() != views.len() => {
-            return Err(fail(PdbWriteErrorKind::ReportCountMismatch {
-                expected: views.len(),
-                actual: reports.len(),
-            }));
+            return Err(fail(PdbWriteErrorKind::ReportCountMismatch(
+                LengthMismatch::new(Countable::Report, views.len(), reports.len()),
+            )));
         }
         Some(reports) => plan.links(&views, reports, &mut omissions),
         None => Vec::new(),

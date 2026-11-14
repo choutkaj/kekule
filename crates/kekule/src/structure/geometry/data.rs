@@ -1,6 +1,8 @@
 //! [`GeometryData`]: the state a [`super::Geometry`] shares, and the row
 //! operations of drafts that stage it.
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, RigidTransform};
@@ -119,10 +121,9 @@ impl GeometryData {
     /// Checks that a per-atom array has one row per atom.
     pub(crate) fn check_len(&self, actual: usize) -> Result<(), GeometryError> {
         if actual != self.positions.len() {
-            return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                expected: self.positions.len(),
-                actual,
-            }));
+            return Err(GeometryError::Array(DenseArrayError::CountMismatch(
+                LengthMismatch::new(Countable::Row, self.positions.len(), actual),
+            )));
         }
         Ok(())
     }

@@ -1,3 +1,5 @@
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use kekule::math::Point3;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{DenseArrayError, Geometry, Positions};
@@ -42,6 +44,6 @@ fn dense_position_projection_is_checked() {
     let positions = Positions::zeros(2);
     assert!(matches!(
         positions.select_indices(&[2]),
-        Err(DenseArrayError::IndexOutOfRange { index: 2, len: 2 })
+        Err(DenseArrayError::IndexOutOfRange(payload)) if payload == IndexOutOfRange::new(Countable::Row, 2, 2)
     ));
 }

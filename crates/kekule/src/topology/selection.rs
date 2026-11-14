@@ -535,7 +535,7 @@ impl AtomSelection {
         if mask.len() != expected {
             return Err(SelectionError::AtomMaskLength {
                 expected,
-                found: mask.len(),
+                actual: mask.len(),
             });
         }
         let tail = count % 64;
@@ -944,7 +944,7 @@ pub enum SelectionError {
         /// The number of words the topology's atoms need.
         expected: usize,
         /// The number of words supplied.
-        found: usize,
+        actual: usize,
     },
     /// A bond is not in the topology.
     InvalidBondId(InstanceBondId),
@@ -973,9 +973,9 @@ impl fmt::Display for SelectionError {
                 "{} is out of order or repeated in the selection.",
                 Capitalized(index)
             ),
-            Self::AtomMaskLength { expected, found } => write!(
+            Self::AtomMaskLength { expected, actual } => write!(
                 formatter,
-                "The atom mask has {found} words, but the topology needs {expected}."
+                "The atom mask has {actual} words, but the topology needs {expected}."
             ),
             Self::InvalidBondId(id) => not_in_topology(formatter, id),
             Self::InvalidBondIndex(index) => not_in_topology(formatter, index),

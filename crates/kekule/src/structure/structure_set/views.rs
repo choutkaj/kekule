@@ -1,5 +1,8 @@
 //! Borrowed geometries of a [`StructureSet`] or another [`StructureSetRead`].
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -74,7 +77,9 @@ impl<'a> GeometryView<'a, dyn StructureSetRead> {
     ) -> Result<Self, StructureSetReadError> {
         let len = reader.len();
         if index >= len {
-            return Err(StructureSetReadError::IndexOutOfRange { index, len });
+            return Err(StructureSetReadError::IndexOutOfRange(
+                IndexOutOfRange::new(Countable::Geometry, index, len),
+            ));
         }
         check_bound(reader.topology(), geometry).map_err(|source| {
             StructureSetReadError::Geometry {
@@ -172,10 +177,11 @@ pub(crate) fn check_bound(topology: &Topology, geometry: &Geometry) -> Result<()
     let properties = geometry.properties();
     validate_binding(atoms, properties, topology)?;
     if !is_bound(atoms, properties, topology) {
-        return Err(GeometryError::BondCountMismatch {
-            expected: topology.bond_count(),
-            actual: properties.bonds().len(),
-        });
+        return Err(GeometryError::BondCountMismatch(LengthMismatch::new(
+            Countable::Row,
+            topology.bond_count(),
+            properties.bonds().len(),
+        )));
     }
     Ok(())
 }

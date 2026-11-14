@@ -1,5 +1,6 @@
 //! [`GeometryError`]: invalid geometry state.
 
+use crate::diagnostics::LengthMismatch;
 use std::fmt;
 
 use crate::math::PeriodicCellError;
@@ -14,12 +15,7 @@ pub enum GeometryError {
     /// Dense per-atom state is invalid.
     Array(DenseArrayError),
     /// Bound bond property rows have the wrong length.
-    BondCountMismatch {
-        /// The required bond row count.
-        expected: usize,
-        /// The supplied bond row count.
-        actual: usize,
-    },
+    BondCountMismatch(LengthMismatch),
     /// The geometry exceeds addressable capacity.
     CapacityOverflow,
     /// A geometry property edit failed; see the source.
@@ -34,10 +30,7 @@ impl fmt::Display for GeometryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Array(error) => error.fmt(formatter),
-            Self::BondCountMismatch { expected, actual } => write!(
-                formatter,
-                "The bond properties have {actual} rows, but the topology has {expected} bonds."
-            ),
+            Self::BondCountMismatch(error) => error.fmt(formatter),
             Self::CapacityOverflow => {
                 formatter.write_str("The geometry exceeds the addressable capacity.")
             }

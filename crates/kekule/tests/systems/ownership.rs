@@ -1,3 +1,5 @@
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use std::cell::Cell;
 use std::error::Error;
 
@@ -151,11 +153,11 @@ fn borrowed_property_reads_retain_string_storage_and_missing_cells() {
     );
     assert!(matches!(
         table.value_ref(&key, row(2)),
-        Err(PropertyError::InvalidIndex { len: 2, index: 2 })
+        Err(PropertyError::InvalidIndex(payload)) if payload == IndexOutOfRange::new(Countable::Row, 2, 2)
     ));
     assert!(matches!(
         table.value_ref(&PropertyKey::new("missing").unwrap(), row(2)),
-        Err(PropertyError::InvalidIndex { len: 2, index: 2 })
+        Err(PropertyError::InvalidIndex(payload)) if payload == IndexOutOfRange::new(Countable::Row, 2, 2)
     ));
 }
 

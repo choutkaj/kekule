@@ -2,6 +2,8 @@
 //! reader's frame, reads run from many threads at once, a refresh takes the
 //! frames a writer appended, and loading gives the set in memory.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use std::fs::{self, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -179,10 +181,9 @@ fn every_read_is_the_indexed_frame_of_every_format() {
         }
         assert_eq!(
             set.read(set.len()),
-            Err(StructureSetReadError::IndexOutOfRange {
-                index: set.len(),
-                len: set.len()
-            })
+            Err(StructureSetReadError::IndexOutOfRange(
+                IndexOutOfRange::new(Countable::Geometry, set.len(), set.len())
+            ))
         );
 
         // Opened again from the kept index, the set reads the same geometries.

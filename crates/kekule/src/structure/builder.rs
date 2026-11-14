@@ -1,3 +1,5 @@
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use crate::DraftError;
 use std::fmt;
 use std::sync::Arc;
@@ -305,7 +307,9 @@ impl StructureBuilder {
 
 fn validate_position_count(expected: usize, actual: usize) -> Result<(), StructureBuildError> {
     if actual != expected {
-        return Err(StructureBuildError::InstancePositionCountMismatch { expected, actual });
+        return Err(StructureBuildError::InstancePositionCountMismatch(
+            LengthMismatch::new(Countable::Position, expected, actual),
+        ));
     }
     Ok(())
 }
@@ -315,12 +319,7 @@ fn validate_position_count(expected: usize, actual: usize) -> Result<(), Structu
 #[non_exhaustive]
 pub enum StructureBuildError {
     /// An added instance's positions do not match its molecule's atom count.
-    InstancePositionCountMismatch {
-        /// The molecule's atom count.
-        expected: usize,
-        /// The number of positions supplied.
-        actual: usize,
-    },
+    InstancePositionCountMismatch(LengthMismatch),
     /// Reserving per-atom state exceeded capacity.
     CapacityOverflow,
     /// A topology edit or the topology build failed; see the source.
@@ -334,12 +333,7 @@ pub enum StructureBuildError {
 impl fmt::Display for StructureBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InstancePositionCountMismatch { expected, actual } => write!(
-                formatter,
-                "The molecule has {}, but {} given.",
-                crate::diagnostics::counted(*expected, "atom", "atoms"),
-                crate::diagnostics::counted(*actual, "position was", "positions were")
-            ),
+            Self::InstancePositionCountMismatch(error) => error.fmt(formatter),
             Self::CapacityOverflow => {
                 formatter.write_str("The structure exceeds the addressable number of atoms.")
             }

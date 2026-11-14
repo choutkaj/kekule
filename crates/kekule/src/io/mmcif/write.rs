@@ -1,6 +1,8 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use crate::diagnostics::{
-    counted, Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
+    Capitalized, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
 };
 use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::macromolecular::{
@@ -305,12 +307,7 @@ pub enum MmcifWriteErrorKind {
     },
     /// The number of interpretation reports does not match the number of
     /// structures written.
-    ReportCountMismatch {
-        /// The number of structures.
-        expected: usize,
-        /// The number of reports.
-        actual: usize,
-    },
+    ReportCountMismatch(LengthMismatch),
     /// The 1-based geometry `geometry` differs from the first geometry in state
     /// one mmCIF block shares between models.
     IncompatibleGeometry {
@@ -468,7 +465,7 @@ impl MmcifWriteErrorKind {
             | Self::MissingAtomProvenance(_)
             | Self::DuplicateAtomProvenance(_)
             | Self::EmptyStructureSet
-            | Self::ReportCountMismatch { .. }
+            | Self::ReportCountMismatch(_)
             | Self::IncompatibleGeometry { .. } => DiagnosticKind::Inconsistent,
         }
     }
@@ -604,12 +601,7 @@ impl fmt::Display for MmcifWriteErrorKind {
             Self::UnsupportedTextValue { item } => {
                 write!(f, "A value of {item} does not fit one mmCIF token.")
             }
-            Self::ReportCountMismatch { expected, actual } => write!(
-                f,
-                "The block has {} and {}.",
-                counted(*expected, "structure", "structures"),
-                counted(*actual, "interpretation report", "interpretation reports")
-            ),
+            Self::ReportCountMismatch(error) => error.fmt(f),
             Self::IncompatibleGeometry { geometry, field } => write!(
                 f,
                 "Geometry {geometry} has a different {field} from the first geometry."
@@ -1027,10 +1019,9 @@ fn write_model_block_to(
     let plan = match entities {
         EntitySemantics::Reports(reports) => {
             let [report] = reports else {
-                return Err(fail(MmcifWriteErrorKind::ReportCountMismatch {
-                    expected: 1,
-                    actual: reports.len(),
-                }));
+                return Err(fail(MmcifWriteErrorKind::ReportCountMismatch(
+                    LengthMismatch::new(Countable::Report, 1, reports.len()),
+                )));
             };
             entity_plan_from_report(view, report)?
         }
@@ -1119,10 +1110,9 @@ fn write_multi_model_block_to(
         EntitySemantics::Classifications(classifications) => (Some(classifications), None),
         EntitySemantics::Reports(reports) => {
             if reports.len() != views.len() {
-                return Err(fail(MmcifWriteErrorKind::ReportCountMismatch {
-                    expected: views.len(),
-                    actual: reports.len(),
-                }));
+                return Err(fail(MmcifWriteErrorKind::ReportCountMismatch(
+                    LengthMismatch::new(Countable::Report, views.len(), reports.len()),
+                )));
             }
             (None, Some(reports))
         }

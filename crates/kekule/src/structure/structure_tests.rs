@@ -1,5 +1,7 @@
 //! Structure construction, identity, and position-update regressions.
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Element, Molecule};
 use crate::structure::{DenseArrayError, GeometryError, Positions, Structure, StructureBuildError};
@@ -208,10 +210,7 @@ fn construction_rejects_empty_and_mismatched_positions_transactionally() {
     let mut builder = Structure::builder();
     assert!(matches!(
         builder.add_molecule(small.clone(), &wrong_count),
-        Err(StructureBuildError::InstancePositionCountMismatch {
-            expected: 2,
-            actual: 1
-        })
+        Err(StructureBuildError::InstancePositionCountMismatch(payload)) if payload == LengthMismatch::new(Countable::Position, 2, 1)
     ));
     assert!(matches!(
         builder.build(),

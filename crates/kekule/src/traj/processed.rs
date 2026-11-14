@@ -1,6 +1,8 @@
 //! Geometries processed as they are read: [`Processed`] and its
 //! [`ProcessingSteps`].
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
@@ -265,12 +267,7 @@ pub enum ProcessingError {
         step: ProcessingStep,
     },
     /// The reference geometry does not exist.
-    ReferenceOutOfRange {
-        /// The reference geometry index.
-        index: usize,
-        /// The number of geometries.
-        len: usize,
-    },
+    ReferenceOutOfRange(IndexOutOfRange),
     /// The reference positions do not fit the reader's topology; see the
     /// source.
     Reference(Box<StructureError>),
@@ -294,11 +291,7 @@ impl fmt::Display for ProcessingError {
             Self::EmptySelection { step } => {
                 write!(formatter, "The atoms of {step} are none.")
             }
-            Self::ReferenceOutOfRange { index, len } => write!(
-                formatter,
-                "The reference geometry {index} does not exist. There are {}.",
-                crate::diagnostics::counted(*len, "geometry", "geometries")
-            ),
+            Self::ReferenceOutOfRange(error) => error.fmt(formatter),
             Self::Reference(_) => {
                 formatter.write_str("The reference positions do not fit the topology.")
             }
@@ -519,7 +512,11 @@ impl<R: StructureSetRead> Processed<R> {
             FitReference::Geometry(index) => {
                 let len = self.inner.len();
                 if *index >= len {
-                    return Err(ProcessingError::ReferenceOutOfRange { index: *index, len });
+                    return Err(ProcessingError::ReferenceOutOfRange(IndexOutOfRange::new(
+                        Countable::Geometry,
+                        *index,
+                        len,
+                    )));
                 }
                 let mut geometry = self.read_inner(*index)?;
                 self.prepare(*index, &mut geometry)?;

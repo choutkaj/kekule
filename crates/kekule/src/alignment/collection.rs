@@ -2,6 +2,8 @@
 //! over listed geometries of any [`StructureSetRead`], through one implementation.
 
 use crate::diagnostics::Cancellation;
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
 use crate::diagnostics::TopologyMismatch;
 use crate::math::RigidTransform;
 use crate::parallel::{Progress, Run};
@@ -316,7 +318,11 @@ fn geometry_values(
         Reference::Index(index) => {
             let len = reader.len();
             if index >= len {
-                return Err(AlignmentError::ReferenceOutOfRange { index, len });
+                return Err(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+                    Countable::Structure,
+                    index,
+                    len,
+                )));
             }
             match reader.peek(index) {
                 Some(view) => view.as_structure_view(),
@@ -500,10 +506,11 @@ fn reference_view<'a>(
             items
                 .get(index)
                 .copied()
-                .ok_or(AlignmentError::ReferenceOutOfRange {
+                .ok_or(AlignmentError::ReferenceOutOfRange(IndexOutOfRange::new(
+                    Countable::Structure,
                     index,
-                    len: items.len(),
-                })
+                    items.len(),
+                )))
         }
         Reference::View(view) => Ok(view),
     }

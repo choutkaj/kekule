@@ -1,6 +1,8 @@
 //! Frame selection, replacement, editing, and extraction of structure sets in
 //! a time order.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
 use std::sync::Arc;
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
@@ -131,7 +133,7 @@ fn frame_selection_retains_exact_state_order_duplicates_and_empty_topology_bindi
     assert_eq!(empty.properties(), original.properties());
     assert_eq!(
         original.select([0, 4]).unwrap_err(),
-        StructureSetError::IndexOutOfRange { index: 4, len: 4 }
+        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 4, 4))
     );
     assert_eq!(format!("{original:?}"), before);
     let atoms = AtomSelection::all(original.shared_topology());
@@ -159,7 +161,7 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
     let invalid = Geometry::new(Positions::zeros(2));
     assert_eq!(
         original.replace(4, invalid.clone()).unwrap_err(),
-        StructureSetError::IndexOutOfRange { index: 4, len: 4 }
+        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 4, 4))
     );
     assert!(original.replace(1, invalid).is_err());
     assert_eq!(format!("{original:?}"), before);

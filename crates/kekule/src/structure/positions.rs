@@ -1,3 +1,6 @@
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use std::fmt;
 use std::sync::Arc;
 
@@ -31,10 +34,11 @@ impl Positions {
     ) -> Result<(), DenseArrayError> {
         for &(index, point) in values {
             if index >= self.values.len() {
-                return Err(DenseArrayError::IndexOutOfRange {
+                return Err(DenseArrayError::IndexOutOfRange(IndexOutOfRange::new(
+                    Countable::Row,
                     index,
-                    len: self.values.len(),
-                });
+                    self.values.len(),
+                )));
             }
             if !point.is_finite() {
                 return Err(DenseArrayError::NonFinite { index });
@@ -160,7 +164,11 @@ impl Positions {
         }
         let len = self.values.len();
         if let Some(&index) = indices.iter().find(|&&index| index >= len) {
-            return Err(DenseArrayError::IndexOutOfRange { index, len });
+            return Err(DenseArrayError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Row,
+                index,
+                len,
+            )));
         }
         let values = indices.iter().map(|&index| self.values[index]).collect();
         Ok(Self {
@@ -184,7 +192,11 @@ impl Positions {
         }
         let len = self.values.len();
         if index >= len {
-            return Err(DenseArrayError::IndexOutOfRange { index, len });
+            return Err(DenseArrayError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Row,
+                index,
+                len,
+            )));
         }
         Arc::make_mut(&mut self.values)[index] = point;
         Ok(())
@@ -221,10 +233,11 @@ impl Positions {
             .conversion_factor_to(CANONICAL_LENGTH_UNIT)?;
         let source = positions.value().as_ref();
         if source.len() != self.len() {
-            return Err(DenseArrayError::CountMismatch {
-                expected: self.len(),
-                actual: source.len(),
-            });
+            return Err(DenseArrayError::CountMismatch(LengthMismatch::new(
+                Countable::Row,
+                self.len(),
+                source.len(),
+            )));
         }
         for (index, point) in source.iter().copied().enumerate() {
             let converted = Point3::new(point.x * factor, point.y * factor, point.z * factor);
@@ -256,19 +269,9 @@ impl Positions {
 #[non_exhaustive]
 pub enum DenseArrayError {
     /// The dense row index is outside an array of `len` rows.
-    IndexOutOfRange {
-        /// The requested row.
-        index: usize,
-        /// The number of rows.
-        len: usize,
-    },
+    IndexOutOfRange(IndexOutOfRange),
     /// The array has the wrong number of rows.
-    CountMismatch {
-        /// The required number of rows.
-        expected: usize,
-        /// The supplied number of rows.
-        actual: usize,
-    },
+    CountMismatch(LengthMismatch),
     /// The value at dense row `index` is not finite.
     NonFinite {
         /// The row.
@@ -281,17 +284,8 @@ pub enum DenseArrayError {
 impl fmt::Display for DenseArrayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::IndexOutOfRange { index, len } => {
-                write!(
-                    formatter,
-                    "Row {index} is outside the array of {}.",
-                    crate::diagnostics::counted(*len, "row", "rows")
-                )
-            }
-            Self::CountMismatch { expected, actual } => write!(
-                formatter,
-                "The array has {actual} rows, but {expected} are required."
-            ),
+            Self::IndexOutOfRange(error) => error.fmt(formatter),
+            Self::CountMismatch(error) => error.fmt(formatter),
             Self::NonFinite { index } => {
                 write!(formatter, "The value in row {index} is not finite.")
             }

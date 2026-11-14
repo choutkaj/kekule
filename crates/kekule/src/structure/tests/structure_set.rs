@@ -2,6 +2,9 @@
 //! copy on write.
 
 use super::*;
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
+use crate::diagnostics::LengthMismatch;
 use crate::diagnostics::TopologyMismatch;
 use crate::units::{DEGREE, PICOSECOND};
 
@@ -90,10 +93,11 @@ fn an_order_has_one_value_per_geometry_in_every_column() {
     let mut set = set_at(&[0.0, 1.0]);
     assert_eq!(
         set.set_order(Some(Order::Step(vec![0]))),
-        Err(StructureSetError::OrderLengthMismatch {
-            expected: 2,
-            actual: 1
-        })
+        Err(StructureSetError::OrderLengthMismatch(LengthMismatch::new(
+            Countable::OrderValue,
+            2,
+            1
+        )))
     );
     assert_eq!(
         set.set_order(Some(Order::Coordinate {
@@ -271,10 +275,9 @@ fn any_geometry_may_carry_site_fields_and_dynamics() {
     geometry.set_velocities(Some(velocities(1.0))).unwrap();
     assert_eq!(
         geometry.set_forces(Some(Forces::zeros(2))),
-        Err(GeometryError::Array(DenseArrayError::CountMismatch {
-            expected: 1,
-            actual: 2
-        }))
+        Err(GeometryError::Array(DenseArrayError::CountMismatch(
+            LengthMismatch::new(Countable::Row, 1, 2)
+        )))
     );
     let view = set.get(0).unwrap();
     assert_eq!(view.occupancy(ATOM0), Some(0.5));
@@ -323,10 +326,11 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
     );
     assert_eq!(
         Distribution::new(Samples::Subset(vec![1, 2]), Partition::one_state(3)),
-        Err(StructureSetError::PartitionMismatch {
-            expected: 2,
-            actual: 3
-        })
+        Err(StructureSetError::PartitionMismatch(LengthMismatch::new(
+            Countable::Sample,
+            2,
+            3
+        )))
     );
     assert_eq!(
         Ensemble::new(
@@ -345,7 +349,7 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
             distribution(Samples::Subset(vec![1, 3]), &[0, 0], &[0])
         )
         .unwrap_err(),
-        StructureSetError::IndexOutOfRange { index: 3, len: 3 }
+        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 3, 3))
     );
     // A subset listing every geometry is all of them.
     let all = ensemble_at(
@@ -385,10 +389,9 @@ fn log_weights_are_finite_and_equal_when_absent() {
     assert_eq!(distribution.effective_sample_size().unwrap(), 2.0);
     assert_eq!(
         distribution.set_log_weights(Some(vec![0.0])),
-        Err(StructureSetError::LogWeightCountMismatch {
-            expected: 2,
-            actual: 1
-        })
+        Err(StructureSetError::LogWeightCountMismatch(
+            LengthMismatch::new(Countable::LogWeight, 2, 1)
+        ))
     );
     assert_eq!(
         distribution.set_log_weights(Some(vec![0.0, f64::NAN])),
@@ -421,10 +424,11 @@ fn log_weights_are_finite_and_equal_when_absent() {
     );
     assert_eq!(
         set.push_sample(Geometry::new(single_position(3.0)), None, 1, Some(0.0)),
-        Err(StructureSetError::StateOutOfRange {
-            state: 1,
-            states: 1
-        })
+        Err(StructureSetError::StateOutOfRange(IndexOutOfRange::new(
+            Countable::State,
+            1,
+            1
+        )))
     );
     assert_eq!(
         set.push_sample(
@@ -535,10 +539,7 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     );
     assert_eq!(
         set.select_states([2]).unwrap_err(),
-        StructureSetError::StateOutOfRange {
-            state: 2,
-            states: 2
-        }
+        StructureSetError::StateOutOfRange(IndexOutOfRange::new(Countable::State, 2, 2))
     );
 
     // Removing a geometry that is not a sample shifts the samples down.
@@ -635,10 +636,9 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     assert_eq!(xs(shared.set()), [0.0, 1.0, 2.0]);
     assert_eq!(
         moved.replace_positions([single_position(0.0)]),
-        Err(StructureSetError::GeometryCountMismatch {
-            expected: 3,
-            actual: 1
-        })
+        Err(StructureSetError::GeometryCountMismatch(
+            LengthMismatch::new(Countable::Geometry, 3, 1)
+        ))
     );
 }
 
@@ -755,10 +755,11 @@ fn distribution_operations_keep_their_results() {
         energy_set
             .distribution_mut()
             .regroup(Partition::one_state(2)),
-        Err(StructureSetError::PartitionMismatch {
-            expected: 3,
-            actual: 2
-        })
+        Err(StructureSetError::PartitionMismatch(LengthMismatch::new(
+            Countable::Sample,
+            3,
+            2
+        )))
     );
     assert_eq!(energy_set.distribution(), &regrouped);
 
@@ -926,7 +927,11 @@ fn replacing_a_geometry_keeps_its_place_and_sample() {
     ));
     assert_eq!(
         set.replace(2, Geometry::new(single_position(0.0))),
-        Err(StructureSetError::IndexOutOfRange { index: 2, len: 2 })
+        Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+            Countable::Geometry,
+            2,
+            2
+        )))
     );
     assert_same_ensemble(&set, &before);
 }
@@ -937,7 +942,7 @@ fn the_distribution_guard_keeps_the_samples() {
     let foreign = Distribution::new(Samples::Subset(vec![7]), Partition::one_state(1)).unwrap();
     assert_eq!(
         Ensemble::new(set_at(&[0.0, 1.0]), foreign).unwrap_err(),
-        StructureSetError::IndexOutOfRange { index: 7, len: 2 }
+        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 7, 2))
     );
     let mut set = ensemble_at(&[0.0, 1.0], distribution_of_one_state(2));
     let mut distribution = set.distribution_mut();
@@ -1166,12 +1171,20 @@ fn places_are_set_only_on_an_order_and_inside_the_set() {
     );
     assert_eq!(
         set.set_place(1, None),
-        Err(StructureSetError::IndexOutOfRange { index: 1, len: 1 })
+        Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+            Countable::Geometry,
+            1,
+            1
+        )))
     );
     set.set_order(Some(Order::Step(vec![0]))).unwrap();
     assert_eq!(
         set.set_place(3, Some(Place::Step(1))),
-        Err(StructureSetError::IndexOutOfRange { index: 3, len: 1 })
+        Err(StructureSetError::IndexOutOfRange(IndexOutOfRange::new(
+            Countable::Geometry,
+            3,
+            1
+        )))
     );
     assert_eq!(
         set.set_place(0, None),
@@ -1249,11 +1262,8 @@ fn constructors_refuse_mismatched_geometries_and_layouts() {
             ],
         ),
         Err(StructureSetError::Geometry(GeometryError::Array(
-            DenseArrayError::CountMismatch {
-                expected: 1,
-                actual: 2
-            }
-        )))
+            DenseArrayError::CountMismatch(payload)
+        ))) if payload == LengthMismatch::new(Countable::Row, 1, 2)
     ));
     let (structure, _, _) = structure_fixture();
     let other = Structure::new(Arc::new(single_atom_topology()), single_position(0.0)).unwrap();
@@ -1292,15 +1302,12 @@ fn every_error_reads_as_a_sentence() {
         (E::EmptySource, "There are no structures to collect."),
         (E::EmptyDistribution, "The distribution has no samples."),
         (
-            E::IndexOutOfRange { index: 3, len: 1 },
-            "Geometry 3 is outside the structure set of 1 geometry.",
+            E::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 3, 1)),
+            "Geometry 3 does not exist. There is 1 geometry.",
         ),
         (
-            E::StateOutOfRange {
-                state: 2,
-                states: 2,
-            },
-            "State 2 is outside the distribution of 2 states.",
+            E::StateOutOfRange(IndexOutOfRange::new(Countable::State, 2, 2)),
+            "State 2 does not exist. There are 2 states.",
         ),
         (
             E::NotSample { geometry: 4 },
@@ -1311,18 +1318,12 @@ fn every_error_reads_as_a_sentence() {
             "The structure has a different topology layout.",
         ),
         (
-            E::GeometryCountMismatch {
-                expected: 3,
-                actual: 1,
-            },
-            "The structure set has 3 geometries, but 1 replacement was given.",
+            E::GeometryCountMismatch(LengthMismatch::new(Countable::Geometry, 3, 1)),
+            "There is 1 geometry instead of 3.",
         ),
         (
-            E::OrderLengthMismatch {
-                expected: 2,
-                actual: 1,
-            },
-            "The order has 1 value, but the structure set has 2 geometries.",
+            E::OrderLengthMismatch(LengthMismatch::new(Countable::OrderValue, 2, 1)),
+            "There is 1 order value instead of 2.",
         ),
         (
             E::TimeAxisMismatch { times: 1, steps: 2 },
@@ -1368,32 +1369,20 @@ fn every_error_reads_as_a_sentence() {
             "The distribution covers 2 geometries, but the structure set has 3.",
         ),
         (
-            E::PartitionMismatch {
-                expected: 2,
-                actual: 3,
-            },
-            "The partition covers 3 samples, but the distribution has 2 samples.",
+            E::PartitionMismatch(LengthMismatch::new(Countable::Sample, 2, 3)),
+            "There are 3 samples instead of 2.",
         ),
         (
-            E::LogWeightCountMismatch {
-                expected: 2,
-                actual: 1,
-            },
-            "The distribution has 2 samples, but 1 log weight was given.",
+            E::LogWeightCountMismatch(LengthMismatch::new(Countable::LogWeight, 2, 1)),
+            "There is 1 log weight instead of 2.",
         ),
         (
-            E::LogWeightCountMismatch {
-                expected: 1,
-                actual: 2,
-            },
-            "The distribution has 1 sample, but 2 log weights were given.",
+            E::LogWeightCountMismatch(LengthMismatch::new(Countable::LogWeight, 1, 2)),
+            "There are 2 log weights instead of 1.",
         ),
         (
-            E::StateCountMismatch {
-                expected: 1,
-                actual: 2,
-            },
-            "The partition has 1 state, but 2 states were given.",
+            E::StateCountMismatch(LengthMismatch::new(Countable::State, 1, 2)),
+            "There are 2 states instead of 1.",
         ),
         (
             E::NonFiniteLogWeight { geometry: 0 },

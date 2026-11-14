@@ -36,6 +36,10 @@ pub enum Countable {
     Sample,
     /// Weights, one per atom or sample.
     Weight,
+    /// Log weights, one per sample of a distribution.
+    LogWeight,
+    /// Values of an order, one per geometry of a structure set.
+    OrderValue,
     /// Resonance contributors.
     ResonanceContributor,
     /// Solute radii, one per atom.
@@ -64,10 +68,12 @@ impl Countable {
             Self::State => "state",
             Self::Sample => "sample",
             Self::Weight => "weight",
+            Self::LogWeight => "log weight",
+            Self::OrderValue => "order value",
             Self::ResonanceContributor => "resonance contributor",
             Self::SoluteRadius => "solute radius",
             Self::Ion => "ion",
-            Self::Report => "report",
+            Self::Report => "interpretation report",
             Self::Value => "value",
         }
     }
@@ -87,10 +93,12 @@ impl Countable {
             Self::State => "states",
             Self::Sample => "samples",
             Self::Weight => "weights",
+            Self::LogWeight => "log weights",
+            Self::OrderValue => "order values",
             Self::ResonanceContributor => "resonance contributors",
             Self::SoluteRadius => "solute radii",
             Self::Ion => "ions",
-            Self::Report => "reports",
+            Self::Report => "interpretation reports",
             Self::Value => "values",
         }
     }

@@ -1,3 +1,5 @@
+use crate::diagnostics::Countable;
+use crate::diagnostics::LengthMismatch;
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, Vector3};
@@ -336,17 +338,17 @@ impl FrameBuffer {
         let time = canonical_time(data.time)?;
         if let Some(source) = data.annotations {
             if source.atoms().len() != self.atom_count() {
-                return Err(GeometryError::Array(DenseArrayError::CountMismatch {
-                    expected: self.atom_count(),
-                    actual: source.atoms().len(),
-                })
+                return Err(GeometryError::Array(DenseArrayError::CountMismatch(
+                    LengthMismatch::new(Countable::Row, self.atom_count(), source.atoms().len()),
+                ))
                 .into());
             }
             if source.bonds().len() != self.properties().bonds().len() {
-                return Err(GeometryError::BondCountMismatch {
-                    expected: self.properties().bonds().len(),
-                    actual: source.bonds().len(),
-                }
+                return Err(GeometryError::BondCountMismatch(LengthMismatch::new(
+                    Countable::Row,
+                    self.properties().bonds().len(),
+                    source.bonds().len(),
+                ))
                 .into());
             }
         }

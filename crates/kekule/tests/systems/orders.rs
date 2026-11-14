@@ -1,6 +1,9 @@
 //! Structure sets on a step or a coordinate order: optimization histories,
 //! relaxed scans, and paths.
 
+use kekule::diagnostics::Countable;
+use kekule::diagnostics::IndexOutOfRange;
+use kekule::diagnostics::LengthMismatch;
 use kekule::diagnostics::TopologyMismatch;
 use std::sync::Arc;
 
@@ -193,10 +196,11 @@ fn geometries_must_lie_on_the_order_and_fit_its_topology() {
     let mut collected = StructureSet::from_geometries(chain(3), [geometry(), geometry()]).unwrap();
     assert_eq!(
         collected.set_order(Some(Order::Step(vec![0]))),
-        Err(StructureSetError::OrderLengthMismatch {
-            expected: 2,
-            actual: 1
-        })
+        Err(StructureSetError::OrderLengthMismatch(LengthMismatch::new(
+            Countable::OrderValue,
+            2,
+            1
+        )))
     );
     assert_eq!(collected.order(), None);
 }
@@ -309,7 +313,7 @@ fn geometries_move_on_the_order_and_are_selected_with_their_places() {
     set.set_place(0, Some(Place::Step(7))).unwrap();
     assert_eq!(
         set.remove(3).unwrap_err(),
-        StructureSetError::IndexOutOfRange { index: 3, len: 3 }
+        StructureSetError::IndexOutOfRange(IndexOutOfRange::new(Countable::Geometry, 3, 3))
     );
 
     // Selection keeps each geometry's step, in the order asked for.
@@ -327,10 +331,7 @@ fn geometries_move_on_the_order_and_are_selected_with_their_places() {
     assert_eq!(places(&set), steps(&[7, 10, 15]));
     assert_eq!(
         set.replace_positions([positions(0.0)]).unwrap_err(),
-        StructureSetError::GeometryCountMismatch {
-            expected: 3,
-            actual: 1
-        }
+        StructureSetError::GeometryCountMismatch(LengthMismatch::new(Countable::Geometry, 3, 1))
     );
 
     // A geometry moves along a coordinate order, in its unit.

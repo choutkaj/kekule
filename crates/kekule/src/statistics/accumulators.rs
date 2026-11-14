@@ -1,6 +1,8 @@
 //! Weighted accumulators of per-atom statistics over geometries, their results
 //! and errors, and the structure-set and ensemble methods that run them.
 
+use crate::diagnostics::Countable;
+use crate::diagnostics::IndexOutOfRange;
 use crate::diagnostics::TopologyMismatch;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -1651,7 +1653,11 @@ fn checked(
     let samples = samples.into_iter().collect::<Vec<_>>();
     if let Some(&index) = samples.iter().find(|index| **index >= len) {
         return Err(StatisticsError::Read(
-            StructureSetReadError::IndexOutOfRange { index, len },
+            StructureSetReadError::IndexOutOfRange(IndexOutOfRange::new(
+                Countable::Geometry,
+                index,
+                len,
+            )),
         ));
     }
     Ok(samples)
