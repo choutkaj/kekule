@@ -2,13 +2,12 @@
 //!
 //! [`XyzReader`] and [`IndexedXyzReader`] read constant-count
 //! element/x/y/z frames whose atom lines follow the topology's dense order and
-//! elements; [`XyzWriter`] writes them deterministically, from trajectory
-//! frames or one frame per geometry of a structure set
-//! ([`XyzWriter::write_structure_set`]). XYZ stores positions only: the writer
-//! rejects a frame's velocities, forces, time, step, occupancies, B-factors
-//! and properties, its
-//! cell, and structure set state unless its options omit them, and reports
-//! everything it leaves out, such as bonds, charges and omitted cells, in
+//! elements; [`XyzWriter`] streams trajectory frames in the text
+//! [`kekule::xyz::write`](crate::xyz::write) writes for a structure or a
+//! structure set. XYZ stores positions only: the writer rejects a frame's
+//! velocities, forces, time, step, occupancies, B-factors and properties,
+//! and its cell, unless its options omit them, and reports everything it
+//! leaves out, such as bonds, charges and omitted cells, in
 //! [`XyzWriter::report`]. To
 //! obtain a topology from an XYZ file itself, interpret one of its frames
 //! with `kekule::xyz`, which keeps atom-line order as dense order and infers
@@ -53,9 +52,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-use crate::diagnostics::{GeometryField, LimitExceeded, Resource, WriteOmission, WriteReport};
-use crate::io::write_policy::{record_multi_model_structure_set, Carries, Omissions};
-use crate::traj::trajectory::reason::{LengthUnitRole, Reason};
+use crate::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
+use crate::traj::trajectory::reason::Reason;
 use crate::traj::FrameView;
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
@@ -63,7 +61,7 @@ use std::sync::Arc;
 
 use crate::math::Point3;
 use crate::molecule::Element;
-use crate::structure::{DecodedGeometry, Positions, StructureSet, StructureView};
+use crate::structure::{DecodedGeometry, Positions};
 use crate::topology::Topology;
 use crate::traj::{
     FrameBuffer, FrameData, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
@@ -72,7 +70,7 @@ use crate::traj::{
 use crate::units::{Quantity, Unit, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::codec::frame_error;
-use super::frame_state::{check_frame_state, record, writer_field_error};
+use super::frame_state::{check_frame_state, record};
 use super::indexed_reader::{indexed_reader_traits, IndexedCodec, IndexedReader, IndexedSource};
 use super::limits::{exceeded_bytes, filled_bytes, reserve_scratch};
 use super::metadata::{FieldAvailability, TrajectoryFieldAvailability};
@@ -107,23 +105,8 @@ pub(super) const FIELDS: TrajectoryFieldAvailability = TrajectoryFieldAvailabili
     properties: FieldAvailability::Absent,
 };
 
-/// What [`XyzWriter::write_structure_set`] checks of each geometry: its cell
-/// and properties. Its set checks the geometries' other state.
-const GEOMETRY_CARRIES: Carries = Carries {
-    place: true,
-    time: true,
-    step: true,
-    velocities: true,
-    forces: true,
-    sites: true,
-    ..Carries::POSITIONS
-};
-
 /// Fails unless `unit` is a length.
-pub(crate) fn validate_length_unit(
-    unit: Unit,
-    source_label: &str,
-) -> Result<(), TrajectoryIoError> {
+fn validate_length_unit(unit: Unit, source_label: &str) -> Result<(), TrajectoryIoError> {
     unit.conversion_factor_to(CANONICAL_LENGTH_UNIT)
         .map(|_| ())
         .map_err(|error| {
@@ -132,7 +115,7 @@ pub(crate) fn validate_length_unit(
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 source_label,
-                Reason::NotALength(LengthUnitRole::XyzInput),
+                Reason::XyzLengthUnitNotLength,
             )
             .with_source(error)
         })

@@ -104,7 +104,7 @@ pub use write_policy::{UnrepresentablePolicy, WriteOmission, WriteReport};
 pub(crate) use xyz::{parse_xyz_reader, parse_xyz_str};
 pub use xyz::{
     XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzInferredBond, XyzInterpretIssue,
-    XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions,
+    XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions, XyzSource,
     XyzStructureSetInterpretOptions, XyzStructureSetInterpretation, XyzWriteOptions,
     DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };

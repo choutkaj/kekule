@@ -1011,68 +1011,84 @@ H -0.24 0.927 0
 
 #[test]
 fn xyz_options_refuse_invalid_values_when_set() {
-    let writer_error = |kind, detail: &str| {
-        codec_error(
-            kind,
-            TrajectoryIoOperation::Open,
-            TrajectoryFormat::Xyz,
-            "XYZ writer options",
-            None,
-            detail,
+    use kekule::diagnostics::{
+        DiagnosticKind, Format, FormatError, FormatStage, LimitExceeded, Resource,
+    };
+
+    // The format, stage, kind, record, exceeded limit, and message.
+    let failure = |error: FormatError| {
+        (
+            (error.format(), error.stage(), error.kind(), error.record()),
+            error.limit_exceeded(),
+            error.to_string(),
+        )
+    };
+    let refused = |kind, limit: Option<LimitExceeded>, message: &str| {
+        (
+            (Format::Xyz, FormatStage::Write, kind, None),
+            limit,
+            format!("Cannot write the XYZ output. {message}"),
         )
     };
     let options = XyzWriteOptions::default();
     assert_eq!(
-        options
-            .clone()
-            .with_decimal_places(18)
-            .map(|_| ())
-            .map_err(seen),
-        Err(writer_error(
-            TrajectoryIoErrorKind::InvalidPrecision,
+        failure(options.clone().with_decimal_places(18).unwrap_err()),
+        refused(
+            DiagnosticKind::InvalidValue,
+            None,
             "The decimal precision is 18 places, more than 17."
-        ))
+        )
     );
     assert!(options.clone().with_decimal_places(17).is_ok());
     for comment in ["two\nlines", "two\rlines"] {
         assert_eq!(
-            options
-                .clone()
-                .with_comment(comment)
-                .map(|_| ())
-                .map_err(seen),
-            Err(writer_error(
-                TrajectoryIoErrorKind::InconsistentMetadata,
+            failure(options.clone().with_comment(comment).unwrap_err()),
+            refused(
+                DiagnosticKind::InvalidValue,
+                None,
                 "The comment contains a line break."
-            ))
-        );
-    }
-    assert_eq!(
-        options
-            .clone()
-            .with_comment("x".repeat(1_048_577))
-            .map(|_| ())
-            .map_err(seen),
-        Err(writer_error(
-            TrajectoryIoErrorKind::LimitExceeded,
-            "The comment has 1048577 bytes, more than 1048576."
-        ))
-    );
-    assert!(options.clone().with_comment("x".repeat(1_048_576)).is_ok());
-
-    let read = XyzReadOptions::default().with_length_unit(PICOSECOND);
-    let write = options.with_length_unit(PICOSECOND);
-    for (error, label) in [
-        (read.unwrap_err(), "XYZ reader options"),
-        (write.unwrap_err(), "XYZ writer options"),
-    ] {
-        assert_eq!(
-            (error.kind(), error.source_label(), error.to_string()),
-            (
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                Some(label),
-                format!("Cannot open the XYZ trajectory \"{label}\". The XYZ length unit is not a length.")
             )
         );
     }
+    assert_eq!(
+        failure(
+            options
+                .clone()
+                .with_comment("x".repeat(1_048_577))
+                .unwrap_err()
+        ),
+        refused(
+            DiagnosticKind::Limit,
+            Some(LimitExceeded::new(
+                Resource::ValueBytes,
+                1_048_576,
+                1_048_577
+            )),
+            "The comment exceeds its value size limit: 1,048,577 bytes of 1,048,576."
+        )
+    );
+    assert!(options.clone().with_comment("x".repeat(1_048_576)).is_ok());
+
+    let write = options.with_length_unit(PICOSECOND).unwrap_err();
+    assert!(std::error::Error::source(&write).is_some());
+    assert_eq!(
+        failure(write),
+        refused(
+            DiagnosticKind::InvalidValue,
+            None,
+            "The unit ps is not a length unit."
+        )
+    );
+    let read = XyzReadOptions::default()
+        .with_length_unit(PICOSECOND)
+        .unwrap_err();
+    assert_eq!(
+        (read.kind(), read.source_label(), read.to_string()),
+        (
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            Some("XYZ reader options"),
+            "Cannot open the XYZ trajectory \"XYZ reader options\". The XYZ length unit is not a length."
+                .to_owned()
+        )
+    );
 }

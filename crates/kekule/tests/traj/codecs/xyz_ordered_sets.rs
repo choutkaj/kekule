@@ -3,13 +3,16 @@
 
 use std::sync::Arc;
 
-use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use kekule::diagnostics::{
+    DiagnosticKind, FormatError, FormatErrorDetail, GeometryField, UnrepresentablePolicy,
+    WriteOmission, WriteReport,
+};
 use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Geometry, Order, Place, StructureSet};
 use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::TrajectoryWriteOptions;
-use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
+use kekule::traj::TrajectoryWriter;
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
 use kekule::xyz::XyzWriteOptions;
 
@@ -104,37 +107,35 @@ fn omit_places() -> XyzWriteOptions {
 fn write(
     set: &StructureSet,
     options: XyzWriteOptions,
-) -> Result<(String, WriteReport), TrajectoryIoError> {
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        set.shared_topology(),
-        TrajectoryWriteOptions::from(options).with_source_label("s.xyz"),
-    )?;
-    writer.write_structure_set(set)?;
-    let report = writer.report().clone();
-    Ok((String::from_utf8(writer.finish()?).unwrap(), report))
+) -> Result<(String, WriteReport), FormatError> {
+    kekule::xyz::write(set, options)
+}
+
+/// The error's kind, refused field, and record.
+fn failure(error: FormatError) -> (DiagnosticKind, Option<GeometryField>, Option<usize>) {
+    let field = match error.detail() {
+        Some(FormatErrorDetail::UnrepresentableState(field)) => Some(*field),
+        _ => None,
+    };
+    (error.kind(), field, error.record())
 }
 
 /// Asserts that writing `set` with `options` fails before any byte for
-/// `field` at `frame`, and returns the error.
+/// `field`, in the 1-based record of its geometry if it has one, and
+/// returns the error.
 fn assert_rejects(
     set: &StructureSet,
     options: XyzWriteOptions,
     field: GeometryField,
-    frame: usize,
-) -> TrajectoryIoError {
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        set.shared_topology(),
-        TrajectoryWriteOptions::from(options).with_source_label("s.xyz"),
-    )
-    .unwrap();
-    let error = writer.write_structure_set(set).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
-    assert_eq!(error.field(), Some(field));
-    assert_eq!(error.frame(), Some(frame));
-    assert!(writer.writer().is_empty());
-    assert_eq!(writer.report().omissions(), [BONDS]);
+    record: Option<usize>,
+) -> FormatError {
+    let mut written = Vec::new();
+    let error = kekule::xyz::write_to(&mut written, set, options).unwrap_err();
+    assert_eq!(
+        failure(error.clone()),
+        (DiagnosticKind::Unsupported, Some(field), record)
+    );
+    assert!(written.is_empty());
     error
 }
 
@@ -145,10 +146,12 @@ fn state_omission(field: GeometryField, geometries: usize) -> WriteOmission {
 #[test]
 fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_omitted() {
     let history = history();
-    let error = assert_rejects(&history, options(), GeometryField::OrderStep, 0);
-    assert!(error
-        .to_string()
-        .ends_with(". XYZ cannot store the order step."));
+    let error = assert_rejects(&history, options(), GeometryField::OrderStep, Some(1));
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the XYZ output in record 1. \
+         The order step of the geometry has no XYZ representation."
+    );
     let (text, report) = write(&history, omit_places()).unwrap();
     assert_eq!(text, TEXT);
     assert_eq!(
@@ -157,10 +160,12 @@ fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_
     );
 
     let scan = scan();
-    let error = assert_rejects(&scan, options(), GeometryField::OrderCoordinate, 0);
-    assert!(error
-        .to_string()
-        .ends_with(". XYZ cannot store the order coordinate."));
+    let error = assert_rejects(&scan, options(), GeometryField::OrderCoordinate, Some(1));
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the XYZ output in record 1. \
+         The order coordinate of the geometry has no XYZ representation."
+    );
     let (text, report) = write(&scan, omit_places()).unwrap();
     assert_eq!(text, TEXT);
     assert_eq!(
@@ -198,7 +203,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             .insert(key(), energy(-1.0 - index as f64))
             .unwrap();
     }
-    assert_rejects(&history, omit_places(), GeometryField::Properties, 1);
+    assert_rejects(&history, omit_places(), GeometryField::Properties, Some(2));
     let options = omit_places().with_properties(UnrepresentablePolicy::Omit);
     let (text, report) = write(&history, options.clone()).unwrap();
     assert_eq!(text, TEXT);
@@ -219,7 +224,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             PropertyValue::String("GFN2-xTB".into()),
         )
         .unwrap();
-    assert_rejects(&history, options, GeometryField::SetProperties, 0);
+    assert_rejects(&history, options, GeometryField::SetProperties, None);
 }
 
 fn cell() -> PeriodicCell {
@@ -235,7 +240,7 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
     let history = history();
     let topology = history.shared_topology();
     let boxed = in_cells(history.clone());
-    assert_rejects(&boxed, omit_places(), GeometryField::Cell, 0);
+    assert_rejects(&boxed, omit_places(), GeometryField::Cell, Some(1));
     let omitted = omit_places().with_cell(UnrepresentablePolicy::Omit);
     let (text, report) = write(&boxed, omitted.clone()).unwrap();
     assert_eq!(text, TEXT);
@@ -248,43 +253,28 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
         ]
     );
 
-    // After a frame, errors name the frame a geometry would have become.
+    // A set written after a frame continues its stream.
     let frame = Frame::new(history.get(0).unwrap().positions().clone()).bound(&topology);
     let mut writer = XyzWriter::new(
         Vec::new(),
         Arc::clone(&topology),
-        TrajectoryWriteOptions::from(options()).with_source_label("s.xyz"),
+        TrajectoryWriteOptions::from(omitted.clone()).with_source_label("s.xyz"),
     )
     .unwrap();
     writer.write_frame(frame.view(&topology)).unwrap();
-    let error = writer.write_structure_set(&history).unwrap_err();
-    assert_eq!(error.field(), Some(GeometryField::OrderStep));
-    assert_eq!(error.frame(), Some(1));
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        Arc::clone(&topology),
-        TrajectoryWriteOptions::from(omitted).with_source_label("s.xyz"),
-    )
-    .unwrap();
-    writer.write_frame(frame.view(&topology)).unwrap();
-    writer.write_structure_set(&boxed).unwrap();
-    let written = String::from_utf8(writer.finish().unwrap()).unwrap();
+    let mut written = writer.finish().unwrap();
+    kekule::xyz::write_to(&mut written, &boxed, omitted).unwrap();
+    let written = String::from_utf8(written).unwrap();
     assert_eq!(written.lines().count(), 4 * 5);
 }
 
 /// What writing gives: the text and omissions, or the error's kind, field,
-/// and frame.
-type Outcome = Result<
-    (String, Vec<WriteOmission>),
-    (TrajectoryIoErrorKind, Option<GeometryField>, Option<usize>),
->;
+/// and record.
+type Outcome =
+    Result<(String, Vec<WriteOmission>), (DiagnosticKind, Option<GeometryField>, Option<usize>)>;
 
-fn refused(field: GeometryField, frame: usize) -> Outcome {
-    Err((
-        TrajectoryIoErrorKind::UnsupportedField,
-        Some(field),
-        Some(frame),
-    ))
+fn refused(field: GeometryField, record: usize) -> Outcome {
+    Err((DiagnosticKind::Unsupported, Some(field), Some(record)))
 }
 
 fn written(omissions: &[WriteOmission]) -> Outcome {
@@ -295,10 +285,10 @@ fn written(omissions: &[WriteOmission]) -> Outcome {
 /// policies as XYZ, which stores only elements and positions, allows.
 #[test]
 fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
-    let outcome = |result: Result<(String, WriteReport), TrajectoryIoError>| -> Outcome {
+    let outcome = |result: Result<(String, WriteReport), FormatError>| -> Outcome {
         result
             .map(|(text, report)| (text, report.omissions().to_vec()))
-            .map_err(|error| (error.kind(), error.field(), error.frame()))
+            .map_err(failure)
     };
     let history = history();
     assert_eq!(history.order(), Some(&Order::Step(vec![0, 5, 10])));
@@ -335,14 +325,14 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             history,
             vec![
-                (fail, fail, refused(GeometryField::OrderStep, 0)),
+                (fail, fail, refused(GeometryField::OrderStep, 1)),
                 (omit, fail, written(&[BONDS, steps])),
             ],
         ),
         (
             scan,
             vec![
-                (fail, fail, refused(GeometryField::OrderCoordinate, 0)),
+                (fail, fail, refused(GeometryField::OrderCoordinate, 1)),
                 (
                     omit,
                     fail,
@@ -353,7 +343,7 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             valued,
             vec![
-                (omit, fail, refused(GeometryField::Properties, 1)),
+                (omit, fail, refused(GeometryField::Properties, 2)),
                 (
                     omit,
                     omit,
@@ -364,8 +354,8 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             boxed,
             vec![
-                (fail, fail, refused(GeometryField::Cell, 0)),
-                (omit, fail, refused(GeometryField::Cell, 0)),
+                (fail, fail, refused(GeometryField::Cell, 1)),
+                (omit, fail, refused(GeometryField::Cell, 1)),
                 (
                     omit,
                     omit,
@@ -390,27 +380,11 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
 }
 
 #[test]
-fn foreign_and_empty_ordered_sets_are_rejected() {
-    let history = history();
-    let other = kekule::smiles::to_topology("O").unwrap();
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        other,
-        TrajectoryWriteOptions::from(omit_places()).with_source_label("s.xyz"),
-    )
-    .unwrap();
-    let error = writer.write_structure_set(&history).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
-
-    let mut empty = StructureSet::new(history.shared_topology());
+fn empty_ordered_sets_are_rejected() {
+    let mut empty = StructureSet::new(history().shared_topology());
     empty.set_order(Some(Order::Step(Vec::new()))).unwrap();
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        history.shared_topology(),
-        TrajectoryWriteOptions::from(omit_places()).with_source_label("s.xyz"),
-    )
-    .unwrap();
-    let error = writer.write_structure_set(&empty).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
-    assert!(writer.writer().is_empty());
+    let mut written = Vec::new();
+    let error = kekule::xyz::write_to(&mut written, &empty, omit_places()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert!(written.is_empty());
 }

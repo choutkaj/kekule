@@ -12,4 +12,4 @@ pub use interpret::{
     XyzInterpretationReport, XyzStructureSetInterpretOptions, XyzStructureSetInterpretation,
     DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };
-pub use write::XyzWriteOptions;
+pub use write::{XyzSource, XyzWriteOptions};

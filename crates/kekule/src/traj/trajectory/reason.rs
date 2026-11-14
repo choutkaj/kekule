@@ -444,7 +444,7 @@ pub(crate) enum Reason {
     DoesNotFitSingle(Part),
     DoesNotFitSelected(Part),
     IncompatibleUnit(Option<TrajectoryFormat>, UnitOf),
-    NotALength(LengthUnitRole),
+    XyzLengthUnitNotLength,
     FrameLacks(Datum, Need),
     NotFullyPeriodic(TrajectoryFormat),
     AtomCountOutOfRange(usize, AtomRange),
@@ -648,18 +648,7 @@ pub(crate) enum Reason {
     CoordinateNotFiniteOnLine(usize),
     LineBufferGrowth(Box<Reason>),
     NoLineBreak,
-    EmptyStructureSet,
     NotFiniteInOutputUnit,
-    DecimalPlaces(usize),
-    CommentLineBreak,
-    CommentTooLong(usize),
-}
-
-/// The role of a length unit a codec cannot use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LengthUnitRole {
-    XyzInput,
-    XyzOutput,
 }
 
 impl fmt::Display for Reason {
@@ -723,8 +712,7 @@ impl fmt::Display for Reason {
             Self::IncompatibleUnit(None, of) => {
                 return write!(formatter, "The {of} unit is incompatible.")
             }
-            Self::NotALength(LengthUnitRole::XyzInput) => "The XYZ length unit is not a length.",
-            Self::NotALength(LengthUnitRole::XyzOutput) => "The XYZ output unit is not a length.",
+            Self::XyzLengthUnitNotLength => "The XYZ length unit is not a length.",
             Self::FrameLacks(datum, need) => {
                 let datum = match datum {
                     Datum::Cell | Datum::Box => "periodic cell".into(),
@@ -1212,21 +1200,7 @@ impl fmt::Display for Reason {
                 return write!(formatter, "The line buffer cannot grow. {reason}")
             }
             Self::NoLineBreak => "The last line has no line break yet.",
-            Self::EmptyStructureSet => "The structure set has no geometries.",
             Self::NotFiniteInOutputUnit => "A coordinate is not finite in the output unit.",
-            Self::DecimalPlaces(places) => {
-                return write!(
-                    formatter,
-                    "The decimal precision is {places} places, more than 17."
-                )
-            }
-            Self::CommentLineBreak => "The comment contains a line break.",
-            Self::CommentTooLong(bytes) => {
-                return write!(
-                    formatter,
-                    "The comment has {bytes} bytes, more than 1048576."
-                )
-            }
         };
         formatter.write_str(text)
     }
