@@ -333,14 +333,15 @@ impl SampleObservations {
 /// `run`'s cancellation before each and reporting the observations made,
 /// and observes each through `observe` with its sample index, its
 /// structure, and its weight; the one reading loop behind every reduction
-/// over a reader. A sample the reader lends is not read.
-fn observe_samples_of(
+/// over a reader, including hydrogen-bond occupancy. A sample the reader
+/// lends is not read.
+pub(crate) fn observe_samples_of<E: From<StatisticsError>>(
     reader: &dyn StructureSetRead,
     observations: &SampleObservations,
     positions: Range<usize>,
     run: Run<'_>,
-    mut observe: impl FnMut(usize, StructureView<'_>, f64) -> Result<(), StatisticsError>,
-) -> Result<(), StatisticsError> {
+    mut observe: impl FnMut(usize, StructureView<'_>, f64) -> Result<(), E>,
+) -> Result<(), E> {
     let (Some(samples), Some(weights)) = (
         observations.samples.get(positions.clone()),
         observations.weights.get(positions.clone()),
@@ -348,14 +349,18 @@ fn observe_samples_of(
         return Err(StatisticsError::ObservationsOutOfRange {
             positions,
             len: observations.len(),
-        });
+        }
+        .into());
     };
     for (done, (&index, &weight)) in samples.iter().zip(weights).enumerate() {
         run.report(Progress::of(done, samples.len()));
         run.check().map_err(StatisticsError::Cancelled)?;
-        visit_geometry(reader, index, StatisticsError::Read, |structure| {
-            observe(index, structure, weight)
-        })?;
+        visit_geometry(
+            reader,
+            index,
+            |error| StatisticsError::Read(error).into(),
+            |structure| observe(index, structure, weight),
+        )?;
     }
     run.report(Progress::of(samples.len(), samples.len()));
     Ok(())
@@ -416,7 +421,7 @@ macro_rules! observe_samples {
 
 /// The total weight after observing `weight`, which must be finite and
 /// positive, with a total that stays finite.
-fn next_total(index: usize, total: f64, weight: f64) -> Result<f64, StatisticsError> {
+pub(crate) fn next_total(index: usize, total: f64, weight: f64) -> Result<f64, StatisticsError> {
     if !weight.is_finite() || weight <= 0.0 {
         return Err(StatisticsError::InvalidWeight { index });
     }
@@ -428,7 +433,7 @@ fn next_total(index: usize, total: f64, weight: f64) -> Result<f64, StatisticsEr
 }
 
 /// The total weight after merging a total of `other`, which must stay finite.
-fn merged_total(total: f64, other: f64) -> Result<f64, StatisticsError> {
+pub(crate) fn merged_total(total: f64, other: f64) -> Result<f64, StatisticsError> {
     let next = total + other;
     if !next.is_finite() {
         return Err(StatisticsError::MergeWeightOverflow);

@@ -477,6 +477,12 @@ pub(crate) const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
 /// The distance, in ångström, at or below which two atoms are too close to
 /// bond.
 pub(crate) const MIN_COVALENT_BOND_DISTANCE_ANGSTROM: f64 = 0.4;
+/// The squared distance, in Å², at or below which the bond-candidate count
+/// of macromolecular interpretation finds two atoms too close to bond. It is
+/// one unit in the last place below
+/// `MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2)`, and is kept so that the
+/// count does not change.
+pub(crate) const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
 /// The covalent radius, in ångström, assumed for an element without a
 /// tabulated one.
 pub(crate) const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;

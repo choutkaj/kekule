@@ -1,8 +1,14 @@
 //! Hydrogen-bond occupancy over weighted observations.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Arc;
 
+use crate::parallel::Run;
+use crate::statistics::{
+    merged_total, next_total, observe_samples_of, SampleObservations, StatisticsError,
+};
+use crate::structure::{StructureSetRead, StructureView};
 use crate::topology::{InstanceAtomId, Topology, TopologyAtomIndex};
 
 use super::criteria::HydrogenBond;
@@ -148,8 +154,9 @@ impl HydrogenBondOccupancyAccumulator {
     ///
     /// # Errors
     ///
-    /// [`InteractionError::InvalidWeight`] when `weight` is not finite and
-    /// positive, [`InteractionError::WeightOverflow`] when the total weight
+    /// [`InteractionError::Statistics`] with
+    /// [`StatisticsError::InvalidWeight`] when `weight` is not finite and
+    /// positive, or [`StatisticsError::WeightOverflow`] when the total weight
     /// would leave the finite range, and
     /// [`InteractionError::ObservationMismatch`] when `interactions` come
     /// from another kind of search, other topology layouts, or other
@@ -160,13 +167,7 @@ impl HydrogenBondOccupancyAccumulator {
         interactions: &Interactions,
         weight: f64,
     ) -> Result<(), InteractionError> {
-        if !weight.is_finite() || weight <= 0.0 {
-            return Err(InteractionError::InvalidWeight { index });
-        }
-        let total = self.total_weight + weight;
-        if !total.is_finite() {
-            return Err(InteractionError::WeightOverflow { index });
-        }
+        let total = next_total(index, self.total_weight, weight)?;
         let scope =
             Scope::of(interactions).ok_or(InteractionError::ObservationMismatch { index })?;
         if self
@@ -210,6 +211,86 @@ impl HydrogenBondOccupancyAccumulator {
         Ok(())
     }
 
+    /// Observes the hydrogen bonds that `search` finds in the observations
+    /// at `positions` (positions in `observations`, not sample indices) from
+    /// `reader`, in order, each labelled by its sample index, as the
+    /// accumulators of [`crate::statistics`] observe samples. A sample the
+    /// reader lends is not read. Failure changes nothing.
+    ///
+    /// ```
+    /// use kekule::interactions::{
+    ///     find_interactions_within, HydrogenBondOccupancyAccumulator, InteractionCriteria,
+    ///     InteractionFeatures,
+    /// };
+    /// use kekule::math::Point3;
+    /// use kekule::statistics::SampleObservations;
+    /// use kekule::structure::{Geometry, Positions, StructureSet};
+    /// use kekule::topology::AtomSelection;
+    /// use kekule::units::{Quantity, ANGSTROM};
+    ///
+    /// let topology = kekule::smiles::to_topology("O.O")?;
+    /// let mut set = StructureSet::new(topology.clone());
+    /// for x in [2.9, 5.0] {
+    ///     let points = [Point3::new(0.0, 0.0, 0.0), Point3::new(x, 0.0, 0.0)];
+    ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
+    /// }
+    /// let features = InteractionFeatures::new(topology.clone());
+    /// let all = AtomSelection::all(topology.clone());
+    /// let criteria = InteractionCriteria::default();
+    /// let observations = SampleObservations::all(&set);
+    /// let mut accumulator = HydrogenBondOccupancyAccumulator::new();
+    /// accumulator.observe_samples(&set, &observations, 0..observations.len(), |structure| {
+    ///     find_interactions_within(&features, &structure, &all, &all, &criteria)
+    /// })?;
+    /// let occupancy = accumulator.finish()?;
+    /// assert_eq!(occupancy.bonds().next().unwrap().1, 0.5);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`InteractionError::Statistics`] with
+    /// [`StatisticsError::ObservationsOutOfRange`] for positions past the
+    /// last observation, or [`StatisticsError::Read`] when a sample cannot be
+    /// read; the errors of `search`; and the errors of [`Self::observe`].
+    pub fn observe_samples(
+        &mut self,
+        reader: &dyn StructureSetRead,
+        observations: &SampleObservations,
+        positions: Range<usize>,
+        search: impl FnMut(StructureView<'_>) -> Result<Interactions, InteractionError>,
+    ) -> Result<(), InteractionError> {
+        self.observe_samples_with(reader, observations, positions, search, Run::default())
+    }
+
+    /// [`Self::observe_samples`] under a [`Run`], observing on the calling
+    /// thread. Progress counts the observations made.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::observe_samples`], and [`InteractionError::Statistics`]
+    /// with [`StatisticsError::Cancelled`] once `run`'s cancellation is
+    /// requested. Either way nothing changes.
+    pub fn observe_samples_with(
+        &mut self,
+        reader: &dyn StructureSetRead,
+        observations: &SampleObservations,
+        positions: Range<usize>,
+        mut search: impl FnMut(StructureView<'_>) -> Result<Interactions, InteractionError>,
+        run: Run<'_>,
+    ) -> Result<(), InteractionError> {
+        let mut observed = self.clone();
+        observe_samples_of(
+            reader,
+            observations,
+            positions,
+            run,
+            |index, structure, weight| observed.observe(index, &search(structure)?, weight),
+        )?;
+        *self = observed;
+        Ok(())
+    }
+
     /// The number of observations so far.
     pub fn observation_count(&self) -> usize {
         self.observations
@@ -230,18 +311,16 @@ impl HydrogenBondOccupancyAccumulator {
     /// # Errors
     ///
     /// [`InteractionError::MergeMismatch`] when the accumulators observed
-    /// different searches, and [`InteractionError::MergeWeightOverflow`] when
-    /// the total weight would leave the finite range.
+    /// different searches, and [`InteractionError::Statistics`] with
+    /// [`StatisticsError::MergeWeightOverflow`] when the total weight would
+    /// leave the finite range.
     pub fn merge(&mut self, other: &Self) -> Result<(), InteractionError> {
         if let (Some(mine), Some(theirs)) = (&self.scope, &other.scope) {
             if !mine.matches(theirs) {
                 return Err(InteractionError::MergeMismatch);
             }
         }
-        let total = self.total_weight + other.total_weight;
-        if !total.is_finite() {
-            return Err(InteractionError::MergeWeightOverflow);
-        }
+        let total = merged_total(self.total_weight, other.total_weight)?;
         for (key, weight) in &other.weights {
             *self.weights.entry(*key).or_insert(0.0) += weight;
         }
@@ -257,9 +336,10 @@ impl HydrogenBondOccupancyAccumulator {
     ///
     /// # Errors
     ///
-    /// [`InteractionError::NoObservations`] when nothing was observed.
+    /// [`InteractionError::Statistics`] with
+    /// [`StatisticsError::NoObservations`] when nothing was observed.
     pub fn finish(self) -> Result<HydrogenBondOccupancy, InteractionError> {
-        let scope = self.scope.ok_or(InteractionError::NoObservations)?;
+        let scope = self.scope.ok_or(StatisticsError::NoObservations)?;
         let (keys, weights) = self.weights.into_iter().unzip();
         Ok(HydrogenBondOccupancy {
             first: scope.first,
