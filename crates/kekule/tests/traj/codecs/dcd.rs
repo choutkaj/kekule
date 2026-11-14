@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_error, codec_kind, fixed_atom_fixture, topology as build_topology,
+    buffer_snapshot, codec_error, codec_kind, fixed_atom_fixture, seen, topology as build_topology,
     x_coordinates as xs, Frame, GuardedCursor, NoBackwardSeekCursor, RestoreSeekFailure,
 };
 
@@ -112,7 +112,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
         frame.set_step(Some(4));
         frame.geometry_mut().set_cell(Some(unrepresentable));
         assert_eq!(
-            writer.write_frame(frame.frame_view()),
+            writer.write_frame(frame.frame_view()).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
@@ -121,10 +121,7 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
                 None,
                 "The cell is degenerate when written as lengths and angles.",
             )
-            .with_source(
-                kekule::traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
-                    .with_detail("The cell angles are degenerate."),
-            ))
+            .with_source("The cell angles are degenerate."))
         );
         assert_eq!(writer.writer(), &before);
         let mut reader = DcdReader::new(
@@ -358,7 +355,7 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
             PeriodicCell::new(Quantity::new(vectors, ANGSTROM), [true; 3]).unwrap(),
         ));
         assert_eq!(
-            writer.write_frame(frame.frame_view()),
+            writer.write_frame(frame.frame_view()).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::UnsupportedVariant,
                 TrajectoryIoOperation::WriteFrame,
@@ -899,7 +896,7 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         Some(cell),
     );
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
@@ -932,7 +929,9 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
         )
         .unwrap();
     assert_eq!(
-        writer.write_frame(bond_annotated.frame_view()),
+        writer
+            .write_frame(bond_annotated.frame_view())
+            .map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -1018,7 +1017,7 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
         None,
     );
     assert_eq!(
-        writer.write_frame(source.frame_view()),
+        writer.write_frame(source.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -1069,13 +1068,16 @@ fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
     };
     let options = DcdWriteOptions::default();
     assert_eq!(
-        options.with_step_sequence(0, 0).map(|_| ()),
+        options.with_step_sequence(0, 0).map(|_| ()).map_err(seen),
         Err(writer_error("The step interval is zero."))
     );
     let beyond = i32::MAX as u64 + 1;
     for (start, interval) in [(beyond, 1), (0, beyond)] {
         assert_eq!(
-            options.with_step_sequence(start, interval).map(|_| ()),
+            options
+                .with_step_sequence(start, interval)
+                .map(|_| ())
+                .map_err(seen),
             Err(writer_error(
                 "The first step or the step interval exceeds the 32-bit header field."
             ))
@@ -1089,7 +1091,8 @@ fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
         assert_eq!(
             options
                 .with_header_delta(Quantity::new(delta, PICOSECOND), policy)
-                .map(|_| ()),
+                .map(|_| ())
+                .map_err(seen),
             Err(writer_error(&format!(
                 "The time step DELTA is {shown}. It is not a finite, nonnegative number."
             )))
@@ -1103,11 +1106,12 @@ fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
         .with_time_policy(DcdTimePolicy::HeaderDelta { unit: ANGSTROM })
         .unwrap_err();
     assert_eq!(
-        (error.kind(), error.source_label(), error.detail()),
+        (error.kind(), error.source_label(), error.to_string()),
         (
             TrajectoryIoErrorKind::InconsistentMetadata,
             Some("DCD reader options"),
-            Some("The DCD time-policy unit is incompatible.")
+            "Cannot open the DCD trajectory \"DCD reader options\". The DCD time-policy unit is incompatible."
+                .to_owned()
         )
     );
 }

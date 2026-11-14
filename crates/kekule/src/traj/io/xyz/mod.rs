@@ -58,6 +58,7 @@ use crate::diagnostics::{
 use crate::io::write_policy::{
     record_multi_model_structure_set, Carries, Omissions, StatePolicies,
 };
+use crate::traj::trajectory::reason::{LengthUnitRole, Reason};
 use crate::traj::FrameView;
 use std::fmt;
 use std::io::{self, BufRead, Seek, SeekFrom, Write};
@@ -134,7 +135,7 @@ fn validate_length_unit(unit: Unit, source_label: &str) -> Result<(), Trajectory
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 source_label,
-                "The XYZ length unit is not a length.",
+                Reason::NotALength(LengthUnitRole::XyzInput),
             )
             .with_source(error)
         })
@@ -227,7 +228,7 @@ impl XyzWriteOptions {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 WRITER_OPTIONS,
-                format!("The decimal precision is {decimal_places} places, more than 17."),
+                Reason::DecimalPlaces(decimal_places),
             ));
         }
         self.decimal_places = decimal_places;
@@ -249,7 +250,7 @@ impl XyzWriteOptions {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 WRITER_OPTIONS,
-                "The comment contains a line break.",
+                Reason::CommentLineBreak,
             ));
         }
         if comment.len() > MAX_WRITER_COMMENT_BYTES {
@@ -258,10 +259,7 @@ impl XyzWriteOptions {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 WRITER_OPTIONS,
-                format!(
-                    "The comment has {} bytes, more than {MAX_WRITER_COMMENT_BYTES}.",
-                    comment.len()
-                ),
+                Reason::CommentTooLong(comment.len()),
             ));
         }
         self.comment = comment;

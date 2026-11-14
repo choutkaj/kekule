@@ -1,3 +1,4 @@
+use crate::traj::trajectory::reason::{Part, Reason};
 use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom};
@@ -14,15 +15,13 @@ use crate::traj::{
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader,
 };
 
-use crate::traj::trajectory::COLUMN_MISMATCH;
-
 use super::indexed_reader::{IndexFacts, IndexedSource};
 use super::limits::index_hard_capacity;
 use super::options::ReadSource;
 use super::{
     dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata,
     IndexBuildControl, SharedFile, TrajectoryFileFingerprint, TrajectoryFrameIndex,
-    TrajectoryOpenOptions, TrajectoryOpenReport, TrajectoryWriteOptions,
+    TrajectoryOpenNote, TrajectoryOpenOptions, TrajectoryOpenReport, TrajectoryWriteOptions,
 };
 
 enum SequentialReaderInner {
@@ -344,9 +343,11 @@ impl IndexedFileTrajectoryReader {
             )
             .with_source_label(self.label.clone())
             .with_frame(index)
-            .with_detail(format!(
-                "The file no longer holds frame {index}: it is {length} bytes, and the frame ends at byte {end}. Open the file again."
-            )),
+            .with_reason(Reason::FrameGone {
+                frame: index,
+                length,
+                end,
+            }),
             _ => error,
         }
     }
@@ -434,7 +435,7 @@ impl IndexedFileTrajectoryReader {
                 TrajectoryIoOperation::Index,
                 format,
                 &label,
-                "The file's indexed bytes changed since they were indexed. Open the file again.",
+                Reason::IndexedBytesChanged,
             )
         };
         if !self.fingerprint.is_prefix_of_file(&mut file, &label)? {
@@ -620,7 +621,7 @@ pub fn read_structure_set(
             )
             .with_source_label(&label)
             .with_frame(index)
-            .with_detail(COLUMN_MISMATCH)
+            .with_reason(Reason::ColumnMismatch)
             .with_source(error)
         })?;
         index += 1;
@@ -694,7 +695,7 @@ pub fn open_trajectory(
             (
                 SequentialReaderInner::Xyz(reader),
                 FileTrajectoryMetadata::xyz(atom_count, None),
-                vec!["XYZ coordinates use the configured explicit/default length unit".into()],
+                vec![TrajectoryOpenNote::XyzLengthUnit],
             )
         }
         TrajectoryFormat::Dcd => {
@@ -703,10 +704,7 @@ pub fn open_trajectory(
             (
                 SequentialReaderInner::Dcd(reader),
                 metadata,
-                vec![
-                    "DCD steps are preserved from ISTART/NSAVC; time follows the explicit policy"
-                        .into(),
-                ],
+                vec![TrajectoryOpenNote::DcdHeaderSteps],
             )
         }
         TrajectoryFormat::Trr => {
@@ -715,10 +713,7 @@ pub fn open_trajectory(
             (
                 SequentialReaderInner::Trr(Box::new(reader)),
                 metadata,
-                vec![
-                    "TRR uses XDR big-endian scalars and explicit lambda preservation policy"
-                        .into(),
-                ],
+                vec![TrajectoryOpenNote::TrrXdrScalars],
             )
         }
         TrajectoryFormat::Xtc => {
@@ -728,7 +723,7 @@ pub fn open_trajectory(
             (
                 SequentialReaderInner::Xtc(reader),
                 metadata,
-                vec!["XTC decoding uses a bounded checked reader".into()],
+                vec![TrajectoryOpenNote::XtcCheckedDecoding],
             )
         }
     };
@@ -940,7 +935,7 @@ fn open_indexed(
                     TrajectoryIoOperation::Open,
                     format,
                     &label,
-                    format!("The index was built for a {} file.", index.format()),
+                    Reason::IndexForOtherFormat(index.format()),
                 ));
             }
             // Detection left the reader at the start with an empty buffer.
@@ -952,7 +947,7 @@ fn open_indexed(
                     TrajectoryIoOperation::Open,
                     format,
                     &label,
-                    "The file does not begin with the bytes the index covers.",
+                    Reason::PrefixMismatch,
                 ));
             }
             if index.frame_count() > index_hard_capacity(&options.limits) {
@@ -963,7 +958,7 @@ fn open_indexed(
                 )
                 .with_source_label(&label)
                 .exceeding(
-                    "The index",
+                    Part::Index,
                     LimitExceeded::new(
                         Resource::Frames,
                         index_hard_capacity(&options.limits),
@@ -991,7 +986,7 @@ fn open_indexed(
             error
         }
     };
-    let (mut inner, metadata, note) = match format {
+    let (mut inner, metadata) = match format {
         TrajectoryFormat::Xyz => {
             let xyz_options = options.xyz;
             let reader = match imported {
@@ -1022,7 +1017,6 @@ fn open_indexed(
             (
                 IndexedReaderInner::Xyz(reader),
                 FileTrajectoryMetadata::xyz(atom_count, Some(count)),
-                "XYZ index verified every complete frame",
             )
         }
         TrajectoryFormat::Dcd => {
@@ -1046,7 +1040,7 @@ fn open_indexed(
                                 TrajectoryIoOperation::Open,
                                 TrajectoryFormat::Dcd,
                                 &label,
-                                "The index's frame count differs from the frame count NSET in the header.",
+                                Reason::IndexNsetMismatch,
                             )
                             .with_written_counts(
                                 error.expected().unwrap_or(0),
@@ -1071,11 +1065,7 @@ fn open_indexed(
             };
             let count = reader.frame_count().unwrap_or(0);
             let metadata = FileTrajectoryMetadata::dcd(reader.header(), Some(count));
-            (
-                IndexedReaderInner::Dcd(reader),
-                metadata,
-                "DCD index verified record markers and the declared frame count",
-            )
+            (IndexedReaderInner::Dcd(reader), metadata)
         }
         TrajectoryFormat::Trr => {
             let trr_options = options.trr;
@@ -1108,11 +1098,7 @@ fn open_indexed(
                 Some(count),
                 reader.inner.facts().precision_mixed,
             );
-            (
-                IndexedReaderInner::Trr(Box::new(reader)),
-                metadata,
-                "TRR index verified every XDR frame and payload block",
-            )
+            (IndexedReaderInner::Trr(Box::new(reader)), metadata)
         }
         TrajectoryFormat::Xtc => {
             let cell_policy = options.xtc.cell_policy();
@@ -1142,11 +1128,7 @@ fn open_indexed(
             let count = reader.frame_count().unwrap_or(0);
             let metadata =
                 FileTrajectoryMetadata::xtc(reader.first_info(), cell_policy, Some(count));
-            (
-                IndexedReaderInner::Xtc(reader),
-                metadata,
-                "XTC index fully decoded and verified every compressed frame",
-            )
+            (IndexedReaderInner::Xtc(reader), metadata)
         }
     };
     if growing && format != TrajectoryFormat::Dcd && inner.source().offsets().is_empty() {
@@ -1167,7 +1149,7 @@ fn open_indexed(
                     TrajectoryIoOperation::Index,
                     format,
                     &label,
-                    "The file changed while it was indexed.",
+                    Reason::ChangedWhileIndexed,
                 ));
             }
             if end == opened.byte_count() {
@@ -1178,14 +1160,11 @@ fn open_indexed(
         })?
     };
     let note = match imported_count {
-        Some(imported) if imported == count => {
-            format!("{format} index imported; every frame is verified as it is read")
-        }
-        Some(imported) => format!(
-            "{format} index imported and {} appended frames verified; every frame is verified as it is read",
-            count - imported
-        ),
-        None => note.to_owned(),
+        Some(imported) => TrajectoryOpenNote::IndexImported {
+            format,
+            appended_frames: count - imported,
+        },
+        None => TrajectoryOpenNote::IndexVerified(format),
     };
     let report = TrajectoryOpenReport {
         selected_format: format,
@@ -1211,5 +1190,5 @@ fn incomplete(format: Option<TrajectoryFormat>, source_label: &str) -> Trajector
         format,
     )
     .with_source_label(source_label)
-    .with_detail("The file does not yet hold a complete frame. Open it again once more is written.")
+    .with_reason(Reason::NoCompleteFrameYet)
 }

@@ -1,3 +1,4 @@
+use crate::traj::trajectory::reason::Reason;
 use crate::traj::{
     TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
 };
@@ -59,7 +60,7 @@ pub(crate) fn require_nonempty_writer(
             TrajectoryIoOperation::Finish,
             Some(format),
             source_label,
-            format!("The {format} trajectory has no frame. It needs at least one."),
+            Reason::NoFrames(format),
         ));
     }
     Ok(())
@@ -80,7 +81,7 @@ pub(crate) fn require_no_partial_frame(
             operation,
             Some(format),
             source_label,
-            format!("An earlier {format} write failed partway. The stream is incomplete."),
+            Reason::PartialWrite(format),
         ));
     }
     Ok(())
@@ -114,9 +115,9 @@ pub(crate) fn codec_context(
     operation: TrajectoryIoOperation,
     format: Option<TrajectoryFormat>,
     source_label: &str,
-    detail: impl Into<String>,
+    reason: impl Into<Option<Reason>>,
 ) -> TrajectoryIoError {
     TrajectoryIoError::codec(kind, operation, format)
         .with_source_label(source_label)
-        .with_detail(detail)
+        .with_reason(reason)
 }

@@ -346,7 +346,7 @@ impl FileTrajectoryMetadata {
 pub struct TrajectoryOpenReport {
     pub(super) selected_format: TrajectoryFormat,
     pub(super) detection_evidence: Vec<FormatDetectionEvidence>,
-    pub(super) notes: Vec<String>,
+    pub(super) notes: Vec<TrajectoryOpenNote>,
 }
 
 impl TrajectoryOpenReport {
@@ -361,8 +361,77 @@ impl TrajectoryOpenReport {
         &self.detection_evidence
     }
 
-    /// Human-readable notes on format conventions applied while opening.
-    pub fn notes(&self) -> &[String] {
+    /// The format conventions applied and checks made while opening.
+    pub fn notes(&self) -> &[TrajectoryOpenNote] {
         &self.notes
+    }
+}
+
+/// A format convention applied or a check made while opening a trajectory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TrajectoryOpenNote {
+    /// XYZ coordinates are read in the configured length unit.
+    XyzLengthUnit,
+    /// DCD steps come from the header's ISTART and NSAVC; times follow the
+    /// time policy.
+    DcdHeaderSteps,
+    /// TRR scalars are big-endian XDR; lambda follows the lambda policy.
+    TrrXdrScalars,
+    /// XTC frames are decoded by a bounded, checked reader.
+    XtcCheckedDecoding,
+    /// Indexing scanned and verified every frame of the file.
+    IndexVerified(TrajectoryFormat),
+    /// The frame index was imported, and `appended_frames` frames written
+    /// after it were scanned and verified; every frame is verified as it is
+    /// read.
+    IndexImported {
+        /// The format of the indexed file.
+        format: TrajectoryFormat,
+        /// The frames the file holds beyond the imported index.
+        appended_frames: usize,
+    },
+}
+
+impl std::fmt::Display for TrajectoryOpenNote {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::XyzLengthUnit => formatter
+                .write_str("XYZ coordinates use the configured explicit/default length unit"),
+            Self::DcdHeaderSteps => formatter.write_str(
+                "DCD steps are preserved from ISTART/NSAVC; time follows the explicit policy",
+            ),
+            Self::TrrXdrScalars => formatter.write_str(
+                "TRR uses XDR big-endian scalars and explicit lambda preservation policy",
+            ),
+            Self::XtcCheckedDecoding => {
+                formatter.write_str("XTC decoding uses a bounded checked reader")
+            }
+            Self::IndexVerified(format) => formatter.write_str(match format {
+                TrajectoryFormat::Xyz => "XYZ index verified every complete frame",
+                TrajectoryFormat::Dcd => {
+                    "DCD index verified record markers and the declared frame count"
+                }
+                TrajectoryFormat::Trr => "TRR index verified every XDR frame and payload block",
+                TrajectoryFormat::Xtc => {
+                    "XTC index fully decoded and verified every compressed frame"
+                }
+            }),
+            Self::IndexImported {
+                format,
+                appended_frames: 0,
+            } => write!(
+                formatter,
+                "{format} index imported; every frame is verified as it is read"
+            ),
+            Self::IndexImported {
+                format,
+                appended_frames,
+            } => write!(
+                formatter,
+                "{format} index imported and {appended_frames} appended frames verified; \
+                 every frame is verified as it is read"
+            ),
+        }
     }
 }

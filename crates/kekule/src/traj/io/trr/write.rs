@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{AtomRange, Datum, Field32, Need, Part, Reason, UnitOf};
 
 /// Pure-Rust TRR writer.
 pub struct TrrWriter<W> {
@@ -59,10 +60,7 @@ impl<W: Write> TrrWriter<W> {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 &source_label,
-                format!(
-                    "The topology has {} atoms. TRR holds 1 to 715,827,882.",
-                    topology.atom_count()
-                ),
+                Reason::AtomCountOutOfRange(topology.atom_count(), AtomRange::Trr),
             ));
         }
         Ok(Self {
@@ -175,7 +173,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             return Err(writer_limit(
                 FORMAT,
                 &self.source_label,
-                "The frame count exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameCount),
             ));
         }
         let (step, time) = self.options.frame_timing.timing(
@@ -190,7 +188,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame has no step. TRR frames need one.",
+                Reason::FrameLacks(Datum::Step, Need::Format(FORMAT)),
             )
         })?;
         let step = i32::try_from(step).map_err(|_| {
@@ -199,7 +197,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame's step exceeds the 32-bit step field.",
+                Reason::Exceeds32Bit(Part::FrameStep, Field32::StepField),
             )
         })?;
         let time = time.ok_or_else(|| {
@@ -208,7 +206,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame has no time. TRR frames need one.",
+                Reason::FrameLacks(Datum::Time, Need::Format(FORMAT)),
             )
         })?;
         let time = time.value_in(PICOSECOND).map_err(|error| {
@@ -217,7 +215,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The TRR time unit is incompatible.",
+                Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Time)),
             )
             .with_source(error)
         })?;
@@ -229,20 +227,30 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             self.frame_count,
         )?;
         let scalar_bytes = self.options.precision.bytes();
-        validate_representable(time, self.options.precision, &self.source_label, "time")?;
-        validate_representable(lambda, self.options.precision, &self.source_label, "lambda")?;
+        validate_representable(
+            time,
+            self.options.precision,
+            &self.source_label,
+            Datum::Time,
+        )?;
+        validate_representable(
+            lambda,
+            self.options.precision,
+            &self.source_label,
+            Datum::Lambda,
+        )?;
         let atom_scalars = self.topology.atom_count().checked_mul(3).ok_or_else(|| {
             writer_limit(
                 FORMAT,
                 &self.source_label,
-                "The frame's values exceed this platform's address range.",
+                Reason::AddressRange(Part::FrameValues),
             )
         })?;
         let vector_bytes = atom_scalars.checked_mul(scalar_bytes).ok_or_else(|| {
             writer_limit(
                 FORMAT,
                 &self.source_label,
-                "The frame's vectors exceed this platform's address range.",
+                Reason::AddressRange(Part::FrameVectors),
             )
         })?;
         let box_size = if frame.cell().is_some() {
@@ -268,12 +276,12 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The cell is not periodic along all three axes. TRR stores only fully periodic cells.",
+                    Reason::NotFullyPeriodic(FORMAT),
                 ));
             }
             let factor = CANONICAL_LENGTH_UNIT
                 .conversion_factor_to(NANOMETER)
-                .map_err(|error| writer_unit(&self.source_label, "cell", error))?;
+                .map_err(|error| writer_unit(&self.source_label, UnitOf::Of(Datum::Cell), error))?;
             Some((cell.vectors().into_value(), factor))
         } else {
             None
@@ -281,7 +289,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
         let positions = frame.positions().values();
         let position_factor = CANONICAL_LENGTH_UNIT
             .conversion_factor_to(NANOMETER)
-            .map_err(|error| writer_unit(&self.source_label, "positions", error))?;
+            .map_err(|error| {
+                writer_unit(&self.source_label, UnitOf::AllOf(Datum::Position), error)
+            })?;
         let velocity_factor = frame
             .velocities()
             .map(|velocities| {
@@ -289,7 +299,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     .values()
                     .unit()
                     .conversion_factor_to(NANOMETER_PER_PICOSECOND)
-                    .map_err(|error| writer_unit(&self.source_label, "velocities", error))
+                    .map_err(|error| {
+                        writer_unit(&self.source_label, UnitOf::AllOf(Datum::Velocity), error)
+                    })
             })
             .transpose()?;
         let force_factor = frame
@@ -299,7 +311,9 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     .values()
                     .unit()
                     .conversion_factor_to(KILOJOULE_PER_MOLE_PER_NANOMETER)
-                    .map_err(|error| writer_unit(&self.source_label, "forces", error))
+                    .map_err(|error| {
+                        writer_unit(&self.source_label, UnitOf::AllOf(Datum::Force), error)
+                    })
             })
             .transpose()?;
 
@@ -310,7 +324,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 *factor,
                 self.options.precision,
                 &self.source_label,
-                "cell",
+                Datum::Cell,
             )?;
             decode_cell(
                 &self.raw,
@@ -324,7 +338,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The cell does not fit the selected precision.",
+                    Reason::DoesNotFitSelected(Part::Cell),
                 )
                 .with_source(validation_cause(error))
             })?;
@@ -346,7 +360,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 factor,
                 self.options.precision,
                 &self.source_label,
-                "velocity",
+                Datum::Velocity,
             )?;
         }
         if let (Some(forces), Some(factor)) =
@@ -358,7 +372,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 factor,
                 self.options.precision,
                 &self.source_label,
-                "force",
+                Datum::Force,
             )?;
         }
 
@@ -372,7 +386,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 writer_limit(
                     FORMAT,
                     &self.source_label,
-                    "A block exceeds the 32-bit block size.",
+                    Reason::Exceeds32Bit(Part::Block, Field32::BlockSize),
                 )
             })?;
         }
@@ -415,7 +429,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 factor,
                 self.options.precision,
                 &self.source_label,
-                "cell",
+                Datum::Cell,
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
@@ -437,7 +451,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 factor,
                 self.options.precision,
                 &self.source_label,
-                "velocity",
+                Datum::Velocity,
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
@@ -450,7 +464,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
                 factor,
                 self.options.precision,
                 &self.source_label,
-                "force",
+                Datum::Force,
             )?;
             write_bytes(&mut self.writer, &self.raw, &self.source_label)?;
         }
@@ -459,7 +473,7 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             writer_limit(
                 FORMAT,
                 &self.source_label,
-                "The frame count exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameCount),
             )
         })?;
         record(&mut self.report, omitted);
@@ -499,14 +513,13 @@ pub(crate) fn check_append_frames(
     options: &TrrWriteOptions,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    let detail = if mixed {
-        "The file's TRR frames mix scalar widths. One writer cannot continue them.".to_owned()
+    let reason = if mixed {
+        Reason::AppendMixedTrrWidths
     } else if first.precision != options.precision {
-        format!(
-            "The file's TRR frames are in {}, the write options in {}. Append with the options the file was written with.",
-            first.precision.name(),
-            options.precision.name()
-        )
+        Reason::AppendTrrPrecision {
+            file: first.precision.name(),
+            options: options.precision.name(),
+        }
     } else {
         return Ok(());
     };
@@ -515,7 +528,7 @@ pub(crate) fn check_append_frames(
         TrajectoryIoOperation::Open,
         Some(FORMAT),
         source_label,
-        detail,
+        reason,
     ))
 }
 
@@ -532,8 +545,8 @@ pub(super) fn encode_points_to_raw(
         factor,
         precision,
         source_label,
-        "position",
-        "The positions exceed this platform's address range.",
+        Datum::Position,
+        Reason::AddressRange(Part::Positions),
     )
 }
 
@@ -543,7 +556,7 @@ pub(super) fn encode_vectors_to_raw(
     factor: f64,
     precision: TrrScalarPrecision,
     source_label: &str,
-    field: &str,
+    field: Datum,
 ) -> Result<(), TrajectoryIoError> {
     encode_triplets_to_raw(
         raw,
@@ -552,7 +565,7 @@ pub(super) fn encode_vectors_to_raw(
         precision,
         source_label,
         field,
-        "The vectors exceed this platform's address range.",
+        Reason::AddressRange(Part::Vectors),
     )
 }
 
@@ -562,20 +575,20 @@ pub(super) fn encode_triplets_to_raw(
     factor: f64,
     precision: TrrScalarPrecision,
     source_label: &str,
-    field: &str,
-    overflow_message: &str,
+    field: Datum,
+    overflow: Reason,
 ) -> Result<(), TrajectoryIoError> {
     raw.clear();
     let bytes = values
         .len()
         .checked_mul(3 * precision.bytes())
-        .ok_or_else(|| writer_limit(FORMAT, source_label, overflow_message))?;
+        .ok_or_else(|| writer_limit(FORMAT, source_label, overflow))?;
     raw.try_reserve(bytes.saturating_sub(raw.len()))
         .map_err(|_| {
             writer_limit(
                 FORMAT,
                 source_label,
-                "Cannot allocate the writer's buffers.",
+                Reason::Allocation(Part::WriterBuffers),
             )
         })?;
     for triplet in values {
@@ -591,7 +604,7 @@ pub(super) fn push_scalar(
     value: f64,
     precision: TrrScalarPrecision,
     source_label: &str,
-    field: &str,
+    field: Datum,
 ) -> Result<(), TrajectoryIoError> {
     validate_representable(value, precision, source_label, field)?;
     match precision {
@@ -605,7 +618,7 @@ pub(super) fn validate_representable(
     value: f64,
     precision: TrrScalarPrecision,
     source_label: &str,
-    field: &str,
+    field: Datum,
 ) -> Result<(), TrajectoryIoError> {
     if !value.is_finite()
         || (precision == TrrScalarPrecision::Float32 && !(value as f32).is_finite())
@@ -615,7 +628,7 @@ pub(super) fn validate_representable(
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            format!("A {field} value does not fit the selected precision."),
+            Reason::DoesNotFitSelected(Part::ValueOf(field)),
         ));
     }
     Ok(())
@@ -663,7 +676,7 @@ pub(super) fn writer_lambda(
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     source_label,
-                    "The lambda policy names a property other than gromacs.trr.lambda.",
+                    Reason::LambdaPolicyKey,
                 ));
             }
             match properties.owner().get(&trr_lambda_key()) {
@@ -677,7 +690,7 @@ pub(super) fn writer_lambda(
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     source_label,
-                    "The lambda property is not one finite, dimensionless number.",
+                    Reason::LambdaPropertyValue,
                 )),
             }
         }
@@ -714,7 +727,7 @@ pub(super) fn write_xdr_string<W: Write>(
             writer_limit(
                 FORMAT,
                 source_label,
-                "The version string exceeds the 32-bit length field.",
+                Reason::Exceeds32Bit(Part::VersionString, Field32::LengthField),
             )
         })?,
         source_label,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{AtomRange, Datum, Field32, Need, Part, Reason, UnitOf};
 
 /// Strict XTC writer using explicit lossy precision.
 pub struct XtcWriter<W> {
@@ -69,10 +70,7 @@ impl<W: Write> XtcWriter<W> {
                 TrajectoryIoOperation::ReadHeader,
                 &source_label,
                 None,
-                format!(
-                    "The topology has {} atoms. XTC holds 1 to 2,147,483,647.",
-                    topology.atom_count()
-                ),
+                Reason::AtomCountOutOfRange(topology.atom_count(), AtomRange::Xtc),
             ));
         }
         if options.magic == XtcMagic::Xtc1995 && topology.atom_count() > XTC_1995_MAX_ATOMS {
@@ -81,10 +79,7 @@ impl<W: Write> XtcWriter<W> {
                 TrajectoryIoOperation::ReadHeader,
                 &source_label,
                 None,
-                format!(
-                    "The topology has {} atoms. XTC 1995 holds at most 298,261,617. Use XTC 2023.",
-                    topology.atom_count()
-                ),
+                Reason::AtomCountOutOfRange(topology.atom_count(), AtomRange::Xtc1995),
             ));
         }
         Ok(Self {
@@ -198,7 +193,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame has no step. XTC frames need one.",
+                Reason::FrameLacks(Datum::Step, Need::Format(FORMAT)),
             )
         })?;
         let step = i32::try_from(step).map_err(|_| {
@@ -207,7 +202,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame's step exceeds the 32-bit step field.",
+                Reason::Exceeds32Bit(Part::FrameStep, Field32::StepField),
             )
         })?;
         let time = time.ok_or_else(|| {
@@ -216,7 +211,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame has no time. XTC frames need one.",
+                Reason::FrameLacks(Datum::Time, Need::Format(FORMAT)),
             )
         })?;
         let time = time.value_in(PICOSECOND).map_err(|error| {
@@ -225,11 +220,11 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The XTC time unit is incompatible.",
+                Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Time)),
             )
             .with_source(error)
         })?;
-        let time = finite_f32(time, &self.source_label, "time")?;
+        let time = finite_f32(time, &self.source_label, Datum::Time)?;
         let mut boxvec = [0.0_f32; 9];
         match (frame.cell().copied(), self.options.cell_policy) {
             (None, XtcCellPolicy::ZeroMatrixAsAbsent) => {}
@@ -239,7 +234,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The frame has no periodic cell. XTC frames need one.",
+                    Reason::FrameLacks(Datum::Cell, Need::Format(FORMAT)),
                 ))
             }
             (Some(cell), _) => {
@@ -249,7 +244,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(FORMAT),
                         &self.source_label,
-                        "The cell is not periodic along all three axes. XTC stores only fully periodic cells.",
+                        Reason::NotFullyPeriodic(FORMAT),
                     ));
                 }
                 let vectors = cell.vectors().value_in(NANOMETER).map_err(|error| {
@@ -258,7 +253,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(FORMAT),
                         &self.source_label,
-                        "The XTC cell unit is incompatible.",
+                        Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Cell)),
                     )
                     .with_source(error)
                 })?;
@@ -267,7 +262,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         .into_iter()
                         .flat_map(|vector| [vector.x, vector.y, vector.z]),
                 ) {
-                    *target = finite_f32(value, &self.source_label, "box")?;
+                    *target = finite_f32(value, &self.source_label, Datum::Box)?;
                 }
                 // Scalar finiteness alone cannot ensure the narrowed matrix still spans
                 // three dimensions. Validate the representation the reader will receive.
@@ -283,7 +278,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(FORMAT),
                         &self.source_label,
-                        "The cell does not fit single precision.",
+                        Reason::DoesNotFitSingle(Part::Cell),
                     )
                     .with_source(validation_cause(error))
                 })?;
@@ -299,7 +294,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The XTC position unit is incompatible.",
+                    Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Position)),
                 )
                 .with_source(error)
             })?;
@@ -314,7 +309,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source_label,
                 Some(self.frame_count),
-                "Cannot allocate the coordinate buffer.",
+                Reason::Allocation(Part::CoordinateBuffer),
             )
         };
         self.positions.clear();
@@ -326,7 +321,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                     TrajectoryIoOperation::ReadFrame,
                     &self.source_label,
                     Some(self.frame_count),
-                    "The coordinate count exceeds this platform's address range.",
+                    Reason::AddressRange(Part::CoordinateCount),
                 )
             })?)
             .map_err(reserve_error)?;
@@ -340,7 +335,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 .into_iter()
                 .enumerate()
             {
-                let value = finite_f32(value, &self.source_label, "position")?;
+                let value = finite_f32(value, &self.source_label, Datum::Position)?;
                 if compressed {
                     // GROMACS scales in f32 and rounds half away from zero.
                     let scaled = (value * self.options.precision).round();
@@ -350,7 +345,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                             TrajectoryIoOperation::WriteFrame,
                             Some(FORMAT),
                             &self.source_label,
-                            "A coordinate exceeds the integer range of the selected precision.",
+                            Reason::CoordinateOutOfIntegerRange,
                         ));
                     }
                     let scaled = scaled as i32;
@@ -371,7 +366,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The coordinates span more along one axis than the integer range of the selected precision holds.",
+                Reason::SpanOutOfIntegerRange,
             ));
         }
         let atom_count = i32::try_from(atom_count).map_err(|_| {
@@ -380,7 +375,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source_label,
                 Some(self.frame_count),
-                "The atom count exceeds the 32-bit atom-count field.",
+                Reason::Exceeds32Bit(Part::AtomCount, Field32::AtomCountField),
             )
         })?;
         self.bytes.clear();
@@ -400,13 +395,13 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 &mut self.stream,
                 &mut self.bytes,
             )
-            .map_err(|detail| {
+            .map_err(|reason| {
                 limit_error(
                     FORMAT,
                     TrajectoryIoOperation::ReadFrame,
                     &self.source_label,
                     Some(self.frame_count),
-                    detail,
+                    reason,
                 )
             })?;
         } else {
@@ -432,7 +427,7 @@ impl<W: Write> TrajectoryWriter for XtcWriter<W> {
                 TrajectoryIoOperation::ReadHeader,
                 &self.source_label,
                 None,
-                "The frame count exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameCount),
             )
         })?;
         record(&mut self.report, omitted);
@@ -471,27 +466,28 @@ pub(crate) fn check_append_frames(
     options: &XtcWriteOptions,
     source_label: &str,
 ) -> Result<(), TrajectoryIoError> {
-    let differs = |detail: String| {
+    let differs = |reason: Reason| {
         codec_context(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::Open,
             Some(FORMAT),
             source_label,
-            format!("{detail} Append with the options the file was written with."),
+            reason,
         )
     };
     if first.magic != options.magic {
-        return Err(differs(format!(
-            "The file's XTC frames use magic {} and the write options {}.",
-            first.magic.number(),
-            options.magic.number()
-        )));
+        return Err(differs(Reason::AppendXtcMagic {
+            file: first.magic.number(),
+            options: options.magic.number(),
+        }));
     }
     match first.precision {
-        Some(precision) if precision != options.precision => Err(differs(format!(
-            "The file's XTC frames have precision {precision} per nm and the write options {} per nm.",
-            options.precision
-        ))),
+        Some(precision) if precision != options.precision => {
+            Err(differs(Reason::AppendXtcPrecision {
+                file: precision,
+                options: options.precision,
+            }))
+        }
         _ => Ok(()),
     }
 }

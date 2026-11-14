@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{LengthUnitRole, Part, Reason};
 
 /// The topology content an XYZ file of `topology` leaves out; see
 /// [`XyzWriter::report`].
@@ -101,7 +102,7 @@ impl<W: Write> XyzWriter<W> {
                 TrajectoryIoOperation::Open,
                 Some(FORMAT),
                 &source_label,
-                "The topology has no atoms.",
+                Reason::TopologyHasNoAtoms,
             ));
         }
         Ok(Self {
@@ -279,7 +280,7 @@ impl<W: Write> XyzWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The structure set has no geometries.",
+                Reason::EmptyStructureSet,
             ));
         }
         // The frame a geometry is written as, for errors.
@@ -371,7 +372,7 @@ impl<W: Write> XyzWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The XYZ output unit is not a length.",
+                    Reason::NotALength(LengthUnitRole::XyzOutput),
                 )
                 .with_source(error)
             })
@@ -390,7 +391,7 @@ impl<W: Write> XyzWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "A coordinate is not finite in the output unit.",
+                    Reason::NotFiniteInOutputUnit,
                 ));
             }
         }
@@ -452,7 +453,7 @@ impl<W: Write> XyzWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame count exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameCount),
             )
         })?;
         Ok(())

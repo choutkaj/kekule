@@ -24,7 +24,8 @@ use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    codec_error, codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor,
+    codec_error, codec_kind, seen, topology as build_topology, x_coordinates as point_xs,
+    GuardedCursor,
 };
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
@@ -557,7 +558,7 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
 
         let (first, _, _) = read(frame_bytes - 1);
         assert_eq!(
-            first,
+            first.map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::ReadHeader,
@@ -635,7 +636,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
         for stream in streams() {
             let (result, destination) = read_first_xyz_frame(stream, &topology, max_scratch_bytes);
             assert_eq!(
-                result,
+                result.map_err(seen),
                 Err(exceeded(max_scratch_bytes)),
                 "{max_scratch_bytes}"
             );
@@ -651,7 +652,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
                 .with_source_label("scratch.xyz"),
         );
         assert_eq!(
-            indexed.err(),
+            indexed.err().map(seen),
             Some(exceeded(max_scratch_bytes)),
             "{max_scratch_bytes}"
         );
@@ -1023,7 +1024,11 @@ fn xyz_options_refuse_invalid_values_when_set() {
     };
     let options = XyzWriteOptions::default();
     assert_eq!(
-        options.clone().with_decimal_places(18).map(|_| ()),
+        options
+            .clone()
+            .with_decimal_places(18)
+            .map(|_| ())
+            .map_err(seen),
         Err(writer_error(
             TrajectoryIoErrorKind::InvalidPrecision,
             "The decimal precision is 18 places, more than 17."
@@ -1032,7 +1037,11 @@ fn xyz_options_refuse_invalid_values_when_set() {
     assert!(options.clone().with_decimal_places(17).is_ok());
     for comment in ["two\nlines", "two\rlines"] {
         assert_eq!(
-            options.clone().with_comment(comment).map(|_| ()),
+            options
+                .clone()
+                .with_comment(comment)
+                .map(|_| ())
+                .map_err(seen),
             Err(writer_error(
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 "The comment contains a line break."
@@ -1043,7 +1052,8 @@ fn xyz_options_refuse_invalid_values_when_set() {
         options
             .clone()
             .with_comment("x".repeat(1_048_577))
-            .map(|_| ()),
+            .map(|_| ())
+            .map_err(seen),
         Err(writer_error(
             TrajectoryIoErrorKind::LimitExceeded,
             "The comment has 1048577 bytes, more than 1048576."
@@ -1058,11 +1068,11 @@ fn xyz_options_refuse_invalid_values_when_set() {
         (write.unwrap_err(), "XYZ writer options"),
     ] {
         assert_eq!(
-            (error.kind(), error.source_label(), error.detail()),
+            (error.kind(), error.source_label(), error.to_string()),
             (
                 TrajectoryIoErrorKind::InconsistentMetadata,
                 Some(label),
-                Some("The XYZ length unit is not a length.")
+                format!("Cannot open the XYZ trajectory \"{label}\". The XYZ length unit is not a length.")
             )
         );
     }

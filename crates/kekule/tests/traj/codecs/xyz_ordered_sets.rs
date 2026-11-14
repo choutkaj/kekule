@@ -145,7 +145,9 @@ fn state_omission(field: GeometryField, geometries: usize) -> WriteOmission {
 fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_omitted() {
     let history = history();
     let error = assert_rejects(&history, options(), GeometryField::OrderStep, 0);
-    assert_eq!(error.detail(), Some("XYZ cannot store the order step."));
+    assert!(error
+        .to_string()
+        .ends_with(". XYZ cannot store the order step."));
     let (text, report) = write(&history, omit_places()).unwrap();
     assert_eq!(text, TEXT);
     assert_eq!(
@@ -155,10 +157,9 @@ fn a_step_or_coordinate_order_writes_one_frame_per_geometry_once_its_places_are_
 
     let scan = scan();
     let error = assert_rejects(&scan, options(), GeometryField::OrderCoordinate, 0);
-    assert_eq!(
-        error.detail(),
-        Some("XYZ cannot store the order coordinate.")
-    );
+    assert!(error
+        .to_string()
+        .ends_with(". XYZ cannot store the order coordinate."));
     let (text, report) = write(&scan, omit_places()).unwrap();
     assert_eq!(text, TEXT);
     assert_eq!(

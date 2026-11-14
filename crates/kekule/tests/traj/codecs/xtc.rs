@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    buffer_snapshot, codec_error, codec_kind, linear_carbon_topology as topology,
+    buffer_snapshot, codec_error, codec_kind, linear_carbon_topology as topology, seen,
     x_coordinates as x_values, Frame, GuardedCursor, RestoreSeekFailure,
 };
 
@@ -141,7 +141,7 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
         .unwrap(),
     ));
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::WriteFrame,
@@ -150,10 +150,7 @@ fn xtc_rejects_cells_degenerate_after_f32_rounding_before_appending_bytes() {
             None,
             "The cell does not fit single precision.",
         )
-        .with_source(
-            kekule::traj::TrajectoryIoError::new(TrajectoryIoErrorKind::InvalidFrame)
-                .with_detail("The periodic cell is invalid."),
-        ))
+        .with_source("The periodic cell is invalid."))
     );
     assert_eq!(writer.writer(), &before);
     frame.geometry_mut().set_cell(valid_cell);
@@ -594,7 +591,7 @@ fn xtc_signed_xdr_counts_and_steps_are_validated_before_private_adaptation() {
     .unwrap();
     let overflow = source_frame(&topology, 0.0, i32::MAX as u64 + 1);
     assert_eq!(
-        writer.write_frame(overflow.frame_view()),
+        writer.write_frame(overflow.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
             TrajectoryIoOperation::WriteFrame,
@@ -874,7 +871,8 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     for precision in [0.0, -1.0, f32::NAN, f32::INFINITY] {
         assert_eq!(
             XtcWriteOptions::default()
-                .with_precision(Quantity::new(f64::from(precision), PER_NANOMETER)),
+                .with_precision(Quantity::new(f64::from(precision), PER_NANOMETER))
+                .map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidPrecision,
                 TrajectoryIoOperation::Open,
@@ -895,7 +893,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
     let mut frame = source_frame(&topology, 0.0, 0);
     frame.geometry_mut().set_cell(None);
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
@@ -918,7 +916,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         )
         .unwrap();
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -943,7 +941,7 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
         )
         .unwrap();
     assert_eq!(
-        writer.write_frame(frame.frame_view()),
+        writer.write_frame(frame.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -1009,7 +1007,7 @@ fn xtc_writer_bounds_scaled_coordinates_and_axis_spans_like_gromacs() {
             continue;
         };
         assert_eq!(
-            writer.write_frame(frame.frame_view()),
+            writer.write_frame(frame.frame_view()).map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::WriteFrame,
@@ -1047,7 +1045,7 @@ fn xtc_zero_box_policy_round_trips_frames_without_a_cell() {
     )
     .unwrap();
     assert_eq!(
-        strict.write_frame(frames[0].2.frame_view()),
+        strict.write_frame(frames[0].2.frame_view()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InconsistentMetadata,
             TrajectoryIoOperation::WriteFrame,
