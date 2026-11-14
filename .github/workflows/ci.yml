@@ -107,12 +107,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # Compares every publishable crate with its latest crates.io release,
-      # judged as the next minor release. Under 0.x a minor release may
-      # break the API, so breaking changes pass until 1.0; from 1.0 they
-      # fail.
+      # judged by the workspace version: after a release, bump the version
+      # to the next 0.x minor before a breaking change lands.
       - uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          release-type: minor
 
   windows:
     name: Windows checks
