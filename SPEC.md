@@ -22,7 +22,7 @@ cross-module rule.
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
 | `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, and an optional `Order` with one value per geometry | An order value on a geometry; a weight, a state, or a distribution |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
-| `Distribution` | Samples (every geometry of the set or a sorted subset), one log weight per sample, one `Partition` of the samples into states, one `State` per state, and a temperature | Geometries; per-geometry energies |
+| `Distribution` | `Samples` (every geometry of the set or a sorted subset), one log weight per sample, one `Partition` of the samples into states, one `StateData` per state, and a temperature | Geometries; per-geometry energies |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
 
 ### Vocabulary
@@ -53,9 +53,12 @@ its geometries are samples, what each weighs, and how they group into states.
 A **frame** is a geometry as a trajectory file stores it, with its time and
 step. Frames belong to `kekule::traj` alone.
 
-**Sample** and **state** belong to the statistical reading alone: a sample is
-a geometry an ensemble's distribution covers, and a state is a group of
-samples with one representative.
+**Sample**, **partition**, and **state** belong to the statistical reading
+alone. A sample is a geometry an ensemble's distribution covers (`Samples`).
+A partition groups the samples into states (`Partition`). A state is one such
+group with one representative sample; what a distribution stores for it, an
+energy and properties, is its `StateData`, and `StateView` reads a state whole:
+its samples, representative, data, and population.
 
 `Model` never names a structure. It stays for perception models
 (`AromaticityModel`, `ValenceModel`), physical and machine-learning models
@@ -562,7 +565,7 @@ Clustering groups the samples of an ensemble's distribution, weighted, or every
 geometry of a structure set, unweighted. It returns a `Partition`, the
 grouping type a distribution owns, and never changes the set.
 `DistributionMut::regroup` installs a partition without changing any weight or
-sample order: a new state containing every member of an old state keeps that
+sample order: a new state containing every sample of an old state keeps that
 state's energy and properties, and a state split apart loses them. Collapsing
 makes a new collection of each state's representative carrying the state's
 population. Pairwise distances are a separate `DistanceMatrix` result. See

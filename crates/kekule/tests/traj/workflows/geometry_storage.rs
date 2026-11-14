@@ -13,7 +13,7 @@ use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::native::{EnsembleDescription, StructureSetDescription};
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Members, Order, Partition, Positions, StructureSet,
+    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, StructureSet,
     StructureSetRead, StructureSetReadError,
 };
 use kekule::topology::{AtomSelection, Topology};
@@ -235,9 +235,9 @@ fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distributi
         .filter(|index| index % 3 != 1)
         .collect::<Vec<_>>();
     let count = kept.len();
-    let members = Members::Subset(kept);
+    let samples = Samples::Subset(kept);
     let log_weights = (0..count).map(|index| (1.0 + index as f64).ln()).collect();
-    let distribution = Distribution::new(members, Partition::one_state(count))
+    let distribution = Distribution::new(samples, Partition::one_state(count))
         .unwrap()
         .with_log_weights(log_weights)
         .unwrap();
@@ -251,7 +251,7 @@ fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distributi
     assert_eq!(loaded.distribution(), selected.distribution());
     // Of the listed geometries, only geometry 0 is a sample (kept: 0, 2, 3,
     // 5, 6), its first, with log weight ln 1; geometries 4 and 1 are not.
-    assert_eq!(loaded.distribution().members(), &Members::Subset(vec![2]));
+    assert_eq!(loaded.distribution().samples(), &Samples::Subset(vec![2]));
     assert_eq!(loaded.distribution().log_weights(), Some([0.0].as_slice()));
     for (position, index) in listed.into_iter().enumerate() {
         assert_eq!(
@@ -346,7 +346,7 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
     }
     // The distribution over every geometry covers the geometries it covered.
     let distribution = ensemble.distribution();
-    assert_eq!(distribution.members(), &Members::Subset(vec![0, 1, 2]));
+    assert_eq!(distribution.samples(), &Samples::Subset(vec![0, 1, 2]));
     assert_eq!(set.storage().frame_index().frame_count(), frames.len());
     assert_eq!(
         open_indexed_structure_set(&path, topology, Default::default())
@@ -577,15 +577,15 @@ fn refresh_keeps_a_distribution_over_some_geometries_or_no_samples() {
     let frames = frames_of(&all);
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
     let growing = TrajectoryOpenOptions::default().with_growing(true);
-    for members in [vec![0, 2], vec![]] {
+    for samples in [vec![0, 2], vec![]] {
         let directory = Directory::new();
         let path = directory.0.join("run.xtc");
         let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
         write_structure_set(&path, &head, options.clone()).unwrap();
         let set =
             open_indexed_structure_set(&path, Arc::clone(&topology), growing.clone()).unwrap();
-        let partition = Partition::one_state(members.len());
-        let distribution = Distribution::new(Members::Subset(members.clone()), partition).unwrap();
+        let partition = Partition::one_state(samples.len());
+        let distribution = Distribution::new(Samples::Subset(samples.clone()), partition).unwrap();
         let mut ensemble = Ensemble::new(set, distribution.clone()).unwrap();
         let (mut writer, _) = append_trajectory(
             &path,
@@ -602,8 +602,8 @@ fn refresh_keeps_a_distribution_over_some_geometries_or_no_samples() {
         writer.finish().unwrap();
         assert_eq!(ensemble.refresh().unwrap(), 3);
         assert_eq!(ensemble.set().len(), 6);
-        assert_eq!(ensemble.distribution(), &distribution, "{members:?}");
-        assert_eq!(ensemble.states().count(), usize::from(!members.is_empty()));
+        assert_eq!(ensemble.distribution(), &distribution, "{samples:?}");
+        assert_eq!(ensemble.states().count(), usize::from(!samples.is_empty()));
     }
 }
 
@@ -1241,10 +1241,10 @@ fn a_frame_meets_the_scratch_limit_alike_whatever_the_reader_read_before() {
 /// with energies and properties, and a temperature.
 fn saved_distribution() -> Distribution {
     use kekule::properties::{PropertyKey, PropertyValue};
-    use kekule::structure::State;
+    use kekule::structure::StateData;
     use kekule::units::{KELVIN, KILOJOULE_PER_MOLE};
 
-    let mut labelled = State::new()
+    let mut labelled = StateData::new()
         .with_energy(Quantity::new(-1.25, KILOJOULE_PER_MOLE))
         .unwrap();
     labelled
@@ -1254,11 +1254,11 @@ fn saved_distribution() -> Distribution {
             PropertyValue::String("folded".into()),
         )
         .unwrap();
-    let other = State::new()
+    let other = StateData::new()
         .with_energy(Quantity::new(0.1 + 0.2, KILOJOULE_PER_MOLE))
         .unwrap();
     Distribution::new(
-        Members::All,
+        Samples::All,
         Partition::new(vec![0, 1, 0], vec![2, 1]).unwrap(),
     )
     .unwrap()
@@ -1317,7 +1317,7 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
     assert!(Ensemble::new(reopened.clone(), distribution.clone()).is_err());
     let extended = distribution.clone().extended_to(5).unwrap();
     let reopened = Ensemble::new(reopened, extended.clone()).unwrap();
-    assert_eq!(extended.members(), &Members::Subset(vec![0, 1, 2]));
+    assert_eq!(extended.samples(), &Samples::Subset(vec![0, 1, 2]));
     assert_eq!(extended.log_weights(), distribution.log_weights());
     assert_eq!(extended.partition(), distribution.partition());
     assert_eq!(extended.states(), distribution.states());

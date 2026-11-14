@@ -16,8 +16,8 @@ use kekule::native::{
 use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Members, Order, Partition, Place, Positions, State,
-    Structure, StructureSet, StructureSetError, TimeAxis, Velocities,
+    Distribution, Ensemble, Forces, Geometry, Order, Partition, Place, Positions, Samples,
+    StateData, Structure, StructureSet, StructureSetError, TimeAxis, Velocities,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
@@ -727,20 +727,20 @@ fn structure_sets_keep_every_order_kind_and_geometry_field() {
 fn ensembles_keep_their_distribution_bit_for_bit() {
     let distributions = [
         // Every geometry, one state, without weights.
-        Distribution::new(Members::All, Partition::one_state(3)).unwrap(),
+        Distribution::new(Samples::All, Partition::one_state(3)).unwrap(),
         // Every geometry, log weighted down to the most negative finite
         // value and with a negative zero, a state each with energies and a
         // temperature.
-        Distribution::new(Members::All, Partition::state_per_sample(3))
+        Distribution::new(Samples::All, Partition::state_per_sample(3))
             .unwrap()
             .with_log_weights(vec![-1.5, -0.0, f64::MIN])
             .unwrap()
             .with_states(vec![
-                State::new()
+                StateData::new()
                     .with_energy(Quantity::new(-12.5, KILOJOULE_PER_MOLE))
                     .unwrap(),
-                State::new(),
-                State::new()
+                StateData::new(),
+                StateData::new()
                     .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
                     .unwrap(),
             ])
@@ -750,14 +750,14 @@ fn ensembles_keep_their_distribution_bit_for_bit() {
         // A subset: geometries 0 and 2, clustered into one state represented by
         // geometry 2, with state properties.
         Distribution::new(
-            Members::Subset(vec![0, 2]),
+            Samples::Subset(vec![0, 2]),
             Partition::new(vec![0, 0], vec![1]).unwrap(),
         )
         .unwrap()
         .with_log_weights(vec![2.0_f64.ln(), 0.0])
         .unwrap()
         .with_states(vec![{
-            let mut state = State::new();
+            let mut state = StateData::new();
             state
                 .properties_mut()
                 .insert(key("cluster"), PropertyValue::String("open".into()))
@@ -941,13 +941,13 @@ fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
     // Geometries 1 and 2 as one state represented by geometry 2, with a
     // temperature and an energy.
     let distribution = Distribution::new(
-        Members::Subset(vec![1, 2]),
+        Samples::Subset(vec![1, 2]),
         Partition::new(vec![0, 0], vec![1]).unwrap(),
     )
     .unwrap()
     .with_log_weights(vec![-0.0, -2.5])
     .unwrap()
-    .with_states(vec![State::new()
+    .with_states(vec![StateData::new()
         .with_energy(Quantity::new(-3.25, KILOJOULE_PER_MOLE))
         .unwrap()])
     .unwrap()
@@ -1003,7 +1003,7 @@ fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
         .unwrap();
     assert_eq!(grown.set().geometry_count(), 5);
     assert_eq!(grown.set().order(), Some(&Order::Step(vec![1, 2, 3, 4, 5])));
-    assert_eq!(grown.distribution().members(), &Members::Subset(vec![1, 2]));
+    assert_eq!(grown.distribution().samples(), &Samples::Subset(vec![1, 2]));
     assert_same_distribution(grown.distribution(), ensemble.distribution());
     assert_eq!(grown.distribution().log_weight(3), None);
     let (set_description, distribution) = grown.into_parts();
@@ -1014,12 +1014,12 @@ fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
     // geometries.
     let every = EnsembleDescription::new(
         StructureSetDescription::new(water_topology(), 2),
-        Distribution::new(Members::All, Partition::one_state(2)).unwrap(),
+        Distribution::new(Samples::All, Partition::one_state(2)).unwrap(),
     )
     .unwrap()
     .extended_to(4, None)
     .unwrap();
-    assert_eq!(every.distribution().members(), &Members::Subset(vec![0, 1]));
+    assert_eq!(every.distribution().samples(), &Samples::Subset(vec![0, 1]));
     assert_eq!(every.set().order(), None);
 
     // Fewer geometries than described, and a distribution outside the
@@ -1033,7 +1033,7 @@ fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
     ));
     assert!(EnsembleDescription::new(
         StructureSetDescription::new(water_topology(), 2),
-        Distribution::new(Members::Subset(vec![2]), Partition::one_state(1)).unwrap(),
+        Distribution::new(Samples::Subset(vec![2]), Partition::one_state(1)).unwrap(),
     )
     .is_err());
     for len in 0..bytes.len() {
@@ -1123,7 +1123,7 @@ fn water_geometries() -> Vec<Geometry> {
 /// weighted down to the most negative finite value and with a negative zero.
 fn water_ensemble(partition: Partition) -> Ensemble {
     let set = StructureSet::from_geometries(water_topology(), water_geometries()).unwrap();
-    let distribution = Distribution::new(Members::All, partition)
+    let distribution = Distribution::new(Samples::All, partition)
         .unwrap()
         .with_log_weights(vec![0.25_f64.ln(), 3.0_f64.ln(), -0.0, f64::MIN])
         .unwrap();
@@ -1175,7 +1175,7 @@ fn distributions_of_one_state_keep_samples_log_weights_and_site_values() {
     ensemble = Ensemble::new(set, distribution).unwrap();
     let decoded = round_trip_ensemble(&ensemble);
     assert_eq!(decoded.distribution().state_count(), 1);
-    assert_eq!(decoded.distribution().members(), &Members::All);
+    assert_eq!(decoded.distribution().samples(), &Samples::All);
     assert_eq!(
         decoded.distribution().log_weights().unwrap()[2].to_bits(),
         (-0.0_f64).to_bits()
@@ -1221,7 +1221,7 @@ fn distributions_of_one_state_per_sample_keep_energies_and_the_temperature() {
 #[test]
 fn clustered_distributions_keep_their_partition_and_state_properties() {
     let mut ensemble = water_ensemble(Partition::new(vec![1, 0, 1, 0], vec![3, 2]).unwrap());
-    let mut state = State::new()
+    let mut state = StateData::new()
         .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
         .unwrap();
     state

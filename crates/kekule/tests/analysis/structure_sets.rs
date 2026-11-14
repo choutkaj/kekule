@@ -21,7 +21,7 @@ use kekule::statistics::{
     ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Members, Order, Partition, Positions, Requirement, State,
+    Distribution, Ensemble, Geometry, Order, Partition, Positions, Requirement, Samples, StateData,
     Structure, StructureSet, StructureSetError, StructureView, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
@@ -135,15 +135,15 @@ fn unordered(count: usize) -> StructureSet {
 fn ensemble(energies: bool) -> Ensemble {
     let states = ENERGIES.map(|energy| {
         if energies {
-            State::new()
+            StateData::new()
                 .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
                 .unwrap()
         } else {
-            State::new()
+            StateData::new()
         }
     });
     let partition = Partition::new(STATES.to_vec(), vec![0, 2, 4, 7]).unwrap();
-    let distribution = Distribution::new(Members::All, partition)
+    let distribution = Distribution::new(Samples::All, partition)
         .unwrap()
         .with_log_weights(ln(&WEIGHTS))
         .unwrap()
@@ -235,7 +235,7 @@ fn fixtures_hold_their_geometries_order_and_distribution() {
         assert_eq!(ensemble.set().order(), None);
         assert!(ensemble.set().iter().all(|g| g.velocities().is_none()));
         let distribution = ensemble.distribution();
-        assert_eq!(distribution.members(), &Members::All);
+        assert_eq!(distribution.samples(), &Samples::All);
         assert_eq!(distribution.partition().assignments(), STATES);
         assert_eq!(distribution.partition().representatives(), [0, 2, 4, 7]);
         assert_eq!(distribution.log_weights(), Some(&ln(&WEIGHTS)[..]));
@@ -678,7 +678,7 @@ fn structure_set_alignment_covers_every_geometry_and_keeps_the_order() {
     // over part of the set fitting the set.
     let mut set = trajectory();
     let distribution =
-        Distribution::new(Members::Subset(vec![1, 4]), Partition::state_per_sample(2))
+        Distribution::new(Samples::Subset(vec![1, 4]), Partition::state_per_sample(2))
             .unwrap()
             .with_log_weights(ln(&[2.0, 1.0]))
             .unwrap();
@@ -758,7 +758,7 @@ fn set_statistics_weigh_every_geometry_and_ensemble_statistics_their_samples() {
 
 /// The samples of `ensemble` as an ensemble of their own, unordered, with
 /// their weights and states, and without velocities.
-fn members(ensemble: &Ensemble) -> Ensemble {
+fn samples_alone(ensemble: &Ensemble) -> Ensemble {
     let samples = ensemble
         .distribution()
         .sample_probabilities()
@@ -782,12 +782,12 @@ const EQUILIBRATED_WEIGHTS: [f64; 5] = [1.0, 2.0, 3.0, 0.5, 1.5];
 /// 3, 5, 6, and 7, weighted, in two states with energies.
 fn equilibrated() -> Ensemble {
     let states = [0.0, 2.5].map(|energy| {
-        State::new()
+        StateData::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap()
     });
     let distribution = Distribution::new(
-        Members::Subset(EQUILIBRATED.to_vec()),
+        Samples::Subset(EQUILIBRATED.to_vec()),
         Partition::new(vec![0, 1, 0, 1, 1], vec![0, 1]).unwrap(),
     )
     .unwrap()
@@ -806,7 +806,7 @@ fn statistics_over_part_of_a_time_ordered_set_observe_its_samples_alone() {
         ensemble.set(),
         &probabilities(&EQUILIBRATED, &EQUILIBRATED_WEIGHTS),
     );
-    assert!(observed.values() == Statistics::of_ensemble(&members(&ensemble)).values());
+    assert!(observed.values() == Statistics::of_ensemble(&samples_alone(&ensemble)).values());
     let rmsf = ensemble
         .rmsf(&all(ensemble.set().shared_topology()))
         .unwrap();
@@ -1049,7 +1049,7 @@ fn weighted_medoid(matrix: &DistanceMatrix, weights: &[f64], cluster: &[usize]) 
     best
 }
 
-/// The members of each state of `partition`.
+/// The samples of each state of `partition`.
 fn clusters_of(partition: &Partition) -> Vec<Vec<usize>> {
     (0..partition.state_count())
         .map(|state| partition.samples(state).collect())
@@ -1307,7 +1307,7 @@ fn clustering_part_of_a_time_ordered_set_groups_its_samples_by_position() {
     ];
     let parity = EQUILIBRATED.map(|geometry| geometry % 2);
     let clustered = clusterings(&set, &parity, &orders);
-    assert!(clustered == clusterings(&members(&set), &parity, &orders));
+    assert!(clustered == clusterings(&samples_alone(&set), &parity, &orders));
     let atoms = all(set.set().shared_topology());
     let matrix = set
         .pairwise_fitted_rmsd(&atoms, Default::default())
@@ -1344,8 +1344,8 @@ fn clustering_part_of_a_time_ordered_set_groups_its_samples_by_position() {
     assert_eq!(distribution.partition(), &states);
     assert_eq!(distribution.log_weights(), set.distribution().log_weights());
     assert_eq!(
-        distribution.members(),
-        &Members::Subset(EQUILIBRATED.to_vec())
+        distribution.samples(),
+        &Samples::Subset(EQUILIBRATED.to_vec())
     );
     assert_eq!(regrouped.set().order(), set.set().order());
     assert!(distribution.state_of(4).is_none());
@@ -1453,7 +1453,7 @@ fn a_set_installs_its_clusters_as_the_distribution_of_an_ensemble() {
     let states = set
         .cluster_hierarchical(&matrix, Linkage::Average, Cut::Count(2))
         .unwrap();
-    let distribution = Distribution::new(Members::All, states.clone()).unwrap();
+    let distribution = Distribution::new(Samples::All, states.clone()).unwrap();
     let ensemble = Ensemble::new(set, distribution).unwrap();
     assert_eq!(ensemble.distribution().partition(), &states);
     assert_eq!(ensemble.states().len(), 2);
@@ -1469,12 +1469,12 @@ fn a_set_installs_its_clusters_as_the_distribution_of_an_ensemble() {
 /// states with energies.
 fn extreme() -> Ensemble {
     let states = [0.0, 1.0].map(|energy| {
-        State::new()
+        StateData::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap()
     });
     let distribution = Distribution::new(
-        Members::All,
+        Samples::All,
         Partition::new(vec![0, 1, 1], vec![0, 1]).unwrap(),
     )
     .unwrap()
@@ -1631,7 +1631,7 @@ fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
     let energies = [0.0, 1.0e6, 2.0, 3.0];
     let mut distribution = ensemble.distribution_mut();
     for (state, energy) in energies.into_iter().enumerate() {
-        *distribution.state_mut(state).unwrap() = State::new()
+        *distribution.state_mut(state).unwrap() = StateData::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap();
     }

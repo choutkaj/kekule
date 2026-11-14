@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::structure::{GeometryView, InMemory, State};
+use crate::structure::{GeometryView, InMemory, StateData};
 
 use super::Ensemble;
 
@@ -32,13 +32,13 @@ impl<S> fmt::Debug for StateView<'_, S> {
         formatter
             .debug_struct("StateView")
             .field("index", &self.index)
-            .field("state", self.payload())
+            .field("data", self.payload())
             .finish_non_exhaustive()
     }
 }
 
 impl<S> std::ops::Deref for StateView<'_, S> {
-    type Target = State;
+    type Target = StateData;
 
     fn deref(&self) -> &Self::Target {
         self.payload()
@@ -80,8 +80,8 @@ impl<'a, S> StateView<'a, S> {
         self.ensemble.distribution.state_log_population(self.index)
     }
 
-    /// The borrowed state with the view's full lifetime.
-    pub fn payload(self) -> &'a State {
+    /// The state's data with the view's full lifetime.
+    pub fn payload(self) -> &'a StateData {
         self.ensemble.distribution.state(self.index)
     }
 }

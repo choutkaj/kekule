@@ -93,8 +93,8 @@ fn regrouped(ensemble: &Ensemble, partition: &Partition) -> Ensemble {
         ensemble.distribution().log_weights()
     );
     assert_eq!(
-        regrouped.distribution().members(),
-        ensemble.distribution().members()
+        regrouped.distribution().samples(),
+        ensemble.distribution().samples()
     );
     regrouped
 }

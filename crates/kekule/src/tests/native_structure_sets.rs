@@ -10,8 +10,8 @@ use crate::native::{
     self, EnsembleDescription, NativeSource, NativeWriteOptions, StructureSetDescription,
 };
 use crate::structure::{
-    Distribution, Ensemble, Geometry, Members, Order, Partition, Positions, State, StructureSet,
-    TimeAxis,
+    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, StateData,
+    StructureSet, TimeAxis,
 };
 use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 
@@ -44,17 +44,17 @@ fn geometries(order: Order) -> StructureSet {
 fn ensemble() -> Ensemble {
     let set = geometries(Order::Step(STEPS.to_vec()));
     let distribution = Distribution::new(
-        Members::Subset(vec![0, 2]),
+        Samples::Subset(vec![0, 2]),
         Partition::new(vec![1, 0], vec![1, 0]).unwrap(),
     )
     .unwrap()
     .with_log_weights(LOG_WEIGHTS.to_vec())
     .unwrap()
     .with_states(vec![
-        State::new()
+        StateData::new()
             .with_energy(Quantity::new(ENERGY, KILOJOULE_PER_MOLE))
             .unwrap(),
-        State::new(),
+        StateData::new(),
     ])
     .unwrap()
     .with_temperature(Quantity::new(TEMPERATURE, KELVIN))
@@ -65,7 +65,7 @@ fn ensemble() -> Ensemble {
 /// Where [`ensemble`]'s encoding stores each part of its distribution.
 struct Layout {
     listed: usize,
-    members: usize,
+    samples: usize,
     weights: usize,
     assignments: usize,
     representative: usize,
@@ -75,7 +75,7 @@ struct Layout {
 impl Layout {
     fn of(bytes: &[u8]) -> Self {
         // The steps follow the order kind; the distribution follows them:
-        // the members tag, the sample count and two samples, the log weights
+        // the samples tag, the sample count and two samples, the log weights
         // tag and two log weights, two assignments, the state count, and the
         // first state's representative.
         let steps = find(bytes, &STEPS[0].to_le_bytes());
@@ -84,13 +84,13 @@ impl Layout {
         assert_eq!(bytes[start], 1, "a subset distribution");
         let layout = Self {
             listed: start + 1,
-            members: start + 5,
+            samples: start + 5,
             weights: start + 14,
             assignments: start + 30,
             representative: start + 42,
             geometries: find(bytes, &TEMPERATURE.to_le_bytes()) + 8,
         };
-        assert_eq!(bytes[layout.listed..layout.members], 2u32.to_le_bytes());
+        assert_eq!(bytes[layout.listed..layout.samples], 2u32.to_le_bytes());
         assert_eq!(bytes[layout.weights - 1], 1, "log weights");
         assert_eq!(find(bytes, &LOG_WEIGHTS[0].to_le_bytes()), layout.weights);
         assert_eq!(
@@ -156,9 +156,9 @@ fn stored_distributions_are_checked_against_their_set() {
     let stored = "The stored structure is not valid.";
     let cases = [
         // Samples unsorted, duplicated, and out of range.
-        (at.members, u32s(&[2, 0]), stored, "unsorted samples"),
-        (at.members, u32s(&[0, 0]), stored, "duplicate samples"),
-        (at.members, u32s(&[0, 7]), stored, "a sample out of range"),
+        (at.samples, u32s(&[2, 0]), stored, "unsorted samples"),
+        (at.samples, u32s(&[0, 0]), stored, "duplicate samples"),
+        (at.samples, u32s(&[0, 7]), stored, "a sample out of range"),
         // More samples than geometries.
         (
             at.listed,

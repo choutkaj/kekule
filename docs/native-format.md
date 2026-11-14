@@ -260,11 +260,11 @@ order          := 0                                (none)
                                                    (time)
                | 2 [u64; geometry_count]           (steps)
                | 3 unit [f64; geometry_count]      (a coordinate in that unit)
-distribution   := members log_weights:opt [f64; sample_count]
+distribution   := samples log_weights:opt [f64; sample_count]
                   state:u32[sample_count]
                   state_count:count state[state_count]
                   temperature:opt f64
-members        := 0                                (every geometry)
+samples        := 0                                (every geometry)
                | 1 sample_count:count geometry:u32[sample_count]
 state          := representative:u32 energy:opt f64 owner
 geometries     := 0 geometry[geometry_count]       (inline)

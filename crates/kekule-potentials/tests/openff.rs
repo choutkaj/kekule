@@ -342,14 +342,14 @@ fn potential_binds_its_layout_and_rejects_periodic_cells() {
 }
 
 #[test]
-fn distribution_members_and_trajectory_frames_evaluate_like_structures() {
+fn distribution_samples_and_trajectory_frames_evaluate_like_structures() {
     let topology = topology(1);
     let potential = OpenFfPotential::new(&parameterize(&topology)).unwrap();
     let structure = structure(&topology);
     let expected = potential.evaluate(structure.as_structure_view()).unwrap();
 
-    let members = Ensemble::uniform(StructureSet::from_structures([structure.clone()]).unwrap());
-    let representative = members.state(0).unwrap().representative_sample();
+    let ensemble = Ensemble::uniform(StructureSet::from_structures([structure.clone()]).unwrap());
+    let representative = ensemble.state(0).unwrap().representative_sample();
     assert_eq!(
         potential
             .evaluate(representative.as_structure_view())

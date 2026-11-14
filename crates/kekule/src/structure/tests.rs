@@ -65,7 +65,7 @@ fn conformers(
 ) -> Result<Ensemble, StructureSetError> {
     let set = StructureSet::from_geometries(topology, geometries)?;
     let partition = Partition::state_per_sample(set.len());
-    Ensemble::new(set, Distribution::new(Members::All, partition)?)
+    Ensemble::new(set, Distribution::new(Samples::All, partition)?)
 }
 
 /// Structures drawn from one distribution: one state of equal weights.
@@ -429,7 +429,7 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
         }));
     assert_eq!(set.replace(0, replacement.clone()), Err(expected.clone()));
     assert_eq!(
-        set.push_state(replacement, None, State::new(), Some(0.0)),
+        set.push_state(replacement, None, StateData::new(), Some(0.0)),
         Err(expected)
     );
     assert_eq!(set.set().len(), 1);
@@ -442,7 +442,7 @@ fn geometry_replacement_rejects_incompatible_geometries_without_changing_state()
         topology.atom_count()
     );
     // Same bond count: a payload bound elsewhere with matching rows is accepted.
-    set.push_member(bound_elsewhere, None, 0, Some(0.0))
+    set.push_sample(bound_elsewhere, None, 0, Some(0.0))
         .unwrap();
     assert_eq!(set.set().len(), 2);
     set.remove(1).unwrap();
@@ -478,7 +478,7 @@ fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_g
     let set_properties = set.properties().clone();
     let mut set = Ensemble::new(
         set,
-        Distribution::new(Members::All, Partition::state_per_sample(2))
+        Distribution::new(Samples::All, Partition::state_per_sample(2))
             .unwrap()
             .with_log_weights(vec![0.0, 0.5_f64.ln()])
             .unwrap(),
@@ -800,7 +800,7 @@ fn ordered_geometries_join_a_distribution_without_copying_positions() {
     let pointer = set.get(0).unwrap().positions().values().value().as_ptr();
     let ensemble = Ensemble::new(
         set,
-        Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
+        Distribution::new(Samples::All, Partition::one_state(1)).unwrap(),
     )
     .unwrap();
     let member = ensemble.set().get(0).unwrap();
@@ -1161,7 +1161,7 @@ fn energy_conformers(energies: &[f64]) -> Ensemble {
     let states = energies
         .iter()
         .map(|energy| {
-            State::new()
+            StateData::new()
                 .with_energy(Quantity::new(*energy, KILOJOULE_PER_MOLE))
                 .unwrap()
         })
@@ -1171,7 +1171,7 @@ fn energy_conformers(energies: &[f64]) -> Ensemble {
         energies.iter().map(|_| Geometry::new(single_position(0.0))),
     )
     .unwrap();
-    let distribution = Distribution::new(Members::All, Partition::state_per_sample(energies.len()))
+    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(energies.len()))
         .unwrap()
         .with_log_weights(vec![0.0; energies.len()])
         .unwrap()
@@ -1204,7 +1204,7 @@ fn grouped(log_weights: &[f64], assignments: &[usize], representatives: &[usize]
     )
     .unwrap();
     let partition = Partition::new(assignments.to_vec(), representatives.to_vec()).unwrap();
-    let distribution = Distribution::new(Members::All, partition)
+    let distribution = Distribution::new(Samples::All, partition)
         .unwrap()
         .with_log_weights(log_weights.to_vec())
         .unwrap();
@@ -1271,7 +1271,7 @@ fn temperature(ensemble: &Ensemble) -> Option<Quantity<f64>> {
 
 #[test]
 fn state_energies_are_canonical_finite_and_never_on_geometries() {
-    let state = State::new();
+    let state = StateData::new();
     assert_eq!(state.energy(), None);
     let mut state = state
         .with_energy(Quantity::new(1.0, KILOCALORIE_PER_MOLE))
@@ -1327,22 +1327,22 @@ fn state_energies_are_canonical_finite_and_never_on_geometries() {
 }
 
 #[test]
-fn every_member_is_in_one_state_that_contains_its_representative() {
+fn every_sample_is_in_one_state_that_contains_its_representative() {
     let mut set = with_empty_distribution(single_atom_topology());
     assert_eq!(set.distribution().state_count(), 0);
     let geometry = |x| Geometry::new(single_position(x));
     assert_eq!(
-        set.push_member(geometry(0.0), None, 0, None),
+        set.push_sample(geometry(0.0), None, 0, None),
         Err(StructureSetError::StateOutOfRange {
             state: 0,
             states: 0
         })
     );
-    set.push_state(geometry(0.0), None, State::new(), None)
+    set.push_state(geometry(0.0), None, StateData::new(), None)
         .unwrap();
-    set.push_state(geometry(1.0), None, State::new(), None)
+    set.push_state(geometry(1.0), None, StateData::new(), None)
         .unwrap();
-    set.push_member(geometry(2.0), None, 0, None).unwrap();
+    set.push_sample(geometry(2.0), None, 0, None).unwrap();
     assert_eq!(set.distribution().partition().assignments(), [0, 1, 0]);
     assert_eq!(representatives(&set), [0, 1]);
     let state = set.state(0).unwrap();
@@ -1352,7 +1352,7 @@ fn every_member_is_in_one_state_that_contains_its_representative() {
     assert_eq!(set.state(1).unwrap().representative(), 1);
     assert_eq!(set.distribution().state_of(2), Some(0));
 
-    // A representative of a state with other members stays.
+    // A representative of a state with other samples stays.
     assert_eq!(
         set.remove(0),
         Err(StructureSetError::RepresentativeRemoval {
@@ -1360,7 +1360,7 @@ fn every_member_is_in_one_state_that_contains_its_representative() {
             state: 0
         })
     );
-    // Removing a state's only member removes the state; later indices shift.
+    // Removing a state's only sample removes the state; later indices shift.
     set.remove(1).unwrap();
     assert_eq!(set.distribution().partition().assignments(), [0, 0]);
     assert_eq!(representatives(&set), [0]);
@@ -1375,7 +1375,7 @@ fn every_member_is_in_one_state_that_contains_its_representative() {
     assert_eq!(
         Ensemble::new(
             two,
-            Distribution::new(Members::All, Partition::one_state(3)).unwrap()
+            Distribution::new(Samples::All, Partition::one_state(3)).unwrap()
         )
         .unwrap_err(),
         StructureSetError::CoverageMismatch {
@@ -1518,7 +1518,7 @@ fn boltzmann_populations_follow_relative_state_energies_at_temperature() {
 }
 
 #[test]
-fn boltzmann_populations_scale_the_members_of_each_state_together() {
+fn boltzmann_populations_scale_the_samples_of_each_state_together() {
     // State 0 (0 kJ/mol) holds geometries of weights 1 and 3; state 1, RT ln 3
     // higher, one geometry of weight 2. Populations go from 4 : 2 to 3 : 1 of
     // the kept total 6, so 4.5 and 1.5: state 0's geometries scale by 4.5 / 4
@@ -1657,7 +1657,7 @@ fn regrouping_and_reweighting_a_shared_ensemble_copy_no_structure() {
     let mut other = with_empty_distribution(shared.set().shared_topology());
     let geometry = shared.set().get(2).unwrap().payload().clone();
     other
-        .push_state(geometry, None, State::new(), None)
+        .push_state(geometry, None, StateData::new(), None)
         .unwrap();
     assert!(other
         .set()
@@ -1827,7 +1827,7 @@ fn collapse_keeps_one_representative_per_state_with_its_population() {
     )
     .unwrap();
     let distribution = Distribution::new(
-        Members::All,
+        Samples::All,
         Partition::new(vec![0, 1, 0, 1], vec![2, 1]).unwrap(),
     )
     .unwrap()
@@ -1895,7 +1895,7 @@ fn selection_copies_geometries_and_whole_or_partial_states() {
     assert_eq!(representatives(&partial), [0, 1]);
     assert_eq!(energies(&partial), [None, kj(2.0)]);
 
-    // Whole states keep their members, representative, and energy.
+    // Whole states keep their samples, representative, and energy.
     let states = set.select_states([1, 0]).unwrap();
     assert_eq!(log_weights(&states), [three, one, two]);
     assert_eq!(states.distribution().partition().assignments(), [0, 1, 1]);

@@ -31,10 +31,10 @@
 //!   [`StructureSet::from_reader`] loads chosen geometries of any reader into
 //!   memory. File codecs and streaming live in [`crate::traj`].
 //! - [`Ensemble`]: one structure set read as draws from a [`Distribution`]
-//!   over all its geometries or some of them ([`Members`]), with log weights,
-//!   grouped into [`State`]s by a [`Partition`]. [`StateView`] reads a state
-//!   and [`DistributionMut`] edits the distribution; its operations fail with
-//!   a [`StructureSetError`] too.
+//!   over all its geometries or some of them ([`Samples`]), with log weights,
+//!   grouped into states by a [`Partition`], each with its [`StateData`].
+//!   [`StateView`] reads a state and [`DistributionMut`] edits the
+//!   distribution; its operations fail with a [`StructureSetError`] too.
 //! - Borrowed access: [`StructureView`] is the common input of coordinate-dependent
 //!   kernels. Structures, geometries ([`GeometryView`]), and codec frames
 //!   ([`crate::traj::FrameView`]) all borrow as one without copying
@@ -129,7 +129,6 @@ mod geometry_edit;
 mod geometry_validation;
 pub mod measure;
 mod owned;
-mod partition;
 pub mod placement;
 mod positions;
 pub(crate) mod scalars;
@@ -140,12 +139,14 @@ mod view;
 pub use builder::{StructureBuildError, StructureBuilder, StructureTopologyMut};
 pub use dynamics::{Forces, Velocities};
 pub(crate) use ensemble::log_sum_exp;
-pub use ensemble::{Distribution, DistributionMut, Ensemble, Members, State, StateIter, StateView};
+pub use ensemble::{
+    Distribution, DistributionMut, Ensemble, Partition, PartitionError, Samples, StateData,
+    StateIter, StateView,
+};
 pub(crate) use geometry::{subset_rows, GeometryData};
 pub use geometry::{Geometry, GeometryError, GeometryMut};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
 pub use owned::{Structure, StructureError};
-pub use partition::{Partition, PartitionError};
 pub use positions::{DenseArrayError, Positions};
 pub use structure_editor::{
     StructureAppend, StructureAppendReport, StructureEditError, StructureEditor,

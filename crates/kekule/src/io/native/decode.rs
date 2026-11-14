@@ -41,7 +41,7 @@ use crate::properties::{
     PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
-    Distribution, Ensemble, Forces, Geometry, Members, Order, Partition, Positions, State,
+    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
     Structure, StructureSet, TimeAxis, Velocities,
 };
 use crate::topology::{
@@ -1389,8 +1389,8 @@ impl<R: Read> Decoder<'_, R> {
 
     /// The distribution over a set of `count` geometries.
     fn distribution(&mut self, count: usize) -> Result<Distribution> {
-        let members = match self.u8()? {
-            0 => Members::All,
+        let samples = match self.u8()? {
+            0 => Samples::All,
             1 => {
                 let listed = self.u32()? as usize;
                 if listed > count {
@@ -1398,7 +1398,7 @@ impl<R: Read> Decoder<'_, R> {
                         "The distribution lists {listed} samples of {count} geometries."
                     )));
                 }
-                Members::Subset(
+                Samples::Subset(
                     self.u32_array(listed)?
                         .into_iter()
                         .map(|index| index as usize)
@@ -1407,8 +1407,8 @@ impl<R: Read> Decoder<'_, R> {
             }
             other => return Err(self.invalid(format!("The samples tag {other} is unknown."))),
         };
-        let sample_count = match &members {
-            Members::Subset(indices) => indices.len(),
+        let sample_count = match &samples {
+            Samples::Subset(indices) => indices.len(),
             _ => count,
         };
         let log_weights = if self.tag("log weights")? {
@@ -1427,7 +1427,7 @@ impl<R: Read> Decoder<'_, R> {
         for _ in 0..state_count {
             representatives.push(self.u32()? as usize);
             let energy = self.opt_f64()?;
-            let mut state = State::new();
+            let mut state = StateData::new();
             state
                 .set_energy(energy.map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT)))
                 .map_err(|error| self.structure_error(error))?;
@@ -1437,7 +1437,7 @@ impl<R: Read> Decoder<'_, R> {
         let temperature = self.opt_f64()?;
         let partition = Partition::new(assignments, representatives)
             .map_err(|error| self.structure_error(error))?;
-        let mut distribution = Distribution::new(members, partition)
+        let mut distribution = Distribution::new(samples, partition)
             .and_then(|distribution| distribution.with_states(states))
             .map_err(|error| self.structure_error(error))?;
         if let Some(log_weights) = log_weights {

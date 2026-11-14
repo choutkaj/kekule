@@ -13,7 +13,7 @@ use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Members, Order, Partition, Positions, State,
+    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
     Structure, StructureSet, StructureView, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
@@ -546,12 +546,12 @@ fn conformer_set() -> StructureSet {
 fn weighted_ensemble() -> Ensemble {
     let states = [0.0, 5.0]
         .map(|energy| {
-            State::new()
+            StateData::new()
                 .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
                 .unwrap()
         })
         .to_vec();
-    let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))
+    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(2))
         .unwrap()
         .with_log_weights(vec![0.0, 3.0_f64.ln()])
         .unwrap()
@@ -2492,10 +2492,10 @@ fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
 fn a_geometry_of_an_ensemble_with_a_place_writes_only_its_place_in_sdf() {
     let mut set = StructureSet::from_structures([structure("C", &[[0.0; 3]])]).unwrap();
     set.set_order(Some(Order::Step(vec![7]))).unwrap();
-    let state = State::new()
+    let state = StateData::new()
         .with_energy(Quantity::new(-1.5, KILOJOULE_PER_MOLE))
         .unwrap();
-    let distribution = Distribution::new(Members::All, Partition::one_state(1))
+    let distribution = Distribution::new(Samples::All, Partition::one_state(1))
         .unwrap()
         .with_log_weights(vec![2.5_f64.ln()])
         .unwrap()
