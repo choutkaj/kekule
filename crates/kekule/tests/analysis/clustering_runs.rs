@@ -11,7 +11,7 @@ use kekule::clustering::{ClusteringError, ClusteringProgress, ClusteringRun};
 use kekule::diagnostics::Cancellation;
 use kekule::math::Point3;
 use kekule::parallel::{Executor, ScopedThreads};
-use kekule::structure::{Distribution, Geometry, Members, Partition, Positions, StructureSet};
+use kekule::structure::{Ensemble, Geometry, Partition, Positions, StructureSet};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
@@ -44,24 +44,23 @@ fn geometry(points: Vec<Point3>, weight: f64) -> (Geometry, f64) {
     (geometry, weight)
 }
 
-/// Weighted geometries, each its own state.
-fn conformers(topology: Arc<Topology>, members: Vec<(Geometry, f64)>) -> StructureSet {
+/// Weighted geometries, each its own state, with the natural logarithms of
+/// their linear weights.
+fn conformers(topology: Arc<Topology>, members: Vec<(Geometry, f64)>) -> Ensemble {
     let (geometries, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
+    let log_weights = weights.into_iter().map(f64::ln).collect::<Vec<_>>();
     let partition = Partition::state_per_sample(geometries.len());
-    let distribution = Distribution::new(Members::All, partition)
-        .unwrap()
-        .with_weights(weights)
-        .unwrap();
-    let mut set = StructureSet::from_geometries(topology, geometries).unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    set
+    let set = StructureSet::from_geometries(topology, geometries).unwrap();
+    let mut ensemble = Ensemble::weighted(set, log_weights).unwrap();
+    ensemble.distribution_mut().regroup(partition).unwrap();
+    ensemble
 }
 
 /// `distinct` random structures, then `copies` of them perturbed by a
 /// hundredth of an angstrom, interleaved, with distinct weights. With
 /// `collinear`, those members lie on a line instead, so no fit to them
 /// succeeds.
-fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> StructureSet {
+fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> Ensemble {
     let topology = topology(ATOMS);
     let mut random = Lcg(7);
     let bases = (0..distinct)
@@ -108,7 +107,7 @@ fn ensemble(distinct: usize, copies: usize, collinear: &[usize]) -> StructureSet
 /// `members` copies of `bases` random structures of `atoms` atoms, each
 /// displaced by up to its own amplitude of zero to two angstroms, with
 /// distinct weights.
-fn jittered(atoms: usize, bases: usize, members: usize) -> StructureSet {
+fn jittered(atoms: usize, bases: usize, members: usize) -> Ensemble {
     let mut random = Lcg(3);
     let bases = (0..bases)
         .map(|_| {
@@ -145,16 +144,12 @@ fn jittered(atoms: usize, bases: usize, members: usize) -> StructureSet {
 /// Leader clustering as documented, one fit at a time: members by
 /// descending weight join the nearest earlier representative within
 /// `radius`, the first on ties, or found a cluster.
-fn naive_leaders(
-    ensemble: &StructureSet,
-    atoms: &AtomSelection,
-    radius: Quantity<f64>,
-) -> Partition {
+fn naive_leaders(ensemble: &Ensemble, atoms: &AtomSelection, radius: Quantity<f64>) -> Partition {
     let radius = radius.value_in(CANONICAL_LENGTH_UNIT).unwrap();
-    let view = |member: usize| ensemble.get(member).unwrap().as_structure_view();
-    let mut assignments = vec![0; ensemble.len()];
+    let view = |member: usize| ensemble.set().get(member).unwrap().as_structure_view();
+    let mut assignments = vec![0; ensemble.set().len()];
     let mut representatives: Vec<usize> = Vec::new();
-    for member in ensemble.distribution().unwrap().ranked_by_weight() {
+    for member in ensemble.distribution().ranked_by_weight() {
         let mut nearest: Option<(usize, f64)> = None;
         for (cluster, representative) in representatives.iter().enumerate() {
             let rmsd = alignment::fit(
@@ -256,7 +251,7 @@ impl Reports {
 #[test]
 fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
     let ensemble = ensemble(5, 1, &[]);
-    let atoms = AtomSelection::all(ensemble.shared_topology());
+    let atoms = AtomSelection::all(ensemble.set().shared_topology());
     let serial = ensemble
         .pairwise_fitted_rmsd(&atoms, Default::default())
         .unwrap();
@@ -291,7 +286,7 @@ fn pairwise_rmsd_is_the_serial_matrix_on_every_executor() {
 #[test]
 fn radius_clustering_is_the_serial_partition_on_every_executor() {
     let ensemble = ensemble(9, 2, &[]);
-    let atoms = AtomSelection::all(ensemble.shared_topology());
+    let atoms = AtomSelection::all(ensemble.set().shared_topology());
     let serial = ensemble
         .cluster_by_radius(radius(), &atoms, Default::default())
         .unwrap();
@@ -328,7 +323,7 @@ fn radius_clustering_is_the_serial_partition_on_every_executor() {
 #[test]
 fn radius_clustering_places_members_as_one_fit_at_a_time_would() {
     let ensemble = jittered(6, 7, 120);
-    let atoms = AtomSelection::all(ensemble.shared_topology());
+    let atoms = AtomSelection::all(ensemble.set().shared_topology());
     let mut cluster_counts = Vec::new();
     for value in [0.0, 0.4, 0.8, 1.5, 100.0] {
         let radius = Quantity::new(value, ANGSTROM);
@@ -365,7 +360,7 @@ fn radius_clustering_places_members_as_one_fit_at_a_time_would() {
 #[test]
 fn failed_fits_report_the_serial_error_on_every_executor() {
     let ensemble = ensemble(9, 0, &[4, 7]);
-    let atoms = AtomSelection::all(ensemble.shared_topology());
+    let atoms = AtomSelection::all(ensemble.set().shared_topology());
     let matrix = ensemble.pairwise_fitted_rmsd(&atoms, Default::default());
     assert_eq!(
         matrix,
@@ -399,7 +394,7 @@ fn cancelled<T>(result: Result<T, ClusteringError>) -> bool {
 #[test]
 fn cancelled_runs_return_no_result() {
     let ensemble = ensemble(5, 1, &[]);
-    let atoms = AtomSelection::all(ensemble.shared_topology());
+    let atoms = AtomSelection::all(ensemble.set().shared_topology());
 
     // Requested before the run: nothing is fitted.
     let requested = Cancellation::new(|| true);
@@ -421,7 +416,7 @@ fn cancelled_runs_return_no_result() {
         run
     )));
     assert!(cancelled(
-        StructureSet::new(ensemble.shared_topology()).pairwise_fitted_rmsd_with(
+        StructureSet::new(ensemble.set().shared_topology()).pairwise_fitted_rmsd_with(
             &atoms,
             Default::default(),
             run
@@ -488,14 +483,14 @@ impl Executor for Skipping {
 #[should_panic(expected = "executor skipped work item 2")]
 fn an_executor_that_skips_work_items_panics() {
     let ensemble = ensemble(5, 1, &[]);
-    let atoms = AtomSelection::all(ensemble.shared_topology());
+    let atoms = AtomSelection::all(ensemble.set().shared_topology());
     let run = ClusteringRun::default().with_executor(&Skipping);
     let _ = ensemble.pairwise_fitted_rmsd_with(&atoms, Default::default(), run);
 }
 
 /// 1,000 geometries of the first 352 alpha carbons of RCSB 1AKE, each atom
 /// displaced by up to a geometry's own amplitude of 0.2 to 1.5 angstroms.
-fn adenylate_kinase_geometries() -> (StructureSet, AtomSelection) {
+fn adenylate_kinase_geometries() -> (Ensemble, AtomSelection) {
     let structure = kekule::mmcif::parse_str(
         include_str!("../fixtures/mmcif/1AKE.cif"),
         Default::default(),

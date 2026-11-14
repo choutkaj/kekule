@@ -1,6 +1,6 @@
 //! Weighted k-medoids clustering by Partitioning Around Medoids.
 
-use crate::structure::{GeometryStorage, Partition, StructureSet};
+use crate::structure::{Ensemble, GeometryStorage, Partition, StructureSet};
 
 use super::hierarchical::ObjectiveDistances;
 use super::{Clustered, ClusteringError, DistanceMatrix};
@@ -32,15 +32,14 @@ impl Clustered<'_> {
     }
 }
 
-impl<S: GeometryStorage> StructureSet<S> {
-    /// Partitions the members of the set's distribution, or every sample of
-    /// a set without one, into `clusters` clusters around medoid members, on
-    /// `distances` indexed by member position
+impl<S: GeometryStorage> Ensemble<S> {
+    /// Partitions the samples of the distribution into `clusters` clusters
+    /// around medoid members, on `distances` indexed by member position
     /// ([`Self::pairwise_fitted_rmsd`]).
     ///
     /// It minimizes the weighted total distance `sum_i w_i d(i, m(i))` from
     /// each member to its nearest medoid, with the members' weights (equal
-    /// without weights or a distribution).
+    /// without weights).
     ///
     /// This is Partitioning Around Medoids (Kaufman and Rousseeuw): a greedy
     /// BUILD adds, one at a time, the member that most lowers the total
@@ -59,10 +58,8 @@ impl<S: GeometryStorage> StructureSet<S> {
     /// `clusters` ranges from one to the member count (zero only for no
     /// members).
     ///
-    /// The partition groups the members by member position; install it with
-    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)
-    /// or, without a distribution, as `Distribution::new(Members::All,
-    /// partition)` through [`Self::set_distribution`].
+    /// The partition groups the samples by member position; install it with
+    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup).
     ///
     /// # Errors
     ///
@@ -74,8 +71,28 @@ impl<S: GeometryStorage> StructureSet<S> {
         distances: &DistanceMatrix,
         clusters: usize,
     ) -> Result<Partition, ClusteringError> {
-        Clustered::of_members(self.len(), self.distribution())
+        Clustered::of_members(self.set().len(), Some(self.distribution()))
             .cluster_k_medoids(distances, clusters)
+    }
+}
+
+impl<S: GeometryStorage> StructureSet<S> {
+    /// Partitions every geometry of the set, each weighing the same, into
+    /// `clusters` clusters around medoid geometries, on `distances` indexed
+    /// by geometry ([`Self::pairwise_fitted_rmsd`]), as
+    /// [`Ensemble::cluster_k_medoids`] does. Install the partition as a new
+    /// distribution of every geometry, `Distribution::new(Members::All,
+    /// partition)`, in [`Ensemble::new`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Ensemble::cluster_k_medoids`].
+    pub fn cluster_k_medoids(
+        &self,
+        distances: &DistanceMatrix,
+        clusters: usize,
+    ) -> Result<Partition, ClusteringError> {
+        Clustered::of_members(self.len(), None).cluster_k_medoids(distances, clusters)
     }
 }
 

@@ -15,11 +15,10 @@ use kekule::pdb::{
 };
 use kekule::solvation::{self, BoxShape, PeriodicBoxOptions, SolventOptions};
 use kekule::structure::{
-    Distribution, Geometry, Members, Order, Partition, Positions, Structure, StructureBuilder,
-    StructureSet, Velocities,
+    Geometry, Order, Positions, Structure, StructureBuilder, StructureSet, Velocities,
 };
 use kekule::topology::{InstanceAtomId, Topology};
-use kekule::units::{Quantity, ANGSTROM, DEGREE, KELVIN, MOLAR, NANOMETER};
+use kekule::units::{Quantity, ANGSTROM, DEGREE, MOLAR, NANOMETER};
 use kekule::{mmcif, smiles};
 
 const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
@@ -468,153 +467,50 @@ fn residues_must_be_consecutive_in_dense_order() {
     ));
 }
 
-/// Geometries of `positions` in one state of equally weighted members, as
-/// readers of formats with weights write them.
-fn one_state(
+/// Geometries of `positions` on `topology`, unordered.
+fn geometries(
     topology: Arc<Topology>,
     positions: impl IntoIterator<Item = Positions>,
 ) -> StructureSet {
-    let mut set =
-        StructureSet::from_geometries(topology, positions.into_iter().map(Geometry::new)).unwrap();
-    let members = set.len();
-    set.set_distribution(Some(
-        Distribution::new(Members::All, Partition::one_state(members))
-            .unwrap()
-            .with_weights(vec![1.0; members])
-            .unwrap(),
-    ))
-    .unwrap();
-    set
+    StructureSet::from_geometries(topology, positions.into_iter().map(Geometry::new)).unwrap()
 }
 
 #[test]
-fn structure_sets_write_models_and_geometry_state_fails_unless_omitted() {
+fn structure_sets_write_one_model_per_geometry() {
     let topology = smiles::to_topology("C").unwrap();
     let positions = |x: f64| {
         Positions::from_vec(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], ANGSTROM)).unwrap()
     };
-    let mut set = one_state(Arc::clone(&topology), [positions(0.0), positions(1.0)]);
+    let set = geometries(Arc::clone(&topology), [positions(0.0), positions(1.0)]);
     let written = pdb::write(&set, Default::default())
         .map(|(text, _)| text)
         .unwrap();
     assert_eq!(written.matches("MODEL ").count(), 2);
     assert_eq!(written.matches("ENDMDL").count(), 2);
-    assert_eq!(crate::fingerprint(&written), 0xac79_8dcd_f341_ece8);
+    assert_eq!(
+        written,
+        "MODEL        1\n\
+         HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C\n\
+         ENDMDL\n\
+         MODEL        2\n\
+         HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C\n\
+         ENDMDL\n\
+         END\n"
+    );
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
         .interpret_structure_set(Default::default())
         .unwrap();
     assert_eq!(reread.structure_set().len(), 2);
-    assert_eq!(crate::native_fingerprint(&reread), 0x2dcc_e32f_274e_b5a5);
+    assert_eq!(reread.structure_set().order(), None);
+    for (geometry, source) in reread.structure_set().iter().zip(&set) {
+        assert_eq!(geometry.positions(), source.positions());
+    }
     assert_eq!(
         pdb::write(reread.structure_set(), Default::default())
             .map(|(text, _)| text)
             .unwrap(),
         written
-    );
-
-    // A second state fails, and so does its energy, which comes first.
-    set.distribution_mut()
-        .unwrap()
-        .regroup(Partition::state_per_sample(2))
-        .unwrap();
-    let error = pdb::write(&set, Default::default())
-        .map(|(text, _)| text)
-        .unwrap_err();
-    assert!(matches!(
-        issue(&error),
-        PdbWriteIssue::UnrepresentableGeometry {
-            geometry: 2,
-            field: GeometryField::State
-        }
-    ));
-    assert_eq!(
-        error.to_string(),
-        "Cannot write the PDB output. The state of geometry 2 has no PDB representation."
-    );
-    set.distribution_mut()
-        .unwrap()
-        .state_mut(1)
-        .unwrap()
-        .set_energy(Some(Quantity::new(1.0, kekule::units::KILOJOULE_PER_MOLE)))
-        .unwrap();
-    let error = pdb::write(&set, Default::default())
-        .map(|(text, _)| text)
-        .unwrap_err();
-    assert!(matches!(
-        issue(&error),
-        PdbWriteIssue::UnrepresentableGeometry {
-            geometry: 2,
-            field: GeometryField::Energy
-        }
-    ));
-    assert_eq!(
-        error.to_string(),
-        "Cannot write the PDB output. The state energy of geometry 2 has no PDB representation."
-    );
-    let options = PdbWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
-    let (_, report) = pdb::write(&set, options).unwrap();
-    assert_eq!(
-        report.omissions(),
-        [
-            WriteOmission::GeometryState {
-                field: GeometryField::Energy,
-                geometries: 1
-            },
-            WriteOmission::GeometryState {
-                field: GeometryField::State,
-                geometries: 2
-            }
-        ]
-    );
-    // A lone geometry's weight is relative to geometries the entry does not hold.
-    let lone = set.get(0).unwrap();
-    let error = pdb::write(pdb::PdbSource::structure(&lone), Default::default()).unwrap_err();
-    assert_eq!(
-        error.detail(),
-        Some(&FormatErrorDetail::UnrepresentableState(
-            GeometryField::Weight
-        ))
-    );
-    assert_eq!(
-        error.to_string(),
-        "Cannot write the PDB output. The weight of the geometry has no PDB representation."
-    );
-    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
-    assert_eq!(
-        report.omissions(),
-        [WriteOmission::GeometryState {
-            field: GeometryField::Weight,
-            geometries: 1
-        }]
-    );
-
-    // The temperature belongs to the whole set.
-    let mut warm = one_state(Arc::clone(&topology), [positions(0.0), positions(1.0)]);
-    warm.distribution_mut()
-        .unwrap()
-        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
-        .unwrap();
-    let error = pdb::write(&warm, Default::default()).unwrap_err();
-    assert!(matches!(
-        issue(&error),
-        PdbWriteIssue::UnrepresentableGeometry {
-            geometry: 1,
-            field: GeometryField::Temperature
-        }
-    ));
-    assert_eq!(
-        error.to_string(),
-        "Cannot write the PDB output. The ensemble temperature has no PDB representation."
-    );
-    let (text, report) = pdb::write(&warm, options).unwrap();
-    assert_eq!(text, written);
-    assert_eq!(
-        report.omissions(),
-        [WriteOmission::GeometryState {
-            field: GeometryField::Temperature,
-            geometries: 2
-        }]
     );
 }
 
@@ -657,15 +553,24 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
     );
     assert_eq!(written.matches("MODEL ").count(), 3);
     assert_eq!(written.matches("ENDMDL").count(), 3);
-    assert_eq!(crate::fingerprint(&written), 0xe5b3_1cce_48b6_9862);
-    // The models read back as one state of the geometries' positions.
+    assert_eq!(
+        written
+            .lines()
+            .filter(|line| line.starts_with("HETATM"))
+            .collect::<Vec<_>>(),
+        [0.0, 1.0, 2.0].map(|x| format!(
+            "HETATM    1  C1  MOL     1    {x:>8.3}   0.000   0.000                       C"
+        ))
+    );
+    // The models read back as an unordered set of the geometries' positions.
     let reread = pdb::parse_str(&written, Default::default())
         .unwrap()
         .interpret_structure_set(Default::default())
         .unwrap();
-    assert_eq!(crate::native_fingerprint(&reread), 0xe477_f52c_3492_7442);
+    assert_eq!(reread.reports().len(), 3);
     let read = reread.structure_set();
     assert_eq!(read.len(), 3);
+    assert_eq!(read.order(), None);
     for (geometry, source) in read.iter().zip(&scan) {
         assert_eq!(geometry.positions(), source.positions());
     }
@@ -1164,7 +1069,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
         full.structure().atom_count()
     );
 
-    let set = one_state(
+    let set = geometries(
         full.structure().shared_topology(),
         [full.structure(), partial.structure()]
             .map(|structure| structure.as_structure_view().positions().clone()),
@@ -1179,7 +1084,14 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 4);
-    assert_eq!(crate::fingerprint(&written), 0x711e_553b_58aa_2bf7);
+    // They are the entry's own four records.
+    let source_links = RUBREDOXIN
+        .lines()
+        .filter(|line| line.starts_with("LINK"))
+        .map(str::trim_end)
+        .collect::<Vec<_>>();
+    assert_eq!(records(&written, "LINK"), source_links);
+    assert_eq!(records(&written, "MODEL").len(), 2);
     assert!(written.starts_with("LINK"));
     assert!(!report
         .omissions()
@@ -1194,7 +1106,8 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 3);
-    assert_eq!(crate::fingerprint(&written), 0x7343_a984_b5dc_32c9);
+    assert_eq!(records(&written, "LINK"), source_links[1..]);
+    let differing_written = written.clone();
     assert!(report
         .omissions()
         .contains(&WriteOmission::Coordination { records: 1 }));
@@ -1202,7 +1115,10 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
         .unwrap()
         .interpret_structure_set(Default::default())
         .unwrap();
-    assert_eq!(crate::native_fingerprint(&reread), 0x7290_b363_5bb4_2fcc);
+    assert_eq!(reread.structure_set().len(), 2);
+    for (geometry, source) in reread.structure_set().iter().zip(&set) {
+        assert_eq!(geometry.positions(), source.positions());
+    }
     for report in reread.reports() {
         assert_eq!(coordination(report), coordination(partial.report()));
     }
@@ -1215,7 +1131,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     .unwrap()
     .0;
     assert_eq!(records(&written, "LINK").len(), 3);
-    assert_eq!(crate::fingerprint(&written), 0x7343_a984_b5dc_32c9);
+    assert_eq!(written, differing_written);
 
     let error = pdb::write(
         PdbSource::structure_set(&set).with_reports(std::slice::from_ref(full.report())),

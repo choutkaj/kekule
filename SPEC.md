@@ -394,9 +394,7 @@ buffer binds it. Borrowed
 buffer's `as_structure_view`), lets coordinate algorithms and writers share
 kernels across structures, geometries, frames, and buffers. A view's `kind()`
 is `StructureKind::Standalone` or `StructureKind::InSet` with a `SetContext`: the
-geometry's place in its order, its membership (weight, state, whether it
-represents the state, the state's energy, and the temperature), and its
-velocities and forces. A frame of a codec or buffer reports its time and
+geometry's place in its order and its velocities and forces. A frame of a codec or buffer reports its time and
 step as its place, so writers and reductions never lose that state silently.
 Structure writers hold a geometry to one policy, `geometry_metadata`, for all of
 that state, whether it belongs to a set or a frame. Per-atom, per-bond, and
@@ -613,7 +611,7 @@ and takes a geometry back, by moving it; the geometry stays bound and validated.
 Path writers stage output and publish only a completed nonempty trajectory;
 stream writers write the same bytes into a host's `Write + Seek` stream and
 leave placing the file to the host. `write_structure_set` writes a structure set
-of a time order, or of none, without a distribution through both, and
+of a time order, or of none, through both, and
 `read_structure_set` reads a file as a structure set of a time order. Codec writers append frames whole and in
 order and never rewrite one, so after a flush the stream holds a complete
 trajectory, a DCD header counting its frames, that another process can read
@@ -662,18 +660,19 @@ taken and every reader moves to it. A truncated or rewritten file fails
 between refreshes compares the fingerprint, or `TrajectoryFrameIndex::prefix_fingerprint`
 of the frames it used, which samples the indexed bytes of those frames alone.
 A host keeping the frame index, or a live clone, makes each growing refresh
-copy the offsets. A distribution over every geometry becomes one over the
-geometries it covered, so appended frames are not members;
-`Distribution::extended_to` is the same operation, and
-`StructureSetDescription::extended_to` applies it to a saved description,
-which takes the longer set's order. A
+copy the offsets. An `Ensemble` over the set refreshes through
+`Ensemble::refresh`: a distribution over every geometry becomes one over the
+geometries it covered, so appended frames are not samples;
+`Distribution::extended_to` is the same operation,
+`StructureSetDescription::extended_to` gives a saved description the longer
+set's order, and `EnsembleDescription::extended_to` does both. A
 clone of the set reads nothing: it shares the set's reader, file object and
 index, starts with an empty pool, and forks its own reader at its first
 refresh, so a host hands it to an analysis while the set goes on refreshing.
 Refreshing either one changes only that one. A failed
 read names the geometry (`StructureSetReadError::Trajectory`). `load` reads every
-geometry, or listed ones, into a set in memory that keeps their order values
-and restricts the distribution, as `select` does.
+geometry, or listed ones, into a set in memory that keeps their order values;
+an ensemble's `load` also restricts the distribution, as `select` does.
 
 `Processed` reads another `StructureSetRead` and runs `ProcessingSteps` on each
 geometry as it is read: make whole or wrap, center, fit onto a geometry of the
@@ -718,9 +717,9 @@ RMSF and contact occupancy, of atom pairs or of pairs of atom groups, are
 weighted statistics in `kekule::statistics`.
 Every observation is a borrowed structure together with an explicit, finite,
 positive weight, so no structure is reduced with an implied weight.
-`StructureSet` methods observe each member of the distribution with its
-probability, its weight over the members' total, and leave the other geometries
-out; a set without a distribution observes every geometry with weight one,
+`Ensemble` methods observe each sample of the distribution with its
+probability, its weight over the samples' total, and leave the other geometries
+out; `StructureSet` methods observe every geometry with weight one,
 taking them as equally weighted equilibrium geometries, and other weights are
 passed to the accumulators explicitly. Streamed frames reach the same accumulators through their buffer's
 `StructureView`; `kekule::traj` adds no statistics of its own. Accumulators consume
@@ -732,13 +731,13 @@ structures into partial accumulators on any threads and merges them in range
 order, so a given split returns the same result on every executor, equal to
 serial observation up to rounding. Merging refuses mismatched accumulators
 with a typed error and, like observation, changes nothing when it fails.
-`SampleObservations` lists the samples of a reader to observe, every member
-or listed indices such as a range with a stride, with the distribution
-restricted to them as `select` restricts it, or weight one without a
-distribution. An accumulator's `observe_samples` reads a range of those
+`SampleObservations` lists the geometries of a reader to observe, every one
+or listed indices such as a range with a stride, with weight one, or the
+samples of an ensemble, every one or listed ones, with the distribution
+restricted to them as `select` restricts it. An accumulator's `observe_samples` reads a range of those
 observations in order, and `observe_samples_cancellable` stops on a
-`Cancellation`; a set's own statistics run the same loop, so a set read
-from a file gives the results of the set in memory. `alignment::geometry_rmsd`
+`Cancellation`; a set's or ensemble's own statistics run the same loop, so
+one read from a file gives the results of one in memory. `alignment::geometry_rmsd`
 and `alignment::geometry_aligned_rmsd` measure listed geometries of a reader
 through the kernels of a set's RMSD.
 Results retain atom/pair associations; observation
@@ -746,13 +745,13 @@ indices are diagnostic labels. Preprocessing, including alignment or imaging,
 is explicit. These are separate analysis results, not new topology state or a
 generic reduction framework.
 
-Clustering is weight-aware and groups the members of a distribution: those
-of a structure set, or every geometry of a set without one. It returns a
+Clustering is weight-aware and groups the samples of an ensemble's
+distribution, or every geometry of a structure set, unweighted. It returns a
 `Partition`, the grouping type a distribution owns, and never changes the
-set. A structure set's distances and partitions are indexed by member
-position, so `DistributionMut::regroup` installs a partition directly, and a
-set without a distribution takes it as a new distribution of every geometry;
-errors name geometry indices. `DistributionMut::regroup` applies a partition without changing any weight or sample
+set. An ensemble's distances and partitions are indexed by sample position,
+so `DistributionMut::regroup` installs a partition directly, and a structure
+set's partition makes a distribution of every geometry with
+`Distribution::new` and `Ensemble::new`; errors name geometry indices. `DistributionMut::regroup` applies a partition without changing any weight or sample
 order: a new state that contains every member of an old state keeps the
 energy and properties of its representative's old state, and a state split
 apart loses them. Collapsing makes a new collection of each state's
@@ -766,8 +765,8 @@ shape its clusters. Pairwise fits and leader clustering may run on a
 `ClusteringRun`; fits split into contiguous ranges merged in a fixed order,
 and leader clustering still places members one at a time, so every executor
 and thread count returns the single-threaded result or error.
-`clustering::pairwise_fitted_rmsd` fits the members of any `StructureSetRead`,
-reading each member once and keeping only its fitted atoms, through the
+`clustering::pairwise_fitted_rmsd` fits the geometries of any `StructureSetRead`,
+reading each geometry once and keeping only its fitted atoms, through the
 loop of a set's pairwise fits; clustering a matrix works for sets of either
 storage. See [clustering](crates/kekule/src/clustering.rs),
 [hierarchical clustering](crates/kekule/src/clustering/hierarchical.rs), and
@@ -896,22 +895,18 @@ pipeline, and `kekule::traj` streams its coordinates against a topology, such
 as the one that interpretation produced. Writing XYZ keeps elements and
 coordinates only, so the writer reports the topology content it leaves out in
 the shared write report. It writes a structure set as one frame per geometry,
-with the PDB writer's rules for set state: a geometry
-outside the distribution, unequal weights, several states, energies, state
-properties, a representative that is not its state's first member, a
-temperature, a place in the order, a time order without times or steps,
-velocities, and forces fail or are omitted with a report under
-`geometry_metadata`. XYZ interprets frames as a structure set without a
-distribution, since the file states none.
+with the PDB writer's rules for set state: a place in the order, a time
+order without times or steps, velocities, and forces fail or are omitted with
+a report under `geometry_metadata`. XYZ interprets frames as a structure set.
 
 | Format scope | Interpretation and projection |
 | --- | --- |
 | SMILES record | All connected components, with topology projection |
 | Molfile | One structure with topology and molecule projections |
 | SDF record | Structure, title, fields, and reports; each record independent |
-| CIF data block | One structure, or compatible coordinate models as a structure set of one unweighted state |
-| PDB entry | One structure, or compatible coordinate models as a structure set of one unweighted state |
-| XYZ file | One frame as a structure, or frames of the same atoms and inferred bonds as a structure set without a distribution |
+| CIF data block | One structure, or compatible coordinate models as a structure set |
+| PDB entry | One structure, or compatible coordinate models as a structure set |
+| XYZ file | One frame as a structure, or frames of the same atoms and inferred bonds as a structure set |
 
 Sibling SDF records and mmCIF blocks never merge implicitly. Singular projections
 check cardinality; plural molecule projections retain every connected component
@@ -937,9 +932,9 @@ residue alternatives or explicitly constrained groups and records its choices in
 the format report. Occupancy ranks representatives, not whole-structure
 probabilities. Assembling coordinate models into a structure set never expands
 alternate labels; caller-supplied conformation selections must pass the same identity and
-topology checks. mmCIF carries no model weights, so every coordinate model
-becomes a geometry of one state without weights; occupancy is never converted
-into a weight.
+topology checks. Every coordinate model becomes a geometry; the formats state
+no distribution, so a host that reads the models as draws builds an
+`Ensemble`, and occupancy is never converted into a weight.
 
 Macromolecular formats (mmCIF and PDB) do not carry complete bonds, and molecule
 boundaries follow bonds, so one resolver shared by these formats derives connectivity
@@ -1065,31 +1060,19 @@ export.
   must not invent assertions from an unasserted drawing or hide a conflict. A
   Molfile or SDF record cannot carry a periodic cell, so writing a structure with
   one fails unless the caller chooses to omit it.
-- SDF represents independent records. A geometry writes its membership in the
-  distribution (its weight when the distribution has weights, its state, and,
-  on the representative's record, its state's energy and the distribution's
-  temperature) and its place in a step or coordinate order as data fields. A
-  geometry outside the distribution is marked with `kekule.member` `false`
-  instead. State and set properties, geometry properties, occupancies, and B
-  factors fail unless omitted. Only the explicit `sdf::structure_set` assembles records into a
-  structure set, whose order the steps or coordinates give. It has a
-  distribution only when a record has a distribution field, one state per
-  record unless the records name their states, and weights only when a
-  record has a weight. A coordinate unit travels as the symbol of a unit
-  constant, which both the writer and the reader take from one table of
-  `units`. `sdf::structure_set` takes only a marked record as outside the
-  distribution, so a distribution over some geometries, or over none,
-  round-trips, and a record that lacks the fields the others carry is an
-  error. A Molfile, an
+- SDF represents independent records. A geometry writes its place in a step
+  or coordinate order as data fields. Set properties, geometry properties,
+  occupancies, and B factors fail unless omitted. Only the explicit
+  `sdf::structure_set` assembles records into a structure set, whose order
+  the steps or coordinates give. A coordinate unit travels as the symbol of
+  a unit constant, which both the writer and the reader take from one table
+  of `units`. A distribution is never a field of a record: an ensemble is
+  inferred, and native files keep it. A Molfile, an
   mmCIF block, and a PDB entry cannot carry a place, and PDB writes a step or
   coordinate order as one `MODEL` per geometry once places are omitted. A
   Molfile, an SDF record, and an mmCIF block cannot carry a frame's time,
-  step, velocities, or forces. A Molfile cannot carry a geometry's weight or
-  its state's energy. mmCIF distinguishes independent structure blocks from one
-  structure set's multi-model block, which, like a PDB entry, reads back as one
-  state of equal weights without an energy or temperature, so writing unequal
-  weights, several states, any energy, a temperature, or one geometry as a structure
-  block fails unless the caller chooses to omit them. mmCIF writes a cell periodic along all three
+  step, velocities, or forces. mmCIF distinguishes independent structure
+  blocks from one structure set's multi-model block. mmCIF writes a cell periodic along all three
   axes in the standard crystallographic frame as `_cell` in space group P 1,
   and reads `_cell` as the structure's cell only in P 1 (or with no space group),
   where the coordinates are a whole unit cell; PDB reads `CRYST1` by the same
@@ -1224,11 +1207,13 @@ native persistence and must not weaken these boundaries. See
 [reconstruction regressions](crates/kekule/tests/molecule/identity.rs).
 
 Exact persistence is the `native` format module, the one owner of Kekule's
-binary encoding of molecules, topologies, structures, and structure sets. A structure or structure set may carry its structure interpretation reports, stored
+binary encoding of molecules, topologies, structures, structure sets, and
+ensembles. A structure or structure set may carry its structure interpretation reports, stored
 as they are, so that an application that saves structures in native files
 keeps what the source stated beyond the structure. A structure set record may
 also keep its geometries elsewhere and store only their number, with its
-topology, order, and distribution, as a `StructureSetDescription`. It stores
+topology and order, as a `StructureSetDescription`, and an ensemble record
+likewise with its distribution, as an `EnsembleDescription`. It stores
 each owner's authoritative state, including
 explicit or inferred class assignments and adjacency order, and reconstructs
 it only through those owners' validating paths: molecule publication,

@@ -1,10 +1,7 @@
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
-use kekule::structure::{
-    Distribution, Members, Partition, Positions, Structure, StructureEditError, StructureEditor,
-    StructureSet,
-};
+use kekule::structure::{Positions, Structure, StructureEditError, StructureEditor, StructureSet};
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId,
     ResidueClass, TopologyAtomIndex, TopologyBuilder,
@@ -827,11 +824,7 @@ fn periodic_cell_rules_are_explicit_and_transactional() {
 #[test]
 fn borrowed_member_geometry_and_plain_finish_need_no_intermediate_structure() {
     let source = annotated(None);
-    let mut set = StructureSet::from_structures([source.clone()]).unwrap();
-    set.set_distribution(Some(
-        Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
-    ))
-    .unwrap();
+    let set = StructureSet::from_structures([source.clone()]).unwrap();
     let member = set.iter().next().unwrap();
     let mut editor = StructureEditor::new();
     let imported = editor.append_structure(&member).unwrap();

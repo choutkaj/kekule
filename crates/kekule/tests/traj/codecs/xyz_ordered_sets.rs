@@ -11,7 +11,7 @@ use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
 use kekule::traj::{TrajectoryField, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
 
-use crate::support::{self, Frame, Recorded};
+use crate::support::Frame;
 
 const WATERS: &str = "3
 first
@@ -248,15 +248,49 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
     assert_eq!(written.lines().count(), 4 * 5);
 }
 
-/// Each set, and what it writes under each pair of place and other
-/// policies, is what the series it replaces converted to and wrote, as
-/// recorded before series became structure sets.
+/// What writing gives: the text and omissions, or the error's kind, field,
+/// and frame.
+type Outcome = Result<
+    (String, Vec<WriteOmission>),
+    (
+        TrajectoryIoErrorKind,
+        Option<TrajectoryField>,
+        Option<usize>,
+    ),
+>;
+
+fn refused(field: TrajectoryField, frame: usize) -> Outcome {
+    Err((
+        TrajectoryIoErrorKind::UnsupportedField,
+        Some(field),
+        Some(frame),
+    ))
+}
+
+fn written(omissions: &[WriteOmission]) -> Outcome {
+    Ok((TEXT.to_owned(), omissions.to_vec()))
+}
+
+/// Each set holds its order, and writes under each pair of place and other
+/// policies as XYZ, which stores only elements and positions, allows.
 #[test]
-fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
-    let outcome = |result: Result<(String, WriteReport), TrajectoryIoError>| {
-        result.map_err(|error| (error.kind(), error.field(), error.frame()))
+fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
+    let outcome = |result: Result<(String, WriteReport), TrajectoryIoError>| -> Outcome {
+        result
+            .map(|(text, report)| (text, report.omissions().to_vec()))
+            .map_err(|error| (error.kind(), error.field(), error.frame()))
     };
-    let mut valued = history();
+    let history = history();
+    assert_eq!(history.order(), Some(&Order::Step(vec![0, 5, 10])));
+    let scan = scan();
+    assert_eq!(
+        scan.order(),
+        Some(&Order::Coordinate {
+            unit: ANGSTROM,
+            values: (0..3).map(|index| 0.9 + 0.1 * index as f64).collect(),
+        })
+    );
+    let mut valued = history.clone();
     valued
         .get_mut(1)
         .unwrap()
@@ -267,42 +301,70 @@ fn ordered_sets_hold_and_write_what_the_series_they_replace_did() {
             PropertyValue::real(-1.0, KILOJOULE_PER_MOLE).unwrap(),
         )
         .unwrap();
+    let boxed = boxed();
+    assert!(boxed
+        .iter()
+        .all(|geometry| geometry.cell() == Some(&cell())));
     let fail = UnrepresentablePolicy::Fail;
     let omit = UnrepresentablePolicy::Omit;
+    let steps = state_omission(GeometryField::OrderStep, 3);
     // Places, then geometry properties and cells. A set checks every geometry's
     // properties before any place, so geometry properties are checked only
-    // with places omitted.
+    // with places omitted. A cell is checked before any place.
     let cases = [
-        (history(), vec![(fail, fail), (omit, fail)]),
-        (scan(), vec![(fail, fail), (omit, fail)]),
-        (valued, vec![(omit, fail), (omit, omit)]),
-        (boxed(), vec![(fail, fail), (omit, fail), (omit, omit)]),
+        (
+            history,
+            vec![
+                (fail, fail, refused(TrajectoryField::OrderStep, 0)),
+                (omit, fail, written(&[BONDS, steps])),
+            ],
+        ),
+        (
+            scan,
+            vec![
+                (fail, fail, refused(TrajectoryField::OrderCoordinate, 0)),
+                (
+                    omit,
+                    fail,
+                    written(&[BONDS, state_omission(GeometryField::OrderCoordinate, 3)]),
+                ),
+            ],
+        ),
+        (
+            valued,
+            vec![
+                (omit, fail, refused(TrajectoryField::Properties, 1)),
+                (
+                    omit,
+                    omit,
+                    written(&[BONDS, steps, state_omission(GeometryField::Properties, 1)]),
+                ),
+            ],
+        ),
+        (
+            boxed,
+            vec![
+                (fail, fail, refused(TrajectoryField::PeriodicCell, 0)),
+                (omit, fail, refused(TrajectoryField::PeriodicCell, 0)),
+                (
+                    omit,
+                    omit,
+                    written(&[BONDS, steps, WriteOmission::Cell { structures: 3 }]),
+                ),
+            ],
+        ),
     ];
-    let mut recorded = Recorded::new(&[
-        0x5818_08d4_7ec2_c2d6, // history
-        0x5d60_039d_d2ae_01d3, // history, places fail, rest fail
-        0x403b_0a51_0b38_0038, // history, places omit, rest fail
-        0xc51c_2d21_01dc_8838, // scan
-        0x7cb3_6b28_1b51_187f, // scan, places fail, rest fail
-        0xcffa_2a26_dee6_f394, // scan, places omit, rest fail
-        0x38a9_5f64_4947_dbc8, // valued
-        0x5001_e09a_cc79_1f23, // valued, places omit, rest fail
-        0x2fbe_d1e5_ab1b_2685, // valued, places omit, rest omit
-        0x1ead_39b6_ac66_4969, // boxed
-        0x13e3_9b29_c744_e766, // boxed, places fail, rest fail
-        0x13e3_9b29_c744_e766, // boxed, places omit, rest fail
-        0x20fe_668a_7a09_abbd, // boxed, places omit, rest omit
-    ]);
     for (set, policies) in cases {
-        recorded.check(&support::contents(&set));
-        for (places, rest) in policies {
-            recorded.check(&outcome(write(
-                &set,
-                options()
-                    .with_geometry_metadata(places)
-                    .with_frame_properties(rest)
-                    .with_cell(rest),
-            )));
+        for (places, rest, expected) in policies {
+            let options = options()
+                .with_geometry_metadata(places)
+                .with_frame_properties(rest)
+                .with_cell(rest);
+            assert_eq!(
+                outcome(write(&set, options)),
+                expected,
+                "places {places:?}, rest {rest:?}"
+            );
         }
     }
 }

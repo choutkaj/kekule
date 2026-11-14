@@ -1,5 +1,4 @@
-//! Borrowed geometries and states of a [`StructureSet`] or another
-//! [`StructureSetRead`].
+//! Borrowed geometries of a [`StructureSet`] or another [`StructureSetRead`].
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -7,24 +6,20 @@ use std::sync::Arc;
 
 use crate::structure::owner::sealed::Sealed;
 use crate::structure::state::{is_bound, validate_binding};
-use crate::structure::{
-    AsStructureView, GeometryError, State, Structure, StructureKind, StructureView,
-};
+use crate::structure::{AsStructureView, GeometryError, Structure, StructureKind, StructureView};
 use crate::topology::Topology;
 
 use super::{Geometry, Place, SetContext, StructureSet, StructureSetRead, StructureSetReadError};
 
 /// One topology-bound [`Geometry`] borrowed from a [`StructureSet`] or another
-/// [`StructureSetRead`], with its place in the reader's order and its membership
-/// in the reader's distribution.
+/// [`StructureSetRead`], with its place in the reader's order.
 ///
 /// Reads geometry state through `Deref` and converts to a [`StructureView`]
 /// through [`AsStructureView`] without copying; the view's
 /// [`StructureKind::InSet`] carries the geometry's [`SetContext`].
 ///
 /// The type parameter says where the view comes from. `GeometryView<'_>` is a
-/// geometry of a set in memory ([`StructureSet::get`]), whose state lends its
-/// representative geometry ([`StateView::representative_sample`]).
+/// geometry of a set in memory ([`StructureSet::get`]).
 /// `GeometryView<'_, dyn StructureSetRead>` is a geometry of any reader, as
 /// [`StructureSetRead::peek`] lends it; [`Self::as_dyn`] turns the first into the
 /// second.
@@ -135,28 +130,6 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
         self.reader.order().map(|order| order.place(self.index))
     }
 
-    /// The geometry's relative weight in the set's distribution (`1.0` when
-    /// every member weighs the same), or `None` when the set has no
-    /// distribution or the geometry is not a member. Weighted statistics walk
-    /// [`StructureSet::weighted_samples`] instead, which counts every geometry of
-    /// a set without a distribution.
-    pub fn weight(self) -> Option<f64> {
-        self.reader.distribution()?.weight(self.index)
-    }
-
-    /// The state the geometry belongs to, or `None` when it is not a member
-    /// of the set's distribution.
-    pub fn state(self) -> Option<StateView<'a, R>> {
-        let state = self.reader.distribution()?.state_of(self.index)?;
-        Some(StateView::new(self.reader, state))
-    }
-
-    /// Whether the geometry represents its state.
-    pub fn is_representative(self) -> bool {
-        self.state()
-            .is_some_and(|state| state.representative() == self.index)
-    }
-
     /// The topology the geometry is bound to, with the view's full lifetime.
     pub fn topology(self) -> &'a Topology {
         self.reader.topology()
@@ -187,7 +160,7 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
     }
 
     /// Materializes the geometry as an owned structure, dropping its place,
-    /// membership, velocities, and forces.
+    /// velocities, and forces.
     pub fn to_structure(self) -> Structure {
         self.as_structure_view().to_structure()
     }
@@ -212,115 +185,6 @@ impl<R: ?Sized> Sealed for GeometryView<'_, R> {}
 impl<R: ?Sized> AsStructureView for GeometryView<'_, R> {
     fn as_structure_view(&self) -> StructureView<'_> {
         GeometryView::as_structure_view(*self)
-    }
-}
-
-/// One state of the distribution of a [`StructureSet`] or another
-/// [`StructureSetRead`], with its members, representative, and population.
-///
-/// Reads the state's energy and properties through `Deref`. The type
-/// parameter says where the state comes from, as for [`GeometryView`]: a
-/// state of a set in memory, `StateView<'_>`, lends its representative
-/// geometry ([`Self::representative_sample`]); the state of a set in a file,
-/// or of another reader, gives its index ([`Self::representative`]), which
-/// the host reads.
-pub struct StateView<'a, R: ?Sized = StructureSet> {
-    reader: &'a dyn StructureSetRead,
-    index: usize,
-    origin: PhantomData<&'a R>,
-}
-
-impl<R: ?Sized> Clone for StateView<'_, R> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<R: ?Sized> Copy for StateView<'_, R> {}
-
-impl<R: ?Sized> fmt::Debug for StateView<'_, R> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StateView")
-            .field("index", &self.index)
-            .field("state", self.payload())
-            .finish_non_exhaustive()
-    }
-}
-
-impl<R: ?Sized> std::ops::Deref for StateView<'_, R> {
-    type Target = State;
-
-    fn deref(&self) -> &Self::Target {
-        self.payload()
-    }
-}
-
-impl<'a, R: ?Sized> StateView<'a, R> {
-    /// State `index` of `reader`'s distribution, which `R` describes.
-    pub(crate) fn new(reader: &'a dyn StructureSetRead, index: usize) -> Self {
-        Self {
-            reader,
-            index,
-            origin: PhantomData,
-        }
-    }
-
-    fn distribution(self) -> &'a super::Distribution {
-        self.reader
-            .distribution()
-            .expect("a state view's reader has a distribution")
-    }
-
-    /// The state's index in the distribution.
-    pub const fn index(self) -> usize {
-        self.index
-    }
-
-    /// The geometry index of the state's representative.
-    pub fn representative(self) -> usize {
-        let distribution = self.distribution();
-        distribution.member(distribution.partition().representatives()[self.index])
-    }
-
-    /// The geometry indices of the state's members, in geometry order.
-    pub fn geometries(self) -> impl Iterator<Item = usize> + 'a {
-        let distribution = self.distribution();
-        distribution
-            .partition()
-            .samples(self.index)
-            .map(move |position| distribution.member(position))
-    }
-
-    /// The population: the total weight of the state's members, divided by
-    /// the largest member weight so that it cannot overflow. Only its ratio
-    /// to other populations carries meaning;
-    /// [`super::Distribution::state_probabilities`] gives every state's share
-    /// of the total.
-    pub fn population(self) -> f64 {
-        self.distribution().population(self.index)
-    }
-
-    /// The borrowed state with the view's full lifetime.
-    pub fn payload(self) -> &'a State {
-        self.distribution().state(self.index)
-    }
-}
-
-impl<'a> StateView<'a> {
-    /// The state's representative geometry.
-    pub fn representative_sample(self) -> GeometryView<'a> {
-        let index = self.representative();
-        let view = self
-            .reader
-            .peek(index)
-            .expect("a set in memory lends every geometry");
-        GeometryView {
-            reader: view.reader,
-            geometry: view.geometry,
-            index,
-            origin: PhantomData,
-        }
     }
 }
 
@@ -355,62 +219,3 @@ impl<'a> Iterator for GeometryIter<'a> {
 }
 
 impl ExactSizeIterator for GeometryIter<'_> {}
-
-/// Iterator over the states of a set's distribution, in state order; empty
-/// without a distribution. Its type parameter is the set's, as for
-/// [`StateView`].
-pub struct StateIter<'a, R: ?Sized = StructureSet> {
-    reader: &'a dyn StructureSetRead,
-    indices: std::ops::Range<usize>,
-    origin: PhantomData<&'a R>,
-}
-
-impl<R: ?Sized> Clone for StateIter<'_, R> {
-    fn clone(&self) -> Self {
-        Self {
-            reader: self.reader,
-            indices: self.indices.clone(),
-            origin: PhantomData,
-        }
-    }
-}
-
-impl<R: ?Sized> fmt::Debug for StateIter<'_, R> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("StateIter")
-            .field("indices", &self.indices)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<'a, R: ?Sized> StateIter<'a, R> {
-    /// The states of `reader`'s distribution, which `R` describes.
-    pub(crate) fn new(reader: &'a dyn StructureSetRead) -> Self {
-        let states = reader
-            .distribution()
-            .map_or(0, super::Distribution::state_count);
-        Self {
-            reader,
-            indices: 0..states,
-            origin: PhantomData,
-        }
-    }
-}
-
-impl<'a, R: ?Sized> Iterator for StateIter<'a, R> {
-    type Item = StateView<'a, R>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let reader = self.reader;
-        self.indices
-            .next()
-            .map(|index| StateView::new(reader, index))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.indices.size_hint()
-    }
-}
-
-impl<R: ?Sized> ExactSizeIterator for StateIter<'_, R> {}

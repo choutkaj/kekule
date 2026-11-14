@@ -1,17 +1,14 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::fmt::Debug;
 use std::io::{self, BufRead, Cursor, Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kekule::math::PeriodicCell;
 use kekule::molecule::{Atom, BondOrder, Element};
 use kekule::structure::{
-    Forces, Geometry, GeometryError, GeometryView, Order, Place, Positions, StructureSet,
-    StructureSetRead, StructureSetReadError, TimeAxis, Velocities,
+    Geometry, GeometryError, GeometryView, Order, Place, Positions, StructureSet, TimeAxis,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::DcdEndian;
@@ -165,93 +162,6 @@ pub(crate) fn time_ordered(
 /// The frames of a set, in set order.
 pub(crate) fn frames_of(set: &StructureSet) -> Vec<Frame> {
     set.iter().map(Frame::of_set_geometry).collect()
-}
-
-/// FNV-1a 64 over `bytes`.
-pub(crate) fn fingerprint_bytes(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
-
-/// FNV-1a 64 over the `Debug` text of `value`. `Debug` writes every `f64`
-/// as the shortest text that reads back to the same bits.
-pub(crate) fn fingerprint(value: &impl Debug) -> u64 {
-    fingerprint_bytes(format!("{value:?}").as_bytes())
-}
-
-/// Checks a sequence of results against their recorded fingerprints, in
-/// order, and that every recorded fingerprint was checked.
-pub(crate) struct Recorded {
-    expected: &'static [u64],
-    next: usize,
-}
-
-impl Recorded {
-    pub(crate) const fn new(expected: &'static [u64]) -> Self {
-        Self { expected, next: 0 }
-    }
-
-    pub(crate) fn check(&mut self, value: &impl Debug) {
-        assert_eq!(
-            Some(&fingerprint(value)),
-            self.expected.get(self.next),
-            "recorded result {}",
-            self.next
-        );
-        self.next += 1;
-    }
-}
-
-impl Drop for Recorded {
-    fn drop(&mut self) {
-        if !std::thread::panicking() {
-            assert_eq!(self.next, self.expected.len(), "unchecked recorded results");
-        }
-    }
-}
-
-/// What a set holds apart from its topology: its properties, order,
-/// distribution, and geometries.
-pub(crate) fn contents(set: &StructureSet) -> impl Debug + '_ {
-    (
-        set.properties(),
-        set.order(),
-        set.distribution(),
-        set.iter()
-            .map(|geometry| geometry.payload())
-            .collect::<Vec<_>>(),
-    )
-}
-
-/// The positions, cell, velocities, and forces of a geometry.
-pub(crate) type Dynamics = (
-    Positions,
-    Option<PeriodicCell>,
-    Option<Velocities>,
-    Option<Forces>,
-);
-
-/// The dynamics of every geometry: the state periodic operations and fits
-/// change.
-pub(crate) fn dynamics(set: &StructureSet) -> Vec<Dynamics> {
-    set.iter()
-        .map(|geometry| {
-            (
-                geometry.positions().clone(),
-                geometry.cell().copied(),
-                geometry.velocities().cloned(),
-                geometry.forces().cloned(),
-            )
-        })
-        .collect()
-}
-
-/// Every geometry `reader` reads, in order.
-pub(crate) fn reads(
-    reader: &(impl StructureSetRead + ?Sized),
-) -> Vec<Result<Geometry, StructureSetReadError>> {
-    (0..reader.len()).map(|index| reader.read(index)).collect()
 }
 
 /// Reject another topology context without changing its buffer or consuming input.

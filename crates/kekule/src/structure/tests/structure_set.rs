@@ -1,4 +1,5 @@
-//! Structure sets: the order, the distribution, views, and copy on write.
+//! Structure sets and ensembles: the order, the distribution, views, and
+//! copy on write.
 
 use super::*;
 use crate::units::{DEGREE, PICOSECOND};
@@ -53,6 +54,11 @@ fn velocities(x: f64) -> Velocities {
 
 const CANONICAL_VELOCITY: crate::units::Unit = crate::units::CANONICAL_VELOCITY_UNIT;
 
+/// The geometries at these x positions as `distribution` reads them.
+fn ensemble_at(xs: &[f64], distribution: Distribution) -> Ensemble {
+    Ensemble::new(set_at(xs), distribution).unwrap()
+}
+
 fn shares_every_geometry(a: &StructureSet, b: &StructureSet) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -68,21 +74,13 @@ fn requirements_read_as_they_are() {
         "needs an energy for every state"
     );
     assert_eq!(
-        StructureSetError::Missing(Requirement::Distribution).to_string(),
-        "The structure set needs a distribution."
+        StructureSetError::Missing(Requirement::TimeOrder).to_string(),
+        "The structure set needs a time order."
     );
     let set = set_at(&[0.0]);
     assert_eq!(
         set.validate_monotonic_time(),
         Err(StructureSetError::Missing(Requirement::TimeOrder))
-    );
-    assert_eq!(
-        set.select_states([0]).unwrap_err(),
-        StructureSetError::Missing(Requirement::Distribution)
-    );
-    assert_eq!(
-        set.collapse().unwrap_err(),
-        StructureSetError::Missing(Requirement::Distribution)
     );
 }
 
@@ -283,7 +281,6 @@ fn any_geometry_may_carry_site_fields_and_dynamics() {
         panic!("a geometry's view is a geometry");
     };
     assert_eq!(context.place(), Some(Place::Step(0)));
-    assert_eq!(context.membership(), None);
     assert_eq!(context.velocities(), Some(&velocities(1.0)));
     assert_eq!(context.forces(), None);
     assert_eq!(view.as_structure_view().occupancy(ATOM0), Some(0.5));
@@ -325,130 +322,134 @@ fn a_distribution_covers_all_geometries_or_a_sorted_subset() {
             actual: 3
         })
     );
-    let mut set = set_at(&[0.0, 1.0, 2.0]);
     assert_eq!(
-        set.set_distribution(Some(distribution(Members::All, &[0, 0], &[0]))),
-        Err(StructureSetError::CoverageMismatch {
+        Ensemble::new(
+            set_at(&[0.0, 1.0, 2.0]),
+            distribution(Members::All, &[0, 0], &[0])
+        )
+        .unwrap_err(),
+        StructureSetError::CoverageMismatch {
             covered: 2,
             geometries: 3
-        })
+        }
     );
     assert_eq!(
-        set.set_distribution(Some(distribution(
-            Members::Subset(vec![1, 3]),
-            &[0, 0],
-            &[0]
-        ))),
-        Err(StructureSetError::IndexOutOfRange { index: 3, len: 3 })
+        Ensemble::new(
+            set_at(&[0.0, 1.0, 2.0]),
+            distribution(Members::Subset(vec![1, 3]), &[0, 0], &[0])
+        )
+        .unwrap_err(),
+        StructureSetError::IndexOutOfRange { index: 3, len: 3 }
     );
-    assert_eq!(set.distribution(), None);
     // A subset listing every geometry is all of them.
-    set.set_distribution(Some(distribution(
-        Members::Subset(vec![0, 1, 2]),
-        &[0, 0, 1],
-        &[0, 2],
-    )))
-    .unwrap();
-    assert_eq!(set.distribution().unwrap().members(), &Members::All);
+    let all = ensemble_at(
+        &[0.0, 1.0, 2.0],
+        distribution(Members::Subset(vec![0, 1, 2]), &[0, 0, 1], &[0, 2]),
+    );
+    assert_eq!(all.distribution().members(), &Members::All);
 
-    set.set_distribution(Some(distribution(
-        Members::Subset(vec![1, 2]),
-        &[0, 1],
-        &[0, 1],
-    )))
-    .unwrap();
-    let distribution = set.distribution().unwrap();
-    assert_eq!(distribution.member_position(0), None);
-    assert_eq!(distribution.member_position(2), Some(1));
+    let set = ensemble_at(
+        &[0.0, 1.0, 2.0],
+        distribution(Members::Subset(vec![1, 2]), &[0, 1], &[0, 1]),
+    );
+    let distribution = set.distribution();
+    assert_eq!(distribution.sample_position(0), None);
+    assert_eq!(distribution.sample_position(2), Some(1));
     assert_eq!(distribution.state_of(2), Some(1));
-    assert_eq!(set.get(0).unwrap().state().map(|state| state.index()), None);
-    assert!(!set.get(0).unwrap().is_representative());
-    assert!(set.get(1).unwrap().is_representative());
+    assert_eq!(distribution.state_of(0), None);
+    assert_eq!(distribution.log_weight(0), None);
+    assert_eq!(set.state(0).unwrap().representative(), 1);
     assert_eq!(set.state(1).unwrap().representative(), 2);
     assert_eq!(set.state(1).unwrap().geometries().collect::<Vec<_>>(), [2]);
     assert_eq!(set.states().len(), 2);
     assert!(set.state(2).is_none());
-    // The view's context reports membership only for members.
-    let StructureKind::InSet(context) = set.get(0).unwrap().as_structure_view().kind() else {
-        panic!("a geometry's view is a geometry");
-    };
-    assert_eq!(context.membership(), None);
-    let StructureKind::InSet(context) = set.get(2).unwrap().as_structure_view().kind() else {
-        panic!("a geometry's view is a geometry");
-    };
-    assert_eq!(
-        context.membership(),
-        Some(Membership::new(1.0, 1, true, None, None))
-    );
 }
 
 #[test]
-fn weights_are_finite_positive_and_equal_when_absent() {
-    let mut set = set_at(&[0.0, 1.0, 2.0]);
-    set.set_distribution(Some(distribution(
-        Members::Subset(vec![0, 2]),
-        &[0, 0],
-        &[0],
-    )))
-    .unwrap();
-    let mut distribution = set.distribution_mut().unwrap();
-    assert_eq!(distribution.weights(), None);
-    assert_eq!(distribution.weight(2), Some(1.0));
-    assert_eq!(distribution.weight(1), None);
+fn log_weights_are_finite_and_equal_when_absent() {
+    let mut set = ensemble_at(
+        &[0.0, 1.0, 2.0],
+        distribution(Members::Subset(vec![0, 2]), &[0, 0], &[0]),
+    );
+    let mut distribution = set.distribution_mut();
+    assert_eq!(distribution.log_weights(), None);
+    assert_eq!(distribution.log_weight(2), Some(0.0));
+    assert_eq!(distribution.log_weight(1), None);
     assert_eq!(distribution.probabilities().unwrap(), [0.5, 0.5]);
     assert_eq!(distribution.effective_sample_size().unwrap(), 2.0);
     assert_eq!(
-        distribution.set_weights(Some(vec![1.0])),
-        Err(StructureSetError::WeightCountMismatch {
+        distribution.set_log_weights(Some(vec![0.0])),
+        Err(StructureSetError::LogWeightCountMismatch {
             expected: 2,
             actual: 1
         })
     );
     assert_eq!(
-        distribution.set_weights(Some(vec![1.0, -1.0])),
-        Err(StructureSetError::InvalidWeight { geometry: 2 })
+        distribution.set_log_weights(Some(vec![0.0, f64::NAN])),
+        Err(StructureSetError::NonFiniteLogWeight { geometry: 2 })
     );
     assert_eq!(
-        distribution.set_weight(1, 2.0),
-        Err(StructureSetError::NotMember { geometry: 1 })
+        distribution.set_log_weight(1, 2.0),
+        Err(StructureSetError::NotSample { geometry: 1 })
     );
-    distribution.set_weight(2, 3.0).unwrap();
-    assert_eq!(distribution.weights(), Some(&[1.0, 3.0][..]));
+    // Failed edits keep every sample equally weighted.
+    assert_eq!(distribution.log_weights(), None);
+    let three = 3.0_f64.ln();
+    distribution.set_log_weight(2, three).unwrap();
+    assert_eq!(distribution.log_weights(), Some(&[0.0, three][..]));
     assert_eq!(distribution.ranked_by_weight(), [2, 0]);
-    distribution.normalize_weights().unwrap();
-    assert_eq!(distribution.weights(), Some(&[0.25, 0.75][..]));
-    // Populations are relative to the largest weight.
-    assert_eq!(set.state(0).unwrap().population(), 1.0 / 0.75);
+    distribution.normalize_log_weights().unwrap();
+    let normalized = distribution.log_weights().unwrap().to_vec();
+    assert_close(&exponentials(&normalized), &[0.25, 0.75]);
+    // Normalized weights sum to one, so the only state's log population is 0.
+    let log_population = set.state(0).unwrap().log_population();
+    assert!(
+        log_population.abs() <= 4.0 * f64::EPSILON,
+        "{log_population}"
+    );
 
-    // A new member needs a weight once the members have weights.
+    // A new sample needs a log weight once the samples have log weights.
     assert_eq!(
         set.push_member(Geometry::new(single_position(3.0)), None, 0, None),
-        Err(StructureSetError::WeightRequired)
+        Err(StructureSetError::LogWeightRequired)
     );
     assert_eq!(
-        set.push_member(Geometry::new(single_position(3.0)), None, 1, Some(1.0)),
+        set.push_member(Geometry::new(single_position(3.0)), None, 1, Some(0.0)),
         Err(StructureSetError::StateOutOfRange {
             state: 1,
             states: 1
         })
     );
-    assert_eq!(set.len(), 3);
     assert_eq!(
-        set.push_member(Geometry::new(single_position(3.0)), None, 0, Some(0.5)),
+        set.push_member(
+            Geometry::new(single_position(3.0)),
+            None,
+            0,
+            Some(f64::INFINITY)
+        ),
+        Err(StructureSetError::NonFiniteLogWeight { geometry: 3 })
+    );
+    assert_eq!(set.set().len(), 3);
+    let half = 0.5_f64.ln();
+    assert_eq!(
+        set.push_member(Geometry::new(single_position(3.0)), None, 0, Some(half)),
         Ok(3)
     );
     let state = State::new()
         .with_energy(Quantity::new(1.0, KILOJOULE_PER_MOLE))
         .unwrap();
     assert_eq!(
-        set.push_state(Geometry::new(single_position(4.0)), None, state, Some(1.0)),
+        set.push_state(Geometry::new(single_position(4.0)), None, state, Some(0.0)),
         Ok(1)
     );
-    // A non-member keeps the distribution as it was.
+    // A geometry that is not a sample keeps the distribution as it was.
     assert_eq!(set.push(Geometry::new(single_position(5.0)), None), Ok(5));
-    let distribution = set.distribution().unwrap();
+    let distribution = set.distribution();
     assert_eq!(distribution.members(), &Members::Subset(vec![0, 2, 3, 4]));
-    assert_eq!(distribution.weights(), Some(&[0.25, 0.75, 0.5, 1.0][..]));
+    assert_eq!(
+        distribution.log_weights(),
+        Some(&[normalized[0], normalized[1], half, 0.0][..])
+    );
     assert_eq!(distribution.partition().assignments(), [0, 0, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 3]);
     assert_eq!(
@@ -460,16 +461,11 @@ fn weights_are_finite_positive_and_equal_when_absent() {
         set.state(1).unwrap().energy(),
         Some(Quantity::new(1.0, KILOJOULE_PER_MOLE))
     );
-    // Pushing a non-member into a distribution of every geometry lists the
-    // others.
-    let mut all = set_at(&[0.0]);
-    all.set_distribution(Some(distribution_of_one_state(1)))
-        .unwrap();
+    // Pushing a geometry that is not a sample into a distribution of every
+    // geometry lists the others.
+    let mut all = Ensemble::uniform(set_at(&[0.0]));
     all.push(Geometry::new(single_position(1.0)), None).unwrap();
-    assert_eq!(
-        all.distribution().unwrap().members(),
-        &Members::Subset(vec![0])
-    );
+    assert_eq!(all.distribution().members(), &Members::Subset(vec![0]));
 }
 
 fn distribution_of_one_state(members: usize) -> Distribution {
@@ -477,32 +473,36 @@ fn distribution_of_one_state(members: usize) -> Distribution {
 }
 
 #[test]
-fn selecting_and_removing_geometries_remaps_the_members() {
+fn selecting_and_removing_geometries_remaps_the_samples() {
     // Five frames; frames 1-4 are an ensemble of two states.
-    let mut set = set_at(&[0.0, 1.0, 2.0, 3.0, 4.0]);
-    set.set_order(Some(Order::Step(vec![0, 1, 2, 3, 4])))
+    let mut frames = set_at(&[0.0, 1.0, 2.0, 3.0, 4.0]);
+    frames
+        .set_order(Some(Order::Step(vec![0, 1, 2, 3, 4])))
         .unwrap();
     let energies = [1.0, 2.0].map(|energy| {
         State::new()
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap()
     });
-    set.set_distribution(Some(
+    let [one, two, three, four] = [1.0_f64, 2.0, 3.0, 4.0].map(f64::ln);
+    let set = Ensemble::new(
+        frames,
         distribution(Members::Subset(vec![1, 2, 3, 4]), &[0, 1, 0, 1], &[0, 3])
-            .with_weights(vec![1.0, 2.0, 3.0, 4.0])
+            .with_log_weights(vec![one, two, three, four])
             .unwrap()
             .with_states(energies.to_vec())
             .unwrap(),
-    ))
+    )
     .unwrap();
 
-    // Selecting 4, 0, 3 keeps part of each state and a non-member.
+    // Selecting 4, 0, 3 keeps part of each state and a geometry that is not
+    // a sample.
     let selected = set.select([4, 0, 3]).unwrap();
-    assert_eq!(xs(&selected), [4.0, 0.0, 3.0]);
-    assert_eq!(selected.order(), Some(&Order::Step(vec![4, 0, 3])));
-    let distribution = selected.distribution().unwrap();
+    assert_eq!(xs(selected.set()), [4.0, 0.0, 3.0]);
+    assert_eq!(selected.set().order(), Some(&Order::Step(vec![4, 0, 3])));
+    let distribution = selected.distribution();
     assert_eq!(distribution.members(), &Members::Subset(vec![0, 2]));
-    assert_eq!(distribution.weights(), Some(&[4.0, 3.0][..]));
+    assert_eq!(distribution.log_weights(), Some(&[four, three][..]));
     // States in state order: state 0 (geometry 3, a new representative),
     // then state 1 (geometry 4, its representative).
     assert_eq!(distribution.partition().assignments(), [1, 0]);
@@ -512,20 +512,17 @@ fn selecting_and_removing_geometries_remaps_the_members() {
 
     // Selecting a whole state keeps its energy.
     let whole = set.select([1, 3]).unwrap();
-    assert_eq!(whole.distribution().unwrap().members(), &Members::All);
+    assert_eq!(whole.distribution().members(), &Members::All);
     assert_eq!(
         whole.state(0).unwrap().energy(),
         Some(Quantity::new(1.0, KILOJOULE_PER_MOLE))
     );
 
-    // Selecting whole states keeps their members and order values.
+    // Selecting whole states keeps their samples and order values.
     let states = set.select_states([1]).unwrap();
-    assert_eq!(xs(&states), [2.0, 4.0]);
-    assert_eq!(states.order(), Some(&Order::Step(vec![2, 4])));
-    assert_eq!(
-        states.distribution().unwrap().weights(),
-        Some(&[2.0, 4.0][..])
-    );
+    assert_eq!(xs(states.set()), [2.0, 4.0]);
+    assert_eq!(states.set().order(), Some(&Order::Step(vec![2, 4])));
+    assert_eq!(states.distribution().log_weights(), Some(&[two, four][..]));
     assert_eq!(
         states.state(0).unwrap().energy(),
         Some(Quantity::new(2.0, KILOJOULE_PER_MOLE))
@@ -538,13 +535,13 @@ fn selecting_and_removing_geometries_remaps_the_members() {
         }
     );
 
-    // Removing a non-member shifts the members down.
+    // Removing a geometry that is not a sample shifts the samples down.
     let mut removed = set.clone();
     removed.remove(0).unwrap();
-    assert_eq!(removed.distribution().unwrap().members(), &Members::All);
-    assert_eq!(removed.order(), Some(&Order::Step(vec![1, 2, 3, 4])));
+    assert_eq!(removed.distribution().members(), &Members::All);
+    assert_eq!(removed.set().order(), Some(&Order::Step(vec![1, 2, 3, 4])));
     assert_eq!(removed.state(1).unwrap().representative(), 3);
-    // The representative of a state with other members stays.
+    // The representative of a state with other samples stays.
     assert_eq!(
         removed.remove(0).unwrap_err(),
         StructureSetError::RepresentativeRemoval {
@@ -554,17 +551,14 @@ fn selecting_and_removing_geometries_remaps_the_members() {
     );
     removed.remove(2).unwrap();
     removed.remove(1).unwrap();
-    assert_eq!(xs(&removed), [1.0, 4.0]);
-    assert_eq!(
-        removed.distribution().unwrap().partition().assignments(),
-        [0, 1]
-    );
-    // Removing a member alone in its state removes the state.
+    assert_eq!(xs(removed.set()), [1.0, 4.0]);
+    assert_eq!(removed.distribution().partition().assignments(), [0, 1]);
+    // Removing a sample alone in its state removes the state.
     removed.remove(0).unwrap();
-    let distribution = removed.distribution().unwrap();
+    let distribution = removed.distribution();
     assert_eq!(distribution.state_count(), 1);
     assert_eq!(distribution.members(), &Members::All);
-    assert_eq!(distribution.weights(), Some(&[4.0][..]));
+    assert_eq!(distribution.log_weights(), Some(&[four][..]));
     assert_eq!(distribution.partition().representatives(), [0]);
     assert_eq!(
         removed.state(0).unwrap().energy(),
@@ -576,36 +570,35 @@ fn selecting_and_removing_geometries_remaps_the_members() {
 fn regrouping_reweighting_and_selecting_copy_no_structure() {
     let mut set = set_at(&[0.0, 1.0, 2.0]);
     set.set_order(Some(Order::Step(vec![0, 1, 2]))).unwrap();
-    set.set_distribution(Some(distribution_of_one_state(3)))
-        .unwrap();
-    let shared = Arc::new(set);
+    let shared = Arc::new(Ensemble::uniform(set));
 
     let mut regrouped = Arc::clone(&shared);
-    let mut distribution = Arc::make_mut(&mut regrouped).distribution_mut().unwrap();
+    let mut distribution = Arc::make_mut(&mut regrouped).distribution_mut();
     distribution
         .regroup(Partition::state_per_sample(3))
         .unwrap();
-    distribution.set_weights(Some(vec![1.0, 2.0, 3.0])).unwrap();
+    let weights = [1.0_f64, 2.0, 3.0].map(f64::ln);
+    distribution
+        .set_log_weights(Some(weights.to_vec()))
+        .unwrap();
     assert!(!Arc::ptr_eq(&regrouped, &shared));
-    assert!(shares_every_geometry(&regrouped, &shared));
-    assert_eq!(shared.distribution().unwrap().state_count(), 1);
+    assert!(shares_every_geometry(regrouped.set(), shared.set()));
+    assert_eq!(shared.distribution().state_count(), 1);
 
     let selected = shared.select([2, 0]).unwrap();
     assert!(Arc::ptr_eq(
-        selected.get(0).unwrap().payload().state(),
-        shared.get(2).unwrap().payload().state()
+        selected.set().get(0).unwrap().payload().state(),
+        shared.set().get(2).unwrap().payload().state()
     ));
-    let collapsed = regrouped.collapse().unwrap();
-    assert_eq!(collapsed.order(), None);
-    assert_eq!(
-        collapsed.distribution().unwrap().weights(),
-        Some(&[1.0 / 3.0, 2.0 / 3.0, 1.0][..])
-    );
-    assert!(shares_every_geometry(&collapsed, &regrouped));
+    // Each state of one sample keeps its log weight as its log population.
+    let collapsed = regrouped.collapse();
+    assert_eq!(collapsed.set().order(), None);
+    assert_eq!(collapsed.distribution().log_weights(), Some(&weights[..]));
+    assert!(shares_every_geometry(collapsed.set(), regrouped.set()));
     let states = regrouped.select_states([1]).unwrap();
     assert!(Arc::ptr_eq(
-        states.get(0).unwrap().payload().state(),
-        shared.get(1).unwrap().payload().state()
+        states.set().get(0).unwrap().payload().state(),
+        shared.set().get(1).unwrap().payload().state()
     ));
 
     // Editing one geometry of a clone copies that geometry alone.
@@ -616,23 +609,24 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
         .set_position_at(ATOM0, Quantity::new(Point3::new(9.0, 0.0, 0.0), NANOMETER))
         .unwrap();
     assert!(Arc::ptr_eq(
-        edited.get(0).unwrap().payload().state(),
-        shared.get(0).unwrap().payload().state()
+        edited.set().get(0).unwrap().payload().state(),
+        shared.set().get(0).unwrap().payload().state()
     ));
     assert!(!edited
+        .set()
         .get(1)
         .unwrap()
-        .shares_storage_with(&shared.get(1).unwrap()));
-    assert_eq!(xs(&shared), [0.0, 1.0, 2.0]);
-    assert_eq!(xs(&edited), [0.0, 9.0, 2.0]);
+        .shares_storage_with(&shared.set().get(1).unwrap()));
+    assert_eq!(xs(shared.set()), [0.0, 1.0, 2.0]);
+    assert_eq!(xs(edited.set()), [0.0, 9.0, 2.0]);
 
     // Replacing positions copies only what the shared geometry keeps.
-    let mut moved = (*shared).clone();
+    let mut moved = shared.set().clone();
     moved
         .replace_positions([3.0, 4.0, 5.0].map(single_position))
         .unwrap();
     assert_eq!(xs(&moved), [3.0, 4.0, 5.0]);
-    assert_eq!(xs(&shared), [0.0, 1.0, 2.0]);
+    assert_eq!(xs(shared.set()), [0.0, 1.0, 2.0]);
     assert_eq!(
         moved.replace_positions([single_position(0.0)]),
         Err(StructureSetError::GeometryCountMismatch {
@@ -644,52 +638,69 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
 
 #[test]
 fn distribution_operations_keep_their_results() {
-    use crate::tests::debug_fingerprint as fingerprint;
-    let mut set = grouped(&[1.0, 2.0, 3.0, 4.0], &[0, 1, 0, 1], &[2, 1]);
-    assert_eq!(fingerprint(&set), 0xc1ab_ee67_1af5_633c);
-    let distribution = set.distribution().unwrap();
-    assert_eq!(
-        fingerprint(&distribution.probabilities()),
-        0x5264_938e_9878_2088
+    // State 0: geometries 0 and 2 (weights 1 and 3), represented by 2;
+    // state 1: geometries 1 and 3 (weights 2 and 4), represented by 1.
+    let weights = [1.0_f64, 2.0, 3.0, 4.0].map(f64::ln);
+    let mut set = grouped(&weights, &[0, 1, 0, 1], &[2, 1]);
+    assert_eq!(set.set().len(), 4);
+    let distribution = set.distribution();
+    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.log_weights(), Some(&weights[..]));
+    assert_eq!(distribution.partition().assignments(), [0, 1, 0, 1]);
+    assert_eq!(distribution.partition().representatives(), [2, 1]);
+    assert_eq!(distribution.temperature(), None);
+    // Weights of a total of 10.
+    assert_close(
+        &distribution.probabilities().unwrap(),
+        &[0.1, 0.2, 0.3, 0.4],
     );
-    assert_eq!(
-        fingerprint(&distribution.state_probabilities()),
-        0xeeff_7097_2abe_e8d6
-    );
-    assert_eq!(
-        fingerprint(&distribution.effective_sample_size()),
-        0xb362_b541_7cb7_3645
-    );
-    assert_eq!(
-        fingerprint(&distribution.ranked_by_weight()),
-        0x2789_cca9_c741_8519
-    );
-    assert_eq!(
-        fingerprint(&distribution.ranked_by_population()),
-        0xc97a_7cef_68ff_64f6
-    );
-    assert_eq!(
-        fingerprint(&distribution.covering_population(0.5)),
-        0xd618_a48c_73fd_0377
-    );
+    assert_close(&distribution.state_probabilities().unwrap(), &[0.4, 0.6]);
+    // Kish: 10² / (1 + 4 + 9 + 16) = 10 / 3.
+    assert!(close(
+        distribution.effective_sample_size().unwrap(),
+        10.0 / 3.0
+    ));
+    assert_eq!(distribution.ranked_by_weight(), [3, 2, 1, 0]);
+    assert_eq!(distribution.ranked_by_population(), [1, 0]);
+    assert_eq!(distribution.covering_population(0.5).unwrap(), [1]);
+    assert_eq!(distribution.covering_population(0.7).unwrap(), [1, 0]);
     assert_eq!(
         distribution.covering_population(0.0),
         Err(StructureSetError::InvalidFraction)
     );
-    assert_eq!(fingerprint(&set.collapse().unwrap()), 0x7c56_eadf_18ed_2b76);
+    let collapsed = set.collapse();
+    assert_eq!(collapsed.set().len(), 2);
+    assert!(collapsed
+        .set()
+        .get(0)
+        .unwrap()
+        .shares_storage_with(&set.set().get(2).unwrap()));
+    assert!(collapsed
+        .set()
+        .get(1)
+        .unwrap()
+        .shares_storage_with(&set.set().get(1).unwrap()));
+    assert_eq!(
+        collapsed.distribution().partition(),
+        &Partition::state_per_sample(2)
+    );
+    assert_close(&log_weights(&collapsed), &[4.0_f64.ln(), 6.0_f64.ln()]);
 
     let mut energy_set = energy_conformers(&[3.0, 1.0, 2.0]);
-    assert_eq!(fingerprint(&energy_set), 0x996e_5d78_1f7b_8096);
-    let distribution = energy_set.distribution().unwrap();
-    assert_eq!(
-        fingerprint(&distribution.ranked_by_energy()),
-        0x1d17_fb39_6219_0729
-    );
+    let state = |energy| State::new().with_energy(kj(energy).unwrap()).unwrap();
+    let expected = Distribution::new(Members::All, Partition::state_per_sample(3))
+        .unwrap()
+        .with_log_weights(vec![0.0; 3])
+        .unwrap()
+        .with_states(vec![state(3.0), state(1.0), state(2.0)])
+        .unwrap();
+    assert_eq!(energy_set.set().len(), 3);
+    assert_eq!(energy_set.distribution(), &expected);
+    let distribution = energy_set.distribution();
+    assert_eq!(distribution.ranked_by_energy().unwrap(), [1, 2, 0]);
+    // States 1 and 2 lie within 1 kJ/mol of the lowest; the bound is inclusive.
     let window = Quantity::new(1.0, KILOJOULE_PER_MOLE);
-    assert_eq!(
-        fingerprint(&distribution.within_energy_window(window)),
-        0xdacb_19db_c0de_14a3
-    );
+    assert_eq!(distribution.within_energy_window(window).unwrap(), [1, 2]);
     assert_eq!(
         distribution.within_energy_window(Quantity::new(-1.0, KILOJOULE_PER_MOLE)),
         Err(StructureSetError::InvalidEnergyWindow)
@@ -697,21 +708,17 @@ fn distribution_operations_keep_their_results() {
     let temperature = Quantity::new(300.0, KELVIN);
     energy_set
         .distribution_mut()
-        .unwrap()
         .set_temperature(Some(temperature))
         .unwrap();
+    assert_eq!(energy_set.distribution().temperature(), Some(temperature));
+    // A temperature changes nothing else.
     assert_eq!(
-        energy_set.distribution().unwrap().temperature(),
-        Some(temperature)
-    );
-    assert_eq!(
-        fingerprint(&energy_set.distribution()),
-        0xf47d_c1c2_0c11_71f4
+        energy_set.distribution(),
+        &expected.clone().with_temperature(temperature).unwrap()
     );
     assert_eq!(
         energy_set
             .distribution_mut()
-            .unwrap()
             .set_temperature(Some(Quantity::new(0.0, KELVIN))),
         Err(StructureSetError::InvalidTemperature)
     );
@@ -720,8 +727,7 @@ fn distribution_operations_keep_their_results() {
     let partition = Partition::new(vec![0, 0, 1], vec![1, 2]).unwrap();
     energy_set
         .distribution_mut()
-        .unwrap()
-        .regroup(partition)
+        .regroup(partition.clone())
         .unwrap();
     assert_eq!(
         energy_set
@@ -730,36 +736,55 @@ fn distribution_operations_keep_their_results() {
             .collect::<Vec<_>>(),
         [1.0, 2.0].map(|energy| Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
     );
-    assert_eq!(
-        fingerprint(&energy_set.distribution()),
-        0x1270_e3e0_7f3f_2a5c
-    );
+    let regrouped = Distribution::new(Members::All, partition)
+        .unwrap()
+        .with_log_weights(vec![0.0; 3])
+        .unwrap()
+        .with_states(vec![state(1.0), state(2.0)])
+        .unwrap()
+        .with_temperature(temperature)
+        .unwrap();
+    assert_eq!(energy_set.distribution(), &regrouped);
     assert_eq!(
         energy_set
             .distribution_mut()
-            .unwrap()
             .regroup(Partition::one_state(2)),
         Err(StructureSetError::PartitionMismatch {
             expected: 3,
             actual: 2
         })
     );
-    set.distribution_mut().unwrap().normalize_weights().unwrap();
-    assert_eq!(fingerprint(&set.distribution()), 0xb6fd_7ee1_eebd_78cd);
+    assert_eq!(energy_set.distribution(), &regrouped);
+
+    // Normalizing changes the log weights alone, to log probabilities.
+    let before = set.distribution().clone();
+    set.distribution_mut().normalize_log_weights().unwrap();
+    let distribution = set.distribution();
+    assert_close(
+        &exponentials(distribution.log_weights().unwrap()),
+        &[0.1, 0.2, 0.3, 0.4],
+    );
+    assert_eq!(distribution.members(), before.members());
+    assert_eq!(distribution.partition(), before.partition());
+    assert_eq!(distribution.states(), before.states());
+    assert_eq!(distribution.temperature(), None);
+}
+
+/// A V2000 record of one carbon atom at `x` Å, followed by `data`.
+fn carbon_record(x: &str, data: &str) -> String {
+    format!(
+        "\n  kekule            2D\n\n  1  0  0  0  0  0            999 V2000\n\
+         {x:>10}    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\nM  END\n\
+         {data}$$$$\n"
+    )
 }
 
 #[test]
 fn geometry_views_write_the_sdf_records_they_always_wrote() {
-    use crate::tests::debug_fingerprint as fingerprint;
-    let mut set = energy_conformers(&[2.5, 1.0]);
-    set.push_member(Geometry::new(single_position(1.0)), None, 0, Some(3.0))
-        .unwrap();
-    set.distribution_mut()
-        .unwrap()
-        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
-        .unwrap();
-    assert_eq!(fingerprint(&set), 0xd1f3_2255_067b_e88c);
     let options = crate::sdf::SdfWriteOptions::default();
+    // One carbon at x = 0 and 0.1 nm: flat, so 2D, with coordinates in Å
+    // and no data fields.
+    let set = set_at(&[0.0, 0.1]);
     let views = set.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
         views.iter().map(crate::sdf::SdfRecordSource::structure),
@@ -767,15 +792,19 @@ fn geometry_views_write_the_sdf_records_they_always_wrote() {
     )
     .unwrap()
     .0;
-    assert_eq!(fingerprint(&written), 0xfdd2_1ccf_3060_ad78);
+    assert_eq!(
+        written,
+        carbon_record("0.0000", "") + &carbon_record("1.0000", "")
+    );
 
+    // A geometry on a coordinate order writes its coordinate and its unit
+    // as data fields.
     let mut scan = set_at(&[0.0]);
     scan.set_order(Some(Order::Coordinate {
         unit: DEGREE,
         values: vec![30.0],
     }))
     .unwrap();
-    assert_eq!(fingerprint(&scan), 0x78d9_7dff_3870_37dd);
     let views = scan.iter().collect::<Vec<_>>();
     let written = crate::sdf::write(
         views.iter().map(crate::sdf::SdfRecordSource::structure),
@@ -783,7 +812,13 @@ fn geometry_views_write_the_sdf_records_they_always_wrote() {
     )
     .unwrap()
     .0;
-    assert_eq!(fingerprint(&written), 0x3c58_9dc0_2772_0fe0);
+    assert_eq!(
+        written,
+        carbon_record(
+            "0.0000",
+            ">  <kekule.coordinate>\n30\n\n>  <kekule.coordinate.unit>\ndeg\n\n"
+        )
+    );
 }
 
 #[test]
@@ -799,12 +834,6 @@ fn subsets_keep_the_order_and_the_distribution() {
         .properties_mut()
         .insert(key("label"), PropertyValue::String("a".into()))
         .unwrap();
-    set.set_distribution(Some(
-        distribution(Members::Subset(vec![1]), &[0], &[0])
-            .with_states(vec![state])
-            .unwrap(),
-    ))
-    .unwrap();
     set.properties_mut()
         .insert(key("method"), PropertyValue::String("md".into()))
         .unwrap();
@@ -812,20 +841,38 @@ fn subsets_keep_the_order_and_the_distribution() {
         .unwrap()
         .set_velocities(Some(Velocities::zeros(2)))
         .unwrap();
+    let ensemble = Ensemble::new(
+        set.clone(),
+        distribution(Members::Subset(vec![1]), &[0], &[0])
+            .with_log_weights(vec![2.0])
+            .unwrap()
+            .with_states(vec![state])
+            .unwrap()
+            .with_temperature(Quantity::new(300.0, KELVIN))
+            .unwrap(),
+    )
+    .unwrap();
     let selection =
         crate::topology::AtomSelection::from_atoms(set.shared_topology(), [atom]).unwrap();
-    let subset = set.subset(&selection).unwrap();
-    assert_eq!(subset.topology().atom_count(), 1);
-    assert!(subset.properties().is_empty());
-    assert_eq!(subset.order(), set.order());
-    assert_eq!(subset.get(0).unwrap().velocities().unwrap().len(), 1);
+    let subset = ensemble.subset(&selection).unwrap();
+    assert_eq!(subset.set().topology().atom_count(), 1);
+    assert!(subset.set().properties().is_empty());
+    assert_eq!(subset.set().order(), set.order());
+    assert_eq!(subset.set().get(0).unwrap().velocities().unwrap().len(), 1);
     let state = subset.state(0).unwrap();
     assert_eq!(state.energy(), Some(Quantity::new(1.0, KILOJOULE_PER_MOLE)));
     assert!(state.properties().is_empty());
+    let distribution = subset.distribution();
+    assert_eq!(distribution.members(), &Members::Subset(vec![1]));
+    assert_eq!(distribution.log_weights(), Some(&[2.0][..]));
     assert_eq!(
-        subset.distribution().unwrap().members(),
-        &Members::Subset(vec![1])
+        distribution.temperature(),
+        Some(Quantity::new(300.0, KELVIN))
     );
+    // The set's own subset is the same projection, without a distribution.
+    let set_subset = set.subset(&selection).unwrap();
+    assert_eq!(set_subset.topology().atom_count(), 1);
+    assert_eq!(set_subset.order(), set.order());
 
     let mut perceived = set.clone();
     perceived.perceive().unwrap();
@@ -837,31 +884,33 @@ fn subsets_keep_the_order_and_the_distribution() {
     );
 }
 
-/// The parts of two sets compared one by one, since a set is not
+/// The parts of two ensembles compared one by one, since a set is not
 /// `PartialEq`; geometries must share their structures.
-fn assert_same_set(actual: &StructureSet, expected: &StructureSet) {
-    assert!(shares_every_geometry(actual, expected));
-    assert_eq!(actual.order(), expected.order());
+fn assert_same_ensemble(actual: &Ensemble, expected: &Ensemble) {
+    assert!(shares_every_geometry(actual.set(), expected.set()));
+    assert_eq!(actual.set().order(), expected.set().order());
     assert_eq!(actual.distribution(), expected.distribution());
-    assert_eq!(actual.properties(), expected.properties());
+    assert_eq!(actual.set().properties(), expected.set().properties());
 }
 
 #[test]
-fn replacing_a_geometry_keeps_its_place_and_membership() {
-    let mut set = set_at(&[0.0, 1.0]);
-    set.set_order(Some(Order::Step(vec![3, 4]))).unwrap();
-    set.set_distribution(Some(
+fn replacing_a_geometry_keeps_its_place_and_sample() {
+    let mut frames = set_at(&[0.0, 1.0]);
+    frames.set_order(Some(Order::Step(vec![3, 4]))).unwrap();
+    let two = 2.0_f64.ln();
+    let mut set = Ensemble::new(
+        frames,
         distribution(Members::Subset(vec![1]), &[0], &[0])
-            .with_weights(vec![2.0])
+            .with_log_weights(vec![two])
             .unwrap(),
-    ))
+    )
     .unwrap();
     let previous = set.replace(1, Geometry::new(single_position(5.0))).unwrap();
     assert_eq!(previous, Geometry::new(single_position(1.0)));
-    assert_eq!(xs(&set), [0.0, 5.0]);
-    assert_eq!(set.get(1).unwrap().place(), Some(Place::Step(4)));
-    assert_eq!(set.get(1).unwrap().weight(), Some(2.0));
-    assert!(set.get(1).unwrap().is_representative());
+    assert_eq!(xs(set.set()), [0.0, 5.0]);
+    assert_eq!(set.set().get(1).unwrap().place(), Some(Place::Step(4)));
+    assert_eq!(set.distribution().log_weight(1), Some(two));
+    assert_eq!(set.state(0).unwrap().representative(), 1);
 
     let before = set.clone();
     // Two atoms do not bind to a one-atom topology.
@@ -873,23 +922,21 @@ fn replacing_a_geometry_keeps_its_place_and_membership() {
         set.replace(2, Geometry::new(single_position(0.0))),
         Err(StructureSetError::IndexOutOfRange { index: 2, len: 2 })
     );
-    assert_same_set(&set, &before);
+    assert_same_ensemble(&set, &before);
 }
 
 #[test]
-fn the_distribution_guard_keeps_the_members() {
-    let mut set = set_at(&[0.0, 1.0]);
-    set.set_distribution(Some(distribution_of_one_state(2)))
-        .unwrap();
-    // The replacement the guard cannot make is refused when installed.
+fn the_distribution_guard_keeps_the_samples() {
+    // The replacement the guard cannot make is refused when paired.
     let foreign = Distribution::new(Members::Subset(vec![7]), Partition::one_state(1)).unwrap();
     assert_eq!(
-        set.set_distribution(Some(foreign)),
-        Err(StructureSetError::IndexOutOfRange { index: 7, len: 2 })
+        Ensemble::new(set_at(&[0.0, 1.0]), foreign).unwrap_err(),
+        StructureSetError::IndexOutOfRange { index: 7, len: 2 }
     );
-    let mut distribution = set.distribution_mut().unwrap();
-    assert_eq!(distribution.member_count(), 2);
-    distribution.set_weight(1, 3.0).unwrap();
+    let mut set = ensemble_at(&[0.0, 1.0], distribution_of_one_state(2));
+    let mut distribution = set.distribution_mut();
+    assert_eq!(distribution.sample_count(), 2);
+    distribution.set_log_weight(1, 3.0_f64.ln()).unwrap();
     distribution
         .regroup(Partition::state_per_sample(2))
         .unwrap();
@@ -898,57 +945,77 @@ fn the_distribution_guard_keeps_the_members() {
         .unwrap()
         .set_energy(kj(1.0))
         .unwrap();
-    assert_eq!(set.distribution().unwrap().members(), &Members::All);
+    assert_eq!(set.distribution().members(), &Members::All);
     assert_eq!(set.state(1).unwrap().representative_sample().index(), 1);
     assert_eq!(set.state(1).unwrap().energy(), kj(1.0));
+    assert_eq!(set.distribution().log_weight(1), Some(3.0_f64.ln()));
 }
 
 #[test]
-fn weighted_walks_join_members_and_samples() {
-    let mut set = set_at(&[0.0, 1.0, 2.0]);
-    // Without a distribution every geometry counts once.
-    assert_eq!(
-        set.weighted_samples().collect::<Vec<_>>(),
-        [(0, 1.0), (1, 1.0), (2, 1.0)]
-    );
-    set.set_distribution(Some(distribution(
-        Members::Subset(vec![0, 2]),
-        &[0, 0],
-        &[0],
-    )))
+fn weighted_observations_join_samples_and_probabilities() {
+    use crate::statistics::SampleObservations;
+    let set = set_at(&[0.0, 1.0, 2.0]);
+    // A set's statistics count every geometry once.
+    let all = SampleObservations::all(&set);
+    assert_eq!(all.samples(), [0, 1, 2]);
+    assert_eq!(all.weights(), [1.0, 1.0, 1.0]);
+    let mut ensemble = Ensemble::new(
+        set,
+        distribution(Members::Subset(vec![0, 2]), &[0, 0], &[0]),
+    )
     .unwrap();
-    let walk = set.weighted_samples();
-    assert_eq!(walk.len(), 2);
-    assert_eq!(walk.collect::<Vec<_>>(), [(0, 1.0), (2, 1.0)]);
-    set.distribution_mut().unwrap().set_weight(2, 4.0).unwrap();
-    let distribution = set.distribution().unwrap();
+    // An ensemble's observe its samples with their probabilities.
+    let observed = SampleObservations::weighted(&ensemble);
+    assert_eq!(observed.samples(), [0, 2]);
+    assert_close(observed.weights(), &[0.5, 0.5]);
     assert_eq!(
-        distribution.weighted_members().collect::<Vec<_>>(),
-        [(0, 1.0), (2, 4.0)]
+        ensemble.distribution().sample_probabilities().unwrap(),
+        [(0, 0.5), (2, 0.5)]
     );
+    ensemble
+        .distribution_mut()
+        .set_log_weight(2, 4.0_f64.ln())
+        .unwrap();
+    let distribution = ensemble.distribution();
+    let joined = distribution.sample_probabilities().unwrap();
     assert_eq!(
-        set.weighted_samples().collect::<Vec<_>>(),
-        distribution.weighted_members().collect::<Vec<_>>()
+        joined
+            .iter()
+            .map(|(geometry, _)| *geometry)
+            .collect::<Vec<_>>(),
+        [0, 2]
     );
-    // Member positions index the weights and probabilities.
-    let probabilities = distribution.probabilities().unwrap();
-    for ((geometry, weight), (position, probability)) in distribution
-        .weighted_members()
-        .zip(probabilities.iter().enumerate())
-    {
-        assert_eq!(distribution.member_position(geometry), Some(position));
-        assert_eq!(*probability, weight / 5.0);
+    // Weights 1 and 4 of 5.
+    let probabilities = joined
+        .iter()
+        .map(|(_, probability)| *probability)
+        .collect::<Vec<_>>();
+    assert_close(&probabilities, &[0.2, 0.8]);
+    let observed = SampleObservations::weighted(&ensemble);
+    assert_eq!(observed.samples(), [0, 2]);
+    assert_close(observed.weights(), &probabilities);
+    // Sample positions index the log weights and probabilities.
+    let by_position = distribution.probabilities().unwrap();
+    for (position, (geometry, probability)) in joined.iter().enumerate() {
+        assert_eq!(distribution.sample_position(*geometry), Some(position));
+        assert_eq!(*probability, by_position[position]);
+        assert_eq!(
+            distribution.log_weight(*geometry),
+            Some(distribution.log_weights().unwrap()[position])
+        );
     }
     assert_eq!(distribution.ranked_by_weight(), [2, 0]);
 }
 
 #[test]
 fn duplicates_in_a_selection_become_separate_geometries() {
-    let mut set = set_at(&[0.0, 1.0]);
-    set.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
-    set.set_distribution(Some(
+    let mut frames = set_at(&[0.0, 1.0]);
+    frames.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
+    let two = 2.0_f64.ln();
+    let set = Ensemble::new(
+        frames,
         distribution(Members::All, &[0, 1], &[0, 1])
-            .with_weights(vec![1.0, 2.0])
+            .with_log_weights(vec![0.0, two])
             .unwrap()
             .with_states(vec![
                 State::new()
@@ -959,27 +1026,29 @@ fn duplicates_in_a_selection_become_separate_geometries() {
                     .unwrap(),
             ])
             .unwrap(),
-    ))
+    )
     .unwrap();
     let twice = set.select([1, 1]).unwrap();
-    assert_eq!(xs(&twice), [1.0, 1.0]);
-    assert_eq!(twice.order(), Some(&Order::Step(vec![6, 6])));
-    let distribution = twice.distribution().unwrap();
+    assert_eq!(xs(twice.set()), [1.0, 1.0]);
+    assert_eq!(twice.set().order(), Some(&Order::Step(vec![6, 6])));
+    let distribution = twice.distribution();
     assert_eq!(distribution.members(), &Members::All);
-    assert_eq!(distribution.weights(), Some(&[2.0, 2.0][..]));
+    assert_eq!(distribution.log_weights(), Some(&[two, two][..]));
     assert_eq!(distribution.partition().assignments(), [0, 0]);
     assert_eq!(distribution.partition().representatives(), [0]);
-    // Every member of state 1 is selected, so it keeps its energy.
+    // Every sample of state 1 is selected, so it keeps its energy.
     assert_eq!(twice.state(0).unwrap().energy(), kj(2.0));
     assert!(twice
+        .set()
         .get(0)
         .unwrap()
-        .shares_storage_with(&twice.get(1).unwrap()));
+        .shares_storage_with(&twice.set().get(1).unwrap()));
 
     let states = set.select_states([0, 0]).unwrap();
-    assert_eq!(xs(&states), [0.0, 0.0]);
-    assert_eq!(states.order(), Some(&Order::Step(vec![5, 5])));
-    let distribution = states.distribution().unwrap();
+    assert_eq!(xs(states.set()), [0.0, 0.0]);
+    assert_eq!(states.set().order(), Some(&Order::Step(vec![5, 5])));
+    let distribution = states.distribution();
+    assert_eq!(distribution.log_weights(), Some(&[0.0, 0.0][..]));
     assert_eq!(distribution.state_count(), 2);
     assert_eq!(distribution.partition().assignments(), [0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 1]);
@@ -987,55 +1056,57 @@ fn duplicates_in_a_selection_become_separate_geometries() {
 }
 
 #[test]
-fn collapse_keeps_population_shares_of_any_members() {
-    // Members 0 and 2 of three geometries, one state, without weights.
-    let mut set = set_at(&[0.0, 1.0, 2.0]);
-    set.set_order(Some(Order::Step(vec![0, 1, 2]))).unwrap();
-    set.set_distribution(Some(distribution(
-        Members::Subset(vec![0, 2]),
-        &[0, 0],
-        &[1],
-    )))
+fn collapse_keeps_population_shares_of_any_samples() {
+    // Samples 0 and 2 of three geometries, one state, without weights.
+    let mut frames = set_at(&[0.0, 1.0, 2.0]);
+    frames.set_order(Some(Order::Step(vec![0, 1, 2]))).unwrap();
+    let set = Ensemble::new(
+        frames,
+        distribution(Members::Subset(vec![0, 2]), &[0, 0], &[1]),
+    )
     .unwrap();
-    let collapsed = set.collapse().unwrap();
-    assert_eq!(xs(&collapsed), [2.0]);
-    assert_eq!(collapsed.order(), None);
+    let collapsed = set.collapse();
+    assert_eq!(xs(collapsed.set()), [2.0]);
+    assert_eq!(collapsed.set().order(), None);
+    // Two samples of weight 1 make a population of 2.
     assert_eq!(
-        collapsed.distribution().unwrap().weights(),
-        Some(&[2.0][..])
+        collapsed.distribution().log_weights(),
+        Some(&[2.0_f64.ln()][..])
     );
     assert!(collapsed
+        .set()
         .get(0)
         .unwrap()
-        .shares_storage_with(&set.get(2).unwrap()));
+        .shares_storage_with(&set.set().get(2).unwrap()));
 
-    // Weights whose sum overflows keep their ratios.
-    let mut heavy = set_at(&[0.0, 1.0, 2.0]);
-    heavy
-        .set_distribution(Some(
-            distribution(Members::All, &[0, 0, 1], &[0, 2])
-                .with_weights(vec![f64::MAX, f64::MAX, f64::MAX])
-                .unwrap(),
-        ))
-        .unwrap();
-    assert_eq!(heavy.state(0).unwrap().population(), 2.0);
-    assert_eq!(
-        heavy.distribution().unwrap().state_probabilities().unwrap(),
-        [2.0 / 3.0, 1.0 / 3.0]
+    // Weights of e¹⁰⁰⁰, whose sum no linear weight holds, keep their ratios.
+    let heavy = ensemble_at(
+        &[0.0, 1.0, 2.0],
+        distribution(Members::All, &[0, 0, 1], &[0, 2])
+            .with_log_weights(vec![1000.0; 3])
+            .unwrap(),
     );
-    let collapsed = heavy.collapse().unwrap();
     assert_eq!(
-        collapsed.distribution().unwrap().weights(),
-        Some(&[2.0, 1.0][..])
+        heavy.state(0).unwrap().log_population(),
+        1000.0 + 2.0_f64.ln()
+    );
+    // 1000 + ln 2 rounds to the spacing of doubles near 1000, 1.1e-13.
+    let shares = heavy.distribution().state_probabilities().unwrap();
+    for (share, expected) in shares.iter().zip([2.0 / 3.0, 1.0 / 3.0]) {
+        assert!((share - expected).abs() <= 1.0e-13, "{shares:?}");
+    }
+    let collapsed = heavy.collapse();
+    assert_eq!(
+        collapsed.distribution().log_weights(),
+        Some(&[1000.0 + 2.0_f64.ln(), 1000.0][..])
     );
 }
 
 #[test]
-fn members_pushed_into_a_distribution_of_every_geometry() {
-    let mut set = set_at(&[0.0]);
-    set.set_order(Some(Order::Step(vec![0]))).unwrap();
-    set.set_distribution(Some(distribution_of_one_state(1)))
-        .unwrap();
+fn samples_pushed_into_a_distribution_of_every_geometry() {
+    let mut frames = set_at(&[0.0]);
+    frames.set_order(Some(Order::Step(vec![0]))).unwrap();
+    let mut set = Ensemble::uniform(frames);
     assert_eq!(
         set.push_member(
             Geometry::new(single_position(1.0)),
@@ -1054,12 +1125,12 @@ fn members_pushed_into_a_distribution_of_every_geometry() {
         ),
         Ok(1)
     );
-    let distribution = set.distribution().unwrap();
+    let distribution = set.distribution();
     assert_eq!(distribution.members(), &Members::All);
-    assert_eq!(distribution.weights(), None);
+    assert_eq!(distribution.log_weights(), None);
     assert_eq!(distribution.partition().assignments(), [0, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 2]);
-    assert_eq!(set.order(), Some(&Order::Step(vec![0, 1, 2])));
+    assert_eq!(set.set().order(), Some(&Order::Step(vec![0, 1, 2])));
 
     // A geometry that does not bind, checked last, changes nothing.
     let before = set.clone();
@@ -1076,14 +1147,7 @@ fn members_pushed_into_a_distribution_of_every_geometry() {
         set.push(wide(), Some(Place::Step(3))),
         Err(StructureSetError::Geometry(_))
     ));
-    assert_same_set(&set, &before);
-    // Without a distribution there is nothing to join.
-    let mut plain = set_at(&[0.0]);
-    assert_eq!(
-        plain.push_member(Geometry::new(single_position(1.0)), None, 0, None),
-        Err(StructureSetError::Missing(Requirement::Distribution))
-    );
-    assert_eq!(plain.len(), 1);
+    assert_same_ensemble(&set, &before);
 }
 
 #[test]
@@ -1112,41 +1176,42 @@ fn places_are_set_only_on_an_order_and_inside_the_set() {
 
 #[test]
 fn empty_selections_and_distributions() {
-    let mut set = set_at(&[0.0, 1.0]);
-    set.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
-    set.set_distribution(Some(distribution(Members::Subset(vec![0]), &[0], &[0])))
-        .unwrap();
+    let mut frames = set_at(&[0.0, 1.0]);
+    frames.set_order(Some(Order::Step(vec![0, 1]))).unwrap();
+    let mut set =
+        Ensemble::new(frames, distribution(Members::Subset(vec![0]), &[0], &[0])).unwrap();
     let none = set.select([]).unwrap();
-    assert!(none.is_empty());
-    assert_eq!(none.order(), Some(&Order::Step(Vec::new())));
-    assert_eq!(none.distribution().unwrap().member_count(), 0);
+    assert!(none.set().is_empty());
+    assert_eq!(none.set().order(), Some(&Order::Step(Vec::new())));
+    assert_eq!(none.distribution().sample_count(), 0);
     assert_eq!(none.states().len(), 0);
     let none = set.select_states([]).unwrap();
-    assert!(none.is_empty());
-    assert_eq!(none.distribution().unwrap().state_count(), 0);
-    // A distribution without members collapses to an empty set.
-    let collapsed = none.collapse().unwrap();
-    assert!(collapsed.is_empty());
-    assert_eq!(collapsed.distribution().unwrap().state_count(), 0);
+    assert!(none.set().is_empty());
+    assert_eq!(none.distribution().state_count(), 0);
+    // A distribution without samples collapses to an empty ensemble.
+    let collapsed = none.collapse();
+    assert!(collapsed.set().is_empty());
+    assert_eq!(collapsed.distribution().state_count(), 0);
     assert_eq!(
-        none.distribution().unwrap().probabilities(),
+        none.distribution().probabilities(),
         Err(StructureSetError::EmptyDistribution)
     );
-    // Removing the last non-member leaves a distribution of every geometry.
+    // Removing the last geometry that is not a sample leaves a distribution
+    // of every geometry.
     set.remove(1).unwrap();
-    assert_eq!(set.distribution().unwrap().members(), &Members::All);
-    assert_eq!(set.order(), Some(&Order::Step(vec![0])));
-    // Removing the last member leaves an empty distribution.
+    assert_eq!(set.distribution().members(), &Members::All);
+    assert_eq!(set.set().order(), Some(&Order::Step(vec![0])));
+    // Removing the last sample leaves an empty distribution.
     set.remove(0).unwrap();
-    assert!(set.is_empty());
-    assert_eq!(set.distribution().unwrap().state_count(), 0);
-    assert_eq!(set.distribution().unwrap().members(), &Members::All);
+    assert!(set.set().is_empty());
+    assert_eq!(set.distribution().state_count(), 0);
+    assert_eq!(set.distribution().members(), &Members::All);
 }
 
 #[test]
 fn regrouping_a_split_state_drops_its_energy() {
-    let mut set = set_at(&[0.0, 1.0, 2.0]);
-    set.set_distribution(Some(
+    let mut set = ensemble_at(
+        &[0.0, 1.0, 2.0],
         distribution(Members::All, &[0, 0, 1], &[0, 2])
             .with_states(vec![
                 State::new()
@@ -1157,10 +1222,9 @@ fn regrouping_a_split_state_drops_its_energy() {
                     .unwrap(),
             ])
             .unwrap(),
-    ))
-    .unwrap();
+    );
     let partition = Partition::new(vec![0, 1, 2], vec![0, 1, 2]).unwrap();
-    set.distribution_mut().unwrap().regroup(partition).unwrap();
+    set.distribution_mut().regroup(partition).unwrap();
     assert_eq!(set.states().len(), 3);
     assert_eq!(set.state(0).unwrap().energy(), None);
     assert_eq!(set.state(1).unwrap().energy(), None);
@@ -1200,8 +1264,6 @@ fn every_error_reads_as_a_sentence() {
         (Requirement::TimeOrder, "needs a time order"),
         (Requirement::AnyOrder, "needs an order"),
         (Requirement::Times, "needs times"),
-        (Requirement::Distribution, "needs a distribution"),
-        (Requirement::Weights, "needs weights"),
         (
             Requirement::StateEnergies,
             "needs an energy for every state",
@@ -1222,7 +1284,7 @@ fn every_error_reads_as_a_sentence() {
         .unwrap_err();
     let errors = [
         (E::EmptySource, "There are no structures to collect."),
-        (E::EmptyDistribution, "The distribution has no members."),
+        (E::EmptyDistribution, "The distribution has no samples."),
         (
             E::IndexOutOfRange { index: 3, len: 1 },
             "Geometry 3 is outside the structure set of 1 geometry.",
@@ -1235,8 +1297,8 @@ fn every_error_reads_as_a_sentence() {
             "State 2 is outside the distribution of 2 states.",
         ),
         (
-            E::NotMember { geometry: 4 },
-            "Geometry 4 is outside the distribution.",
+            E::NotSample { geometry: 4 },
+            "Geometry 4 is not a sample of the distribution.",
         ),
         (
             E::TopologyMismatch,
@@ -1290,7 +1352,7 @@ fn every_error_reads_as_a_sentence() {
         ),
         (
             E::UnsortedMembers,
-            "The members of the distribution are not in increasing order.",
+            "The samples of the distribution are not in increasing order.",
         ),
         (
             E::CoverageMismatch {
@@ -1304,14 +1366,21 @@ fn every_error_reads_as_a_sentence() {
                 expected: 2,
                 actual: 3,
             },
-            "The partition covers 3 samples, but the distribution has 2 members.",
+            "The partition covers 3 samples, but the distribution has 2 samples.",
         ),
         (
-            E::WeightCountMismatch {
+            E::LogWeightCountMismatch {
                 expected: 2,
                 actual: 1,
             },
-            "The distribution has 2 members, but 1 weight was given.",
+            "The distribution has 2 samples, but 1 log weight was given.",
+        ),
+        (
+            E::LogWeightCountMismatch {
+                expected: 1,
+                actual: 2,
+            },
+            "The distribution has 1 sample, but 2 log weights were given.",
         ),
         (
             E::StateCountMismatch {
@@ -1321,12 +1390,12 @@ fn every_error_reads_as_a_sentence() {
             "The partition has 1 state, but 2 states were given.",
         ),
         (
-            E::InvalidWeight { geometry: 0 },
-            "The weight of geometry 0 is not finite and positive.",
+            E::NonFiniteLogWeight { geometry: 0 },
+            "The log weight of geometry 0 is not finite.",
         ),
         (
-            E::WeightRequired,
-            "The new member has no weight, but the other members have weights.",
+            E::LogWeightRequired,
+            "The new sample has no log weight, but the other samples have log weights.",
         ),
         (
             E::RepresentativeRemoval {

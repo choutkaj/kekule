@@ -12,8 +12,8 @@ use kekule::math::{Lattice, Matrix3, PeriodicCell, Point3, RigidTransform, Vecto
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Geometry, GeometryView, Order, Positions, Structure, StructureSet,
-    StructureSetRead, StructureSetReadError, Velocities,
+    Forces, Geometry, GeometryView, Order, Positions, Structure, StructureSet, StructureSetRead,
+    StructureSetReadError, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::traj::analysis::FrameSuperposer;
@@ -26,9 +26,7 @@ use kekule::traj::{
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
-use crate::support::{
-    contents, fingerprint_bytes, linear_carbon_topology, reads, time_ordered, Frame, Recorded,
-};
+use crate::support::{linear_carbon_topology, time_ordered, Frame};
 
 /// Seven frames of two three-atom chains crossing the faces of a 1 nm cell,
 /// turning a little, with velocities, forces, and a property, in a time
@@ -106,15 +104,8 @@ fn assert_geometry(geometry: &Geometry, frame: &Geometry, context: &str) {
     assert_eq!(geometry.properties(), frame.properties(), "{context}");
 }
 
-/// Checks that every geometry of `reader` is the geometry of `expected`, and
-/// that the geometries read are the next recorded ones.
-fn assert_reads(
-    reader: &dyn StructureSetRead,
-    expected: &StructureSet,
-    context: &str,
-    recorded: &mut Recorded,
-) {
-    recorded.check(&reads(reader));
+/// Checks that every geometry of `reader` is the geometry of `expected`.
+fn assert_reads(reader: &dyn StructureSetRead, expected: &StructureSet, context: &str) {
     assert_eq!(reader.len(), expected.len(), "{context}");
     for (index, frame) in expected.iter().enumerate() {
         let geometry = reader.read(index).unwrap();
@@ -124,6 +115,100 @@ fn assert_reads(
             &format!("{context}: geometry {index}"),
         );
     }
+}
+
+/// The bonds of [`source`]'s two chains.
+const BONDS: [(usize, usize); 4] = [(0, 1), (1, 2), (3, 4), (4, 5)];
+
+const TOLERANCE: f64 = 1.0e-12;
+
+fn points(geometry: &Geometry) -> Vec<Point3> {
+    geometry.positions().values().value().to_vec()
+}
+
+/// The shortest image of `vector` in [`source`]'s unit cubic cell.
+fn minimum_image(vector: Vector3) -> Vector3 {
+    Vector3::new(
+        vector.x - vector.x.round(),
+        vector.y - vector.y.round(),
+        vector.z - vector.z.round(),
+    )
+}
+
+fn centroid(points: &[Point3], atoms: &[usize]) -> Point3 {
+    let mut sum = Vector3::zero();
+    for &atom in atoms {
+        sum += points[atom] - Point3::origin();
+    }
+    Point3::origin() + sum / atoms.len() as f64
+}
+
+/// Checks that every bond of `processed` is the shortest image of that bond
+/// in `stored`: each chain is whole, a translated copy of its shortest-image
+/// shape.
+fn assert_whole(processed: &[Point3], stored: &[Point3], context: &str) {
+    for (a, b) in BONDS {
+        let bond = processed[b] - processed[a];
+        let expected = minimum_image(stored[b] - stored[a]);
+        assert!(
+            (bond - expected).norm() < TOLERANCE,
+            "{context}: bond {a}-{b}: {bond:?}, expected {expected:?}"
+        );
+    }
+}
+
+/// Checks that every atom of `processed` is an image of the atom in `stored`,
+/// moved by whole cell vectors.
+fn assert_images(processed: &[Point3], stored: &[Point3], context: &str) {
+    for (atom, (moved, at)) in processed.iter().zip(stored).enumerate() {
+        let shift = *moved - *at;
+        for value in [shift.x, shift.y, shift.z] {
+            assert!(
+                (value - value.round()).abs() < TOLERANCE,
+                "{context}: atom {atom} moved by {shift:?}"
+            );
+        }
+    }
+}
+
+/// Checks that `processed` is `stored` moved by one translation.
+fn assert_translated(processed: &[Point3], stored: &[Point3], context: &str) {
+    let shift = processed[0] - stored[0];
+    for (atom, (moved, at)) in processed.iter().zip(stored).enumerate() {
+        assert!(
+            ((*moved - *at) - shift).norm() < TOLERANCE,
+            "{context}: atom {atom}"
+        );
+    }
+}
+
+/// Checks that `processed` is `stored` moved rigidly: every distance between
+/// two atoms is kept.
+fn assert_rigid(processed: &[Point3], stored: &[Point3], context: &str) {
+    for a in 0..stored.len() {
+        for b in a + 1..stored.len() {
+            let kept = (processed[b] - processed[a]).norm();
+            let before = (stored[b] - stored[a]).norm();
+            assert!(
+                (kept - before).abs() < TOLERANCE,
+                "{context}: atoms {a} and {b}: {kept} against {before}"
+            );
+        }
+    }
+}
+
+fn rmsd(points: &[Point3], reference: &[Point3]) -> f64 {
+    let sum = points
+        .iter()
+        .zip(reference)
+        .map(|(point, reference)| (*point - *reference).norm().powi(2))
+        .sum::<f64>();
+    (sum / points.len() as f64).sqrt()
+}
+
+/// The center of [`source`]'s unit cell.
+fn cell_center() -> Point3 {
+    Point3::new(0.5, 0.5, 0.5)
 }
 
 /// `set` with every molecule made whole.
@@ -163,19 +248,7 @@ fn fitted(set: &StructureSet, atoms: &AtomSelection) -> StructureSet {
 
 #[test]
 fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
-    let mut recorded = Recorded::new(&[
-        0x4fe7_8cc9_9ea6_6841, // the source
-        0x7d61_c968_325d_e8ff, // whole
-        0x3c3d_0c50_c7c9_0fa3, // wrap
-        0x3c3d_0c50_c7c9_0fa3, // whole and wrap
-        0xf4ec_bcf5_2066_89df, // center
-        0x62a0_a213_9f0e_9940, // fit
-        0xf8e8_9396_535e_8c58, // fit onto positions
-        0xc7e1_24ff_ca1e_706a, // subset
-        0x0f1b_7aa3_97b7_2aab, // no step
-    ]);
     let set = source();
-    recorded.check(&contents(&set));
     let topology = set.shared_topology();
     let all = AtomSelection::all(Arc::clone(&topology));
     let first = atoms(&set, &[0, 1, 2]);
@@ -184,7 +257,15 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     // Making whole.
     let expected = whole(&set);
     let processed = Processed::new(&set, ProcessingSteps::default().with_whole(true)).unwrap();
-    assert_reads(&processed, &expected, "whole", &mut recorded);
+    assert_reads(&processed, &expected, "whole");
+    // Each chain is whole, its atoms moved by whole cell vectors.
+    for (index, stored) in set.iter().enumerate() {
+        let read = points(&processed.read(index).unwrap());
+        let stored = points(stored.payload());
+        let context = format!("whole: geometry {index}");
+        assert_whole(&read, &stored, &context);
+        assert_images(&read, &stored, &context);
+    }
     let mut buffer = FrameBuffer::new(Arc::clone(&topology));
     for (index, frame) in set.iter().enumerate() {
         buffer
@@ -199,7 +280,32 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     periodic::image_molecules(&mut expected, &first).unwrap();
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_wrap(first.clone())).unwrap();
-    assert_reads(&processed, &expected, "wrap", &mut recorded);
+    assert_reads(&processed, &expected, "wrap");
+    // Each chain is whole, the first centered in the cell and the second at
+    // its image nearest the first.
+    for (index, stored) in set.iter().enumerate() {
+        let read = points(&processed.read(index).unwrap());
+        let stored = points(stored.payload());
+        let context = format!("wrap: geometry {index}");
+        assert_whole(&read, &stored, &context);
+        let first = centroid(&read, &[0, 1, 2]);
+        assert!((first - cell_center()).norm() < TOLERANCE, "{context}");
+        let second = centroid(&read, &[3, 4, 5]) - first;
+        assert!(
+            [second.x, second.y, second.z]
+                .iter()
+                .all(|value| value.abs() <= 0.5),
+            "{context}: {second:?}"
+        );
+        // The first chain's first atom moved by the centering translation;
+        // the second chain moved by it and whole cell vectors.
+        let shift = read[0] - stored[0];
+        let moved = stored
+            .iter()
+            .map(|point| *point + shift)
+            .collect::<Vec<_>>();
+        assert_images(&read[3..], &moved[3..], &context);
+    }
     for (index, frame) in set.iter().enumerate() {
         buffer
             .copy_from(FrameView::from_geometry(frame).unwrap())
@@ -215,14 +321,24 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
         &Processed::new(&set, both).unwrap(),
         &expected,
         "whole and wrap",
-        &mut recorded,
     );
 
     // Centering.
     let expected = centered(&set, &first);
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_center(first.clone())).unwrap();
-    assert_reads(&processed, &expected, "center", &mut recorded);
+    assert_reads(&processed, &expected, "center");
+    // Every atom moved by one translation, which put the first chain's
+    // centroid at the cell's center.
+    for (index, stored) in set.iter().enumerate() {
+        let read = points(&processed.read(index).unwrap());
+        let context = format!("center: geometry {index}");
+        assert_translated(&read, &points(stored.payload()), &context);
+        assert!(
+            (centroid(&read, &[0, 1, 2]) - cell_center()).norm() < TOLERANCE,
+            "{context}"
+        );
+    }
 
     // Fitting onto geometry 0 and onto given positions.
     let expected = fitted(&set, &all);
@@ -231,7 +347,24 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
         ProcessingSteps::default().with_fit(all.clone(), FitReference::Geometry(0)),
     )
     .unwrap();
-    assert_reads(&processed, &expected, "fit", &mut recorded);
+    assert_reads(&processed, &expected, "fit");
+    // Each geometry moved rigidly, no farther from geometry 0 than before,
+    // and geometry 0, fitted onto itself, stayed.
+    let reference_points = points(set.get(0).unwrap().payload());
+    for (index, stored) in set.iter().enumerate() {
+        let read = points(&processed.read(index).unwrap());
+        let stored = points(stored.payload());
+        let context = format!("fit: geometry {index}");
+        assert_rigid(&read, &stored, &context);
+        assert!(
+            rmsd(&read, &reference_points) <= rmsd(&stored, &reference_points) + TOLERANCE,
+            "{context}"
+        );
+    }
+    let stayed = points(&processed.read(0).unwrap());
+    for (atom, (read, stored)) in stayed.iter().zip(&reference_points).enumerate() {
+        assert!((*read - *stored).norm() < TOLERANCE, "fit: atom {atom}");
+    }
     let reference = set.get(0).unwrap();
     let superposer = FrameSuperposer::new(&reference, &all, Default::default());
     for (index, frame) in set.iter().enumerate() {
@@ -256,38 +389,48 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
     expected
         .superpose(&structure, &first, Default::default())
         .unwrap();
-    assert_reads(&processed, &expected, "fit onto positions", &mut recorded);
+    assert_reads(&processed, &expected, "fit onto positions");
+    // Each geometry moved rigidly, and geometry 3, fitted onto its own
+    // positions, stayed.
+    for (index, stored) in set.iter().enumerate() {
+        let read = points(&processed.read(index).unwrap());
+        let context = format!("fit onto positions: geometry {index}");
+        assert_rigid(&read, &points(stored.payload()), &context);
+    }
+    let stayed = points(&processed.read(3).unwrap());
+    let stored = points(set.get(3).unwrap().payload());
+    for (atom, (read, stored)) in stayed.iter().zip(&stored).enumerate() {
+        assert!(
+            (*read - *stored).norm() < TOLERANCE,
+            "fit onto positions: atom {atom}"
+        );
+    }
 
     // The subset.
     let expected = set.subset(&first).unwrap();
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_subset(first.clone())).unwrap();
-    recorded.check(&reads(&processed));
     assert_eq!(processed.topology().atom_count(), 3);
     assert_eq!(expected.topology().atom_count(), 3);
     for index in 0..set.len() {
-        assert_eq!(
-            &processed.read(index).unwrap(),
-            expected.get(index).unwrap().payload()
-        );
+        let read = processed.read(index).unwrap();
+        assert_eq!(&read, expected.get(index).unwrap().payload());
+        // The first chain's atoms, as stored.
+        let stored = set.get(index).unwrap();
+        assert_eq!(points(&read), points(stored.payload())[..3]);
+        assert_eq!(read.cell(), stored.cell());
     }
 
     // No step reads the geometries as stored.
     let processed = Processed::new(&set, ProcessingSteps::default()).unwrap();
     assert!(processed.steps().is_empty());
-    assert_reads(&processed, &set, "no step", &mut recorded);
+    assert_reads(&processed, &set, "no step");
     assert_eq!(processed.order(), set.order());
 }
 
 #[test]
 fn every_step_together_equals_the_functions_in_order() {
-    let mut recorded = Recorded::new(&[
-        0x4fe7_8cc9_9ea6_6841, // the source
-        0xb286_da85_876e_2b2b, // the functions in order
-        0x54ef_bcf6_372c_8913, // processed
-    ]);
     let set = source();
-    recorded.check(&contents(&set));
     let first = atoms(&set, &[0, 1, 2]);
     let second = atoms(&set, &[3, 4, 5]);
     let fit = atoms(&set, &[0, 1, 2, 4]);
@@ -296,7 +439,6 @@ fn every_step_together_equals_the_functions_in_order() {
     periodic::image_molecules(&mut expected, &second).unwrap();
     let expected = fitted(&centered(&expected, &first), &fit);
     let expected = expected.subset(&second).unwrap();
-    recorded.check(&contents(&expected));
 
     let steps = ProcessingSteps::default()
         .with_whole(true)
@@ -308,8 +450,16 @@ fn every_step_together_equals_the_functions_in_order() {
     for index in 0..set.len() {
         let geometry = processed.read(index).unwrap();
         assert_eq!(&geometry, expected.get(index).unwrap().payload(), "{index}");
+        // The second chain, whole and moved rigidly.
+        let read = points(&geometry);
+        let stored = points(set.get(index).unwrap().payload());
+        let chain = [
+            stored[3],
+            stored[3] + minimum_image(stored[4] - stored[3]),
+            stored[3] + minimum_image(stored[5] - stored[3]),
+        ];
+        assert_rigid(&read, &chain, &format!("geometry {index}"));
     }
-    recorded.check(&reads(&processed));
     // Without smoothing, the steps read as before.
     let smoothed = steps.with_smoothing(3).unwrap();
     assert_eq!(smoothed.smoothing(), Some(3));
@@ -345,14 +495,7 @@ fn molecule_centers_from_cell_center(topology: &Topology, geometry: &Geometry) -
 
 #[test]
 fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
-    let mut recorded = Recorded::new(&[
-        0x4fe7_8cc9_9ea6_6841, // the source
-        0xcf8c_de1f_fc55_7de0, // the first chain
-        0x3df3_6687_8073_cbfe, // the second chain
-        0x2710_66a0_7fa8_50fa, // every atom
-    ]);
     let set = source();
-    recorded.check(&contents(&set));
     let topology = set.shared_topology();
     for anchors in [
         atoms(&set, &[0, 1, 2]),
@@ -363,9 +506,13 @@ fn wrapping_then_centering_on_the_anchors_keeps_every_molecule_in_the_cell() {
             .with_wrap(anchors.clone())
             .with_center(anchors);
         let processed = Processed::new(&set, steps).unwrap();
-        recorded.check(&reads(&processed));
         for index in 0..set.len() {
             let geometry = processed.read(index).unwrap();
+            assert_whole(
+                &points(&geometry),
+                &points(set.get(index).unwrap().payload()),
+                &format!("geometry {index}"),
+            );
             for center in molecule_centers_from_cell_center(&topology, &geometry) {
                 assert!(
                     center.iter().all(|value| value.abs() <= 0.5 + 1.0e-12),
@@ -411,20 +558,7 @@ fn smoothed_by_hand(stepped: &StructureSet, window: usize, index: usize) -> Vec<
 
 #[test]
 fn smoothing_averages_the_window_imaged_onto_each_geometry() {
-    let mut recorded = Recorded::new(&[
-        0x4fe7_8cc9_9ea6_6841, // the source
-        0x4da2_d680_c62a_711a, // window 1
-        0x4da2_d680_c62a_711a, // window 1 unsmoothed
-        0xea2c_d51c_d3e8_c05c, // window 3
-        0x4da2_d680_c62a_711a, // window 3 unsmoothed
-        0x700f_6e7f_6202_5db6, // window 5
-        0x4da2_d680_c62a_711a, // window 5 unsmoothed
-        0xcc44_ebf4_eb2c_4558, // window 15
-        0x4da2_d680_c62a_711a, // window 15 unsmoothed
-        0x9eb8_cb60_b337_440d, // smoothing alone
-    ]);
     let set = source();
-    recorded.check(&contents(&set));
     let all = AtomSelection::all(set.shared_topology());
     let stepped = fitted(&whole(&set), &all);
     for window in [1, 3, 5, 15] {
@@ -435,11 +569,20 @@ fn smoothing_averages_the_window_imaged_onto_each_geometry() {
             .unwrap();
         let processed = Processed::new(&set, steps.clone()).unwrap();
         let plain = Processed::new(&set, steps.without_smoothing()).unwrap();
-        recorded.check(&reads(&processed));
-        recorded.check(&reads(&plain));
         for index in 0..set.len() {
             let geometry = processed.read(index).unwrap();
             let frame = stepped.get(index).unwrap();
+            // A window of one geometry is the geometry alone.
+            if window == 1 {
+                assert_eq!(geometry.positions(), frame.positions());
+            }
+            // A window wider than the set averages every geometry.
+            if window == 15 {
+                assert_eq!(
+                    *geometry.positions().values().value(),
+                    &smoothed_by_hand(&stepped, 2 * set.len() + 1, index)[..]
+                );
+            }
             assert_eq!(
                 *geometry.positions().values().value(),
                 &smoothed_by_hand(&stepped, window, index)[..],
@@ -455,7 +598,6 @@ fn smoothing_averages_the_window_imaged_onto_each_geometry() {
     // Smoothing alone averages the geometries as stored, imaged.
     let processed =
         Processed::new(&set, ProcessingSteps::default().with_smoothing(3).unwrap()).unwrap();
-    recorded.check(&reads(&processed));
     for index in 0..set.len() {
         assert_eq!(
             *processed.read(index).unwrap().positions().values().value(),
@@ -466,12 +608,7 @@ fn smoothing_averages_the_window_imaged_onto_each_geometry() {
 
 #[test]
 fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
-    let mut recorded = Recorded::new(&[
-        0x4fe7_8cc9_9ea6_6841, // the source
-        0x411a_7a89_4dc1_d98d, // processed
-    ]);
     let set = source();
-    recorded.check(&contents(&set));
     let second = atoms(&set, &[3, 4, 5]);
     let steps = ProcessingSteps::default()
         .with_whole(true)
@@ -479,7 +616,6 @@ fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
         .unwrap()
         .with_subset(second);
     let processed = Processed::new(&set, steps).unwrap();
-    recorded.check(&reads(&processed));
     assert_eq!(processed.topology().atom_count(), 3);
     let stepped = whole(&set);
     for index in 0..set.len() {
@@ -493,11 +629,6 @@ fn smoothing_then_the_subset_keeps_the_smoothed_atoms_of_the_subset() {
 
 #[test]
 fn smoothing_images_each_geometry_of_the_window_in_its_own_cell() {
-    let mut recorded = Recorded::new(&[
-        0x90b1_5648_d0f4_79c9, // the source in growing cells
-        0x1a20_e0f8_140c_7e0b, // window 3
-        0x8484_92f6_ffdf_ecdc, // window 5
-    ]);
     let mut set = source();
     for index in 0..set.len() {
         let edge = 1.0 + 0.03 * index as f64;
@@ -508,14 +639,12 @@ fn smoothing_images_each_geometry_of_the_window_in_its_own_cell() {
         .unwrap();
         set.get_mut(index).unwrap().set_cell(Some(cell));
     }
-    recorded.check(&contents(&set));
     for window in [3, 5] {
         let steps = ProcessingSteps::default()
             .with_whole(true)
             .with_smoothing(window)
             .unwrap();
         let processed = Processed::new(&set, steps).unwrap();
-        recorded.check(&reads(&processed));
         let stepped = whole(&set);
         for index in 0..set.len() {
             let geometry = processed.read(index).unwrap();
@@ -531,15 +660,10 @@ fn smoothing_images_each_geometry_of_the_window_in_its_own_cell() {
 
 #[test]
 fn geometries_without_a_cell_skip_imaging_and_center_where_geometry_0_was() {
-    let mut recorded = Recorded::new(&[
-        0xa84f_340b_275f_a6f9, // the source without cells
-        0x9d5d_970c_e8ff_ac0f, // processed
-    ]);
     let mut set = source();
     for index in 0..set.len() {
         set.get_mut(index).unwrap().set_cell(None);
     }
-    recorded.check(&contents(&set));
     let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_whole(true)
@@ -550,7 +674,6 @@ fn geometries_without_a_cell_skip_imaging_and_center_where_geometry_0_was() {
     // Smoothing reads the geometries, so construction checks it too.
     Processed::new(&set, steps.clone()).unwrap();
     let processed = Processed::new(&set, steps.without_smoothing()).unwrap();
-    recorded.check(&reads(&processed));
     let centroid = |geometry: &Geometry| {
         let values = geometry.positions().values();
         let points = values.value();
@@ -565,14 +688,17 @@ fn geometries_without_a_cell_skip_imaging_and_center_where_geometry_0_was() {
         let geometry = processed.read(index).unwrap();
         assert!((centroid(&geometry) - rest).norm() < 1.0e-12, "{index}");
         assert!(geometry.cell().is_none());
+        // Without imaging, every atom moved by the one centering translation.
+        assert_translated(
+            &points(&geometry),
+            &points(set.get(index).unwrap().payload()),
+            &format!("geometry {index}"),
+        );
     }
 }
 
 #[test]
 fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
-    let mut recorded = Recorded::new(&[
-        0x86c3_7b1b_fdaa_edab, // processed from the file
-    ]);
     let set = source();
     let directory = std::env::temp_dir().join(format!("kekule-processing-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
@@ -587,14 +713,19 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
         ),
     )
     .unwrap();
-    // The bytes the trajectory of these frames wrote.
-    assert_eq!(
-        fingerprint_bytes(&std::fs::read(&path).unwrap()),
-        0xcb70_4f4e_30e5_b7f1
-    );
     let file =
         open_indexed_structure_set(&path, set.shared_topology(), Default::default()).unwrap();
     let memory = file.load(0..file.len()).unwrap();
+    // The file holds the frames: their times, steps, cells, and positions to
+    // TRR's single precision.
+    assert_eq!(memory.order(), set.order());
+    assert_eq!(memory.len(), set.len());
+    for (index, (read, stored)) in memory.iter().zip(&set).enumerate() {
+        assert_eq!(read.cell(), stored.cell(), "geometry {index}");
+        for (read, stored) in points(read.payload()).iter().zip(points(stored.payload())) {
+            assert!((*read - stored).norm() < 1.0e-6, "geometry {index}");
+        }
+    }
     let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
         .with_wrap(first.clone())
@@ -603,7 +734,6 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
         .unwrap();
     let from_file = Processed::new(Arc::new(file), steps.clone()).unwrap();
     let from_memory = Processed::new(memory, steps).unwrap();
-    recorded.check(&reads(&from_file));
     for index in 0..from_file.len() {
         assert_eq!(
             from_file.read(index).unwrap(),
@@ -708,10 +838,6 @@ impl StructureSetRead for Short {
         self.0.order()
     }
 
-    fn distribution(&self) -> Option<&Distribution> {
-        None
-    }
-
     fn peek(&self, _index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
         None
     }
@@ -741,10 +867,6 @@ impl StructureSetRead for Panicking {
         self.0.order()
     }
 
-    fn distribution(&self) -> Option<&Distribution> {
-        None
-    }
-
     fn peek(&self, _index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
         None
     }
@@ -757,9 +879,6 @@ impl StructureSetRead for Panicking {
 
 #[test]
 fn a_panic_in_the_reader_below_leaves_the_other_geometries_readable() {
-    let mut recorded = Recorded::new(&[
-        0xe144_50c6_ae4c_c334, // processed from the set
-    ]);
     let set = source();
     let panicking = Panicking(set.clone());
     let first = atoms(&set, &[0, 1, 2]);
@@ -771,7 +890,6 @@ fn a_panic_in_the_reader_below_leaves_the_other_geometries_readable() {
         .unwrap();
     let processed = Processed::new(&panicking, steps.clone()).unwrap();
     let expected = Processed::new(&set, steps).unwrap();
-    recorded.check(&reads(&expected));
     for _ in 0..2 {
         // Geometries 3 and 5 smooth over geometry 4.
         for index in [3, 4, 5] {
@@ -813,10 +931,6 @@ impl StructureSetRead for Unique {
         self.set.order()
     }
 
-    fn distribution(&self) -> Option<&Distribution> {
-        None
-    }
-
     fn peek(&self, _index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
         None
     }
@@ -838,9 +952,6 @@ impl StructureSetRead for Unique {
 
 #[test]
 fn the_steps_change_a_unique_geometry_in_place_and_copy_a_shared_one() {
-    let mut recorded = Recorded::new(&[
-        0x13a6_b8ce_bc32_a8b6, // processed from the set
-    ]);
     let set = source();
     let topology = set.shared_topology();
     let first = atoms(&set, &[0, 1, 2]);
@@ -855,7 +966,6 @@ fn the_steps_change_a_unique_geometry_in_place_and_copy_a_shared_one() {
     };
     let from_unique = Processed::new(&unique, steps.clone()).unwrap();
     let from_shared = Processed::new(&set, steps).unwrap();
-    recorded.check(&reads(&from_shared));
     for index in 0..set.len() {
         // A unique geometry is processed in the allocation it was read into.
         let geometry = from_unique.read(index).unwrap();
@@ -915,10 +1025,6 @@ impl StructureSetRead for Counting {
         self.set.order()
     }
 
-    fn distribution(&self) -> Option<&Distribution> {
-        None
-    }
-
     fn peek(&self, _index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
         None
     }
@@ -931,9 +1037,6 @@ impl StructureSetRead for Counting {
 
 #[test]
 fn the_reader_lends_geometry_0_it_processed_on_construction() {
-    let mut recorded = Recorded::new(&[
-        0x3f82_a3b1_468f_3700, // processed from the set
-    ]);
     let set = source();
     let first = atoms(&set, &[0, 1, 2]);
     let steps = ProcessingSteps::default()
@@ -952,7 +1055,6 @@ fn the_reader_lends_geometry_0_it_processed_on_construction() {
     };
     let processed = Processed::new(&counting, steps.clone()).unwrap();
     let expected = Processed::new(set.clone(), steps).unwrap();
-    recorded.check(&reads(&expected));
     let reads = counting.reads(0);
     assert!(reads > 0);
 

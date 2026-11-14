@@ -1,5 +1,5 @@
 //! Readers that interpret structure sets: what each format states of the
-//! distribution and order, and the sets they build.
+//! order, that none states a distribution, and the sets they build.
 
 use kekule::diagnostics::{
     DiagnosticKind, FormatErrorDetail, GeometryField, UnrepresentablePolicy, WriteOmission,
@@ -9,8 +9,8 @@ use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
-    Distribution, Geometry, Members, Order, Partition, Place, Positions, Structure, StructureSet,
-    TimeAxis, Velocities,
+    Distribution, Ensemble, Geometry, Members, Order, Partition, Place, Positions, State,
+    Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{
@@ -46,9 +46,30 @@ fn pdb_waters() -> String {
 }
 
 #[test]
-fn pdb_and_mmcif_structure_sets_are_one_unweighted_state() {
+fn pdb_and_mmcif_structure_sets_are_their_models() {
     let text = pdb_waters();
-    assert_eq!(crate::fingerprint(&text), 0xb1bb_deac_c50e_359a);
+    let model = |z: &str| {
+        [
+            ("1", "O1", "0.000", "0.000", "O"),
+            ("2", "H2", "0.957", "0.000", "H"),
+            ("3", "H3", "-0.240", "0.927", "H"),
+        ]
+        .map(|(serial, name, x, y, element)| {
+            format!(
+                "HETATM{serial:>5}  {name:<3} UNL A   1    {x:>8}{y:>8}{z:>8}                       \
+                 {element}"
+            )
+        })
+        .join("\n")
+    };
+    assert_eq!(
+        text,
+        format!(
+            "MODEL        1\n{}\nENDMDL\nMODEL        2\n{}\nENDMDL\nEND\n",
+            model("0.000"),
+            model("0.100")
+        )
+    );
     let document = pdb::parse_str(&text, Default::default()).unwrap();
     let set = document
         .interpret_structure_set(Default::default())
@@ -56,34 +77,79 @@ fn pdb_and_mmcif_structure_sets_are_one_unweighted_state() {
     assert_eq!(set.reports().len(), 2);
     assert_eq!(set.structure_set().len(), 2);
     assert_eq!(set.structure_set().order(), None);
-    let distribution = set.structure_set().distribution().unwrap();
-    assert_eq!(distribution.state_count(), 1);
-    assert_eq!(distribution.weights(), None);
-    assert_eq!(crate::native_fingerprint(&set), 0x2aba_a9f4_5933_d9f3);
-    assert_eq!(
-        crate::fingerprint(format!(
-            "{:?}",
-            pdb::write(&set, PdbWriteOptions::default()).unwrap()
-        )),
-        0xaaa2_2f01_7606_146c
-    );
+    assert_waters(set.structure_set());
+    // The interpretation writes back the same entry, losing nothing.
+    let (written, report) = pdb::write(&set, PdbWriteOptions::default()).unwrap();
+    assert_eq!(written, text);
+    assert!(report.is_empty());
 
     let text = mmcif::write([&set], MmcifWriteOptions::default())
         .unwrap()
         .0;
-    assert_eq!(crate::fingerprint(&text), 0x3a95_627c_2c78_254c);
+    assert_eq!(text.matches("data_").count(), 1, "{text}");
+    let rows = text
+        .lines()
+        .filter(|line| line.starts_with("HETATM"))
+        .map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            // The atom name, coordinates, and model number.
+            [fields[3], fields[10], fields[11], fields[12], fields[20]].join(" ")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows,
+        [
+            "O1 0.000 0.000 0.000 1",
+            "H2 0.957 0.000 0.000 1",
+            "H3 -0.240 0.927 0.000 1",
+            "O1 0.000 0.000 0.100 2",
+            "H2 0.957 0.000 0.100 2",
+            "H3 -0.240 0.927 0.100 2",
+        ]
+    );
     let document = mmcif::parse_str(&text, Default::default()).unwrap();
     let set = document
         .interpret_structure_set(Default::default())
         .unwrap();
-    assert_eq!(crate::native_fingerprint(&set), 0xfb08_1261_f062_f25a);
+    assert_eq!(set.reports().len(), 2);
+    assert_eq!(set.structure_set().order(), None);
+    assert_waters(set.structure_set());
     let block = &document.blocks()[0];
     let from_block = block.interpret_structure_set(Default::default()).unwrap();
     assert_eq!(from_block.reports(), set.reports());
-    assert_eq!(
-        crate::native_fingerprint(&from_block),
-        0xfb08_1261_f062_f25a
-    );
+    assert!(from_block
+        .topology()
+        .same_layout(set.structure_set().topology()));
+    for (left, right) in from_block.structure_set().iter().zip(set.structure_set()) {
+        assert_eq!(left.payload(), right.payload());
+    }
+}
+
+/// Asserts that `set` holds the two waters of [`WATERS`]: one water topology
+/// and the second geometry 0.1 A above the first.
+fn assert_waters(set: &StructureSet) {
+    assert_eq!(set.len(), 2);
+    let elements = set
+        .topology()
+        .atoms()
+        .map(|atom| atom.element().symbol())
+        .collect::<Vec<_>>();
+    assert_eq!(elements, ["O", "H", "H"]);
+    assert_eq!(set.topology().bond_count(), 2);
+    let expected = [[0.0, 0.0, 0.0], [0.957, 0.0, 0.0], [-0.24, 0.927, 0.0]];
+    for (geometry, z) in set.iter().zip([0.0, 0.1]) {
+        for (index, [x, y, _]) in expected.into_iter().enumerate() {
+            let point = geometry
+                .positions()
+                .get(index)
+                .unwrap()
+                .value_in(ANGSTROM)
+                .unwrap();
+            for (actual, expected) in [point.x, point.y, point.z].into_iter().zip([x, y, z]) {
+                assert!((actual - expected).abs() <= 1e-9, "{actual} != {expected}");
+            }
+        }
+    }
 }
 
 fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
@@ -95,9 +161,9 @@ fn interpret_records(text: &str) -> Vec<SdfRecordInterpretation> {
         .collect()
 }
 
-/// Two methane conformers in two states, weighted 1:3, the second at
-/// -2.5 kJ/mol.
-fn weighted_methanes() -> StructureSet {
+/// Two methane conformers at 0 and 1 A along x as an ensemble of two states,
+/// weighted 1:3, the second at -2.5 kJ/mol, at 300 K.
+fn weighted_methanes() -> Ensemble {
     let topology = kekule::smiles::to_topology("C").unwrap();
     let structures = [0.0, 1.0].map(|x| {
         Structure::new(
@@ -110,21 +176,21 @@ fn weighted_methanes() -> StructureSet {
         )
         .unwrap()
     });
-    let mut set = StructureSet::from_structures(structures).unwrap();
-    set.set_distribution(Some(
-        Distribution::new(Members::All, Partition::state_per_sample(2))
-            .unwrap()
-            .with_weights(vec![1.0, 3.0])
-            .unwrap(),
-    ))
-    .unwrap();
-    set.distribution_mut()
+    let set = StructureSet::from_structures(structures).unwrap();
+    let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))
         .unwrap()
-        .state_mut(1)
+        .with_log_weights(vec![0.0, 3.0_f64.ln()])
         .unwrap()
-        .set_energy(Some(Quantity::new(-2.5, KILOJOULE_PER_MOLE)))
+        .with_states(vec![
+            State::new(),
+            State::new()
+                .with_energy(Quantity::new(-2.5, KILOJOULE_PER_MOLE))
+                .unwrap(),
+        ])
+        .unwrap()
+        .with_temperature(Quantity::new(300.0, kekule::units::KELVIN))
         .unwrap();
-    set
+    Ensemble::new(set, distribution).unwrap()
 }
 
 /// How a three-geometry methane set is ordered.
@@ -154,48 +220,75 @@ fn methane_series(axis: Axis) -> StructureSet {
 }
 
 #[test]
-fn sdf_structure_sets_are_the_distributions_and_orders_of_their_records() {
-    // Weights, states and energies make the distribution.
-    let set = weighted_methanes();
-    assert_eq!(crate::native_fingerprint(&set), 0x8fe6_53ce_8dea_5590);
-    let text = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
-    assert_eq!(crate::fingerprint(&text), 0xa96d_0167_e29e_65c6);
-    let read = sdf::structure_set(&interpret_records(&text)).unwrap();
+fn sdf_structure_sets_are_the_orders_of_their_records() {
+    // An ensemble's set writes its geometries alone: the records read back
+    // as an unordered set of the same positions.
+    let ensemble = weighted_methanes();
+    let text = sdf::write(ensemble.set(), SdfWriteOptions::default())
+        .unwrap()
+        .0;
+    assert!(!text.contains("kekule."), "{text}");
+    let records = interpret_records(&text);
+    assert!(records.iter().all(|record| record.data_fields().is_empty()));
+    let read = sdf::structure_set(&records).unwrap();
     assert_eq!(read.order(), None);
-    assert_eq!(read.distribution().unwrap().state_count(), 2);
-    assert_eq!(read.distribution(), set.distribution());
-    assert_eq!(crate::native_fingerprint(&read), 0xf4be_d5a7_57e0_1dcf);
+    assert_eq!(read.len(), 2);
+    for (left, right) in read.iter().zip(ensemble.set()) {
+        assert_eq!(left.positions(), right.positions());
+    }
 
     // Steps or coordinates make the order.
-    for (axis, native, written, reread) in [
+    for (axis, fields) in [
         (
             Axis::Step,
-            0x8346_2618_fe0b_dd41,
-            0x27fd_0aed_408e_6608,
-            0x97db_3505_645b_a4f1,
+            vec![
+                vec![(sdf::STEP_FIELD, "0")],
+                vec![(sdf::STEP_FIELD, "4")],
+                vec![(sdf::STEP_FIELD, "8")],
+            ],
         ),
         (
             Axis::Coordinate(DEGREE),
-            0x7be2_e975_7d64_a7b5,
-            0xd40b_391d_7512_5e32,
-            0xd492_afa0_6f9d_cd74,
+            ["-60", "-30", "0"]
+                .map(|value| {
+                    vec![
+                        (sdf::COORDINATE_FIELD, value),
+                        (sdf::COORDINATE_UNIT_FIELD, "deg"),
+                    ]
+                })
+                .to_vec(),
         ),
     ] {
         let series = methane_series(axis);
-        assert_eq!(crate::native_fingerprint(&series), native, "{axis:?}");
         let text = sdf::write(&series, SdfWriteOptions::default()).unwrap().0;
-        assert_eq!(crate::fingerprint(&text), written, "{axis:?}");
-        let set = sdf::structure_set(&interpret_records(&text)).unwrap();
-        assert_eq!(crate::native_fingerprint(&set), reread, "{axis:?}");
+        let records = interpret_records(&text);
+        let written = records
+            .iter()
+            .map(|record| {
+                record
+                    .data_fields()
+                    .iter()
+                    .map(|field| (field.name().to_owned(), field.value().to_owned()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let fields = fields
+            .iter()
+            .map(|record| {
+                record
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(written, fields, "{axis:?}");
+        let set = sdf::structure_set(&records).unwrap();
         assert_eq!(set.order(), series.order(), "{axis:?}");
         assert!(matches!(
             (axis, set.order()),
             (Axis::Step, Some(Order::Step(_)))
                 | (Axis::Coordinate(_), Some(Order::Coordinate { .. }))
         ));
-        // The records have no distribution field, so the set has no
-        // distribution.
-        assert_eq!(set.distribution(), None);
         for (left, right) in set.iter().zip(series.iter()) {
             assert_eq!(left.payload(), right.payload());
         }
@@ -280,56 +373,61 @@ fn sdf_round_trip(set: &StructureSet, options: SdfWriteOptions) -> StructureSet 
 
 #[test]
 fn sdf_structure_sets_state_only_what_the_records_state() {
-    // Records without distribution fields give no distribution.
+    // Records without place fields give an unordered set.
     let bare = [methane_record(0.0, &[]), methane_record(1.0, &[])];
     let set = sdf::structure_set(&bare).unwrap();
-    assert_eq!(set.distribution(), None);
     assert_eq!(set.order(), None);
-    assert_eq!(crate::native_fingerprint(&set), 0xdc67_2d95_20d3_270a);
-    // A set without a distribution survives a round trip.
+    assert_eq!(set.len(), 2);
+    let close = |(left, right): (f64, f64), expected: (f64, f64)| {
+        (left - expected.0).abs() <= 1e-12 && (right - expected.1).abs() <= 1e-12
+    };
+    let x = |set: &StructureSet, geometry: usize| {
+        set.get(geometry)
+            .unwrap()
+            .positions()
+            .get(0)
+            .unwrap()
+            .value_in(ANGSTROM)
+            .unwrap()
+            .x
+    };
+    assert!(close((x(&set, 0), x(&set, 1)), (0.0, 1.0)));
     let read = sdf_round_trip(&set, SdfWriteOptions::default());
-    assert_eq!(read.distribution(), None);
-    assert_eq!(read.len(), 2);
-
-    // States without weights give a distribution without weights.
-    let states = [
-        methane_record(
-            0.0,
-            &[(sdf::STATE_FIELD, "0"), (sdf::REPRESENTATIVE_FIELD, "true")],
-        ),
-        methane_record(1.0, &[(sdf::STATE_FIELD, "0")]),
-    ];
-    let set = sdf::structure_set(&states).unwrap();
-    let distribution = set.distribution().unwrap();
-    assert_eq!(distribution.state_count(), 1);
-    assert_eq!(distribution.weights(), None);
-    // One field on one record is enough for a distribution.
-    let warm = [
-        methane_record(0.0, &[(sdf::TEMPERATURE_FIELD, "300")]),
-        methane_record(1.0, &[(sdf::TEMPERATURE_FIELD, "300")]),
-    ];
-    let set = sdf::structure_set(&warm).unwrap();
-    let distribution = set.distribution().unwrap();
-    assert_eq!(distribution.state_count(), 2);
-    assert_eq!(distribution.weights(), None);
-    assert!(distribution.temperature().is_some());
-    // A weight on one record stores every weight.
-    let weighted = [
-        methane_record(0.0, &[(sdf::WEIGHT_FIELD, "2")]),
-        methane_record(1.0, &[]),
-    ];
-    let set = sdf::structure_set(&weighted).unwrap();
-    assert_eq!(
-        set.distribution().unwrap().weights(),
-        Some([2.0, 1.0].as_slice())
-    );
-
-    // A set with a distribution and no order survives a round trip.
-    let set = weighted_methanes();
-    let read = sdf_round_trip(&set, SdfWriteOptions::default());
-    assert_eq!(crate::native_fingerprint(&read), 0xf4be_d5a7_57e0_1dcf);
     assert_eq!(read.order(), None);
-    assert_eq!(read.distribution(), set.distribution());
+    assert_eq!(read.len(), 2);
+    assert!(close((x(&read, 0), x(&read, 1)), (0.0, 1.0)));
+
+    // The fields an earlier writer gave a distribution are ordinary data: the
+    // records form the same unordered set, whatever the fields hold.
+    let old = [
+        [
+            methane_record(
+                0.0,
+                &[("kekule.state", "0"), ("kekule.representative", "true")],
+            ),
+            methane_record(1.0, &[("kekule.state", "0")]),
+        ],
+        [
+            methane_record(0.0, &[("kekule.temperature.K", "300")]),
+            methane_record(1.0, &[("kekule.temperature.K", "310")]),
+        ],
+        [
+            methane_record(0.0, &[("kekule.weight", "2")]),
+            methane_record(
+                1.0,
+                &[("kekule.weight", "heavy"), ("kekule.member", "true")],
+            ),
+        ],
+    ];
+    for records in &old {
+        let set = sdf::structure_set(records).unwrap();
+        assert_eq!(set.order(), None);
+        assert!(close((x(&set, 0), x(&set, 1)), (0.0, 1.0)));
+        assert!(records.iter().all(|record| record
+            .data_fields()
+            .iter()
+            .all(|field| field.name().starts_with("kekule."))));
+    }
 }
 
 /// A two-geometry methane set ordered by coordinates in `unit`.
@@ -487,29 +585,29 @@ fn sdf_place_fields_appear_once_per_record() {
 }
 
 #[test]
-fn xyz_structure_sets_have_no_distribution() {
+fn xyz_structure_sets_have_no_order() {
     let document = kekule::xyz::parse_str(WATERS, Default::default()).unwrap();
     let set = document
         .interpret_structure_set(Default::default())
         .unwrap();
+    let reports = set.reports();
     assert_eq!(
-        crate::fingerprint(format!("{:?}", set.reports())),
-        0xa502_1322_7468_2c3c
+        reports
+            .iter()
+            .map(|report| (report.frame(), report.comment()))
+            .collect::<Vec<_>>(),
+        [(0, "first"), (1, "second")]
     );
     assert_eq!(set.structure_set().order(), None);
-    assert_eq!(set.structure_set().distribution(), None);
-    assert_eq!(
-        crate::native_fingerprint(set.structure_set()),
-        0xcce8_08a1_364d_2b57
-    );
-    // With a distribution of one unweighted state it is what readers of
-    // formats with states give.
-    let mut set = set.into_structure_set();
-    set.set_distribution(Some(
-        Distribution::new(Members::All, Partition::one_state(2)).unwrap(),
-    ))
-    .unwrap();
-    assert_eq!(crate::native_fingerprint(&set), 0x0f08_570b_3fb1_51ac);
+    assert_waters(set.structure_set());
+    // An ensemble of one unweighted state over every geometry reads the
+    // frames as equally likely draws.
+    let ensemble = Ensemble::uniform(set.into_structure_set());
+    let distribution = ensemble.distribution();
+    assert_eq!(distribution.members(), &Members::All);
+    assert_eq!(distribution.state_count(), 1);
+    assert_eq!(distribution.log_weights(), None);
+    assert_eq!(distribution.probabilities().unwrap(), [0.5, 0.5]);
 }
 
 /// Four frames of one water, each with a cell, velocities, a time, and a
@@ -565,31 +663,23 @@ fn water_frames() -> StructureSet {
     frames
 }
 
-/// An ensemble of the frames `[3, 1, 3]` built with the calls that replace
-/// `Trajectory::to_ensemble`, as the changelog states them.
-fn ensemble_of_frames(
-    frames: &StructureSet,
-    atoms: Option<&AtomSelection>,
-    weights: Option<Vec<f64>>,
-) -> StructureSet {
+/// The frames `[3, 1, 3]` as an unordered set without velocities, built with
+/// the calls that replace `Trajectory::to_ensemble`, as the changelog states
+/// them.
+fn ensemble_of_frames(frames: &StructureSet, atoms: Option<&AtomSelection>) -> StructureSet {
     let mut ensemble = StructureSet::from_reader(frames, [3, 1, 3]).unwrap();
     ensemble.set_order(None).unwrap();
     ensemble.clear_velocities_and_forces();
     if let Some(atoms) = atoms {
         ensemble = ensemble.subset(atoms).unwrap();
     }
-    let mut distribution = Distribution::new(Members::All, Partition::one_state(3)).unwrap();
-    if let Some(weights) = weights {
-        distribution = distribution.with_weights(weights).unwrap();
-    }
-    ensemble.set_distribution(Some(distribution)).unwrap();
     ensemble
 }
 
-/// The calls replacing `Trajectory::to_ensemble` write the PDB and mmCIF
-/// bytes it wrote; the fingerprints were recorded from its output.
+/// The calls replacing `Trajectory::to_ensemble` write one model per sampled
+/// frame, its positions shifted as the frame's.
 #[test]
-fn ensembles_of_trajectory_frames_write_what_trajectory_sampling_wrote() {
+fn ensembles_of_trajectory_frames_write_one_model_per_sampled_frame() {
     let frames = water_frames();
     let atoms = AtomSelection::from_indices(
         frames.shared_topology(),
@@ -598,45 +688,71 @@ fn ensembles_of_trajectory_frames_write_what_trajectory_sampling_wrote() {
     .unwrap();
     let omit = UnrepresentablePolicy::Omit;
     let hydrogens = |atoms| WriteOmission::ImplicitHydrogens { atoms };
-    let weights = WriteOmission::GeometryState {
-        field: GeometryField::Weight,
-        geometries: 3,
-    };
     let cases = [
+        (ensemble_of_frames(&frames, None), 3, vec![hydrogens(3)]),
         (
-            ensemble_of_frames(&frames, None, None),
-            false,
-            vec![hydrogens(3)],
-            0x7856_ea1c_9be2_f84b,
-            0xdc86_05a8_6729_3231,
-        ),
-        (
-            ensemble_of_frames(&frames, Some(&atoms), None),
-            false,
+            ensemble_of_frames(&frames, Some(&atoms)),
+            2,
             vec![hydrogens(2)],
-            0xa036_6f06_4366_5371,
-            0x3c9d_6a15_f7ef_9fb6,
-        ),
-        (
-            ensemble_of_frames(&frames, Some(&atoms), Some(vec![2.0, 1.0, 0.5])),
-            true,
-            vec![weights, hydrogens(2)],
-            0xa036_6f06_4366_5371,
-            0x3c9d_6a15_f7ef_9fb6,
         ),
     ];
-    for (ensemble, weighted, omissions, pdb_bytes, mmcif_bytes) in cases {
-        let mut pdb_options = PdbWriteOptions::default().with_implicit_hydrogens(omit);
-        let mut mmcif_options = MmcifWriteOptions::default().with_implicit_hydrogens(omit);
-        if weighted {
-            pdb_options = pdb_options.with_geometry_metadata(omit);
-            mmcif_options = mmcif_options.with_geometry_metadata(omit);
-        }
+    // Frame i is the water shifted by 0.25 i nm along x and back along z:
+    // frames 3, 1, and 3 in angstroms, as the writers round them.
+    let water = [("O1", 0.0, 0.0), ("H2", 0.957, 0.0), ("H3", -0.24, 0.927)];
+    let shifts = [7.5, 2.5, 7.5];
+    for (ensemble, atoms, omissions) in cases {
+        assert_eq!(ensemble.len(), 3);
+        assert_eq!(ensemble.order(), None);
+        let pdb_options = PdbWriteOptions::default().with_implicit_hydrogens(omit);
+        let mmcif_options = MmcifWriteOptions::default().with_implicit_hydrogens(omit);
         let (text, report) = pdb::write(&ensemble, pdb_options).unwrap();
-        assert_eq!(crate::fingerprint(&text), pdb_bytes, "{text}");
         assert_eq!(report.omissions(), omissions);
+        assert!(text.starts_with(
+            "CRYST1   20.000   21.000   22.000  90.00  90.00  90.00 P 1           1\n"
+        ));
+        assert_eq!(text.matches("MODEL ").count(), 3, "{text}");
+        let expected = shifts
+            .iter()
+            .flat_map(|shift| {
+                water[..atoms]
+                    .iter()
+                    .enumerate()
+                    .map(move |(serial, (name, x, y))| {
+                        format!(
+                            "HETATM{:>5}  {name:<3} UNL A   1    {:>8.3}{:>8.3}{:>8.3}",
+                            serial + 1,
+                            x + shift,
+                            y,
+                            -shift
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let atom_rows = text
+            .lines()
+            .filter(|line| line.starts_with("HETATM"))
+            .map(|line| line[..54].to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(atom_rows, expected);
         let (text, report) = mmcif::write([&ensemble], mmcif_options).unwrap();
-        assert_eq!(crate::fingerprint(&text), mmcif_bytes, "{text}");
         assert_eq!(report.omissions(), omissions);
+        let rows = text
+            .lines()
+            .filter(|line| line.starts_with("HETATM"))
+            .map(|line| {
+                let fields = line.split_whitespace().collect::<Vec<_>>();
+                [fields[3], fields[10], fields[11], fields[12], fields[20]].join(" ")
+            })
+            .collect::<Vec<_>>();
+        let expected = shifts
+            .iter()
+            .enumerate()
+            .flat_map(|(model, shift)| {
+                water[..atoms].iter().map(move |(name, x, y)| {
+                    format!("{name} {:.3} {y:.3} {:.3} {}", x + shift, -shift, model + 1)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows, expected);
     }
 }

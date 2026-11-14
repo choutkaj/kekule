@@ -53,10 +53,10 @@ pub(crate) use molfile_write::{write_molfile, write_molfile_to};
 pub use molfile_write::{MolfileSource, MolfileWriteOptions, MolfileWriteVersion};
 pub(crate) use native::{read_native, write_native, write_native_to};
 pub use native::{
-    NativeKind, NativeObject, NativeReadOptions, NativeSource, NativeWriteOptions,
-    StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS, DEFAULT_NATIVE_MAX_BONDS,
-    DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS, DEFAULT_NATIVE_MAX_STRING_BYTES,
-    NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, NativeSource,
+    NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,
+    DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS,
+    DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
 pub(crate) use pdb_document::{parse_pdb_reader, parse_pdb_str};
 pub use pdb_document::{
@@ -76,8 +76,7 @@ pub(crate) use sdf_structure_set::sdf_structure_set;
 pub(crate) use sdf_write::{write_sdf, write_sdf_to};
 pub use sdf_write::{
     SdfRecordSource, SdfWriteOptions, SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD,
-    SDF_ENERGY_FIELD, SDF_MEMBER_FIELD, SDF_REPRESENTATIVE_FIELD, SDF_STATE_FIELD, SDF_STEP_FIELD,
-    SDF_TEMPERATURE_FIELD, SDF_WEIGHT_FIELD,
+    SDF_STEP_FIELD,
 };
 pub(crate) use smiles::{
     parse_smiles_document, parse_smiles_reader, write_canonical_smiles, write_isomeric_smiles,

@@ -13,8 +13,8 @@ use kekule::clustering::{
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Geometry, Members, Partition, PartitionError, Positions, Requirement,
-    StructureSet, StructureSetError,
+    Ensemble, Geometry, Partition, PartitionError, Positions, Requirement, StructureSet,
+    StructureSetError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, UnitError, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
@@ -52,50 +52,68 @@ fn shape(mirror: bool, moved: bool) -> Vec<Point3> {
         .collect()
 }
 
-/// A geometry at `points` and its weight.
+/// A geometry at `points` and its linear weight.
 fn member(points: Vec<Point3>, weight: f64) -> (Geometry, f64) {
     let geometry = Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap());
     (geometry, weight)
 }
 
-/// Distinct weighted samples, each its own state.
+/// Distinct weighted samples, each its own state, with the natural
+/// logarithms of their linear weights.
 fn conformers(
     topology: impl Into<Arc<Topology>>,
     members: impl IntoIterator<Item = (Geometry, f64)>,
-) -> StructureSet {
+) -> Ensemble {
     let (geometries, weights): (Vec<_>, Vec<_>) = members.into_iter().unzip();
+    let log_weights = weights.into_iter().map(f64::ln).collect::<Vec<_>>();
     let partition = Partition::state_per_sample(geometries.len());
-    let distribution = Distribution::new(Members::All, partition)
-        .unwrap()
-        .with_weights(weights)
-        .unwrap();
-    let mut set = StructureSet::from_geometries(topology, geometries).unwrap();
-    set.set_distribution(Some(distribution)).unwrap();
-    set
+    let set = StructureSet::from_geometries(topology, geometries).unwrap();
+    let mut ensemble = Ensemble::weighted(set, log_weights).unwrap();
+    ensemble.distribution_mut().regroup(partition).unwrap();
+    ensemble
 }
 
-/// Applies `partition` and checks that regrouping kept every sample and
-/// weight.
-fn regrouped(ensemble: &StructureSet, partition: &Partition) -> StructureSet {
+/// Applies `partition` and checks that regrouping kept every geometry,
+/// sample, and weight.
+fn regrouped(ensemble: &Ensemble, partition: &Partition) -> Ensemble {
     let mut regrouped = ensemble.clone();
     regrouped
         .distribution_mut()
-        .unwrap()
         .regroup(partition.clone())
         .unwrap();
-    assert_eq!(regrouped.distribution().unwrap().partition(), partition);
+    assert_eq!(regrouped.distribution().partition(), partition);
+    assert_eq!(regrouped.set().len(), ensemble.set().len());
     assert!(regrouped
+        .set()
         .iter()
-        .zip(ensemble.iter())
-        .all(|(after, before)| after.payload() == before.payload()
-            && after.weight() == before.weight()));
+        .zip(ensemble.set().iter())
+        .all(|(after, before)| after.payload() == before.payload()));
+    assert_eq!(
+        regrouped.distribution().log_weights(),
+        ensemble.distribution().log_weights()
+    );
+    assert_eq!(
+        regrouped.distribution().members(),
+        ensemble.distribution().members()
+    );
     regrouped
 }
 
-/// The energy of state `state` of `set`.
-fn set_energy(set: &mut StructureSet, state: usize, energy: Option<f64>) {
-    set.distribution_mut()
-        .unwrap()
+/// Asserts that each value is within a few ulps of its expected value.
+fn assert_close(actual: &[f64], expected: &[f64]) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() <= 4.0 * f64::EPSILON * expected.abs().max(1.0),
+            "{actual} != {expected}"
+        );
+    }
+}
+
+/// Sets the energy of state `state` of `ensemble`.
+fn set_energy(ensemble: &mut Ensemble, state: usize, energy: Option<f64>) {
+    ensemble
+        .distribution_mut()
         .state_mut(state)
         .unwrap()
         .set_energy(energy.map(|energy| Quantity::new(energy, KILOJOULE_PER_MOLE)))
@@ -103,7 +121,7 @@ fn set_energy(set: &mut StructureSet, state: usize, energy: Option<f64>) {
 }
 
 /// Shape A, A moved, its mirror B, and B moved, weighted 1, 3, 2, 1.
-fn two_shapes() -> (Arc<Topology>, StructureSet) {
+fn two_shapes() -> (Arc<Topology>, Ensemble) {
     let topology = kekule::smiles::to_topology("CCCC").unwrap();
     let members = [
         member(shape(false, false), 1.0),
@@ -116,10 +134,10 @@ fn two_shapes() -> (Arc<Topology>, StructureSet) {
 }
 
 /// The fitted RMSD between the two shapes.
-fn shape_distance(ensemble: &StructureSet, atoms: &AtomSelection) -> f64 {
+fn shape_distance(ensemble: &Ensemble, atoms: &AtomSelection) -> f64 {
     alignment::fit(
-        ensemble.get(0).unwrap().as_structure_view(),
-        ensemble.get(2).unwrap().as_structure_view(),
+        ensemble.set().get(0).unwrap().as_structure_view(),
+        ensemble.set().get(2).unwrap().as_structure_view(),
         atoms,
         Default::default(),
     )
@@ -146,11 +164,29 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
         .unwrap();
     assert_eq!(clusters, partition(&[0, 0, 1, 1], &[1, 2]));
     assert_eq!(clusters.samples(1).collect::<Vec<_>>(), [2, 3]);
-    // Applied, the clusters are states whose populations follow the samples,
-    // relative to the heaviest sample.
+    // Applied, the clusters are states whose populations sum their samples'
+    // weights: 1 + 3 and 2 + 1 of 7.
     let states = regrouped(&ensemble, &clusters);
-    assert_eq!(states.state(0).unwrap().population(), 1.0 / 3.0 + 1.0);
-    assert_eq!(states.state(1).unwrap().population(), 2.0 / 3.0 + 1.0 / 3.0);
+    assert_close(
+        &[
+            states.state(0).unwrap().log_population(),
+            states.state(1).unwrap().log_population(),
+        ],
+        &[4.0_f64.ln(), 3.0_f64.ln()],
+    );
+    assert_close(
+        &states.distribution().state_probabilities().unwrap(),
+        &[4.0 / 7.0, 3.0 / 7.0],
+    );
+    // The set alone weighs its geometries equally and visits them in
+    // geometry order: A leads, then B founds the second cluster.
+    assert_eq!(
+        ensemble
+            .set()
+            .cluster_by_radius(radius(0.5), &atoms, Default::default())
+            .unwrap(),
+        partition(&[0, 0, 1, 1], &[0, 2])
+    );
     // A radius reaching the other shape leaves one cluster.
     assert_eq!(
         ensemble
@@ -170,6 +206,15 @@ fn radius_clustering_groups_members_around_the_first_visited_leaders() {
             .cluster_by_radius(radius(0.5), &atoms, by_energy)
             .unwrap(),
         partition(&[0, 0, 1, 1], &[0, 2])
+    );
+    // A set has no states, so no energies to order by.
+    assert_eq!(
+        ensemble
+            .set()
+            .cluster_by_radius(radius(0.5), &atoms, by_energy),
+        Err(ClusteringError::StructureSet(Box::new(
+            StructureSetError::Missing(Requirement::StateEnergies)
+        )))
     );
     set_energy(&mut ensemble, 3, None);
     assert_eq!(
@@ -275,53 +320,61 @@ fn symmetric_radius_clustering_merges_rotamers() {
         .cluster_by_radius(radius, &symmetric, Default::default())
         .unwrap();
     assert_eq!(rotamers, partition(&[0, 0], &[0]));
-    let collapsed = regrouped(&ensemble, &rotamers).collapse().unwrap();
-    assert_eq!(collapsed.len(), 1);
-    assert_eq!(collapsed.get(0).unwrap().weight(), Some(2.0));
+    let collapsed = regrouped(&ensemble, &rotamers).collapse();
+    assert_eq!(collapsed.set().len(), 1);
+    // Two samples of weight one make a state of weight two.
+    assert_close(
+        &[collapsed.distribution().log_weight(0).unwrap()],
+        &[2.0_f64.ln()],
+    );
 }
 
 #[test]
 fn collapsing_clusters_keeps_representatives_with_their_populations() {
-    let (_, mut ensemble) = two_shapes();
+    let (_, ensemble) = two_shapes();
     let key = PropertyKey::new("source").unwrap();
-    ensemble
-        .properties_mut()
+    let (mut set, distribution) = ensemble.into_parts();
+    set.properties_mut()
         .insert(key.clone(), PropertyValue::Int(7))
         .unwrap();
+    let mut ensemble = Ensemble::new(set, distribution).unwrap();
     set_energy(&mut ensemble, 2, Some(7.0));
 
     // Each cluster merges whole conformer states, so it keeps the energy of
     // its representative's state: none for sample 1, 7 kJ/mol for sample 2.
     let clustered = regrouped(&ensemble, &partition(&[0, 0, 1, 1], &[1, 2]));
-    let collapsed = clustered.collapse().unwrap();
-    assert_eq!(collapsed.len(), 2);
-    assert!(collapsed.topology().shares_layout(ensemble.topology()));
-    // Each weight is its state's population, relative to the heaviest
-    // geometry.
-    assert_eq!(
-        collapsed
-            .iter()
-            .map(|geometry| geometry.weight().unwrap())
-            .collect::<Vec<_>>(),
-        [1.0 / 3.0 + 1.0, 2.0 / 3.0 + 1.0 / 3.0]
+    let collapsed = clustered.collapse();
+    assert_eq!(collapsed.set().len(), 2);
+    assert!(collapsed
+        .set()
+        .topology()
+        .shares_layout(ensemble.set().topology()));
+    // Each log weight is its state's log population: the weights 1 + 3 and
+    // 2 + 1.
+    assert_close(
+        collapsed.distribution().log_weights().unwrap(),
+        &[4.0_f64.ln(), 3.0_f64.ln()],
     );
     for (state, representative) in [(0, 1), (1, 2)] {
         assert_eq!(
-            collapsed.get(state).unwrap().positions(),
-            ensemble.get(representative).unwrap().positions()
+            collapsed.set().get(state).unwrap().positions(),
+            ensemble.set().get(representative).unwrap().positions()
         );
         assert_eq!(
             collapsed.state(state).unwrap().energy(),
             ensemble
-                .get(representative)
-                .unwrap()
-                .state()
+                .state(ensemble.distribution().state_of(representative).unwrap())
                 .unwrap()
                 .energy()
         );
     }
+    assert_eq!(collapsed.state(0).unwrap().energy(), None);
     assert_eq!(
-        collapsed.properties().get(&key),
+        collapsed.state(1).unwrap().energy(),
+        Some(Quantity::new(7.0, KILOJOULE_PER_MOLE))
+    );
+    assert_eq!(
+        collapsed.set().properties().get(&key),
         Some(&PropertyValue::Int(7))
     );
 
@@ -329,7 +382,6 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
     assert_eq!(
         mismatched
             .distribution_mut()
-            .unwrap()
             .regroup(partition(&[0, 0, 0], &[0]))
             .unwrap_err(),
         StructureSetError::PartitionMismatch {
@@ -337,22 +389,24 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             actual: 3,
         }
     );
-    let topology = ensemble.shared_topology();
-    let mut huge = conformers(
+    let topology = ensemble.set().shared_topology();
+    let set = StructureSet::from_geometries(
         topology,
-        [
-            member(shape(false, false), f64::MAX),
-            member(shape(false, true), f64::MAX),
-        ],
-    );
-    // Populations relative to the heaviest sample do not overflow.
+        [shape(false, false), shape(false, true)].map(|points| member(points, 1.0).0),
+    )
+    .unwrap();
+    // Weights of e^1000 each, beyond `f64::MAX`, sum without overflow: their
+    // state weighs 2 e^1000.
+    let mut huge = Ensemble::weighted(set, vec![1000.0, 1000.0]).unwrap();
     huge.distribution_mut()
-        .unwrap()
         .regroup(partition(&[0, 0], &[0]))
         .unwrap();
-    let collapsed = huge.collapse().unwrap();
-    assert_eq!(collapsed.len(), 1);
-    assert_eq!(collapsed.get(0).unwrap().weight(), Some(2.0));
+    let collapsed = huge.collapse();
+    assert_eq!(collapsed.set().len(), 1);
+    assert_close(
+        &[collapsed.distribution().log_weight(0).unwrap()],
+        &[1000.0 + 2.0_f64.ln()],
+    );
 }
 
 #[test]
@@ -593,8 +647,8 @@ fn pairwise_rmsd_fits_every_unordered_pair_once() {
     for first in 0..4 {
         for second in first + 1..4 {
             let fit = alignment::fit(
-                ensemble.get(first).unwrap().as_structure_view(),
-                ensemble.get(second).unwrap().as_structure_view(),
+                ensemble.set().get(first).unwrap().as_structure_view(),
+                ensemble.set().get(second).unwrap().as_structure_view(),
                 &atoms,
                 Default::default(),
             )
@@ -754,7 +808,7 @@ fn member_distances_do_not_depend_on_member_order() {
 }
 
 /// Five members of one shape with the given weights.
-fn weighted_members(weights: [f64; 5]) -> StructureSet {
+fn weighted_members(weights: [f64; 5]) -> Ensemble {
     conformers(
         kekule::smiles::to_topology("CCCC").unwrap(),
         weights.map(|weight| member(shape(false, false), weight)),
@@ -778,8 +832,18 @@ fn k_medoids_minimizes_the_weighted_distance_to_medoids() {
     assert_eq!(two.assignments(), [0, 0, 0, 1, 1]);
     assert_eq!(two.representatives(), [2, 4]);
     let states = regrouped(&weighted, &two);
-    assert_eq!(states.state(0).unwrap().population(), 0.1 + 0.1 + 1.0);
-    assert_eq!(states.state(1).unwrap().population(), 0.1 + 0.2);
+    assert_close(
+        &[
+            states.state(0).unwrap().log_population(),
+            states.state(1).unwrap().log_population(),
+        ],
+        &[12.0_f64.ln(), 3.0_f64.ln()],
+    );
+    // The set alone weighs its geometries equally, as the uniform members.
+    assert_eq!(
+        weighted.set().cluster_k_medoids(&distances, 2).unwrap(),
+        partition(&[0, 0, 0, 1, 1], &[1, 3])
+    );
 
     // One cluster gathers around the weighted medoid; one per member keeps
     // every member alone.

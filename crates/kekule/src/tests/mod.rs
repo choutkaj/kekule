@@ -8,7 +8,7 @@ use crate::perception::{
 };
 use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecordInterpretation};
 use crate::smiles::*;
-use crate::structure::{Positions, Structure};
+use crate::structure::{Positions, Structure, StructureSet};
 use crate::{
     descriptors, molfile, perception as perception_api, sdf, smiles as smiles_api,
     stereo as stereo_api,
@@ -22,24 +22,26 @@ pub(super) fn error_detail<T>(
     result.err()?.detail().cloned()
 }
 
-/// The FNV-1a 64 hash of `value`'s `Debug` text.
-///
-/// Topology layout identities are masked: they count the layouts published
-/// so far and so differ between runs.
-pub(crate) fn debug_fingerprint(value: &impl std::fmt::Debug) -> u64 {
-    let text = format!("{value:?}");
-    let mut masked = String::with_capacity(text.len());
-    let mut rest = text.as_str();
-    while let Some(at) = rest.find("LayoutId(") {
-        let end = at + "LayoutId(".len();
-        masked.push_str(&rest[..end]);
-        masked.push('_');
-        rest = rest[end..].trim_start_matches(|c: char| c.is_ascii_digit());
-    }
-    masked.push_str(rest);
-    masked.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
+/// Each geometry of `set` as its atoms in topology order: the element symbol
+/// and the position in Å, rounded to 1e-9 Å so that coordinates read from
+/// text compare equal to their decimal literals.
+pub(crate) fn geometry_atoms(set: &StructureSet) -> Vec<Vec<(&'static str, [f64; 3])>> {
+    let angstroms = |nanometers: f64| (nanometers * 1.0e10).round() / 1.0e9;
+    set.iter()
+        .map(|geometry| {
+            geometry
+                .as_structure_view()
+                .atoms()
+                .map(|atom| {
+                    let position = atom.position().into_value();
+                    (
+                        atom.element.symbol(),
+                        [position.x, position.y, position.z].map(angstroms),
+                    )
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// The messages of `error` and its sources, joined by `: `.

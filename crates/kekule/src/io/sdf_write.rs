@@ -2,10 +2,10 @@
 use std::io::Write;
 
 use crate::structure::{
-    AsStructureView, GeometryView, Membership, Place, Structure, StructureKind, StructureView,
+    AsStructureView, GeometryView, Place, Structure, StructureKind, StructureView,
 };
 use crate::traj::FrameView;
-use crate::units::{named_unit, KELVIN, KILOJOULE_PER_MOLE};
+use crate::units::named_unit;
 
 use super::molfile_write::{check_cell, render_structure};
 use super::sdf_document::{SdfDataField, SdfRecordInterpretation};
@@ -55,14 +55,13 @@ impl SdfWriteOptions {
 
     /// The state that an SDF record cannot carry of a geometry, whether of a
     /// structure set or a trajectory frame: its time and MD step in a time
-    /// order, its velocities and forces, its state's properties, and a
-    /// coordinate unit that is not a unit constant; and the occupancies and
+    /// order, its velocities and forces, and a coordinate unit that is not a
+    /// unit constant; and the occupancies and
     /// B factors of any structure. By default writing a structure with any of
     /// them fails. Under [`UnrepresentablePolicy::Omit`] the report counts
     /// the records written without each ([`WriteOmission::GeometryState`],
     /// [`WriteOmission::Occupancies`], [`WriteOmission::BFactors`]). A
-    /// geometry's membership, weight, state, state energy, and temperature, and
-    /// its step or coordinate, are written as data fields.
+    /// geometry's step or coordinate is written as data fields.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
         self.geometry_metadata
     }
@@ -95,25 +94,6 @@ impl SdfWriteOptions {
     }
 }
 
-/// The data field a geometry's relative weight is written to and
-/// [`sdf::structure_set`](crate::sdf::structure_set) reads it from, on the records
-/// of a distribution with weights.
-pub const SDF_WEIGHT_FIELD: &str = "kekule.weight";
-/// The data field the index of a geometry's state is written to.
-pub const SDF_STATE_FIELD: &str = "kekule.state";
-/// The data field, `true`, that marks the record of a state's representative
-/// geometry.
-pub const SDF_REPRESENTATIVE_FIELD: &str = "kekule.representative";
-/// The data field a state's energy is written to, in kJ/mol, on the record of
-/// its representative geometry.
-pub const SDF_ENERGY_FIELD: &str = "kekule.energy.kJ_per_mol";
-/// The data field the temperature a distribution's populations describe is
-/// written to, in kelvin, on the record of every member.
-pub const SDF_TEMPERATURE_FIELD: &str = "kekule.temperature.K";
-/// The data field, `false`, that marks the record of a geometry outside its
-/// set's distribution.
-pub const SDF_MEMBER_FIELD: &str = "kekule.member";
-
 /// The data field a geometry's step in a step order is written to.
 pub const SDF_STEP_FIELD: &str = "kekule.step";
 /// The data field a geometry's coordinate in a coordinate order is written
@@ -123,16 +103,6 @@ pub const SDF_COORDINATE_FIELD: &str = "kekule.coordinate";
 /// unit displays itself: its symbol, such as `A` or `deg`, `1` for a
 /// dimensionless coordinate, or its scale and dimension.
 pub const SDF_COORDINATE_UNIT_FIELD: &str = "kekule.coordinate.unit";
-
-/// The data fields a geometry's membership uses.
-const MEMBERSHIP_FIELDS: [&str; 6] = [
-    SDF_WEIGHT_FIELD,
-    SDF_STATE_FIELD,
-    SDF_REPRESENTATIVE_FIELD,
-    SDF_ENERGY_FIELD,
-    SDF_TEMPERATURE_FIELD,
-    SDF_MEMBER_FIELD,
-];
 
 /// The data fields a geometry's step or coordinate place uses.
 const PLACE_FIELDS: [&str; 3] = [
@@ -146,21 +116,13 @@ const PLACE_FIELDS: [&str; 3] = [
 /// Convert from `&Structure`, a borrowed geometry of a structure set, a trajectory
 /// frame, or `&SdfRecordInterpretation` (which keeps its title and data
 /// fields); `sdf::write(&set, options)` writes a record per geometry. A
-/// geometry's membership in a distribution follows its data fields: its
-/// state and the distribution's temperature as [`SDF_STATE_FIELD`] and
-/// [`SDF_TEMPERATURE_FIELD`], and its weight as [`SDF_WEIGHT_FIELD`] when
-/// the distribution has weights; a representative's record is marked with
-/// [`SDF_REPRESENTATIVE_FIELD`] and carries its state's energy as
-/// [`SDF_ENERGY_FIELD`], whichever way its view is passed. The record of a
-/// geometry outside the distribution is marked with [`SDF_MEMBER_FIELD`]
-/// alone, so a distribution over some of a set's geometries is written whole.
-/// A step place follows as [`SDF_STEP_FIELD`], and a coordinate place as
-/// [`SDF_COORDINATE_FIELD`] with [`SDF_COORDINATE_UNIT_FIELD`]; a geometry
-/// with both a membership and a place writes both groups. A coordinate
+/// geometry's step place follows its data fields as [`SDF_STEP_FIELD`], and
+/// a coordinate place as [`SDF_COORDINATE_FIELD`] with
+/// [`SDF_COORDINATE_UNIT_FIELD`]. A coordinate
 /// unit must be one of the unit constants of [`crate::units`], which the
 /// reader knows by symbol; another fails to write unless
 /// [`SdfWriteOptions::geometry_metadata`] omits the coordinate. A geometry's
-/// time, MD step, velocities, forces, and state properties, and a structure's
+/// time, MD step, velocities, and forces, and a structure's
 /// occupancies and B factors, fail to write unless
 /// [`SdfWriteOptions::geometry_metadata`] omits them; structure and set
 /// properties fail unless [`SdfWriteOptions::properties`] omits them. Add
@@ -195,8 +157,8 @@ impl<'a> SdfRecordSource<'a> {
         self
     }
 
-    /// Sets the data fields, written in order; a geometry's membership and
-    /// place fields still follow them. Writing fails with `Unsupported`
+    /// Sets the data fields, written in order; a geometry's place fields
+    /// still follow them. Writing fails with `Unsupported`
     /// for a field SDF cannot frame (an empty, untrimmed, or bracketed name,
     /// or a value with a carriage return, blank line, or `$$$$` line) and
     /// with `Inconsistent` for a field named like the geometry metadata.
@@ -268,33 +230,19 @@ fn write_record(
 ) -> Result<(), FormatError> {
     validate_title(record.title)?;
     let policies = StatePolicies {
-        writes_membership: true,
         writes_place: true,
         ..StatePolicies::positions_only(options.geometry_metadata, options.properties)
     };
     check_geometry_state(Format::Sdf, record.structure, policies)?;
-    // A geometry's membership, or its being outside the distribution, and its
-    // step or coordinate place, which travel as data fields; whether its
-    // set's distribution has weights; and whether its set has a
-    // distribution.
-    let (membership, weighted, distributed, place) = match record.structure.kind() {
-        StructureKind::InSet(context) => (
-            context.membership(),
-            context
-                .distribution()
-                .is_some_and(|distribution| distribution.weights().is_some()),
-            context.membership().is_some() || context.is_outside_distribution(),
-            context
-                .place()
-                .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
-        ),
-        StructureKind::Standalone => (None, false, false, None),
+    // A geometry's step or coordinate place, which travels as data fields.
+    let place = match record.structure.kind() {
+        StructureKind::InSet(context) => context
+            .place()
+            .filter(|place| matches!(place, Place::Step(_) | Place::Coordinate(_))),
+        StructureKind::Standalone => None,
     };
     // Whether a geometry's own data uses the name.
-    let reserved = |name: &str| {
-        (distributed && MEMBERSHIP_FIELDS.contains(&name))
-            || (place.is_some() && PLACE_FIELDS.contains(&name))
-    };
+    let reserved = |name: &str| place.is_some() && PLACE_FIELDS.contains(&name);
     // A coordinate unit travels as the symbol of a unit constant, which the
     // reader turns back into that unit.
     let written_place = match place {
@@ -322,17 +270,11 @@ fn write_record(
         }
         place => place,
     };
-    let mut own_fields = match membership {
-        Some(membership) => membership_fields(membership, weighted),
-        None if distributed => vec![SdfDataField::new(SDF_MEMBER_FIELD, "false")],
-        None => Vec::new(),
-    };
-    own_fields.extend(written_place.map_or_else(Vec::new, place_fields));
+    let own_fields = written_place.map_or_else(Vec::new, place_fields);
     for field in record.data_fields {
         validate_data_field(field)?;
-        // Every geometry owns these names, whether or not it writes them, so a
-        // caller's field never adds a second representative, energy, or
-        // place.
+        // A placed geometry owns these names, so a caller's field never
+        // adds a second place.
         if reserved(field.name()) {
             return Err(FormatError::write(
                 Format::Sdf,
@@ -375,40 +317,6 @@ fn place_fields(place: Place) -> Vec<SdfDataField> {
         ],
         _ => Vec::new(),
     }
-}
-
-/// A geometry's weight when the distribution has weights, its state, its
-/// state's energy on a representative's record, and the distribution's
-/// temperature as data fields, numbers in the shortest decimal text that
-/// reads back to the same value.
-fn membership_fields(membership: Membership, weighted: bool) -> Vec<SdfDataField> {
-    let mut fields = Vec::new();
-    if weighted {
-        fields.push(SdfDataField::new(
-            SDF_WEIGHT_FIELD,
-            membership.weight().to_string(),
-        ));
-    }
-    fields.push(SdfDataField::new(
-        SDF_STATE_FIELD,
-        membership.state().to_string(),
-    ));
-    if membership.is_representative() {
-        fields.push(SdfDataField::new(SDF_REPRESENTATIVE_FIELD, "true"));
-        if let Some(energy) = membership.state_energy() {
-            let kj_per_mol = energy
-                .value_in(KILOJOULE_PER_MOLE)
-                .expect("state energies have an energy-per-amount dimension");
-            fields.push(SdfDataField::new(SDF_ENERGY_FIELD, kj_per_mol.to_string()));
-        }
-    }
-    if let Some(temperature) = membership.temperature() {
-        let kelvin = temperature
-            .value_in(KELVIN)
-            .expect("distribution temperatures have a temperature dimension");
-        fields.push(SdfDataField::new(SDF_TEMPERATURE_FIELD, kelvin.to_string()));
-    }
-    fields
 }
 
 fn validate_title(title: &str) -> Result<(), FormatError> {

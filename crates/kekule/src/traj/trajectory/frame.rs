@@ -103,17 +103,10 @@ impl<'a> FrameView<'a> {
     /// # Errors
     ///
     /// [`TrajectoryIoErrorKind::UnsupportedField`](super::TrajectoryIoErrorKind::UnsupportedField)
-    /// for a geometry that is a member of its set's distribution
-    /// ([`TrajectoryField::Membership`]), or that has a place on a step or
-    /// coordinate order ([`TrajectoryField::OrderStep`],
+    /// for a geometry that has a place on a step or coordinate order ([`TrajectoryField::OrderStep`],
     /// [`TrajectoryField::OrderCoordinate`]): a frame cannot hold them.
     pub fn from_geometry<R: ?Sized>(view: GeometryView<'a, R>) -> Result<Self, TrajectoryIoError> {
         let view = view.as_dyn();
-        if view.weight().is_some() {
-            return Err(TrajectoryIoError::unsupported_field(
-                TrajectoryField::Membership,
-            ));
-        }
         let (time, step) = match view.place() {
             None => (None, None),
             Some(Place::Time { time, step }) => (time, step),

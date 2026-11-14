@@ -1,36 +1,36 @@
-//! Partitions of the members of a [`StructureSet`]'s distribution into states
-//! of similar structures.
+//! Partitions of the samples of an [`Ensemble`], or of the geometries of a
+//! [`StructureSet`], into states of similar structures.
 //!
-//! A set clusters the members of its distribution, leaving the other
-//! samples out, or every sample when it has no distribution. Its results
-//! are indexed by member position, the `i`th member being the `i`th sample
-//! [`Distribution::members`](crate::structure::Distribution::members) lists
-//! (sample `i` without a distribution): the [`DistanceMatrix`] of
-//! [`StructureSet::pairwise_fitted_rmsd`] and each partition, whose
-//! assignments and representatives are member positions. Errors name sample
-//! indices. [`pairwise_fitted_rmsd`] fits the members of any
-//! [`StructureSetRead`](crate::structure::StructureSetRead), such as a set read from a
-//! file, through the same loop, and a set of either storage clusters a
-//! matrix.
+//! An ensemble clusters the samples of its distribution, leaving the other
+//! geometries out; a structure set clusters every geometry. Results are
+//! indexed by member position, the `i`th member being the `i`th sample
+//! [`Distribution::members`](crate::structure::Distribution::members) lists,
+//! or geometry `i` of a set: the [`DistanceMatrix`] of
+//! [`Ensemble::pairwise_fitted_rmsd`] and each partition, whose
+//! assignments and representatives are member positions. Errors name
+//! geometry indices. [`pairwise_fitted_rmsd`] fits the geometries of any
+//! [`StructureSetRead`](crate::structure::StructureSetRead), such as a set
+//! read from a file, through the same loop, and an ensemble or a set of
+//! either storage clusters a matrix.
 //!
-//! Clustering never changes the set. It returns a [`Partition`] that
-//! assigns every member to one state and names one representative member
-//! per state.
+//! Clustering never changes the ensemble or the set. It returns a
+//! [`Partition`] that assigns every member to one state and names one
+//! representative member per state.
 //! [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)
 //! installs it without changing any weight, so populations follow the
-//! samples, and [`StructureSet::collapse`] then keeps one sample per state,
-//! carrying the state's population. A set without a distribution installs
-//! it as a new distribution of every sample through
-//! [`StructureSet::set_distribution`].
+//! samples, and [`Ensemble::collapse`] then keeps one sample per state,
+//! carrying the state's population. A partition of a set's geometries
+//! becomes a new distribution of every geometry in
+//! [`Ensemble::new`] with `Distribution::new(Members::All, partition)`.
 //!
-//! [`StructureSet::cluster_hierarchical`] cuts the [`Dendrogram`] of a
-//! [`DistanceMatrix`], such as [`StructureSet::pairwise_fitted_rmsd`], at a
+//! [`Ensemble::cluster_hierarchical`] cuts the [`Dendrogram`] of a
+//! [`DistanceMatrix`], such as [`Ensemble::pairwise_fitted_rmsd`], at a
 //! height or into a number of clusters, and represents each cluster by its
 //! weighted medoid. Complete linkage cut at height `h` bounds every
 //! cluster's diameter by `h`.
 //!
-//! [`StructureSet::pairwise_fitted_rmsd_with`] and
-//! [`StructureSet::cluster_by_radius_with`] take a [`ClusteringRun`]: a
+//! [`Ensemble::pairwise_fitted_rmsd_with`] and
+//! [`Ensemble::cluster_by_radius_with`] take a [`ClusteringRun`]: a
 //! [`parallel::Executor`](crate::parallel::Executor) that spreads the fits
 //! over threads, a [`Cancellation`](crate::diagnostics::Cancellation), and a
 //! [`ClusteringProgress`] callback. Fits run in contiguous ranges whose
@@ -38,13 +38,13 @@
 //! returns exactly the single-threaded result, including which error is
 //! reported.
 //!
-//! [`StructureSet::cluster_k_medoids`] finds a given number of clusters
+//! [`Ensemble::cluster_k_medoids`] finds a given number of clusters
 //! directly, choosing medoid members that minimize the weight-summed
 //! distance from every member to its nearest medoid, so heavy members
 //! attract medoids.
 //!
-//! [`StructureSet::cluster_by_radius`] is leader clustering on fitted RMSD. It
-//! needs no matrix, so it scales to larger sets. With
+//! [`Ensemble::cluster_by_radius`] is leader clustering on fitted RMSD. It
+//! needs no matrix, so it scales to larger ensembles. With
 //! a [`SymmetricSelection`](crate::alignment::SymmetricSelection) and a small
 //! radius it merges rotamers, copies of one conformer that differ only by
 //! exchanged equivalent atoms. Weight the conformers by energy first; the
@@ -56,16 +56,17 @@
 //!
 //! use kekule::alignment::SymmetricSelection;
 //! use kekule::math::Point3;
-//! use kekule::structure::{Distribution, Members, Partition, Positions, Geometry, StructureSet, State};
+//! use kekule::structure::{
+//!     Distribution, Ensemble, Geometry, Members, Partition, Positions, State, StructureSet,
+//! };
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE};
 //!
 //! // Acetate, then a rotamer with its oxygens exchanged, then a distinct
 //! // conformer 5 kJ/mol higher, each its own state.
 //! let topology = kekule::smiles::to_topology("CC(=O)[O-]")?;
-//! let mut conformers = StructureSet::new(topology.clone());
 //! let none = Distribution::new(Members::All, Partition::state_per_sample(0))?;
-//! conformers.set_distribution(Some(none))?;
+//! let mut conformers = Ensemble::new(StructureSet::new(topology.clone()), none)?;
 //! for (o2, o3, energy) in [(1.1, -1.1, 0.0), (-1.1, 1.1, 0.0), (1.1, -0.3, 5.0)] {
 //!     let points = [
 //!         Point3::new(0.0, 0.0, 0.0),
@@ -77,23 +78,23 @@
 //!     let state = State::new().with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))?;
 //!     conformers.push_state(Geometry::new(positions), None, state, None)?;
 //! }
-//! let mut distribution = conformers.distribution_mut().unwrap();
-//! distribution.assign_boltzmann_populations(Quantity::new(298.15, KELVIN))?;
-//! drop(distribution);
+//! conformers
+//!     .distribution_mut()
+//!     .assign_boltzmann_populations(Quantity::new(298.15, KELVIN))?;
 //!
 //! let atoms = SymmetricSelection::new(&AtomSelection::all(topology.clone()))?;
 //! let radius = Quantity::new(0.125, ANGSTROM);
 //! let rotamers = conformers.cluster_by_radius(radius, &atoms, Default::default())?;
 //! assert_eq!(rotamers.assignments(), [0, 0, 1]);
 //!
-//! conformers.distribution_mut().unwrap().regroup(rotamers)?;
+//! conformers.distribution_mut().regroup(rotamers)?;
 //! assert_eq!(conformers.states().len(), 2);
 //! assert!(conformers.state(0).unwrap().energy().is_some());
-//! let collapsed = conformers.collapse()?;
-//! assert_eq!(collapsed.len(), 2);
+//! let collapsed = conformers.collapse();
+//! assert_eq!(collapsed.set().len(), 2);
 //! assert_eq!(
-//!     collapsed.get(0).unwrap().weight(),
-//!     Some(conformers.state(0).unwrap().population()),
+//!     collapsed.distribution().log_weight(0),
+//!     Some(conformers.state(0).unwrap().log_population()),
 //! );
 //! # Ok::<(), Box<dyn Error>>(())
 //! ```
@@ -112,8 +113,8 @@ use crate::alignment::{
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
 use crate::structure::{
-    Distribution, GeometryError, Members, Partition, Requirement, StructureSet, StructureSetError,
-    StructureSetReadError, StructureView,
+    Distribution, Ensemble, GeometryError, Members, Partition, Requirement, StructureSet,
+    StructureSetError, StructureSetReadError, StructureView,
 };
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
 use run::{FirstFailure, Stop, Tracker};
@@ -132,7 +133,8 @@ pub enum ClusterOrder {
     Energy,
 }
 
-/// Options for [`StructureSet::cluster_by_radius`].
+/// Options for [`Ensemble::cluster_by_radius`] and
+/// [`StructureSet::cluster_by_radius`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ClusteringOptions<'a> {
     alignment: AlignmentOptions<'a>,
@@ -165,34 +167,37 @@ impl<'a> ClusteringOptions<'a> {
     }
 }
 
-/// The structures a clustering groups, in member order: the members of a
-/// structure set's distribution, or every geometry of a set without one.
+/// The structures a clustering groups, in member order: the samples of an
+/// ensemble's distribution, or every geometry of a set.
 struct Clustered<'a> {
     views: Vec<StructureView<'a>>,
-    /// The sample index of each member, which errors name.
+    /// The geometry index of each member, which errors name.
     samples: &'a Members,
-    /// Each member's relative weight.
-    weights: Vec<f64>,
+    /// Each member's natural-logarithm weight.
+    log_weights: Vec<f64>,
     /// Each member's state energy in the canonical unit, or why there is
     /// none.
     energies: Result<Vec<f64>, ClusteringError>,
 }
 
-/// The members of a set without a distribution: every geometry.
+/// The members of a set: every geometry.
 static EVERY_GEOMETRY: Members = Members::All;
 
 impl<'a> Clustered<'a> {
-    fn of_set(set: &'a StructureSet) -> Self {
-        let mut clustered = Self::of_members(set.len(), set.distribution());
-        clustered.views = match set.distribution() {
+    /// The samples of `distribution` over `set`, or every geometry of `set`
+    /// without one.
+    fn new(set: &'a StructureSet, distribution: Option<&'a Distribution>) -> Self {
+        let mut clustered = Self::of_members(set.len(), distribution);
+        clustered.views = match distribution {
             None => set
                 .iter()
                 .map(|geometry| geometry.as_structure_view())
                 .collect(),
-            Some(distribution) => distribution
-                .weighted_members()
-                .map(|(sample, _)| {
-                    let view = set.get(sample).expect("members are samples of the set");
+            Some(distribution) => (0..distribution.sample_count())
+                .map(|position| {
+                    let view = set
+                        .get(distribution.sample(position))
+                        .expect("samples are geometries of the set");
                     view.as_structure_view()
                 })
                 .collect(),
@@ -200,7 +205,7 @@ impl<'a> Clustered<'a> {
         clustered
     }
 
-    /// The members of `distribution` over `len` geometries, or every
+    /// The samples of `distribution` over `len` geometries, or every
     /// geometry without one, with their weights and energies but no views:
     /// what clustering on a distance matrix needs.
     fn of_members(len: usize, distribution: Option<&'a Distribution>) -> Self {
@@ -208,14 +213,13 @@ impl<'a> Clustered<'a> {
             return Self {
                 views: Vec::new(),
                 samples: &EVERY_GEOMETRY,
-                weights: vec![1.0; len],
-                energies: Err(StructureSetError::Missing(Requirement::Distribution).into()),
+                log_weights: vec![0.0; len],
+                energies: Err(StructureSetError::Missing(Requirement::StateEnergies).into()),
             };
         };
-        let weights = distribution
-            .weighted_members()
-            .map(|(_, weight)| weight)
-            .collect();
+        let log_weights = distribution
+            .log_weights()
+            .map_or_else(|| vec![0.0; distribution.sample_count()], <[f64]>::to_vec);
         let energies = distribution
             .state_energies()
             .map(|energies| member_energies(&energies, distribution.partition()))
@@ -223,20 +227,28 @@ impl<'a> Clustered<'a> {
         Self {
             views: Vec::new(),
             samples: distribution.members(),
-            weights,
+            log_weights,
             energies,
         }
     }
 
     /// The number of members.
     fn len(&self) -> usize {
-        self.weights.len()
+        self.log_weights.len()
     }
 
-    /// Weights divided by the largest one, so sums cannot overflow.
+    /// Weights divided by the largest one, so the largest is one and sums
+    /// cannot overflow.
     fn scaled_weights(&self) -> Vec<f64> {
-        let maximum = self.weights.iter().copied().fold(0.0_f64, f64::max);
-        self.weights.iter().map(|weight| weight / maximum).collect()
+        let maximum = self
+            .log_weights
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        self.log_weights
+            .iter()
+            .map(|log_weight| (log_weight - maximum).exp())
+            .collect()
     }
 
     /// Member positions in visiting order.
@@ -244,7 +256,7 @@ impl<'a> Clustered<'a> {
         let mut positions = (0..self.len()).collect::<Vec<_>>();
         match order {
             ClusterOrder::Weight => {
-                positions.sort_by(|&a, &b| self.weights[b].total_cmp(&self.weights[a]))
+                positions.sort_by(|&a, &b| self.log_weights[b].total_cmp(&self.log_weights[a]))
             }
             ClusterOrder::Energy => {
                 let energies = self.energies.as_ref().map_err(Clone::clone)?;
@@ -407,22 +419,67 @@ fn sample_index(members: &Members, position: usize) -> usize {
 
 impl StructureSet {
     /// Leader clustering on fitted RMSD within `radius`, a finite,
-    /// nonnegative length, of the members of the set's distribution, or of
-    /// every geometry of a set without one.
+    /// nonnegative length, of every geometry of the set, each weighing the
+    /// same; [`Ensemble::cluster_by_radius`] clusters the samples of a
+    /// distribution with their weights.
+    ///
+    /// The result groups the geometries, by geometry index. Install it as a
+    /// new distribution of every geometry, `Distribution::new(Members::All,
+    /// partition)`, in [`Ensemble::new`]. Members are visited in geometry
+    /// order; the rest is as [`Ensemble::cluster_by_radius`] describes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Ensemble::cluster_by_radius`], and
+    /// [`ClusteringError::StructureSet`] wrapping `Missing(StateEnergies)`
+    /// when ordering by [`ClusterOrder::Energy`], since a set has no states.
+    pub fn cluster_by_radius<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+    ) -> Result<Partition, ClusteringError> {
+        self.cluster_by_radius_with(radius, atoms, options, ClusteringRun::default())
+    }
+
+    /// [`Self::cluster_by_radius`], with its fits run, followed and stopped
+    /// as `run` says, as in [`Ensemble::cluster_by_radius_with`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::cluster_by_radius`], and [`ClusteringError::Cancelled`]
+    /// once `run`'s cancellation is requested.
+    ///
+    /// # Panics
+    ///
+    /// When a work item panics, which
+    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
+    /// the executor skips or repeats a work item.
+    pub fn cluster_by_radius_with<'a>(
+        &self,
+        radius: Quantity<f64>,
+        atoms: impl Into<FitAtoms<'a>>,
+        options: ClusteringOptions<'_>,
+        run: ClusteringRun<'_>,
+    ) -> Result<Partition, ClusteringError> {
+        Clustered::new(self, None).cluster_by_radius(radius, atoms.into(), options, run)
+    }
+}
+
+impl Ensemble {
+    /// Leader clustering on fitted RMSD within `radius`, a finite,
+    /// nonnegative length, of the samples of the distribution.
     ///
     /// The result groups exactly those samples, by member position: entry
-    /// `i` of its assignments, and each representative, is the `i`th member
-    /// ([`Distribution::members`](crate::structure::Distribution::members)),
-    /// or sample `i` without a distribution. Install it with
+    /// `i` of its assignments, and each representative, is the `i`th sample
+    /// ([`Distribution::members`](crate::structure::Distribution::members)).
+    /// Install it with
     /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup),
-    /// which keeps every weight, or, for a set without a distribution, as
-    /// `Distribution::new(Members::All, partition)` through
-    /// [`Self::set_distribution`]. Samples outside the distribution are not
+    /// which keeps every weight. Geometries that are not samples are not
     /// clustered.
     ///
     /// Members are visited in the [`ClusterOrder`] of `options`, by default
-    /// descending weight (in member order without a distribution, every
-    /// member weighing the same); ties keep member order.
+    /// descending weight; ties keep member order.
     /// [`ClusterOrder::Energy`] visits them by ascending energy of their
     /// states. Each member joins the cluster whose representative is nearest
     /// by RMSD after a [`fit`](crate::alignment::fit) over `atoms` with the
@@ -434,13 +491,14 @@ impl StructureSet {
     ///
     /// `atoms` is a selection or a
     /// [`SymmetricSelection`](crate::alignment::SymmetricSelection) of this
-    /// set's layout, so each distance is the same whichever member moves; an
-    /// [`AtomCorrespondence`](crate::alignment::AtomCorrespondence) is
-    /// rejected. Each member is fitted to at most every representative, so
-    /// the cost grows with members times clusters (times symmetry
-    /// permutations). A set without members gives an empty partition. Fits
-    /// run on the calling thread; [`Self::cluster_by_radius_with`] spreads
-    /// them over threads, reports progress, and can be cancelled.
+    /// ensemble's layout, so each distance is the same whichever member
+    /// moves; an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence)
+    /// is rejected. Each member is fitted to at most every representative,
+    /// so the cost grows with members times clusters (times symmetry
+    /// permutations). A distribution without samples gives an empty
+    /// partition. Fits run on the calling thread;
+    /// [`Self::cluster_by_radius_with`] spreads them over threads, reports
+    /// progress, and can be cancelled.
     ///
     /// # Errors
     ///
@@ -449,13 +507,13 @@ impl StructureSet {
     /// - [`ClusteringError::DirectedCorrespondence`] when `atoms` is an
     ///   [`AtomCorrespondence`](crate::alignment::AtomCorrespondence).
     /// - [`ClusteringError::Alignment`] when `atoms` does not belong to this
-    ///   set's layout, has fewer than three pairs, or the explicit weights of
-    ///   `options` are invalid. A failed fit is wrapped in
-    ///   [`AlignmentError::Item`] naming the sample index of the member being
-    ///   placed.
-    /// - [`ClusteringError::StructureSet`] wrapping `Missing(Distribution)` or
-    ///   `Missing(StateEnergies)` when ordering by [`ClusterOrder::Energy`] a
-    ///   set without a distribution or with a state without an energy.
+    ///   ensemble's layout, has fewer than three pairs, or the explicit
+    ///   weights of `options` are invalid. A failed fit is wrapped in
+    ///   [`AlignmentError::Item`] naming the geometry index of the member
+    ///   being placed.
+    /// - [`ClusteringError::StructureSet`] wrapping `Missing(StateEnergies)`
+    ///   when ordering by [`ClusterOrder::Energy`] with a state without an
+    ///   energy.
     pub fn cluster_by_radius<'a>(
         &self,
         radius: Quantity<f64>,
@@ -495,7 +553,12 @@ impl StructureSet {
         options: ClusteringOptions<'_>,
         run: ClusteringRun<'_>,
     ) -> Result<Partition, ClusteringError> {
-        Clustered::of_set(self).cluster_by_radius(radius, atoms.into(), options, run)
+        Clustered::new(self.set(), Some(self.distribution())).cluster_by_radius(
+            radius,
+            atoms.into(),
+            options,
+            run,
+        )
     }
 }
 
@@ -569,7 +632,7 @@ pub enum ClusteringError {
     DirectedCorrespondence,
     /// Fitting members or validating the fit atoms failed; see the source.
     Alignment(Box<AlignmentError>),
-    /// The structure set lacks what the clustering needs, such as an energy for
+    /// The ensemble lacks what the clustering needs, such as an energy for
     /// every state; see the source.
     StructureSet(Box<StructureSetError>),
     /// A quantity could not be converted to the required unit; see the source.
@@ -622,7 +685,7 @@ impl fmt::Display for ClusteringError {
                 "Distances between members need an atom selection, not an atom correspondence.",
             ),
             Self::Alignment(_) => formatter.write_str("Cannot fit the members."),
-            Self::StructureSet(_) => formatter.write_str("Cannot cluster the structure set."),
+            Self::StructureSet(_) => formatter.write_str("Cannot cluster the geometries."),
             Self::Unit(_) => formatter.write_str("A clustering quantity has the wrong unit."),
             Self::Cancelled(_) => formatter.write_str("Clustering stopped."),
             Self::Read(error) => fmt::Display::fmt(error, formatter),

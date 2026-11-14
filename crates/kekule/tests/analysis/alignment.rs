@@ -12,8 +12,7 @@ use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Distribution, Forces, Geometry, Members, Order, Partition, Place, Positions, Structure,
-    StructureSet, TimeAxis, Velocities,
+    Forces, Geometry, Order, Place, Positions, Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::units::{
@@ -562,7 +561,7 @@ fn superposition_uses_stored_periodic_coordinates_and_explicit_weights() {
 }
 
 #[test]
-fn weighted_sets_share_the_collection_contract_and_keep_weights() {
+fn sets_share_the_collection_contract() {
     let topology = chain(4);
     let reference = spread();
     let member = Geometry::new(
@@ -573,11 +572,6 @@ fn weighted_sets_share_the_collection_contract_and_keep_weights() {
         .unwrap(),
     );
     let mut ensemble = StructureSet::from_geometries(Arc::clone(&topology), [member]).unwrap();
-    let distribution = Distribution::new(Members::All, Partition::one_state(1))
-        .unwrap()
-        .with_weights(vec![0.25])
-        .unwrap();
-    ensemble.set_distribution(Some(distribution)).unwrap();
     let structure = Structure::new(
         Arc::clone(&topology),
         Positions::new(Quantity::new(reference, NANOMETER)).unwrap(),
@@ -602,7 +596,6 @@ fn weighted_sets_share_the_collection_contract_and_keep_weights() {
             .value()[0]
             < 1.0e-12
     );
-    assert_eq!(ensemble.get(0).unwrap().weight(), Some(0.25));
 
     // The free kernel and collection items share one view contract.
     let item = ensemble.get(0).unwrap();
@@ -1015,11 +1008,6 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     let members = [reference.to_vec(), moved_swapped.clone()]
         .map(|points| Geometry::new(Positions::new(Quantity::new(points, NANOMETER)).unwrap()));
     let mut ensemble = StructureSet::from_geometries(Arc::clone(&topology), members).unwrap();
-    let distribution = Distribution::new(Members::All, Partition::state_per_sample(2))
-        .unwrap()
-        .with_weights(vec![1.0, 1.0])
-        .unwrap();
-    ensemble.set_distribution(Some(distribution)).unwrap();
     let all = AtomSelection::all(Arc::clone(&topology));
     let symmetric = SymmetricSelection::new(&all).unwrap();
     let oxygens = selection(&topology, &[2, 3]);
@@ -1049,7 +1037,7 @@ fn collections_fit_and_measure_under_the_best_symmetry_permutation() {
     assert_eq!(direct.value()[0], 0.0);
     assert_close(direct.value()[1], 0.0, 1.0e-12);
 
-    // Sets without a distribution share the kernels.
+    // Sets of frames share the kernels and report each fit.
     let mut trajectory = StructureSet::from_geometries(
         Arc::clone(&topology),
         [frame(&reference), frame(&moved_swapped)],

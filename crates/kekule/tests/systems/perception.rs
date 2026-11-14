@@ -5,9 +5,7 @@ use std::sync::{Arc, Weak};
 
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
-use kekule::structure::{
-    Distribution, Geometry, Members, Partition, Positions, Structure, StructureSet,
-};
+use kekule::structure::{Geometry, Positions, Structure, StructureSet};
 use kekule::topology::{
     AtomSelection, AtomSiteMetadata, InstanceAtomId, MoleculeClass, MoleculeDefinitionId,
     ResidueClass, SelectionError, Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder,
@@ -289,7 +287,7 @@ fn reperception_replaces_even_a_uniquely_owned_snapshot_and_clears_cip() {
 }
 
 #[test]
-fn structure_set_perception_preserves_geometries_weights_and_set_properties() {
+fn structure_set_perception_preserves_geometries_and_set_properties() {
     let topology = smiles::to_topology("c1ccccc1").unwrap();
     let mut member = Geometry::new(Positions::zeros(6));
     member.set_cell(Some(
@@ -313,51 +311,38 @@ fn structure_set_perception_preserves_geometries_weights_and_set_properties() {
         )
         .unwrap();
     let second = Geometry::new(Positions::zeros(6));
-    let mut ensemble =
-        StructureSet::from_geometries(Arc::clone(&topology), [member, second]).unwrap();
-    ensemble
-        .set_distribution(Some(
-            Distribution::new(Members::All, Partition::one_state(2))
-                .unwrap()
-                .with_weights(vec![0.25, 0.75])
-                .unwrap(),
-        ))
-        .unwrap();
+    let mut set = StructureSet::from_geometries(Arc::clone(&topology), [member, second]).unwrap();
     // Bond rows exist once the member is bound to the set's topology.
-    ensemble
-        .get_mut(0)
+    set.get_mut(0)
         .unwrap()
         .properties_mut()
         .bonds_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(12); 6]))
         .unwrap();
-    ensemble
-        .properties_mut()
+    set.properties_mut()
         .insert(key(), PropertyValue::Int(13))
         .unwrap();
-    let before = ensemble.clone();
-    let pointers = ensemble
+    let before = set.clone();
+    let pointers = set
         .iter()
         .map(|m| m.positions().values().value().as_ptr())
         .collect::<Vec<_>>();
-    ensemble.perceive().unwrap();
+    set.perceive().unwrap();
 
-    assert_default_perception(ensemble.topology());
-    assert!(topology.same_layout(ensemble.topology()));
-    assert!(!Arc::ptr_eq(&topology, &ensemble.shared_topology()));
+    assert_default_perception(set.topology());
+    assert!(topology.same_layout(set.topology()));
+    assert!(!Arc::ptr_eq(&topology, &set.shared_topology()));
     assert!(Arc::ptr_eq(&topology, &before.shared_topology()));
-    assert_eq!(ensemble.properties(), before.properties());
-    assert_eq!(ensemble.distribution(), before.distribution());
-    for ((member, original), pointer) in ensemble.iter().zip(before.iter()).zip(pointers) {
+    assert_eq!(set.properties(), before.properties());
+    for ((member, original), pointer) in set.iter().zip(before.iter()).zip(pointers) {
         assert!(Arc::ptr_eq(
             &member.shared_topology(),
-            &ensemble.shared_topology()
+            &set.shared_topology()
         ));
         assert_eq!(member.positions(), original.positions());
         assert_eq!(member.positions().values().value().as_ptr(), pointer);
         assert_eq!(member.cell(), original.cell());
         assert_eq!(member.properties(), original.properties());
-        assert_eq!(member.weight(), original.weight());
     }
     let mut empty = StructureSet::new(topology);
     empty.perceive().unwrap();
@@ -394,30 +379,23 @@ fn topology_structure_and_structure_set_failure_preserve_complete_previous_state
     assert_eq!(structure, before);
     assert_eq!(installed(structure.topology()), previous);
 
-    let mut ensemble = StructureSet::from_geometries(
+    let mut set = StructureSet::from_geometries(
         Arc::clone(&topology),
         [Geometry::new(Positions::zeros(topology.atom_count()))],
     )
     .unwrap();
-    ensemble
-        .set_distribution(Some(
-            Distribution::new(Members::All, Partition::one_state(1)).unwrap(),
-        ))
-        .unwrap();
-    ensemble
-        .properties_mut()
+    set.properties_mut()
         .insert(key(), PropertyValue::Int(15))
         .unwrap();
-    let before = ensemble.clone();
-    assert_eq!(ensemble.perceive(), Err(error));
-    assert!(Arc::ptr_eq(&topology, &ensemble.shared_topology()));
-    assert_eq!(ensemble.properties(), before.properties());
-    assert_eq!(ensemble.distribution(), before.distribution());
+    let before = set.clone();
+    assert_eq!(set.perceive(), Err(error));
+    assert!(Arc::ptr_eq(&topology, &set.shared_topology()));
+    assert_eq!(set.properties(), before.properties());
     assert_eq!(
-        ensemble.get(0).unwrap().to_structure(),
+        set.get(0).unwrap().to_structure(),
         before.get(0).unwrap().to_structure()
     );
-    assert_eq!(installed(ensemble.topology()), previous);
+    assert_eq!(installed(set.topology()), previous);
 }
 
 #[test]

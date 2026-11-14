@@ -556,7 +556,6 @@ fn item_error(index: usize, source: AlignmentError) -> AlignmentError {
 impl StructureSet {
     /// Fits every geometry onto `reference` and applies each transform in place.
     ///
-    /// Every geometry is fitted, members of the distribution or not.
     /// `reference` is a geometry index of this set or any borrowed view
     /// (`&structure`, `&other.get(0).unwrap()`, ...); `atoms` is an
     /// [`AtomSelection`](crate::topology::AtomSelection) or
@@ -604,9 +603,9 @@ impl StructureSet {
     /// Direct RMSD from every geometry to `reference`, measured as stored.
     ///
     /// Never fits or changes the set. Values are in [`CANONICAL_LENGTH_UNIT`],
-    /// one per geometry in set order, members of the distribution or not: plot
-    /// them against the order's values, or weight the members' values by
-    /// their weights for distribution statistics. `options` selects the pair
+    /// one per geometry in set order: plot them against the order's values,
+    /// or weight an ensemble's samples by
+    /// [`Distribution::sample_probabilities`](crate::structure::Distribution::sample_probabilities). `options` selects the pair
     /// weights and the periodic policy.
     ///
     /// # Errors

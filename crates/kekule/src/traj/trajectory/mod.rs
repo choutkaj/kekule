@@ -210,27 +210,10 @@ pub enum TrajectoryField {
     Properties,
     /// Properties of the structure set.
     CollectionProperties,
-    /// A member's relative weight in the set's distribution.
-    Weight,
-    /// The energy of a member's state.
-    Energy,
-    /// The grouping of members into states.
-    State,
-    /// The temperature the distribution's populations describe.
-    Temperature,
-    /// Properties of a state.
-    StateProperties,
     /// A geometry's step on a step order.
     OrderStep,
     /// A geometry's coordinate on a coordinate order.
     OrderCoordinate,
-    /// Whether a geometry belongs to its set's distribution.
-    Membership,
-    /// A structure set's distribution, which a trajectory file cannot store.
-    Distribution,
-    /// A structure set's state representative that is not the state's first
-    /// member.
-    Representative,
     /// A structure set's time order without times or steps.
     Order,
 }
@@ -249,16 +232,8 @@ impl fmt::Display for TrajectoryField {
             Self::BondProperties => "bond properties",
             Self::Properties => "frame properties",
             Self::CollectionProperties => "collection properties",
-            Self::Weight => "weight",
-            Self::Energy => "state energy",
-            Self::State => "state",
-            Self::Temperature => "temperature",
-            Self::StateProperties => "state properties",
             Self::OrderStep => "order step",
             Self::OrderCoordinate => "order coordinate",
-            Self::Membership => "distribution membership",
-            Self::Distribution => "structure set distribution",
-            Self::Representative => "state representative",
             Self::Order => "geometry order",
         })
     }

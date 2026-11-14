@@ -520,8 +520,7 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
     }
 }
 
-/// The first coordinate model of [`MODELS`] and the set of both models,
-/// whose two geometries carry stored equal weights.
+/// The first coordinate model of [`MODELS`] and the set of both models.
 pub(super) fn parts() -> (Structure, StructureSet) {
     let document = crate::mmcif::parse_str(MODELS, Default::default()).unwrap();
     let structure = document
@@ -531,15 +530,26 @@ pub(super) fn parts() -> (Structure, StructureSet) {
         )
         .unwrap()
         .into_structure();
-    let mut set = document
+    let set = document
         .interpret_structure_set(Default::default())
         .unwrap()
         .into_structure_set();
-    set.distribution_mut()
-        .unwrap()
-        .set_weights(Some(vec![1.0, 1.0]))
-        .unwrap();
     (structure, set)
+}
+
+/// The x coordinate of each atom of each geometry of `set`, in Å.
+fn x_angstroms(set: &StructureSet) -> Vec<Vec<f64>> {
+    set.iter()
+        .map(|geometry| {
+            geometry
+                .positions()
+                .values()
+                .value()
+                .iter()
+                .map(|position| position.x * 10.0)
+                .collect()
+        })
+        .collect()
 }
 
 pub(super) fn read(
@@ -551,7 +561,22 @@ pub(super) fn read(
 #[test]
 fn every_report_field_round_trips() {
     let (structure, set) = parts();
-    assert_eq!(super::debug_fingerprint(&set), 0xbff9_29d2_6f24_4c64);
+    // Model 1 has its two waters at x = 0 and 3 Å, model 2 at 0.1 and 3.1 Å,
+    // all at y = z = 0.
+    assert_eq!(set.len(), 2);
+    assert_eq!(set.topology().atom_count(), 2);
+    assert_eq!(set.order(), None);
+    for (actual, expected) in x_angstroms(&set).iter().zip([[0.0, 3.0], [0.1, 3.1]]) {
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((actual - expected).abs() <= 1e-12, "{actual} != {expected}");
+        }
+    }
+    assert!(set.iter().all(|geometry| geometry
+        .positions()
+        .values()
+        .value()
+        .iter()
+        .all(|position| position.y == 0.0 && position.z == 0.0)));
     let report = report(false);
     let bytes = native::write(
         NativeSource::interpreted_structure(&structure, &report),
@@ -573,14 +598,20 @@ fn every_report_field_round_trips() {
         NativeWriteOptions::default(),
     )
     .unwrap();
-    assert_eq!(super::debug_fingerprint(&bytes), 0xde2b_74f7_fb64_0b01);
+    assert_eq!(bytes[12], 10, "an interpreted structure set record");
     let decoded = read(&bytes)
         .unwrap()
         .into_structure_set_interpretation()
         .unwrap();
-    assert_eq!(super::debug_fingerprint(&decoded), 0x63e9_9b07_512b_83a0);
     assert_eq!(decoded.reports(), reports.as_slice());
-    assert_eq!(decoded.structure_set().len(), 2);
+    let decoded_set = decoded.structure_set();
+    assert_eq!(decoded_set.len(), 2);
+    assert!(decoded_set.topology().same_layout(set.topology()));
+    assert_eq!(decoded_set.order(), set.order());
+    assert_eq!(decoded_set.properties(), set.properties());
+    for (decoded, original) in decoded_set.iter().zip(set.iter()) {
+        assert_eq!(decoded.payload(), original.payload());
+    }
     let again = native::write(&decoded, NativeWriteOptions::default()).unwrap();
     assert!(
         again == bytes,

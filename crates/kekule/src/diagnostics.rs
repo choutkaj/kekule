@@ -896,19 +896,6 @@ pub enum FormatErrorDetail {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GeometryField {
-    /// A sample's relative weight in its set's distribution.
-    Weight,
-    /// The energy of a sample's state.
-    Energy,
-    /// The state a sample belongs to: the grouping of samples into states.
-    State,
-    /// The temperature a distribution's populations describe.
-    Temperature,
-    /// The properties of a structure set's state.
-    StateProperties,
-    /// A structure set's state representative that is not the state's first
-    /// member.
-    Representative,
     /// A structure set's time order without times or steps.
     Order,
     /// A geometry's or frame's time in a time order.
@@ -935,20 +922,11 @@ pub enum GeometryField {
     OrderStep,
     /// A geometry's coordinate in a coordinate order.
     OrderCoordinate,
-    /// A structure set's geometry that is outside its distribution, which a file
-    /// whose every structure is a member cannot tell apart.
-    Membership,
 }
 
 impl fmt::Display for GeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Weight => "weight",
-            Self::Energy => "state energy",
-            Self::State => "state",
-            Self::Temperature => "temperature",
-            Self::StateProperties => "state properties",
-            Self::Representative => "state representative",
             Self::Order => "geometry order",
             Self::Time => "time",
             Self::Step => "MD step",
@@ -962,7 +940,6 @@ impl fmt::Display for GeometryField {
             Self::BFactors => "B factors",
             Self::OrderStep => "order step",
             Self::OrderCoordinate => "order coordinate",
-            Self::Membership => "distribution membership",
         })
     }
 }

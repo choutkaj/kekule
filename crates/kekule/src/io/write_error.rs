@@ -2,9 +2,7 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField, LimitExceeded,
 };
-use crate::structure::{
-    Distribution, Order, Place, SetContext, StructureKind, StructureSet, StructureView,
-};
+use crate::structure::{Order, Place, SetContext, StructureKind, StructureSet, StructureView};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -215,10 +213,6 @@ pub(crate) struct StatePolicies {
     /// The policy for per-atom, per-bond, and own structure properties and
     /// for the properties of a geometry's set.
     pub(crate) properties: UnrepresentablePolicy,
-    /// Whether the format writes a geometry's membership in a distribution
-    /// itself, and its writer decides about a geometry outside the
-    /// distribution.
-    pub(crate) writes_membership: bool,
     /// Whether the format writes a geometry's step or coordinate place itself.
     pub(crate) writes_place: bool,
     /// Whether the format writes occupancies and B factors.
@@ -235,7 +229,6 @@ impl StatePolicies {
         Self {
             policy,
             properties,
-            writes_membership: false,
             writes_place: false,
             writes_sites: false,
         }
@@ -266,16 +259,13 @@ impl StatePolicies {
 
 /// The sentence for the `field` of a geometry that `format` cannot carry: of
 /// the 1-based geometry `geometry` of a set, or of a lone geometry for `None`. The
-/// temperature and the order belong to the whole set.
+/// order belongs to the whole set.
 pub(crate) fn unrepresentable_state(
     format: impl std::fmt::Display,
     field: GeometryField,
     geometry: Option<usize>,
 ) -> String {
     match (field, geometry) {
-        (GeometryField::Temperature, _) => {
-            format!("The ensemble temperature has no {format} representation.")
-        }
         (GeometryField::Order, _) => format!("The geometry order has no {format} representation."),
         (GeometryField::SetProperties, _) => {
             format!("The structure set properties have no {format} representation.")
@@ -313,7 +303,6 @@ const fn verb(field: GeometryField) -> &'static str {
     match field {
         GeometryField::Velocities
         | GeometryField::Forces
-        | GeometryField::StateProperties
         | GeometryField::AtomProperties
         | GeometryField::BondProperties
         | GeometryField::Properties
@@ -424,10 +413,7 @@ fn structure_omission(field: GeometryField, structures: usize) -> WriteOmission 
 
 /// The state of the lone structure `view` that a format with `policies`
 /// cannot carry, whatever the policies decide about it, in checking order:
-/// a geometry's membership, unless the format writes memberships (its weight,
-/// its state's energy, and the temperature); its
-/// state's properties, on the record of the state's representative; its
-/// step or coordinate place, unless the format writes places; its time,
+/// its step or coordinate place, unless the format writes places; its time,
 /// MD step, velocities, and forces; the structure's occupancies and B
 /// factors, unless the format writes them; and its per-atom, per-bond, and
 /// own properties and those of its set.
@@ -438,26 +424,6 @@ fn lost_geometry_state(view: StructureView<'_>, policies: StatePolicies) -> Vec<
         StructureKind::Standalone => None,
     };
     if let Some(context) = context {
-        if let Some(membership) = context.membership() {
-            if !policies.writes_membership {
-                // A lone record cannot carry a weight relative to other
-                // geometries, so its weight is always left out.
-                fields.push(GeometryField::Weight);
-                if membership.state_energy().is_some() {
-                    fields.push(GeometryField::Energy);
-                }
-                if membership.temperature().is_some() {
-                    fields.push(GeometryField::Temperature);
-                }
-            }
-            let properties = context
-                .distribution()
-                .and_then(|distribution| distribution.states().get(membership.state()))
-                .is_some_and(|state| !state.properties().is_empty());
-            if membership.is_representative() && properties {
-                fields.push(GeometryField::StateProperties);
-            }
-        }
         if !policies.writes_place {
             fields.extend(place_field(context));
         }
@@ -545,13 +511,7 @@ pub(crate) fn check_geometry_state(
     let field = lost
         .iter()
         .copied()
-        .find(|&field| policies.of(field) == UnrepresentablePolicy::Fail)
-        // A membership with a state energy fails on the energy, the field
-        // the reader would miss most.
-        .map(|field| match field {
-            GeometryField::Weight if lost.contains(&GeometryField::Energy) => GeometryField::Energy,
-            field => field,
-        });
+        .find(|&field| policies.of(field) == UnrepresentablePolicy::Fail);
     match field {
         None => Ok(()),
         Some(field) => Err(FormatError::write(
@@ -602,137 +562,50 @@ pub(crate) fn record_structure_set_properties(
 }
 
 /// Records or rejects the state of `set` that a multi-model format cannot
-/// carry. Its readers give one state of equally weighted geometries without an
-/// energy, properties, a temperature, or an order, the first geometry
-/// representing it, so only that survives a round trip: a geometry outside
-/// the distribution, unequal weights, more than one state, state energies,
-/// state properties, a lone state's representative that is not its first
-/// member, the geometries' places, velocities, and forces, the temperature,
-/// and a time order without times or steps are lost.
+/// carry. Its readers give geometries without an order, so the geometries'
+/// places, velocities, and forces, and a time order without times or steps,
+/// are lost.
 ///
 /// With [`UnrepresentablePolicy::Fail`], returns the 1-based number of the
 /// first geometry with such state and the field, checked for each geometry in
-/// the order above; state properties are their representative's. The
-/// temperature and the time order are the first geometry's and are checked
+/// the order above. The time order is the first geometry's and is checked
 /// last. With [`UnrepresentablePolicy::Omit`], records the omissions.
 pub(crate) fn record_multi_model_structure_set(
     set: &StructureSet,
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
 ) -> Result<(), (usize, GeometryField)> {
-    let distribution = set.distribution();
     let contexts = set.iter().map(|view| SetContext::of_view(view.as_dyn()));
-    let weight = contexts
-        .clone()
-        .find_map(|context| context.membership())
-        .map(|membership| membership.weight());
-    // The representatives of states with properties, and of a lone state
-    // when it is not the state's first member; with several states, the
-    // lost grouping includes the representatives.
-    let mut with_properties = Vec::new();
-    let mut late = Vec::new();
-    let lone = distribution.map_or(0, Distribution::state_count) == 1;
-    for state in set.states() {
-        let representative = state.representative();
-        if !state.payload().properties().is_empty() {
-            with_properties.push(representative);
-        }
-        if lone && state.geometries().next() != Some(representative) {
-            late.push(representative);
-        }
-    }
     // The state of one geometry that is lost, in checking order.
-    let lost = |index: usize, context: SetContext<'_>| {
-        let membership = context.membership();
+    let lost = |context: SetContext<'_>| {
         let mut fields = Vec::new();
-        match membership {
-            None if distribution.is_some() => fields.push(GeometryField::Membership),
-            None => {}
-            Some(membership) => {
-                if membership.state_energy().is_some() {
-                    fields.push(GeometryField::Energy);
-                }
-                if Some(membership.weight()) != weight {
-                    fields.push(GeometryField::Weight);
-                }
-                if membership.state() != 0 {
-                    fields.push(GeometryField::State);
-                }
-                if with_properties.contains(&index) {
-                    fields.push(GeometryField::StateProperties);
-                }
-                if late.contains(&index) {
-                    fields.push(GeometryField::Representative);
-                }
-            }
-        }
         fields.extend(place_field(context));
-        let (time, step) = match context.place() {
-            Some(Place::Time { time, step }) => (time.is_some(), step.is_some()),
-            _ => (false, false),
-        };
-        fields.extend(
-            [
-                (time, GeometryField::Time),
-                (step, GeometryField::Step),
-                (context.velocities().is_some(), GeometryField::Velocities),
-                (context.forces().is_some(), GeometryField::Forces),
-            ]
-            .into_iter()
-            .filter_map(|(present, field)| present.then_some(field)),
-        );
+        fields.extend(frame_fields(context));
         fields
     };
-    let temperature = distribution.and_then(|distribution| distribution.temperature());
     let bare_order = matches!(
         set.order(),
         Some(Order::Time(axis)) if axis.times().is_none() && axis.steps().is_none()
     );
     if policy == UnrepresentablePolicy::Fail {
         for (index, context) in contexts.enumerate() {
-            if let Some(&field) = lost(index, context).first() {
+            if let Some(&field) = lost(context).first() {
                 return Err((index + 1, field));
             }
-        }
-        if temperature.is_some() {
-            return Err((1, GeometryField::Temperature));
         }
         if bare_order && !set.is_empty() {
             return Err((1, GeometryField::Order));
         }
         return Ok(());
     }
-    let members = distribution.map_or(0, Distribution::member_count);
-    let unequal = contexts
-        .clone()
-        .filter_map(|context| context.membership())
-        .any(|membership| Some(membership.weight()) != weight);
     let count = |field: GeometryField| {
         contexts
             .clone()
-            .enumerate()
-            .filter(|(index, context)| lost(*index, *context).contains(&field))
+            .filter(|context| lost(*context).contains(&field))
             .count()
     };
-    let states = distribution.map_or(0, Distribution::state_count);
     for (field, geometries) in [
-        (GeometryField::Weight, if unequal { members } else { 0 }),
-        (GeometryField::Energy, count(GeometryField::Energy)),
-        (GeometryField::State, if states > 1 { members } else { 0 }),
-        (
-            GeometryField::StateProperties,
-            count(GeometryField::StateProperties),
-        ),
-        (
-            GeometryField::Representative,
-            count(GeometryField::Representative),
-        ),
-        (
-            GeometryField::Temperature,
-            if temperature.is_some() { members } else { 0 },
-        ),
         (GeometryField::Order, if bare_order { set.len() } else { 0 }),
-        (GeometryField::Membership, count(GeometryField::Membership)),
         (GeometryField::Time, count(GeometryField::Time)),
         (GeometryField::Step, count(GeometryField::Step)),
         (GeometryField::OrderStep, count(GeometryField::OrderStep)),

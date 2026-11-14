@@ -16,8 +16,8 @@ pub(crate) mod sealed {
 /// parameter: [`InMemory`], the default, or an indexed trajectory file
 /// ([`IndexedFile`](crate::traj::io::IndexedFile)).
 ///
-/// Every storage shares the topology, the set properties, the order, the
-/// distribution, and the operations on them. Only an in-memory set lends
+/// Every storage shares the topology, the set properties, the order, and
+/// the operations on them. Only an in-memory set lends
 /// its geometries by reference; any set is read through
 /// [`StructureSetRead`](super::StructureSetRead). The trait is sealed.
 pub trait GeometryStorage: sealed::Storage + fmt::Debug + Send + Sync {}

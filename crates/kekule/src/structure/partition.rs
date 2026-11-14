@@ -139,7 +139,7 @@ impl Partition {
 
     /// The samples of one state in sample order; empty for a state that
     /// does not exist.
-    pub fn samples(&self, state: usize) -> impl Iterator<Item = usize> + '_ {
+    pub fn samples(&self, state: usize) -> impl Iterator<Item = usize> + Clone + '_ {
         self.assignments
             .iter()
             .enumerate()

@@ -214,10 +214,18 @@ fn frames_of_the_same_connectivity_form_a_structure_set() {
     assert_eq!(interpretation.reports()[1].comment(), "stretched");
     let x = set.get(1).unwrap().positions().get(1).unwrap();
     assert!((x.value_in(ANGSTROM).unwrap().x - 1.0).abs() < 1e-12);
-    // An XYZ file states no weights, states, or order.
-    assert_eq!(set.distribution(), None);
+    // An XYZ file states no order; each frame's coordinates are its
+    // geometry's.
     assert_eq!(set.order(), None);
-    assert_eq!(crate::native_fingerprint(set), 0x86ec_939a_2cbb_3e26);
+    assert_eq!(set.topology().atom_count(), 3);
+    assert_eq!(set.topology().bond_count(), 2);
+    let frames = [
+        [[0.0, 0.0, 0.0], [0.957, 0.0, 0.0], [-0.24, 0.927, 0.0]],
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-0.25, 0.95, 0.0]],
+    ];
+    for (geometry, frame) in set.iter().zip(frames) {
+        assert_points(geometry.positions(), frame);
+    }
 
     let selected = document
         .interpret_structure_set(
@@ -227,9 +235,11 @@ fn frames_of_the_same_connectivity_form_a_structure_set() {
         )
         .unwrap();
     assert_eq!(selected.reports()[0].frame(), 1);
-    assert_eq!(
-        crate::native_fingerprint(selected.structure_set()),
-        0xbe77_888f_6f82_8a84
+    assert_eq!(selected.reports()[0].comment(), "stretched");
+    assert_eq!(selected.structure_set().len(), 1);
+    assert_points(
+        selected.structure_set().get(0).unwrap().positions(),
+        frames[1],
     );
     assert!(XyzStructureSetInterpretOptions::default()
         .with_frames(Some(Vec::new()))
@@ -511,9 +521,12 @@ fn documents_built_from_atoms_interpret_as_parsed_files() {
         );
     }
     for interpretation in [&from_atoms, &from_text] {
-        assert_eq!(
-            crate::native_fingerprint(interpretation.structure_set()),
-            0x8953_66ba_1095_4bea
+        let set = interpretation.structure_set();
+        assert_eq!(set.order(), None);
+        assert_eq!(set.topology().bond_count(), 2);
+        assert_points(
+            set.get(1).unwrap().positions(),
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [-0.24, 0.927, 0.0]],
         );
     }
 }
@@ -591,4 +604,16 @@ fn built_documents_fail_as_parsing_would_reject_them() {
         error.detail(),
         Some(FormatErrorDetail::NoCoordinateModels)
     ));
+}
+
+/// Asserts that `positions` are the decimal coordinates `expected` of an XYZ
+/// file, in angstroms, up to the rounding of their storage in nanometres.
+fn assert_points(positions: &kekule::structure::Positions, expected: [[f64; 3]; 3]) {
+    assert_eq!(positions.len(), expected.len());
+    for (index, expected) in expected.into_iter().enumerate() {
+        let point = positions.get(index).unwrap().value_in(ANGSTROM).unwrap();
+        for (actual, expected) in [point.x, point.y, point.z].into_iter().zip(expected) {
+            assert!((actual - expected).abs() <= 1e-12, "{actual} != {expected}");
+        }
+    }
 }

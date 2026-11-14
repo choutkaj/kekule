@@ -15,27 +15,29 @@
 //!   ([`StructureEditorPropertiesMut`]) reach annotations without geometry.
 //! - [`StructureSet`]: many geometries ([`Geometry`]) of one shared topology,
 //!   each shared and copied on write, with an optional [`Order`] that places
-//!   every geometry ([`TimeAxis`], steps, or coordinate values; [`Place`]) and
-//!   an optional [`Distribution`] over all geometries or some of them
-//!   ([`Members`]) grouped into [`State`]s by a [`Partition`]. A trajectory,
-//!   a conformer ensemble, and a scan are structure sets. [`GeometryView`],
-//!   [`GeometryMut`], and [`StateView`] read and edit them, and
-//!   [`DistributionMut`] edits the distribution; the set's operations fail
-//!   with a [`StructureSetError`]. Its storage ([`GeometryStorage`]) is a type
+//!   every geometry ([`TimeAxis`], steps, or coordinate values; [`Place`]). A
+//!   trajectory, a scan, and the conformers of a search are structure sets.
+//!   [`GeometryView`] and [`GeometryMut`] read and edit them; the set's
+//!   operations fail with a [`StructureSetError`]. Its storage ([`GeometryStorage`]) is a type
 //!   parameter: [`InMemory`] by default, or a file's
 //!   ([`crate::traj::io::IndexedFile`]), whose geometries are read on demand.
 //!   Sets of either storage, and a host's own readers, read through
 //!   [`StructureSetRead`], which fails with [`StructureSetReadError`];
 //!   [`StructureSet::from_reader`] loads chosen geometries of any reader into
 //!   memory. File codecs and streaming live in [`crate::traj`].
+//! - [`Ensemble`]: one structure set read as draws from a [`Distribution`]
+//!   over all its geometries or some of them ([`Members`]), with log weights,
+//!   grouped into [`State`]s by a [`Partition`]. [`StateView`] reads a state
+//!   and [`DistributionMut`] edits the distribution; its operations fail with
+//!   a [`StructureSetError`] too.
 //! - Borrowed access: [`StructureView`] is the common input of coordinate-dependent
 //!   kernels. Structures, geometries ([`GeometryView`]), and codec frames
 //!   ([`crate::traj::FrameView`]) all borrow as one without copying
 //!   ([`AsStructureView`]); [`StructureAtomView`] pairs one topology atom with its
 //!   geometry state. [`StructureView::kind`] says whether a view borrows a structure
 //!   or a geometry ([`StructureKind`]); a geometry's [`SetContext`] reports
-//!   its place, [`Membership`], velocities, and forces, so that state is
-//!   never silently dropped.
+//!   its place, velocities, and forces, so that state is never silently
+//!   dropped.
 //! - [`measure`]: checked distances, angles, dihedrals, bond dihedrals and
 //!   distance-based selections.
 //! - [`placement`]: builder geometry on a [`StructureEditor`] draft: hydrogens
@@ -117,6 +119,7 @@
 
 mod draft_geometry;
 mod dynamics;
+mod ensemble;
 mod geometry_edit;
 pub mod measure;
 mod owner;
@@ -129,6 +132,8 @@ mod structure_editor;
 mod structure_set;
 
 pub use dynamics::{Forces, Velocities};
+pub(crate) use ensemble::log_sum_exp;
+pub use ensemble::{Distribution, DistributionMut, Ensemble, Members, State, StateIter, StateView};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit, GeometryEditError};
 pub(crate) use owner::sealed::Sealed as StructureViewSealed;
 pub use owner::{
@@ -147,10 +152,9 @@ pub(crate) use structure_set::{
     check_bound, sealed as geometry_storage, visit_geometry, DecodedGeometry,
 };
 pub use structure_set::{
-    Distribution, DistributionMut, Geometry, GeometryIter, GeometryMut, GeometryStorage,
-    GeometryView, InMemory, Members, Membership, Order, Place, Requirement, SetContext, State,
-    StateIter, StateView, StructureSet, StructureSetError, StructureSetRead, StructureSetReadError,
-    TimeAxis,
+    Geometry, GeometryIter, GeometryMut, GeometryStorage, GeometryView, InMemory, Order, Place,
+    Requirement, SetContext, StructureSet, StructureSetError, StructureSetRead,
+    StructureSetReadError, TimeAxis,
 };
 
 #[cfg(test)]

@@ -1,13 +1,10 @@
 //! Assembles interpreted coordinate models or explicit conformation
-//! selections into one shared-topology structure set: an ensemble of equally
-//! weighted geometries in one state.
+//! selections into one shared-topology, unordered structure set.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail};
-use crate::structure::{
-    Distribution, Geometry, Members, Partition, State, StructureSet, StructureSetError,
-};
+use crate::structure::{Geometry, StructureSet, StructureSetError};
 
 use super::types::{
     structure_set_error, StructureInterpretOptions, StructureInterpretation,
@@ -149,18 +146,9 @@ fn assemble(
     let shared_topology = first.structure.shared_topology();
     let shared_atom_identity = provenance_identity(&first.report);
     let mut set = StructureSet::new(Arc::clone(&shared_topology));
-    let empty = Distribution::new(Members::All, Partition::one_state(0)).map_err(assembly_error)?;
-    set.set_distribution(Some(empty)).map_err(assembly_error)?;
     let (first_structure, first_report) = first.into_parts();
-    // Coordinate models are equally weighted draws of one distribution: one
-    // state without weights.
-    set.push_state(
-        Geometry::from_structure(first_structure),
-        None,
-        State::new(),
-        None,
-    )
-    .map_err(assembly_error)?;
+    set.push(Geometry::from_structure(first_structure), None)
+        .map_err(assembly_error)?;
     let mut reports = vec![first_report];
     for interpreted in remaining {
         let (structure, report) = interpreted?.into_parts();
@@ -192,7 +180,7 @@ fn assemble(
         {
             return Err(inconsistent_dense_atom_order(model_id));
         }
-        set.push_member(Geometry::from_structure(structure), None, 0, None)
+        set.push(Geometry::from_structure(structure), None)
             .map_err(assembly_error)?;
         reports.push(report);
     }

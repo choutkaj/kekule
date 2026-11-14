@@ -6,7 +6,7 @@ use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
 
-/// What an operation needs and a structure set lacks.
+/// What an operation needs and a structure set or ensemble lacks.
 ///
 /// Its `Display` text, such as "needs a time order", can be shown as it is,
 /// for example beside an operation a host cannot offer for a set.
@@ -19,10 +19,6 @@ pub enum Requirement {
     AnyOrder,
     /// A time order whose axis has times.
     Times,
-    /// A [`Distribution`](super::Distribution).
-    Distribution,
-    /// A distribution with weights.
-    Weights,
     /// An energy on every state of the distribution.
     StateEnergies,
     /// A distribution with a temperature.
@@ -39,8 +35,6 @@ impl fmt::Display for Requirement {
             Self::TimeOrder => "needs a time order",
             Self::AnyOrder => "needs an order",
             Self::Times => "needs times",
-            Self::Distribution => "needs a distribution",
-            Self::Weights => "needs weights",
             Self::StateEnergies => "needs an energy for every state",
             Self::Temperature => "needs a temperature",
             Self::Cell => "needs a periodic cell on every geometry",
@@ -49,16 +43,17 @@ impl fmt::Display for Requirement {
     }
 }
 
-/// Failure of a [`super::StructureSet`] operation.
+/// Failure of a [`super::StructureSet`] or [`Ensemble`](crate::structure::Ensemble)
+/// operation.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum StructureSetError {
-    /// The operation needs something the set lacks, such as a time order or
-    /// a distribution.
+    /// The operation needs something the set or ensemble lacks, such as a
+    /// time order or an energy for every state.
     Missing(Requirement),
     /// A constructor received no structures.
     EmptySource,
-    /// Probabilities were asked of a distribution without members.
+    /// Probabilities were asked of a distribution without samples.
     EmptyDistribution,
     /// A geometry index is outside the set.
     IndexOutOfRange {
@@ -74,8 +69,8 @@ pub enum StructureSetError {
         /// The number of states.
         states: usize,
     },
-    /// A geometry is not a member of the distribution.
-    NotMember {
+    /// A geometry is not a sample of the distribution.
+    NotSample {
         /// The geometry's index.
         geometry: usize,
     },
@@ -140,9 +135,9 @@ pub enum StructureSetError {
         /// The index of the out-of-order geometry.
         geometry: usize,
     },
-    /// The members of a distribution are not increasing geometry indices.
+    /// The samples of a distribution are not increasing geometry indices.
     UnsortedMembers,
-    /// A distribution of every geometry ([`Members::All`](super::Members::All))
+    /// A distribution of every geometry ([`Members::All`](crate::structure::Members::All))
     /// covers another number of geometries than the set has.
     CoverageMismatch {
         /// The number of geometries the distribution covers.
@@ -150,21 +145,21 @@ pub enum StructureSetError {
         /// The set's geometry count.
         geometries: usize,
     },
-    /// A partition groups another number of members than the distribution
-    /// lists ([`Distribution::new`](super::Distribution::new),
-    /// [`DistributionMut::regroup`](super::DistributionMut::regroup)).
+    /// A partition groups another number of samples than the distribution
+    /// lists ([`Distribution::new`](crate::structure::Distribution::new),
+    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup)).
     PartitionMismatch {
-        /// The number of members.
+        /// The number of samples.
         expected: usize,
         /// The partition's sample count.
         actual: usize,
     },
-    /// Weights were given in a different number than the distribution has
-    /// members.
-    WeightCountMismatch {
-        /// The number of members.
+    /// Log weights were given in a different number than the distribution
+    /// has samples.
+    LogWeightCountMismatch {
+        /// The number of samples.
         expected: usize,
-        /// The number of weights.
+        /// The number of log weights.
         actual: usize,
     },
     /// States were given in a different number than the partition has.
@@ -174,17 +169,17 @@ pub enum StructureSetError {
         /// The number of states.
         actual: usize,
     },
-    /// A weight is not finite and positive.
-    InvalidWeight {
-        /// The index of the geometry the weight belongs to.
+    /// A log weight is not finite.
+    NonFiniteLogWeight {
+        /// The index of the geometry the log weight belongs to.
         geometry: usize,
     },
-    /// A new member came without a weight, and the distribution has
+    /// A new sample came without a log weight, and the distribution has
     /// weights. Pass one, or clear the weights first.
-    WeightRequired,
-    /// The representative of a state with other members cannot be removed;
+    LogWeightRequired,
+    /// The representative of a state with other samples cannot be removed;
     /// choose another representative with
-    /// [`super::DistributionMut::regroup`] first.
+    /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup) first.
     RepresentativeRemoval {
         /// The representative geometry.
         geometry: usize,
@@ -212,7 +207,7 @@ impl fmt::Display for StructureSetError {
         match self {
             Self::Missing(requirement) => write!(formatter, "The structure set {requirement}."),
             Self::EmptySource => formatter.write_str("There are no structures to collect."),
-            Self::EmptyDistribution => formatter.write_str("The distribution has no members."),
+            Self::EmptyDistribution => formatter.write_str("The distribution has no samples."),
             Self::IndexOutOfRange { index, len } => write!(
                 formatter,
                 "Geometry {index} is outside the structure set of {}.",
@@ -223,8 +218,8 @@ impl fmt::Display for StructureSetError {
                 "State {state} is outside the distribution of {}.",
                 counted(*states, "state", "states")
             ),
-            Self::NotMember { geometry } => {
-                write!(formatter, "Geometry {geometry} is outside the distribution.")
+            Self::NotSample { geometry } => {
+                write!(formatter, "Geometry {geometry} is not a sample of the distribution.")
             }
             Self::TopologyMismatch => formatter
                 .write_str("The structure has a different topology layout from the structure set."),
@@ -277,7 +272,7 @@ impl fmt::Display for StructureSetError {
                 "Geometry {geometry} is earlier than the geometry before it."
             ),
             Self::UnsortedMembers => {
-                formatter.write_str("The members of the distribution are not in increasing order.")
+                formatter.write_str("The samples of the distribution are not in increasing order.")
             }
             Self::CoverageMismatch { covered, geometries } => write!(
                 formatter,
@@ -288,13 +283,13 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "The partition covers {}, but the distribution has {}.",
                 counted(*actual, "sample", "samples"),
-                counted(*expected, "member", "members")
+                counted(*expected, "sample", "samples")
             ),
-            Self::WeightCountMismatch { expected, actual } => write!(
+            Self::LogWeightCountMismatch { expected, actual } => write!(
                 formatter,
                 "The distribution has {}, but {} given.",
-                counted(*expected, "member", "members"),
-                given(*actual, "weight", "weights")
+                counted(*expected, "sample", "samples"),
+                given(*actual, "log weight", "log weights")
             ),
             Self::StateCountMismatch { expected, actual } => write!(
                 formatter,
@@ -302,12 +297,13 @@ impl fmt::Display for StructureSetError {
                 counted(*expected, "state", "states"),
                 given(*actual, "state", "states")
             ),
-            Self::InvalidWeight { geometry } => write!(
+            Self::NonFiniteLogWeight { geometry } => write!(
                 formatter,
-                "The weight of geometry {geometry} is not finite and positive."
+                "The log weight of geometry {geometry} is not finite."
             ),
-            Self::WeightRequired => formatter
-                .write_str("The new member has no weight, but the other members have weights."),
+            Self::LogWeightRequired => formatter.write_str(
+                "The new sample has no log weight, but the other samples have log weights.",
+            ),
             Self::RepresentativeRemoval { geometry, state } => write!(
                 formatter,
                 "Geometry {geometry} represents state {state}. Remove the state's other samples first."
@@ -328,7 +324,7 @@ impl fmt::Display for StructureSetError {
     }
 }
 
-/// "1 weight was" or "2 weights were".
+/// "1 log weight was" or "2 log weights were".
 fn given(count: usize, one: &str, many: &str) -> String {
     let verb = if count == 1 { "was" } else { "were" };
     format!("{} {verb}", crate::diagnostics::counted(count, one, many))

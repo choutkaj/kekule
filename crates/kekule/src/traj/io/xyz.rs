@@ -263,12 +263,10 @@ impl XyzWriteOptions {
 
     /// The state of a structure set's geometries beyond their positions, cells,
     /// and properties, under the rules of `kekule`'s PDB and mmCIF writers:
-    /// an XYZ file reads back as geometries without an order or distribution,
-    /// so by default [`XyzWriter::write_structure_set`] fails for a set with a
-    /// geometry outside its distribution, unequal weights, more than one
-    /// state, a state energy, a representative that is not its state's
-    /// first member, a temperature, or an order, a time order without times
-    /// or steps among them, or a geometry with velocities or forces;
+    /// an XYZ file reads back as geometries without an order, so by default
+    /// [`XyzWriter::write_structure_set`] fails for a set with an order, a
+    /// time order without times or steps among them, or a geometry with
+    /// velocities or forces;
     /// [`UnrepresentablePolicy::Omit`] writes it and reports each kind of
     /// [`WriteOmission::GeometryState`] left out.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
@@ -1531,16 +1529,6 @@ impl<W: Write> XyzWriter<W> {
                 &self.source_label,
                 frame(0),
                 TrajectoryField::CollectionProperties,
-            ));
-        }
-        if let Some(state) = set
-            .states()
-            .find(|state| !state.payload().properties().is_empty())
-        {
-            return Err(writer_field_error(
-                &self.source_label,
-                frame(state.representative()),
-                TrajectoryField::StateProperties,
             ));
         }
         let factor = self.output_factor()?;

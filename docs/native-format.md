@@ -21,9 +21,9 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   preserves properties at every scope with their units, molecular adjacency
   order, positions, cells, occupancies, B factors, and a structure set's geometries
   with their velocities and forces, its order (times and steps, steps, or
-  coordinates with their unit), its distribution (members, weights, each
-  member's state, each state's representative, energy, and owner properties,
-  and the temperature), and its owner properties. Interpretation reports
+  coordinates with their unit), and its owner properties, and an ensemble's
+  distribution (samples, log weights, each sample's state, each state's
+  representative, energy, and owner properties, and the temperature). Interpretation reports
   round-trip field by field and compare equal. Floating-point values are
   stored as their IEEE-754 bits, so coordinates come back bitwise identical
   (`-0.0` stays `-0.0`).
@@ -55,7 +55,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **5**. A reader accepts only
+The header carries one format version, currently **6**. A reader accepts only
 the versions it implements and rejects any other with
 `FormatErrorDetail::NativeVersion { found, supported }` of kind
 `DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
@@ -78,7 +78,10 @@ trajectories, and series as sample sets, kinds 9 and 10, and retires kinds
 4, 5, 6, and 8; a version 5 reader reads no version 4 file. A reader meets
 a retired kind only in a version 5 header, which no writer produces, and
 rejects it as an unknown kind with `DiagnosticKind::InvalidValue`; an older file
-that holds one fails on its version first.
+that holds one fails on its version first. Version 6 moves the distribution
+out of the structure set record into the ensemble record, kind 11, and
+stores natural logarithms of weights in place of weights; a version 6 reader
+reads no version 5 file.
 
 ## Layout
 
@@ -104,7 +107,7 @@ file      := header payload trailer
 header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
 kind      := 1 molecule | 2 topology | 3 structure | 7 interpreted structure
-           | 9 structure set | 10 interpreted structure set
+           | 9 structure set | 10 interpreted structure set | 11 ensemble
 flags     := bit 0: perception stored; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
@@ -262,19 +265,20 @@ reclassification.
 
 ```text
 structure      := topology geometry_state
-structure_set  := topology owner geometry_count:count order
-                  distribution:opt distribution geometries
+structure_set  := set_head geometries
+ensemble       := set_head distribution geometries
+set_head       := topology owner geometry_count:count order
 order          := 0                                (none)
                | 1 times:opt [f64; geometry_count] steps:opt [u64; geometry_count]
                                                    (time)
                | 2 [u64; geometry_count]           (steps)
                | 3 unit [f64; geometry_count]      (a coordinate in that unit)
-distribution   := members weights:opt [f64; member_count]
-                  state:u32[member_count]
+distribution   := members log_weights:opt [f64; sample_count]
+                  state:u32[sample_count]
                   state_count:count state[state_count]
                   temperature:opt f64
 members        := 0                                (every geometry)
-               | 1 member_count:count geometry:u32[member_count]
+               | 1 sample_count:count geometry:u32[sample_count]
 state          := representative:u32 energy:opt f64 owner
 geometries     := 0 geometry[geometry_count]       (inline)
                | 1                                 (stored elsewhere)
@@ -298,22 +302,26 @@ topology atom and bond.
 A structure set stores its geometries in set order, after what describes them. A
 time order stores times, steps, or both, each for every geometry; a step order
 a step per geometry; a coordinate order a coordinate per geometry in its unit,
-stored as property units are. Times and coordinates are finite. Without a
-distribution, the set states no weights or states. A distribution's members
+stored as property units are. Times and coordinates are finite.
+
+An ensemble is a structure set and a distribution over its geometries; a
+structure set record states no weights or states. A distribution's samples
 are every geometry, or the geometries that a strictly ascending list of indices
-names; `member_count` is the geometry count for every geometry. Weights, one per
-member, are finite and positive; without them members weigh the same. Each
-member stores the index of its state, and each state the member position of
-its representative. The reader validates the partition: every state index
-names a stored state, and every representative is a member of its own state,
-so no state is empty.
+names; `sample_count` is the geometry count for every geometry. Log weights,
+the natural logarithm of each sample's weight, one per sample, are finite;
+without them samples weigh the same. Each sample stores the index of its
+state, and each state the sample position of its representative. The reader
+validates the partition: every state index names a stored state, and every
+representative is a sample of its own state, so no state is empty.
 
 The geometries section is inline, or tag `1` for geometries stored elsewhere: such
-a record is a `StructureSetDescription`, whose `geometry_count` bounds its order
-and distribution as stored geometries would. `StructureSetDescription::of`
-describes a set in memory or one read from a trajectory file, so a host
-stores a file's order and distribution beside the file. An interpreted
-structure set stores its geometries inline.
+a structure set record is a `StructureSetDescription`, whose `geometry_count`
+bounds its order as stored geometries would, and such an ensemble record an
+`EnsembleDescription`, whose `geometry_count` bounds its distribution too.
+`StructureSetDescription::of` and `EnsembleDescription::of` describe a set or
+ensemble in memory or read from a trajectory file, so a host stores a file's
+order and distribution beside the file. An interpreted structure set stores
+its geometries inline.
 
 ### Interpretation reports
 
@@ -463,7 +471,7 @@ rotation, `6` too many operations; `2` to `5` with a `str`), and its line
 
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
-also bound atom sites and residue site lists; the geometries, members, and states of one
+also bound atom sites and residue site lists; the geometries, samples, and states of one
 structure set, hierarchy chains and residues, property columns and owner
 values, and the entries of report lists; and the byte length of one string.
 The atoms and bonds of one report's instance provenance count against the

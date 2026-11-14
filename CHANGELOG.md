@@ -932,6 +932,44 @@ are marked **Breaking:**.
 
 ### Changed
 
+- **Breaking:** A distribution belongs to an `Ensemble`, never to a
+  `StructureSet`. `Ensemble` owns one set and one `Distribution` over it,
+  validated together (`Ensemble::new`, `uniform`, `weighted`, `into_parts`);
+  edits that change which geometries exist (`push`, `push_member`,
+  `push_state`, `remove`, `select`, `select_states`, `collapse`, `subset`)
+  and `state`/`states` move from the set to the ensemble, and
+  `Ensemble<IndexedFile>` has `refresh` and `load`. `StructureSet` loses
+  `distribution`, `distribution_mut`, `set_distribution` and
+  `weighted_samples`; `GeometryView` loses `weight`, `state` and
+  `is_representative`; `SetContext::membership`, `Membership`,
+  `StructureSetRead::distribution`, `Requirement::Distribution` and
+  `Requirement::Weights` are gone. A distribution stores natural logarithms
+  of weights, so weights spanning hundreds of orders of magnitude neither
+  underflow nor are rejected: `with_log_weights`, `log_weights`,
+  `log_weight`, `DistributionMut::set_log_weights`, `set_log_weight` and
+  `normalize_log_weights` replace their weight counterparts, and
+  `StateView::log_population` replaces `population`. Errors follow:
+  `NotSample`, `LogWeightCountMismatch`, `NonFiniteLogWeight` and
+  `LogWeightRequired`. RMSF, contact occupancy and clustering on a
+  `StructureSet` observe every geometry with weight one; the same methods on
+  an `Ensemble` observe its samples by probability, and
+  `SampleObservations::weighted` and `weighted_of` read an ensemble.
+- **Breaking:** Interchange formats carry no distribution. SDF no longer
+  reads or writes `kekule.weight`, `kekule.state`, `kekule.representative`,
+  `kekule.energy`, `kekule.temperature` or `kekule.member` (their constants
+  are gone, and such fields are ordinary data); multi-model PDB and mmCIF
+  read as a plain structure set. `GeometryField` and `TrajectoryField` lose
+  `Weight`, `Energy`, `State`, `Temperature`, `StateProperties`,
+  `Representative` and `Membership`, and `TrajectoryField` loses
+  `Distribution`.
+- **Breaking:** Native format version 6. A structure set record stores no
+  distribution; an ensemble record, kind 11 (`NativeKind::Ensemble`), stores
+  the set and its distribution with log weights, read as
+  `NativeObject::Ensemble` or, with external geometries,
+  `NativeObject::EnsembleDescription`, through `into_ensemble` and
+  `into_ensemble_description`. `StructureSetDescription` loses
+  `with_distribution` and `distribution`; the new `EnsembleDescription` pairs
+  it with a distribution. Version 5 files are not read.
 - **Breaking:** One word names each concept of the structure layer
   (SeekDelta K76). `Topology` is what is bonded to what; a `Geometry` is
   where the atoms are, plus the per-atom state recorded at that arrangement;

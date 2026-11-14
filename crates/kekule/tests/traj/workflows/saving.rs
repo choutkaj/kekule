@@ -19,8 +19,7 @@ use kekule::traj::{
 };
 
 use crate::support::{
-    codec_error, contents, dynamics, fingerprint_bytes, frames_of, linear_carbon_topology,
-    time_ordered, topology, Frame, Recorded,
+    codec_error, frames_of, linear_carbon_topology, time_ordered, topology, Frame,
 };
 
 struct Directory(PathBuf);
@@ -493,9 +492,6 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
         topology::AtomSelection,
         units::{Quantity, DIMENSIONLESS, NANOMETER, PICOSECOND},
     };
-    let mut recorded = Recorded::new(&[
-        0xe706_edac_04c6_dc3d, // loaded, whole, unwrapped, and superposed
-    ]);
     let directory = Directory::new();
     let topology = topology(&["O", "H", "H"], &[(0, 1), (0, 2)]);
     let mut source = read_structure_set(
@@ -564,7 +560,42 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     periodic::make_molecules_whole(&mut expected).unwrap();
     periodic::unwrap_trajectory(&mut expected).unwrap();
     expected.superpose(0, &atoms, Default::default()).unwrap();
-    recorded.check(&dynamics(&expected));
+    // The fixture's water is whole in the 2 nm cell and moves by less than
+    // half a cell, so making it whole and unwrapping keep it; each of its
+    // frames is the first translated, so every frame fitted onto the first
+    // lies on it. The cell, the zero velocities and forces, and the steps
+    // are kept.
+    let first = selected.get(0).unwrap();
+    let first = first.positions().values();
+    assert_eq!(expected.len(), 3);
+    for (index, geometry) in expected.iter().enumerate() {
+        let points = geometry.positions().values();
+        for (atom, (point, reference)) in
+            points.value().iter().zip(first.value().iter()).enumerate()
+        {
+            assert!(
+                (*point - *reference).norm() < 1.0e-12,
+                "geometry {index}, atom {atom}: {point:?} against {reference:?}"
+            );
+        }
+        // The fit rotates the cell with the frame, here by no more than
+        // rounding.
+        let vectors = geometry.cell().unwrap().vectors().into_value();
+        for (vector, expected) in vectors.into_iter().zip(cell.vectors().into_value()) {
+            assert!((vector - expected).norm() < 1.0e-12, "geometry {index}");
+        }
+        assert_eq!(
+            geometry.velocities(),
+            Some(&Velocities::zeros(3)),
+            "geometry {index}"
+        );
+        assert_eq!(
+            geometry.forces(),
+            Some(&Forces::zeros(3)),
+            "geometry {index}"
+        );
+    }
+    assert_eq!(steps(&expected), [Some(0), Some(5), Some(5)]);
     let loaded_output = directory.file("loaded.trr");
     write_structure_set(&loaded_output, &expected, options.clone()).unwrap();
 
@@ -713,50 +744,65 @@ fn stream_writers_write_from_the_stream_position_what_path_writers_publish() {
     }
 }
 
-/// A set saves the bytes the trajectory it replaces saved and reads back
-/// as the set that trajectory read back as, both recorded before
-/// trajectories became structure sets; a time order and no distribution.
+/// A set saves as every format and reads back as the set it saved, to the
+/// format's precision, with a time order.
 #[test]
-fn structure_sets_save_and_load_as_the_trajectories_they_replace_did() {
-    use kekule::structure::{Distribution, Members, Order, Partition};
+fn structure_sets_save_and_load_as_every_format() {
+    use kekule::structure::Order;
 
-    let mut recorded = Recorded::new(&[
-        0x206b_cba1_e8d8_a76f, // the DCD fixture
-        0x5903_2844_2058_60e1, // read back from XYZ
-        0xcd09_1f3d_16d1_a47f, // read back from DCD
-        0x18cd_9466_67ba_83a6, // read back from TRR
-        0xea7d_1dc0_cd0f_0f8a, // read back from XTC
-    ]);
     let directory = Directory::new();
     let set = dcd_fixture();
-    recorded.check(&contents(&set));
-    for (format, bytes) in [
-        (TrajectoryFormat::Xyz, 0xe04e_bbe3_5823_f5fa),
-        (TrajectoryFormat::Dcd, 0xf5a0_5c2f_1292_84d9),
-        (TrajectoryFormat::Trr, 0x6486_cf10_9168_e9eb),
-        (TrajectoryFormat::Xtc, 0xd547_6671_a026_a2eb),
+    assert_eq!(set.topology().atom_count(), 3);
+    assert!(set.len() >= 2);
+    // The largest difference in nanometres each format's precision allows:
+    // XYZ writes eight decimals of ångströms, DCD single-precision ångströms
+    // as the fixture stores them, TRR single-precision nanometres, and XTC a
+    // thousandth of a nanometre.
+    for (format, tolerance) in [
+        (TrajectoryFormat::Xyz, 1.0e-9),
+        (TrajectoryFormat::Dcd, 0.0),
+        (TrajectoryFormat::Trr, 1.0e-6),
+        (TrajectoryFormat::Xtc, 5.0e-4),
     ] {
         let path = directory.file(&format!("geometries.{}", format.name()));
         write_structure_set(&path, &set, converting_options(format)).unwrap();
+        // Writing again gives the same bytes.
+        let again = directory.file(&format!("again.{}", format.name()));
+        write_structure_set(&again, &set, converting_options(format)).unwrap();
         assert_eq!(
-            fingerprint_bytes(&fs::read(&path).unwrap()),
-            bytes,
+            fs::read(&path).unwrap(),
+            fs::read(&again).unwrap(),
             "{format}"
         );
         let read = read_structure_set(&path, set.shared_topology(), Default::default()).unwrap();
-        recorded.check(&contents(&read));
         assert!(matches!(read.order(), Some(Order::Time(_))), "{format}");
-        assert_eq!(read.distribution(), None);
+        assert_eq!(read.len(), set.len(), "{format}");
+        assert!(read.properties().is_empty(), "{format}");
+        for (index, (read, stored)) in read.iter().zip(&set).enumerate() {
+            let values = read.positions().values();
+            let expected = stored.positions().values();
+            for (atom, (point, stored)) in values
+                .value()
+                .iter()
+                .zip(expected.value().iter())
+                .enumerate()
+            {
+                assert!(
+                    (*point - *stored).norm() <= tolerance,
+                    "{format}: geometry {index}, atom {atom}: {point:?} against {stored:?}"
+                );
+            }
+            // XYZ leaves the cell out; the others store it.
+            match format {
+                TrajectoryFormat::Xyz => assert!(read.cell().is_none()),
+                _ => assert!(read.cell().is_some(), "{format}: geometry {index}"),
+            }
+            assert!(read.velocities().is_none() && read.forces().is_none());
+        }
     }
 
-    // A distribution and a step or coordinate order have no trajectory
-    // representation; nothing is written.
-    let mut weighted = set.clone();
-    weighted
-        .set_distribution(Some(
-            Distribution::new(Members::All, Partition::one_state(set.len())).unwrap(),
-        ))
-        .unwrap();
+    // A step or coordinate order has no trajectory representation; nothing
+    // is written.
     let mut stepped = set.clone();
     stepped
         .set_order(Some(Order::Step((0..set.len() as u64).collect())))
@@ -769,7 +815,6 @@ fn structure_sets_save_and_load_as_the_trajectories_they_replace_did() {
         }))
         .unwrap();
     for (refused, field) in [
-        (weighted, TrajectoryField::Distribution),
         (stepped, TrajectoryField::OrderStep),
         (scanned, TrajectoryField::OrderCoordinate),
     ] {

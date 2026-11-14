@@ -221,23 +221,12 @@ fn memory_streams_debug_their_progress_without_their_frames() {
 }
 
 #[test]
-fn members_and_geometries_off_a_time_order_are_not_frames() {
-    let mut set = annotated();
-    set.set_distribution(Some(
-        crate::structure::Distribution::new(
-            crate::structure::Members::Subset(vec![1]),
-            crate::structure::Partition::one_state(1),
-        )
-        .unwrap(),
-    ))
-    .unwrap();
+fn geometries_off_a_time_order_are_not_frames() {
+    let set = annotated();
     let mut reader = MemoryTrajectoryReader::new(&set);
     let mut destination = reader.frame_buffer();
     assert!(reader.read_next(&mut destination).unwrap());
     let before = buffered(&destination);
-    let error = reader.read_next(&mut destination).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
-    assert_eq!(buffered(&destination), before);
     let mut stepped = annotated();
     stepped
         .set_order(Some(Order::Step(vec![0, 10, 20, 30])))
@@ -277,18 +266,17 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
 
     // Every atom, requested out of order and with a duplicate.
     let loaded = StructureSet::from_reader(&set, [3, 1, 3]).unwrap();
+    let frame_key = PropertyKey::new("frame").unwrap();
+    // Frame `i` has its first atom at x = i nm and its frame property `i`.
     assert_eq!(
-        crate::tests::debug_fingerprint(
-            &loaded
-                .iter()
-                .map(|s| (
-                    s.positions().clone(),
-                    s.cell().cloned(),
-                    s.properties().clone()
-                ))
-                .collect::<Vec<_>>()
-        ),
-        0x5382_8ce3_eccc_df37
+        loaded
+            .iter()
+            .map(|geometry| (
+                geometry.positions().values().value()[0].x,
+                geometry.properties().owner().get(&frame_key).cloned()
+            ))
+            .collect::<Vec<_>>(),
+        [3, 1, 3].map(|frame| (f64::from(frame), Some(PropertyValue::Int(frame.into()))))
     );
     assert_eq!(loaded.len(), 3);
     assert!(loaded.topology().shares_layout(set.topology()));
@@ -309,25 +297,39 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
         .unwrap()
         .subset(&atoms)
         .unwrap();
-    assert_eq!(
-        crate::tests::debug_fingerprint(
-            &loaded
-                .iter()
-                .map(|s| (
-                    s.positions().clone(),
-                    s.cell().cloned(),
-                    s.properties().clone()
-                ))
-                .collect::<Vec<_>>()
-        ),
-        0x4d55_21b7_9819_a76f
-    );
-    assert_eq!(
-        crate::tests::debug_fingerprint(&loaded.topology()),
-        0x9c60_547f_6f3e_261b
-    );
+    // Frames 1 and 3, with the first two atoms of each, in their own box, and
+    // without frame properties, which belong to the whole geometry.
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
+        [true; 3],
+    )
+    .unwrap();
+    for (geometry, frame) in loaded.iter().zip([1.0, 3.0]) {
+        assert_eq!(
+            geometry.positions().values().value().to_vec(),
+            [Point3::new(frame, 0.0, 0.0), Point3::new(0.1, 0.0, 0.0)]
+        );
+        assert_eq!(geometry.cell(), Some(&cell));
+        assert!(geometry.properties().owner().is_empty());
+        assert_eq!(
+            geometry.velocities().map(|velocities| velocities.len()),
+            Some(2)
+        );
+        assert_eq!(geometry.forces().map(|forces| forces.len()), Some(2));
+    }
+    // The first two carbons of the chain and the bond between them.
     assert_eq!(loaded.topology().atom_count(), 2);
     assert_eq!(loaded.topology().bond_count(), 1);
+    let view = loaded.get(0).unwrap().as_structure_view();
+    let carbons = view.atoms().collect::<Vec<_>>();
+    assert!(carbons.iter().all(|atom| atom.element.symbol() == "C"));
+    assert_eq!(
+        carbons[0]
+            .neighbors()
+            .map(|atom| atom.id())
+            .collect::<Vec<_>>(),
+        [carbons[1].id()]
+    );
     assert!(loaded.properties().is_empty());
     let geometry = loaded.get(1).unwrap();
     let frame = set.get(3).unwrap();

@@ -169,9 +169,10 @@ impl GeometryState {
 /// order, an optional periodic cell, geometry properties, and, only when
 /// stated, occupancies, B-factors, velocities, and forces.
 ///
-/// A geometry has no place and no weight: an order's values and a
-/// distribution's weights belong to the set, so a geometry taken out of its set
-/// claims neither. The geometry carries no topology. It is *bound* to one when
+/// A geometry has no place and no weight: an order's values belong to the
+/// set and a distribution's weights to an
+/// [`Ensemble`](crate::structure::Ensemble), so a geometry taken out of its
+/// set claims neither. The geometry carries no topology. It is *bound* to one when
 /// it has a property row per atom and bond of that topology: a set binds the
 /// geometries it takes, and [`Self::bind`] binds a geometry outside a set, as a
 /// [`FrameView`](crate::traj::FrameView) of it needs.
@@ -518,9 +519,9 @@ impl Geometry {
 /// [`super::StructureSet`].
 ///
 /// Reads use `Deref`. There is deliberately no `DerefMut`; replace a whole
-/// geometry through [`super::StructureSet::replace`]. The geometry's place and
-/// weight belong to the set ([`super::StructureSet::set_place`],
-/// [`super::DistributionMut::set_weight`]).
+/// geometry through [`super::StructureSet::replace`]. The geometry's place
+/// belongs to the set ([`super::StructureSet::set_place`]) and its weight to
+/// an ensemble ([`DistributionMut::set_log_weight`](crate::structure::DistributionMut::set_log_weight)).
 #[derive(Debug)]
 pub struct GeometryMut<'a> {
     geometry: &'a mut Geometry,

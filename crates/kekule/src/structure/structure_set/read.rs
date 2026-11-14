@@ -10,7 +10,7 @@ use crate::topology::Topology;
 use crate::traj::periodic::PeriodicError;
 use crate::traj::TrajectoryIoError;
 
-use super::{Distribution, Geometry, GeometryView, Order};
+use super::{Geometry, GeometryView, Order};
 use crate::structure::StructureView;
 
 /// Reads the geometries of a set, one at a time and from any thread: a
@@ -29,9 +29,9 @@ use crate::structure::StructureView;
 /// bound to the topology, and fails with [`StructureSetReadError::Geometry`]
 /// when one is not; it relies on the rest:
 ///
-/// - [`Self::len`], [`Self::order`], and [`Self::distribution`] change only
-///   through `&mut` access to the reader. The order and the distribution
-///   describe [`Self::len`] geometries, as a set's do.
+/// - [`Self::len`] and [`Self::order`] change only through `&mut` access to
+///   the reader. The order describes [`Self::len`] geometries, as a set's
+///   does.
 /// - [`Self::read`] of an index below [`Self::len`] returns the same geometry
 ///   every time, bound to [`Self::topology`]: it has one position per atom
 ///   and one property row per atom and bond. An index past the last fails
@@ -68,9 +68,6 @@ pub trait StructureSetRead: Send + Sync + fmt::Debug {
 
     /// The order of the geometries, or `None` when they are unordered.
     fn order(&self) -> Option<&Order>;
-
-    /// The distribution over the geometries, or `None` without one.
-    fn distribution(&self) -> Option<&Distribution>;
 
     /// The set-level properties, for a reader that has them; `None` by
     /// default. Structure writers refuse or report what they cannot write.
@@ -111,9 +108,6 @@ macro_rules! forward_structure_set_read {
                 (**self).order()
             }
 
-            fn distribution(&self) -> Option<&Distribution> {
-                (**self).distribution()
-            }
 
             fn properties(&self) -> Option<&OwnerProperties> {
                 (**self).properties()

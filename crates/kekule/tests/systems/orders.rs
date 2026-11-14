@@ -216,7 +216,7 @@ fn geometry_views_borrow_as_structures_with_their_place() {
     assert!(matches!(
         view.kind(),
         StructureKind::InSet(context)
-            if context.place() == Some(place) && context.membership().is_none()
+            if context.place() == Some(place)
     ));
     assert_eq!(
         AsStructureView::as_structure_view(&geometry).atom_count(),
