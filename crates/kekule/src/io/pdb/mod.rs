@@ -11,6 +11,4 @@ pub use document::{
     PdbPartner, PdbRecord, PdbSsbond, PdbTer,
 };
 pub(crate) use write::{write_pdb, write_pdb_to};
-pub use write::{
-    PdbAtomField, PdbCellReason, PdbChainIdPolicy, PdbSource, PdbWriteErrorKind, PdbWriteOptions,
-};
+pub use write::{PdbChainIdPolicy, PdbSource, PdbWriteErrorKind, PdbWriteOptions};
