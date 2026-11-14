@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 
 fn fixture() -> Value {
     serde_json::from_reader(flate2::read::GzDecoder::new(
-        &include_bytes!("../../tests/fixtures/offxml-generalization.json.gz")[..],
+        &include_bytes!("../../../tests/fixtures/offxml-generalization.json.gz")[..],
     ))
     .unwrap()
 }
@@ -73,7 +73,7 @@ fn every_rule_and_setting_matches_independent_toolkit_interpretation() {
     assert_eq!(
         format!(
             "{:x}",
-            Sha256::digest(include_bytes!("../../data/rosemary.offxml"))
+            Sha256::digest(include_bytes!("../../../data/rosemary.offxml"))
         ),
         report["source_sha256"]
     );
