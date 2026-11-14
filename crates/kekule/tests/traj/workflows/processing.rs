@@ -711,7 +711,7 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
         TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
             TrrWriteOptions::default()
                 .with_lambda_policy(TrrLambdaPolicy::RequireZero)
-                .with_frame_properties(UnrepresentablePolicy::Omit),
+                .with_properties(UnrepresentablePolicy::Omit),
         ),
     )
     .unwrap();

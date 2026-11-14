@@ -21,22 +21,22 @@ use std::fmt;
 use std::io::Write;
 
 use crate::diagnostics::{
-    Capitalized, Count, DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField,
+    AtomField, Capitalized, CellReason, Count, DiagnosticKind, Format, FormatError,
+    FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
-use crate::io::macromolecular::cell::{cell_parameters, CellParameterError, CellParameters};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
-use crate::io::mmcif::write::bond_order_name;
+use crate::io::mmcif::write::{bond_order_name, cell_values};
 use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
-    unrepresentable_state, Omissions, StatePolicies,
+    unrepresentable_state, Carries, Omissions, StatePolicies,
 };
 use crate::io::{
     ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
 };
-use crate::math::{PeriodicCell, Point3};
+use crate::math::{PeriodicCell, PeriodicCellError, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
@@ -44,6 +44,14 @@ use crate::topology::{
     Topology, TopologyAtomIndex,
 };
 use crate::units::{ANGSTROM, SQUARE_ANGSTROM};
+
+/// PDB carries occupancies and B factors, and a cell when [`entry_cell`]
+/// can write it.
+const PDB_CARRIES: Carries = Carries {
+    cell: true,
+    sites: true,
+    ..Carries::POSITIONS
+};
 
 /// The largest atom serial number five hybrid-36 columns hold.
 const MAX_ATOM_SERIAL: i64 = 87_440_031;
@@ -129,7 +137,12 @@ impl PdbWriteOptions {
 
     /// The policies for the state of one structure.
     const fn state_policies(&self) -> StatePolicies {
-        StatePolicies::with_sites(self.geometry_metadata, self.properties)
+        StatePolicies {
+            carries: PDB_CARRIES,
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
+        }
     }
 
     /// A periodic cell `CRYST1` cannot carry as the structure's cell: one not
@@ -199,77 +212,6 @@ impl PdbWriteOptions {
     pub const fn with_chain_ids(mut self, chain_ids: PdbChainIdPolicy) -> Self {
         self.chain_ids = chain_ids;
         self
-    }
-}
-
-/// Atom state named by [`PdbWriteErrorKind::UnsupportedAtomField`].
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PdbAtomField {
-    /// An isotope other than deuterium (`D`) or tritium (`T`).
-    Isotope,
-    /// Radical electrons.
-    Radical,
-    /// A fixed implicit hydrogen count; PDB readers infer implicit
-    /// hydrogens from valence.
-    Hydrogens,
-    /// An atom-map number.
-    AtomMap,
-}
-
-impl PdbAtomField {
-    /// The verb for the field as the subject: "have" for a plural field,
-    /// "has" otherwise.
-    const fn verb(self) -> &'static str {
-        match self {
-            Self::Radical => "have",
-            _ => "has",
-        }
-    }
-}
-
-impl fmt::Display for PdbAtomField {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Isotope => "isotope",
-            Self::Radical => "radical electrons",
-            Self::Hydrogens => "fixed implicit hydrogen count",
-            Self::AtomMap => "atom-map number",
-        })
-    }
-}
-
-/// Why `CRYST1` cannot carry a periodic cell as the structure's cell.
-#[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PdbCellReason {
-    /// The geometries have different cells; an entry has one `CRYST1`.
-    GeometryCellsDiffer,
-    /// The cell is not periodic along all three axes.
-    PartiallyPeriodic,
-    /// The cell does not have `a` along x and `b` in the xy plane, as PDB
-    /// coordinates assume.
-    NonstandardOrientation,
-    /// The written parameters are PDB's 1 Å placeholder cube, which readers
-    /// take to mean no crystal lattice.
-    Placeholder,
-    /// A length or angle does not fit its `CRYST1` columns.
-    ParametersOutOfRange,
-}
-
-/// Writes the reason as a sentence, such as `The cell is not periodic along
-/// all three axes.`
-impl fmt::Display for PdbCellReason {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::GeometryCellsDiffer => "The geometries have different cells.",
-            Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
-            Self::NonstandardOrientation => {
-                "Cell vector a is not along x, or b is not in the xy plane."
-            }
-            Self::Placeholder => "The cell is PDB's 1 Å placeholder cube.",
-            Self::ParametersOutOfRange => "A cell parameter does not fit its CRYST1 columns.",
-        })
     }
 }
 
@@ -363,13 +305,13 @@ pub enum PdbWriteErrorKind {
     },
     /// An atom has state PDB cannot carry, with
     /// [`PdbWriteOptions::implicit_hydrogens`] (for
-    /// [`PdbAtomField::Hydrogens`]) or [`PdbWriteOptions::chemistry`] set to
+    /// [`AtomField::Hydrogens`]) or [`PdbWriteOptions::chemistry`] set to
     /// fail.
     UnsupportedAtomField {
         /// The atom.
         atom: InstanceAtomId,
         /// The field.
-        field: PdbAtomField,
+        field: AtomField,
     },
     /// A molecule instance carries represented stereo, with
     /// [`PdbWriteOptions::chemistry`] set to fail.
@@ -390,7 +332,7 @@ pub enum PdbWriteErrorKind {
     /// [`PdbWriteOptions::cell`] set to fail.
     UnrepresentableCell {
         /// Why the cell cannot be written.
-        reason: PdbCellReason,
+        reason: CellReason,
     },
     /// The bonds between two named heavy atoms of a residue the bundled
     /// [`ComponentLibrary`] covers differ from its template, which a reader
@@ -665,8 +607,11 @@ pub(crate) fn write_pdb_to<'a>(
     let source = source.into();
     let (views, models) = match source.content {
         Content::Structure(view) => {
-            check_geometry_state(Format::Pdb, view, options.state_policies())?;
-            omissions.record_geometry_state(view, options.state_policies());
+            omissions.extend(check_geometry_state(
+                Format::Pdb,
+                view,
+                options.state_policies(),
+            )?);
             (vec![view], false)
         }
         Content::StructureSet(set) => {
@@ -739,15 +684,15 @@ pub(crate) fn write_pdb_to<'a>(
 fn entry_cell<'a>(
     cells: impl IntoIterator<Item = Option<&'a PeriodicCell>>,
     policy: UnrepresentablePolicy,
-) -> Result<Option<CellParameters>, FormatError> {
+) -> Result<Option<[f64; 6]>, FormatError> {
     let mut cells = cells.into_iter();
     let first = cells.next().flatten();
     let parameters = if cells.any(|cell| cell != first) {
-        Err(PdbCellReason::GeometryCellsDiffer)
+        Err(CellReason::GeometryCellsDiffer)
     } else {
-        match first.map(cell_parameters).transpose() {
+        match first.map(|cell| cell_values(*cell)).transpose() {
             Ok(Some(parameters)) if is_written_placeholder(parameters) => {
-                Err(PdbCellReason::Placeholder)
+                Err(CellReason::Placeholder)
             }
             Ok(Some(parameters))
                 if parameters[..3]
@@ -757,13 +702,11 @@ fn entry_cell<'a>(
                         .iter()
                         .any(|&angle| rounded(angle, 2) > 9_999.99) =>
             {
-                Err(PdbCellReason::ParametersOutOfRange)
+                Err(CellReason::ParametersOutOfRange)
             }
             Ok(parameters) => return Ok(parameters),
-            Err(CellParameterError::PartiallyPeriodic) => Err(PdbCellReason::PartiallyPeriodic),
-            Err(CellParameterError::NonstandardOrientation) => {
-                Err(PdbCellReason::NonstandardOrientation)
-            }
+            Err(PeriodicCellError::PartiallyPeriodic) => Err(CellReason::PartiallyPeriodic),
+            Err(_) => Err(CellReason::NonstandardOrientation),
         }
     };
     match (parameters, policy) {
@@ -780,7 +723,7 @@ fn rounded(value: f64, places: i32) -> f64 {
     (value * scale).round() / scale
 }
 
-fn is_written_placeholder(parameters: CellParameters) -> bool {
+fn is_written_placeholder(parameters: [f64; 6]) -> bool {
     parameters[..3]
         .iter()
         .all(|&length| rounded(length, 3) == 1.0)
@@ -946,10 +889,10 @@ impl Plan {
             let fields = [
                 (
                     structure_element_symbol(atom.element, isotope).is_none(),
-                    PdbAtomField::Isotope,
+                    AtomField::Isotope,
                 ),
-                (atom.radical.is_some(), PdbAtomField::Radical),
-                (atom.atom_map.is_some(), PdbAtomField::AtomMap),
+                (atom.radical.is_some(), AtomField::Radical),
+                (atom.atom_map.is_some(), AtomField::AtomMap),
             ];
             for (present, field) in fields {
                 if !present {
@@ -962,8 +905,8 @@ impl Plan {
                     }));
                 }
                 match field {
-                    PdbAtomField::Isotope => isotopes += 1,
-                    PdbAtomField::Radical => radicals += 1,
+                    AtomField::Isotope => isotopes += 1,
+                    AtomField::Radical => radicals += 1,
                     _ => atom_maps += 1,
                 }
             }
@@ -971,7 +914,7 @@ impl Plan {
                 if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
                     return Err(fail(PdbWriteErrorKind::UnsupportedAtomField {
                         atom: atom_id,
-                        field: PdbAtomField::Hydrogens,
+                        field: AtomField::Hydrogens,
                     }));
                 }
                 omitted_hydrogens += 1;

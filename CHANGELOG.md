@@ -115,12 +115,16 @@ through the workspace.
 - `traj::io::append_trajectory` continues a trajectory after a restart, keeping
   the frames `KeepFrames` selects (`TrajectoryAppendReport`), for XTC, TRR,
   DCD, and XYZ.
-- Trajectory writers' `frame_metadata` and `frame_properties` policies omit and
-  report state a format cannot carry (`DcdWriter::report`, `TrrWriter::report`,
-  `XtcWriter::report`, `TrajectoryWriteOptions::with_frame_metadata`).
-- `FrameTimingPolicy::Number { interval }` numbers XTC and TRR frames without
-  time or step (`with_frame_timing`); `DcdFrameTimingPolicy::Number` puts DCD
-  frames on the header's step sequence.
+- Trajectory writers' `geometry_metadata`, `properties`, and `cell` policies
+  omit and report state a format cannot carry (`DcdWriter::report`,
+  `TrrWriter::report`, `XtcWriter::report`,
+  `TrajectoryWriteOptions::with_geometry_metadata`), through the one check
+  every writer shares.
+- `FrameTimingPolicy::Number` numbers XTC and TRR frames without time or step,
+  `frame_interval` apart (`with_frame_timing`, `with_frame_interval`), and puts
+  DCD frames on the header's step sequence.
+- `math::PeriodicCell::from_parameters` and `to_parameters` convert a cell to
+  and from `CellParameters`, its lengths and angles.
 - `create_trajectory_stream_writer` writes into any `Write + Seek` stream, and
   `TrajectoryStreamWriter::finish` finalizes and returns it.
 - `kekule::parallel` (`Executor`, `ScopedThreads`, `Run`, `Progress`) runs
@@ -232,8 +236,14 @@ through the workspace.
   `sdf::WEIGHT_FIELD` and `ENERGY_FIELD` are gone.
 - **Breaking:** `MmcifWriteErrorKind`'s `*EnsembleMember` and `EmptyEnsemble` are
   `IncompatibleGeometry`, `UnrepresentableGeometry`, and `EmptyStructureSet`;
-  `MmcifMemberField` is `MmcifGeometryField`, without `Weight` and `Energy`.
-- **Breaking:** `MmcifCellReason::MemberCellsDiffer` is `GeometryCellsDiffer`.
+  `MmcifMemberField` is `MmcifSharedCategory`, the `category` of
+  `IncompatibleGeometry`, without `Weight` and `Energy`.
+- **Breaking:** `MmcifAtomField` and `MmcifCellReason` are
+  `diagnostics::AtomField` and `CellReason`, which the PDB writer shares;
+  `MemberCellsDiffer` is `GeometryCellsDiffer`.
+- **Breaking:** `SdfWriteOptions` holds the `MolfileWriteOptions` of its
+  records (`molfile`, `with_molfile`, `From`) in place of its own `version`
+  and `cell` settings.
 - **Breaking:** `mmcif::write`, `molfile::write`, and `sdf::write` return
   `(String, WriteReport)`, and their `write_to` returns the `WriteReport` of
   omissions `UnrepresentablePolicy::Omit` made. Migration: take `.0`.
@@ -250,8 +260,14 @@ through the workspace.
   `StructureSet` (`into_structure_set`), and it and `read_structure_set` refuse
   a frame whose time or step columns differ from the first frame's.
 - **Breaking:** XYZ, DCD, TRR, and XTC writers refuse a frame's occupancies and
-  B factors (`TrajectoryField::Occupancies`, `BFactors`) unless
-  `frame_metadata` omits them.
+  B factors (`GeometryField::Occupancies`, `BFactors`) unless
+  `geometry_metadata` omits them.
+- **Breaking:** `traj::TrajectoryField` merges into `diagnostics::GeometryField`,
+  which gains `Cell`; `TrajectoryIoError::field` returns it.
+- **Breaking:** `DcdWriteOptions::with_cell_policy(DcdCellPolicy)` is
+  `with_unit_cells(bool)`. Without unit cells, a frame's cell follows the new
+  `cell` policy: it fails as `UnsupportedField` by default, and `Omit` omits
+  and reports it.
 - **Breaking:** `TrajectoryWriter::flush` replaces the codec writers' own
   `flush`; `TrrWriteOptions` is no longer `Eq`.
 - **Breaking:** Frame-index fingerprints compare content, not modification

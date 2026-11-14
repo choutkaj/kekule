@@ -724,8 +724,10 @@ fn write(format: &str, text: &str, options: &Value) -> Result<Facts, Failure> {
                 let record = sdf::SdfRecordInterpretation::new("", structure, vec![]);
                 sdf::write(
                     &[record],
-                    sdf::SdfWriteOptions::default()
-                        .with_version(molfile::MolfileWriteVersion::V2000),
+                    sdf::SdfWriteOptions::from(
+                        molfile::MolfileWriteOptions::default()
+                            .with_version(molfile::MolfileWriteVersion::V2000),
+                    ),
                 )
                 .map_err(|e| Failure::new("write", e))?
                 .0

@@ -5,8 +5,8 @@ use crate::molecule::Molecule;
 use crate::structure::{AsStructureView, Structure, StructureView};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError};
-use crate::io::write_policy::{check_geometry_state, Omissions, StatePolicies, MOLFILE_WRITE};
-use crate::io::{MolfileVersion, UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::io::write_policy::{check_geometry_state, Carries, StatePolicies, MOLFILE_WRITE};
+use crate::io::{MolfileVersion, UnrepresentablePolicy, WriteReport};
 
 mod record;
 mod v2000;
@@ -53,10 +53,8 @@ impl MolfileWriteOptions {
         self
     }
 
-    /// A structure's periodic cell, which a Molfile cannot carry: by default a
-    /// structure with a cell fails to write, and under
-    /// [`UnrepresentablePolicy::Omit`] the report names it
-    /// ([`WriteOmission::Cell`]).
+    /// A structure's periodic cell, which a Molfile cannot carry; by default a
+    /// structure with a cell fails to write.
     pub const fn cell(&self) -> UnrepresentablePolicy {
         self.cell
     }
@@ -70,11 +68,8 @@ impl MolfileWriteOptions {
 
     /// The state that a Molfile cannot carry: a geometry's place in its set's
     /// order (a frame's time and MD step among them), and the velocities,
-    /// forces, occupancies, and B factors of a geometry or structure. By default writing a
-    /// structure with any of them fails, and under
-    /// [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::GeometryState`], [`WriteOmission::Occupancies`],
-    /// [`WriteOmission::BFactors`]).
+    /// forces, occupancies, and B factors of a geometry or structure. By
+    /// default writing a structure with any of them fails.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
         self.geometry_metadata
     }
@@ -90,10 +85,8 @@ impl MolfileWriteOptions {
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a geometry's set, which a Molfile cannot carry: by
-    /// default a structure with any fails to write, and under
-    /// [`UnrepresentablePolicy::Omit`] the report names each
-    /// ([`WriteOmission::GeometryState`]).
+    /// properties of a geometry's set, which a Molfile cannot carry; by
+    /// default a structure with any fails to write.
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -103,6 +96,16 @@ impl MolfileWriteOptions {
     pub const fn with_properties(mut self, properties: UnrepresentablePolicy) -> Self {
         self.properties = properties;
         self
+    }
+
+    /// The policies of a record whose format carries `carries`.
+    pub(in crate::io) const fn state_policies(&self, carries: Carries) -> StatePolicies {
+        StatePolicies {
+            carries,
+            geometry_metadata: self.geometry_metadata,
+            properties: self.properties,
+            cell: self.cell,
+        }
     }
 }
 
@@ -195,20 +198,16 @@ pub(crate) fn write_molfile<'a>(
                 source.title,
                 options.version,
             )?;
-            Ok((text, WriteReport::default()))
+            Ok((text, WriteReport::empty()))
         }
         MolfileContent::Structure(structure) => {
-            let policies =
-                StatePolicies::positions_only(options.geometry_metadata, options.properties);
-            check_cell(structure, options.cell)?;
-            check_geometry_state(Format::Molfile, structure, policies)?;
+            let omitted = check_geometry_state(
+                Format::Molfile,
+                structure,
+                options.state_policies(Carries::POSITIONS),
+            )?;
             let text = render_structure(structure, source.title, options.version)?;
-            let mut omissions = Omissions::default();
-            if structure.cell().is_some() {
-                omissions.record(WriteOmission::Cell { structures: 1 });
-            }
-            omissions.record_geometry_state(structure, policies);
-            Ok((text, omissions.into_report()))
+            Ok((text, omitted.into_iter().collect()))
         }
     }
 }
@@ -238,18 +237,6 @@ fn render_molecule(
             rendered => rendered,
         },
     }
-}
-
-/// Fails for a structure with a periodic cell, which no CTAB can carry, unless
-/// the caller chose to omit it.
-pub(in crate::io) fn check_cell(
-    structure: StructureView<'_>,
-    policy: UnrepresentablePolicy,
-) -> Result<(), FormatError> {
-    if structure.cell().is_some() && policy == UnrepresentablePolicy::Fail {
-        return Err(MOLFILE_WRITE.unsupported("A Molfile cannot hold a periodic cell."));
-    }
-    Ok(())
 }
 
 /// Renders one structure CTAB with an SDF or Molfile title.

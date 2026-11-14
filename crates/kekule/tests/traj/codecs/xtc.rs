@@ -1,6 +1,7 @@
 use std::io::Cursor;
 use std::sync::Arc;
 
+use kekule::diagnostics::GeometryField;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
@@ -10,8 +11,8 @@ use kekule::traj::io::xtc::{
 };
 use kekule::traj::io::TrajectoryIoLimits;
 use kekule::traj::{
-    FrameBuffer, SeekableTrajectoryReader, TrajectoryField, TrajectoryFormat,
-    TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
+    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PER_NANOMETER, PICOSECOND};
 use sha2::{Digest, Sha256};
@@ -933,9 +934,9 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot store the frame properties.",
+            "XTC cannot store the geometry properties.",
         )
-        .with_field(TrajectoryField::Properties))
+        .with_field(GeometryField::Properties))
     );
     frame.geometry_mut().properties_mut().owner_mut().clear();
     frame
@@ -958,9 +959,9 @@ fn xtc_writer_rejects_unrepresentable_or_unpreserved_state() {
             TrajectoryFormat::Xtc,
             "strict.xtc",
             Some(0),
-            "XTC cannot store the bond properties.",
+            "XTC cannot store the per-bond geometry properties.",
         )
-        .with_field(TrajectoryField::BondProperties))
+        .with_field(GeometryField::BondProperties))
     );
 }
 

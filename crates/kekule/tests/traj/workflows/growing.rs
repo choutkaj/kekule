@@ -15,7 +15,7 @@ use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::Topology;
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdWriteOptions};
+use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
@@ -118,8 +118,8 @@ fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
     TrajectoryWriteOptions::new(format)
         .with_dcd_options(
             DcdWriteOptions::default()
-                .with_cell_policy(DcdCellPolicy::Write)
-                .with_frame_metadata(UnrepresentablePolicy::Omit),
+                .with_unit_cells(true)
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
         .with_trr_options(
             TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
@@ -127,7 +127,7 @@ fn options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
         .with_xyz_options(
             XyzWriteOptions::default()
                 .with_cell(UnrepresentablePolicy::Omit)
-                .with_frame_metadata(UnrepresentablePolicy::Omit),
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
 }
 

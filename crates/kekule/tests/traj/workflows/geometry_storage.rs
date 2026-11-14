@@ -19,7 +19,7 @@ use kekule::structure::{
     StructureSetRead, StructureSetReadError,
 };
 use kekule::topology::{AtomSelection, Topology};
-use kekule::traj::io::dcd::{DcdCellPolicy, DcdEndian, DcdWriteOptions};
+use kekule::traj::io::dcd::{DcdEndian, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
 use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
@@ -826,14 +826,14 @@ fn growing_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
     TrajectoryWriteOptions::new(format)
         .with_dcd_options(
             DcdWriteOptions::default()
-                .with_cell_policy(DcdCellPolicy::Write)
+                .with_unit_cells(true)
                 .with_step_sequence(0, 10)
-                .with_frame_metadata(UnrepresentablePolicy::Omit),
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
         .with_xyz_options(
             XyzWriteOptions::default()
                 .with_cell(UnrepresentablePolicy::Omit)
-                .with_frame_metadata(UnrepresentablePolicy::Omit),
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
         )
 }
 

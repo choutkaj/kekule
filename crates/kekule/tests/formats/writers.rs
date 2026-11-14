@@ -718,7 +718,7 @@ fn write_structure(
         .map(|(text, _)| text),
         sdf::write(
             [sdf::SdfRecordSource::structure(&view)],
-            SdfWriteOptions::default().with_geometry_metadata(policy),
+            SdfWriteOptions::from(MolfileWriteOptions::default().with_geometry_metadata(policy)),
         )
         .map(|(text, _)| text),
         mmcif::write(
@@ -1022,7 +1022,7 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let boxed = boxed_structure([true; 3]);
     let mut open = boxed.clone();
     open.geometry_mut().set_cell(None);
-    let message = "A Molfile cannot hold a periodic cell.";
+    let message = "The periodic cell of the structure has no Molfile representation.";
     for version in [
         MolfileWriteVersion::Auto,
         MolfileWriteVersion::V2000,
@@ -1043,9 +1043,12 @@ fn molfile_and_sdf_fail_on_a_periodic_cell_unless_told_to_omit_it() {
     let error = sdf::write([&boxed], SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        format!("Cannot write the SDF output in record 1. {message}")
+        "Cannot write the SDF output in record 1. \
+         The periodic cell of the structure has no SDF representation."
     );
-    let omitted = SdfWriteOptions::default().with_cell(UnrepresentablePolicy::Omit);
+    let omitted = SdfWriteOptions::from(
+        MolfileWriteOptions::default().with_cell(UnrepresentablePolicy::Omit),
+    );
     assert_eq!(
         sdf::write([&boxed], omitted).unwrap().0,
         sdf::write([&open], SdfWriteOptions::default()).unwrap().0
@@ -2106,7 +2109,7 @@ fn view_outcomes(
         )),
         written(sdf::write(
             [sdf::SdfRecordSource::structure(&view)],
-            SdfWriteOptions::default().with_geometry_metadata(policy),
+            SdfWriteOptions::from(MolfileWriteOptions::default().with_geometry_metadata(policy)),
         )),
         written(mmcif::write(
             [mmcif::MmcifBlockSource::structure(&view)],
@@ -2300,7 +2303,8 @@ fn structure_sets_write_their_order_or_fail_on_it() {
             .with_implicit_hydrogens(UnrepresentablePolicy::Omit)
             .with_geometry_metadata(policy);
         let mmcif_options = MmcifWriteOptions::default().with_geometry_metadata(policy);
-        let sdf_options = SdfWriteOptions::default().with_geometry_metadata(policy);
+        let sdf_options =
+            SdfWriteOptions::from(MolfileWriteOptions::default().with_geometry_metadata(policy));
 
         // An unordered set writes a model, a block's model number, or a
         // record per geometry, with nothing to omit.
@@ -2658,7 +2662,7 @@ fn mmcif_geometries_share_the_first_geometry_s_entities() {
         Some(&FormatErrorDetail::MmcifWrite(
             MmcifWriteErrorKind::IncompatibleGeometry {
                 geometry: 2,
-                field: kekule::mmcif::MmcifGeometryField::Entities,
+                category: kekule::mmcif::MmcifSharedCategory::Entities,
             }
         ))
     );
@@ -2683,7 +2687,7 @@ fn atom_field_messages_agree_with_their_subjects() {
     };
     assert_eq!(
         message("[CH4]", true),
-        "Cannot write the mmCIF output. The implicit hydrogens of atom 0 of instance 0 have no mmCIF representation."
+        "Cannot write the mmCIF output. The fixed implicit hydrogen count of atom 0 of instance 0 has no mmCIF representation."
     );
     assert_eq!(
         message("[CH3]", true),
@@ -2718,7 +2722,7 @@ fn molfile_and_sdf_report_what_they_leave_out() {
 
     // The cells of the records written without them.
     let boxed = boxed_structure([true; 3]);
-    let open = SdfWriteOptions::default().with_cell(omit);
+    let open = SdfWriteOptions::from(MolfileWriteOptions::default().with_cell(omit));
     let (_, report) = sdf::write([&boxed, &plain, &boxed], open).unwrap();
     assert_eq!(report.omissions(), [WriteOmission::Cell { structures: 2 }]);
     let mut stream = Vec::new();
@@ -2739,7 +2743,8 @@ fn molfile_and_sdf_report_what_they_leave_out() {
     // The times, steps, velocities, and forces of frames.
     let frames = StatefulFrames::new();
     let frames = frames.views();
-    let metadata = SdfWriteOptions::default().with_geometry_metadata(omit);
+    let metadata =
+        SdfWriteOptions::from(MolfileWriteOptions::default().with_geometry_metadata(omit));
     let (_, report) = sdf::write(frames.clone(), metadata).unwrap();
     assert_eq!(
         report.omissions(),
@@ -2892,13 +2897,13 @@ fn molfile_and_sdf_refuse_or_report_sites_and_properties() {
         };
         let (sdf_omit, sdf_other) = if properties {
             (
-                SdfWriteOptions::default().with_properties(omit),
-                SdfWriteOptions::default().with_geometry_metadata(omit),
+                SdfWriteOptions::from(MolfileWriteOptions::default().with_properties(omit)),
+                SdfWriteOptions::from(MolfileWriteOptions::default().with_geometry_metadata(omit)),
             )
         } else {
             (
-                SdfWriteOptions::default().with_geometry_metadata(omit),
-                SdfWriteOptions::default().with_properties(omit),
+                SdfWriteOptions::from(MolfileWriteOptions::default().with_geometry_metadata(omit)),
+                SdfWriteOptions::from(MolfileWriteOptions::default().with_properties(omit)),
             )
         };
         let verb = "have";
@@ -2973,8 +2978,11 @@ fn sdf_and_molfile_refuse_or_report_set_properties() {
             GeometryField::SetProperties
         ))
     );
-    let (text, report) =
-        sdf::write(&set, SdfWriteOptions::default().with_properties(omit)).unwrap();
+    let (text, report) = sdf::write(
+        &set,
+        SdfWriteOptions::from(MolfileWriteOptions::default().with_properties(omit)),
+    )
+    .unwrap();
     assert_eq!(text, bare);
     assert_eq!(report.omissions(), [state(GeometryField::SetProperties, 2)]);
     assert_eq!(

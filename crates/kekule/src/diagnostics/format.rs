@@ -283,6 +283,8 @@ pub enum FormatErrorDetail {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GeometryField {
+    /// A geometry's or frame's periodic cell.
+    Cell,
     /// A structure set's time order without times or steps.
     Order,
     /// A geometry's or frame's time in a time order.
@@ -314,6 +316,7 @@ pub enum GeometryField {
 impl fmt::Display for GeometryField {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Cell => "periodic cell",
             Self::Order => "geometry order",
             Self::Time => "time",
             Self::Step => "MD step",
@@ -327,6 +330,88 @@ impl fmt::Display for GeometryField {
             Self::BFactors => "B factors",
             Self::OrderStep => "order step",
             Self::OrderCoordinate => "order coordinate",
+        })
+    }
+}
+
+/// Atom state named by a PDB or mmCIF writer error.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AtomField {
+    /// The atom's isotope; PDB writes deuterium (`D`) and tritium (`T`)
+    /// alone.
+    Isotope,
+    /// The atom's radical electrons.
+    Radical,
+    /// The atom's fixed implicit hydrogen count; readers infer implicit
+    /// hydrogens from valence.
+    Hydrogens,
+    /// The atom's atom-map number.
+    AtomMap,
+    /// mmCIF `_atom_site.label_asym_id`.
+    LabelAsymId,
+    /// The source `asym_id` recorded in mmCIF provenance.
+    SourceAsymId,
+    /// mmCIF `_atom_site.type_symbol`.
+    TypeSymbol,
+}
+
+impl AtomField {
+    /// The verb for the field as the subject: "have" for a plural field,
+    /// "has" otherwise.
+    pub(crate) const fn verb(self) -> &'static str {
+        match self {
+            Self::Radical => "have",
+            _ => "has",
+        }
+    }
+}
+
+impl fmt::Display for AtomField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Isotope => "isotope",
+            Self::Radical => "radical electrons",
+            Self::Hydrogens => "fixed implicit hydrogen count",
+            Self::AtomMap => "atom-map number",
+            Self::LabelAsymId => "label_asym_id",
+            Self::SourceAsymId => "source asym_id",
+            Self::TypeSymbol => "type_symbol",
+        })
+    }
+}
+
+/// Why a PDB or mmCIF writer cannot write a periodic cell as the structure's
+/// cell.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CellReason {
+    /// The geometries have different cells; an entry or block has one cell.
+    GeometryCellsDiffer,
+    /// The cell is not periodic along all three axes.
+    PartiallyPeriodic,
+    /// The cell does not have `a` along x and `b` in the xy plane, as the
+    /// coordinates assume.
+    NonstandardOrientation,
+    /// The written parameters are PDB's 1 Å placeholder cube, which readers
+    /// take to mean no crystal lattice.
+    Placeholder,
+    /// A length or angle does not fit its PDB `CRYST1` columns.
+    ParametersOutOfRange,
+}
+
+/// Writes the reason as a sentence, such as `The cell is not periodic along
+/// all three axes.`
+impl fmt::Display for CellReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::GeometryCellsDiffer => "The geometries have different cells.",
+            Self::PartiallyPeriodic => "The cell is not periodic along all three axes.",
+            Self::NonstandardOrientation => {
+                "Cell vector a is not along x, or b is not in the xy plane."
+            }
+            Self::Placeholder => "The cell is PDB's 1 Å placeholder cube.",
+            Self::ParametersOutOfRange => "A cell parameter does not fit its CRYST1 columns.",
         })
     }
 }

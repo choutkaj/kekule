@@ -2,7 +2,8 @@
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
-use super::{fail, invalid_structure, MmcifAtomField, MmcifGeometryField, MmcifWriteErrorKind};
+use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind};
+use crate::diagnostics::AtomField;
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::UnrepresentablePolicy;
@@ -223,20 +224,20 @@ fn validate_graph_chemistry(
         {
             return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                 atom: atom_id,
-                field: MmcifAtomField::Isotope,
+                field: AtomField::Isotope,
             }));
         }
         if atom.radical.is_some() {
             return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                 atom: atom_id,
-                field: MmcifAtomField::Radical,
+                field: AtomField::Radical,
             }));
         }
         if atom.hydrogens != ImplicitHydrogens::default() {
             if implicit_hydrogens == UnrepresentablePolicy::Fail {
                 return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                     atom: atom_id,
-                    field: MmcifAtomField::Hydrogens,
+                    field: AtomField::Hydrogens,
                 }));
             }
             omitted_hydrogens += 1;
@@ -244,7 +245,7 @@ fn validate_graph_chemistry(
         if atom.atom_map.is_some() {
             return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                 atom: atom_id,
-                field: MmcifAtomField::AtomMap,
+                field: AtomField::AtomMap,
             }));
         }
         if !(-8..=8).contains(&atom.formal_charge) {
@@ -288,7 +289,7 @@ fn collect_macro_rows(
         {
             return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                 atom: qualified,
-                field: MmcifAtomField::LabelAsymId,
+                field: AtomField::LabelAsymId,
             }));
         }
         if site
@@ -299,7 +300,7 @@ fn collect_macro_rows(
         {
             return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                 atom: qualified,
-                field: MmcifAtomField::TypeSymbol,
+                field: AtomField::TypeSymbol,
             }));
         }
         let group_pdb = assignment.kind.default_group_pdb().to_owned();
@@ -608,13 +609,13 @@ pub(super) fn validate_geometry(
     if candidate.entities != model.entities {
         return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
-            field: MmcifGeometryField::Entities,
+            category: MmcifSharedCategory::Entities,
         }));
     }
     if candidate.asyms != model.asyms {
         return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
-            field: MmcifGeometryField::StructuralAsymmetry,
+            category: MmcifSharedCategory::StructuralAsymmetry,
         }));
     }
     let bonds = |model: &PreparedModel| {
@@ -627,7 +628,7 @@ pub(super) fn validate_geometry(
     if bonds(candidate) != bonds(model) {
         return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
-            field: MmcifGeometryField::Connectivity,
+            category: MmcifSharedCategory::Connectivity,
         }));
     }
     if candidate.atoms.len() != model.atoms.len()
@@ -639,7 +640,7 @@ pub(super) fn validate_geometry(
     {
         return Err(fail(MmcifWriteErrorKind::IncompatibleGeometry {
             geometry,
-            field: MmcifGeometryField::AtomSites,
+            category: MmcifSharedCategory::AtomSites,
         }));
     }
     Ok(())
