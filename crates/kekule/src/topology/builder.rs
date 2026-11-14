@@ -59,7 +59,7 @@ pub struct TopologyBuilder {
     // The class each definition keeps unless new evidence arrives, by ID.
     preserved_molecule_classes: Vec<Option<MoleculeClass>>,
     preserved_residue_classes: BTreeMap<ResidueId, ResidueClass>,
-    source_hierarchy: Option<Hierarchy>,
+    source_hierarchy: Option<HierarchyBuilder>,
     source_instance_count: usize,
     extending_topology: bool,
 }
@@ -255,8 +255,7 @@ impl TopologyBuilder {
         // Perceived snapshots may still share static state.
         let atoms = Arc::unwrap_or_clone(atoms);
         let bonds = Arc::unwrap_or_clone(bonds);
-        let mut hierarchy = Arc::unwrap_or_clone(hierarchy);
-        hierarchy.index_atoms();
+        let hierarchy = HierarchyBuilder::from_published(Arc::unwrap_or_clone(hierarchy));
         let properties = Arc::unwrap_or_clone(properties);
         // Explicit classes stay explicit; clearing one returns it to inference
         // rather than to its retained value.
@@ -264,10 +263,11 @@ impl TopologyBuilder {
             .iter()
             .map(|d| (!molecule_class_overrides.contains_key(&d.id())).then(|| d.class()))
             .collect();
-        let preserved_residue_classes = hierarchy
-            .residues()
-            .filter(|(_, r)| r.explicit_class().is_none())
-            .map(|(id, r)| (id, r.class()))
+        let published = hierarchy.storage();
+        let preserved_residue_classes = published
+            .residue_ids()
+            .filter(|&id| published.explicit_residue_class(id).is_none())
+            .map(|id| (id, published.residue_class(id)))
             .collect();
         let source_hierarchy = Some(hierarchy.clone());
         let source_instance_count = instances.len();
@@ -276,7 +276,7 @@ impl TopologyBuilder {
             instances,
             atoms,
             bonds,
-            hierarchy: HierarchyBuilder::from_storage(hierarchy),
+            hierarchy,
             properties,
             molecule_class_overrides,
             preserved_molecule_classes,
@@ -414,8 +414,7 @@ impl TopologyBuilder {
     ) -> Result<(), TopologyBuildError> {
         if explicit {
             self.hierarchy
-                .storage_mut()
-                .set_explicit_residue_class(residue, Some(class))
+                .set_residue_class(residue, class)
                 .map_err(|_| TopologyBuildError::InvalidResidueId(residue))?;
         } else {
             self.hierarchy
@@ -558,13 +557,13 @@ impl TopologyBuilder {
 
         let hierarchy = if classify {
             self.invalidate_changed_hierarchy_classes();
-            let mut hierarchy = self.hierarchy.into_storage();
-            self.preserved_residue_classes.extend(
-                hierarchy
-                    .residues()
-                    .filter_map(|(id, residue)| residue.explicit_class().map(|class| (id, class))),
-            );
-            let lookup = hierarchy.take_atom_lookup();
+            let (mut hierarchy, lookup) = self.hierarchy.into_parts();
+            self.preserved_residue_classes
+                .extend(hierarchy.residue_ids().filter_map(|id| {
+                    hierarchy
+                        .explicit_residue_class(id)
+                        .map(|class| (id, class))
+                }));
             super::classification::finalize(
                 &mut self.definitions,
                 &mut hierarchy,
@@ -584,18 +583,16 @@ impl TopologyBuilder {
             );
             hierarchy
         } else {
-            self.hierarchy.into_storage()
+            self.hierarchy.into_parts().0
         };
-        let mut hierarchy = hierarchy;
-        hierarchy.freeze();
 
         let dimensions = [
             self.instances.len(),
             atom_count,
             bond_count,
-            hierarchy.chains().len(),
-            hierarchy.residues().len(),
-            hierarchy.atom_sites().len(),
+            hierarchy.chain_count(),
+            hierarchy.residue_count(),
+            hierarchy.atom_site_count(),
         ];
         self.properties.resize_domains(dimensions);
         self.properties
@@ -657,7 +654,7 @@ impl TopologyBuilder {
             self.instances.len(),
             self.atoms.len(),
             self.bonds.len(),
-            hierarchy.chains().len(),
+            hierarchy.chain_count(),
             hierarchy.residue_count(),
             hierarchy.atom_site_count(),
         ];
@@ -736,34 +733,32 @@ impl TopologyBuilder {
     }
 
     fn invalidate_changed_hierarchy_classes(&mut self) {
-        let Some(source) = &self.source_hierarchy else {
+        let Some(source_builder) = &self.source_hierarchy else {
             return;
         };
-        let staged = self.hierarchy.storage();
+        let (source, staged) = (source_builder.storage(), self.hierarchy.storage());
         let unchanged_residues = source
-            .residues()
-            .filter_map(|(id, before)| {
-                let after = staged.residue(id)?;
+            .residue_ids()
+            .filter(|&id| {
+                if !staged.has_residue(id) {
+                    return false;
+                }
+                let (before, after) = (source.residue_labels(id), staged.residue_labels(id));
                 let same_component = before.name() == after.name()
                     && before.label_comp_id() == after.label_comp_id()
                     && before.author_comp_id() == after.author_comp_id();
-                let atoms = |hierarchy: &Hierarchy, residue: super::Residue<'_>| {
-                    residue
-                        .atom_sites()
+                let atoms = |hierarchy: &Hierarchy| {
+                    hierarchy
+                        .residue_sites(id)
                         .iter()
-                        .map(|&id| {
-                            hierarchy
-                                .atom_site(id)
-                                .expect("validated residue site")
-                                .atom()
-                        })
+                        .map(|&site| hierarchy.site_atom(site))
                         .collect::<std::collections::BTreeSet<_>>()
                 };
-                let same_atoms = atoms(source, before) == atoms(staged, after);
-                let same_class = after
-                    .explicit_class()
-                    .is_none_or(|class| class == before.class());
-                (same_component && same_atoms && same_class).then_some(id)
+                let same_atoms = atoms(source) == atoms(staged);
+                let same_class = staged
+                    .explicit_residue_class(id)
+                    .is_none_or(|class| class == source.residue_class(id));
+                same_component && same_atoms && same_class
             })
             .collect::<std::collections::BTreeSet<_>>();
         self.preserved_residue_classes
@@ -773,15 +768,19 @@ impl TopologyBuilder {
             let unchanged = definition.molecule().atom_ids().all(|atom| {
                 let atom = instance.qualify_atom(atom);
                 match (
-                    source.atom_site_for_atom(atom),
-                    staged.atom_site_for_atom(atom),
+                    source_builder.atom_site_for_atom(atom),
+                    self.hierarchy.atom_site_for_atom(atom),
                 ) {
                     (None, None) => true,
                     (Some(before), Some(after)) => {
-                        before.residue() == after.residue()
-                            && unchanged_residues.contains(&before.residue())
-                            && before.metadata().label_atom_id == after.metadata().label_atom_id
-                            && before.metadata().auth_atom_id == after.metadata().auth_atom_id
+                        let residue = source.site_residue(before);
+                        let same_residue = residue == staged.site_residue(after);
+                        let (before, after) =
+                            (source.site_metadata(before), staged.site_metadata(after));
+                        same_residue
+                            && unchanged_residues.contains(&residue)
+                            && before.label_atom_id == after.label_atom_id
+                            && before.auth_atom_id == after.auth_atom_id
                     }
                     _ => false,
                 }
@@ -898,18 +897,6 @@ pub(super) fn checked_future_len(
 /// from the public API; publication checks the rest in debug builds.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TopologyHierarchyError {
-    InvalidChainIdentifier {
-        slot: usize,
-        id: ChainId,
-    },
-    InvalidResidueIdentifier {
-        slot: usize,
-        id: ResidueId,
-    },
-    InvalidAtomSiteIdentifier {
-        slot: usize,
-        id: AtomSiteId,
-    },
     InvalidChainResidue {
         chain: ChainId,
         residue: ResidueId,
@@ -947,18 +934,6 @@ pub(crate) enum TopologyHierarchyError {
 impl fmt::Display for TopologyHierarchyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidChainIdentifier { slot, id } => write!(
-                formatter,
-                "hierarchy chain slot {slot} stores non-matching identifier {id}"
-            ),
-            Self::InvalidResidueIdentifier { slot, id } => write!(
-                formatter,
-                "hierarchy residue slot {slot} stores non-matching identifier {id}"
-            ),
-            Self::InvalidAtomSiteIdentifier { slot, id } => write!(
-                formatter,
-                "hierarchy atom-site slot {slot} stores non-matching identifier {id}"
-            ),
             Self::InvalidChainResidue { chain, residue } => {
                 write!(formatter, "hierarchy {chain} references missing {residue}")
             }
@@ -1007,22 +982,22 @@ pub(crate) fn validate_hierarchy(
 ) -> Result<(), TopologyHierarchyError> {
     // Each child list is counted once into scratch space and reset afterwards,
     // so validation stays linear even for chains with very many residues.
-    let mut residue_counts = vec![0isize; hierarchy.residues().count()];
+    let mut residue_counts = vec![0isize; hierarchy.residue_count()];
     let mut listed_residues = vec![false; residue_counts.len()];
-    for (slot, (chain_id, chain)) in hierarchy.chains().enumerate() {
-        if chain_id.index() != slot {
-            return Err(TopologyHierarchyError::InvalidChainIdentifier { slot, id: chain_id });
-        }
-        let residue_ids = || chain.residues().iter().map(|id| id.index());
+    for chain_id in hierarchy.chain_ids() {
+        let residues = hierarchy.chain_residues(chain_id);
+        let residue_ids = || residues.iter().map(|id| id.index());
         tally(&mut residue_counts, residue_ids(), 1);
-        for residue_id in chain.residues() {
-            let residue = hierarchy.require_residue(*residue_id).map_err(|_| {
+        for residue_id in residues {
+            hierarchy.require_residue(*residue_id).map_err(|_| {
                 TopologyHierarchyError::InvalidChainResidue {
                     chain: chain_id,
                     residue: *residue_id,
                 }
             })?;
-            if residue.chain() != chain_id || residue_counts[residue_id.index()] != 1 {
+            if hierarchy.residue_chain(*residue_id) != chain_id
+                || residue_counts[residue_id.index()] != 1
+            {
                 return Err(TopologyHierarchyError::InconsistentChainResidue {
                     chain: chain_id,
                     residue: *residue_id,
@@ -1032,39 +1007,35 @@ pub(crate) fn validate_hierarchy(
         }
         tally(&mut residue_counts, residue_ids(), -1);
     }
-    let mut site_counts = vec![0isize; hierarchy.atom_sites().count()];
+    let mut site_counts = vec![0isize; hierarchy.atom_site_count()];
     let mut listed_sites = vec![false; site_counts.len()];
-    for (slot, (residue_id, residue)) in hierarchy.residues().enumerate() {
-        if residue_id.index() != slot {
-            return Err(TopologyHierarchyError::InvalidResidueIdentifier {
-                slot,
-                id: residue_id,
-            });
-        }
-        hierarchy.require_chain(residue.chain()).map_err(|_| {
+    for residue_id in hierarchy.residue_ids() {
+        let chain = hierarchy.residue_chain(residue_id);
+        hierarchy.require_chain(chain).map_err(|_| {
             TopologyHierarchyError::InvalidResidueChain {
                 residue: residue_id,
-                chain: residue.chain(),
+                chain,
             }
         })?;
         // Every chain listing was validated above, so a residue listed anywhere
         // is listed exactly once, by its own chain.
         if !listed_residues[residue_id.index()] {
             return Err(TopologyHierarchyError::InconsistentChainResidue {
-                chain: residue.chain(),
+                chain,
                 residue: residue_id,
             });
         }
-        let site_ids = || residue.atom_sites().iter().map(|id| id.index());
+        let sites = hierarchy.residue_sites(residue_id);
+        let site_ids = || sites.iter().map(|id| id.index());
         tally(&mut site_counts, site_ids(), 1);
-        for site_id in residue.atom_sites() {
-            let site = hierarchy.require_atom_site(*site_id).map_err(|_| {
+        for site_id in sites {
+            hierarchy.require_atom_site(*site_id).map_err(|_| {
                 TopologyHierarchyError::InvalidResidueAtomSite {
                     residue: residue_id,
                     site: *site_id,
                 }
             })?;
-            if site.residue() != residue_id || site_counts[site_id.index()] != 1 {
+            if hierarchy.site_residue(*site_id) != residue_id || site_counts[site_id.index()] != 1 {
                 return Err(TopologyHierarchyError::InconsistentResidueAtomSite {
                     residue: residue_id,
                     site: *site_id,
@@ -1074,27 +1045,26 @@ pub(crate) fn validate_hierarchy(
         }
         tally(&mut site_counts, site_ids(), -1);
     }
-    for (slot, (site_id, site)) in hierarchy.atom_sites().enumerate() {
-        if site_id.index() != slot {
-            return Err(TopologyHierarchyError::InvalidAtomSiteIdentifier { slot, id: site_id });
-        }
-        hierarchy.require_residue(site.residue()).map_err(|_| {
+    for site_id in hierarchy.atom_site_ids() {
+        let residue = hierarchy.site_residue(site_id);
+        hierarchy.require_residue(residue).map_err(|_| {
             TopologyHierarchyError::InvalidAtomSiteResidue {
                 site: site_id,
-                residue: site.residue(),
+                residue,
             }
         })?;
         // As for residues, a validated listing is unique and by the owner.
         if !listed_sites[site_id.index()] {
             return Err(TopologyHierarchyError::InconsistentResidueAtomSite {
-                residue: site.residue(),
+                residue,
                 site: site_id,
             });
         }
-        if atoms.index(site.atom()).is_none() {
+        let atom = hierarchy.site_atom(site_id);
+        if atoms.index(atom).is_none() {
             return Err(TopologyHierarchyError::InvalidAtomSiteAtom {
                 site: site_id,
-                atom: site.atom(),
+                atom,
             });
         }
     }

@@ -6,7 +6,7 @@ use crate::diagnostics::{Cancellation, LimitExceeded, Resource};
 use crate::math::{bounding_box, Point3, PointGrid};
 use crate::structure::StructureView;
 use crate::topology::{
-    Chain, ChainId, Hierarchy, MoleculeInstanceId, Residue, ResidueClass, ResidueId, Topology,
+    ChainId, Hierarchy, MoleculeInstanceId, ResidueClass, ResidueId, ResidueLabels, Topology,
 };
 use crate::units::ANGSTROM;
 
@@ -168,7 +168,7 @@ type Classified = (DsspSecondaryStructure, [DsspHelixPosition; 4]);
 #[derive(Debug, Clone, Copy)]
 struct ChainResidue<'a> {
     hierarchy: &'a Hierarchy,
-    chain: &'a Chain,
+    chain: ChainId,
     residue: ResidueId,
     discovery_order: usize,
     /// Whether the residue is classified as amino acid or other, the
@@ -177,8 +177,8 @@ struct ChainResidue<'a> {
 }
 
 #[derive(Debug)]
-struct LogicalChain<'a> {
-    chain: &'a Chain,
+struct LogicalChain {
+    chain: ChainId,
     discovery_order: usize,
     /// The discovery order of the chain's first residue.
     first_residue: usize,
@@ -353,8 +353,8 @@ impl Prepared {
     pub(super) fn new(topology: &Topology, executor: &dyn Executor) -> Self {
         let hierarchy = topology.hierarchy();
         let mut represented = vec![false; topology.instance_count()];
-        for (_, site) in hierarchy.atom_sites() {
-            if let Some(flag) = represented.get_mut(site.atom().instance().index()) {
+        for site in hierarchy.atom_site_ids() {
+            if let Some(flag) = represented.get_mut(hierarchy.site_atom(site).instance().index()) {
                 *flag = true;
             }
         }
@@ -368,15 +368,15 @@ impl Prepared {
         // instances, so no fragment reassembly is required here.
         let mut first_residue = 0;
         let mut logical_chains = hierarchy
-            .chains()
+            .chain_ids()
             .enumerate()
-            .map(|(discovery_order, (_, chain))| {
+            .map(|(discovery_order, chain)| {
                 let logical = LogicalChain {
                     chain,
                     discovery_order,
                     first_residue,
                 };
-                first_residue += chain.residues().len();
+                first_residue += hierarchy.chain_residues(chain).len();
                 logical
             })
             .collect::<Vec<_>>();
@@ -384,7 +384,10 @@ impl Prepared {
         // shortlex ordering matches generated mmCIF label-asym series (A..Z,
         // AA..) while preserving discovery order for repeated logical chains.
         logical_chains.sort_by(|left, right| {
-            let (left_label, right_label) = (left.chain.label_id(), right.chain.label_id());
+            let (left_label, right_label) = (
+                hierarchy.chain_label_id(left.chain),
+                hierarchy.chain_label_id(right.chain),
+            );
             left_label
                 .len()
                 .cmp(&right_label.len())
@@ -398,12 +401,10 @@ impl Prepared {
         let sizes = logical_chains
             .iter()
             .map(|logical| {
-                logical
-                    .chain
-                    .residues()
+                hierarchy
+                    .chain_residues(logical.chain)
                     .iter()
-                    .filter_map(|&residue| hierarchy.residue(residue))
-                    .map(|residue| residue.atom_sites().len())
+                    .map(|&residue| hierarchy.residue_sites(residue).len())
                     .sum::<usize>()
                     .max(1)
             })
@@ -464,10 +465,9 @@ impl Prepared {
 }
 
 /// The residues of one logical chain in DSSP order.
-fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain<'a>) -> Vec<ChainResidue<'a>> {
-    let mut ordered = logical
-        .chain
-        .residues()
+fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain) -> Vec<ChainResidue<'a>> {
+    let mut ordered = hierarchy
+        .chain_residues(logical.chain)
         .iter()
         .zip(logical.first_residue..)
         .map(|(&residue, discovery_order)| ChainResidue {
@@ -475,12 +475,10 @@ fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain<'a>) -> Vec<
             chain: logical.chain,
             residue,
             discovery_order,
-            peptide: hierarchy.residue(residue).is_some_and(|residue| {
-                matches!(
-                    residue.class(),
-                    ResidueClass::AminoAcid | ResidueClass::Other
-                )
-            }),
+            peptide: matches!(
+                hierarchy.residue_class(residue),
+                ResidueClass::AminoAcid | ResidueClass::Other
+            ),
         })
         .collect::<Vec<_>>();
     // Choose one ordering convention for the complete chain. Mixing label
@@ -489,61 +487,42 @@ fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain<'a>) -> Vec<
     let ordering_residues = ordered
         .iter()
         .filter(|entry| {
-            entry
-                .hierarchy
-                .residue(entry.residue)
-                .is_some_and(|residue| {
-                    residue.class() == ResidueClass::AminoAcid
-                        || residue.class() == ResidueClass::Other
-                            && residue.atom_sites().iter().any(|site| {
-                                entry.hierarchy.atom_site(*site).is_some_and(|site| {
-                                    site.metadata()
-                                        .label_atom_id
-                                        .as_deref()
-                                        .or(site.metadata().auth_atom_id.as_deref())
-                                        .and_then(|name| backbone_index(name.trim()))
-                                        .is_some()
-                                })
-                            })
-                })
+            let class = hierarchy.residue_class(entry.residue);
+            class == ResidueClass::AminoAcid
+                || class == ResidueClass::Other
+                    && hierarchy.residue_sites(entry.residue).iter().any(|&site| {
+                        let metadata = hierarchy.site_metadata(site);
+                        metadata
+                            .label_atom_id
+                            .as_deref()
+                            .or(metadata.auth_atom_id.as_deref())
+                            .and_then(|name| backbone_index(name.trim()))
+                            .is_some()
+                    })
         })
         .collect::<Vec<_>>();
+    let number = |residue: &ResidueLabels| {
+        residue
+            .author_seq_id()
+            .and_then(|value| value.parse::<i64>().ok())
+    };
     let label_numbered = ordering_residues.iter().all(|entry| {
-        entry
-            .hierarchy
-            .residue(entry.residue)
-            .is_some_and(|residue| residue.label_seq_id().is_some())
+        hierarchy
+            .residue_labels(entry.residue)
+            .label_seq_id()
+            .is_some()
     });
-    let author_numbered = ordering_residues.iter().all(|entry| {
-        entry
-            .hierarchy
-            .residue(entry.residue)
-            .is_some_and(|residue| {
-                residue
-                    .author_seq_id()
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .is_some()
-            })
-    });
+    let author_numbered = ordering_residues
+        .iter()
+        .all(|entry| number(hierarchy.residue_labels(entry.residue)).is_some());
     ordered.sort_by(|left, right| {
-        let left_residue = left
-            .hierarchy
-            .residue(left.residue)
-            .expect("validated logical chain residue");
-        let right_residue = right
-            .hierarchy
-            .residue(right.residue)
-            .expect("validated logical chain residue");
+        let left_residue = hierarchy.residue_labels(left.residue);
+        let right_residue = hierarchy.residue_labels(right.residue);
         let sequence_order = if label_numbered {
             left_residue
                 .label_seq_id()
                 .cmp(&right_residue.label_seq_id())
         } else if author_numbered {
-            let number = |residue: Residue<'_>| {
-                residue
-                    .author_seq_id()
-                    .and_then(|value| value.parse::<i64>().ok())
-            };
             number(left_residue).cmp(&number(right_residue))
         } else {
             return left.discovery_order.cmp(&right.discovery_order);
@@ -562,21 +541,16 @@ fn order_chain<'a>(hierarchy: &'a Hierarchy, logical: &LogicalChain<'a>) -> Vec<
 /// Finds a peptide residue's backbone atoms by name.
 fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedResidue {
     let hierarchy = entry.hierarchy;
-    let residue = hierarchy
-        .residue(entry.residue)
-        .expect("chain residues come from the structure hierarchy");
+    let residue = hierarchy.residue_labels(entry.residue);
     let mut backbone = [None; 4];
     let mut any_backbone_atom = false;
     let mut repeated = None;
-    for &site_id in residue.atom_sites() {
-        let site = hierarchy
-            .atom_site(site_id)
-            .expect("residue atom sites come from the structure hierarchy");
-        let atom_name = site
-            .metadata()
+    for &site in hierarchy.residue_sites(entry.residue) {
+        let metadata = hierarchy.site_metadata(site);
+        let atom_name = metadata
             .label_atom_id
             .as_deref()
-            .or(site.metadata().auth_atom_id.as_deref())
+            .or(metadata.auth_atom_id.as_deref())
             .map(str::trim);
         let Some(backbone_index) = atom_name.and_then(backbone_index) else {
             continue;
@@ -588,18 +562,18 @@ fn prepare_residue(topology: &Topology, entry: &ChainResidue<'_>) -> PreparedRes
         }
         backbone[backbone_index] = Some(
             topology
-                .atom_index(site.atom())
+                .atom_index(hierarchy.site_atom(site))
                 .expect("hierarchy atoms are topology atoms")
                 .index(),
         );
     }
     PreparedResidue {
         key: entry.residue,
-        source_chain: entry.chain.id,
+        source_chain: entry.chain,
         label_sequence_id: residue.label_seq_id(),
         atoms: repeated.map_or(Ok(backbone), Err),
         any_backbone_atom,
-        amino_acid: residue.class() == ResidueClass::AminoAcid,
+        amino_acid: hierarchy.residue_class(entry.residue) == ResidueClass::AminoAcid,
         is_proline: residue.name().eq_ignore_ascii_case("PRO"),
     }
 }
@@ -827,21 +801,11 @@ fn backbone_index(name: &str) -> Option<usize> {
 
 /// The source labels of residue `key` of chain `chain`.
 fn source(hierarchy: &Hierarchy, chain: ChainId, key: ResidueId) -> DsspResidueSource {
-    residue_source(
-        hierarchy
-            .chain(chain)
-            .expect("analyzed residues come from the structure hierarchy"),
-        hierarchy
-            .residue(key)
-            .expect("analyzed residues come from the structure hierarchy"),
-    )
-}
-
-fn residue_source(chain: &Chain, residue: Residue<'_>) -> DsspResidueSource {
+    let residue = hierarchy.residue_labels(key);
     DsspResidueSource {
         residue_name: residue.name().to_owned(),
-        chain_label_id: chain.label_id.clone(),
-        chain_author_id: chain.author_id.clone(),
+        chain_label_id: hierarchy.chain_label_id(chain).to_owned(),
+        chain_author_id: hierarchy.chain_author_id(chain).map(str::to_owned),
         label_sequence_id: residue.label_seq_id(),
         author_sequence_id: residue.author_seq_id().map(str::to_owned),
         insertion_code: residue.insertion_code().map(str::to_owned),
@@ -1378,12 +1342,7 @@ fn calculate_beta_sheets(
         current.push((second, bridge_type, ladder));
     }
 
-    let chain_label = |residue: &BackboneResidue| {
-        hierarchy
-            .chain(residue.source_chain)
-            .expect("analyzed residues come from the structure hierarchy")
-            .label_id()
-    };
+    let chain_label = |residue: &BackboneResidue| hierarchy.chain_label_id(residue.source_chain);
     bridges.sort_by(|left, right| {
         let left_residue = &residues[left.i[0]];
         let right_residue = &residues[right.i[0]];

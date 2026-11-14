@@ -1,7 +1,7 @@
 use super::overlay::{Entry, Run};
 use super::*;
 use crate::topology::dense_order::{DenseOrder, ABSENT};
-use crate::topology::hierarchy::{Chain, HierarchyColumns};
+use crate::topology::hierarchy::HierarchyColumns;
 use crate::topology::hierarchy_index::HierarchyIndex;
 use crate::topology::shared_rows::SharedRows;
 use crate::topology::{Hierarchy, MoleculeInstance, TopologyAtomIndex, TopologyBondIndex};
@@ -690,18 +690,21 @@ impl TopologyEditor {
         let chain_block = hierarchy.chains.block();
         let mut chain_ids = vec![u32::MAX; chain_block.len];
         let mut added_chains = BTreeMap::new();
-        let mut chains = Vec::with_capacity(hierarchy.chains.len());
+        let mut chain_label_ids = Vec::with_capacity(hierarchy.chains.len());
+        let mut chain_author_ids = Vec::with_capacity(hierarchy.chains.len());
         let mut chain_handles = Vec::with_capacity(hierarchy.chains.len());
         let mut chain_slots = Vec::with_capacity(hierarchy.chains.len());
         for (handle, entry) in hierarchy.chains.entries() {
-            let id = chains.len() as u32;
+            let id = chain_label_ids.len() as u32;
             let (label_id, author_id, slot) = match entry {
                 Entry::Source(index) => {
-                    let chain = source_of()
-                        .chain(ChainId::new(index as u32))
-                        .expect("source chain");
+                    let chain = ChainId::new(index as u32);
                     chain_ids[index] = id;
-                    (chain.label_id.clone(), chain.author_id.clone(), index)
+                    (
+                        source_of().chain_label_id(chain).to_owned(),
+                        source_of().chain_author_id(chain).map(str::to_owned),
+                        index,
+                    )
                 }
                 Entry::Stored(chain) => {
                     match chain_block.source(handle) {
@@ -713,12 +716,8 @@ impl TopologyEditor {
                     (chain.label.clone(), chain.author.clone(), chain.slot)
                 }
             };
-            chains.push(Chain {
-                id: ChainId::new(id),
-                label_id,
-                author_id,
-                residues: Vec::new(),
-            });
+            chain_label_ids.push(label_id);
+            chain_author_ids.push(author_id);
             chain_handles.push(handle);
             chain_slots.push(slot);
         }
@@ -729,6 +728,7 @@ impl TopologyEditor {
 
         let residue_block = hierarchy.residues.block();
         let residue_count = hierarchy.residues.len();
+        let mut chain_residues = vec![Vec::new(); chain_label_ids.len()];
         let mut residue_ids = vec![u32::MAX; residue_block.len];
         let mut added_residues = BTreeMap::new();
         let mut residue_chains = Vec::with_capacity(residue_count);
@@ -742,15 +742,13 @@ impl TopologyEditor {
             let id = residue_chains.len() as u32;
             let (chain, class, explicit, key, slot) = match entry {
                 Entry::Source(index) => {
-                    let residue = source_of()
-                        .residue(ResidueId::new(index as u32))
-                        .expect("source residue");
+                    let (source, residue) = (source_of(), ResidueId::new(index as u32));
                     residue_ids[index] = id;
                     (
-                        chain_ids[residue.chain().index()],
-                        Some(residue.class()),
-                        residue.explicit_class(),
-                        residue.label_key(),
+                        chain_ids[source.residue_chain(residue).index()],
+                        Some(source.residue_class(residue)),
+                        source.explicit_residue_class(residue),
+                        source.residue_label_key(residue),
                         index,
                     )
                 }
@@ -770,7 +768,7 @@ impl TopologyEditor {
                     )
                 }
             };
-            chains[chain as usize].residues.push(ResidueId::new(id));
+            chain_residues[chain as usize].push(ResidueId::new(id));
             residue_chains.push(ChainId::new(chain));
             residue_classes.push(class.unwrap_or(ResidueClass::Other));
             if class.is_none() {
@@ -841,7 +839,9 @@ impl TopologyEditor {
         }
         PublishedHierarchy {
             hierarchy: Hierarchy::from_columns(HierarchyColumns {
-                chains,
+                chain_label_ids,
+                chain_author_ids,
+                chain_residues,
                 residue_chains,
                 residue_classes,
                 residue_explicit,

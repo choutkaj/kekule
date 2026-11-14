@@ -180,9 +180,11 @@ keeps source atom-row order, builders default to instance order or accept an
 explicit permutation, and editors and subsets keep surviving atoms in source
 order. Dense bond order is instance order, then local bond ID.
 
-`Hierarchy` is owned exactly once by `Topology`. Its storage is private: chain,
-residue, and atom-site views are the only read path, and builders stage it
-through one `HierarchyBuilder`. Atom sites refer to live `InstanceAtomId`
+`Hierarchy` is owned exactly once by `Topology`. Its storage is private and
+columnar: chain, residue, and atom-site views read the columns directly and are
+the only read path. Builders stage it by ID through one `HierarchyBuilder`; the
+topology editor stages edits by handle over its source, and both publish the
+same columns. Atom sites refer to live `InstanceAtomId`
 values and do not copy atoms. One chain or residue may span molecules, and one
 molecule may span chains. Source labels and author identifiers remain typed
 metadata with their namespaces and insertion codes. Hierarchy membership never
@@ -309,14 +311,17 @@ every repeated entity.
 | State of a distribution | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
-take the table's row type. Writes go through length-preserving `*Mut` guards:
-whole-column replacement or removal, single-cell writes, and transactional
-batches. Published tables have one row per entity. Draft tables have one row
-per slot, the draft graph decides which rows are live, and writing to a
-deleted slot fails. `StructureEditor` does not dereference to its topology draft:
-`topology()` reads it, `topology_mut()` reaches edits that need no geometry,
-and its own `properties_mut()` holds structure-scoped values, so the two scopes
-never shadow each other.
+take the table's row type. Writes go through one length-preserving table guard,
+`PropertyTableMut<R>`, handed out by each scope's `*Mut` guard: whole-column
+replacement or removal, single-cell writes, and transactional batches. Its row
+key `R` (`TableRow`) is an identifier or a draft's editing handle, and sets the
+error type. Published tables have one row per entity. Draft tables have one row per slot: a molecule draft addresses them
+by `AtomId` and `BondId`, and its graph decides which rows are live; topology
+and structure drafts address them by editing handle, with columns in live-handle
+order. Writing to a deleted slot or handle fails. `StructureEditor` does not
+dereference to its topology draft: `topology()` reads it, `topology_mut()`
+reaches edits that need no geometry, and its own `properties_mut()` holds
+structure-scoped values, so the two scopes never shadow each other.
 
 Keys are validated and never reserved. A column has one type and, for real
 values, one physical unit; missing entries are explicit; column length matches

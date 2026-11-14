@@ -391,6 +391,13 @@ through the workspace.
   over `SlotLiveness` (`Dense` by default, `Sparse` for drafts), so its counts
   take constant time and its atom, bond, and stereo iterators are exact-size
   and double-ended.
+- Chain, residue, and atom-site views read a topology's hierarchy columns
+  directly, and `HierarchyBuilder` alone stages a hierarchy by ID; results are
+  unchanged.
+- **Breaking:** `PropertyTableMut` is the one table guard: topology and
+  structure drafts return `PropertyTableMut<'_, EditAtomId>` (and the other
+  handles) for `EditPropertyTableMut`, and its row key `R: TableRow` sets the
+  error type.
 
 ### Removed
 

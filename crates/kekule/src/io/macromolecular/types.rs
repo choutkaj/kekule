@@ -1387,7 +1387,6 @@ impl StructureInterpretationReport {
             .filter(|atom| partners.contains(&atom.atom))
             .map(|atom| (atom.atom, atom))
             .collect::<HashMap<_, _>>();
-        let hierarchy = topology.hierarchy();
         let matches = |atom: InstanceAtomId| {
             let (Some(source), Some(site)) = (sources.get(&atom), topology.atom_site_of(atom))
             else {
@@ -1397,9 +1396,7 @@ impl StructureInterpretationReport {
             metadata.label_atom_id() == source.label_atom_name.as_deref()
                 && metadata.auth_atom_id() == source.auth_atom_name.as_deref()
                 && metadata.type_symbol() == Some(source.type_symbol.as_str())
-                && hierarchy
-                    .residue(site.residue())
-                    .is_some_and(|residue| residue.name() == source.component_id)
+                && site.residue().name() == source.component_id
         };
         let (records, unmatched): (Vec<_>, Vec<_>) = self
             .coordination

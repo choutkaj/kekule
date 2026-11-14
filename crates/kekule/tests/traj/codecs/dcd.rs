@@ -1102,6 +1102,22 @@ fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
         .with_header_delta(Quantity::new(0.0, PICOSECOND), policy)
         .is_ok());
 
+    // A length is not a time, even when DELTA has the policy's unit.
+    let error = options
+        .with_header_delta(
+            Quantity::new(1.0, ANGSTROM),
+            DcdTimePolicy::HeaderDelta { unit: ANGSTROM },
+        )
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.source_label(), error.detail()),
+        (
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            Some("DCD writer options"),
+            Some("The DCD time-policy unit is incompatible.")
+        )
+    );
+
     let error = DcdReadOptions::default()
         .with_time_policy(DcdTimePolicy::HeaderDelta { unit: ANGSTROM })
         .unwrap_err();

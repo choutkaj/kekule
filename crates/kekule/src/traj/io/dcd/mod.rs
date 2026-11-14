@@ -332,6 +332,7 @@ impl DcdWriteOptions {
         delta: Quantity<f64>,
         time_policy: DcdTimePolicy,
     ) -> Result<Self, TrajectoryIoError> {
+        validate_time_policy(time_policy, "DCD writer options")?;
         let unit = header_delta_unit(time_policy);
         let delta = delta
             .value_in(unit)

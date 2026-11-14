@@ -1,149 +1,30 @@
 use std::marker::PhantomData;
 
 use super::*;
+use crate::properties::{rows::RowKey, HandleSlots, LiveRows, PropertyTableMut, TableRow};
 
-/// The live rows of one draft property domain: which handles are live and
-/// which storage slot each one addresses.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct EditRows<'a> {
-    source: Option<&'a Topology>,
-    atoms: &'a Overlay<EditAtomId, Location<AtomId>>,
-    bonds: &'a Overlay<EditBondId, Location<BondId>>,
-    hierarchy: &'a EditHierarchy,
-    domain: RowDomain,
-}
+macro_rules! handle_rows {
+    ($($handle:ident => $storage:ty, $invalid:ident;)*) => {$(
+        impl RowKey for $handle {
+            type Storage = $storage;
 
-#[derive(Debug, Clone, Copy)]
-enum RowDomain {
-    Atoms,
-    Bonds,
-    Chains,
-    Residues,
-    AtomSites,
-}
-
-/// The rows of one domain of `$editor`, borrowing only the fields they read.
-macro_rules! edit_rows {
-    ($editor:expr, $domain:ident) => {
-        EditRows {
-            source: $editor.source.as_deref(),
-            atoms: &$editor.atoms,
-            bonds: &$editor.bonds,
-            hierarchy: &$editor.hierarchy,
-            domain: RowDomain::$domain,
+            fn slot(self, rows: LiveRows<'_>) -> Result<usize, TopologyEditError> {
+                rows.handle_slot(self.position())
+                    .ok_or(TopologyEditError::$invalid(self))
+            }
         }
-    };
-}
-
-impl<'a> EditRows<'a> {
-    fn source_hierarchy(self) -> SourceHierarchy<'a> {
-        SourceHierarchy::new(self.source, self.atoms.block(), self.hierarchy)
-    }
-
-    /// Live slots in handle order, which is publication order.
-    fn live_slots(self) -> Vec<usize> {
-        let source = self.source;
-        let hierarchy = self.source_hierarchy();
-        match self.domain {
-            RowDomain::Atoms => self
-                .atoms
-                .iter(|index| source_atom(source, index))
-                .map(|(_, row)| row.slot)
-                .collect(),
-            RowDomain::Bonds => self
-                .bonds
-                .iter(|index| source_bond(source, index))
-                .map(|(_, row)| row.slot)
-                .collect(),
-            RowDomain::Chains => self
-                .hierarchy
-                .chains
-                .iter(|index| hierarchy.chain(index))
-                .map(|(_, row)| row.slot)
-                .collect(),
-            RowDomain::Residues => self
-                .hierarchy
-                .residues
-                .iter(|index| hierarchy.residue(index))
-                .map(|(_, row)| row.slot)
-                .collect(),
-            RowDomain::AtomSites => self
-                .hierarchy
-                .sites
-                .iter(|index| hierarchy.site(index))
-                .map(|(_, row)| row.slot)
-                .collect(),
+        impl TableRow for $handle {
+            type Error = TopologyEditError;
         }
-    }
+    )*};
 }
 
-/// A draft handle that addresses one row of an editor property table.
-trait EditRow: Copy {
-    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError>;
-}
-
-impl EditRow for EditAtomId {
-    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
-        rows.atoms
-            .get(&self, |index| source_atom(rows.source, index))
-            .map(|row| row.slot)
-            .ok_or(TopologyEditError::InvalidAtom(self))
-    }
-}
-
-impl EditRow for EditBondId {
-    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
-        rows.bonds
-            .get(&self, |index| source_bond(rows.source, index))
-            .map(|row| row.slot)
-            .ok_or(TopologyEditError::InvalidBond(self))
-    }
-}
-
-impl EditRow for EditChainId {
-    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
-        let source = rows.source_hierarchy();
-        rows.hierarchy
-            .chains
-            .get(&self, |index| source.chain(index))
-            .map(|row| row.slot)
-            .ok_or(TopologyEditError::InvalidChain(self))
-    }
-}
-
-impl EditRow for EditResidueId {
-    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
-        let source = rows.source_hierarchy();
-        rows.hierarchy
-            .residues
-            .get(&self, |index| source.residue(index))
-            .map(|row| row.slot)
-            .ok_or(TopologyEditError::InvalidResidue(self))
-    }
-}
-
-impl EditRow for EditAtomSiteId {
-    fn slot(self, rows: EditRows<'_>) -> Result<usize, TopologyEditError> {
-        let source = rows.source_hierarchy();
-        rows.hierarchy
-            .sites
-            .get(&self, |index| source.site(index))
-            .map(|row| row.slot)
-            .ok_or(TopologyEditError::InvalidAtomSite(self))
-    }
-}
-
-/// One property column of the live rows, in handle order.
-fn live_column(
-    table: &RawPropertyTable,
-    rows: EditRows<'_>,
-    key: &PropertyKey,
-) -> Option<PropertyColumn> {
-    table.get(key)?;
-    table
-        .select_indices(&rows.live_slots())
-        .expect("live slots are allocated rows")
-        .remove(key)
+handle_rows! {
+    EditAtomId => crate::topology::TopologyAtomIndex, InvalidAtom;
+    EditBondId => crate::topology::TopologyBondIndex, InvalidBond;
+    EditChainId => ChainId, InvalidChain;
+    EditResidueId => ResidueId, InvalidResidue;
+    EditAtomSiteId => AtomSiteId, InvalidAtomSite;
 }
 
 /// Read access to one draft property table, addressed by editing handle
@@ -151,43 +32,25 @@ fn live_column(
 /// `EditAtomSiteId`).
 ///
 /// Columns read in live-handle order, which is the dense order of the
-/// published result.
-pub struct EditPropertyTable<'a, H> {
+/// published result. A deleted or foreign handle fails with the matching
+/// [`TopologyEditError`].
+pub struct EditPropertyTable<'a, H: TableRow<Error = TopologyEditError>> {
     table: &'a RawPropertyTable,
-    rows: EditRows<'a>,
+    handles: &'a dyn HandleSlots,
     handle: PhantomData<fn() -> H>,
 }
 
-impl<H> fmt::Debug for EditPropertyTable<'_, H> {
+impl<H: TableRow<Error = TopologyEditError>> fmt::Debug for EditPropertyTable<'_, H> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.table.fmt(formatter)
     }
 }
 
-/// Mutable access to one draft property table, addressed by editing handle
-/// `H`, with the method set of [`PropertyTableMut`](crate::properties::PropertyTableMut).
-///
-/// Every mutation is transactional. A deleted or foreign handle fails with
-/// the matching [`TopologyEditError`] (`InvalidAtom`, `InvalidBond`, ...).
-/// Columns are read and inserted in live-handle order.
-pub struct EditPropertyTableMut<'a, H> {
-    table: &'a mut RawPropertyTable,
-    rows: EditRows<'a>,
-    revision: Option<&'a mut u64>,
-    handle: PhantomData<fn() -> H>,
-}
-
-impl<H> fmt::Debug for EditPropertyTableMut<'_, H> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.table.fmt(formatter)
-    }
-}
-
-impl<'a, H> EditPropertyTable<'a, H> {
-    pub(crate) const fn new(table: &'a RawPropertyTable, rows: EditRows<'a>) -> Self {
+impl<'a, H: TableRow<Error = TopologyEditError>> EditPropertyTable<'a, H> {
+    pub(crate) fn new(table: &'a RawPropertyTable, handles: &'a dyn HandleSlots) -> Self {
         Self {
             table,
-            rows,
+            handles,
             handle: PhantomData,
         }
     }
@@ -204,162 +67,54 @@ impl<'a, H> EditPropertyTable<'a, H> {
 
     /// One column in live-handle order.
     pub fn get(&self, key: &PropertyKey) -> Option<PropertyColumn> {
-        live_column(self.table, self.rows, key)
+        crate::properties::live_column(self.table, self.handles, key)
+    }
+
+    /// Reads one cell of a live row.
+    pub fn value(
+        &self,
+        key: &PropertyKey,
+        row: H,
+    ) -> Result<Option<PropertyValue>, TopologyEditError> {
+        let slot = row.slot(LiveRows::Handles(self.handles))?;
+        Ok(self.table.value(key, slot)?)
     }
 }
 
-impl<'a, H> EditPropertyTableMut<'a, H> {
-    pub(crate) fn new(
-        table: &'a mut RawPropertyTable,
-        rows: EditRows<'a>,
-        revision: Option<&'a mut u64>,
-    ) -> Self {
-        Self {
-            table,
-            rows,
-            revision,
-            handle: PhantomData,
-        }
-    }
-
-    fn changed(&mut self) {
-        if let Some(revision) = self.revision.as_deref_mut() {
-            *revision += 1;
-        }
+/// The reads of [`EditPropertyTable`] on a draft table's guard.
+impl<H: TableRow<Error = TopologyEditError>> PropertyTableMut<'_, H> {
+    fn view(&self) -> EditPropertyTable<'_, H> {
+        let (table, live) = self.parts();
+        let LiveRows::Handles(handles) = live else {
+            unreachable!("draft tables address rows by editing handle")
+        };
+        EditPropertyTable::new(table, handles)
     }
 
     /// Whether any column is present.
     pub fn has_data(&self) -> bool {
-        self.table.has_data()
+        self.view().has_data()
     }
 
     /// Column keys in deterministic order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = &PropertyKey> {
-        self.table.iter().map(|(key, _)| key)
+        self.parts().0.iter().map(|(key, _)| key)
     }
 
     /// One column in live-handle order.
     pub fn get(&self, key: &PropertyKey) -> Option<PropertyColumn> {
-        live_column(self.table, self.rows, key)
+        self.view().get(key)
     }
 
-    /// Inserts or replaces a complete column given in live-handle order,
-    /// returning the previous one.
-    pub fn insert(
-        &mut self,
-        key: PropertyKey,
-        column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, TopologyEditError> {
-        let previous = self.get(&key);
-        install_column(self.table, &self.rows.live_slots(), key.clone(), column)?;
-        if previous != self.get(&key) {
-            self.changed();
-        }
-        Ok(previous)
-    }
-
-    /// Removes a column, returning it in live-handle order.
-    pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        let previous = self.get(key);
-        self.table.remove(key);
-        if previous.is_some() {
-            self.changed();
-        }
-        previous
-    }
-
-    /// Removes every column.
-    pub fn clear(&mut self) {
-        if self.table.has_data() {
-            self.table.clear_columns();
-            self.changed();
-        }
+    /// Reads one cell of a live row.
+    pub fn value(
+        &self,
+        key: &PropertyKey,
+        row: H,
+    ) -> Result<Option<PropertyValue>, TopologyEditError> {
+        self.view().value(key, row)
     }
 }
-
-macro_rules! edit_table_rows {
-    ($($handle:ty),*) => {$(
-        impl EditPropertyTable<'_, $handle> {
-            /// Reads one cell of a live row.
-            pub fn value(
-                &self,
-                key: &PropertyKey,
-                row: $handle,
-            ) -> Result<Option<PropertyValue>, TopologyEditError> {
-                Ok(self.table.value(key, row.slot(self.rows)?)?)
-            }
-        }
-
-        impl EditPropertyTableMut<'_, $handle> {
-            /// Reads one cell of a live row.
-            pub fn value(
-                &self,
-                key: &PropertyKey,
-                row: $handle,
-            ) -> Result<Option<PropertyValue>, TopologyEditError> {
-                Ok(self.table.value(key, row.slot(self.rows)?)?)
-            }
-
-            /// Sets or clears one cell, removing a column that becomes
-            /// all-missing.
-            pub fn set_value(
-                &mut self,
-                key: PropertyKey,
-                row: $handle,
-                value: Option<PropertyValue>,
-            ) -> Result<(), TopologyEditError> {
-                let slot = row.slot(self.rows)?;
-                let previous = self.table.value(&key, slot)?;
-                self.table.set_value(key.clone(), slot, value)?;
-                if previous != self.table.value(&key, slot)? {
-                    self.changed();
-                }
-                Ok(())
-            }
-
-/// Clears one cell; the same as [`Self::set_value`] with `None`.
-            pub fn clear_value(
-                &mut self,
-                key: PropertyKey,
-                row: $handle,
-            ) -> Result<(), TopologyEditError> {
-                self.set_value(key, row, None)
-            }
-
-            /// Applies several cell updates to one column transactionally;
-            /// repeated handles use the last value. Other columns are never
-            /// copied.
-            pub fn set_values(
-                &mut self,
-                key: PropertyKey,
-                values: impl IntoIterator<Item = ($handle, Option<PropertyValue>)>,
-            ) -> Result<(), TopologyEditError> {
-                let mut staged = self.table.stage_column(&key);
-                for (row, value) in values {
-                    staged.set_value(key.clone(), row.slot(self.rows)?, value)?;
-                }
-                // An equal column may still differ in signed zeros or unit
-                // symbols; a table without publication tracking keeps them.
-                let changed = staged.get(&key) != self.table.get(&key);
-                if changed || self.revision.is_none() {
-                    self.table.commit_column(key, staged);
-                }
-                if changed {
-                    self.changed();
-                }
-                Ok(())
-            }
-        }
-    )*};
-}
-
-edit_table_rows!(
-    EditAtomId,
-    EditBondId,
-    EditChainId,
-    EditResidueId,
-    EditAtomSiteId
-);
 
 /// Read access to a draft's static topology annotations, addressed by
 /// editing handle.
@@ -374,49 +129,43 @@ impl<'a> EditProperties<'a> {
         self.editor.properties.owner()
     }
 
-    /// Atom annotations, addressed by editing handle.
+    /// Atom annotations.
     pub fn atoms(&self) -> EditPropertyTable<'a, EditAtomId> {
-        EditPropertyTable::new(
-            self.editor.properties.atoms().raw(),
-            edit_rows!(self.editor, Atoms),
-        )
+        EditPropertyTable::new(self.editor.properties.atoms().raw(), &self.editor.atoms)
     }
 
-    /// Bond annotations, addressed by editing handle.
+    /// Bond annotations.
     pub fn bonds(&self) -> EditPropertyTable<'a, EditBondId> {
-        EditPropertyTable::new(
-            self.editor.properties.bonds().raw(),
-            edit_rows!(self.editor, Bonds),
-        )
+        EditPropertyTable::new(self.editor.properties.bonds().raw(), &self.editor.bonds)
     }
 
-    /// Chain annotations, addressed by editing handle.
+    /// Chain annotations.
     pub fn chains(&self) -> EditPropertyTable<'a, EditChainId> {
         EditPropertyTable::new(
             self.editor.properties.chains().raw(),
-            edit_rows!(self.editor, Chains),
+            &self.editor.hierarchy.chains,
         )
     }
 
-    /// Residue annotations, addressed by editing handle.
+    /// Residue annotations.
     pub fn residues(&self) -> EditPropertyTable<'a, EditResidueId> {
         EditPropertyTable::new(
             self.editor.properties.residues().raw(),
-            edit_rows!(self.editor, Residues),
+            &self.editor.hierarchy.residues,
         )
     }
 
-    /// Atom-site annotations, addressed by editing handle.
+    /// Atom-site annotations.
     pub fn atom_sites(&self) -> EditPropertyTable<'a, EditAtomSiteId> {
         EditPropertyTable::new(
             self.editor.properties.atom_sites().raw(),
-            edit_rows!(self.editor, AtomSites),
+            &self.editor.hierarchy.sites,
         )
     }
 }
 
 /// Mutable access to a draft's static topology annotations, addressed by
-/// editing handle; see [`EditPropertyTableMut`] for the table methods.
+/// editing handle; see [`PropertyTableMut`] for the table methods.
 ///
 /// ```
 /// use kekule::{properties::{PropertyKey, PropertyValue}, smiles};
@@ -451,52 +200,52 @@ impl EditPropertiesMut<'_> {
         self.editor.properties.owner_mut()
     }
 
-    /// Atom annotations, addressed by editing handle.
-    pub fn atoms_mut(&mut self) -> EditPropertyTableMut<'_, EditAtomId> {
+    /// Atom annotations.
+    pub fn atoms_mut(&mut self) -> PropertyTableMut<'_, EditAtomId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.properties.atoms_mut(),
-            edit_rows!(editor, Atoms),
+        PropertyTableMut::new(
+            editor.properties.atom_table_mut(),
+            LiveRows::Handles(&editor.atoms),
             Some(&mut editor.revision),
         )
     }
 
-    /// Bond annotations, addressed by editing handle.
-    pub fn bonds_mut(&mut self) -> EditPropertyTableMut<'_, EditBondId> {
+    /// Bond annotations.
+    pub fn bonds_mut(&mut self) -> PropertyTableMut<'_, EditBondId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.properties.bonds_mut(),
-            edit_rows!(editor, Bonds),
+        PropertyTableMut::new(
+            editor.properties.bond_table_mut(),
+            LiveRows::Handles(&editor.bonds),
             Some(&mut editor.revision),
         )
     }
 
-    /// Chain annotations, addressed by editing handle.
-    pub fn chains_mut(&mut self) -> EditPropertyTableMut<'_, EditChainId> {
+    /// Chain annotations.
+    pub fn chains_mut(&mut self) -> PropertyTableMut<'_, EditChainId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.properties.chains_mut(),
-            edit_rows!(editor, Chains),
+        PropertyTableMut::new(
+            editor.properties.chain_table_mut(),
+            LiveRows::Handles(&editor.hierarchy.chains),
             Some(&mut editor.revision),
         )
     }
 
-    /// Residue annotations, addressed by editing handle.
-    pub fn residues_mut(&mut self) -> EditPropertyTableMut<'_, EditResidueId> {
+    /// Residue annotations.
+    pub fn residues_mut(&mut self) -> PropertyTableMut<'_, EditResidueId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.properties.residues_mut(),
-            edit_rows!(editor, Residues),
+        PropertyTableMut::new(
+            editor.properties.residue_table_mut(),
+            LiveRows::Handles(&editor.hierarchy.residues),
             Some(&mut editor.revision),
         )
     }
 
-    /// Atom-site annotations, addressed by editing handle.
-    pub fn atom_sites_mut(&mut self) -> EditPropertyTableMut<'_, EditAtomSiteId> {
+    /// Atom-site annotations.
+    pub fn atom_sites_mut(&mut self) -> PropertyTableMut<'_, EditAtomSiteId> {
         let editor = &mut *self.editor;
-        EditPropertyTableMut::new(
-            editor.properties.atom_sites_mut(),
-            edit_rows!(editor, AtomSites),
+        PropertyTableMut::new(
+            editor.properties.atom_site_table_mut(),
+            LiveRows::Handles(&editor.hierarchy.sites),
             Some(&mut editor.revision),
         )
     }
@@ -577,35 +326,14 @@ impl TopologyEditor {
 
     /// The live rows of the draft's atoms, for structure tables kept beside
     /// this draft.
-    pub(crate) fn atom_rows(&self) -> EditRows<'_> {
-        edit_rows!(self, Atoms)
+    pub(crate) fn atom_rows(&self) -> &dyn HandleSlots {
+        &self.atoms
     }
 
     /// The live rows of the draft's bonds.
-    pub(crate) fn bond_rows(&self) -> EditRows<'_> {
-        edit_rows!(self, Bonds)
+    pub(crate) fn bond_rows(&self) -> &dyn HandleSlots {
+        &self.bonds
     }
-}
-
-fn install_column(
-    table: &mut RawPropertyTable,
-    live: &[usize],
-    key: PropertyKey,
-    column: PropertyColumn,
-) -> Result<(), PropertyError> {
-    let mut dense = RawPropertyTable::new(live.len());
-    dense.insert(key.clone(), column)?;
-    let mut slots = vec![None; table.len()];
-    for (index, &slot) in live.iter().enumerate() {
-        slots[slot] = Some(index);
-    }
-    let mut projected = dense.select_optional_indices(&slots)?;
-    if let Some(column) = projected.remove(&key) {
-        table.insert(key, column)?;
-    } else {
-        table.remove(&key);
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -676,6 +404,62 @@ mod allocation_tests {
         assert_eq!(
             int_column(editor.properties.bonds().raw(), &untouched),
             bond_column
+        );
+    }
+
+    // The shared table guard keeps handle addressing: live-handle column
+    // order, the handle's own error, and no-op writes that keep the source.
+    #[test]
+    fn draft_table_guards_address_live_handles_and_keep_unchanged_sources() {
+        let tag = key("tag");
+        let mut seeded = TopologyEditor::from_topology(crate::smiles::to_topology("CCO").unwrap());
+        let atoms = seeded.atom_ids().collect::<Vec<_>>();
+        seeded
+            .properties_mut()
+            .atoms_mut()
+            .set_values(
+                tag.clone(),
+                [
+                    (atoms[0], Some(PropertyValue::Int(1))),
+                    (atoms[2], Some(PropertyValue::Int(3))),
+                ],
+            )
+            .unwrap();
+        let source = seeded.finish().unwrap();
+
+        let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+        let atoms = editor.atom_ids().collect::<Vec<_>>();
+        let column = editor.properties().atoms().get(&tag).unwrap();
+        let mut properties = editor.properties_mut();
+        let mut table = properties.atoms_mut();
+        assert_eq!(
+            table.insert(tag.clone(), column.clone()).unwrap(),
+            Some(column)
+        );
+        table.set_values(tag.clone(), [(atoms[1], None)]).unwrap();
+        table.clear_value(tag.clone(), atoms[1]).unwrap();
+        assert_eq!(table.remove(&key("absent")), None);
+        properties.chains_mut().clear();
+        assert!(Arc::ptr_eq(&source, &editor.finish().unwrap()));
+
+        let mut editor = TopologyEditor::from_topology(source);
+        let atoms = editor.atom_ids().collect::<Vec<_>>();
+        editor.delete_atom(atoms[0]).unwrap();
+        assert_eq!(
+            editor.properties_mut().atoms_mut().set_value(
+                tag.clone(),
+                atoms[0],
+                Some(PropertyValue::Int(0))
+            ),
+            Err(TopologyEditError::InvalidAtom(atoms[0]))
+        );
+        assert_eq!(
+            editor.properties().atoms().value(&tag, atoms[0]),
+            Err(TopologyEditError::InvalidAtom(atoms[0]))
+        );
+        assert_eq!(
+            editor.properties_mut().atoms_mut().get(&tag),
+            Some(PropertyColumn::Int(vec![None, Some(3)]))
         );
     }
 }

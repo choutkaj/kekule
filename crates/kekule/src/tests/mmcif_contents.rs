@@ -614,16 +614,16 @@ ATOM 2 C C1 LIG Z 1 1 1.0 0.0 0.0 1
 "#;
     let result = (parse(input)).interpret(Default::default()).unwrap();
     assert_eq!(result.structure().topology().instance_count(), 1);
-    let hierarchy = result.structure().topology().hierarchy();
-    let chain_order = hierarchy
+    let topology = result.structure().topology();
+    let chain_order = topology
         .chains()
-        .map(|(_, chain)| chain.label_id())
+        .map(|chain| chain.label_id())
         .collect::<Vec<_>>();
     assert_eq!(chain_order, ["Z", "A"]);
-    assert_eq!(hierarchy.atom_sites().count(), 2);
-    assert!(hierarchy
+    assert_eq!(topology.atom_sites().count(), 2);
+    assert!(topology
         .atom_sites()
-        .all(|(_, site)| site.atom().instance() == MoleculeInstanceId::new(0)));
+        .all(|site| site.atom().id().instance() == MoleculeInstanceId::new(0)));
 
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::structure(result.structure())
@@ -640,9 +640,8 @@ ATOM 2 C C1 LIG Z 1 1 1.0 0.0 0.0 1
     assert_eq!(
         round_trip
             .topology()
-            .hierarchy()
             .chains()
-            .map(|(_, chain)| chain.label_id())
+            .map(|chain| chain.label_id())
             .collect::<Vec<_>>(),
         ["A", "Z"]
     );
@@ -677,39 +676,33 @@ fn interpretation_builds_connected_typed_instances_and_complete_positions() {
         .iter()
         .all(|point| point.x.is_finite()));
     assert!(!structure.topology().hierarchy().is_empty());
-    let hierarchy = structure.topology().hierarchy();
+    let topology = structure.topology();
     assert_eq!(
-        hierarchy
+        topology
             .chains()
-            .map(|(_, chain)| chain.label_id())
+            .map(|chain| chain.label_id())
             .collect::<Vec<_>>(),
         ["A", "L", "W"]
     );
-    let chain_a = hierarchy
+    let chain_a = topology
         .chains()
-        .find(|(_, chain)| chain.label_id() == "A")
-        .unwrap()
-        .1;
+        .find(|chain| chain.label_id() == "A")
+        .unwrap();
     let mut chain_a_instances = chain_a
         .residues()
-        .iter()
-        .flat_map(|residue| hierarchy.residue(*residue).unwrap().atom_sites())
-        .map(|site| hierarchy.atom_site(*site).unwrap().atom().instance())
+        .flat_map(|residue| residue.atom_sites())
+        .map(|site| site.atom().id().instance())
         .collect::<Vec<_>>();
     chain_a_instances.sort_unstable();
     chain_a_instances.dedup();
     assert_eq!(chain_a_instances.len(), 1);
     for (label, component) in [("L", "LIG"), ("W", "HOH")] {
-        let chain = hierarchy
+        let chain = topology
             .chains()
-            .find(|(_, chain)| chain.label_id() == label)
-            .unwrap()
-            .1;
+            .find(|chain| chain.label_id() == label)
+            .unwrap();
         assert_eq!(chain.residues().len(), 1);
-        assert_eq!(
-            hierarchy.residue(chain.residues()[0]).unwrap().name(),
-            component
-        );
+        assert_eq!(chain.residues().next().unwrap().name(), component);
     }
     assert!(
         structure
@@ -799,17 +792,16 @@ _atom_site.Cartn_z
 ATOM 1 C CA CAX GLY GLC A X 1 7 100 B 0.0 0.0 0.0
 "#;
     let result = (parse(input)).interpret(Default::default()).unwrap();
-    let hierarchy = result.structure().topology().hierarchy();
-    let (_, chain) = hierarchy.chains().next().unwrap();
+    let chain = result.structure().topology().chains().next().unwrap();
     assert_eq!(chain.label_id(), "A");
     assert_eq!(chain.author_id(), Some("X"));
-    let residue = hierarchy.residue(chain.residues()[0]).unwrap();
+    let residue = chain.residues().next().unwrap();
     assert_eq!(residue.label_comp_id(), Some("GLY"));
     assert_eq!(residue.author_comp_id(), Some("GLC"));
     assert_eq!(residue.label_seq_id(), Some(7));
     assert_eq!(residue.author_seq_id(), Some("100"));
     assert_eq!(residue.insertion_code(), Some("B"));
-    let site = hierarchy.atom_site(residue.atom_sites()[0]).unwrap();
+    let site = residue.atom_sites().next().unwrap();
     assert_eq!(site.metadata().label_atom_id.as_deref(), Some("CA"));
     assert_eq!(site.metadata().auth_atom_id.as_deref(), Some("CAX"));
     assert_eq!(site.metadata().label_asym_id.as_deref(), Some("A"));
@@ -854,14 +846,13 @@ ATOM 1 C . CAX . GLC . X 1 . 100 0.0 0.0 0.0
     assert_eq!(atom.auth_atom_name(), Some("CAX"));
     assert_eq!(atom.label_component_id(), None);
     assert_eq!(atom.auth_component_id(), Some("GLC"));
-    let hierarchy = interpreted.topology().hierarchy();
-    let (_, chain) = hierarchy.chains().next().unwrap();
+    let chain = interpreted.topology().chains().next().unwrap();
     assert_eq!(chain.label_id(), "X");
     assert_eq!(chain.author_id(), Some("X"));
-    let residue = hierarchy.residue(chain.residues()[0]).unwrap();
+    let residue = chain.residues().next().unwrap();
     assert_eq!(residue.label_comp_id(), None);
     assert_eq!(residue.author_comp_id(), Some("GLC"));
-    let site = hierarchy.atom_site(residue.atom_sites()[0]).unwrap();
+    let site = residue.atom_sites().next().unwrap();
     assert_eq!(site.metadata().label_asym_id, None);
     assert_eq!(site.metadata().label_atom_id, None);
 
@@ -980,10 +971,9 @@ ATOM 1 N N GLY GLC A X 1 7 . 0.0 0.0 0.0
 ATOM 2 C CA GLY GLC A X 1 7 100 10.0 0.0 0.0
 "#;
     let interpreted = (parse(input)).interpret(Default::default()).unwrap();
-    let hierarchy = interpreted.topology().hierarchy();
-    let (_, chain) = hierarchy.chains().next().unwrap();
+    let chain = interpreted.topology().chains().next().unwrap();
     assert_eq!(chain.residues().len(), 1);
-    let residue = hierarchy.residue(chain.residues()[0]).unwrap();
+    let residue = chain.residues().next().unwrap();
     assert_eq!(residue.label_seq_id(), Some(7));
     assert_eq!(residue.author_seq_id(), Some("100"));
 }
@@ -1016,14 +1006,12 @@ HETATM 2 C C1 ION A 1 10.0 0.0 0.0
 "#;
     let interpreted = (parse(input)).interpret(Default::default()).unwrap();
     assert_eq!(interpreted.topology().instance_count(), 2);
-    let hierarchy = interpreted.topology().hierarchy();
-    let (_, chain) = hierarchy.chains().next().unwrap();
+    let chain = interpreted.topology().chains().next().unwrap();
     assert_eq!(chain.residues().len(), 2);
     assert_eq!(
         chain
             .residues()
-            .iter()
-            .map(|residue| hierarchy.residue(*residue).unwrap().name())
+            .map(|residue| residue.name())
             .collect::<Vec<_>>(),
         ["LIG", "ION"]
     );
@@ -1057,12 +1045,12 @@ HETATM 2 O O HOH W 1 5.0 0.0 0.0
 "#;
     let result = (parse(input)).interpret(Default::default()).unwrap();
     assert_eq!(result.structure().topology().instance_count(), 2);
-    let hierarchy = result.structure().topology().hierarchy();
-    let (_, chain) = hierarchy.chains().next().unwrap();
-    assert_eq!(hierarchy.chains().count(), 1);
+    let topology = result.structure().topology();
+    let chain = topology.chains().next().unwrap();
+    assert_eq!(topology.chains().count(), 1);
     assert_eq!(chain.label_id(), "W");
     assert_eq!(chain.residues().len(), 2);
-    assert_eq!(hierarchy.atom_sites().count(), 2);
+    assert_eq!(topology.atom_sites().count(), 2);
 
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::structure(result.structure())
@@ -1073,7 +1061,7 @@ HETATM 2 O O HOH W 1 5.0 0.0 0.0
     .unwrap();
     let round_trip = (parse(&written)).interpret(Default::default()).unwrap();
     assert_eq!(round_trip.topology().instance_count(), 2);
-    assert_eq!(round_trip.topology().hierarchy().chains().count(), 1);
+    assert_eq!(round_trip.topology().chains().count(), 1);
     assert!(round_trip
         .report()
         .instances()
@@ -2193,7 +2181,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .interpret(Default::default())
         .unwrap();
     assert_eq!(interpreted.topology().instance_count(), 2);
-    assert_eq!(interpreted.topology().hierarchy().chains().count(), 1);
+    assert_eq!(interpreted.topology().chains().count(), 1);
     assert!(interpreted
         .report()
         .instances()
@@ -2233,7 +2221,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
 
     let round_trip = document.interpret(Default::default()).unwrap();
     assert_eq!(round_trip.topology().instance_count(), 2);
-    assert_eq!(round_trip.topology().hierarchy().chains().count(), 1);
+    assert_eq!(round_trip.topology().chains().count(), 1);
     assert_eq!(round_trip.topology().bond_count(), 0);
     assert!(round_trip
         .report()
@@ -2260,10 +2248,7 @@ fn mmcif_writer_keeps_one_source_asym_entity_across_disconnected_molecules() {
         .interpret(Default::default())
         .unwrap();
     assert_eq!(generic_round_trip.topology().instance_count(), 2);
-    assert_eq!(
-        generic_round_trip.topology().hierarchy().chains().count(),
-        1
-    );
+    assert_eq!(generic_round_trip.topology().chains().count(), 1);
 
     let mut conflicting = MmcifEntityClassifications::new();
     let molecules = interpreted
