@@ -261,14 +261,53 @@ pub fn within(
         .collect::<Result<Vec<_>, _>>()?;
     let mut selected = Vec::new();
     if !points.is_empty() {
+        // Candidates are measured up to the first missing one, which then
+        // fails.
+        let mut measured = Vec::new();
+        let mut missing = None;
         for atom in candidates.atom_ids() {
-            let p = point(view, atom)?;
-            for q in &points {
-                if norm(p - *q)? <= cutoff {
-                    selected.push(atom);
+            match point(view, atom) {
+                Ok(p) => measured.push((atom, p)),
+                Err(error) => {
+                    missing = Some(error);
                     break;
                 }
             }
+        }
+        // Coordinates this small keep every distance finite, so measuring
+        // only the pairs a grid finds near selects the same atoms and fails
+        // alike; few pairs are measured directly.
+        let bounded = |p: &Point3| p.x.abs() <= 1e300 && p.y.abs() <= 1e300 && p.z.abs() <= 1e300;
+        if measured.len().saturating_mul(points.len()) > 1024
+            && points
+                .iter()
+                .chain(measured.iter().map(|(_, p)| p))
+                .all(bounded)
+        {
+            let mut grid = crate::math::PointGrid::default();
+            grid.build(
+                points.iter().map(|&q| (q, ())),
+                crate::math::bounding_box(points.iter().copied()),
+                cutoff,
+                measured.len(),
+            );
+            for &(atom, p) in &measured {
+                if grid.any_near(&p, |q, ()| norm(p - *q).is_ok_and(|d| d <= cutoff)) {
+                    selected.push(atom);
+                }
+            }
+        } else {
+            for &(atom, p) in &measured {
+                for q in &points {
+                    if norm(p - *q)? <= cutoff {
+                        selected.push(atom);
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(error) = missing {
+            return Err(error);
         }
     }
     AtomSelection::from_atoms(topology.clone(), selected).map_err(MeasurementError::Selection)
