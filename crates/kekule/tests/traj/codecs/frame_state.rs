@@ -17,7 +17,7 @@ use kekule::traj::io::trr::{
     TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
 use kekule::traj::io::xtc::{XtcCellPolicy, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter};
-use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::{write_structure_set_to, FrameTimingPolicy, TrajectoryWriteOptions};
 use kekule::traj::{
     FrameView, TrajectoryFormat, TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryWriter,
@@ -26,6 +26,7 @@ use kekule::units::{
     Quantity, ANGSTROM, CANONICAL_FORCE_UNIT, CANONICAL_VELOCITY_UNIT, DIMENSIONLESS, NANOMETER,
     PICOSECOND, SQUARE_ANGSTROM,
 };
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support;
 use support::{codec_error, read_all, seen, Frame};

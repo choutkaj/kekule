@@ -105,5 +105,6 @@ pub(crate) use xyz::{parse_xyz_reader, parse_xyz_str};
 pub use xyz::{
     XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzInferredBond, XyzInterpretIssue,
     XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions,
-    XyzStructureSetInterpretOptions, XyzStructureSetInterpretation, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+    XyzStructureSetInterpretOptions, XyzStructureSetInterpretation, XyzWriteOptions,
+    DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };

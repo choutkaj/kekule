@@ -643,9 +643,9 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
 fn converting_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
     use kekule::diagnostics::UnrepresentablePolicy;
     use kekule::traj::io::trr::TrrLambdaPolicy;
-    use kekule::traj::io::xyz::XyzWriteOptions;
     use kekule::traj::io::FrameTimingPolicy;
     use kekule::units::{Quantity, PICOSECOND};
+    use kekule::xyz::XyzWriteOptions;
 
     TrajectoryWriteOptions::new(format)
         .with_xyz_options(XyzWriteOptions::default().with_cell(UnrepresentablePolicy::Omit))

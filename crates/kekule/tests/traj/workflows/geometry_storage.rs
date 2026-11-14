@@ -21,7 +21,6 @@ use kekule::structure::{
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdEndian, DcdWriteOptions};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
-use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
     append_trajectory, open_indexed_structure_set, open_indexed_structure_set_from_index,
     open_indexed_trajectory, read_structure_set, write_structure_set, IndexedFile, KeepFrames,
@@ -32,6 +31,7 @@ use kekule::traj::{
     TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support::{
     fixed_atom_fixture, frames_of, linear_carbon_topology, time_ordered, topology, Frame,

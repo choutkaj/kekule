@@ -7,10 +7,11 @@ use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, W
 use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Geometry, Order, Place, StructureSet};
-use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
 use kekule::units::{Quantity, ANGSTROM, KILOJOULE_PER_MOLE, NANOMETER};
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support::Frame;
 

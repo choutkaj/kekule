@@ -7,9 +7,7 @@ use kekule::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
-use kekule::traj::io::xyz::{
-    IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter,
-};
+use kekule::traj::io::xyz::{IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriter};
 use kekule::traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
     FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
@@ -20,6 +18,7 @@ use kekule::traj::{
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
+use kekule::xyz::XyzWriteOptions;
 use sha2::{Digest, Sha256};
 
 use crate::support;

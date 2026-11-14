@@ -1,48 +1,6 @@
 use super::*;
+use crate::io::xyz::write::topology_omissions;
 use crate::traj::trajectory::reason::{LengthUnitRole, Part, Reason};
-
-/// The topology content an XYZ file of `topology` leaves out; see
-/// [`XyzWriter::report`].
-pub(super) fn topology_omissions(topology: &Topology) -> WriteReport {
-    let (mut hydrogens, mut charges, mut isotopes, mut radicals, mut maps, mut sites) =
-        (0, 0, 0, 0, 0, 0);
-    for &atom_id in topology.atom_ids() {
-        let view = topology
-            .atom(atom_id)
-            .expect("dense topology atom IDs name topology atoms");
-        let atom = view.atom();
-        hydrogens += usize::from(view.implicit_hydrogens() != Some(0));
-        charges += usize::from(atom.formal_charge() != 0);
-        isotopes += usize::from(atom.isotope().is_some());
-        radicals += usize::from(atom.radical().is_some());
-        maps += usize::from(atom.atom_map().is_some());
-        sites += usize::from(view.atom_site().is_some_and(|site| {
-            let metadata = site.metadata();
-            metadata.label_atom_id().is_some() || metadata.auth_atom_id().is_some()
-        }));
-    }
-    let stereo = topology
-        .instances()
-        .filter(|instance| {
-            let molecule = instance.definition().molecule();
-            molecule.stereo_elements().next().is_some() || molecule.stereo_groups().next().is_some()
-        })
-        .count();
-    [
-        WriteOmission::Bonds {
-            bonds: topology.bond_count(),
-        },
-        WriteOmission::ImplicitHydrogens { atoms: hydrogens },
-        WriteOmission::FormalCharges { atoms: charges },
-        WriteOmission::Isotopes { atoms: isotopes },
-        WriteOmission::Radicals { atoms: radicals },
-        WriteOmission::AtomMaps { atoms: maps },
-        WriteOmission::AtomSites { atoms: sites },
-        WriteOmission::Stereo { molecules: stereo },
-    ]
-    .into_iter()
-    .collect()
-}
 
 /// Strict multi-frame XYZ writer over a caller-supplied stream.
 pub struct XyzWriter<W> {
@@ -314,16 +272,15 @@ impl<W: Write> XyzWriter<W> {
             omitted.extend(state);
         }
         let mut state = Omissions::default();
-        record_multi_model_structure_set(set, self.options.geometry_metadata, &mut state).map_err(
-            |(geometry, field)| {
+        record_multi_model_structure_set(set, self.options.geometry_metadata(), &mut state)
+            .map_err(|(geometry, field)| {
                 writer_field_error(
                     TrajectoryFormat::Xyz,
                     &self.source_label,
                     frame(geometry - 1),
                     field,
                 )
-            },
-        )?;
+            })?;
         for geometry in set {
             self.write_positions(geometry.as_structure_view().positions(), factor)?;
         }
@@ -365,7 +322,7 @@ impl<W: Write> XyzWriter<W> {
     /// The factor from canonical lengths to the output unit.
     pub(super) fn output_factor(&self) -> Result<f64, TrajectoryIoError> {
         CANONICAL_LENGTH_UNIT
-            .conversion_factor_to(self.options.length_unit)
+            .conversion_factor_to(self.options.length_unit())
             .map_err(|error| {
                 codec_context(
                     TrajectoryIoErrorKind::InconsistentMetadata,
@@ -414,7 +371,7 @@ impl<W: Write> XyzWriter<W> {
                 error,
             )
         })?;
-        writeln!(self.writer, "{}", self.options.comment).map_err(|error| {
+        writeln!(self.writer, "{}", self.options.comment()).map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
@@ -435,7 +392,7 @@ impl<W: Write> XyzWriter<W> {
                 x = point.x * factor,
                 y = point.y * factor,
                 z = point.z * factor,
-                precision = self.options.decimal_places,
+                precision = self.options.decimal_places(),
             )
             .map_err(|error| {
                 io_context(

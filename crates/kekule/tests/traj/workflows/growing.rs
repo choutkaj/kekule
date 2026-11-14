@@ -17,7 +17,6 @@ use kekule::structure::{Geometry, Positions, StructureSet};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
-use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{
     create_trajectory_stream_writer, open_indexed_trajectory, open_indexed_trajectory_from_index,
     IndexedFileTrajectoryReader, TrajectoryFileFingerprint, TrajectoryOpenOptions,
@@ -28,6 +27,7 @@ use kekule::traj::{
     TrajectoryWriter,
 };
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support::{self, linear_carbon_topology, time_ordered, Frame};
 

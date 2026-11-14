@@ -137,7 +137,7 @@
 //! [`crate::structure::StructureSet::from_reader`] loads chosen geometries of any
 //! reader, by range, stride, or explicit indices, into memory.
 mod processed;
-mod trajectory;
+pub(crate) mod trajectory;
 
 pub mod analysis;
 pub mod io;
