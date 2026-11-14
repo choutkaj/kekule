@@ -169,6 +169,7 @@
 //! trajectories, and compressed wrappers are outside this initial profile and
 //! return structured unsupported-format or unsupported-variant errors.
 mod append;
+mod codec;
 pub mod dcd;
 mod detect;
 mod file_reader;
@@ -176,6 +177,7 @@ mod file_writer;
 mod frame_index;
 mod frame_state;
 mod indexed_file;
+mod indexed_reader;
 mod limits;
 mod metadata;
 mod options;

@@ -116,7 +116,11 @@ fn loading_accepts_owned_topology_and_honors_format_units_and_sequential_limits(
     assert!(read_structure_set(&input.0, linear_carbon_topology(1), Default::default()).is_err());
     let options = TrajectoryOpenOptions::default()
         .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Xyz))
-        .with_xyz_options(XyzReadOptions::default().with_length_unit(NANOMETER))
+        .with_xyz_options(
+            XyzReadOptions::default()
+                .with_length_unit(NANOMETER)
+                .unwrap(),
+        )
         .with_limits(
             TrajectoryIoLimits::default()
                 .with_max_frames(2)

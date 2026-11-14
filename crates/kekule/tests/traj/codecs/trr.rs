@@ -12,6 +12,7 @@ use kekule::traj::io::trr::{
     IndexedTrrReader, TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrScalarPrecision,
     TrrWriteOptions, TrrWriter, TRR_LAMBDA_PROPERTY,
 };
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::io::{
     open_indexed_trajectory, open_trajectory, CoordinateEncoding, ScalarPrecision,
     TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
@@ -136,8 +137,8 @@ fn trr_cell_validation_uses_the_encoded_precision_before_appending_bytes() {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default().with_precision(precision),
-            "box-rounding.trr",
+            TrajectoryWriteOptions::from(TrrWriteOptions::default().with_precision(precision))
+                .with_source_label("box-rounding.trr"),
         )
         .unwrap();
         let mut frame = populated_frame(&topology, 0.0, 0);
@@ -196,8 +197,8 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default().with_precision(precision),
-            "scratch.trr",
+            TrajectoryWriteOptions::from(TrrWriteOptions::default().with_precision(precision))
+                .with_source_label("scratch.trr"),
         )
         .unwrap();
         let mut frame = populated_frame(&topology, step as f64, step);
@@ -219,7 +220,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         TrrReader::new(
             Cursor::new(combined.clone()),
             Arc::clone(&topology),
-            TrrReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
         )
     };
@@ -227,7 +228,7 @@ fn trr_aggregate_scratch_limits_cover_raw_growth_and_indexed_reuse() {
         IndexedTrrReader::new(
             Cursor::new(combined.clone()),
             Arc::clone(&topology),
-            TrrReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
         )
     };
@@ -292,8 +293,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            options,
-            "memory.trr",
+            TrajectoryWriteOptions::from(options).with_source_label("memory.trr"),
         )
         .unwrap();
         let first = populated_frame(&topology, 0.0, 4);
@@ -322,7 +322,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let mut reader = TrrReader::new(
             Cursor::new(bytes.clone()),
             Arc::clone(&topology),
-            TrrReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.trr"),
         )
@@ -396,7 +396,7 @@ fn trr_f32_and_f64_round_trip_all_fields_and_clear_absent_state() {
         let mut indexed = IndexedTrrReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
-            TrrReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.trr"),
         )
@@ -415,8 +415,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default(),
-        "exact-limit.trr",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_source_label("exact-limit.trr"),
     )
     .unwrap();
     writer
@@ -433,7 +432,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     let mut reader = TrrReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits.clone())
             .with_source_label("exact-limit.trr"),
     )
@@ -446,7 +445,7 @@ fn trr_exact_frame_and_index_limits_still_allow_clean_eof() {
     let indexed = IndexedTrrReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.trr"),
     )
@@ -460,8 +459,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default(),
-        "restore-failure.trr",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_source_label("restore-failure.trr"),
     )
     .unwrap();
     writer
@@ -474,7 +472,7 @@ fn indexed_trr_restoration_failure_does_not_publish_or_change_destination() {
     let mut indexed = IndexedTrrReader::new(
         stream,
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("restore-failure.trr"),
     )
@@ -502,8 +500,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default(),
-        "guarded.trr",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_source_label("guarded.trr"),
     )
     .unwrap();
     writer
@@ -519,7 +516,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let mut reader = TrrReader::new(
         stream,
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_frames(1))
             .with_source_label("guarded-sequential.trr"),
     )
@@ -542,7 +539,7 @@ fn trr_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         let error = IndexedTrrReader::new(
             stream,
             Arc::clone(&topology),
-            TrrReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.trr"),
         )
@@ -564,8 +561,10 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
-        "zero.trr",
+        TrajectoryWriteOptions::from(
+            TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+        )
+        .with_source_label("zero.trr"),
     )
     .unwrap();
     assert_eq!(
@@ -586,10 +585,11 @@ fn trr_lambda_policy_and_writer_contract_are_explicit() {
     let mut reader = TrrReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        TrrReadOptions::default()
-            .with_lambda_policy(TrrLambdaPolicy::RequireZero)
-            .with_limits(TrajectoryIoLimits::default())
-            .with_source_label("zero.trr"),
+        TrajectoryOpenOptions::from(
+            TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+        )
+        .with_limits(TrajectoryIoLimits::default())
+        .with_source_label("zero.trr"),
     )
     .unwrap();
     let mut destination = FrameBuffer::new(topology);
@@ -603,8 +603,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default(),
-        "memory.trr",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_source_label("memory.trr"),
     )
     .unwrap();
     let first = populated_frame(&topology, 0.0, 0);
@@ -618,7 +617,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let error = TrrReader::new(
         Cursor::new(invalid_size),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("size.trr"),
     )
@@ -634,7 +633,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let mut reader = TrrReader::new(
         Cursor::new(truncated),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("truncated.trr"),
     )
@@ -656,7 +655,7 @@ fn trr_malformed_sizes_truncation_limits_and_eof_are_transactional() {
     let mut reader = TrrReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("limited.trr"),
     )
@@ -679,8 +678,8 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default().with_precision(precision),
-            "triplets.trr",
+            TrajectoryWriteOptions::from(TrrWriteOptions::default().with_precision(precision))
+                .with_source_label("triplets.trr"),
         )
         .unwrap();
         writer.write_frame(first.frame_view()).unwrap();
@@ -699,7 +698,7 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
             let mut reader = TrrReader::new(
                 Cursor::new(invalid),
                 Arc::clone(&topology),
-                TrrReadOptions::default().with_source_label("triplets.trr"),
+                TrajectoryOpenOptions::default().with_source_label("triplets.trr"),
             )
             .unwrap();
             let mut destination = populated_frame(&topology, 10.0, 7);
@@ -731,8 +730,10 @@ fn trr_triplet_fields_reject_nonfinite_input_without_publishing_partial_frames()
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float32),
-            "triplets.trr",
+            TrajectoryWriteOptions::from(
+                TrrWriteOptions::default().with_precision(TrrScalarPrecision::Float32),
+            )
+            .with_source_label("triplets.trr"),
         )
         .unwrap();
         assert_eq!(
@@ -756,8 +757,7 @@ fn trr_writer_validates_the_complete_frame_before_writing_its_header() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default(),
-        "late-invalid.trr",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_source_label("late-invalid.trr"),
     )
     .unwrap();
     let mut frame = populated_frame(&topology, 0.0, 0);
@@ -824,8 +824,8 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default().with_precision(precision),
-            "mixed.trr",
+            TrajectoryWriteOptions::from(TrrWriteOptions::default().with_precision(precision))
+                .with_source_label("mixed.trr"),
         )
         .unwrap();
         let frame = populated_frame(&topology, shift, step);
@@ -835,7 +835,7 @@ fn indexed_trr_accepts_per_frame_precision_and_verifies_both_payloads() {
     let mut reader = IndexedTrrReader::new(
         Cursor::new(combined),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("mixed.trr"),
     )
@@ -852,8 +852,7 @@ fn indexed_trr_addresses_frames_from_the_stream_position_it_was_opened_at() {
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        TrrWriteOptions::default(),
-        "memory.trr",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_source_label("memory.trr"),
     )
     .unwrap();
     for step in 0..3 {
@@ -897,8 +896,8 @@ fn format_agnostic_trr_metadata_tracks_mixed_precision_sequentially_and_indexed(
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default().with_precision(precision),
-            "mixed-metadata.trr",
+            TrajectoryWriteOptions::from(TrrWriteOptions::default().with_precision(precision))
+                .with_source_label("mixed-metadata.trr"),
         )
         .unwrap();
         writer
@@ -968,7 +967,7 @@ fn independently_generated_mdanalysis_trr_preserves_all_supported_fields() {
     let mut reader = TrrReader::new(
         Cursor::new(fixture),
         Arc::clone(&topology),
-        TrrReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("mdanalysis-2.9.0-three-atoms.trr"),
     )

@@ -9,19 +9,14 @@ use std::time::{Duration, Instant};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, Element};
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::traj::io::dcd::{
-    DcdReadOptions, DcdReader, DcdWriteOptions, DcdWriter, IndexedDcdReader,
-};
+use kekule::traj::io::dcd::{DcdReader, DcdWriteOptions, DcdWriter, IndexedDcdReader};
 use kekule::traj::io::trr::{
     IndexedTrrReader, TrrLambdaPolicy, TrrReadOptions, TrrReader, TrrWriteOptions, TrrWriter,
 };
-use kekule::traj::io::xtc::{
-    IndexedXtcReader, XtcReadOptions, XtcReader, XtcWriteOptions, XtcWriter,
-};
-use kekule::traj::io::xyz::{
-    IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter,
-};
-use kekule::traj::io::TrajectoryIoLimits;
+use kekule::traj::io::xtc::{IndexedXtcReader, XtcReader, XtcWriter};
+use kekule::traj::io::xyz::{IndexedXyzReader, XyzReader, XyzWriter};
+use kekule::traj::io::{TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions};
+use kekule::traj::TrajectoryFormat;
 use kekule::traj::{FrameBuffer, SeekableTrajectoryReader, TrajectoryReader, TrajectoryWriter};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
@@ -94,7 +89,7 @@ fn benchmark_xyz(profile: Profile) -> Result<(), Box<dyn Error>> {
             XyzReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                XyzReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.xyz"),
             )
@@ -104,7 +99,7 @@ fn benchmark_xyz(profile: Profile) -> Result<(), Box<dyn Error>> {
             IndexedXyzReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                XyzReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.xyz"),
             )
@@ -131,7 +126,7 @@ fn benchmark_dcd(profile: Profile) -> Result<(), Box<dyn Error>> {
             DcdReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                DcdReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.dcd"),
             )
@@ -141,7 +136,7 @@ fn benchmark_dcd(profile: Profile) -> Result<(), Box<dyn Error>> {
             IndexedDcdReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                DcdReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.dcd"),
             )
@@ -168,10 +163,11 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
             TrrReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                TrrReadOptions::default()
-                    .with_lambda_policy(TrrLambdaPolicy::RequireZero)
-                    .with_limits(TrajectoryIoLimits::default())
-                    .with_source_label("bench.trr"),
+                TrajectoryOpenOptions::from(
+                    TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+                )
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("bench.trr"),
             )
             .expect("benchmark TRR reader")
         },
@@ -179,10 +175,11 @@ fn benchmark_trr(profile: Profile) -> Result<(), Box<dyn Error>> {
             IndexedTrrReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                TrrReadOptions::default()
-                    .with_lambda_policy(TrrLambdaPolicy::RequireZero)
-                    .with_limits(TrajectoryIoLimits::default())
-                    .with_source_label("bench.trr"),
+                TrajectoryOpenOptions::from(
+                    TrrReadOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+                )
+                .with_limits(TrajectoryIoLimits::default())
+                .with_source_label("bench.trr"),
             )
             .expect("benchmark TRR index")
         },
@@ -207,7 +204,7 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
             XtcReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                XtcReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.xtc"),
             )
@@ -217,7 +214,7 @@ fn benchmark_xtc(profile: Profile) -> Result<(), Box<dyn Error>> {
             IndexedXtcReader::new(
                 Cursor::new(bytes.as_slice()),
                 Arc::clone(&topology),
-                XtcReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default())
                     .with_source_label("bench.xtc"),
             )
@@ -354,8 +351,7 @@ fn encode_xyz(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     let mut writer = XyzWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(topology),
-        XyzWriteOptions::default(),
-        "bench.xyz",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label("bench.xyz"),
     )?;
     let frame = base_frame(topology)?;
     for _ in 0..frames {
@@ -368,8 +364,8 @@ fn encode_dcd(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(topology),
-        DcdWriteOptions::default().with_step_sequence(0, 1),
-        "bench.dcd",
+        TrajectoryWriteOptions::from(DcdWriteOptions::default().with_step_sequence(0, 1).unwrap())
+            .with_source_label("bench.dcd"),
     )?;
     let mut frame = base_frame(topology)?;
     for index in 0..frames {
@@ -383,8 +379,10 @@ fn encode_trr(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     let mut writer = TrrWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(topology),
-        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
-        "bench.trr",
+        TrajectoryWriteOptions::from(
+            TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+        )
+        .with_source_label("bench.trr"),
     )?;
     let mut frame = dynamic_frame(topology)?;
     for index in 0..frames {
@@ -399,8 +397,7 @@ fn encode_xtc(topology: &Arc<Topology>, frames: usize) -> Result<Vec<u8>, Box<dy
     let mut writer = XtcWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(topology),
-        XtcWriteOptions::default(),
-        "bench.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("bench.xtc"),
     )?;
     let mut frame = dynamic_frame(topology)?;
     for index in 0..frames {

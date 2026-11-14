@@ -24,9 +24,9 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::structure::StructureSetRead;
 use kekule::topology::{Topology, TopologyBuilder};
-use kekule::traj::io::open_indexed_structure_set;
-use kekule::traj::io::xtc::{XtcWriteOptions, XtcWriter};
-use kekule::traj::{FrameBuffer, TrajectoryWriter};
+use kekule::traj::io::xtc::XtcWriter;
+use kekule::traj::io::{open_indexed_structure_set, TrajectoryWriteOptions};
+use kekule::traj::{FrameBuffer, TrajectoryFormat, TrajectoryWriter};
 use kekule::units::{Quantity, NANOMETER, PICOSECOND};
 
 /// Atoms when none are requested.
@@ -222,8 +222,7 @@ fn write(
     let mut writer = XtcWriter::new(
         file,
         Arc::clone(topology),
-        XtcWriteOptions::default(),
-        "bench.xtc",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("bench.xtc"),
     )?;
     let mut frame = FrameBuffer::new(Arc::clone(topology));
     frame

@@ -10,8 +10,9 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdWriteOptions, DcdWriter};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions, TrrWriter};
-use kekule::traj::io::xtc::{XtcWriteOptions, XtcWriter};
-use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::xtc::XtcWriter;
+use kekule::traj::io::xyz::XyzWriter;
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::{
     FrameBuffer, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
     TrajectoryWriter,
@@ -69,15 +70,20 @@ fn open<W: Write + Seek + 'static>(
     let topology = Arc::clone(topology);
     let label = label(format);
     match format {
-        TrajectoryFormat::Xyz => {
-            Box::new(XyzWriter::new(sink, topology, XyzWriteOptions::default(), label).unwrap())
-        }
+        TrajectoryFormat::Xyz => Box::new(
+            XyzWriter::new(
+                sink,
+                topology,
+                TrajectoryWriteOptions::new(TrajectoryFormat::Xyz).with_source_label(label),
+            )
+            .unwrap(),
+        ),
         TrajectoryFormat::Dcd => Box::new(
             DcdWriter::new(
                 sink,
                 topology,
-                DcdWriteOptions::default().with_unit_cells(true),
-                label,
+                TrajectoryWriteOptions::from(DcdWriteOptions::default().with_unit_cells(true))
+                    .with_source_label(label),
             )
             .unwrap(),
         ),
@@ -85,14 +91,21 @@ fn open<W: Write + Seek + 'static>(
             TrrWriter::new(
                 sink,
                 topology,
-                TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
-                label,
+                TrajectoryWriteOptions::from(
+                    TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+                )
+                .with_source_label(label),
             )
             .unwrap(),
         ),
-        TrajectoryFormat::Xtc => {
-            Box::new(XtcWriter::new(sink, topology, XtcWriteOptions::default(), label).unwrap())
-        }
+        TrajectoryFormat::Xtc => Box::new(
+            XtcWriter::new(
+                sink,
+                topology,
+                TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label(label),
+            )
+            .unwrap(),
+        ),
         _ => unreachable!("every supported codec is listed"),
     }
 }

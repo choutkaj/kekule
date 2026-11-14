@@ -72,8 +72,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut writer = create_trajectory_stream_writer(
                 file,
                 Arc::clone(&topology),
-                TrajectoryWriteOptions::new(TrajectoryFormat::Xtc),
-                "bench.xtc",
+                TrajectoryWriteOptions::new(TrajectoryFormat::Xtc).with_source_label("bench.xtc"),
             )?;
             for index in 0..FRAMES {
                 frame.set_step(Some(index as u64));

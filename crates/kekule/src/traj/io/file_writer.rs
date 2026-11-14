@@ -18,6 +18,7 @@ use crate::traj::{
     TrajectoryWriter,
 };
 
+use super::options::stream_label;
 use super::{codec_context, dcd, detect, io_context, trr, xtc, xyz, FrameTimingPolicy};
 
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -44,14 +45,20 @@ pub enum OverwritePolicy {
 /// `.dcd`, `.trr`, or `.xtc`, case-insensitively); [`Self::new`] names it
 /// explicitly, as a writer over a host's stream requires. Both forbid
 /// overwriting and use each codec's default options.
+///
+/// The codec writers, such as [`xyz::XyzWriter`], take these options too,
+/// or their format's options alone through [`From`], and use their
+/// format's options and the source label; they ignore the format and the
+/// overwrite policy.
 #[derive(Debug, Clone)]
 pub struct TrajectoryWriteOptions {
     format: Option<TrajectoryFormat>,
     overwrite: OverwritePolicy,
-    xyz: xyz::XyzWriteOptions,
-    dcd: dcd::DcdWriteOptions,
-    trr: trr::TrrWriteOptions,
-    xtc: xtc::XtcWriteOptions,
+    source_label: Option<String>,
+    pub(super) xyz: xyz::XyzWriteOptions,
+    pub(super) dcd: dcd::DcdWriteOptions,
+    pub(super) trr: trr::TrrWriteOptions,
+    pub(super) xtc: xtc::XtcWriteOptions,
 }
 
 impl Default for TrajectoryWriteOptions {
@@ -59,11 +66,36 @@ impl Default for TrajectoryWriteOptions {
         Self {
             format: None,
             overwrite: OverwritePolicy::Forbid,
+            source_label: None,
             xyz: xyz::XyzWriteOptions::default(),
             dcd: dcd::DcdWriteOptions::default(),
             trr: trr::TrrWriteOptions::default(),
             xtc: xtc::XtcWriteOptions::default(),
         }
+    }
+}
+
+impl From<xyz::XyzWriteOptions> for TrajectoryWriteOptions {
+    fn from(options: xyz::XyzWriteOptions) -> Self {
+        Self::new(TrajectoryFormat::Xyz).with_xyz_options(options)
+    }
+}
+
+impl From<dcd::DcdWriteOptions> for TrajectoryWriteOptions {
+    fn from(options: dcd::DcdWriteOptions) -> Self {
+        Self::new(TrajectoryFormat::Dcd).with_dcd_options(options)
+    }
+}
+
+impl From<trr::TrrWriteOptions> for TrajectoryWriteOptions {
+    fn from(options: trr::TrrWriteOptions) -> Self {
+        Self::new(TrajectoryFormat::Trr).with_trr_options(options)
+    }
+}
+
+impl From<xtc::XtcWriteOptions> for TrajectoryWriteOptions {
+    fn from(options: xtc::XtcWriteOptions) -> Self {
+        Self::new(TrajectoryFormat::Xtc).with_xtc_options(options)
     }
 }
 
@@ -74,6 +106,7 @@ impl TrajectoryWriteOptions {
         Self {
             format: Some(format),
             overwrite: OverwritePolicy::Forbid,
+            source_label: None,
             xyz: xyz::XyzWriteOptions::default(),
             dcd: dcd::DcdWriteOptions::default(),
             trr: trr::TrrWriteOptions::default(),
@@ -85,6 +118,13 @@ impl TrajectoryWriteOptions {
     #[must_use]
     pub fn with_overwrite_policy(mut self, overwrite: OverwritePolicy) -> Self {
         self.overwrite = overwrite;
+        self
+    }
+
+    /// Sets [`Self::source_label`].
+    #[must_use]
+    pub fn with_source_label(mut self, source_label: impl Into<String>) -> Self {
+        self.source_label = Some(source_label.into());
         self
     }
 
@@ -190,6 +230,13 @@ impl TrajectoryWriteOptions {
         self.overwrite
     }
 
+    /// The name of the destination in errors. Unset by default: path
+    /// writers then name the path, and writers over a stream the format's
+    /// stream, such as `xyz stream`.
+    pub fn source_label(&self) -> Option<&str> {
+        self.source_label.as_deref()
+    }
+
     /// Options for the XYZ writer, used when that format is selected.
     pub const fn xyz_options(&self) -> &xyz::XyzWriteOptions {
         &self.xyz
@@ -208,6 +255,20 @@ impl TrajectoryWriteOptions {
     /// Options for the XTC writer, used when that format is selected.
     pub const fn xtc_options(&self) -> &xtc::XtcWriteOptions {
         &self.xtc
+    }
+
+    /// The label of a path writer's errors about `path`.
+    pub(super) fn path_label(&self, path: &Path) -> String {
+        self.source_label
+            .clone()
+            .unwrap_or_else(|| path.display().to_string())
+    }
+
+    /// The label of the errors of a writer of `format` over a stream.
+    pub(super) fn stream_label(&self, format: TrajectoryFormat) -> String {
+        self.source_label
+            .clone()
+            .unwrap_or_else(|| stream_label(format))
     }
 }
 
@@ -229,35 +290,17 @@ impl<W: Write + Seek> CodecWriter<W> {
     ) -> Result<Self, TrajectoryIoError> {
         match format {
             TrajectoryFormat::Xyz => {
-                xyz::XyzWriter::new(writer, topology, options.xyz, label).map(Self::Xyz)
+                xyz::XyzWriter::open(writer, topology, options.xyz, label).map(Self::Xyz)
             }
             TrajectoryFormat::Dcd => {
-                dcd::DcdWriter::new(writer, topology, options.dcd, label).map(Self::Dcd)
+                dcd::DcdWriter::open(writer, topology, options.dcd, label).map(Self::Dcd)
             }
             TrajectoryFormat::Trr => {
-                trr::TrrWriter::new(writer, topology, options.trr, label).map(Self::Trr)
+                trr::TrrWriter::open(writer, topology, options.trr, label).map(Self::Trr)
             }
             TrajectoryFormat::Xtc => {
-                xtc::XtcWriter::new(writer, topology, options.xtc, label).map(Self::Xtc)
+                xtc::XtcWriter::open(writer, topology, options.xtc, label).map(Self::Xtc)
             }
-        }
-    }
-
-    fn report(&self) -> &WriteReport {
-        match self {
-            Self::Xyz(writer) => writer.report(),
-            Self::Dcd(writer) => writer.report(),
-            Self::Trr(writer) => writer.report(),
-            Self::Xtc(writer) => writer.report(),
-        }
-    }
-
-    fn writer(&self) -> &W {
-        match self {
-            Self::Xyz(writer) => writer.writer(),
-            Self::Dcd(writer) => writer.writer(),
-            Self::Trr(writer) => writer.writer(),
-            Self::Xtc(writer) => writer.writer(),
         }
     }
 
@@ -270,42 +313,52 @@ impl<W: Write + Seek> CodecWriter<W> {
         }
     }
 
-    fn topology(&self) -> &Topology {
+    /// The codec writer, which writes every format alike.
+    fn codec(&self) -> &dyn CodecStream<W> {
         match self {
-            Self::Xyz(writer) => writer.topology(),
-            Self::Dcd(writer) => writer.topology(),
-            Self::Trr(writer) => writer.topology(),
-            Self::Xtc(writer) => writer.topology(),
+            Self::Xyz(writer) => writer,
+            Self::Dcd(writer) => writer,
+            Self::Trr(writer) => writer,
+            Self::Xtc(writer) => writer,
         }
     }
 
-    fn shared_topology(&self) -> Arc<Topology> {
+    fn codec_mut(&mut self) -> &mut dyn CodecStream<W> {
         match self {
-            Self::Xyz(writer) => writer.shared_topology(),
-            Self::Dcd(writer) => writer.shared_topology(),
-            Self::Trr(writer) => writer.shared_topology(),
-            Self::Xtc(writer) => writer.shared_topology(),
-        }
-    }
-
-    fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
-        match self {
-            Self::Xyz(writer) => writer.write_frame(frame),
-            Self::Dcd(writer) => writer.write_frame(frame),
-            Self::Trr(writer) => writer.write_frame(frame),
-            Self::Xtc(writer) => writer.write_frame(frame),
-        }
-    }
-
-    fn flush(&mut self) -> Result<(), TrajectoryIoError> {
-        match self {
-            Self::Xyz(writer) => writer.flush(),
-            Self::Dcd(writer) => writer.flush(),
-            Self::Trr(writer) => writer.flush(),
-            Self::Xtc(writer) => writer.flush(),
+            Self::Xyz(writer) => writer,
+            Self::Dcd(writer) => writer,
+            Self::Trr(writer) => writer,
+            Self::Xtc(writer) => writer,
         }
     }
 }
+
+/// What a stream writer uses of a codec writer, beyond writing frames.
+trait CodecStream<W>: TrajectoryWriter {
+    fn report(&self) -> &WriteReport;
+    fn writer(&self) -> &W;
+}
+
+macro_rules! codec_stream {
+    ($($codec:ident::$writer:ident),+) => {$(
+        impl<W: Write + Seek> CodecStream<W> for $codec::$writer<W> {
+            fn report(&self) -> &WriteReport {
+                $codec::$writer::report(self)
+            }
+
+            fn writer(&self) -> &W {
+                $codec::$writer::writer(self)
+            }
+        }
+    )+};
+}
+
+codec_stream!(
+    xyz::XyzWriter,
+    dcd::DcdWriter,
+    trr::TrrWriter,
+    xtc::XtcWriter
+);
 
 /// Strict writer of one format over a host's stream, from
 /// [`create_trajectory_stream_writer`].
@@ -365,7 +418,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
 
     /// The stream being written.
     pub fn writer(&self) -> &W {
-        self.inner.writer()
+        self.inner.codec().writer()
     }
 
     /// The content the frames written so far leave out: for XYZ,
@@ -373,7 +426,7 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
     /// their options omit ([`dcd::DcdWriter::report`],
     /// [`trr::TrrWriter::report`], [`xtc::XtcWriter::report`]).
     pub fn report(&self) -> &WriteReport {
-        self.inner.report()
+        self.inner.codec().report()
     }
 
     fn poisoned(&self, operation: TrajectoryIoOperation) -> TrajectoryIoError {
@@ -389,18 +442,18 @@ impl<W: Write + Seek> TrajectoryStreamWriter<W> {
 
 impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
     fn topology(&self) -> &Topology {
-        self.inner.topology()
+        self.inner.codec().topology()
     }
 
     fn shared_topology(&self) -> Arc<Topology> {
-        self.inner.shared_topology()
+        self.inner.codec().shared_topology()
     }
 
     fn write_frame(&mut self, frame: FrameView<'_>) -> Result<(), TrajectoryIoError> {
         if self.failed {
             return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
         }
-        let result = self.inner.write_frame(frame);
+        let result = self.inner.codec_mut().write_frame(frame);
         self.failed = result.is_err();
         result
     }
@@ -412,7 +465,7 @@ impl<W: Write + Seek> TrajectoryWriter for TrajectoryStreamWriter<W> {
         if self.failed {
             return Err(self.poisoned(TrajectoryIoOperation::WriteFrame));
         }
-        self.inner.flush()
+        self.inner.codec_mut().flush()
     }
 }
 
@@ -423,6 +476,8 @@ pub struct FileTrajectoryWriter {
     inner: Option<TrajectoryStreamWriter<BufWriter<File>>>,
     format: TrajectoryFormat,
     destination: PathBuf,
+    /// The name of the destination in errors.
+    label: String,
     temporary: PathBuf,
     overwrite: OverwritePolicy,
     published: bool,
@@ -458,7 +513,7 @@ impl FileTrajectoryWriter {
     /// publishing fails, including when [`OverwritePolicy::Forbid`] finds the
     /// destination created meanwhile.
     pub fn finish(mut self) -> Result<(), TrajectoryIoError> {
-        let label = self.destination.display().to_string();
+        let label = self.label.clone();
         if self.stream().failed {
             return Err(codec_context(
                 TrajectoryIoErrorKind::InvalidFrame,
@@ -605,7 +660,7 @@ pub fn write_structure_set(
     options: TrajectoryWriteOptions,
 ) -> Result<WriteReport, TrajectoryIoError> {
     let path = path.as_ref();
-    resolve_format(path, options.format)?;
+    resolve_format(path, &options)?;
     check_structure_set(set)?;
     let mut writer = create_trajectory_writer(path, set.shared_topology(), options)?;
     for geometry in set {
@@ -665,12 +720,7 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
     options: TrajectoryWriteOptions,
 ) -> Result<WriteReport, TrajectoryIoError> {
     check_structure_set(set)?;
-    let mut writer = create_trajectory_stream_writer(
-        writer,
-        set.shared_topology(),
-        options,
-        "trajectory stream",
-    )?;
+    let mut writer = create_trajectory_stream_writer(writer, set.shared_topology(), options)?;
     for geometry in set {
         writer.write_frame(FrameView::from_geometry(geometry)?)?;
     }
@@ -697,7 +747,7 @@ fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
 }
 
 /// Creates a strict writer of the format `options` names over a host's
-/// stream; `source_label` names the destination in errors.
+/// stream.
 ///
 /// The writer writes from the stream's current position: the DCD header
 /// there, patched when the writer finishes, and the other formats' frames
@@ -714,18 +764,17 @@ pub fn create_trajectory_stream_writer<W: Write + Seek>(
     writer: W,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryWriteOptions,
-    source_label: impl Into<String>,
 ) -> Result<TrajectoryStreamWriter<W>, TrajectoryIoError> {
-    let source_label = source_label.into();
     let format = options.format.ok_or_else(|| {
         codec_context(
             TrajectoryIoErrorKind::UnknownFormat,
             TrajectoryIoOperation::Open,
             None,
-            &source_label,
+            options.source_label().unwrap_or("trajectory stream"),
             "A stream has no extension. Choose the format explicitly.",
         )
     })?;
+    let source_label = options.stream_label(format);
     stream_writer(format, writer, topology.into(), options, source_label)
 }
 
@@ -745,7 +794,7 @@ pub(super) fn resumed_stream_writer<W: Write + Seek>(
     let label = source_label.clone();
     let inner = match format {
         TrajectoryFormat::Xyz => CodecWriter::Xyz(
-            xyz::XyzWriter::new(writer, topology, options.xyz, label)?.resumed(frame_count),
+            xyz::XyzWriter::open(writer, topology, options.xyz, label)?.resumed(frame_count),
         ),
         TrajectoryFormat::Dcd if header => CodecWriter::Dcd(dcd::DcdWriter::resume(
             writer,
@@ -756,13 +805,13 @@ pub(super) fn resumed_stream_writer<W: Write + Seek>(
             frame_count,
         )?),
         TrajectoryFormat::Dcd => {
-            CodecWriter::Dcd(dcd::DcdWriter::new(writer, topology, options.dcd, label)?)
+            CodecWriter::Dcd(dcd::DcdWriter::open(writer, topology, options.dcd, label)?)
         }
         TrajectoryFormat::Trr => CodecWriter::Trr(
-            trr::TrrWriter::new(writer, topology, options.trr, label)?.resumed(frame_count),
+            trr::TrrWriter::open(writer, topology, options.trr, label)?.resumed(frame_count),
         ),
         TrajectoryFormat::Xtc => CodecWriter::Xtc(
-            xtc::XtcWriter::new(writer, topology, options.xtc, label)?.resumed(frame_count),
+            xtc::XtcWriter::open(writer, topology, options.xtc, label)?.resumed(frame_count),
         ),
     };
     Ok(TrajectoryStreamWriter {
@@ -791,13 +840,13 @@ fn stream_writer<W: Write + Seek>(
 /// The explicit format, or the one the destination extension names.
 pub(super) fn resolve_format(
     path: &Path,
-    format: Option<TrajectoryFormat>,
+    options: &TrajectoryWriteOptions,
 ) -> Result<TrajectoryFormat, TrajectoryIoError> {
-    match format {
+    match options.format {
         Some(format) => Ok(format),
         None => detect::extension_format(path).ok_or_else(|| codec_context(
             TrajectoryIoErrorKind::UnknownFormat, TrajectoryIoOperation::Open, None,
-            &path.display().to_string(), "The destination's extension names no supported format. Choose the format explicitly.",
+            &options.path_label(path), "The destination's extension names no supported format. Choose the format explicitly.",
         )),
     }
 }
@@ -823,8 +872,8 @@ pub fn create_trajectory_writer(
 ) -> Result<FileTrajectoryWriter, TrajectoryIoError> {
     let topology = topology.into();
     let destination = path.as_ref().to_path_buf();
-    let format = resolve_format(&destination, options.format)?;
-    let label = destination.display().to_string();
+    let format = resolve_format(&destination, &options)?;
+    let label = options.path_label(&destination);
     if options.overwrite == OverwritePolicy::Forbid && destination.exists() {
         return Err(io_context(
             TrajectoryIoOperation::Open,
@@ -836,7 +885,7 @@ pub fn create_trajectory_writer(
             ),
         ));
     }
-    let temporary = create_temporary_sibling(&destination, format)?;
+    let temporary = create_temporary_sibling(&destination, format, &label)?;
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -857,7 +906,13 @@ pub fn create_trajectory_writer(
         }
     }
     let overwrite = options.overwrite;
-    let inner = match stream_writer(format, BufWriter::new(file), topology, options, label) {
+    let inner = match stream_writer(
+        format,
+        BufWriter::new(file),
+        topology,
+        options,
+        label.clone(),
+    ) {
         Ok(inner) => inner,
         Err(error) => {
             let _ = std::fs::remove_file(&temporary);
@@ -868,6 +923,7 @@ pub fn create_trajectory_writer(
         inner: Some(inner),
         format,
         destination,
+        label,
         temporary,
         overwrite,
         published: false,
@@ -877,6 +933,7 @@ pub fn create_trajectory_writer(
 fn create_temporary_sibling(
     destination: &Path,
     format: TrajectoryFormat,
+    label: &str,
 ) -> Result<PathBuf, TrajectoryIoError> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     let name = destination
@@ -894,7 +951,7 @@ fn create_temporary_sibling(
         TrajectoryIoErrorKind::LimitExceeded,
         TrajectoryIoOperation::Open,
         Some(format),
-        &destination.display().to_string(),
+        label,
         "Cannot find a free name for the temporary file.",
     ))
 }
