@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{Compressed, Part, Reason};
 
 pub(super) struct CheckedXtcReaderAdapter<R> {
     pub(super) reader: R,
@@ -44,7 +45,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 return Err(header_error(
                     FORMAT,
                     source_label,
-                    "The frame header is missing.",
+                    Reason::Missing(Part::FrameHeader),
                 ))
             }
             Ok(_) => {}
@@ -66,18 +67,12 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             TrajectoryIoOperation::ReadFrame,
             source_label,
             Some(frame_index),
-            "The frame header is truncated.",
+            Reason::Truncated(Part::FrameHeader),
         )?;
         let magic = match i32::from_be_bytes(header[..4].try_into().expect("magic")) {
             1995 => XtcMagic::Xtc1995,
             2023 => XtcMagic::Xtc2023,
-            _ => {
-                return Err(header_error(
-                    FORMAT,
-                    source_label,
-                    "The magic number is not 1995 or 2023.",
-                ))
-            }
+            _ => return Err(header_error(FORMAT, source_label, Reason::XtcMagic)),
         };
         read_exact(
             FORMAT,
@@ -86,12 +81,12 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             TrajectoryIoOperation::ReadFrame,
             source_label,
             Some(frame_index),
-            "The frame header is truncated.",
+            Reason::Truncated(Part::FrameHeader),
         )?;
         let atom_count_raw = i32::from_be_bytes(header[4..8].try_into().expect("natoms"));
         let atom_count = nonnegative_xdr_count(
             atom_count_raw,
-            "atom count",
+            Part::AtomCount,
             source_label,
             frame_index,
             start + 4,
@@ -111,7 +106,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let repeated_raw = i32::from_be_bytes(header[52..56].try_into().expect("repeat"));
         let repeated = nonnegative_xdr_count(
             repeated_raw,
-            "repeated atom count",
+            Part::RepeatedAtomCount,
             source_label,
             frame_index,
             start + 52,
@@ -125,7 +120,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_source_label(source_label)
             .with_frame(frame_index)
             .with_counts(atom_count as u64, repeated as u64)
-            .with_detail("The repeated atom count differs from the header's."));
+            .with_reason(Reason::RepeatedAtomCountDiffers));
         }
         let step_raw = i32::from_be_bytes(header[8..12].try_into().expect("step"));
         let step = u64::try_from(step_raw).map_err(|_| {
@@ -137,7 +132,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
             .with_source_label(source_label)
             .with_frame(frame_index)
             .with_byte_offset(start + 8)
-            .with_detail("The step is negative.")
+            .with_reason(Reason::Negative(Part::Step))
         })?;
         let time = f64::from(f32::from_be_bytes(header[12..16].try_into().expect("time")));
         if !time.is_finite() {
@@ -147,7 +142,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "The frame's time is not finite.",
+                Reason::NotFinite(Part::FrameTime),
             ));
         }
         let mut box_values = [0_f64; 9];
@@ -164,7 +159,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "The coordinate count exceeds this platform's address range.",
+                Reason::AddressRange(Part::CoordinateCount),
             )
         })?;
         let (precision, compressed_bytes, end) = if atom_count <= 9 {
@@ -174,7 +169,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     TrajectoryIoOperation::ReadHeader,
                     source_label,
                     None,
-                    "The frame's size exceeds this platform's address range.",
+                    Reason::AddressRange(Part::FrameSize),
                 )
             })?;
             self.reserve_decode_scratch(
@@ -193,7 +188,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
-                "The coordinates are truncated.",
+                Reason::Truncated(Part::Coordinates),
             )?;
             for chunk in self.scratch.as_chunks::<4>().0 {
                 let value = f32::from_be_bytes(*chunk);
@@ -204,7 +199,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "A coordinate is not finite.",
+                        Reason::NotFinite(Part::Coordinate),
                     ));
                 }
                 self.decoded_positions.push(value);
@@ -218,7 +213,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                         TrajectoryIoOperation::ReadHeader,
                         source_label,
                         None,
-                        "The frame's end exceeds the 64-bit range.",
+                        Reason::Range64(Part::FrameEnd),
                     )
                 })?;
             (None, coordinate_bytes, end)
@@ -231,7 +226,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
-                "The compressed-coordinate header is truncated.",
+                Reason::Truncated(Part::CompressedCoordinateHeader),
             )?;
             let precision = f32::from_be_bytes(prelude[..4].try_into().expect("precision"));
             validate_precision(precision, source_label)?;
@@ -256,7 +251,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "The compressed coordinates' lower bound exceeds the upper bound.",
+                        Reason::Compressed(Compressed::BoundsReversed),
                     ));
                 }
             }
@@ -269,7 +264,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
-                    "The compressed coordinates' small index is negative or too large.",
+                    Reason::Compressed(Compressed::SmallIndexRange),
                 )
             })?;
             if !(XTC_FIRST_SMALL_INDEX..XTC_MAGIC_INTS.len()).contains(&small_index) {
@@ -279,7 +274,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
-                    "The compressed coordinates' small index is outside the table.",
+                    Reason::Compressed(Compressed::SmallIndexOutsideTable),
                 ));
             }
             let compressed_bytes = read_nbytes(&mut self.reader, magic, source_label, frame_index)?;
@@ -289,7 +284,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
-                    "The compressed coordinates have no bytes.",
+                    Reason::Compressed(Compressed::NoBytes),
                 ));
             }
             if compressed_bytes as u64 > limits.max_record_bytes() {
@@ -298,18 +293,29 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
-                    "",
+                    None,
                 )
                 .exceeding(
-                    "The compressed coordinates",
+                    Part::CompressedCoordinates,
                     exceeded_bytes(limits.max_record_bytes(), compressed_bytes as u64),
                 ));
             }
             if compressed_bytes > limits.max_scratch_bytes() {
-                return Err(limit_error(FORMAT, TrajectoryIoOperation::ReadFrame, source_label, Some(frame_index), format!(
-                        "The compressed coordinates have {compressed_bytes} bytes, more than the buffer limit of {} bytes.",
-                        limits.max_scratch_bytes()
-                    )));
+                return Err(limit_error(
+                    FORMAT,
+                    TrajectoryIoOperation::ReadFrame,
+                    source_label,
+                    Some(frame_index),
+                    None,
+                )
+                .exceeding(
+                    Part::CompressedCoordinates,
+                    LimitExceeded::new(
+                        Resource::BufferBytes,
+                        limits.max_scratch_bytes(),
+                        compressed_bytes,
+                    ),
+                ));
             }
             self.reserve_decode_scratch(
                 coordinate_scalars,
@@ -327,7 +333,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
-                "The compressed coordinates are truncated.",
+                Reason::Truncated(Part::CompressedCoordinates),
             )?;
             decode_compressed_payload(
                 &self.scratch,
@@ -350,7 +356,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                         TrajectoryIoOperation::ReadHeader,
                         source_label,
                         None,
-                        "The padding exceeds this platform's address range.",
+                        Reason::AddressRange(Part::Padding),
                     )
                 })?;
             let end = start
@@ -364,7 +370,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                         TrajectoryIoOperation::ReadHeader,
                         source_label,
                         None,
-                        "The frame's end exceeds the 64-bit range.",
+                        Reason::Range64(Part::FrameEnd),
                     )
                 })?;
             (Some(precision), compressed_bytes, end)
@@ -375,7 +381,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "The frame ends before it starts.",
+                Reason::FrameEndsBeforeStart,
             )
         })?;
         if frame_bytes > limits.max_frame_bytes() {
@@ -384,10 +390,10 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
-                "",
+                None,
             )
             .exceeding(
-                "The frame",
+                Part::Frame,
                 exceeded_bytes(limits.max_frame_bytes(), frame_bytes),
             ));
         }
@@ -414,7 +420,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame_index),
-                "The frame ends after the end of the file.",
+                Reason::FrameEndsAfterFile,
             ));
         }
         if let Some(precision) = precision {
@@ -438,7 +444,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame_index),
-                    "The padding is truncated.",
+                    Reason::Truncated(Part::Padding),
                 )?;
                 if pad[..padding].iter().any(|byte| *byte != 0) {
                     return Err(frame_error(
@@ -447,7 +453,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "The padding is not zero.",
+                        Reason::NotZero(Part::Padding),
                     ));
                 }
             }
@@ -489,13 +495,13 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
         let position_bytes = positions_capacity
             .max(coordinate_scalars / 3)
             .checked_mul(std::mem::size_of::<Point3>());
-        let error = |detail: &str| {
+        let error = |reason: Reason| {
             limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 Some(frame),
-                detail,
+                reason,
             )
         };
         // Include the forthcoming byte buffer before reserving scalar storage;
@@ -534,7 +540,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "The frame changed between its first and second reading.",
+                Reason::FrameChanged,
             ));
         }
         self.reader
@@ -563,7 +569,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "The decoded frame differs from its header.",
+                Reason::DecodedFrameDiffers,
             ));
         }
         if self
@@ -577,7 +583,7 @@ impl<R: Read + Seek> CheckedXtcReaderAdapter<R> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "A decoded coordinate is not finite.",
+                Reason::NotFinite(Part::DecodedCoordinate),
             ));
         }
         self.decoded_start = None;
@@ -661,13 +667,13 @@ impl<R: Read + Seek> XtcReader<R> {
             atom_count,
             Some(0),
             limits.max_scratch_bytes(),
-            |detail| {
+            |reason| {
                 limit_error(
                     FORMAT,
                     TrajectoryIoOperation::ReadHeader,
                     source_label,
                     None,
-                    detail,
+                    reason,
                 )
             },
         )?;
@@ -683,7 +689,7 @@ impl<R: Read + Seek> XtcReader<R> {
         let first_info = adapter
             .preflight(&topology, &options, &source, 0, false, positions.capacity())
             .map_err(|error| frame_offset_context(error, 0, stream_start))?
-            .ok_or_else(|| header_error(FORMAT, source_label, "The stream is empty."))?;
+            .ok_or_else(|| header_error(FORMAT, source_label, Reason::EmptyStream))?;
         Ok(Self {
             adapter,
             topology,
@@ -750,10 +756,10 @@ impl<R: Read + Seek> XtcReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 Some(self.frame_cursor),
-                "",
+                None,
             )
             .exceeding(
-                "The trajectory",
+                Part::Trajectory,
                 LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
@@ -769,7 +775,7 @@ impl<R: Read + Seek> XtcReader<R> {
             .with_source_label(&self.source.label)
             .with_frame(self.frame_cursor)
             .with_byte_offset(info.start)
-            .with_detail("The frame's magic number or precision differs from the first frame's."));
+            .with_reason(Reason::MagicOrPrecisionDiffers));
         }
         if self.adapter.decoded_start != Some(info.start) {
             self.adapter
@@ -800,7 +806,7 @@ impl<R: Read + Seek> XtcReader<R> {
                         TrajectoryIoOperation::ReadFrame,
                         &self.source.label,
                         Some(self.frame_cursor),
-                        "An indexed frame is no longer in the file.",
+                        Reason::IndexedFrameGone,
                     )
                 })?;
             if refreshed != info {
@@ -810,7 +816,7 @@ impl<R: Read + Seek> XtcReader<R> {
                     TrajectoryIoOperation::ReadFrame,
                     &self.source.label,
                     self.frame_cursor,
-                    "The frame changed between its first and second reading.",
+                    Reason::FrameChanged,
                 ));
             }
         }
@@ -841,7 +847,7 @@ impl<R: Read + Seek> XtcReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 Some(self.frame_cursor),
-                "The frame number exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameNumber),
             )
         })?;
         Ok(Some(info))
@@ -945,7 +951,7 @@ impl<'a> CheckedByteBuffer<'a> {
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "The compressed coordinates end before the last atom.",
+                Reason::Compressed(Compressed::EndsBeforeLastAtom),
             )
         })?;
         self.index += 1;
@@ -991,7 +997,7 @@ pub(super) fn decode_compressed_payload(
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "The compressed coordinates span more than the decoder supports.",
+                Reason::Compressed(Compressed::SpanTooWide),
             )
         })?;
         sizes[axis] = u32::try_from(span)
@@ -1004,7 +1010,7 @@ pub(super) fn decode_compressed_payload(
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
-                    "The compressed coordinates' size exceeds this platform's address range.",
+                    Reason::AddressRange(Part::CompressedSize),
                 )
             })?;
     }
@@ -1018,7 +1024,7 @@ pub(super) fn decode_compressed_payload(
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
-                    "A compressed axis needs 32-bit values. The decoder does not support them.",
+                    Reason::Compressed(Compressed::Axis32Bit),
                 ));
             }
         }
@@ -1055,7 +1061,7 @@ pub(super) fn decode_compressed_payload(
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "A compressed coordinate is outside the declared bounds.",
+                        Reason::Compressed(Compressed::OutsideDeclaredBounds),
                     ));
                 }
                 decoded[axis] = value as i32;
@@ -1082,7 +1088,7 @@ pub(super) fn decode_compressed_payload(
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "A compressed coordinate exceeds the declared bounds.",
+                        Reason::Compressed(Compressed::ExceedsDeclaredBounds),
                     )
                 })?;
         }
@@ -1115,7 +1121,7 @@ pub(super) fn decode_compressed_payload(
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "A compressed run's atom count exceeds this platform's address range.",
+                        Reason::AddressRange(Part::CompressedRunAtomCount),
                     )
                 })?;
             if emitted_atoms > atom_count - read_atoms {
@@ -1125,7 +1131,7 @@ pub(super) fn decode_compressed_payload(
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
-                    "A compressed run extends past the declared atom count.",
+                    Reason::Compressed(Compressed::RunPastAtomCount),
                 ));
             }
             let small_size = u32::try_from(XTC_MAGIC_INTS[small_index])
@@ -1152,7 +1158,7 @@ pub(super) fn decode_compressed_payload(
                                 TrajectoryIoOperation::ReadFrame,
                                 source_label,
                                 frame_index,
-                                "A compressed run's coordinate exceeds the declared bounds.",
+                                Reason::Compressed(Compressed::RunExceedsBounds),
                             )
                         })?;
                 }
@@ -1189,7 +1195,7 @@ pub(super) fn decode_compressed_payload(
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "The compressed coordinates' small index drops below the table.",
+                        Reason::Compressed(Compressed::SmallIndexBelowTable),
                     ));
                 }
                 small_index -= 1;
@@ -1208,7 +1214,7 @@ pub(super) fn decode_compressed_payload(
                         TrajectoryIoOperation::ReadFrame,
                         source_label,
                         frame_index,
-                        "The compressed coordinates' small index rises above the table.",
+                        Reason::Compressed(Compressed::SmallIndexAboveTable),
                     ));
                 }
                 small_index += 1;
@@ -1226,7 +1232,7 @@ pub(super) fn decode_compressed_payload(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
-            "The compressed coordinates have unused trailing bytes.",
+            Reason::Compressed(Compressed::TrailingBytes),
         ));
     }
     let trailing_mask = if state.last_bits == 0 {
@@ -1241,7 +1247,7 @@ pub(super) fn decode_compressed_payload(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
-            "The compressed coordinates have nonzero trailing bits.",
+            Reason::Compressed(Compressed::TrailingBits),
         ));
     }
     Ok(())
@@ -1261,7 +1267,7 @@ pub(super) fn decode_checked_bits(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
-            "A compressed value needs more than 32 bits.",
+            Reason::Compressed(Compressed::ValueOver32Bits),
         ));
     }
     let mask = if count == 32 {
@@ -1308,7 +1314,7 @@ pub(super) fn push_checked_coordinate(
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "A decoded coordinate is not finite.",
+                Reason::NotFinite(Part::DecodedCoordinate),
             ));
         }
         output.push(value);
@@ -1329,7 +1335,7 @@ pub(super) fn validate_decoded_count(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
-            "The compressed coordinates decode to fewer or more atoms than declared.",
+            Reason::Compressed(Compressed::AtomCountDiffers),
         ));
     }
     Ok(())
@@ -1389,7 +1395,7 @@ pub(super) fn decode_checked_triplet(
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     frame_index,
-                    "A compressed coordinate triple exceeds its bounds.",
+                    Reason::Compressed(Compressed::TripleExceedsBounds),
                 ));
             }
             encoded[index] = quotient as u8;
@@ -1404,7 +1410,7 @@ pub(super) fn decode_checked_triplet(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame_index,
-            "A compressed x coordinate exceeds its bounds.",
+            Reason::Compressed(Compressed::XExceedsBounds),
         ));
     }
     let mut x = [0_u8; 4];
@@ -1419,7 +1425,7 @@ pub(super) fn decode_checked_triplet(
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame_index,
-                "A compressed coordinate is outside its bounds.",
+                Reason::Compressed(Compressed::OutsideBounds),
             ));
         }
     }
@@ -1439,7 +1445,7 @@ pub(super) fn decode_cell(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
-            "The box holds a value that is not finite.",
+            Reason::BoxNotFinite,
         ));
     }
     if values.iter().all(|value| *value == 0.0) {
@@ -1450,7 +1456,7 @@ pub(super) fn decode_cell(
                 TrajectoryIoOperation::ReadFrame,
                 Some(FORMAT),
                 source_label,
-                "The box is a zero matrix.",
+                Reason::BoxZero,
             )),
         };
     }
@@ -1468,7 +1474,7 @@ pub(super) fn decode_cell(
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame,
-                "The periodic cell is invalid.",
+                Reason::InvalidPeriodicCell,
             )
             .with_source(error)
         })
@@ -1488,7 +1494,7 @@ pub(super) fn read_nbytes<R: Read>(
         TrajectoryIoOperation::ReadFrame,
         source_label,
         Some(frame),
-        "The compressed-byte count is truncated.",
+        Reason::Truncated(Part::CompressedByteCount),
     )?;
     let value = match magic {
         XtcMagic::Xtc1995 => u64::from(u32::from_be_bytes(bytes[..4].try_into().expect("u32"))),
@@ -1500,7 +1506,7 @@ pub(super) fn read_nbytes<R: Read>(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             Some(frame),
-            "The compressed-byte count exceeds this platform's address range.",
+            Reason::AddressRange(Part::CompressedByteCount),
         )
     })
 }

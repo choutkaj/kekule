@@ -21,12 +21,12 @@ use kekule::structure::{
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
-use kekule::traj::io::xyz::XyzWriteOptions;
 use kekule::traj::io::{open_indexed_structure_set, write_structure_set, TrajectoryWriteOptions};
 use kekule::traj::TrajectoryFormat;
 use kekule::units::{
     Quantity, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
+use kekule::xyz::XyzWriteOptions;
 
 /// Atoms of the test system: an array of their positions has a size no
 /// other block of a read has.

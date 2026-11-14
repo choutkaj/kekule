@@ -21,7 +21,7 @@ use kekule::traj::{
 };
 
 use crate::support::{
-    codec_error, frames_of, linear_carbon_topology, time_ordered, topology, Frame,
+    codec_error, frames_of, linear_carbon_topology, seen, time_ordered, topology, Frame,
 };
 
 struct Directory(PathBuf);
@@ -200,23 +200,24 @@ fn explicit_format_overrides_extension_and_precision_is_preserved() {
     )
     .unwrap();
     let path = directory.file("trajectory.data");
-    let unknown: TrajectoryIoError = TrajectoryIoError::codec(
+    let unknown = codec_error(
         TrajectoryIoErrorKind::UnknownFormat,
         TrajectoryIoOperation::Open,
         None,
-    )
-    .with_source_label(label(&path))
-    .with_detail(
+        &label(&path),
+        None,
         "The destination's extension names no supported format. Choose the format explicitly.",
     );
     assert_eq!(
-        write_structure_set(&path, &trajectory, Default::default()),
+        write_structure_set(&path, &trajectory, Default::default()).map_err(seen),
         Err(unknown.clone())
     );
     // Default options take the path writer's format from the extension too.
     assert_eq!(
-        create_trajectory_writer(&path, topology.clone(), TrajectoryWriteOptions::default())
-            .unwrap_err(),
+        seen(
+            create_trajectory_writer(&path, topology.clone(), TrajectoryWriteOptions::default())
+                .unwrap_err()
+        ),
         unknown
     );
     let saved = directory.file("saved.trr");
@@ -267,7 +268,7 @@ fn every_empty_path_writer_rejects_publication_and_removes_temporary_files() {
             create_trajectory_writer(&path, topology.clone(), TrajectoryWriteOptions::new(format))
                 .unwrap();
         assert_eq!(
-            empty.finish(),
+            empty.finish().map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::InvalidFrame,
                 TrajectoryIoOperation::Finish,
@@ -323,11 +324,13 @@ fn rejected_saves_leave_no_destination_or_temporary_file() {
         ),
         (
             &annotated,
-            TrajectoryIoError::unsupported_field(GeometryField::SetProperties),
+            seen(TrajectoryIoError::unsupported_field(
+                GeometryField::SetProperties,
+            )),
         ),
     ] {
         assert_eq!(
-            write_structure_set(&path, trajectory, Default::default()),
+            write_structure_set(&path, trajectory, Default::default()).map_err(seen),
             Err(expected)
         );
         assert_eq!(directory.names(), Vec::<String>::new());
@@ -374,7 +377,7 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
     writer.write_frame(frame.view(&topology)).unwrap();
     frame.set_step(Some(1));
     assert_eq!(
-        writer.write_frame(frame.view(&topology)),
+        writer.write_frame(frame.view(&topology)).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::UnsupportedField,
             TrajectoryIoOperation::WriteFrame,
@@ -386,7 +389,7 @@ fn a_failed_frame_write_prevents_publication_of_the_frames_before_it() {
         .with_field(GeometryField::Step))
     );
     assert_eq!(
-        writer.finish(),
+        writer.finish().map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::Finish,
@@ -640,9 +643,9 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
 fn converting_options(format: TrajectoryFormat) -> TrajectoryWriteOptions {
     use kekule::diagnostics::UnrepresentablePolicy;
     use kekule::traj::io::trr::TrrLambdaPolicy;
-    use kekule::traj::io::xyz::XyzWriteOptions;
     use kekule::traj::io::FrameTimingPolicy;
     use kekule::units::{Quantity, PICOSECOND};
+    use kekule::xyz::XyzWriteOptions;
 
     TrajectoryWriteOptions::new(format)
         .with_xyz_options(XyzWriteOptions::default().with_cell(UnrepresentablePolicy::Omit))
@@ -838,14 +841,16 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
             source.shared_topology(),
             TrajectoryWriteOptions::default().with_source_label("host stream")
         )
-        .map(|_| ()),
-        Err(TrajectoryIoError::codec(
+        .map(|_| ())
+        .map_err(seen),
+        Err(codec_error(
             TrajectoryIoErrorKind::UnknownFormat,
             TrajectoryIoOperation::Open,
             None,
-        )
-        .with_source_label("host stream")
-        .with_detail("A stream has no extension. Choose the format explicitly."))
+            "host stream",
+            None,
+            "A stream has no extension. Choose the format explicitly.",
+        ))
     );
 
     // XYZ under its default options refuses the cell of every DCD frame.
@@ -866,10 +871,13 @@ fn stream_writers_need_a_format_and_refuse_to_finish_after_a_failed_frame() {
         None,
         "An earlier frame failed to write. The trajectory is incomplete.",
     );
-    assert_eq!(writer.write_frame(frame(&source, 0)), Err(poisoned));
+    assert_eq!(
+        writer.write_frame(frame(&source, 0)).map_err(seen),
+        Err(poisoned)
+    );
     assert!(writer.writer().get_ref().is_empty());
     assert_eq!(
-        writer.finish().map(|_| ()),
+        writer.finish().map(|_| ()).map_err(seen),
         Err(codec_error(
             TrajectoryIoErrorKind::InvalidFrame,
             TrajectoryIoOperation::Finish,
@@ -1037,18 +1045,19 @@ fn writers_name_the_caller_label_or_else_the_path_or_the_format_stream() {
     };
     let labelled = TrajectoryWriteOptions::default().with_source_label("custom");
     assert_eq!(
-        write_structure_set(&path, &empty, labelled),
+        write_structure_set(&path, &empty, labelled).map_err(seen),
         Err(no_frame("custom"))
     );
     assert_eq!(directory.names(), Vec::<String>::new());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz);
     let mut stream = io::Cursor::new(Vec::new());
     assert_eq!(
-        write_structure_set_to(&mut stream, &empty, options.clone()),
+        write_structure_set_to(&mut stream, &empty, options.clone()).map_err(seen),
         Err(no_frame("xyz stream"))
     );
     assert_eq!(
-        write_structure_set_to(&mut stream, &empty, options.with_source_label("custom")),
+        write_structure_set_to(&mut stream, &empty, options.with_source_label("custom"))
+            .map_err(seen),
         Err(no_frame("custom"))
     );
 }

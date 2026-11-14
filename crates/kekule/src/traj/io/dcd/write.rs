@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{AtomRange, Datum, Field32, Need, Part, Reason, UnitOf};
 
 /// Canonical DCD writer over one seekable stream.
 pub struct DcdWriter<W> {
@@ -109,7 +110,7 @@ impl<W: Write + Seek> DcdWriter<W> {
                 TrajectoryIoOperation::Open,
                 &source_label,
                 None,
-                "Cannot allocate the writer's buffers.",
+                Reason::Allocation(Part::WriterBuffers),
             )
         })?;
         Ok(Self {
@@ -158,7 +159,7 @@ impl<W: Write + Seek> DcdWriter<W> {
                 operation,
                 Some(FORMAT),
                 &self.source_label,
-                "The trajectory has more frames than the 32-bit frame count of the header holds.",
+                Reason::FrameCountField,
             ));
         }
         let io = |error| io_context(operation, Some(FORMAT), &self.source_label, error);
@@ -169,7 +170,7 @@ impl<W: Write + Seek> DcdWriter<W> {
                 operation,
                 Some(FORMAT),
                 &self.source_label,
-                "The header's byte offset exceeds the 64-bit range.",
+                Reason::Range64(Part::HeaderOffset),
             )
         })?;
         let count = self
@@ -273,7 +274,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             return Err(writer_limit(
                 FORMAT,
                 &self.source_label,
-                "The trajectory has more frames than the 32-bit frame count of the header holds.",
+                Reason::FrameCountField,
             ));
         }
         let expected_step = self
@@ -282,21 +283,9 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             .checked_add(
                 (self.frame_count as u64)
                     .checked_mul(self.options.step_interval)
-                    .ok_or_else(|| {
-                        writer_limit(
-                            FORMAT,
-                            &self.source_label,
-                            "The frame's step exceeds the 64-bit step range.",
-                        )
-                    })?,
+                    .ok_or_else(|| writer_limit(FORMAT, &self.source_label, Reason::StepRange64))?,
             )
-            .ok_or_else(|| {
-                writer_limit(
-                    FORMAT,
-                    &self.source_label,
-                    "The frame's step exceeds the 64-bit step range.",
-                )
-            })?;
+            .ok_or_else(|| writer_limit(FORMAT, &self.source_label, Reason::StepRange64))?;
         let numbers = self.options.frame_timing == FrameTimingPolicy::Number;
         let replaced_step = match frame.step() {
             Some(step) if step == expected_step => false,
@@ -308,9 +297,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    format!(
-                        "The frame's step is not {expected_step}, the next step of the header's sequence."
-                    ),
+                    Reason::StepNotInSequence(expected_step),
                 ))
             }
         };
@@ -325,7 +312,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(FORMAT),
                         &self.source_label,
-                        "The DCD time unit is incompatible.",
+                        Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Time)),
                     )
                     .with_source(error)
                 })?;
@@ -343,7 +330,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                             TrajectoryIoOperation::WriteFrame,
                             Some(FORMAT),
                             &self.source_label,
-                            "The frame's time differs from the time the step and DELTA give.",
+                            Reason::TimeNotFromDelta,
                         ));
                     }
                     replaced_time = true;
@@ -356,7 +343,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The frame has no time. The header's time policy needs one.",
+                    Reason::FrameLacks(Datum::Time, Need::TimePolicy),
                 ))
             }
         }
@@ -368,7 +355,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 TrajectoryIoOperation::WriteFrame,
                 Some(FORMAT),
                 &self.source_label,
-                "The frame has no periodic cell. The header's unit-cell flag needs one.",
+                Reason::FrameLacks(Datum::Cell, Need::CellFlag),
             ));
         }
         let factor = CANONICAL_LENGTH_UNIT
@@ -379,7 +366,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                     TrajectoryIoOperation::WriteFrame,
                     Some(FORMAT),
                     &self.source_label,
-                    "The DCD position unit is incompatible.",
+                    Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Position)),
                 )
                 .with_source(error)
             })?;
@@ -392,7 +379,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                         TrajectoryIoOperation::WriteFrame,
                         Some(FORMAT),
                         &self.source_label,
-                        "A coordinate does not fit single precision.",
+                        Reason::DoesNotFitSingle(Part::Coordinate),
                     ));
                 }
             }
@@ -418,7 +405,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
                 writer_limit(
                     FORMAT,
                     &self.source_label,
-                    "A coordinate record exceeds the 32-bit record length.",
+                    Reason::Exceeds32Bit(Part::CoordinateRecord, Field32::RecordLength),
                 )
             })?;
         self.partial = true;
@@ -465,7 +452,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             writer_limit(
                 FORMAT,
                 &self.source_label,
-                "The frame count exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameCount),
             )
         })?;
         record(&mut self.report, omitted);
@@ -504,7 +491,7 @@ pub(super) fn header_records(
             TrajectoryIoOperation::Open,
             Some(FORMAT),
             source_label,
-            format!("The trajectory has {atom_count} atoms. The header holds 1 to 2,147,483,647."),
+            Reason::AtomCountOutOfRange(atom_count, AtomRange::DcdHeader),
         ));
     }
     let mut records = Vec::new();
@@ -562,7 +549,7 @@ pub(crate) fn check_append_header(
             TrajectoryIoOperation::Open,
             Some(FORMAT),
             source_label,
-            "The file's header differs from the header of the write options. Append with the options the file was written with.",
+            Reason::AppendHeaderDiffers,
         ));
     }
     Ok(())
@@ -610,7 +597,7 @@ pub(super) fn encode_cell(
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            "The cell is not periodic along all three axes. DCD stores only fully periodic cells.",
+            Reason::NotFullyPeriodic(FORMAT),
         ));
     }
     let [a, b, c] = cell.vectors().value_in(ANGSTROM).map_err(|error| {
@@ -619,7 +606,7 @@ pub(super) fn encode_cell(
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            "The DCD cell unit is incompatible.",
+            Reason::IncompatibleUnit(Some(FORMAT), UnitOf::Of(Datum::Cell)),
         )
         .with_source(error)
     })?;
@@ -629,7 +616,7 @@ pub(super) fn encode_cell(
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            "The cell is not in standard orientation. Cell vector a lies along +x, b in the xy plane with +y, c with +z.",
+            Reason::CellNotStandard,
         ));
     }
     let length =
@@ -652,7 +639,7 @@ pub(super) fn encode_cell(
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            "The cell has no finite lengths and angles.",
+            Reason::CellNoParameters,
         ));
     }
     let mut record = [0; CELL_BYTES];
@@ -665,7 +652,7 @@ pub(super) fn encode_cell(
             TrajectoryIoOperation::WriteFrame,
             Some(FORMAT),
             source_label,
-            "The cell is degenerate when written as lengths and angles.",
+            Reason::CellDegenerateParameters,
         )
         .with_source(validation_cause(error))
     })?;
@@ -683,7 +670,7 @@ pub(super) fn write_record<W: Write>(
         writer_limit(
             FORMAT,
             source_label,
-            "A record exceeds the 32-bit record length.",
+            Reason::Exceeds32Bit(Part::Record, Field32::RecordLength),
         )
     })?;
     writer

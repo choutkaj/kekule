@@ -16,7 +16,7 @@ use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index,
     open_indexed_trajectory_from_index_with, open_indexed_trajectory_with, CoordinateEncoding,
     IndexedFileTrajectoryReader, ScalarPrecision, TrajectoryFileFingerprint, TrajectoryFrameIndex,
-    TrajectoryIoLimits, TrajectoryOpenOptions,
+    TrajectoryIoLimits, TrajectoryOpenNote, TrajectoryOpenOptions,
 };
 use kekule::traj::{
     SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
@@ -239,7 +239,13 @@ fn exported_indexes_reopen_every_format_with_identical_frames_and_metadata() {
         let mut reopened = reopen(&path, &topology, &bytes).unwrap();
         assert_eq!(reopened.metadata(), built.metadata(), "{name}");
         assert_eq!(reopened.to_frame_index(), index);
-        assert!(reopened.open_report().notes()[0].contains("imported"));
+        assert_eq!(
+            reopened.open_report().notes(),
+            [TrajectoryOpenNote::IndexImported {
+                format: index.format(),
+                appended_frames: 0,
+            }]
+        );
         // Random reads in any order, then sequential reads, match the scan.
         let mut buffer = reopened.frame_buffer();
         for index in (0..expected.len()).rev() {
@@ -359,7 +365,13 @@ fn an_index_opens_the_file_grown_by_appending_and_indexes_only_the_new_frames() 
         );
         assert_eq!(frames(&mut reopened), expected, "{name}");
         assert_eq!(reopened.pending_byte_count(), 0);
-        assert!(reopened.open_report().notes()[0].contains("1 appended frames"));
+        assert_eq!(
+            reopened.open_report().notes(),
+            [TrajectoryOpenNote::IndexImported {
+                format: index.format(),
+                appended_frames: 1,
+            }]
+        );
         let extended = reopened.to_frame_index();
         assert_eq!(&extended.frame_offsets()[..starts.len()], &starts[..]);
         assert_eq!(
@@ -553,7 +565,7 @@ fn indexes_of_the_previous_version_are_refused() {
         reencode(&mut previous);
         let error = reopen(&path, &topology, &previous).unwrap_err();
         assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidIndex, "{name}");
-        assert!(error.detail().unwrap().contains("version 1"), "{name}");
+        assert!(error.to_string().contains("version 1"), "{name}");
     }
 }
 

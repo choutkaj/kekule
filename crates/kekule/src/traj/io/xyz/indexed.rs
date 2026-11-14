@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{Part, Reason};
 
 /// Fully scanned XYZ reader with verified frame offsets.
 pub struct IndexedXyzReader<R> {
@@ -62,7 +63,7 @@ impl<R: BufRead + Seek> IndexedXyzReader<R> {
                 TrajectoryIoOperation::Index,
                 Some(FORMAT),
                 &inner.codec.source.label,
-                "The file holds no frame.",
+                Reason::FileHoldsNoFrame,
             ));
         }
         Ok(Self { inner })
@@ -172,9 +173,9 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
             TrajectoryIoOperation::Index,
             Some(FORMAT),
             label,
-            "",
+            None,
         )
-        .exceeding("The frame index", limit))
+        .exceeding(Part::FrameIndex, limit))
     }
 
     fn index_next(
@@ -193,7 +194,7 @@ impl<R: BufRead + Seek> IndexedCodec for XyzReader<R> {
                 TrajectoryIoOperation::Index,
                 &self.source.label,
                 self.frame_cursor,
-                "The frame number exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameNumber),
             )
         })?;
         Ok(Some(FrameStamp::default()))

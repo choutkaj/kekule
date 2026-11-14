@@ -7,9 +7,7 @@ use kekule::diagnostics::{LimitExceeded, Resource, WriteOmission, WriteReport};
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::topology::Topology;
-use kekule::traj::io::xyz::{
-    IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriteOptions, XyzWriter,
-};
+use kekule::traj::io::xyz::{IndexedXyzReader, XyzReadOptions, XyzReader, XyzWriter};
 use kekule::traj::io::{
     create_trajectory_writer, detect_trajectory_format, open_indexed_trajectory, open_trajectory,
     FieldAvailability, FormatDetectionEvidence, RandomAccessCapability, TrajectoryFormatHint,
@@ -20,11 +18,13 @@ use kekule::traj::{
     TrajectoryIoErrorKind, TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
 };
 use kekule::units::{Quantity, ANGSTROM, CANONICAL_VELOCITY_UNIT, NANOMETER, PICOSECOND};
+use kekule::xyz::XyzWriteOptions;
 use sha2::{Digest, Sha256};
 
 use crate::support;
 use support::{
-    codec_error, codec_kind, topology as build_topology, x_coordinates as point_xs, GuardedCursor,
+    codec_error, codec_kind, seen, topology as build_topology, x_coordinates as point_xs,
+    GuardedCursor,
 };
 
 const TWO_FRAMES: &str = "2\r\nfirst\r\nC 0.0 1.0 2.0\r\nH 3.0 4.0 5.0\r\n\
@@ -557,7 +557,7 @@ fn xyz_frame_byte_limit_charges_exact_source_bytes_including_terminators() {
 
         let (first, _, _) = read(frame_bytes - 1);
         assert_eq!(
-            first,
+            first.map_err(seen),
             Err(codec_error(
                 TrajectoryIoErrorKind::LimitExceeded,
                 TrajectoryIoOperation::ReadHeader,
@@ -635,7 +635,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
         for stream in streams() {
             let (result, destination) = read_first_xyz_frame(stream, &topology, max_scratch_bytes);
             assert_eq!(
-                result,
+                result.map_err(seen),
                 Err(exceeded(max_scratch_bytes)),
                 "{max_scratch_bytes}"
             );
@@ -651,7 +651,7 @@ fn xyz_line_buffer_shares_the_scratch_budget_with_positions() {
                 .with_source_label("scratch.xyz"),
         );
         assert_eq!(
-            indexed.err(),
+            indexed.err().map(seen),
             Some(exceeded(max_scratch_bytes)),
             "{max_scratch_bytes}"
         );
@@ -1011,59 +1011,84 @@ H -0.24 0.927 0
 
 #[test]
 fn xyz_options_refuse_invalid_values_when_set() {
-    let writer_error = |kind, detail: &str| {
-        codec_error(
-            kind,
-            TrajectoryIoOperation::Open,
-            TrajectoryFormat::Xyz,
-            "XYZ writer options",
-            None,
-            detail,
+    use kekule::diagnostics::{
+        DiagnosticKind, Format, FormatError, FormatStage, LimitExceeded, Resource,
+    };
+
+    // The format, stage, kind, record, exceeded limit, and message.
+    let failure = |error: FormatError| {
+        (
+            (error.format(), error.stage(), error.kind(), error.record()),
+            error.limit_exceeded(),
+            error.to_string(),
+        )
+    };
+    let refused = |kind, limit: Option<LimitExceeded>, message: &str| {
+        (
+            (Format::Xyz, FormatStage::Write, kind, None),
+            limit,
+            format!("Cannot write the XYZ output. {message}"),
         )
     };
     let options = XyzWriteOptions::default();
     assert_eq!(
-        options.clone().with_decimal_places(18).map(|_| ()),
-        Err(writer_error(
-            TrajectoryIoErrorKind::InvalidPrecision,
+        failure(options.clone().with_decimal_places(18).unwrap_err()),
+        refused(
+            DiagnosticKind::InvalidValue,
+            None,
             "The decimal precision is 18 places, more than 17."
-        ))
+        )
     );
     assert!(options.clone().with_decimal_places(17).is_ok());
     for comment in ["two\nlines", "two\rlines"] {
         assert_eq!(
-            options.clone().with_comment(comment).map(|_| ()),
-            Err(writer_error(
-                TrajectoryIoErrorKind::InconsistentMetadata,
+            failure(options.clone().with_comment(comment).unwrap_err()),
+            refused(
+                DiagnosticKind::InvalidValue,
+                None,
                 "The comment contains a line break."
-            ))
-        );
-    }
-    assert_eq!(
-        options
-            .clone()
-            .with_comment("x".repeat(1_048_577))
-            .map(|_| ()),
-        Err(writer_error(
-            TrajectoryIoErrorKind::LimitExceeded,
-            "The comment has 1048577 bytes, more than 1048576."
-        ))
-    );
-    assert!(options.clone().with_comment("x".repeat(1_048_576)).is_ok());
-
-    let read = XyzReadOptions::default().with_length_unit(PICOSECOND);
-    let write = options.with_length_unit(PICOSECOND);
-    for (error, label) in [
-        (read.unwrap_err(), "XYZ reader options"),
-        (write.unwrap_err(), "XYZ writer options"),
-    ] {
-        assert_eq!(
-            (error.kind(), error.source_label(), error.detail()),
-            (
-                TrajectoryIoErrorKind::InconsistentMetadata,
-                Some(label),
-                Some("The XYZ length unit is not a length.")
             )
         );
     }
+    assert_eq!(
+        failure(
+            options
+                .clone()
+                .with_comment("x".repeat(1_048_577))
+                .unwrap_err()
+        ),
+        refused(
+            DiagnosticKind::Limit,
+            Some(LimitExceeded::new(
+                Resource::ValueBytes,
+                1_048_576,
+                1_048_577
+            )),
+            "The comment exceeds its value size limit: 1,048,577 bytes of 1,048,576."
+        )
+    );
+    assert!(options.clone().with_comment("x".repeat(1_048_576)).is_ok());
+
+    let write = options.with_length_unit(PICOSECOND).unwrap_err();
+    assert!(std::error::Error::source(&write).is_some());
+    assert_eq!(
+        failure(write),
+        refused(
+            DiagnosticKind::InvalidValue,
+            None,
+            "The unit ps is not a length unit."
+        )
+    );
+    let read = XyzReadOptions::default()
+        .with_length_unit(PICOSECOND)
+        .unwrap_err();
+    assert_eq!(
+        (read.kind(), read.source_label(), read.to_string()),
+        (
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            Some("XYZ reader options"),
+            "Cannot open the XYZ trajectory \"XYZ reader options\". The XYZ length unit is not a length."
+                .to_owned()
+        )
+    );
 }

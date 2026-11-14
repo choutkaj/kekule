@@ -51,8 +51,10 @@ through the workspace.
   and `xyz::XyzDocument`; `sdf::structure_set` assembles records into a set;
   `traj::io::read_structure_set` reads a trajectory file as a time-ordered set.
 - `pdb::PdbSource`, `mmcif::MmcifBlockSource`, and `sdf::SdfRecordSource` take
-  a `StructureSet` or `GeometryView`; `XyzWriter::write_structure_set` and
-  `traj::io::write_structure_set(_to)` write a set one frame per geometry.
+  a `StructureSet` or `GeometryView`; `traj::io::write_structure_set(_to)`
+  writes a set one frame per geometry.
+- `xyz::write` and `xyz::write_to` write a structure as one XYZ frame, or a
+  structure set (`xyz::XyzSource`) as one frame per geometry.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
@@ -280,6 +282,12 @@ through the workspace.
   `DcdReadOptions::with_time_policy`, and the XYZ options' `with_length_unit`,
   `with_decimal_places`, and `with_comment` return `Result`, refusing what
   the readers and writers refused when opened.
+- **Breaking:** `XyzWriteOptions` moves to `kekule::xyz`, and its setters fail
+  with a `FormatError`.
+- **Breaking:** `TrajectoryIoError` loses `with_detail` and `detail()`: its
+  message comes from a typed reason, and buffer limits are `LimitExceeded`
+  (`Resource::BufferBytes`). `TrajectoryOpenReport::notes` returns
+  `TrajectoryOpenNote`s.
 - **Breaking:** Frame-index fingerprints compare content, not modification
   time, and hash DCD `NSET` and `NSTEP` as zero; sequential reads of an
   indexed reader end after its last indexed frame.

@@ -606,6 +606,70 @@ fn built_documents_fail_as_parsing_would_reject_them() {
     ));
 }
 
+#[test]
+fn a_structure_writes_as_one_frame_under_the_set_rules() {
+    use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission};
+    use kekule::math::{PeriodicCell, Vector3};
+    use kekule::units::{Quantity, NANOMETER};
+
+    let options = || {
+        xyz::XyzWriteOptions::default()
+            .with_decimal_places(3)
+            .unwrap()
+            .with_comment("water")
+            .unwrap()
+    };
+    let mut structure = interpret(WATER, Default::default()).into_structure();
+    let bonds = WriteOmission::Bonds { bonds: 2 };
+    let (text, report) = xyz::write(&structure, options()).unwrap();
+    assert_eq!(text, WATER);
+    assert_eq!(report.omissions(), [bonds]);
+
+    // Occupancies are left out and reported under every policy.
+    structure
+        .geometry_mut()
+        .set_occupancies(Some(vec![Some(0.5), None, None]))
+        .unwrap();
+    let (text, report) = xyz::write(&structure, options()).unwrap();
+    assert_eq!(text, WATER);
+    assert_eq!(
+        report.omissions(),
+        [bonds, WriteOmission::Occupancies { structures: 1 }]
+    );
+
+    // A cell fails unless the cell policy omits it.
+    let cell = PeriodicCell::orthorhombic(
+        Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
+        [true; 3],
+    )
+    .unwrap();
+    structure.geometry_mut().set_cell(Some(cell));
+    let mut written = Vec::new();
+    let error = xyz::write_to(&mut written, &structure, options()).unwrap_err();
+    assert!(written.is_empty());
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(error.record(), None);
+    assert!(matches!(
+        error.detail(),
+        Some(FormatErrorDetail::UnrepresentableState(GeometryField::Cell))
+    ));
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the XYZ output. The periodic cell of the structure has no XYZ representation."
+    );
+    let (text, report) =
+        xyz::write(&structure, options().with_cell(UnrepresentablePolicy::Omit)).unwrap();
+    assert_eq!(text, WATER);
+    assert_eq!(
+        report.omissions(),
+        [
+            bonds,
+            WriteOmission::Cell { structures: 1 },
+            WriteOmission::Occupancies { structures: 1 },
+        ]
+    );
+}
+
 /// Asserts that `positions` are the decimal coordinates `expected` of an XYZ
 /// file, in angstroms, up to the rounding of their storage in nanometres.
 fn assert_points(positions: &kekule::structure::Positions, expected: [[f64; 3]; 3]) {

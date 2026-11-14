@@ -2,14 +2,18 @@
 
 use std::sync::Arc;
 
-use kekule::diagnostics::{GeometryField, UnrepresentablePolicy, WriteOmission, WriteReport};
+use kekule::diagnostics::{
+    DiagnosticKind, FormatError, FormatErrorDetail, GeometryField, UnrepresentablePolicy,
+    WriteOmission, WriteReport,
+};
 use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{Order, StructureSet, TimeAxis, Velocities};
-use kekule::traj::io::xyz::{XyzWriteOptions, XyzWriter};
+use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::TrajectoryWriteOptions;
-use kekule::traj::{TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryWriter};
+use kekule::traj::TrajectoryWriter;
 use kekule::units::{Quantity, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND};
+use kekule::xyz::XyzWriteOptions;
 
 use crate::support::{self, Frame};
 
@@ -58,37 +62,23 @@ fn omit() -> XyzWriteOptions {
 fn write(
     set: &StructureSet,
     options: XyzWriteOptions,
-) -> Result<(String, WriteReport), TrajectoryIoError> {
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        set.shared_topology(),
-        TrajectoryWriteOptions::from(options).with_source_label("e.xyz"),
-    )?;
-    writer.write_structure_set(set)?;
-    let report = writer.report().clone();
-    Ok((String::from_utf8(writer.finish()?).unwrap(), report))
+) -> Result<(String, WriteReport), FormatError> {
+    kekule::xyz::write(set, options)
 }
 
 /// Asserts that writing `set` with `options` fails before any byte for
-/// `field` at `frame`, and returns the error.
+/// `field`, in the 1-based record of its geometry if it has one, and
+/// returns the error.
 fn assert_rejects(
     set: &StructureSet,
     options: XyzWriteOptions,
     field: GeometryField,
-    frame: usize,
-) -> TrajectoryIoError {
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        set.shared_topology(),
-        TrajectoryWriteOptions::from(options).with_source_label("e.xyz"),
-    )
-    .unwrap();
-    let error = writer.write_structure_set(set).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
-    assert_eq!(error.field(), Some(field));
-    assert_eq!(error.frame(), Some(frame));
-    assert!(writer.writer().is_empty());
-    assert_eq!(writer.report().omissions(), [BONDS]);
+    record: Option<usize>,
+) -> FormatError {
+    let mut written = Vec::new();
+    let error = kekule::xyz::write_to(&mut written, set, options).unwrap_err();
+    assert_eq!(failure(error.clone()), refused(field, record));
+    assert!(written.is_empty());
     error
 }
 
@@ -143,9 +133,9 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
     let mut set = waters();
     set.get_mut(1).unwrap().set_cell(Some(cell()));
     set.get_mut(2).unwrap().set_cell(Some(cell()));
-    assert_rejects(&set, options(), GeometryField::Cell, 1);
+    assert_rejects(&set, options(), GeometryField::Cell, Some(2));
     // A cell is not geometry metadata.
-    assert_rejects(&set, omit(), GeometryField::Cell, 1);
+    assert_rejects(&set, omit(), GeometryField::Cell, Some(2));
     let (text, report) = write(&set, options().with_cell(UnrepresentablePolicy::Omit)).unwrap();
     assert_eq!(text, plain());
     assert_eq!(
@@ -179,20 +169,19 @@ fn cells_are_rejected_or_omitted_with_a_report_as_for_frames() {
         writer.report().omissions(),
         [BONDS, WriteOmission::Cell { structures: 1 }]
     );
-    writer.write_structure_set(&set).unwrap();
+    // A set written after the frames continues their stream.
+    let mut written = writer.finish().unwrap();
+    let report = kekule::xyz::write_to(
+        &mut written,
+        &set,
+        options().with_cell(UnrepresentablePolicy::Omit),
+    )
+    .unwrap();
     assert_eq!(
-        writer.report().omissions(),
-        [BONDS, WriteOmission::Cell { structures: 3 }]
+        report.omissions(),
+        [BONDS, WriteOmission::Cell { structures: 2 }]
     );
-    assert_eq!(
-        writer
-            .finish()
-            .unwrap()
-            .iter()
-            .filter(|&&b| b == b'\n')
-            .count(),
-        20
-    );
+    assert_eq!(written.iter().filter(|&&b| b == b'\n').count(), 20);
 }
 
 #[test]
@@ -231,7 +220,7 @@ fn properties_are_rejected_at_every_level() {
 
     let mut set = waters();
     set.properties_mut().insert(key(), value()).unwrap();
-    assert_rejects(&set, options(), GeometryField::SetProperties, 0);
+    assert_rejects(&set, options(), GeometryField::SetProperties, None);
 
     let mut set = waters();
     set.get_mut(1)
@@ -240,32 +229,20 @@ fn properties_are_rejected_at_every_level() {
         .owner_mut()
         .insert(key(), value())
         .unwrap();
-    assert_rejects(&set, options(), GeometryField::Properties, 1);
+    assert_rejects(&set, options(), GeometryField::Properties, Some(2));
 }
 
 #[test]
-fn foreign_and_empty_sets_are_rejected() {
-    let set = waters();
-    let other = kekule::smiles::to_topology("O").unwrap();
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        other,
-        TrajectoryWriteOptions::from(options()).with_source_label("e.xyz"),
-    )
-    .unwrap();
-    let error = writer.write_structure_set(&set).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::TopologyMismatch);
-
-    let empty = StructureSet::new(set.shared_topology());
-    let mut writer = XyzWriter::new(
-        Vec::new(),
-        set.shared_topology(),
-        TrajectoryWriteOptions::from(options()).with_source_label("e.xyz"),
-    )
-    .unwrap();
-    let error = writer.write_structure_set(&empty).unwrap_err();
-    assert_eq!(error.kind(), TrajectoryIoErrorKind::InvalidFrame);
-    assert!(writer.writer().is_empty());
+fn empty_sets_are_rejected() {
+    let empty = StructureSet::new(waters().shared_topology());
+    let mut written = Vec::new();
+    let error = kekule::xyz::write_to(&mut written, &empty, options()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the XYZ output. The structure set has no geometries."
+    );
+    assert!(written.is_empty());
 }
 
 /// `set` with zero velocities on its geometry `index`.
@@ -309,11 +286,21 @@ fn geometry_state_rules_match_the_pdb_writer() {
     assert_eq!(state(&xyz), [state_omission(GeometryField::Velocities, 1)]);
 }
 
-/// The error's kind, field, and frame.
-fn failure(
-    error: TrajectoryIoError,
-) -> (TrajectoryIoErrorKind, Option<GeometryField>, Option<usize>) {
-    (error.kind(), error.field(), error.frame())
+/// The error's kind, refused field, and record.
+fn failure(error: FormatError) -> (DiagnosticKind, Option<GeometryField>, Option<usize>) {
+    let field = match error.detail() {
+        Some(FormatErrorDetail::UnrepresentableState(field)) => Some(*field),
+        _ => None,
+    };
+    (error.kind(), field, error.record())
+}
+
+/// The failure for `field`, in `record`.
+fn refused(
+    field: GeometryField,
+    record: Option<usize>,
+) -> (DiagnosticKind, Option<GeometryField>, Option<usize>) {
+    (DiagnosticKind::Unsupported, Some(field), record)
 }
 
 #[test]
@@ -358,11 +345,7 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
         // geometry.
         assert_eq!(
             failure(write(&labelled, options()).unwrap_err()),
-            (
-                TrajectoryIoErrorKind::UnsupportedField,
-                Some(GeometryField::Properties),
-                Some(1)
-            )
+            refused(GeometryField::Properties, Some(2))
         );
 
         // A cell is refused or dropped by the cell policy.
@@ -370,11 +353,7 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
         match policy {
             UnrepresentablePolicy::Fail => assert_eq!(
                 failure(written.unwrap_err()),
-                (
-                    TrajectoryIoErrorKind::UnsupportedField,
-                    Some(GeometryField::Cell),
-                    Some(1)
-                )
+                refused(GeometryField::Cell, Some(2))
             ),
             _ => {
                 let (text, report) = written.unwrap();
@@ -399,7 +378,7 @@ fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
             TimeAxis::new(Some(Quantity::new(vec![0.0, 1.0, 2.0], PICOSECOND)), None).unwrap(),
         )))
         .unwrap();
-    assert_rejects(&timed, options(), GeometryField::Time, 0);
+    assert_rejects(&timed, options(), GeometryField::Time, Some(1));
     let (text, report) = write(&timed, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
@@ -411,7 +390,7 @@ fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
     let mut bare = waters();
     bare.set_order(Some(Order::Time(TimeAxis::new(None, None).unwrap())))
         .unwrap();
-    assert_rejects(&bare, options(), GeometryField::Order, 0);
+    assert_rejects(&bare, options(), GeometryField::Order, None);
     let (text, report) = write(&bare, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(
@@ -421,7 +400,7 @@ fn geometry_state_xyz_cannot_hold_is_rejected_or_omitted_with_a_report() {
 
     // Velocities on one geometry.
     let moving = with_velocities(waters(), 1);
-    assert_rejects(&moving, options(), GeometryField::Velocities, 1);
+    assert_rejects(&moving, options(), GeometryField::Velocities, Some(2));
     let (text, report) = write(&moving, omit()).unwrap();
     assert_eq!(text, plain);
     assert_eq!(

@@ -61,6 +61,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use crate::traj::trajectory::reason::{DcdField, Part, Reason, UnitOf};
 use crate::traj::FrameView;
 use std::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -305,12 +306,10 @@ impl DcdWriteOptions {
         step_interval: u64,
     ) -> Result<Self, TrajectoryIoError> {
         if step_interval == 0 {
-            return Err(writer_option_error("The step interval is zero."));
+            return Err(writer_option_error(Reason::StepIntervalZero));
         }
         if start_step > i32::MAX as u64 || step_interval > i32::MAX as u64 {
-            return Err(writer_option_error(
-                "The first step or the step interval exceeds the 32-bit header field.",
-            ));
+            return Err(writer_option_error(Reason::StepSequenceRange));
         }
         self.start_step = start_step;
         self.step_interval = step_interval;
@@ -335,13 +334,12 @@ impl DcdWriteOptions {
     ) -> Result<Self, TrajectoryIoError> {
         validate_time_policy(time_policy, "DCD writer options")?;
         let unit = header_delta_unit(time_policy);
-        let delta = delta.value_in(unit).map_err(|error| {
-            writer_option_error("The DCD DELTA is not a time.").with_source(error)
-        })? as f32;
+        let delta = delta
+            .value_in(unit)
+            .map_err(|error| writer_option_error(Reason::DeltaNotTime).with_source(error))?
+            as f32;
         if !delta.is_finite() || delta < 0.0 {
-            return Err(writer_option_error(format!(
-                "The time step DELTA is {delta}. It is not a finite, nonnegative number."
-            )));
+            return Err(writer_option_error(Reason::InvalidDelta(delta)));
         }
         self.delta = delta;
         self.time_policy = time_policy;
@@ -513,7 +511,7 @@ fn validate_time_policy(
                     TrajectoryIoOperation::Open,
                     Some(FORMAT),
                     source_label,
-                    "The DCD time-policy unit is incompatible.",
+                    Reason::IncompatibleUnit(Some(FORMAT), UnitOf::TimePolicy),
                 )
                 .with_source(error)
             })?;
@@ -522,13 +520,13 @@ fn validate_time_policy(
 }
 
 /// An invalid DCD writer option.
-fn writer_option_error(detail: impl Into<String>) -> TrajectoryIoError {
+fn writer_option_error(reason: impl Into<Option<Reason>>) -> TrajectoryIoError {
     codec_context(
         TrajectoryIoErrorKind::InconsistentMetadata,
         TrajectoryIoOperation::Open,
         Some(FORMAT),
         "DCD writer options",
-        detail,
+        reason,
     )
 }
 
@@ -539,27 +537,31 @@ fn checked_coordinate_bytes(count: usize, source_label: &str) -> Result<usize, T
             TrajectoryIoOperation::ReadFrame,
             source_label,
             None,
-            "A coordinate record's size exceeds this platform's address range.",
+            Reason::AddressRange(Part::CoordinateRecordSize),
         )
     })
 }
 
-fn nonnegative_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
+fn nonnegative_u64(
+    value: i32,
+    field: DcdField,
+    source_label: &str,
+) -> Result<u64, TrajectoryIoError> {
     u64::try_from(value).map_err(|_| {
         header_error(
             FORMAT,
             source_label,
-            format!("The header field {field} is {value}. It is negative."),
+            Reason::HeaderFieldNegative(field, value),
         )
     })
 }
 
-fn positive_u64(value: i32, field: &str, source_label: &str) -> Result<u64, TrajectoryIoError> {
+fn positive_u64(value: i32, field: DcdField, source_label: &str) -> Result<u64, TrajectoryIoError> {
     if value <= 0 {
         return Err(header_error(
             FORMAT,
             source_label,
-            format!("The header field {field} is {value}. It is not positive."),
+            Reason::HeaderFieldNotPositive(field, value),
         ));
     }
     Ok(value as u64)
@@ -567,14 +569,14 @@ fn positive_u64(value: i32, field: &str, source_label: &str) -> Result<u64, Traj
 
 fn nonnegative_usize(
     value: i32,
-    field: &str,
+    field: DcdField,
     source_label: &str,
 ) -> Result<usize, TrajectoryIoError> {
     usize::try_from(value).map_err(|_| {
         header_error(
             FORMAT,
             source_label,
-            format!("The header field {field} is {value}. It is negative."),
+            Reason::HeaderFieldNegative(field, value),
         )
     })
 }

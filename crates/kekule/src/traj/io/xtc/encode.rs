@@ -4,6 +4,7 @@
 //! than [`XTC_MAX_SCALED`] and no integer arithmetic here can overflow.
 
 use super::{XtcMagic, XTC_FIRST_SMALL_INDEX, XTC_MAGIC_INTS, XTC_MAX_SCALED};
+use crate::traj::trajectory::reason::Reason;
 
 const XTC_LAST_SMALL_INDEX: usize = XTC_MAGIC_INTS.len() - 1;
 /// Axis sizes above this are written separately instead of packed together.
@@ -110,7 +111,7 @@ pub(super) fn encode_coordinates(
     magic: XtcMagic,
     stream: &mut Vec<u8>,
     output: &mut Vec<u8>,
-) -> Result<(), &'static str> {
+) -> Result<(), Reason> {
     debug_assert!(coordinates.len() >= 2);
     let mut minimum = [i32::MAX; 3];
     let mut maximum = [i32::MIN; 3];
@@ -246,7 +247,7 @@ pub(super) fn encode_coordinates(
     match magic {
         XtcMagic::Xtc1995 => output.extend_from_slice(
             &i32::try_from(stream.len())
-                .map_err(|_| "The compressed coordinates exceed the 32-bit byte count of XTC 1995. Use XTC 2023.")?
+                .map_err(|_| Reason::Xtc1995ByteCount)?
                 .to_be_bytes(),
         ),
         XtcMagic::Xtc2023 => output.extend_from_slice(&(stream.len() as u64).to_be_bytes()),

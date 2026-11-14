@@ -1,4 +1,4 @@
-//! XYZ parsing and structure interpretation.
+//! XYZ parsing, structure interpretation, and writing.
 //!
 //! An XYZ file is a sequence of frames, each an atom count, a comment line,
 //! and one element and three coordinates per atom. It states no bonds, so
@@ -32,6 +32,10 @@
 //! the only element tokens that reader accepts; interpretation also accepts
 //! other letter cases and atomic numbers.
 //!
+//! [`write()`] writes a structure as one frame or a structure set as one
+//! frame per geometry, in dense atom order, so the file interprets back to
+//! the same atoms.
+//!
 //! ```
 //! use kekule::molecule::BondOrder;
 //! use kekule::xyz;
@@ -50,9 +54,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub use crate::io::xyz::entry_points::{parse_reader, parse_str};
+pub use crate::io::xyz::entry_points::{parse_reader, parse_str, write, write_to};
 pub use crate::io::{
     XyzAtom, XyzDocument, XyzFrame, XyzFrameSelection, XyzInferredBond, XyzInterpretIssue,
-    XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions,
-    XyzStructureSetInterpretOptions, XyzStructureSetInterpretation, DEFAULT_XYZ_MAX_ATOM_CONTACTS,
+    XyzInterpretOptions, XyzInterpretation, XyzInterpretationReport, XyzParseOptions, XyzSource,
+    XyzStructureSetInterpretOptions, XyzStructureSetInterpretation, XyzWriteOptions,
+    DEFAULT_XYZ_MAX_ATOM_CONTACTS,
 };

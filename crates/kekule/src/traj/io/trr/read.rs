@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::{Datum, Part, Reason};
 
 /// Sequential TRR reader retaining one seekable stream and reusable scratch.
 pub struct TrrReader<R> {
@@ -94,7 +95,7 @@ impl<R: Read + Seek> TrrReader<R> {
             )
         })?;
         let first_header = read_header(&mut reader, limits, source_label, Some(atom_count), false)?
-            .ok_or_else(|| header_error(FORMAT, source_label, "The stream is empty."))?;
+            .ok_or_else(|| header_error(FORMAT, source_label, Reason::EmptyStream))?;
         validate_lambda(first_header.lambda, options.lambda_policy, source_label, 0)?;
         let mut positions = Vec::new();
         let mut velocities = Vec::new();
@@ -107,7 +108,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     TrajectoryIoOperation::ReadHeader,
                     source_label,
                     None,
-                    "The vector buffers exceed this platform's address range.",
+                    Reason::AddressRange(Part::VectorBuffers),
                 )
             })?;
         let scratch_bytes = vector_bytes.checked_mul(3).ok_or_else(|| {
@@ -116,14 +117,25 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "The vector buffers exceed this platform's address range.",
+                Reason::AddressRange(Part::VectorBuffers),
             )
         })?;
         if scratch_bytes > limits.max_scratch_bytes() {
-            return Err(limit_error(FORMAT, TrajectoryIoOperation::ReadHeader, source_label, None, format!(
-                    "The vector buffers need {scratch_bytes} bytes, more than the buffer limit of {} bytes.",
-                    limits.max_scratch_bytes()
-                )));
+            return Err(limit_error(
+                FORMAT,
+                TrajectoryIoOperation::ReadHeader,
+                source_label,
+                None,
+                None,
+            )
+            .exceeding(
+                Part::VectorBuffers,
+                LimitExceeded::new(
+                    Resource::BufferBytes,
+                    limits.max_scratch_bytes(),
+                    scratch_bytes,
+                ),
+            ));
         }
         positions.try_reserve_exact(atom_count).map_err(|_| {
             limit_error(
@@ -131,7 +143,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "Cannot allocate the position buffer.",
+                Reason::Allocation(Part::PositionBuffer),
             )
         })?;
         velocities.try_reserve_exact(atom_count).map_err(|_| {
@@ -140,7 +152,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "Cannot allocate the velocity buffer.",
+                Reason::Allocation(Part::BufferOf(Datum::Velocity)),
             )
         })?;
         forces.try_reserve_exact(atom_count).map_err(|_| {
@@ -149,7 +161,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "Cannot allocate the force buffer.",
+                Reason::Allocation(Part::BufferOf(Datum::Force)),
             )
         })?;
         let mut properties = OwnerProperties::new();
@@ -240,10 +252,10 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 Some(self.frame_cursor),
-                "",
+                None,
             )
             .exceeding(
-                "The trajectory",
+                Part::Trajectory,
                 LimitExceeded::first_beyond(Resource::Frames, self.source.limits.max_frames()),
             ));
         }
@@ -268,7 +280,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     TrajectoryIoOperation::ReadFrame,
                     &self.source.label,
                     Some(self.frame_cursor),
-                    "The frame's size exceeds this platform's address range.",
+                    Reason::AddressRange(Part::FrameSize),
                 )
             })?;
         let frame_bytes = header
@@ -280,7 +292,7 @@ impl<R: Read + Seek> TrrReader<R> {
                     TrajectoryIoOperation::ReadFrame,
                     &self.source.label,
                     Some(self.frame_cursor),
-                    "The frame's size exceeds the 64-bit range.",
+                    Reason::Range64(Part::FrameSize),
                 )
             })?;
         if frame_bytes > self.source.limits.max_frame_bytes() {
@@ -289,10 +301,10 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 Some(self.frame_cursor),
-                "",
+                None,
             )
             .exceeding(
-                "The frame",
+                Part::Frame,
                 exceeded_bytes(self.source.limits.max_frame_bytes(), frame_bytes),
             ));
         }
@@ -319,9 +331,14 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 Some(self.frame_cursor),
-                format!(
-                    "The frame's buffers exceed the buffer limit of {} bytes.",
-                    self.source.limits.max_scratch_bytes()
+                None,
+            )
+            .exceeding(
+                Part::FrameBuffers,
+                LimitExceeded::new(
+                    Resource::BufferBytes,
+                    self.source.limits.max_scratch_bytes(),
+                    scratch_bytes.unwrap_or(usize::MAX),
                 ),
             ));
         }
@@ -334,7 +351,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.source.limits,
                 &self.source.label,
                 self.frame_cursor,
-                "box",
+                Datum::Box,
             )?;
             Some(decode_cell(
                 &self.raw,
@@ -352,7 +369,7 @@ impl<R: Read + Seek> TrrReader<R> {
             &self.source.limits,
             &self.source.label,
             self.frame_cursor,
-            "position",
+            Datum::Position,
         )?;
         decode_triplets_into(
             &self.raw,
@@ -361,7 +378,7 @@ impl<R: Read + Seek> TrrReader<R> {
             Point3::new,
             &self.source.label,
             self.frame_cursor,
-            "position",
+            Datum::Position,
         )?;
         if header.has_velocities() {
             read_raw(
@@ -371,7 +388,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.source.limits,
                 &self.source.label,
                 self.frame_cursor,
-                "velocity",
+                Datum::Velocity,
             )?;
             decode_triplets_into(
                 &self.raw,
@@ -380,7 +397,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 Vector3::new,
                 &self.source.label,
                 self.frame_cursor,
-                "velocity",
+                Datum::Velocity,
             )?;
         }
         if header.has_forces() {
@@ -391,7 +408,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 &self.source.limits,
                 &self.source.label,
                 self.frame_cursor,
-                "force",
+                Datum::Force,
             )?;
             decode_triplets_into(
                 &self.raw,
@@ -400,7 +417,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 Vector3::new,
                 &self.source.label,
                 self.frame_cursor,
-                "force",
+                Datum::Force,
             )?;
         }
         if self.options.lambda_policy == TrrLambdaPolicy::FrameProperty {
@@ -419,7 +436,7 @@ impl<R: Read + Seek> TrrReader<R> {
                         TrajectoryIoOperation::ReadFrame,
                         &self.source.label,
                         self.frame_cursor,
-                        "The lambda value is not a valid frame property.",
+                        Reason::LambdaNotProperty,
                     )
                 })?;
         }
@@ -429,7 +446,7 @@ impl<R: Read + Seek> TrrReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 &self.source.label,
                 Some(self.frame_cursor),
-                "The frame number exceeds this platform's address range.",
+                Reason::AddressRange(Part::FrameNumber),
             )
         })?;
         Ok(Some(TrrDecodedFrame { header, cell }))
@@ -539,7 +556,7 @@ pub(super) fn read_header<R: Read>(
             return Err(header_error(
                 FORMAT,
                 source_label,
-                "The magic number is missing.",
+                Reason::Missing(Part::MagicNumber),
             ))
         }
         Ok(_) => {}
@@ -559,20 +576,16 @@ pub(super) fn read_header<R: Read>(
         TrajectoryIoOperation::ReadHeader,
         source_label,
         None,
-        "The magic number is incomplete.",
+        Reason::Incomplete(Part::MagicNumber),
     )?;
     if i32::from_be_bytes(magic) != TRR_MAGIC {
-        return Err(header_error(
-            FORMAT,
-            source_label,
-            "The magic number is not 1993.",
-        ));
+        return Err(header_error(FORMAT, source_label, Reason::TrrMagic));
     }
     let declared_version_bytes = read_i32(
         reader,
         source_label,
         None,
-        "The version length is truncated.",
+        Reason::Truncated(Part::VersionLength),
     )?;
     if declared_version_bytes
         != i32::try_from(TRR_VERSION.len() + 1).expect("TRR version length fits i32")
@@ -582,7 +595,7 @@ pub(super) fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The version length is not that of GMX_trn_file.",
+            Reason::TrrVersionLength,
         ));
     }
     let (version_matches, version_bytes) = read_xdr_string(reader, limits, source_label)?;
@@ -592,24 +605,29 @@ pub(super) fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The version string is not GMX_trn_file.",
+            Reason::TrrVersionString,
         ));
     }
     let mut sizes = [0_usize; 10];
     for size in &mut sizes {
-        let value = read_i32(reader, source_label, None, "A block size is truncated.")?;
+        let value = read_i32(
+            reader,
+            source_label,
+            None,
+            Reason::Truncated(Part::BlockSize),
+        )?;
         *size = usize::try_from(value)
-            .map_err(|_| header_error(FORMAT, source_label, "A block size is negative."))?;
+            .map_err(|_| header_error(FORMAT, source_label, Reason::Negative(Part::BlockSize)))?;
         if *size as u64 > limits.max_record_bytes() {
             return Err(limit_error(
                 FORMAT,
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "",
+                None,
             )
             .exceeding(
-                "A block",
+                Part::Block,
                 exceeded_bytes(limits.max_record_bytes(), *size as u64),
             ));
         }
@@ -618,9 +636,9 @@ pub(super) fn read_header<R: Read>(
         reader,
         source_label,
         None,
-        "The atom count is truncated.",
+        Reason::Truncated(Part::AtomCount),
     )?)
-    .map_err(|_| header_error(FORMAT, source_label, "The atom count is negative."))?;
+    .map_err(|_| header_error(FORMAT, source_label, Reason::Negative(Part::AtomCount)))?;
     validate_atom_count(
         FORMAT,
         atom_count,
@@ -649,7 +667,7 @@ pub(super) fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The frame has input record, energy, virial, pressure, topology or symbol blocks. Kekule cannot keep them.",
+            Reason::UnsupportedTrrBlocks,
         ));
     }
     if x_size == 0 {
@@ -658,7 +676,7 @@ pub(super) fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The frame has no positions.",
+            Reason::NoPositions,
         ));
     }
     let precision = infer_precision(atom_count, box_size, x_size, v_size, f_size, source_label)?;
@@ -671,7 +689,7 @@ pub(super) fn read_header<R: Read>(
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "A vector block exceeds this platform's address range.",
+                Reason::AddressRange(Part::VectorBlock),
             )
         })?;
     if x_size != expected_vectors
@@ -684,24 +702,24 @@ pub(super) fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The block sizes do not match the atom count and the scalar precision.",
+            Reason::BlockSizesMismatch,
         ));
     }
-    let step_raw = read_i32(reader, source_label, None, "The step is truncated.")?;
+    let step_raw = read_i32(reader, source_label, None, Reason::Truncated(Part::Step))?;
     let step = u64::try_from(step_raw).map_err(|_| {
         codec_context(
             TrajectoryIoErrorKind::NegativeOrUnrepresentableStep,
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The step is negative.",
+            Reason::Negative(Part::Step),
         )
     })?;
     let nre = read_i32(
         reader,
         source_label,
         None,
-        "The energy count nre is truncated.",
+        Reason::Truncated(Part::EnergyCount),
     )?;
     if nre != 0 {
         return Err(codec_context(
@@ -709,7 +727,7 @@ pub(super) fn read_header<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            "The frame has energy terms. Kekule cannot keep them.",
+            Reason::EnergyTerms,
         ));
     }
     let time = read_scalar(
@@ -717,20 +735,20 @@ pub(super) fn read_header<R: Read>(
         precision,
         source_label,
         None,
-        "The time is truncated.",
+        Reason::Truncated(Part::Time),
     )?;
     let lambda = read_scalar(
         reader,
         precision,
         source_label,
         None,
-        "The lambda value is truncated.",
+        Reason::Truncated(Part::Lambda),
     )?;
     if !time.is_finite() || !lambda.is_finite() {
         return Err(header_error(
             FORMAT,
             source_label,
-            format!("The time {time} or the lambda value {lambda} is not finite."),
+            Reason::TimeOrLambdaNotFinite { time, lambda },
         ));
     }
     let header_bytes = 4_u64
@@ -744,7 +762,7 @@ pub(super) fn read_header<R: Read>(
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "The frame header's size exceeds the 64-bit range.",
+                Reason::Range64(Part::FrameHeaderSize),
             )
         })?;
     Ok(Some(TrrFrameHeader {
@@ -778,23 +796,11 @@ pub(super) fn infer_precision(
     let (size, scalars) = candidates
         .into_iter()
         .find(|(size, _)| *size != 0)
-        .ok_or_else(|| {
-            header_error(
-                FORMAT,
-                source_label,
-                "The frame has no block that shows its precision.",
-            )
-        })?;
+        .ok_or_else(|| header_error(FORMAT, source_label, Reason::NoPrecisionBlock))?;
     let width = size
         .checked_div(scalars)
         .filter(|_| size % scalars == 0)
-        .ok_or_else(|| {
-            header_error(
-                FORMAT,
-                source_label,
-                "The block sizes give no whole scalar width.",
-            )
-        })?;
+        .ok_or_else(|| header_error(FORMAT, source_label, Reason::NoScalarWidth))?;
     match width {
         4 => Ok(TrrScalarPrecision::Float32),
         8 => Ok(TrrScalarPrecision::Float64),
@@ -803,7 +809,7 @@ pub(super) fn infer_precision(
             TrajectoryIoOperation::ReadHeader,
             Some(FORMAT),
             source_label,
-            format!("The scalar width is {width} bytes, not 4 or 8."),
+            Reason::ScalarWidth(width),
         )),
     }
 }
@@ -817,13 +823,13 @@ pub(super) fn read_xdr_string<R: Read>(
         reader,
         source_label,
         None,
-        "The version string's length is truncated.",
+        Reason::Truncated(Part::VersionStringLength),
     )?)
     .map_err(|_| {
         header_error(
             FORMAT,
             source_label,
-            "The version string's length is negative.",
+            Reason::Negative(Part::VersionStringLength),
         )
     })?;
     if length > 256 || length > limits.max_text_line_bytes() || length > limits.max_scratch_bytes()
@@ -833,7 +839,7 @@ pub(super) fn read_xdr_string<R: Read>(
             TrajectoryIoOperation::ReadHeader,
             source_label,
             None,
-            format!("The version string has {length} bytes, more than 256 or the line limit."),
+            Reason::VersionStringTooLong(length),
         ));
     }
     let padded = length
@@ -845,7 +851,7 @@ pub(super) fn read_xdr_string<R: Read>(
                 TrajectoryIoOperation::ReadHeader,
                 source_label,
                 None,
-                "The version string's padding exceeds this platform's address range.",
+                Reason::AddressRange(Part::VersionStringPadding),
             )
         })?;
     let mut bytes = [0_u8; 256];
@@ -856,13 +862,13 @@ pub(super) fn read_xdr_string<R: Read>(
         TrajectoryIoOperation::ReadHeader,
         source_label,
         None,
-        "The version string is truncated.",
+        Reason::Truncated(Part::VersionString),
     )?;
     if bytes[length..].iter().any(|byte| *byte != 0) {
         return Err(header_error(
             FORMAT,
             source_label,
-            "The version string's padding is not zero.",
+            Reason::NotZero(Part::VersionStringPadding),
         ));
     }
     Ok((&bytes[..length] == TRR_VERSION, 4 + padded as u64))
@@ -875,14 +881,28 @@ pub(super) fn read_raw<R: Read>(
     limits: &TrajectoryIoLimits,
     source_label: &str,
     frame: usize,
-    field: &str,
+    field: Datum,
 ) -> Result<(), TrajectoryIoError> {
-    if length > limits.max_scratch_bytes() || length as u64 > limits.max_record_bytes() {
-        return Err(limit_error(FORMAT, TrajectoryIoOperation::ReadFrame, source_label, Some(frame), format!(
-                "The {field} block has {length} bytes, more than the record limit of {} bytes or the buffer limit of {} bytes.",
-                limits.max_record_bytes(),
-                limits.max_scratch_bytes()
-            )));
+    let limit = if length as u64 > limits.max_record_bytes() {
+        Some(exceeded_bytes(limits.max_record_bytes(), length as u64))
+    } else if length > limits.max_scratch_bytes() {
+        Some(LimitExceeded::new(
+            Resource::BufferBytes,
+            limits.max_scratch_bytes(),
+            length,
+        ))
+    } else {
+        None
+    };
+    if let Some(limit) = limit {
+        return Err(limit_error(
+            FORMAT,
+            TrajectoryIoOperation::ReadFrame,
+            source_label,
+            Some(frame),
+            None,
+        )
+        .exceeding(Part::BlockOf(field), limit));
     }
     if raw.capacity() < length {
         raw.try_reserve_exact(length.saturating_sub(raw.len()))
@@ -892,7 +912,7 @@ pub(super) fn read_raw<R: Read>(
                     TrajectoryIoOperation::ReadFrame,
                     source_label,
                     Some(frame),
-                    format!("Cannot allocate the {field} buffer."),
+                    Reason::Allocation(Part::BufferOf(field)),
                 )
             })?;
     }
@@ -904,7 +924,7 @@ pub(super) fn read_raw<R: Read>(
         TrajectoryIoOperation::ReadFrame,
         source_label,
         Some(frame),
-        &format!("truncated {field}"),
+        Reason::Truncated(Part::BlockOf(field)),
     )
 }
 
@@ -915,7 +935,7 @@ pub(super) fn decode_triplets<T>(
     construct: impl Fn(f64, f64, f64) -> T,
     source_label: &str,
     frame: usize,
-    field: &str,
+    field: Datum,
 ) -> Result<(), TrajectoryIoError> {
     for (destination, values) in destination
         .iter_mut()
@@ -931,7 +951,7 @@ pub(super) fn decode_triplets<T>(
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame,
-                format!("A {field} value is not finite."),
+                Reason::NotFinite(Part::ValueOf(field)),
             ));
         }
         *destination = construct(x, y, z);
@@ -948,7 +968,7 @@ pub(super) fn decode_triplets_into<T>(
     construct: impl Fn(f64, f64, f64) -> T,
     source_label: &str,
     frame: usize,
-    field: &str,
+    field: Datum,
 ) -> Result<(), TrajectoryIoError> {
     destination.clear();
     // The indexed reader hands the buffers over, so the next read
@@ -965,7 +985,7 @@ pub(super) fn decode_triplets_into<T>(
                 TrajectoryIoOperation::ReadFrame,
                 source_label,
                 frame,
-                format!("A {field} value is not finite."),
+                Reason::NotFinite(Part::ValueOf(field)),
             ));
         }
         destination.push(construct(x, y, z));
@@ -987,7 +1007,7 @@ pub(super) fn decode_cell(
         Vector3::new,
         source_label,
         frame,
-        "box",
+        Datum::Box,
     )?;
     PeriodicCell::new(Quantity::new(vectors, NANOMETER), [true; 3]).map_err(|error| {
         frame_error(
@@ -996,7 +1016,7 @@ pub(super) fn decode_cell(
             TrajectoryIoOperation::ReadFrame,
             source_label,
             frame,
-            "The periodic cell is invalid.",
+            Reason::InvalidPeriodicCell,
         )
         .with_source(error)
     })
@@ -1028,7 +1048,7 @@ pub(super) fn validate_lambda(
         )
         .with_source_label(source_label)
         .with_frame(frame)
-        .with_detail("The lambda value is not zero."));
+        .with_reason(Reason::LambdaNotZero));
     }
     Ok(())
 }
@@ -1037,7 +1057,7 @@ pub(super) fn read_i32<R: Read>(
     reader: &mut R,
     source_label: &str,
     frame: Option<usize>,
-    detail: &str,
+    reason: Reason,
 ) -> Result<i32, TrajectoryIoError> {
     let mut bytes = [0_u8; 4];
     read_exact(
@@ -1047,7 +1067,7 @@ pub(super) fn read_i32<R: Read>(
         read_operation(frame),
         source_label,
         frame,
-        detail,
+        reason,
     )?;
     Ok(i32::from_be_bytes(bytes))
 }
@@ -1057,7 +1077,7 @@ pub(super) fn read_scalar<R: Read>(
     precision: TrrScalarPrecision,
     source_label: &str,
     frame: Option<usize>,
-    detail: &str,
+    reason: Reason,
 ) -> Result<f64, TrajectoryIoError> {
     let mut bytes = [0_u8; 8];
     read_exact(
@@ -1067,7 +1087,7 @@ pub(super) fn read_scalar<R: Read>(
         read_operation(frame),
         source_label,
         frame,
-        detail,
+        reason,
     )?;
     Ok(match precision {
         TrrScalarPrecision::Float32 => {

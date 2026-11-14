@@ -1,4 +1,5 @@
 use super::*;
+use crate::traj::trajectory::reason::Reason;
 
 /// Fully verified indexed TRR reader.
 pub struct IndexedTrrReader<R> {
@@ -224,7 +225,7 @@ impl<R: Read + Seek> IndexedCodec for TrrReader<R> {
                 TrajectoryIoOperation::ReadFrame,
                 TrajectoryFormat::Trr,
                 &self.source.label,
-                "The frame's scalar width differs from the first frame's.",
+                Reason::ScalarWidthDiffers,
             )
             .with_frame(index));
         }

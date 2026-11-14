@@ -7,11 +7,6 @@ use crate::topology::Topology;
 use super::buffer::FrameBuffer;
 use super::{FrameView, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation};
 
-/// Why a time-ordered set refuses a frame whose time or step columns differ
-/// from the first frame's.
-pub(crate) const COLUMN_MISMATCH: &str =
-    "The frame has a time or step the first frame lacks, or lacks one it has.";
-
 /// Sequential reader that publishes complete frames into reusable storage.
 ///
 /// `read_next` returns `Ok(false)` only at clean end-of-stream. Implementations
@@ -258,7 +253,7 @@ impl TrajectoryWriter for MemoryTrajectoryWriter {
                 None,
             )
             .with_frame(index)
-            .with_detail(COLUMN_MISMATCH)
+            .with_reason(super::reason::Reason::ColumnMismatch)
             .with_source(error),
         })
     }

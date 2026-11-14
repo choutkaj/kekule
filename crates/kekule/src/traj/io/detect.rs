@@ -1,3 +1,5 @@
+use crate::diagnostics::{LimitExceeded, Resource};
+use crate::traj::trajectory::reason::{Part, Reason};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
@@ -150,7 +152,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "The detection limit is 0 bytes. Detection reads at least 1 byte.",
+            Reason::DetectionLimitZero,
         ));
     }
     if max > limits.max_scratch_bytes() {
@@ -159,10 +161,11 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            format!(
-                "The detection limit of {max} bytes exceeds the buffer limit of {} bytes.",
-                limits.max_scratch_bytes()
-            ),
+            None,
+        )
+        .exceeding(
+            Part::DetectionLimit,
+            LimitExceeded::new(Resource::BufferBytes, limits.max_scratch_bytes(), max),
         ));
     }
     let mut prefix = Vec::new();
@@ -172,7 +175,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "Cannot allocate the detection buffer.",
+            Reason::Allocation(Part::DetectionBuffer),
         )
     })?;
     let read_result = Read::by_ref(reader)
@@ -191,7 +194,7 @@ pub(crate) fn select_format<R: Read + Seek>(
             TrajectoryIoOperation::Detect,
             None,
             source_label,
-            "The file is compressed. Decompress it first.",
+            Reason::CompressedFile,
         ));
     }
 
@@ -216,7 +219,7 @@ pub(crate) fn select_format<R: Read + Seek>(
                 TrajectoryIoOperation::Detect,
                 Some(signature),
                 source_label,
-                format!("The content is {signature} but the extension names {extension}."),
+                Reason::ContentExtensionMismatch(signature, extension),
             )),
             (Some(signature), None) => Ok(DetectionResult {
                 format: signature,
@@ -230,21 +233,21 @@ pub(crate) fn select_format<R: Read + Seek>(
                 TrajectoryIoOperation::Detect,
                 Some(extension),
                 source_label,
-                "The file does not yet hold its format's signature.",
+                Reason::NoSignatureYet,
             )),
             (None, Some(extension)) => Err(codec_context(
                 TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 Some(extension),
                 source_label,
-                "The content does not match the format its extension names.",
+                Reason::NotExtensionFormat,
             )),
             (None, None) => Err(codec_context(
                 TrajectoryIoErrorKind::UnknownFormat,
                 TrajectoryIoOperation::Detect,
                 None,
                 source_label,
-                "The content matches no supported trajectory format.",
+                None,
             )),
         },
     }
