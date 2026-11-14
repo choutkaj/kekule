@@ -1006,8 +1006,8 @@ table above: `tests/<domain>/main.rs` (`foundations`, `chemistry`, `queries`,
 `tests/support/`. Two binaries stand apart: `invariants`, which checks
 cross-domain invariants over the external corpus, and `reading_threads`, whose
 counting global allocator must not see other tests' allocations. A test that
-needs only the public API is an integration test, and a topic is tested in one
-tree, not both.
+needs only the public API is an integration test; a unit test is for behaviour
+that needs crate internals. A topic can therefore have tests in both trees.
 
 ### Companion packages
 
