@@ -93,6 +93,7 @@ use hierarchy_index::HierarchyIndex;
 pub(crate) use hierarchy_index::SiteNames;
 pub use perception::TopologyPerceptionError;
 pub(crate) use reconstruct::{RawDefinition, TopologyParts};
+pub(crate) use selection::{expand_mask, Expansion};
 pub use selection::{AtomSelection, BondSelection, BondSelectionMode, SelectionError};
 pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubsetError};
 
