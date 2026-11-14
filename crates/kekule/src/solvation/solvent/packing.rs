@@ -215,8 +215,14 @@ pub(super) fn solvate(
     if report.waters_added > 0 {
         let water = definition("O", 0, true);
         let atom_ids: Vec<_> = water.atom_ids().collect();
-        let def = builder.add_molecule_definition(water)?;
-        builder.set_molecule_class(def, MoleculeClass::Water)?;
+        let def = builder
+            .topology_mut()
+            .add_molecule_definition(water)
+            .map_err(StructureBuildError::from)?;
+        builder
+            .topology_mut()
+            .set_molecule_class(def, MoleculeClass::Water)
+            .map_err(StructureBuildError::from)?;
         let chain = new_chain(&mut builder, "SOL")?;
         for (index, water) in waters.iter().enumerate().filter(|(i, _)| !is_ion[*i]) {
             let source = template(water.template);
@@ -258,8 +264,14 @@ pub(super) fn solvate(
         }
         let ion = definition(symbol, charge, false);
         let atom_ids: Vec<_> = ion.atom_ids().collect();
-        let def = builder.add_molecule_definition(ion)?;
-        builder.set_molecule_class(def, MoleculeClass::Ion)?;
+        let def = builder
+            .topology_mut()
+            .add_molecule_definition(ion)
+            .map_err(StructureBuildError::from)?;
+        builder
+            .topology_mut()
+            .set_molecule_class(def, MoleculeClass::Ion)
+            .map_err(StructureBuildError::from)?;
         let chain = new_chain(&mut builder, "ION")?;
         for (index, &site) in indices.iter().enumerate() {
             let point = translated(origin, waters[site].oxygen)?;
@@ -384,12 +396,15 @@ fn new_chain(builder: &mut StructureBuilder, prefix: &str) -> Result<ChainId, So
     let mut suffix = 1_u64;
     loop {
         let label = format!("{prefix}{suffix}");
-        let staged = builder.hierarchy().storage();
+        let staged = builder.topology().hierarchy().storage();
         if !staged
             .chain_ids()
             .any(|chain| staged.chain_label_id(chain) == label)
         {
-            return Ok(builder.hierarchy_mut().add_chain(label, None)?);
+            return Ok(builder
+                .topology_mut()
+                .hierarchy_mut()
+                .add_chain(label, None)?);
         }
         suffix += 1;
     }
@@ -408,7 +423,7 @@ fn append(
 ) -> Result<(), SolvationError> {
     let positions = Positions::new(Quantity::new(points, CANONICAL_LENGTH_UNIT))?;
     let instance = builder.add_instance(definition, &positions)?;
-    let residue = builder.hierarchy_mut().add_residue(
+    let residue = builder.topology_mut().hierarchy_mut().add_residue(
         chain,
         residue_name,
         None,
@@ -416,13 +431,16 @@ fn append(
         None,
     )?;
     for (&atom, &name) in atoms.iter().zip(names) {
-        builder.hierarchy_mut().add_atom_site(
+        builder.topology_mut().hierarchy_mut().add_atom_site(
             residue,
             InstanceAtomId::new(instance, atom),
             AtomSiteMetadata::default().with_label_atom_id(Some(name.into())),
         )?;
     }
-    builder.hierarchy_mut().set_residue_class(residue, class)?;
+    builder
+        .topology_mut()
+        .hierarchy_mut()
+        .set_residue_class(residue, class)?;
     Ok(())
 }
 

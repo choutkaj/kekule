@@ -49,6 +49,7 @@ use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
 use overlay::{HandleBlock, Overlay};
+pub use placement::RemovedHydrogens;
 pub(crate) use placement::{AttachedInOccurrence, DraftHydrogenError};
 pub use properties::{EditProperties, EditPropertiesMut, EditPropertyTable};
 use std::collections::{BTreeMap, BTreeSet};
@@ -307,8 +308,8 @@ impl GroupIdentity {
 /// survive metadata changes. Changes to represented chemistry or residue
 /// composition require a fresh override. Unchanged inferred classes, including
 /// classes retained by a prior subset, are preserved without reclassification.
-/// No-op publication
-/// retains the exact input `Arc<Topology>` supplied to [`Self::from_topology`].
+/// No-op publication returns the source topology, sharing its layout
+/// ([`Topology::shares_layout`]).
 ///
 /// ```
 /// use kekule::{smiles, topology::{Topology, edit::TopologyEditor}};
@@ -321,7 +322,7 @@ impl GroupIdentity {
 /// assert_eq!(edited.instance_count(), 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TopologyEditor {
     source: Option<Arc<Topology>>,
     // The group of source instance `i` is group `i`, read from the source
@@ -374,8 +375,7 @@ impl Topology {
     ///
     /// To edit a shared snapshot without copying it, pass the `Arc` to
     /// [`TopologyEditor::from_topology`]: molecular data is then copied only
-    /// when edited, and a no-op publication returns that same allocation. Use
-    /// [`Self::into_editor`] to transfer an owned topology.
+    /// when edited. Use [`Self::into_editor`] to transfer an owned topology.
     pub fn to_editor(&self) -> TopologyEditor {
         TopologyEditor::from_topology(self.clone())
     }
@@ -387,11 +387,27 @@ impl Topology {
 }
 
 impl TopologyEditor {
-    /// An empty draft with no source topology.
+    /// The sourceless draft of an empty [`StructureEditor`]; topologies are
+    /// built from scratch with a [`TopologyBuilder`].
     ///
-    /// Publishing it fails until atoms are added.
-    pub fn new() -> Self {
-        Self::default()
+    /// [`StructureEditor`]: crate::structure::StructureEditor
+    /// [`TopologyBuilder`]: crate::topology::TopologyBuilder
+    pub(crate) fn empty() -> Self {
+        Self {
+            source: None,
+            groups: Vec::new(),
+            atoms: Overlay::default(),
+            bonds: Overlay::default(),
+            molecule_classes: BTreeMap::new(),
+            hierarchy: EditHierarchy::default(),
+            properties: TopologyProperties::default(),
+            revision: 0,
+            structural_revision: 0,
+            dead_atom_slots: BTreeSet::new(),
+            cleared: false,
+            deleted_slots: Default::default(),
+            shared: sharing::SharedDefinitions::default(),
+        }
     }
 
     /// Clears the draft while retaining source correspondence for deleted entities.
@@ -430,13 +446,14 @@ impl TopologyEditor {
             atoms: Overlay::new(atoms),
             bonds: Overlay::new(bonds),
             source: Some(Arc::clone(&source)),
-            ..Self::default()
+            ..Self::empty()
         };
         editor.import_hierarchy(&source);
         editor
     }
 
-    /// The source snapshot, or `None` for a draft started with [`Self::new`].
+    /// The source snapshot, or `None` for the draft of an empty
+    /// [`StructureEditor`](crate::structure::StructureEditor).
     pub fn source_topology(&self) -> Option<&Topology> {
         self.source.as_deref()
     }
@@ -1062,7 +1079,7 @@ impl TopologyEditor {
         for element in elements {
             draft.add_stereo_element(element.clone())?;
         }
-        draft.clone().finish()?;
+        draft.validate()?;
         self.group_mut(group).chemistry = GroupChemistry::Draft(Box::new(draft));
         self.mark_group_changed(group);
         self.changed();

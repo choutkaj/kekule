@@ -435,7 +435,7 @@ fn perceived_snapshots_share_one_layout_and_publications_create_new_ones() {
     let unchanged = TopologyEditor::from_topology(Arc::clone(&perceived))
         .finish()
         .unwrap();
-    assert!(Arc::ptr_eq(&unchanged, &perceived));
+    assert!(unchanged.shares_layout(&perceived));
     let mut editor = TopologyEditor::from_topology(Arc::clone(&perceived));
     let sodium = editor.atom_handle(perceived.atom_ids()[6]).unwrap();
     editor.delete_atom(sodium).unwrap();

@@ -79,7 +79,8 @@ fn hierarchy_views_read_what_the_builder_staged() {
 
 #[test]
 fn editor_hierarchy_membership_stays_aligned_during_bulk_assembly_and_site_edits() {
-    let mut editor = TopologyEditor::new();
+    let mut editor = TopologyEditor::from_topology(kekule::smiles::to_topology("O").unwrap());
+    editor.clear();
     let chain = editor.add_chain("A", None).unwrap();
     let mut residues = Vec::new();
     let mut sites = Vec::new();

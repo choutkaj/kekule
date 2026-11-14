@@ -293,7 +293,10 @@ fn optional_connectivity_reports_each_missing_consecutive_pair() {
 fn reused_definitions_do_not_create_bonds_between_instances() {
     let molecule = smiles::to_molecules("CC").unwrap().pop().unwrap();
     let mut builder = Structure::builder();
-    let definition = builder.add_molecule_definition(molecule.clone()).unwrap();
+    let definition = builder
+        .topology_mut()
+        .add_molecule_definition(molecule.clone())
+        .unwrap();
     let points = right_angle();
     builder
         .add_instance(

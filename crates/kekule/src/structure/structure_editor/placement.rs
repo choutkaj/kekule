@@ -10,7 +10,7 @@ use crate::structure::placement::{
     fragment_names, free_sites, ideal_bond_length, name_prefix, next_free_number, perceive_domains,
     unit, AtomDomains, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
     Fragment, NameAllocator, PlacedFragment, PlacedHydrogens, PlacedHydrogensReport,
-    PlacementError, RemovedHydrogens, RemovedHydrogensReport, Rotation, SiteQuery,
+    PlacementError, RemovedHydrogensReport, Rotation, SiteQuery,
 };
 use crate::structure::Positions;
 use crate::topology::edit::{EditAtomId, EditResidueId};
@@ -222,17 +222,7 @@ impl StructureEditor {
         self.slots.clear_atom_rows(&collapsed.dead_atom_slots);
         self.slots.clear_bond_rows(&collapsed.dead_bond_slots);
         Ok(RemovedHydrogensReport {
-            atoms: collapsed
-                .parents
-                .into_iter()
-                .map(|entry| RemovedHydrogens {
-                    atom: entry.parent,
-                    removed: entry.removed,
-                    retained: entry.retained,
-                    hydrogens: entry.hydrogens,
-                    implicit_hydrogens: entry.implicit_hydrogens,
-                })
-                .collect(),
+            atoms: collapsed.parents,
         })
     }
 

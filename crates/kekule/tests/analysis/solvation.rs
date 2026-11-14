@@ -395,14 +395,20 @@ fn errors_leave_every_part_of_structure_unchanged() {
 #[test]
 fn original_entities_properties_and_existing_water_survive() {
     let mut builder = structure("[H]O[H]").into_builder();
-    let ids = builder.topology_builder().atom_ids().to_vec();
-    let chain = builder.hierarchy_mut().add_chain("SOL1", None).unwrap();
+    let ids = builder.topology().atom_ids().to_vec();
+    let chain = builder
+        .topology_mut()
+        .hierarchy_mut()
+        .add_chain("SOL1", None)
+        .unwrap();
     let residue = builder
+        .topology_mut()
         .hierarchy_mut()
         .add_residue(chain, "HOH", None, Some("123".into()), None)
         .unwrap();
     for (i, id) in ids.iter().enumerate() {
         builder
+            .topology_mut()
             .hierarchy_mut()
             .add_atom_site(
                 residue,
@@ -412,7 +418,7 @@ fn original_entities_properties_and_existing_water_survive() {
             .unwrap();
     }
     builder
-        .topology_builder_mut()
+        .topology_mut()
         .properties_mut()
         .owner_mut()
         .insert(key("topology_note"), PropertyValue::Int(1))

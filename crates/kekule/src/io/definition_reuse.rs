@@ -50,7 +50,7 @@ impl<L: Hash + Eq> DefinitionReuse<L> {
         let candidates = self.staged.entry(key).or_default();
         for (definition, staged_labels) in candidates.iter() {
             let staged = builder
-                .topology_builder()
+                .topology()
                 .definition(*definition)
                 .expect("reused definitions are staged")
                 .molecule();
@@ -61,7 +61,7 @@ impl<L: Hash + Eq> DefinitionReuse<L> {
                 return Ok(*definition);
             }
         }
-        let definition = builder.add_molecule_definition(molecule)?;
+        let definition = builder.topology_mut().add_molecule_definition(molecule)?;
         candidates.push((definition, labels));
         Ok(definition)
     }
