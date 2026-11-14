@@ -2,7 +2,8 @@ use crate::algorithms::{
     add_hydrogens_to_molecule, remove_hydrogens_from_molecule, AddHydrogensOptions,
     AddHydrogensReport, HydrogenTransformError, RemoveHydrogensReport,
 };
-use crate::algorithms::{perceive_molecule, PerceptionError};
+use crate::algorithms::{perceive_molecule, perceive_molecule_with, PerceptionError};
+use crate::parallel::Run;
 
 use super::Molecule;
 
@@ -17,6 +18,19 @@ impl Molecule {
     /// there is no separate public normalization step before perception.
     pub fn perceive(&mut self) -> Result<(), PerceptionError> {
         perceive_molecule(self)
+    }
+
+    /// [`Self::perceive`] under a [`Run`], on the calling thread. Its
+    /// cancellation is also polled during ring and resonance perception,
+    /// which dominate on large molecules. Progress counts the stages done,
+    /// of five: valence, rings, aromaticity, conjugation, and resonance.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::perceive`], and [`PerceptionError::Cancelled`] once `run`'s
+    /// cancellation is requested.
+    pub fn perceive_with(&mut self, run: Run<'_>) -> Result<(), PerceptionError> {
+        perceive_molecule_with(self, run)
     }
 
     /// Convert resolved implicit hydrogens into explicit graph atoms under the

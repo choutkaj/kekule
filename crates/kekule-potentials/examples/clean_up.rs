@@ -15,17 +15,19 @@
 //! fixed, and writes the coordinates back. `--whole` cleans up the whole ligand
 //! instead of the group.
 
+use std::sync::{atomic::AtomicBool, Arc};
 use std::{collections::BTreeSet, env, error::Error, fs, ops::ControlFlow, time::Instant};
 
+use kekule::diagnostics::Cancellation;
 use kekule::math::{Point3, Vector3};
+use kekule::parallel::Run;
 use kekule::structure::Structure;
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{Quantity, CANONICAL_LENGTH_UNIT, NANOMETER};
 use kekule::{mmcif, sdf};
 use kekule_openff::{ForceField, NaglModel};
 use kekule_potentials::{
-    minimize_scoped_with_observer, openff::OpenFfPotential, MinimizationScope, MinimizeOptions,
-    Potential,
+    minimize_scoped_with, openff::OpenFfPotential, MinimizationScope, MinimizeOptions, Potential,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -141,7 +143,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let clock = Instant::now();
     let mut steps = 0;
-    let result = minimize_scoped_with_observer(
+    // A GUI sets the flag when the user cancels.
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancellation = Cancellation::from_flag(Arc::clone(&cancel));
+    let result = minimize_scoped_with(
         &potential,
         molecule.as_structure_view(),
         &scope,
@@ -149,9 +154,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         &MinimizeOptions::default().with_max_iterations(5_000),
         |_| {
             steps += 1;
-            // A GUI returns `Break` here when the user cancels.
+            // A GUI returns `Break` here to keep the geometry so far.
             ControlFlow::Continue(())
         },
+        Run::new().with_cancellation(&cancellation),
     )?;
     let minimize_time = clock.elapsed();
 

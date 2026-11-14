@@ -8,11 +8,10 @@
 //! of skipped residues and work counts. [`DsspOptions`] and [`DsspLimits`]
 //! configure the run; failures are [`DsspError`].
 //!
-//! [`DsspOptions::with_threads`] spreads one assignment over several scoped
-//! threads, and [`assign_with`] runs it on a host's own thread pool through a
-//! [`parallel::Executor`](crate::parallel::Executor). Every executor and thread count returns the same result
-//! as the default single thread, including the order of tied hydrogen bonds
-//! and every identifier.
+//! [`assign_with`] runs one assignment under a
+//! [`Run`](crate::parallel::Run), on any executor. Every executor and thread
+//! count returns the same result as the calling thread alone, including the
+//! order of tied hydrogen bonds and every identifier.
 //!
 //! A [`DsspPlan`] prepares what assignment reads from a topology once, so the
 //! frames of a trajectory, or the geometries of an ensemble, are each assigned

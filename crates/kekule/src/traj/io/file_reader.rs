@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::topology::Topology;
 
 use crate::diagnostics::{LimitExceeded, Resource};
+use crate::parallel::Run;
 use crate::structure::{DecodedGeometry, Geometry, StructureSet};
 use crate::traj::{
     FrameBuffer, MemoryTrajectoryWriter, SeekableTrajectoryReader, TrajectoryFormat,
@@ -874,10 +875,7 @@ pub fn open_trajectory(
 /// index `i` is topology dense atom index `i`, and readers check counts and
 /// available metadata, including XYZ element order. Opening scans and validates
 /// the entire file and stores bounded frame offsets for random access.
-/// `options` sets the format policies and limits, and may set a cancellation
-/// and a progress callback for the scan
-/// ([`TrajectoryOpenOptions::with_index_cancellation`],
-/// [`TrajectoryOpenOptions::with_index_progress`]). A file still being
+/// `options` sets the format policies and limits. A file still being
 /// written opens with [`TrajectoryOpenOptions::with_growing`]: its complete
 /// frames are indexed, a final frame still being written is
 /// [pending](IndexedFileTrajectoryReader::pending_byte_count), and
@@ -894,45 +892,64 @@ pub fn open_trajectory(
 ///
 /// Returns the errors of [`open_trajectory`], the decoding error of the first
 /// invalid frame, [`TrajectoryIoErrorKind::LimitExceeded`] when the index
-/// outgrows the limits, [`TrajectoryIoErrorKind::Cancelled`] when the
-/// cancellation stops the scan, [`TrajectoryIoErrorKind::IndexMismatch`]
+/// outgrows the limits, [`TrajectoryIoErrorKind::IndexMismatch`]
 /// when bytes of the file change while it is scanned, and, for a growing
 /// file, [`TrajectoryIoErrorKind::Incomplete`] when it does not yet hold a
 /// complete frame, or for DCD a complete header.
 ///
 /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::traj::TrajectoryIoErrorKind::LimitExceeded
-/// [`TrajectoryIoErrorKind::Cancelled`]: crate::traj::TrajectoryIoErrorKind::Cancelled
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
 /// [`TrajectoryIoErrorKind::Incomplete`]: crate::traj::TrajectoryIoErrorKind::Incomplete
+pub fn open_indexed_trajectory(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
+    options: TrajectoryOpenOptions,
+) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
+    open_indexed_trajectory_with(path, topology, options, Run::default())
+}
+
+/// [`open_indexed_trajectory`] under a [`Run`], scanning on the calling
+/// thread. Its cancellation is polled before the first frame and after
+/// every verified frame, and progress counts the bytes verified, headers
+/// included, of the file's size when it was opened.
+///
+/// # Errors
+///
+/// As [`open_indexed_trajectory`], and
+/// [`TrajectoryIoErrorKind::Cancelled`] once `run`'s cancellation is
+/// requested.
+///
+/// [`TrajectoryIoErrorKind::Cancelled`]: crate::traj::TrajectoryIoErrorKind::Cancelled
 ///
 /// ```no_run
 /// use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// use std::sync::Arc;
 ///
 /// use kekule::diagnostics::Cancellation;
+/// use kekule::parallel::{Progress, Run};
 /// use kekule::{smiles, topology::Topology};
-/// use kekule::traj::io::{open_indexed_trajectory, TrajectoryOpenOptions};
+/// use kekule::traj::io::open_indexed_trajectory_with;
 ///
 /// let molecule = smiles::to_molecules("CC")?.pop().unwrap();
 /// let topology = Topology::from_molecule(molecule)?;
 /// let cancel = Arc::new(AtomicBool::new(false));
-/// let done = Arc::new(AtomicU64::new(0));
-/// let progress = Arc::clone(&done);
-/// let options = TrajectoryOpenOptions::default()
-///     .with_index_cancellation(Cancellation::from_flag(Arc::clone(&cancel)))
-///     .with_index_progress(move |step| progress.store(step.byte_count(), Ordering::Relaxed));
+/// let cancellation = Cancellation::from_flag(Arc::clone(&cancel));
+/// let done = AtomicU64::new(0);
+/// let progress = |step: Progress| done.store(step.completed(), Ordering::Relaxed);
 /// // Another thread may read `done` for a progress bar and set `cancel`.
-/// let reader = open_indexed_trajectory("ethane.xtc", topology, options)?;
+/// let run = Run::new().with_cancellation(&cancellation).with_progress(&progress);
+/// let reader = open_indexed_trajectory_with("ethane.xtc", topology, Default::default(), run)?;
 /// let index = reader.to_frame_index();
 /// println!("{} frames", index.frame_count());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn open_indexed_trajectory(
+pub fn open_indexed_trajectory_with(
     path: impl AsRef<Path>,
     topology: impl Into<Arc<Topology>>,
     options: TrajectoryOpenOptions,
+    run: Run<'_>,
 ) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
-    open_indexed(path.as_ref(), topology.into(), None, options)
+    open_indexed(path.as_ref(), topology.into(), None, options, run)
 }
 
 /// Opens an indexed path-backed trajectory reader from a previously exported
@@ -946,7 +963,7 @@ pub fn open_indexed_trajectory(
 /// grew by appending since the index was exported is the same file with
 /// more frames: the reader scans the appended bytes alone, verifying and
 /// indexing every complete frame there as [`IndexedFileTrajectoryReader::refresh`]
-/// does, with the index cancellation and progress callback of `options`.
+/// does.
 /// Every frame read later is fully verified as it is decoded, and a random
 /// read checks that the frame ends exactly where the index places the next
 /// frame, or at the end of the indexed bytes, and records the index's time
@@ -978,16 +995,38 @@ pub fn open_indexed_trajectory_from_index(
     index: TrajectoryFrameIndex,
     options: TrajectoryOpenOptions,
 ) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
-    open_indexed(path.as_ref(), topology.into(), Some(index), options)
+    open_indexed_trajectory_from_index_with(path, topology, index, options, Run::default())
 }
 
-/// Opens an indexed reader, scanning the file unless `index` is given, and
-/// then the bytes appended after the frames `index` covers.
+/// [`open_indexed_trajectory_from_index`] under a [`Run`], as
+/// [`open_indexed_trajectory_with`] runs; it scans only the appended
+/// bytes, and progress counts from the end of the indexed ones.
+///
+/// # Errors
+///
+/// As [`open_indexed_trajectory_from_index`], and
+/// [`TrajectoryIoErrorKind::Cancelled`] once `run`'s cancellation is
+/// requested.
+///
+/// [`TrajectoryIoErrorKind::Cancelled`]: crate::traj::TrajectoryIoErrorKind::Cancelled
+pub fn open_indexed_trajectory_from_index_with(
+    path: impl AsRef<Path>,
+    topology: impl Into<Arc<Topology>>,
+    index: TrajectoryFrameIndex,
+    options: TrajectoryOpenOptions,
+    run: Run<'_>,
+) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
+    open_indexed(path.as_ref(), topology.into(), Some(index), options, run)
+}
+
+/// Opens an indexed reader under `run`, scanning the file unless `index` is
+/// given, and then the bytes appended after the frames `index` covers.
 fn open_indexed(
     path: &Path,
     topology: Arc<Topology>,
     index: Option<TrajectoryFrameIndex>,
     options: TrajectoryOpenOptions,
+    run: Run<'_>,
 ) -> Result<IndexedFileTrajectoryReader, TrajectoryIoError> {
     let label = path.display().to_string();
     let growing = options.growing;
@@ -1066,11 +1105,7 @@ fn open_indexed(
         (None, None) => unreachable!("an index or a scan fingerprint is taken"),
     };
     let imported = imported.map(TrajectoryFrameIndex::into_parts);
-    let control = IndexBuildControl::new(
-        options.index_cancellation.as_ref(),
-        options.index_progress.as_ref(),
-        length,
-    );
+    let control = IndexBuildControl::new(run, length);
     // A growing file whose first frame or header is still being written.
     let unfinished = |error: TrajectoryIoError| {
         if growing && error.kind() == TrajectoryIoErrorKind::TruncatedRecord {

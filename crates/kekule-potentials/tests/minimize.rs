@@ -5,6 +5,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use kekule::math::{Point3, Vector3};
+use kekule::parallel::Run;
 use kekule::structure::{Positions, Structure, StructureView};
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{
@@ -12,10 +13,9 @@ use kekule::units::{
     KILOJOULE_PER_MOLE_PER_NANOMETER, KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER, NANOMETER,
 };
 use kekule_potentials::{
-    minimize, minimize_scoped, minimize_scoped_with_observer, minimize_with_observer, Energy,
-    Evaluation, EvaluationError, InteractionKind, MinimizationError, MinimizationScope,
-    MinimizationStatus, MinimizeOption, MinimizeOptions, Potential, RestraintProblem,
-    SingularGeometry,
+    minimize, minimize_scoped, minimize_scoped_with, minimize_with, Energy, Evaluation,
+    EvaluationError, InteractionKind, MinimizationError, MinimizationScope, MinimizationStatus,
+    MinimizeOption, MinimizeOptions, Potential, RestraintProblem, SingularGeometry,
 };
 
 /// `sum_i sum_axis k_axis * scale * (x - center_i)^2`, optionally singular
@@ -142,8 +142,11 @@ fn every_accepted_step_is_observed_and_observers_can_stop() {
     let structure = start();
     let bowl = Bowl::new(&structure, centers());
     let mut energies = Vec::new();
-    let result =
-        minimize_with_observer(&bowl, structure.as_structure_view(), &tight(1e-6), |step| {
+    let result = minimize_with(
+        &bowl,
+        structure.as_structure_view(),
+        &tight(1e-6),
+        |step| {
             energies.push(step.energy().total().into_value());
             assert_eq!(step.iteration(), energies.len());
             assert_eq!(step.positions().len(), 3);
@@ -152,8 +155,10 @@ fn every_accepted_step_is_observed_and_observers_can_stop() {
             } else {
                 ControlFlow::Continue(())
             }
-        })
-        .unwrap();
+        },
+        Run::default(),
+    )
+    .unwrap();
     assert_eq!(result.status(), MinimizationStatus::Stopped);
     assert_eq!(result.iterations(), 3);
     assert!(energies.windows(2).all(|w| w[1] < w[0]));
@@ -477,7 +482,7 @@ fn scoped_observers_see_restraint_energies_and_can_stop() {
         )
         .unwrap();
     let mut seen = Vec::new();
-    let result = minimize_scoped_with_observer(
+    let result = minimize_scoped_with(
         &bowl,
         structure.as_structure_view(),
         &scope,
@@ -494,6 +499,7 @@ fn scoped_observers_see_restraint_energies_and_can_stop() {
                 ControlFlow::Continue(())
             }
         },
+        Run::default(),
     )
     .unwrap();
     assert_eq!(result.status(), MinimizationStatus::Stopped);

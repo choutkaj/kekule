@@ -148,9 +148,9 @@ keep their grid and the neighbor lists it gathers, so a host evaluating one
 selection over many structures builds them once and grids them once for
 each cutoff. Repeated reference
 points, as of copies stacked in one place, are measured once.
-`SelectEvaluateOptions::with_executor` measures ranges of the evaluated atoms
-as separate work items on a `parallel::Executor`, such as a host's thread
-pool; every executor selects the same atoms.
+`SelectionExpr::evaluate_structure_with` measures ranges of the evaluated
+atoms as separate work items on the executor of a `parallel::Run`, such as a
+host's thread pool; every executor selects the same atoms.
 
 ## Host extensions
 

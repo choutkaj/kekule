@@ -91,8 +91,8 @@ mod correspondence_tests;
 mod symmetry_tests;
 
 pub use collection::{
-    geometry_aligned_rmsd, geometry_aligned_rmsd_cancellable, geometry_rmsd,
-    geometry_rmsd_cancellable, AlignedRmsdOptions, Reference, SuperpositionReport,
+    geometry_aligned_rmsd, geometry_aligned_rmsd_with, geometry_rmsd, geometry_rmsd_with,
+    AlignedRmsdOptions, Reference, SuperpositionReport,
 };
 pub use correspondence::{
     AmbiguousLabel, AtomCorrespondence, AtomCorrespondenceError, AtomLabel, CorrespondenceSide,

@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut atoms = 0;
         for _ in 0..ROUNDS {
             let start = Instant::now();
-            let built = assembly.to_structure(structure, None)?;
+            let built = assembly.to_structure(structure)?;
             times.push(start.elapsed());
             atoms = built.atom_count();
             black_box(built);

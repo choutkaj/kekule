@@ -10,6 +10,7 @@ use std::sync::Arc;
 use kekule::diagnostics::{DiagnosticKind, Format};
 use kekule::math::Point3;
 use kekule::molecule::Element;
+use kekule::parallel::Run;
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::select::{
     self, HostRequest, HostRole, HostTerm, HostTermError, HostTermKind, HostValue, ReferencePoints,
@@ -1442,6 +1443,143 @@ fn threads(count: usize) -> kekule::parallel::ScopedThreads {
 }
 
 #[test]
+fn evaluation_stops_at_the_first_term_once_cancelled() {
+    use kekule::diagnostics::{Cancellation, Cancelled};
+
+    let structure = structure("mmcif/1AKE.cif");
+    let expression =
+        select::parse("protein and within 5 of resname GLY", Default::default()).unwrap();
+    let cancellation = Cancellation::new(|| true);
+    let run = Run::new().with_cancellation(&cancellation);
+    for error in [
+        expression
+            .evaluate_with(structure.shared_topology(), Default::default(), run)
+            .unwrap_err(),
+        expression
+            .evaluate_structure_with(&structure, Default::default(), run)
+            .unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, SelectEvaluateError::Cancelled { .. }),
+            "{error:?}"
+        );
+        // The whole expression is the first term evaluated.
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Evaluation stopped at the term {:?}.",
+                expression.to_string()
+            )
+        );
+        assert!(std::error::Error::source(&error).is_some_and(|source| source.is::<Cancelled>()));
+    }
+    let never = Cancellation::new(|| false);
+    assert_eq!(
+        expression
+            .evaluate_structure_with(
+                &structure,
+                Default::default(),
+                Run::new().with_cancellation(&never)
+            )
+            .unwrap(),
+        expression
+            .evaluate_structure(&structure, Default::default())
+            .unwrap()
+    );
+}
+
+#[test]
+fn within_and_smarts_stop_inside_the_term_once_cancelled() {
+    use kekule::diagnostics::{Cancellation, Cancelled};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Requested from the third poll on. The polls before each term pass, so
+    // only a poll inside the term can stop it.
+    let third_poll = || {
+        let polls = Arc::new(AtomicUsize::new(0));
+        Cancellation::new(move || polls.fetch_add(1, Ordering::Relaxed) >= 2)
+    };
+    let assert_cancelled_at = |error: SelectEvaluateError, expression: &SelectionExpr| {
+        assert!(
+            matches!(&error, SelectEvaluateError::Cancelled { .. }),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "Evaluation stopped at the term {:?}.",
+                expression.to_string()
+            )
+        );
+        assert!(std::error::Error::source(&error).is_some_and(|source| source.is::<Cancelled>()));
+    };
+
+    // `within` polls while it measures, on the calling thread and in every
+    // work item of an executor: the term and its reference poll first.
+    let base = structure("mmcif/1AKE.cif");
+    let large = copies_in_one_structure(&base, 100_000 / base.atom_count() + 1, true);
+    let pool = threads(4);
+    let within = parse("within 5 of resname GLY");
+    for (structure, run) in [
+        (&base, Run::new()),
+        (&large, Run::new().with_executor(&pool)),
+    ] {
+        let cancellation = third_poll();
+        let error = within
+            .evaluate_structure_with(
+                structure,
+                Default::default(),
+                run.with_cancellation(&cancellation),
+            )
+            .unwrap_err();
+        assert_cancelled_at(error, &within);
+        let never = Cancellation::new(|| false);
+        assert_eq!(
+            within
+                .evaluate_structure_with(
+                    structure,
+                    Default::default(),
+                    run.with_cancellation(&never)
+                )
+                .unwrap(),
+            within
+                .evaluate_structure(structure, Default::default())
+                .unwrap()
+        );
+    }
+
+    // SMARTS matching polls once the target is prepared, and per match.
+    let topology = Arc::new(
+        smiles::to_topology("c1ccccc1CC(=O)[OH].[Na+]")
+            .unwrap()
+            .perceived()
+            .unwrap(),
+    );
+    let smarts = parse("smarts \"[#6]\"");
+    let cancellation = third_poll();
+    let error = smarts
+        .evaluate_with(
+            topology.clone(),
+            Default::default(),
+            Run::new().with_cancellation(&cancellation),
+        )
+        .unwrap_err();
+    assert_cancelled_at(error, &smarts);
+    let never = Cancellation::new(|| false);
+    assert_eq!(
+        smarts
+            .evaluate_with(
+                topology.clone(),
+                Default::default(),
+                Run::new().with_cancellation(&never)
+            )
+            .unwrap()
+            .len(),
+        8
+    );
+}
+
+#[test]
 fn within_selects_the_same_atoms_on_any_executor() {
     // About 100k atoms, so `within` splits them into several work items.
     let base = structure("mmcif/1AKE.cif");
@@ -1470,7 +1608,7 @@ fn within_selects_the_same_atoms_on_any_executor() {
         assert!(!serial.is_empty(), "{text}");
         for executor in executors {
             let parallel = expression
-                .evaluate_structure(&structure, options.with_executor(executor))
+                .evaluate_structure_with(&structure, options, Run::new().with_executor(executor))
                 .unwrap();
             assert_eq!(parallel, serial, "{text}");
         }
@@ -1603,19 +1741,21 @@ fn selection_terms_on_a_million_atoms_run_within_a_frame() {
             "byres (within 3 of ligand)",
         ] {
             let expression = select::parse(text, parse_options.clone()).unwrap();
-            let time = |options| {
+            let time = |run| {
                 let mut times = (0..7)
                     .map(|_| {
                         let start = std::time::Instant::now();
-                        let selected = expression.evaluate_structure(&structure, options).unwrap();
+                        let selected = expression
+                            .evaluate_structure_with(&structure, serial, run)
+                            .unwrap();
                         (start.elapsed(), selected.len())
                     })
                     .collect::<Vec<_>>();
                 times.sort();
                 (times[0], times[3].0)
             };
-            let ((best, count), median) = time(serial);
-            let ((pooled, _), pooled_median) = time(serial.with_executor(&pool));
+            let ((best, count), median) = time(Run::new());
+            let ((pooled, _), pooled_median) = time(Run::new().with_executor(&pool));
             report += &format!(
                 "\n  `{text}`: {count} atoms, {best:.1?} ({median:.1?}); {pooled:.1?} ({pooled_median:.1?})"
             );

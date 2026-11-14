@@ -7,10 +7,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kekule::alignment::{self, AlignedRmsdOptions, AlignmentError, AlignmentOptions, Weighting};
-use kekule::clustering::{self, ClusteringError, ClusteringRun, Cut, Linkage};
+use kekule::clustering::{self, ClusteringError, Cut, Linkage};
 use kekule::diagnostics::Cancellation;
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
-use kekule::parallel::ScopedThreads;
+use kekule::parallel::{Run, ScopedThreads};
 use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator,
     SampleObservations, StatisticsError,
@@ -406,7 +406,12 @@ fn split_observations_merge_and_cancelled_ones_change_nothing() {
         .unwrap();
     let cancelled = Cancellation::new(|| true);
     assert!(matches!(
-        accumulator.observe_samples_cancellable(&file, &observations, 2..6, &cancelled),
+        accumulator.observe_samples_with(
+            &file,
+            &observations,
+            2..6,
+            Run::new().with_cancellation(&cancelled)
+        ),
         Err(StatisticsError::Cancelled(_))
     ));
     assert_eq!(accumulator.observation_count(), 2);
@@ -420,7 +425,12 @@ fn split_observations_merge_and_cancelled_ones_change_nothing() {
     assert_eq!(accumulator.observation_count(), 2);
     let running = Cancellation::new(|| false);
     accumulator
-        .observe_samples_cancellable(&file, &observations, 2..10, &running)
+        .observe_samples_with(
+            &file,
+            &observations,
+            2..10,
+            Run::new().with_cancellation(&running),
+        )
         .unwrap();
     assert_eq!(accumulator.observation_count(), 10);
 }
@@ -459,7 +469,42 @@ fn rmsd_of_listed_geometries_equals_the_set_in_memory() {
         );
         let cancelled = Cancellation::new(|| true);
         assert!(matches!(
-            alignment::geometry_rmsd_cancellable(reader, listed, 3, &fit, options, &cancelled),
+            alignment::geometry_rmsd_with(
+                reader,
+                listed,
+                3,
+                &fit,
+                options,
+                Run::new().with_cancellation(&cancelled)
+            ),
+            Err(AlignmentError::Cancelled(_))
+        ));
+        // An endless list stops when cancelled, before or while it is listed.
+        assert!(matches!(
+            alignment::geometry_aligned_rmsd_with(
+                reader,
+                0..,
+                3,
+                &fit,
+                &measured,
+                aligned,
+                Run::new().with_cancellation(&cancelled)
+            ),
+            Err(AlignmentError::Cancelled(_))
+        ));
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let later = Cancellation::new(move || {
+            polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 3
+        });
+        assert!(matches!(
+            alignment::geometry_rmsd_with(
+                reader,
+                std::iter::repeat(0),
+                3,
+                &fit,
+                options,
+                Run::new().with_cancellation(&later)
+            ),
             Err(AlignmentError::Cancelled(_))
         ));
         let none = alignment::geometry_rmsd(reader, [0_usize; 0], 3, &fit, options).unwrap();
@@ -491,13 +536,10 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
             .pairwise_fitted_rmsd(&atoms, Default::default())
             .unwrap();
         assert_eq!(held.member_count(), 10);
-        for run in [
-            ClusteringRun::default(),
-            ClusteringRun::default().with_executor(&threads),
-        ] {
+        for run in [Run::default(), Run::default().with_executor(&threads)] {
             for reader in [&file as &dyn StructureSetRead, &memory] {
                 let read =
-                    clustering::pairwise_fitted_rmsd(reader, &atoms, Default::default(), run)
+                    clustering::pairwise_fitted_rmsd_with(reader, &atoms, Default::default(), run)
                         .unwrap();
                 assert_eq!(read, held);
             }
@@ -520,10 +562,7 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
             .pairwise_fitted_rmsd(&atoms, Default::default())
             .unwrap();
         assert_eq!(held.member_count(), 6);
-        for run in [
-            ClusteringRun::default(),
-            ClusteringRun::default().with_executor(&threads),
-        ] {
+        for run in [Run::default(), Run::default().with_executor(&threads)] {
             assert_eq!(
                 file_ensemble
                     .pairwise_fitted_rmsd_with(&atoms, Default::default(), run)
@@ -543,10 +582,10 @@ fn pairwise_fitted_rmsd_over_a_reader_equals_the_set_in_memory() {
         );
     }
     let cancelled = Cancellation::new(|| true);
-    let run = ClusteringRun::default().with_cancellation(&cancelled);
+    let run = Run::default().with_cancellation(&cancelled);
     let atoms = AtomSelection::all(Arc::clone(&topology));
     assert!(matches!(
-        clustering::pairwise_fitted_rmsd(&file, &atoms, Default::default(), run),
+        clustering::pairwise_fitted_rmsd_with(&file, &atoms, Default::default(), run),
         Err(ClusteringError::Cancelled(_))
     ));
 }
@@ -564,20 +603,14 @@ fn pairwise_fitted_rmsd_over_processed_geometries_runs_from_several_threads() {
     let file = Processed::new(file, steps.clone()).unwrap();
     let memory = Processed::new(memory, steps).unwrap();
     let atoms = selection(&topology, &[1, 2, 4, 5]);
-    let held = clustering::pairwise_fitted_rmsd(
-        &memory,
-        &atoms,
-        Default::default(),
-        ClusteringRun::default(),
-    )
-    .unwrap();
+    let held = clustering::pairwise_fitted_rmsd(&memory, &atoms, Default::default()).unwrap();
     std::thread::scope(|scope| {
         let runs = (0..4)
             .map(|_| {
                 scope.spawn(|| {
                     let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
-                    let run = ClusteringRun::default().with_executor(&threads);
-                    clustering::pairwise_fitted_rmsd(&file, &atoms, Default::default(), run)
+                    let run = Run::default().with_executor(&threads);
+                    clustering::pairwise_fitted_rmsd_with(&file, &atoms, Default::default(), run)
                         .unwrap()
                 })
             })
@@ -602,7 +635,12 @@ fn a_reduction_over_a_cut_file_names_the_geometry_it_cannot_read() {
     let observations = SampleObservations::all(&file);
     let mut accumulator = RmsfAccumulator::new(&atoms).unwrap();
     let error = accumulator
-        .observe_samples_cancellable(&file, &observations, 0..10, &Cancellation::new(|| false))
+        .observe_samples_with(
+            &file,
+            &observations,
+            0..10,
+            Run::new().with_cancellation(&Cancellation::new(|| false)),
+        )
         .unwrap_err();
     let StatisticsError::Read(StructureSetReadError::Trajectory { geometry, source }) = &error
     else {

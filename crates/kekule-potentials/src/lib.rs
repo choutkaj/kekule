@@ -74,7 +74,7 @@ mod potential;
 pub mod openff;
 
 pub use minimize::{
-    minimize, minimize_scoped, minimize_scoped_with_observer, minimize_with_observer, Minimization,
+    minimize, minimize_scoped, minimize_scoped_with, minimize_with, Minimization,
     MinimizationError, MinimizationScope, MinimizationStatus, MinimizationStep, MinimizeOption,
     MinimizeOptions, NumericalFailure, PositionRestraint, RestraintProblem,
 };

@@ -14,7 +14,8 @@ use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
 use super::driver::{sample_index, undirected, Clustered};
 use super::run::{FirstFailure, Stop, Tracker};
-use super::{ClusteringError, ClusteringRun};
+use super::ClusteringError;
+use crate::parallel::Run;
 
 /// Symmetric pairwise distances between the samples of one ensemble's
 /// distribution, or the geometries of one structure set, stored once per
@@ -318,7 +319,7 @@ impl Clustered<'_> {
         &self,
         atoms: FitAtoms<'_>,
         options: AlignmentOptions<'_>,
-        run: ClusteringRun<'_>,
+        run: Run<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
         let atoms = undirected(atoms)?;
         let views = &self.views;
@@ -452,23 +453,21 @@ impl PairFits<'_, '_> {
 const MEMBERS_PER_WORK_ITEM: usize = 16;
 
 /// Fitted RMSD between every pair of geometries of `reader`, as
-/// [`StructureSet::pairwise_fitted_rmsd_with`] computes it for a set in
-/// memory, with the same matrix and errors.
+/// [`StructureSet::pairwise_fitted_rmsd`] computes it for a set in memory,
+/// with the same matrix and errors.
 ///
 /// Only the fitted atoms of each geometry are kept: every geometry is lent
-/// or read once, on `run`'s executor, and its fitted positions copied out,
-/// so memory grows with the geometries times the fitted atoms rather than
-/// with whole geometries. The first geometry is read once more to check
-/// `atoms`. Progress counts pairs fitted once the geometries are loaded;
-/// cancellation is polled before each geometry is loaded and while fitting.
+/// or read once and its fitted positions copied out, so memory grows with
+/// the geometries times the fitted atoms rather than with whole geometries.
+/// The first geometry is read once more to check `atoms`.
 ///
 /// To fit some of the geometries, such as the frames after equilibration,
 /// read them as the samples of an [`Ensemble`] ([`Samples::Subset`]) and
-/// use [`Ensemble::pairwise_fitted_rmsd_with`], which reads them through
-/// this loop.
+/// use [`Ensemble::pairwise_fitted_rmsd`], which reads them through this
+/// loop.
 ///
 /// ```
-/// use kekule::clustering::{pairwise_fitted_rmsd, ClusteringRun};
+/// use kekule::clustering::pairwise_fitted_rmsd;
 /// use kekule::math::Point3;
 /// use kekule::structure::{Positions, Geometry, StructureSet};
 /// use kekule::topology::AtomSelection;
@@ -485,27 +484,39 @@ const MEMBERS_PER_WORK_ITEM: usize = 16;
 ///     set.push(Geometry::new(Positions::new(Quantity::new(points, ANGSTROM))?), None)?;
 /// }
 /// let atoms = AtomSelection::all(topology);
-/// let matrix = pairwise_fitted_rmsd(&set, &atoms, Default::default(), ClusteringRun::default())?;
+/// let matrix = pairwise_fitted_rmsd(&set, &atoms, Default::default())?;
 /// assert_eq!(matrix, set.pairwise_fitted_rmsd(&atoms, Default::default())?);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
 ///
-/// As [`StructureSet::pairwise_fitted_rmsd_with`], and
+/// As [`StructureSet::pairwise_fitted_rmsd`], and
 /// [`ClusteringError::Read`] when a geometry cannot be read; a failed read
 /// reports the first failing geometry in order.
-///
-/// # Panics
-///
-/// When a work item panics, which
-/// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-/// the executor skips or repeats a work item.
 pub fn pairwise_fitted_rmsd<'a>(
     reader: &dyn StructureSetRead,
     atoms: impl Into<FitAtoms<'a>>,
     options: AlignmentOptions<'_>,
-    run: ClusteringRun<'_>,
+) -> Result<DistanceMatrix, ClusteringError> {
+    pairwise_fitted_rmsd_with(reader, atoms, options, Run::default())
+}
+
+/// [`pairwise_fitted_rmsd`] under a [`Run`]: geometries load and pairs fit
+/// on its executor, with the matrix and errors of
+/// [`StructureSet::pairwise_fitted_rmsd_with`]. Progress counts pairs
+/// fitted once the geometries are loaded; cancellation is also polled
+/// before each geometry is loaded.
+///
+/// # Errors
+///
+/// As [`pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`] once
+/// `run`'s cancellation is requested.
+pub fn pairwise_fitted_rmsd_with<'a>(
+    reader: &dyn StructureSetRead,
+    atoms: impl Into<FitAtoms<'a>>,
+    options: AlignmentOptions<'_>,
+    run: Run<'_>,
 ) -> Result<DistanceMatrix, ClusteringError> {
     fitted_rmsd_of(
         reader,
@@ -525,7 +536,7 @@ fn fitted_rmsd_of(
     count: usize,
     atoms: FitAtoms<'_>,
     options: AlignmentOptions<'_>,
-    run: ClusteringRun<'_>,
+    run: Run<'_>,
 ) -> Result<DistanceMatrix, ClusteringError> {
     let atoms = undirected(atoms)?;
     let expected = condensed_len(count)?;
@@ -661,8 +672,6 @@ impl StructureSet {
     /// an [`AtomCorrespondence`](crate::alignment::AtomCorrespondence) is
     /// rejected. Each unordered pair is fitted once, lower geometry moving,
     /// so the cost is `n (n - 1) / 2` fits (times symmetry permutations).
-    /// They run on the calling thread; [`Self::pairwise_fitted_rmsd_with`]
-    /// spreads them over threads, reports progress, and can be cancelled.
     ///
     /// # Errors
     ///
@@ -679,11 +688,10 @@ impl StructureSet {
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
-        self.pairwise_fitted_rmsd_with(atoms, options, ClusteringRun::default())
+        self.pairwise_fitted_rmsd_with(atoms, options, Run::default())
     }
 
-    /// [`Self::pairwise_fitted_rmsd`], with its fits run, followed and
-    /// stopped as `run` says.
+    /// [`Self::pairwise_fitted_rmsd`] under a [`Run`].
     ///
     /// The pairs split, in condensed order, into contiguous ranges on
     /// `run`'s executor, whose distances join in order. Each distance is one
@@ -694,10 +702,9 @@ impl StructureSet {
     ///
     /// ```
     /// use std::num::NonZeroUsize;
-    /// use std::sync::atomic::{AtomicUsize, Ordering};
-    /// use kekule::clustering::{ClusteringProgress, ClusteringRun};
+    /// use std::sync::atomic::{AtomicU64, Ordering};
     /// use kekule::math::Point3;
-    /// use kekule::parallel::ScopedThreads;
+    /// use kekule::parallel::{Progress, Run, ScopedThreads};
     /// use kekule::structure::{Positions, Geometry, StructureSet};
     /// use kekule::topology::AtomSelection;
     /// use kekule::units::{Quantity, ANGSTROM};
@@ -715,11 +722,11 @@ impl StructureSet {
     /// let atoms = AtomSelection::all(topology);
     ///
     /// let threads = ScopedThreads::new(NonZeroUsize::new(2).unwrap());
-    /// let fitted = AtomicUsize::new(0);
-    /// let progress = |progress: ClusteringProgress| {
+    /// let fitted = AtomicU64::new(0);
+    /// let progress = |progress: Progress| {
     ///     fitted.store(progress.completed(), Ordering::Relaxed);
     /// };
-    /// let run = ClusteringRun::default()
+    /// let run = Run::default()
     ///     .with_executor(&threads)
     ///     .with_progress(&progress);
     /// let matrix = set.pairwise_fitted_rmsd_with(&atoms, Default::default(), run)?;
@@ -732,17 +739,11 @@ impl StructureSet {
     ///
     /// As [`Self::pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`]
     /// once `run`'s cancellation is requested.
-    ///
-    /// # Panics
-    ///
-    /// When a work item panics, which
-    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-    /// the executor skips or repeats a work item.
     pub fn pairwise_fitted_rmsd_with<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
-        run: ClusteringRun<'_>,
+        run: Run<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
         Clustered::new(self, None).pairwise_fitted_rmsd(atoms.into(), options, run)
     }
@@ -830,28 +831,21 @@ where
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
-        self.pairwise_fitted_rmsd_with(atoms, options, ClusteringRun::default())
+        self.pairwise_fitted_rmsd_with(atoms, options, Run::default())
     }
 
-    /// [`Self::pairwise_fitted_rmsd`], with its samples read and fitted on
-    /// `run`'s executor, followed and stopped as `run` says, as in
-    /// [`pairwise_fitted_rmsd`].
+    /// [`Self::pairwise_fitted_rmsd`] under a [`Run`], with its samples
+    /// read and fitted as [`pairwise_fitted_rmsd_with`] reads and fits.
     ///
     /// # Errors
     ///
     /// As [`Self::pairwise_fitted_rmsd`], and [`ClusteringError::Cancelled`]
     /// once `run`'s cancellation is requested.
-    ///
-    /// # Panics
-    ///
-    /// When a work item panics, which
-    /// [`Executor::run`](crate::parallel::Executor::run) passes on, or when
-    /// the executor skips or repeats a work item.
     pub fn pairwise_fitted_rmsd_with<'a>(
         &self,
         atoms: impl Into<FitAtoms<'a>>,
         options: AlignmentOptions<'_>,
-        run: ClusteringRun<'_>,
+        run: Run<'_>,
     ) -> Result<DistanceMatrix, ClusteringError> {
         let distribution = self.distribution();
         fitted_rmsd_of(

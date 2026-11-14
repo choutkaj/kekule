@@ -6,8 +6,9 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::diagnostics::{Cancellation, Cancelled};
+use crate::diagnostics::Cancelled;
 use crate::math::{Point3, PointGrid, Vector3};
+use crate::parallel::{Progress, Run};
 use crate::structure::{
     log_sum_exp, visit_geometry, AsStructureView, Ensemble, GeometryStorage, StructureSet,
     StructureSetRead, StructureSetReadError, StructureView,
@@ -332,15 +333,15 @@ impl SampleObservations {
 }
 
 /// Reads the observations at `positions` from `reader` in order, polling
-/// `cancellation` before each, and observes each through `observe` with
-/// its sample index, its structure, and its weight; the one reading loop
-/// behind every reduction over a reader. A sample the reader lends is not
-/// read.
+/// `run`'s cancellation before each and reporting the observations made,
+/// and observes each through `observe` with its sample index, its
+/// structure, and its weight; the one reading loop behind every reduction
+/// over a reader. A sample the reader lends is not read.
 fn observe_samples_of(
     reader: &dyn StructureSetRead,
     observations: &SampleObservations,
     positions: Range<usize>,
-    cancellation: Option<&Cancellation>,
+    run: Run<'_>,
     mut observe: impl FnMut(usize, StructureView<'_>, f64) -> Result<(), StatisticsError>,
 ) -> Result<(), StatisticsError> {
     let (Some(samples), Some(weights)) = (
@@ -352,17 +353,19 @@ fn observe_samples_of(
             len: observations.len(),
         });
     };
-    for (&index, &weight) in samples.iter().zip(weights) {
-        Cancellation::poll(cancellation).map_err(StatisticsError::Cancelled)?;
+    for (done, (&index, &weight)) in samples.iter().zip(weights).enumerate() {
+        run.report(Progress::of(done, samples.len()));
+        run.check().map_err(StatisticsError::Cancelled)?;
         visit_geometry(reader, index, StatisticsError::Read, |structure| {
             observe(index, structure, weight)
         })?;
     }
+    run.report(Progress::of(samples.len(), samples.len()));
     Ok(())
 }
 
-/// Defines `observe_samples` and `observe_samples_cancellable` of an
-/// accumulator through [`observe_samples_of`], transactionally.
+/// Defines `observe_samples` and `observe_samples_with` of an accumulator
+/// through [`observe_samples_of`], transactionally.
 macro_rules! observe_samples {
     ($name:literal) => {
         /// Observes the observations at `positions` (positions in
@@ -382,39 +385,30 @@ macro_rules! observe_samples {
             observations: &SampleObservations,
             positions: Range<usize>,
         ) -> Result<(), StatisticsError> {
-            self.observe_samples_polling(reader, observations, positions, None)
+            self.observe_samples_with(reader, observations, positions, Run::default())
         }
 
-        /// [`Self::observe_samples`], stopping when `cancellation` is
-        /// requested.
+        /// [`Self::observe_samples`] under a [`Run`], observing on the
+        /// calling thread. Progress counts the observations made.
         ///
         /// # Errors
         ///
-        /// Returns [`StatisticsError::Cancelled`] when cancelled, and the
-        /// errors of [`Self::observe_samples`]. Either way nothing changes.
-        pub fn observe_samples_cancellable(
+        /// As [`Self::observe_samples`], and [`StatisticsError::Cancelled`]
+        /// once `run`'s cancellation is requested. Either way nothing
+        /// changes.
+        pub fn observe_samples_with(
             &mut self,
             reader: &dyn StructureSetRead,
             observations: &SampleObservations,
             positions: Range<usize>,
-            cancellation: &Cancellation,
-        ) -> Result<(), StatisticsError> {
-            self.observe_samples_polling(reader, observations, positions, Some(cancellation))
-        }
-
-        fn observe_samples_polling(
-            &mut self,
-            reader: &dyn StructureSetRead,
-            observations: &SampleObservations,
-            positions: Range<usize>,
-            cancellation: Option<&Cancellation>,
+            run: Run<'_>,
         ) -> Result<(), StatisticsError> {
             let mut observed = self.clone();
             observe_samples_of(
                 reader,
                 observations,
                 positions,
-                cancellation,
+                run,
                 |index, structure, weight| observed.observe(index, &structure, weight),
             )?;
             *self = observed;
@@ -1499,11 +1493,15 @@ impl GroupContactOccupancyAccumulator {
                             points.iter().map(|point| (*point, ())),
                             scratch.bounds[large],
                             cutoff,
+                            0,
                         );
                         scratch.built[large] = true;
                     }
                     let points = &scratch.points[scratch.starts[small]..scratch.starts[small + 1]];
-                    scratch.grids[large].any_within(points, |a, b| within(a, b, cutoff))
+                    let grid = &scratch.grids[large];
+                    points
+                        .iter()
+                        .any(|point| grid.any_near(point, |other, ()| within(point, other, cutoff)))
                 }
             };
         }

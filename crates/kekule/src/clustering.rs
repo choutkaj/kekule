@@ -30,13 +30,12 @@
 //! cluster's diameter by `h`.
 //!
 //! [`Ensemble::pairwise_fitted_rmsd_with`] and
-//! [`Ensemble::cluster_by_radius_with`] take a [`ClusteringRun`]: a
-//! [`parallel::Executor`](crate::parallel::Executor) that spreads the fits
-//! over threads, a [`Cancellation`](crate::diagnostics::Cancellation), and a
-//! [`ClusteringProgress`] callback. Fits run in contiguous ranges whose
-//! results combine in a fixed order, so every executor and thread count
-//! returns exactly the single-threaded result, including which error is
-//! reported.
+//! [`Ensemble::cluster_by_radius_with`] take a
+//! [`Run`](crate::parallel::Run): fits run on its executor in contiguous
+//! ranges whose results combine in a fixed order, so every executor and
+//! thread count returns exactly the single-threaded result, including which
+//! error is reported. Too few fits for two ranges of a few milliseconds each
+//! run on the calling thread.
 //!
 //! [`Ensemble::cluster_k_medoids`] finds a given number of clusters
 //! directly, choosing medoid members that minimize the weight-summed
@@ -105,8 +104,10 @@ mod medoids;
 mod run;
 
 pub use driver::{ClusterOrder, ClusteringError, ClusteringOptions};
-pub use hierarchical::{pairwise_fitted_rmsd, Cut, Dendrogram, DistanceMatrix, Linkage, Merge};
-pub use run::{ClusteringProgress, ClusteringRun};
+pub use hierarchical::{
+    pairwise_fitted_rmsd, pairwise_fitted_rmsd_with, Cut, Dendrogram, DistanceMatrix, Linkage,
+    Merge,
+};
 
 #[cfg(doc)]
 use crate::structure::{Ensemble, Partition, StructureSet};

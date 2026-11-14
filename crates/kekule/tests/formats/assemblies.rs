@@ -7,6 +7,7 @@ use kekule::macromolecular::{
     StructureInterpretOptions, StructureInterpretation,
 };
 use kekule::math::Point3;
+use kekule::parallel::Run;
 use kekule::units::{Quantity, ANGSTROM};
 use kekule::{mmcif, pdb};
 
@@ -62,7 +63,7 @@ fn assert_copies_are_placed(
     tolerance: f64,
 ) {
     let structure = interpretation.structure();
-    let built = assembly.to_structure(structure, None).unwrap();
+    let built = assembly.to_structure(structure).unwrap();
     let generator = &assembly.generators()[0];
     let operations = generator.operations();
     assert_eq!(
@@ -143,7 +144,7 @@ fn copies_keep_identity_chains_and_name_the_others_by_operation() {
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
     let structure = interpretation.structure();
     let built = interpretation.report().assemblies()[0]
-        .to_structure(structure, None)
+        .to_structure(structure)
         .unwrap();
     let source = chain_labels(structure);
     let labels = chain_labels(&built);
@@ -178,7 +179,7 @@ fn written_assemblies_name_every_copy() {
     // author, so it reads back as built.
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
     let built = interpretation.report().assemblies()[0]
-        .to_structure(interpretation.structure(), None)
+        .to_structure(interpretation.structure())
         .unwrap();
     let (text, _) = mmcif::write(
         [mmcif::MmcifBlockSource::structure(&built)],
@@ -192,7 +193,7 @@ fn written_assemblies_name_every_copy() {
     // which read back as chains.
     let interpretation = from_pdb(INSULIN_RECEPTOR_KINASE_PDB);
     let built = interpretation.report().assemblies()[0]
-        .to_structure(interpretation.structure(), None)
+        .to_structure(interpretation.structure())
         .unwrap();
     let options = pdb::PdbWriteOptions::default().with_chain_ids(pdb::PdbChainIdPolicy::SegmentId);
     let (text, _) = pdb::write(&built, options).unwrap();
@@ -217,7 +218,7 @@ fn assemblies_pick_their_chains() {
     );
     let built = assemblies
         .iter()
-        .map(|assembly| assembly.to_structure(structure, None).unwrap())
+        .map(|assembly| assembly.to_structure(structure).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(
         built[0].atom_count() + built[1].atom_count(),
@@ -287,9 +288,7 @@ END
         .map(|generator| generator.chains().to_vec())
         .collect::<Vec<_>>();
     assert_eq!(chains, [["A"], ["B"]]);
-    let built = assembly
-        .to_structure(interpretation.structure(), None)
-        .unwrap();
+    let built = assembly.to_structure(interpretation.structure()).unwrap();
     let labels = chain_labels(&built)
         .into_iter()
         .map(|(label, _)| label)
@@ -375,9 +374,7 @@ fn products_place_one_copy_per_combination() {
         .map(|operation| operation.name())
         .collect::<Vec<_>>();
     assert_eq!(names, ["1-1", "1-T", "R-1", "R-T"]);
-    let built = assembly
-        .to_structure(interpretation.structure(), None)
-        .unwrap();
+    let built = assembly.to_structure(interpretation.structure()).unwrap();
     let labels = chain_labels(&built);
     assert_eq!(
         labels,
@@ -469,7 +466,7 @@ fn a_chain_copied_twice_under_one_name_is_refused() {
     let assembly = &interpretation.report().assemblies()[0];
     assert_eq!(assembly.generators().len(), 2);
     let error = assembly
-        .to_structure(interpretation.structure(), None)
+        .to_structure(interpretation.structure())
         .unwrap_err();
     assert!(
         matches!(&error, AssemblyError::RepeatedCopy { chain, .. } if chain == "A"),
@@ -485,7 +482,7 @@ fn a_chain_copied_twice_under_one_name_is_refused() {
 fn a_structure_without_the_chains_builds_nothing() {
     let interpretation = from_mmcif(&block("1 1 Z", ""));
     let error = interpretation.report().assemblies()[0]
-        .to_structure(interpretation.structure(), None)
+        .to_structure(interpretation.structure())
         .unwrap_err();
     assert!(matches!(error, AssemblyError::NoAtoms { .. }), "{error:?}");
 }
@@ -495,7 +492,10 @@ fn building_stops_when_cancelled() {
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
     let cancellation = Cancellation::new(|| true);
     let error = interpretation.report().assemblies()[0]
-        .to_structure(interpretation.structure(), Some(&cancellation))
+        .to_structure_with(
+            interpretation.structure(),
+            Run::new().with_cancellation(&cancellation),
+        )
         .unwrap_err();
     assert!(
         matches!(error, AssemblyError::Cancelled { .. }),

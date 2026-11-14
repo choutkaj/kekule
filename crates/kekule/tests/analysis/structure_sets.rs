@@ -5,19 +5,18 @@
 
 use std::fmt::Debug;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use kekule::alignment::{
     self, AlignedRmsdOptions, AlignmentError, AlignmentGeometry, AlignmentOptions, Weighting,
 };
 use kekule::clustering::{
-    ClusterOrder, ClusteringError, ClusteringOptions, ClusteringProgress, ClusteringRun, Cut,
-    DistanceMatrix, Linkage,
+    ClusterOrder, ClusteringError, ClusteringOptions, Cut, DistanceMatrix, Linkage,
 };
 use kekule::diagnostics::Cancellation;
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
-use kekule::parallel::ScopedThreads;
+use kekule::parallel::{Progress, Run, ScopedThreads};
 use kekule::statistics::{
     ContactOccupancyResult, GroupContactOccupancyResult, RmsfResult, StatisticsError,
 };
@@ -1405,11 +1404,11 @@ fn ensemble_clustering_runs_on_threads_report_progress_and_cancel() {
     let set = equilibrated();
     let atoms = all(set.set().shared_topology());
     let threads = ScopedThreads::new(NonZeroUsize::new(3).unwrap());
-    let fitted = AtomicUsize::new(0);
-    let progress = |progress: ClusteringProgress| {
+    let fitted = AtomicU64::new(0);
+    let progress = |progress: Progress| {
         fitted.store(progress.completed(), Ordering::Relaxed);
     };
-    let run = ClusteringRun::default()
+    let run = Run::default()
         .with_executor(&threads)
         .with_progress(&progress);
     let matrix = set
@@ -1432,7 +1431,7 @@ fn ensemble_clustering_runs_on_threads_report_progress_and_cancel() {
     assert_eq!(fitted.load(Ordering::Relaxed), 5);
 
     let cancellation = Cancellation::new(|| true);
-    let cancelled = ClusteringRun::default().with_cancellation(&cancellation);
+    let cancelled = Run::default().with_cancellation(&cancellation);
     assert!(matches!(
         set.pairwise_fitted_rmsd_with(&atoms, Default::default(), cancelled),
         Err(ClusteringError::Cancelled(_))

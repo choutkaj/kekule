@@ -42,8 +42,8 @@ through the workspace.
 - `StructureSet::from_reader(reader, indices)` copies chosen geometries of any
   `StructureSetRead`, whole and in the given order, with their order values.
 - Analyses read any `StructureSetRead`: `statistics::SampleObservations`,
-  `observe_samples(_cancellable)`, `alignment::geometry_rmsd` and
-  `geometry_aligned_rmsd` (`_cancellable`), `clustering::pairwise_fitted_rmsd`.
+  `observe_samples(_with)`, `alignment::geometry_rmsd` and
+  `geometry_aligned_rmsd` (`_with`), `clustering::pairwise_fitted_rmsd`.
 - `StructureSet` gains `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, contact
   occupancy, and clustering, weighing every geometry 1; their errors gain
   `Read`, `Cancelled`, and `ObservationsOutOfRange`.
@@ -71,7 +71,7 @@ through the workspace.
   `evaluate_structure` gives an `AtomSelection` (`docs/selection-language.md`).
 - `SelectionResolver` resolves host `#...`, `$name`, and keyword terms and adds
   `select::ReferencePoints` from other structures to `within`;
-  `SelectEvaluateOptions::with_executor` runs `within` in parallel.
+  `evaluate_with` and `evaluate_structure_with` run `within` in parallel.
 - `AtomSelection::from_sorted_indices`, `from_mask`, `to_mask`, and `ranges`
   convert selections in linear time, and `from_indices` is faster.
 - `AtomSiteView::atom_index` and `Topology::atom_site_at` map between sites
@@ -93,7 +93,7 @@ through the workspace.
   (`PdbSource::with_reports`, `WriteOmission::Coordination`).
 - `diagnostics::Cancellation` (`from_flag`, `check`) cancels mmCIF and PDB
   interpretation (`with_cancellation`, `DiagnosticKind::Cancelled`) and
-  perception (`perceive_cancellable`, `PerceptionError::Cancelled`).
+  perception (`perceive_with`, `PerceptionError::Cancelled`).
 - `MmcifBlockSource::with_block_name` names a data block; duplicate names fail
   with `MmcifWriteIssue::DuplicateBlockName`.
 - `XyzWriter::report` and `FileTrajectoryWriter::report` list what XYZ leaves
@@ -104,7 +104,7 @@ through the workspace.
 - `IndexedFileTrajectoryReader::to_frame_index` exports a `TrajectoryFrameIndex`
   (with `times`, `steps`, `to_bytes`), and `open_indexed_trajectory_from_index`
   opens a file without scanning it; a stale index fails with `IndexMismatch`.
-- `TrajectoryOpenOptions::with_index_progress` and `with_index_cancellation`
+- `open_indexed_trajectory_with` and `open_indexed_trajectory_from_index_with`
   report and cancel the scan (`TrajectoryIoErrorKind::Cancelled`).
 - `TrajectoryFileFingerprint` (`of_path`, `matches_path`, `same_content`,
   `is_prefix_of_path`, `Display`/`FromStr`) identifies a file, and
@@ -123,12 +123,11 @@ through the workspace.
   frames on the header's step sequence.
 - `create_trajectory_stream_writer` writes into any `Write + Seek` stream, and
   `TrajectoryStreamWriter::finish` finalizes and returns it.
-- `kekule::parallel` (`Executor`, `ScopedThreads`) runs DSSP in parallel
-  (`DsspOptions::with_threads`, `dssp::assign_with`) with exactly the serial
-  result; `dssp::DsspPlan` prepares DSSP once per topology layout.
-- `clustering::ClusteringRun` runs `pairwise_fitted_rmsd_with` and
-  `cluster_by_radius_with` on an executor with progress (`ClusteringProgress`)
-  and cancellation, with unchanged results.
+- `kekule::parallel` (`Executor`, `ScopedThreads`, `Run`, `Progress`) runs
+  long operations on an executor with progress and cancellation; DSSP
+  (`dssp::assign_with`) and clustering (`pairwise_fitted_rmsd_with`,
+  `cluster_by_radius_with`) give exactly the serial result, and
+  `dssp::DsspPlan` prepares DSSP once per topology layout.
 - `RmsfAccumulator::merge`, `ContactOccupancyAccumulator::merge`, and
   `GroupContactOccupancyAccumulator::merge` combine partial accumulators
   (`StatisticsError::MergeMismatch`); the accumulators are `Clone`.
@@ -145,8 +144,8 @@ through the workspace.
 - `structure::placement::fragments` has 48 ring and group fragments that
   `StructureEditor::attach_fragment` and `place_fragment` add, naming ring
   atoms by IUPAC locant (`Fragment::locant`).
-- `kekule-potentials`: `minimize_scoped` and `minimize_scoped_with_observer`
-  take a `MinimizationScope` that fixes atoms and adds `PositionRestraint`s.
+- `kekule-potentials`: `minimize_scoped` and `minimize_scoped_with` take a
+  `MinimizationScope` that fixes atoms and adds `PositionRestraint`s.
 - `kekule-openff`: `Error::atoms` lists the atoms a failure concerns, and
   `NaglModel::elements` and `supports_element` give a charge model's elements.
 - `kekule::interactions`: `find_interactions_within` and
@@ -178,6 +177,8 @@ through the workspace.
 - The default XYZ comment and DCD title name `kekule`, not `kekule-traj`.
 - Public modules are thin facades of docs and re-exports over private
   implementation modules; every public path is unchanged.
+- `measure::within` searches large selections through a spatial grid instead
+  of comparing every pair.
 - **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
   `StructureEditor` (`append_structure`), `StructureView`, `AsStructureView`,
   `StructureAtomView`, `StructureError`, and the other `Model*` items.
@@ -305,6 +306,9 @@ through the workspace.
   it, and writing a specified E/Z on another bond fails.
 - mmCIF and PDB interpretation of large entries, and DSSP on one thread, are
   several times faster, with unchanged results.
+- **Breaking:** `kekule-potentials`' `minimize_with_observer` is
+  `minimize_with(potential, structure, options, observer, run)`, whose
+  `parallel::Run` can cancel (`MinimizationError::Cancelled`).
 
 ### Removed
 

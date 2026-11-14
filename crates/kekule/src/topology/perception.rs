@@ -1,8 +1,8 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::algorithms::{perceive_molecule_cancellable, PerceptionError};
-use crate::diagnostics::Cancellation;
+use crate::algorithms::{perceive_molecule_with, PerceptionError};
+use crate::parallel::{Progress, Run};
 
 use crate::molecule::Molecule;
 
@@ -66,43 +66,43 @@ impl Topology {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn perceived(&self) -> Result<Self, TopologyPerceptionError> {
-        self.perceived_polling(None)
+        self.perceived_with(Run::default())
     }
 
-    /// [`Self::perceived`], stopping partway once `cancellation` is
-    /// requested.
-    ///
-    /// Perception polls `cancellation` between definitions, between the
-    /// stages of each, and during ring perception, which dominates on large
-    /// molecules. A result is identical to that of [`Self::perceived`].
+    /// [`Self::perceived`] under a [`Run`], on the calling thread. Its
+    /// cancellation is polled between definitions and inside each, as
+    /// [`Molecule::perceive_with`] polls it. Progress counts the definitions
+    /// done, of the definition count.
     ///
     /// # Errors
     ///
-    /// The errors of [`Self::perceived`], and, once `cancellation` is
+    /// The errors of [`Self::perceived`], and, once `run`'s cancellation is
     /// requested, an error whose source is [`PerceptionError::Cancelled`],
-    /// naming the definition being perceived. No partial snapshot is returned.
-    pub fn perceived_cancellable(
-        &self,
-        cancellation: &Cancellation,
-    ) -> Result<Self, TopologyPerceptionError> {
-        self.perceived_polling(Some(cancellation))
-    }
-
-    fn perceived_polling(
-        &self,
-        cancellation: Option<&Cancellation>,
-    ) -> Result<Self, TopologyPerceptionError> {
+    /// naming the definition being perceived.
+    pub fn perceived_with(&self, run: Run<'_>) -> Result<Self, TopologyPerceptionError> {
+        // Each definition polls the cancellation; only the topology reports
+        // progress.
+        let inner = match run.cancellation() {
+            Some(cancellation) => Run::new().with_cancellation(cancellation),
+            None => Run::new(),
+        };
+        let total = self.definitions.len();
+        run.report(Progress::of(0, total));
         let definitions = self
             .definitions
             .iter()
-            .map(|definition| {
+            .enumerate()
+            .map(|(done, definition)| {
+                if done > 0 {
+                    run.report(Progress::of(done, total));
+                }
                 // Perception is deterministic, so a definition already holding
                 // exactly this profile's result is shared, not perceived again.
                 if definition.default_perception {
                     return Ok(definition.clone());
                 }
                 let mut molecule = Molecule::clone(&definition.molecule);
-                perceive_molecule_cancellable(&mut molecule, cancellation).map_err(|source| {
+                perceive_molecule_with(&mut molecule, inner).map_err(|source| {
                     TopologyPerceptionError {
                         definition: definition.id,
                         source,
@@ -115,6 +115,7 @@ impl Topology {
                 })
             })
             .collect::<Result<_, TopologyPerceptionError>>()?;
+        run.report(Progress::of(total, total));
 
         // Perception never requires reclassification, reindexing, or rebuilding
         // hierarchy correspondence, so the snapshot keeps the published layout.

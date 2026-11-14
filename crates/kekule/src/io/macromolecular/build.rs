@@ -5,7 +5,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::io::canonicalize_molecule_for_publication;
-use crate::math::Point3;
+use crate::math::{bounding_box, Point3, PointGrid};
 use crate::molecule::{Atom, AtomId, Element, Molecule, MoleculeEditor};
 use crate::structure::Positions;
 use crate::topology::{AtomSiteMetadata, Hierarchy};
@@ -705,26 +705,20 @@ fn count_bond_candidates(
     sites: &[(AtomId, Element, Point3, usize)],
     cancellation: Option<&Cancellation>,
 ) -> Result<usize, FormatError> {
+    // Coordinates too large to search for bonds fail first, in site order.
+    for (step, &(_, _, point, line)) in sites.iter().enumerate() {
+        poll_every(cancellation, step)?;
+        covalent_bond_cell(point, line)?;
+    }
     // No cutoff exceeds the cell edge, so a pair within bonding distance lies
     // in one cell or in two adjacent ones.
-    let cells = sites
-        .iter()
-        .enumerate()
-        .map(|(step, &(_, _, point, line))| {
-            poll_every(cancellation, step)?;
-            covalent_bond_cell(point, line)
-        })
-        .collect::<Result<Vec<_>, FormatError>>()?;
-    let mut order = (0..sites.len()).collect::<Vec<_>>();
-    order.sort_unstable_by_key(|&index| (cells[index], index));
-    // Occupied cells in order, each with its range of `order`.
-    let mut occupied = Vec::<([i64; 3], usize, usize)>::new();
-    for (position, &index) in order.iter().enumerate() {
-        match occupied.last_mut() {
-            Some((cell, _, end)) if *cell == cells[index] => *end = position + 1,
-            _ => occupied.push((cells[index], position, position + 1)),
-        }
-    }
+    let mut grid = PointGrid::default();
+    grid.build(
+        sites.iter().map(|site| site.2).zip(0..),
+        bounding_box(sites.iter().map(|site| site.2)),
+        COVALENT_BOND_CELL_ANGSTROM,
+        sites.len(),
+    );
     let mut candidates = 0usize;
     let mut count = |left: usize, right: usize| -> Result<(), FormatError> {
         let (left, left_element, left_point, _) = sites[left];
@@ -751,45 +745,20 @@ fn count_bond_candidates(
         }
         Ok(())
     };
-    // Each pair of cells is visited once: a cell with itself and with the
-    // 13 neighbours that follow it.
-    let forward = (-1_i64..=1)
-        .flat_map(|x| (-1_i64..=1).flat_map(move |y| (-1_i64..=1).map(move |z| [x, y, z])))
-        .filter(|offset| *offset > [0, 0, 0])
-        .collect::<Vec<_>>();
-    // Pair scans poll once per atom whose partners they visit, since one
-    // dense cell can hold many atoms.
-    let mut scanned = 0usize;
-    for &(cell, start, end) in &occupied {
-        let members = &order[start..end];
-        for (offset, &left) in members.iter().enumerate() {
-            poll_every(cancellation, scanned)?;
-            scanned += 1;
-            for &right in &members[offset + 1..] {
-                count(left, right)?;
+    // Each pair is counted once, from its earlier site; pair scans poll once
+    // per atom whose partners they visit, since one dense cell can hold many
+    // atoms.
+    let mut partners = Vec::new();
+    for (left, &(_, _, point, _)) in sites.iter().enumerate() {
+        poll_every(cancellation, left)?;
+        partners.clear();
+        grid.for_each_near(&point, |_, right| {
+            if right > left {
+                partners.push(right);
             }
-        }
-        for offset in &forward {
-            // Cells beyond the supported range hold no atoms.
-            let (Some(x), Some(y), Some(z)) = (
-                cell[0].checked_add(offset[0]),
-                cell[1].checked_add(offset[1]),
-                cell[2].checked_add(offset[2]),
-            ) else {
-                continue;
-            };
-            let Ok(neighbor) = occupied.binary_search_by_key(&[x, y, z], |&(cell, _, _)| cell)
-            else {
-                continue;
-            };
-            let (_, neighbor_start, neighbor_end) = occupied[neighbor];
-            for &left in members {
-                poll_every(cancellation, scanned)?;
-                scanned += 1;
-                for &right in &order[neighbor_start..neighbor_end] {
-                    count(left, right)?;
-                }
-            }
+        });
+        for &right in &partners {
+            count(left, right)?;
         }
     }
     Ok(candidates)
@@ -1058,4 +1027,87 @@ fn hierarchy_error(source: impl std::error::Error + Send + Sync + 'static) -> Fo
         "Cannot build the chains and residues.",
     )
     .with_source(source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::molecule::BondOrder;
+
+    /// The grid counts the unbonded close pairs that measuring every pair
+    /// counts, for seeded atoms on cell boundaries, exactly at bonding
+    /// distance, and some bonded; too-large coordinates still fail.
+    #[test]
+    fn bond_candidates_match_every_pair() {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut below = move |bound: u64| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % bound
+        };
+        let palette = ["C", "N", "O", "S", "Fe", "Xe"]
+            .map(|symbol| Element::from_symbol(symbol).expect("element symbol"));
+        for spread in [5u64, 9, 30] {
+            let mut editor = MoleculeEditor::new();
+            let mut sites = Vec::<(AtomId, Element, Point3, usize)>::new();
+            for line in 0..400 {
+                let element = palette[below(palette.len() as u64) as usize];
+                let atom = editor.add_atom(Atom::new(element)).unwrap();
+                let point = if line % 6 == 1 {
+                    // On the 2.1 Å cell edge, or at the largest cutoff.
+                    let previous = sites[line - 1].2;
+                    Point3::new(
+                        previous.x + COVALENT_BOND_CELL_ANGSTROM,
+                        previous.y,
+                        previous.z,
+                    )
+                } else if line % 6 == 4 {
+                    let mut axis = || below(spread * 2) as f64 * 1.05;
+                    Point3::new(axis(), axis(), axis())
+                } else {
+                    let mut axis = || below(spread * 1000) as f64 * 1e-3;
+                    Point3::new(axis(), axis(), axis())
+                };
+                if line > 0 && line % 3 == 0 {
+                    editor
+                        .add_bond(sites[line - 1].0, atom, BondOrder::Single)
+                        .unwrap();
+                }
+                sites.push((atom, element, point, line));
+            }
+            let graph = editor.working();
+            let mut expected = 0;
+            for left in 0..sites.len() {
+                for right in left + 1..sites.len() {
+                    let (left, left_element, left_point, _) = sites[left];
+                    let (right, right_element, right_point, _) = sites[right];
+                    let distance_squared = point_distance_squared(left_point, right_point);
+                    let radius = |element: Element| {
+                        element
+                            .covalent_radius_angstrom()
+                            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM)
+                    };
+                    let cutoff = (radius(left_element)
+                        + radius(right_element)
+                        + COVALENT_BOND_TOLERANCE_ANGSTROM)
+                        .min(COVALENT_BOND_CELL_ANGSTROM);
+                    if distance_squared > MIN_COVALENT_BOND_DISTANCE_SQUARED
+                        && distance_squared <= cutoff * cutoff
+                        && graph.bond_between(left, right).is_none()
+                    {
+                        expected += 1;
+                    }
+                }
+            }
+            assert!(expected > 0, "{spread}");
+            assert_eq!(
+                count_bond_candidates(graph, &sites, None).unwrap(),
+                expected,
+                "{spread}"
+            );
+            sites[7].2.y = 1.0e300;
+            assert!(count_bond_candidates(graph, &sites, None).is_err());
+        }
+    }
 }

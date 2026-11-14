@@ -31,7 +31,7 @@
 
 mod grid;
 mod periodic;
-pub(crate) use grid::PointGrid;
+pub(crate) use grid::{bounding_box, Cell, CellHasher, PointGrid};
 pub use periodic::{Lattice, LatticeError, MAX_LATTICE_IMAGES};
 
 use std::fmt;
