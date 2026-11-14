@@ -50,13 +50,17 @@ jobs:
         run: python3 -m unittest discover -s benchmarks/tests -p "test_*.py"
       - run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
       # Each optional feature set of the OpenFF crates. The all-features runs
-      # above cover the defaults, which enable every feature.
+      # above cover the defaults, which enable every feature; the `openff`-only
+      # runs cover kekule-potentials with OpenFF but without the Ash model.
       - run: cargo clippy -p kekule-potentials --all-targets --no-default-features --locked -- -D warnings
       - run: cargo clippy -p kekule-openff --all-targets --no-default-features --locked -- -D warnings
       - run: cargo test -p kekule-potentials --no-default-features --locked
       - run: cargo test -p kekule-openff --no-default-features --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --no-deps --locked
       - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-openff --no-default-features --no-deps --locked
+      - run: cargo clippy -p kekule-potentials --all-targets --no-default-features --features openff --locked -- -D warnings
+      - run: cargo test -p kekule-potentials --no-default-features --features openff --locked
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc -p kekule-potentials --no-default-features --features openff --no-deps --locked
       - name: Check packaged license copies
         run: |
           for package in kekule kekule-potentials kekule-openff kekule-openff-ash; do
