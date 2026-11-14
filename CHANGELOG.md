@@ -214,11 +214,6 @@ through the workspace.
   weights (`with_log_weights`), a `Partition` into states with one `StateData`
   each (energy, properties), and a temperature; `DistributionMut` edits it,
   and `StateView` reads a state with its samples and population.
-- **Breaking:** Ensemble names say sample, not member: `Samples`,
-  `Distribution::samples`, `Ensemble::push_sample`, and
-  `StructureSetError::UnsortedSamples` replace `Members`, `members`,
-  `push_member`, and `UnsortedMembers` of earlier builds of this release, and
-  `StateData` replaces `State`.
 - **Breaking:** Log weights span hundreds of orders of magnitude without
   underflow; `probabilities`, rankings, and `effective_sample_size` move from
   the old `Ensemble` to `Distribution`.
