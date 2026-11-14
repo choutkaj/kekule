@@ -56,6 +56,11 @@ use super::periodic::{MoleculeImager, PeriodicError};
 /// 5. Subset ([`Self::with_subset`]): the geometry projected onto the atoms of
 ///    a topology subset, which becomes the reader's topology.
 ///
+/// Making whole and wrapping call the kernels of the in-memory periodic
+/// functions and [`MoleculeImager`], and fitting the kernel of
+/// [`FrameSuperposer`](super::analysis::FrameSuperposer), so each step gives
+/// the same bits as the operation it names.
+///
 /// Analyses read geometries without smoothing, which is for display: they read
 /// a reader with [`Self::without_smoothing`].
 ///

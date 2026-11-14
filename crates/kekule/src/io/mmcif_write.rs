@@ -783,11 +783,17 @@ impl MmcifEntityClassifications {
 /// `&StructureInterpretation`, or `&StructureSetInterpretation`;
 /// interpretations keep their source reports. [`Self::structure`] accepts any
 /// borrowed structure view, such as a geometry or a trajectory frame; a
-/// geometry's membership, place, velocities, and forces fail to write unless
+/// geometry's place, velocities, and forces fail to write unless
 /// the write options omit them.
 ///
 /// A block is named by [`MmcifWriteOptions::block_name`] unless
 /// [`Self::with_block_name`] names it.
+///
+/// Entity kinds follow canonical classification; hierarchy alone does not
+/// establish polymer status. The writer states only the bonds its reader
+/// cannot derive, and states a residue's bonds whole or not at all, since one
+/// stated internal bond makes the reader take all of that residue's bonds
+/// from the source.
 ///
 /// Every hierarchy chain is a structural instance of its own, even when
 /// chains share a label, as the copies
@@ -798,7 +804,8 @@ impl MmcifEntityClassifications {
 /// the author chain name, which falls back to the label. Reading the block
 /// back gives the same chains, residues, atoms, and bonds, in the same order
 /// and under the same author names, with the written asym IDs as their
-/// labels.
+/// labels. The hierarchy itself keeps labels as appended, since a label
+/// names a source's instance, not one of the combined structure's.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
     content: BlockContent<'a>,

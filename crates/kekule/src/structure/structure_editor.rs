@@ -59,7 +59,8 @@ impl Structure {
         self.clone().into_editor()
     }
     /// Moves the geometry state into a draft while retaining the shared
-    /// topology. Source slots are source dense indices.
+    /// topology. Source slots are source dense indices. The draft shares the
+    /// source's positions, occupancies, and B factors until one is written.
     pub fn into_editor(self) -> StructureEditor {
         let (topology, slots) = self.into_state();
         StructureEditor {

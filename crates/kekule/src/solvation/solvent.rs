@@ -489,6 +489,11 @@ from_error!(HierarchyError, Hierarchy);
 /// Ion sites use a deterministic shuffled greedy search; infeasible placement
 /// returns an error rather than publishing a partially solvated structure.
 ///
+/// Waters and ions are named as the Chemical Component Dictionary names them,
+/// which the PDB and mmCIF readers check, and their (zero) implicit-hydrogen
+/// counts are left to valence inference, as those readers do, so a solvated
+/// system writes to both formats and reads back as written.
+///
 /// Publication is atomic. Existing entity IDs/order and annotations survive;
 /// topology/structure owner annotations are cleared as for an ordinary append.
 /// The new topology invalidates reuse of old snapshot-bound selections and

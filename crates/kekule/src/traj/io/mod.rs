@@ -63,7 +63,8 @@
 //! Readers accept an owned topology or a shared `Arc<Topology>`. File coordinate
 //! index `i` means topology dense atom index `i`. Counts and available metadata
 //! (including XYZ element order) are checked automatically; matching counts
-//! alone cannot establish atom identity. Native units are converted once
+//! alone cannot establish atom identity, so callers that need it validate
+//! semantic atom order themselves. Native units are converted once
 //! at the codec boundary: DCD and default XYZ use angstrom, while TRR/XTC use
 //! GROMACS nanometre/picosecond conventions. XTC coordinate resolution is
 //! nominally `1 / precision` nanometres.

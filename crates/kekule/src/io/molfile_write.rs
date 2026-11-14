@@ -114,7 +114,9 @@ impl MolfileWriteOptions {
 ///
 /// Convert from `&Molecule` or `&Structure`, or build one with [`Self::molecule`]
 /// or [`Self::structure`], which accepts any borrowed structure view. Specified stereo
-/// requires coordinates.
+/// requires coordinates. The writer never invents stereo assertions from an
+/// unasserted drawing and never hides a conflict between coordinates and
+/// assertions.
 ///
 /// ```
 /// use kekule::molfile::{self, MolfileSource};

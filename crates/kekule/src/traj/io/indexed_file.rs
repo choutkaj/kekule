@@ -22,12 +22,16 @@ use super::{
 ///
 /// The set holds no geometry in memory. [`StructureSetRead::read`] decodes frame
 /// `i` into the returned [`Geometry`]: positions, cell, velocities, forces,
-/// and properties, written once into the arrays the geometry keeps.
+/// and properties, written once into the arrays the geometry keeps. XTC
+/// decodes coordinates to single precision first, and a DCD with fixed atoms
+/// fills each frame's array with the fixed atoms before its free ones.
 /// [`StructureSetRead::peek`] lends none. Reads from several threads run at once:
 /// each takes a reader of the pool, or opens one when all are busy, so the
-/// pool grows to the most reads that ran at once.
+/// pool grows to the most reads that ran at once, and no lock is held while
+/// a frame decodes.
 ///
-/// Every reader reads the file object the set opened and shares the set's
+/// Every reader reads the file object the set opened, through positional
+/// reads, and shares the set's
 /// frame index, so opening one reads the start of the file alone and a read
 /// gives the same geometry whichever reader serves it. The readers share one
 /// file handle. On Windows, reads of one handle run one after another, so
@@ -50,7 +54,11 @@ use super::{
 ///
 /// After a failed refresh, opening the file again is the way back. A host
 /// that must know of changes between refreshes compares
-/// [`Self::fingerprint`] with [`TrajectoryFileFingerprint::is_prefix_of_path`].
+/// [`Self::fingerprint`] with [`TrajectoryFileFingerprint::is_prefix_of_path`],
+/// or keeps the
+/// [`TrajectoryFrameIndex::prefix_fingerprint`](super::TrajectoryFrameIndex::prefix_fingerprint)
+/// of the frames it used, which samples the indexed bytes of those frames
+/// alone.
 ///
 /// The order is a time order of the index's times and steps, as
 /// [`read_structure_set`](super::read_structure_set) gives them.
