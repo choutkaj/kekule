@@ -16,7 +16,10 @@ use super::super::element_symbol::structure_element_symbol;
 use super::super::staged_coordinates::StagedCoordinates;
 use super::atom_site::AtomRow;
 use super::connections::{DeclaredConnection, InstanceUnion};
-use super::connectivity::{record_evidence, BondEvidenceMap, ListedBond};
+use super::connectivity::{
+    covalent_bonding_radius, record_evidence, BondEvidenceMap, ListedBond,
+    COVALENT_BOND_TOLERANCE_ANGSTROM, MIN_COVALENT_BOND_DISTANCE_SQUARED,
+};
 use super::types::{
     AtomProvenance, BondEvidence, BondProvenance, EntityKind, InstanceProvenance,
     StructureInterpretIssue, StructureInterpretationReport,
@@ -694,10 +697,8 @@ impl std::ops::Index<usize> for RowsOf<'_> {
     }
 }
 
+/// The grid cell edge of the bond-candidate search, and the largest cutoff.
 const COVALENT_BOND_CELL_ANGSTROM: f64 = 2.1;
-const COVALENT_BOND_TOLERANCE_ANGSTROM: f64 = 0.45;
-const MIN_COVALENT_BOND_DISTANCE_SQUARED: f64 = 0.16;
-const FALLBACK_COVALENT_RADIUS_ANGSTROM: f64 = 0.77;
 
 /// Counts atom pairs within covalent bonding distance that are not bonded.
 fn count_bond_candidates<L: SlotLiveness>(
@@ -727,12 +728,8 @@ fn count_bond_candidates<L: SlotLiveness>(
         if distance_squared <= MIN_COVALENT_BOND_DISTANCE_SQUARED {
             return Ok(());
         }
-        let left_radius = left_element
-            .covalent_radius_angstrom()
-            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM);
-        let right_radius = right_element
-            .covalent_radius_angstrom()
-            .unwrap_or(FALLBACK_COVALENT_RADIUS_ANGSTROM);
+        let left_radius = covalent_bonding_radius(left_element).0;
+        let right_radius = covalent_bonding_radius(right_element).0;
         let cutoff = (left_radius + right_radius + COVALENT_BOND_TOLERANCE_ANGSTROM)
             .min(COVALENT_BOND_CELL_ANGSTROM);
         if distance_squared <= cutoff * cutoff
@@ -1031,6 +1028,7 @@ fn hierarchy_error(source: impl std::error::Error + Send + Sync + 'static) -> Fo
 
 #[cfg(test)]
 mod tests {
+    use super::super::connectivity::FALLBACK_COVALENT_RADIUS_ANGSTROM;
     use super::*;
     use crate::molecule::BondOrder;
 

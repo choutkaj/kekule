@@ -5,7 +5,7 @@ use crate::diagnostics::TopologyMismatch;
 use std::collections::VecDeque;
 use std::fmt;
 
-use crate::math::{PeriodicCell, Point3, Vector3};
+use crate::math::{Lattice, PeriodicCell, PeriodicCellError, Point3, Vector3};
 use crate::structure::{
     AsStructureView, DenseArrayError, Place, Positions, StructureSet, StructureSetError,
 };
@@ -365,9 +365,10 @@ impl MoleculePlan {
         &self,
         source: &[Point3],
         lattice: &Lattice,
+        frame: usize,
     ) -> Result<Vec<Point3>, PeriodicError> {
         let mut points = source.to_vec();
-        self.make_whole_in_place(&mut points, lattice)?;
+        self.make_whole_in_place(&mut points, lattice, frame)?;
         Ok(points)
     }
 
@@ -378,6 +379,7 @@ impl MoleculePlan {
         &self,
         points: &mut [Point3],
         lattice: &Lattice,
+        frame: usize,
     ) -> Result<(), PeriodicError> {
         let mut atom_images = vec![[0_i64; 3]; points.len()];
         // Choose each bond image once, in its authoritative endpoint order. Tree
@@ -387,8 +389,9 @@ impl MoleculePlan {
             .iter()
             .map(|&(_, a, b)| {
                 lattice
-                    .nearest_image(points[b] - points[a])
+                    .nearest_image_canonical(points[b] - points[a])
                     .map(|(_, images)| images)
+                    .map_err(|error| cell_error(error, frame))
             })
             .collect::<Result<Vec<_>, _>>()?;
         for &(parent, child, bond) in &self.tree {
@@ -396,7 +399,7 @@ impl MoleculePlan {
             let images = bond_images[bond];
             for axis in 0..3 {
                 let image = atom_images[parent][axis] + direction * images[axis];
-                checked_image(image as f64, lattice.frame)?;
+                checked_image(image as f64, frame)?;
                 atom_images[child][axis] = image;
             }
         }
@@ -404,14 +407,12 @@ impl MoleculePlan {
             // Check closure in integer lattice space, without a length tolerance
             // that could conceal a winding cycle in a short cell direction.
             if (0..3).any(|axis| atom_images[b][axis] - atom_images[a][axis] != images[axis]) {
-                return Err(PeriodicError::InconsistentBondImages {
-                    frame: lattice.frame,
-                    bond,
-                });
+                return Err(PeriodicError::InconsistentBondImages { frame, bond });
             }
         }
         for &(_, child, _) in &self.tree {
-            points[child] = points[child] - lattice.cartesian(atom_images[child].map(|n| n as f64));
+            points[child] =
+                points[child] - lattice.cartesian_canonical(atom_images[child].map(|n| n as f64));
         }
         Ok(())
     }
@@ -425,18 +426,20 @@ impl MoleculePlan {
         points: &[Point3],
         reference: &[Point3],
         lattice: &Lattice,
+        frame: usize,
         sum: &mut [Vector3],
     ) -> Result<(), PeriodicError> {
         for group in &self.groups {
-            let delta =
-                center(points, group, lattice.frame)? - center(reference, group, lattice.frame)?;
-            let (_, images) = lattice.nearest_image(delta)?;
-            let shift = lattice.cartesian(images.map(|n| n as f64));
+            let delta = center(points, group, frame)? - center(reference, group, frame)?;
+            let (_, images) = lattice
+                .nearest_image_canonical(delta)
+                .map_err(|error| cell_error(error, frame))?;
+            let shift = lattice.cartesian_canonical(images.map(|n| n as f64));
             for &atom in group {
                 let imaged = points[atom] - shift;
                 if !imaged.is_finite() {
                     return Err(PeriodicError::Position {
-                        frame: lattice.frame,
+                        frame,
                         source: Box::new(DenseArrayError::NonFinite { index: atom }),
                     });
                 }
@@ -451,12 +454,14 @@ impl MoleculePlan {
         points: &mut [Point3],
         reference: &[Point3],
         lattice: &Lattice,
+        frame: usize,
     ) -> Result<(), PeriodicError> {
         for group in &self.groups {
-            let delta =
-                center(points, group, lattice.frame)? - center(reference, group, lattice.frame)?;
-            let (_, images) = lattice.nearest_image(delta)?;
-            let shift = lattice.cartesian(images.map(|n| n as f64));
+            let delta = center(points, group, frame)? - center(reference, group, frame)?;
+            let (_, images) = lattice
+                .nearest_image_canonical(delta)
+                .map_err(|error| cell_error(error, frame))?;
+            let shift = lattice.cartesian_canonical(images.map(|n| n as f64));
             for &atom in group {
                 points[atom] = points[atom] - shift;
             }
@@ -468,17 +473,21 @@ impl MoleculePlan {
         &self,
         points: &mut [Point3],
         lattice: &Lattice,
+        frame: usize,
         anchors: &[bool],
     ) -> Result<(), PeriodicError> {
         let first = anchors
             .iter()
             .position(|selected| *selected)
             .expect("nonempty checked anchors");
-        let first_center = center(points, &self.groups[first], lattice.frame)?;
+        let first_center = center(points, &self.groups[first], frame)?;
         for (group, &anchor) in self.groups.iter().zip(anchors) {
             if anchor {
-                let delta = center(points, group, lattice.frame)? - first_center;
-                let shift = lattice.minimum_image(delta)? - delta;
+                let delta = center(points, group, frame)? - first_center;
+                let shift = lattice
+                    .minimum_image_canonical(delta)
+                    .map_err(|error| cell_error(error, frame))?
+                    - delta;
                 for &atom in group {
                     points[atom] = points[atom] + shift;
                 }
@@ -491,10 +500,13 @@ impl MoleculePlan {
             .filter(|(_, anchor)| **anchor)
             .flat_map(|(atoms, _)| atoms.iter().copied())
             .collect();
-        let anchor_center = center(points, &anchor_atoms, lattice.frame)?;
-        let fractional = lattice.fractional(anchor_center - Point3::origin())?;
-        let shift = lattice.cartesian(std::array::from_fn(|axis| {
-            if lattice.periodic[axis] {
+        let anchor_center = center(points, &anchor_atoms, frame)?;
+        let fractional = lattice
+            .fractional_canonical(anchor_center - Point3::origin())
+            .map_err(|error| cell_error(error, frame))?;
+        let periodic = lattice.periodic_axes();
+        let shift = lattice.cartesian_canonical(std::array::from_fn(|axis| {
+            if periodic[axis] {
                 0.5 - fractional[axis]
             } else {
                 0.0
@@ -506,8 +518,11 @@ impl MoleculePlan {
         let anchor_center = anchor_center + shift;
         for (group, &anchor) in self.groups.iter().zip(anchors) {
             if !anchor {
-                let delta = center(points, group, lattice.frame)? - anchor_center;
-                let shift = lattice.minimum_image(delta)? - delta;
+                let delta = center(points, group, frame)? - anchor_center;
+                let shift = lattice
+                    .minimum_image_canonical(delta)
+                    .map_err(|error| cell_error(error, frame))?
+                    - delta;
                 for &atom in group {
                     points[atom] = points[atom] + shift;
                 }
@@ -529,53 +544,24 @@ fn center(points: &[Point3], atoms: &[usize], frame: usize) -> Result<Point3, Pe
     Ok(Point3::origin() + mean)
 }
 
-pub(super) struct Lattice {
-    geometry: crate::math::Lattice,
-    pub(super) periodic: [bool; 3],
+/// The lattice of frame `frame`'s cell.
+pub(super) fn frame_lattice(
+    cell: Option<PeriodicCell>,
     frame: usize,
+) -> Result<Lattice, PeriodicError> {
+    let cell = cell.ok_or(PeriodicError::MissingCell { frame })?;
+    Lattice::new(cell).map_err(|error| cell_error(error, frame))
 }
-impl Lattice {
-    pub(super) fn new(cell: Option<PeriodicCell>, frame: usize) -> Result<Self, PeriodicError> {
-        let cell = cell.ok_or(PeriodicError::MissingCell { frame })?;
-        Ok(Self {
-            geometry: crate::math::Lattice::new(cell)
-                .map_err(|error| geometry_error(error, frame))?,
-            periodic: cell.periodic_axes(),
-            frame,
-        })
-    }
-    pub(super) fn fractional(&self, vector: Vector3) -> Result<[f64; 3], PeriodicError> {
-        self.geometry
-            .fractional(Quantity::new(vector, CANONICAL_LENGTH_UNIT))
-            .map_err(|error| geometry_error(error, self.frame))
-    }
-    pub(super) fn cartesian(&self, fractional: [f64; 3]) -> Vector3 {
-        self.geometry.cartesian(fractional).into_value()
-    }
-    fn minimum_image(&self, delta: Vector3) -> Result<Vector3, PeriodicError> {
-        self.geometry
-            .minimum_image(Quantity::new(delta, CANONICAL_LENGTH_UNIT))
-            .map(Quantity::into_value)
-            .map_err(|error| geometry_error(error, self.frame))
-    }
-    fn nearest_image(&self, delta: Vector3) -> Result<(Vector3, [i64; 3]), PeriodicError> {
-        self.geometry
-            .nearest_image(Quantity::new(delta, CANONICAL_LENGTH_UNIT))
-            .map(|(vector, images)| (vector.into_value(), images))
-            .map_err(|error| geometry_error(error, self.frame))
-    }
-}
-fn geometry_error(error: crate::math::PeriodicCellError, frame: usize) -> PeriodicError {
+
+/// A lattice failure of frame `frame`. Canonical lengths cannot fail on
+/// units, so every other failure is numerical.
+pub(super) fn cell_error(error: PeriodicCellError, frame: usize) -> PeriodicError {
     match error {
-        crate::math::PeriodicCellError::NumericalFailure => {
-            PeriodicError::NumericalFailure { frame }
-        }
-        crate::math::PeriodicCellError::LimitExceeded(limit) => {
-            PeriodicError::LimitExceeded { frame, limit }
-        }
+        PeriodicCellError::LimitExceeded(limit) => PeriodicError::LimitExceeded { frame, limit },
         _ => PeriodicError::NumericalFailure { frame },
     }
 }
+
 pub(super) fn checked_image(value: f64, frame: usize) -> Result<f64, PeriodicError> {
     if !value.is_finite() || value.abs() >= 2.0_f64.powi(52) {
         return Err(PeriodicError::NumericalFailure { frame });
@@ -603,14 +589,14 @@ mod tests {
             for mask in 1..8 {
                 let axes = std::array::from_fn(|axis| mask & (1 << axis) != 0);
                 let cell = PeriodicCell::new(Quantity::new(basis, NANOMETER), axes).unwrap();
-                let lattice = Lattice::new(Some(cell), 7).unwrap();
+                let lattice = frame_lattice(Some(cell), 7).unwrap();
                 for geometry in 0..19 {
                     let delta = Vector3::new(
                         f64::from((geometry * 17) % 31 - 15) / 11.0,
                         f64::from((geometry * 11) % 29 - 14) / 9.0,
                         f64::from((geometry * 7) % 23 - 11) / 8.0,
                     );
-                    let (nearest, images) = lattice.nearest_image(delta).unwrap();
+                    let (nearest, images) = lattice.nearest_image_canonical(delta).unwrap();
                     let mut exhaustive = f64::INFINITY;
                     for a in -4..=4 {
                         for b in -4..=4 {
@@ -637,7 +623,8 @@ mod tests {
                         assert!(axes[axis] || images[axis] == 0);
                     }
                     assert!(
-                        (nearest - (delta - lattice.cartesian(images.map(|n| n as f64)))).norm()
+                        (nearest - (delta - lattice.cartesian_canonical(images.map(|n| n as f64))))
+                            .norm()
                             < 1.0e-12
                     );
                 }
@@ -652,9 +639,9 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        let lattice = Lattice::new(Some(cell), 0).unwrap();
+        let lattice = frame_lattice(Some(cell), 0).unwrap();
         let (nearest, images) = lattice
-            .nearest_image(Vector3::new(1.25, 1.25e-6, 1.25e6))
+            .nearest_image_canonical(Vector3::new(1.25, 1.25e-6, 1.25e6))
             .unwrap();
         assert_eq!(images, [1; 3]);
         assert!((nearest.x - 0.25).abs() < 1.0e-14);
@@ -676,14 +663,19 @@ mod tests {
             [true; 3],
         )
         .unwrap();
-        let lattice = Lattice::new(Some(cell), 7).unwrap();
+        let lattice = frame_lattice(Some(cell), 7).unwrap();
+        let nearest_image = |delta| {
+            lattice
+                .nearest_image_canonical(delta)
+                .map_err(|error| cell_error(error, 7))
+        };
         assert!(matches!(
-            lattice.nearest_image(Vector3::new(0.49, 0.49, 0.0)),
+            nearest_image(Vector3::new(0.49, 0.49, 0.0)),
             Err(PeriodicError::LimitExceeded { frame: 7, limit })
                 if limit.resource() == crate::diagnostics::Resource::LatticeImages
         ));
         assert!(matches!(
-            lattice.nearest_image(Vector3::new(1.0e100, 0.0, 0.0)),
+            nearest_image(Vector3::new(1.0e100, 0.0, 0.0)),
             Err(PeriodicError::NumericalFailure { frame: 7 })
         ));
     }

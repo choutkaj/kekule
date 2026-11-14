@@ -28,8 +28,8 @@
 //!
 //! [`HydrogenBondOccupancyAccumulator`] reduces the hydrogen bonds of
 //! weighted observations, such as the geometries of a set or trajectory frames, to
-//! occupancies, and merges partial results as the [`crate::statistics`]
-//! accumulators do.
+//! occupancies. It observes samples, checks weights, and merges partial
+//! results as the [`crate::statistics`] accumulators do.
 //!
 //! # Example
 //!
