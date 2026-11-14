@@ -82,7 +82,7 @@ impl<S: GeometryStorage> StructureSet<S> {
     /// `clusters` clusters around medoid geometries, on `distances` indexed
     /// by geometry ([`Self::pairwise_fitted_rmsd`]), as
     /// [`Ensemble::cluster_k_medoids`] does. Install the partition as a new
-    /// distribution of every geometry, `Distribution::new(Members::All,
+    /// distribution of every geometry, `Distribution::new(Samples::All,
     /// partition)`, in [`Ensemble::new`].
     ///
     /// # Errors

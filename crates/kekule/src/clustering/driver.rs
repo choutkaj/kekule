@@ -11,7 +11,7 @@ use crate::alignment::{
 use crate::diagnostics::Cancelled;
 use crate::parallel::map_ranges;
 use crate::structure::{
-    Distribution, Ensemble, GeometryError, Members, Partition, Requirement, StructureSet,
+    Distribution, Ensemble, GeometryError, Partition, Requirement, Samples, StructureSet,
     StructureSetError, StructureSetReadError, StructureView,
 };
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};
@@ -69,7 +69,7 @@ impl<'a> ClusteringOptions<'a> {
 pub(super) struct Clustered<'a> {
     pub(super) views: Vec<StructureView<'a>>,
     /// The geometry index of each member, which errors name.
-    pub(super) samples: &'a Members,
+    pub(super) samples: &'a Samples,
     /// Each member's natural-logarithm weight.
     log_weights: Vec<f64>,
     /// Each member's state energy in the canonical unit, or why there is
@@ -78,7 +78,7 @@ pub(super) struct Clustered<'a> {
 }
 
 /// The members of a set: every geometry.
-static EVERY_GEOMETRY: Members = Members::All;
+static EVERY_GEOMETRY: Samples = Samples::All;
 
 impl<'a> Clustered<'a> {
     /// The samples of `distribution` over `set`, or every geometry of `set`
@@ -119,11 +119,11 @@ impl<'a> Clustered<'a> {
             .map_or_else(|| vec![0.0; distribution.sample_count()], <[f64]>::to_vec);
         let energies = distribution
             .state_energies()
-            .map(|energies| member_energies(&energies, distribution.partition()))
+            .map(|energies| sample_energies(&energies, distribution.partition()))
             .map_err(ClusteringError::from);
         Self {
             views: Vec::new(),
-            samples: distribution.members(),
+            samples: distribution.samples(),
             log_weights,
             energies,
         }
@@ -296,9 +296,9 @@ impl<'a> Clustered<'a> {
     }
 }
 
-/// Each member's state energy, from every state's energy and the members'
+/// Each sample's state energy, from every state's energy and the samples'
 /// grouping into states.
-fn member_energies(energies: &[f64], partition: &Partition) -> Vec<f64> {
+fn sample_energies(energies: &[f64], partition: &Partition) -> Vec<f64> {
     partition
         .assignments()
         .iter()
@@ -306,11 +306,11 @@ fn member_energies(energies: &[f64], partition: &Partition) -> Vec<f64> {
         .collect()
 }
 
-/// The sample index of the member at `position` of `members`.
-pub(super) fn sample_index(members: &Members, position: usize) -> usize {
-    match members {
-        Members::All => position,
-        Members::Subset(indices) => indices[position],
+/// The geometry index of the sample at `position` of `samples`.
+pub(super) fn sample_index(samples: &Samples, position: usize) -> usize {
+    match samples {
+        Samples::All => position,
+        Samples::Subset(indices) => indices[position],
     }
 }
 
@@ -321,7 +321,7 @@ impl StructureSet {
     /// distribution with their weights.
     ///
     /// The result groups the geometries, by geometry index. Install it as a
-    /// new distribution of every geometry, `Distribution::new(Members::All,
+    /// new distribution of every geometry, `Distribution::new(Samples::All,
     /// partition)`, in [`Ensemble::new`]. Members are visited in geometry
     /// order; the rest is as [`Ensemble::cluster_by_radius`] describes.
     ///
@@ -367,9 +367,9 @@ impl Ensemble {
     /// Leader clustering on fitted RMSD within `radius`, a finite,
     /// nonnegative length, of the samples of the distribution.
     ///
-    /// The result groups exactly those samples, by member position: entry
+    /// The result groups exactly those samples, by sample position: entry
     /// `i` of its assignments, and each representative, is the `i`th sample
-    /// ([`Distribution::members`](crate::structure::Distribution::members)).
+    /// ([`Distribution::samples`](crate::structure::Distribution::samples)).
     /// Install it with
     /// [`DistributionMut::regroup`](crate::structure::DistributionMut::regroup),
     /// which keeps every weight. Geometries that are not samples are not

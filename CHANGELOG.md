@@ -204,15 +204,21 @@ through the workspace.
 - `Velocities` and `Forces` share storage between clones, as `Positions`
   does, and store no runtime unit; their values are in the canonical unit.
 - **Breaking:** `GeometryError::NonFiniteEnergy` and `NonFiniteTime` are
-  `StructureSetError::NonFiniteEnergy` and `NonFiniteTime`; `State::set_energy`,
+  `StructureSetError::NonFiniteEnergy` and `NonFiniteTime`; `StateData::set_energy`,
   `FrameView::new`, `FrameBuffer::set_time`, and `replace_from_data` return
   `StructureSetError`.
 - **Breaking:** `Ensemble` now owns one `StructureSet` and one `Distribution`
   (`Ensemble::new`, `uniform`, `weighted`, `into_parts`); geometry edits,
   `select_states`, `collapse`, and `state`/`states` go through it.
-- **Breaking:** A `Distribution` holds samples (`Members`), optional natural-log
-  weights (`with_log_weights`), a `Partition` into states with one `State`
-  each (energy, properties), and a temperature; `DistributionMut` edits it.
+- **Breaking:** A `Distribution` holds samples (`Samples`), optional natural-log
+  weights (`with_log_weights`), a `Partition` into states with one `StateData`
+  each (energy, properties), and a temperature; `DistributionMut` edits it,
+  and `StateView` reads a state with its samples and population.
+- **Breaking:** Ensemble names say sample, not member: `Samples`,
+  `Distribution::samples`, `Ensemble::push_sample`, and
+  `StructureSetError::UnsortedSamples` replace `Members`, `members`,
+  `push_member`, and `UnsortedMembers` of earlier builds of this release, and
+  `StateData` replaces `State`.
 - **Breaking:** Log weights span hundreds of orders of magnitude without
   underflow; `probabilities`, rankings, and `effective_sample_size` move from
   the old `Ensemble` to `Distribution`.

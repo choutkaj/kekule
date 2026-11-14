@@ -2101,7 +2101,7 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
     use kekule::math::{PeriodicCell, Point3, Vector3};
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::structure::{
-        Distribution, Ensemble, Members, Partition, StructureSet, StructureSetError,
+        Distribution, Ensemble, Partition, Samples, StructureSet, StructureSetError,
     };
     use kekule::topology::{TopologyAtomIndex, TopologyBondIndex};
     use kekule::units::{Quantity, ANGSTROM, SQUARE_NANOMETER};
@@ -2178,7 +2178,7 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
     // An ensemble over the set keeps the partition the caller passes.
     let conformers = Ensemble::new(
         StructureSet::from_structures([read_structure(CRAMBIN), read_structure(CRAMBIN)]).unwrap(),
-        Distribution::new(Members::All, Partition::state_per_sample(2)).unwrap(),
+        Distribution::new(Samples::All, Partition::state_per_sample(2)).unwrap(),
     )
     .unwrap();
     assert_eq!(conformers.distribution().state_count(), 2);

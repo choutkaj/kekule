@@ -159,11 +159,11 @@ impl StructureSetDescription {
 ///
 /// ```
 /// use kekule::native::{self, EnsembleDescription, NativeReadOptions, StructureSetDescription};
-/// use kekule::structure::{Distribution, Members, Order, Partition};
+/// use kekule::structure::{Distribution, Order, Partition, Samples};
 ///
 /// let topology = kekule::smiles::to_topology("O")?;
 /// // The last two of three frames, reweighted, as one state.
-/// let distribution = Distribution::new(Members::Subset(vec![1, 2]), Partition::one_state(2))?
+/// let distribution = Distribution::new(Samples::Subset(vec![1, 2]), Partition::one_state(2))?
 ///     .with_log_weights(vec![-1.5, 0.0])?;
 /// let saved = EnsembleDescription::new(StructureSetDescription::new(topology, 3), distribution)?;
 /// let bytes = native::write(&saved, Default::default())?;
@@ -174,7 +174,7 @@ impl StructureSetDescription {
 /// // The file grew to five frames; the new ones are not samples.
 /// let grown = read.extended_to(5, None)?;
 /// assert_eq!(grown.set().geometry_count(), 5);
-/// assert_eq!(grown.distribution().members(), &Members::Subset(vec![1, 2]));
+/// assert_eq!(grown.distribution().samples(), &Samples::Subset(vec![1, 2]));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -185,7 +185,7 @@ pub struct EnsembleDescription {
 
 impl EnsembleDescription {
     /// `distribution` over the geometries `set` describes. A subset listing
-    /// every geometry becomes [`Members::All`](crate::structure::Members::All).
+    /// every geometry becomes [`Samples::All`](crate::structure::Samples::All).
     ///
     /// # Errors
     ///

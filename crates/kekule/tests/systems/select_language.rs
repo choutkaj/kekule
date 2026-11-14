@@ -1266,7 +1266,7 @@ fn within_on_a_million_atoms_takes_under_fifty_milliseconds() {
 #[ignore = "timing of `within` over many structures; run in release with --ignored"]
 fn within_over_many_structures_grows_with_atoms_plus_points() {
     // 27 copies of 1AKE without water, about 92k atoms, as a host holds them:
-    // apart on a grid, and stacked in one place as an ensemble's members are.
+    // apart on a grid, and stacked in one place as an ensemble's samples are.
     let complex = structure("mmcif/1AKE.cif");
     let dry = complex
         .subset(

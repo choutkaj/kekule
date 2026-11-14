@@ -4,7 +4,7 @@
 //! An ensemble clusters the samples of its distribution, leaving the other
 //! geometries out; a structure set clusters every geometry. Results are
 //! indexed by member position, the `i`th member being the `i`th sample
-//! [`Distribution::members`](crate::structure::Distribution::members) lists,
+//! [`Distribution::samples`](crate::structure::Distribution::samples) lists,
 //! or geometry `i` of a set: the [`DistanceMatrix`] of
 //! [`Ensemble::pairwise_fitted_rmsd`] and each partition, whose
 //! assignments and representatives are member positions. Errors name
@@ -21,7 +21,7 @@
 //! samples, and [`Ensemble::collapse`] then keeps one sample per state,
 //! carrying the state's population. A partition of a set's geometries
 //! becomes a new distribution of every geometry in
-//! [`Ensemble::new`] with `Distribution::new(Members::All, partition)`.
+//! [`Ensemble::new`] with `Distribution::new(Samples::All, partition)`.
 //!
 //! [`Ensemble::cluster_hierarchical`] cuts the [`Dendrogram`] of a
 //! [`DistanceMatrix`], such as [`Ensemble::pairwise_fitted_rmsd`], at a
@@ -57,7 +57,7 @@
 //! use kekule::alignment::SymmetricSelection;
 //! use kekule::math::Point3;
 //! use kekule::structure::{
-//!     Distribution, Ensemble, Geometry, Members, Partition, Positions, State, StructureSet,
+//!     Distribution, Ensemble, Geometry, Partition, Positions, Samples, StateData, StructureSet,
 //! };
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE};
@@ -65,7 +65,7 @@
 //! // Acetate, then a rotamer with its oxygens exchanged, then a distinct
 //! // conformer 5 kJ/mol higher, each its own state.
 //! let topology = kekule::smiles::to_topology("CC(=O)[O-]")?;
-//! let none = Distribution::new(Members::All, Partition::state_per_sample(0))?;
+//! let none = Distribution::new(Samples::All, Partition::state_per_sample(0))?;
 //! let mut conformers = Ensemble::new(StructureSet::new(topology.clone()), none)?;
 //! for (o2, o3, energy) in [(1.1, -1.1, 0.0), (-1.1, 1.1, 0.0), (1.1, -0.3, 5.0)] {
 //!     let points = [
@@ -75,7 +75,7 @@
 //!         Point3::new(2.2, o3, 0.5),
 //!     ];
 //!     let positions = Positions::new(Quantity::new(points, ANGSTROM))?;
-//!     let state = State::new().with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))?;
+//!     let state = StateData::new().with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))?;
 //!     conformers.push_state(Geometry::new(positions), None, state, None)?;
 //! }
 //! conformers

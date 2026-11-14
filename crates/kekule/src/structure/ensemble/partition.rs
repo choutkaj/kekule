@@ -1,12 +1,12 @@
 use std::fmt;
 
-/// A grouping of the members of a distribution into states, with one
-/// representative member per state.
+/// A grouping of the samples of a distribution into states, with one
+/// representative sample per state.
 ///
-/// States are numbered from zero, and every member is in exactly one of
+/// States are numbered from zero, and every sample is in exactly one of
 /// them. A state always contains its representative, so none is empty. The
-/// partition records member positions only: it applies to any distribution
-/// with the same member count, and
+/// partition records sample positions only: it applies to any distribution
+/// with the same sample count, and
 /// [`DistributionMut::regroup`](super::DistributionMut::regroup) checks that
 /// count.
 ///
