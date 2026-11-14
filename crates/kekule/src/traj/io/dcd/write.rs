@@ -12,7 +12,6 @@ pub struct DcdWriter<W> {
     /// fails, so a stream that may end in a partial frame is never extended
     /// or reported as finished.
     pub(super) partial: bool,
-    pub(super) finalized: bool,
     pub(super) axis: Vec<f32>,
     pub(super) report: WriteReport,
 }
@@ -26,7 +25,6 @@ impl<W> fmt::Debug for DcdWriter<W> {
             .field("source_label", &self.source_label)
             .field("frame_count", &self.frame_count)
             .field("partial", &self.partial)
-            .field("finalized", &self.finalized)
             .finish_non_exhaustive()
     }
 }
@@ -122,7 +120,6 @@ impl<W: Write + Seek> DcdWriter<W> {
             header_start,
             frame_count,
             partial: false,
-            finalized: false,
             axis,
             report: WriteReport::empty(),
         })
@@ -192,20 +189,17 @@ impl<W: Write + Seek> DcdWriter<W> {
         Ok(())
     }
 
-    /// Patches the header frame count, leaving the stream at its end; later
-    /// calls do nothing. No frame can be written afterwards.
+    /// Patches the header frame count, flushes, and returns the nonempty DCD
+    /// stream, positioned at its end.
     ///
     /// # Errors
     ///
     /// Returns [`TrajectoryIoErrorKind::InvalidFrame`] when no frame was
     /// written or an earlier write left a partial frame,
     /// [`TrajectoryIoErrorKind::LimitExceeded`] when the frame count exceeds
-    /// `i32::MAX`, and [`TrajectoryIoErrorKind::Io`] when seeking or writing
-    /// fails.
-    pub fn finalize(&mut self) -> Result<(), TrajectoryIoError> {
-        if self.finalized {
-            return Ok(());
-        }
+    /// `i32::MAX`, and [`TrajectoryIoErrorKind::Io`] when seeking, writing,
+    /// or flushing fails.
+    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
         require_no_partial_frame(
             self.partial,
             TrajectoryIoOperation::Finish,
@@ -214,18 +208,6 @@ impl<W: Write + Seek> DcdWriter<W> {
         )?;
         require_nonempty_writer(self.frame_count, TrajectoryFormat::Dcd, &self.source_label)?;
         self.write_frame_count(TrajectoryIoOperation::Finish)?;
-        self.finalized = true;
-        Ok(())
-    }
-
-    /// Finalizes the frame count, flushes, and returns the nonempty DCD stream.
-    ///
-    /// # Errors
-    ///
-    /// Returns the errors of [`Self::finalize`] and
-    /// [`TrajectoryIoErrorKind::Io`] when flushing fails.
-    pub fn finish(mut self) -> Result<W, TrajectoryIoError> {
-        self.finalize()?;
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::Finish,
@@ -257,9 +239,7 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             TrajectoryFormat::Dcd,
             &self.source_label,
         )?;
-        if !self.finalized {
-            self.write_frame_count(TrajectoryIoOperation::WriteFrame)?;
-        }
+        self.write_frame_count(TrajectoryIoOperation::WriteFrame)?;
         self.writer.flush().map_err(|error| {
             io_context(
                 TrajectoryIoOperation::WriteFrame,
@@ -277,15 +257,6 @@ impl<W: Write + Seek> TrajectoryWriter for DcdWriter<W> {
             TrajectoryFormat::Dcd,
             &self.source_label,
         )?;
-        if self.finalized {
-            return Err(codec_context(
-                TrajectoryIoErrorKind::InvalidFrame,
-                TrajectoryIoOperation::WriteFrame,
-                Some(FORMAT),
-                &self.source_label,
-                "The writer is already finished.",
-            ));
-        }
         if !frame.topology().shares_layout(self.topology()) {
             return Err(TrajectoryIoError::new(
                 TrajectoryIoErrorKind::TopologyMismatch,
@@ -527,30 +498,6 @@ pub(super) fn header_records(
     atom_count: usize,
     source_label: &str,
 ) -> Result<Vec<u8>, TrajectoryIoError> {
-    if options.step_interval == 0
-        || options.start_step > i32::MAX as u64
-        || options.step_interval > i32::MAX as u64
-        || !options.delta.is_finite()
-        || options.delta < 0.0
-    {
-        return Err(codec_context(
-            TrajectoryIoErrorKind::InconsistentMetadata,
-            TrajectoryIoOperation::Open,
-            Some(FORMAT),
-            source_label,
-            if options.step_interval == 0 {
-                "The step interval is zero.".to_owned()
-            } else if !options.delta.is_finite() || options.delta < 0.0 {
-                format!(
-                    "The time step DELTA is {}. It is not a finite, nonnegative number.",
-                    options.delta
-                )
-            } else {
-                "The first step or the step interval exceeds the 32-bit header field.".to_owned()
-            },
-        ));
-    }
-    validate_time_policy(options.time_policy, source_label)?;
     if atom_count == 0 || atom_count > i32::MAX as usize {
         return Err(codec_context(
             TrajectoryIoErrorKind::LimitExceeded,
