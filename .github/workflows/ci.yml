@@ -106,7 +106,9 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
-      # Compares every publishable crate with its latest crates.io release.
+      # Compares every publishable crate with its latest crates.io release,
+      # judged by the workspace version: after a release, bump the version
+      # to the next 0.x minor before a breaking change lands.
       - uses: obi1kenobi/cargo-semver-checks-action@v2
 
   windows:

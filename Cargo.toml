@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.89"
 repository = "https://github.com/choutkaj/kekule"
@@ -23,8 +23,8 @@ categories = ["science", "data-structures", "parser-implementations"]
 # workspace version except `kekule-openff-ash`, which is versioned on its own
 # and released only when its model data changes (see RELEASING.md).
 [workspace.dependencies]
-kekule = { version = "0.4.0", path = "crates/kekule" }
-kekule-openff = { version = "0.4.0", path = "crates/kekule-openff" }
+kekule = { version = "0.5.0", path = "crates/kekule" }
+kekule-openff = { version = "0.5.0", path = "crates/kekule-openff" }
 kekule-openff-ash = { version = "0.3", path = "crates/kekule-openff-ash" }
 
 [workspace.lints.rust]
