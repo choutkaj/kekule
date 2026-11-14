@@ -28,15 +28,13 @@ fn hierarchy_adds_chains_residues_and_atom_sites_in_order() {
     let second_chain = hierarchy.add_chain("B", None).unwrap();
 
     assert_eq!(
-        hierarchy.chains().map(|(id, _)| id).collect::<Vec<_>>(),
+        hierarchy.chain_ids().collect::<Vec<_>>(),
         vec![chain, second_chain]
     );
-    assert_eq!(hierarchy.chain(chain).unwrap().residues(), &[residue]);
-    assert_eq!(hierarchy.residue(residue).unwrap().atom_sites(), &[site]);
-    assert_eq!(
-        hierarchy.atom_site_for_atom(atom).unwrap().metadata(),
-        &metadata
-    );
+    assert_eq!(hierarchy.chain_residues(chain), &[residue]);
+    assert_eq!(hierarchy.residue_sites(residue), &[site]);
+    assert_eq!(hierarchy.atom_site_for_atom(atom), Some(site));
+    assert_eq!(hierarchy.site_metadata(site), &metadata);
 }
 
 #[test]
@@ -104,5 +102,5 @@ fn topology_publication_validates_hierarchy_references() {
             AtomSiteMetadata::default(),
         )
         .unwrap();
-    assert_eq!(builder.build().unwrap().hierarchy().atom_sites().count(), 1);
+    assert_eq!(builder.build().unwrap().atom_sites().count(), 1);
 }

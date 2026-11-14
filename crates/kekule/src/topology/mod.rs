@@ -81,13 +81,12 @@ pub use builder::{TopologyBuildError, TopologyBuilder};
 use dense_order::DenseOrder;
 pub(crate) use editor::{AppendMapping, AttachedInOccurrence, ChainIds, DraftHydrogenError};
 pub use entity_views::{AtomView, BondView};
-pub(crate) use hierarchy::{
-    AtomSite, Chain, Hierarchy, RawAtomSite, RawChain, RawHierarchyError, RawResidue, Residue,
-    ResidueLabels,
-};
 pub use hierarchy::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError, HierarchyIdKind,
     ResidueId,
+};
+pub(crate) use hierarchy::{
+    Hierarchy, RawAtomSite, RawChain, RawHierarchyError, RawResidue, ResidueLabels,
 };
 use hierarchy_index::HierarchyIndex;
 pub(crate) use hierarchy_index::SiteNames;
@@ -408,22 +407,22 @@ impl<'a> ChainView<'a> {
 
     /// The label chain identifier (mmCIF `label_asym_id`).
     pub fn label_id(self) -> &'a str {
-        self.local().label_id()
+        self.topology.hierarchy.chain_label_id(self.id)
     }
 
     /// The author chain identifier, or `None` when the source gave none.
     pub fn author_id(self) -> Option<&'a str> {
-        self.local().author_id()
+        self.topology.hierarchy.chain_author_id(self.id)
     }
 
     /// This chain's residues in chain order.
     pub fn residues(self) -> impl ExactSizeIterator<Item = ResidueView<'a>> + 'a {
         let topology = self.topology;
-        self.local()
-            .residues()
+        topology
+            .hierarchy
+            .chain_residues(self.id)
             .iter()
-            .copied()
-            .map(move |residue| ResidueView::new(topology, residue))
+            .map(move |&residue| ResidueView::new(topology, residue))
     }
 
     /// One static topology annotation of this node.
@@ -438,13 +437,6 @@ impl<'a> ChainView<'a> {
             .chains()
             .value_ref(key, self.id)
             .expect("dense hierarchy rows cover every node")
-    }
-
-    pub(crate) fn local(self) -> &'a Chain {
-        self.topology
-            .hierarchy
-            .chain(self.id)
-            .expect("chain view references a validated topology hierarchy")
     }
 }
 
@@ -476,55 +468,62 @@ impl<'a> ResidueView<'a> {
 
     /// The chain containing this residue.
     pub fn chain(self) -> ChainView<'a> {
-        ChainView::new(self.topology, self.local().chain())
+        ChainView::new(
+            self.topology,
+            self.topology.hierarchy.residue_chain(self.id),
+        )
     }
 
     /// The residue (component) name, such as `ALA` or `HOH`.
     pub fn name(self) -> &'a str {
-        self.local().name()
+        self.labels().name()
     }
 
     /// Returns this topology-owned residue's canonical class.
     pub fn class(self) -> ResidueClass {
-        self.local().class()
+        self.topology.hierarchy.residue_class(self.id)
     }
 
     /// This residue's class and whether it was assigned explicitly.
     pub fn class_assignment(self) -> ClassAssignment<ResidueClass> {
-        let residue = self.local();
-        ClassAssignment::new(residue.class(), residue.explicit_class().is_some())
+        let hierarchy = &self.topology.hierarchy;
+        ClassAssignment::new(
+            hierarchy.residue_class(self.id),
+            hierarchy.explicit_residue_class(self.id).is_some(),
+        )
     }
 
     /// The label component identifier, or `None` when absent.
     pub fn label_comp_id(self) -> Option<&'a str> {
-        self.local().label_comp_id()
+        self.labels().label_comp_id()
     }
 
     /// The author component identifier, or `None` when absent.
     pub fn author_comp_id(self) -> Option<&'a str> {
-        self.local().author_comp_id()
+        self.labels().author_comp_id()
     }
 
     /// The label sequence number, or `None` when absent.
     pub fn label_seq_id(self) -> Option<i32> {
-        self.local().label_seq_id()
+        self.labels().label_seq_id()
     }
 
     /// The author sequence identifier as written by the source, or `None`.
     pub fn author_seq_id(self) -> Option<&'a str> {
-        self.local().author_seq_id()
+        self.labels().author_seq_id()
     }
 
     /// The insertion code, or `None` when the residue has none.
     pub fn insertion_code(self) -> Option<&'a str> {
-        self.local().insertion_code()
+        self.labels().insertion_code()
     }
 
     /// This residue's atom sites in residue order.
     pub fn atom_sites(self) -> impl ExactSizeIterator<Item = AtomSiteView<'a>> + 'a {
         let topology = self.topology;
-        self.local()
-            .atom_sites()
+        topology
+            .hierarchy
+            .residue_sites(self.id)
             .iter()
             .map(move |&site| AtomSiteView::new(topology, site))
     }
@@ -543,11 +542,8 @@ impl<'a> ResidueView<'a> {
             .expect("dense hierarchy rows cover every node")
     }
 
-    pub(crate) fn local(self) -> Residue<'a> {
-        self.topology
-            .hierarchy
-            .residue(self.id)
-            .expect("residue view references a validated topology hierarchy")
+    fn labels(self) -> &'a ResidueLabels {
+        self.topology.hierarchy.residue_labels(self.id)
     }
 }
 
@@ -590,12 +586,12 @@ impl<'a> AtomSiteView<'a> {
 
     /// The residue containing this site.
     pub fn residue(self) -> ResidueView<'a> {
-        ResidueView::new(self.topology, self.local().residue())
+        ResidueView::new(self.topology, self.topology.hierarchy.site_residue(self.id))
     }
 
     /// Source atom-site labels.
     pub fn metadata(self) -> &'a AtomSiteMetadata {
-        self.local().metadata()
+        self.topology.hierarchy.site_metadata(self.id)
     }
 
     /// One static topology annotation of this node.
@@ -610,13 +606,6 @@ impl<'a> AtomSiteView<'a> {
             .atom_sites()
             .value_ref(key, self.id)
             .expect("dense hierarchy rows cover every node")
-    }
-
-    pub(crate) fn local(self) -> AtomSite<'a> {
-        self.topology
-            .hierarchy
-            .atom_site(self.id)
-            .expect("atom-site view references a validated topology hierarchy")
     }
 }
 
@@ -1055,10 +1044,9 @@ impl Topology {
 
     /// The site placing a qualified atom, or `None` when it has none or is
     /// not in this topology. Constant time.
-    pub(crate) fn atom_site_of(&self, atom: InstanceAtomId) -> Option<AtomSite<'_>> {
-        let index = self.atom_index(atom)?;
-        let site = self.hierarchy_index.atom_site(index)?;
-        self.hierarchy.atom_site(site)
+    pub(crate) fn atom_site_of(&self, atom: InstanceAtomId) -> Option<AtomSiteView<'_>> {
+        let site = self.hierarchy_index.atom_site(self.atom_index(atom)?)?;
+        Some(AtomSiteView::new(self, site))
     }
 
     /// The dense atom of every hierarchy atom site, by site ID.
@@ -1119,39 +1107,43 @@ impl Topology {
     /// Every hierarchy chain in hierarchy order.
     pub fn chains(&self) -> impl ExactSizeIterator<Item = ChainView<'_>> {
         self.hierarchy
-            .chains()
-            .map(move |(id, _)| ChainView::new(self, id))
+            .chain_ids()
+            .map(move |id| ChainView::new(self, id))
     }
 
     /// Every hierarchy residue in hierarchy order.
     pub fn residues(&self) -> impl ExactSizeIterator<Item = ResidueView<'_>> {
-        (0..self.hierarchy.residues().len())
-            .map(move |index| ResidueView::new(self, ResidueId::new(index as u32)))
+        self.hierarchy
+            .residue_ids()
+            .map(move |id| ResidueView::new(self, id))
     }
 
     /// Every hierarchy atom site in hierarchy order.
     pub fn atom_sites(&self) -> impl ExactSizeIterator<Item = AtomSiteView<'_>> {
-        (0..self.hierarchy.atom_sites().len())
-            .map(move |index| AtomSiteView::new(self, AtomSiteId::new(index as u32)))
+        self.hierarchy
+            .atom_site_ids()
+            .map(move |id| AtomSiteView::new(self, id))
     }
 
     /// One hierarchy chain, or `None` when `id` names no chain here.
     pub fn chain(&self, id: ChainId) -> Option<ChainView<'_>> {
-        self.hierarchy.chain(id).map(|_| ChainView::new(self, id))
+        self.hierarchy
+            .has_chain(id)
+            .then(|| ChainView::new(self, id))
     }
 
     /// One hierarchy residue, or `None` when `id` names no residue here.
     pub fn residue(&self, id: ResidueId) -> Option<ResidueView<'_>> {
         self.hierarchy
-            .residue(id)
-            .map(|_| ResidueView::new(self, id))
+            .has_residue(id)
+            .then(|| ResidueView::new(self, id))
     }
 
     /// One hierarchy atom site, or `None` when `id` names no site here.
     pub fn atom_site(&self, id: AtomSiteId) -> Option<AtomSiteView<'_>> {
         self.hierarchy
-            .atom_site(id)
-            .map(|_| AtomSiteView::new(self, id))
+            .has_atom_site(id)
+            .then(|| AtomSiteView::new(self, id))
     }
 
     /// The atom site placing the atom at a dense index, or `None` when the

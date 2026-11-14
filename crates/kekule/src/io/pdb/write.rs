@@ -1162,7 +1162,6 @@ impl Plan {
                 atom_id.atom().raw() + 1
             )
         };
-        let hierarchy = topology.hierarchy();
         let Some(site) = topology.atom_site_of(atom_id) else {
             let next = synthetic.len() + 1;
             let number = *synthetic.entry(instance.id()).or_insert(next);
@@ -1184,12 +1183,8 @@ impl Plan {
                 insertion_code: None,
             };
         };
-        let residue = hierarchy
-            .require_residue(site.residue())
-            .expect("published atom sites reference live residues");
-        let chain = hierarchy
-            .require_chain(residue.chain())
-            .expect("published residues reference live chains");
+        let residue = site.residue();
+        let chain = residue.chain();
         let metadata = site.metadata();
         Identity {
             residue: AtomResidue {
@@ -1613,9 +1608,9 @@ fn template_conflict(
 /// Each hierarchy residue's chain and position within it.
 fn residue_chain_positions(topology: &Topology) -> BTreeMap<ResidueId, (usize, usize)> {
     let mut positions = BTreeMap::new();
-    for (chain_index, (_, chain)) in topology.hierarchy().chains().enumerate() {
-        for (position, &residue) in chain.residues().iter().enumerate() {
-            positions.insert(residue, (chain_index, position));
+    for (chain_index, chain) in topology.chains().enumerate() {
+        for (position, residue) in chain.residues().enumerate() {
+            positions.insert(residue.id(), (chain_index, position));
         }
     }
     positions

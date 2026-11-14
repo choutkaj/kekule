@@ -106,14 +106,7 @@ pub(super) fn prepare_model(
                 .atom_site_of(molecule.qualify_atom(atom))
                 .is_some()
         }) {
-            collect_macro_rows(
-                structure,
-                molecule,
-                definition,
-                hierarchy,
-                &assignments,
-                &mut atoms,
-            )?;
+            collect_macro_rows(structure, molecule, definition, &assignments, &mut atoms)?;
         } else {
             collect_small_rows(structure, molecule, definition, &assignments, &mut atoms)?;
         }
@@ -261,7 +254,6 @@ fn collect_macro_rows(
     structure: StructureView<'_>,
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
-    hierarchy: &Hierarchy,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), FormatError> {
@@ -271,12 +263,8 @@ fn collect_macro_rows(
             .topology()
             .atom_site_of(qualified)
             .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomSite(qualified)))?;
-        let residue = hierarchy
-            .require_residue(site.residue())
-            .map_err(|error| invalid_hierarchy(qualified).with_source(error))?;
-        let chain = hierarchy
-            .require_chain(residue.chain())
-            .map_err(|error| invalid_hierarchy(qualified).with_source(error))?;
+        let residue = site.residue();
+        let chain = residue.chain();
         let assignment = assignments
             .get(&qualified)
             .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomSite(qualified)))?;
@@ -284,7 +272,7 @@ fn collect_macro_rows(
             .metadata()
             .label_asym_id
             .as_deref()
-            .is_some_and(|value| value != chain.label_id)
+            .is_some_and(|value| value != chain.label_id())
         {
             return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
                 atom: qualified,
@@ -313,7 +301,7 @@ fn collect_macro_rows(
         let label_comp_id = residue.label_comp_id().unwrap_or(residue.name()).to_owned();
         rows.push(AtomRow {
             atom: qualified,
-            residue: Some(site.residue()),
+            residue: Some(residue.id()),
             entity_id: assignment.entity_id.clone(),
             asym_id: assignment.asym_id.clone(),
             group_pdb,
@@ -347,8 +335,8 @@ fn collect_macro_rows(
                 .metadata()
                 .auth_asym_id
                 .clone()
-                .or_else(|| chain.author_id.clone())
-                .unwrap_or_else(|| chain.label_id.clone()),
+                .or_else(|| chain.author_id().map(str::to_owned))
+                .unwrap_or_else(|| chain.label_id().to_owned()),
             auth_atom_id: site
                 .metadata()
                 .auth_atom_id
@@ -522,14 +510,8 @@ fn number_unsequenced_polymers(
         .map(|entity| entity.id.as_str())
         .collect::<BTreeSet<_>>();
     let chain_position = |residue: ResidueId| {
-        let chain = hierarchy
-            .residue(residue)
-            .expect("atom-site rows reference live residues")
-            .chain();
         hierarchy
-            .chain(chain)
-            .expect("published residues reference live chains")
-            .residues()
+            .chain_residues(hierarchy.residue_chain(residue))
             .iter()
             .position(|candidate| *candidate == residue)
             .expect("a chain lists its residues")
@@ -582,10 +564,6 @@ fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {
         }
     }
     Ok(())
-}
-
-fn invalid_hierarchy(atom: InstanceAtomId) -> FormatError {
-    invalid_structure(format!("The residue or chain of {atom} is invalid."))
 }
 
 fn missing_position(atom: InstanceAtomId) -> FormatError {

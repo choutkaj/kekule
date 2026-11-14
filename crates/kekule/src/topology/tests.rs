@@ -766,7 +766,7 @@ fn hierarchy_publication_rejects_each_inconsistent_listing() {
             },
         ),
     ];
-    assert_eq!(staged().build().unwrap().hierarchy().residues().count(), 2);
+    assert_eq!(staged().build().unwrap().residues().count(), 2);
     for (case, corrupt, expected) in cases {
         let mut builder = staged();
         corrupt(builder.hierarchy_mut().storage_mut());
@@ -897,13 +897,16 @@ fn selections_distinguish_instances_elements_and_queries() {
 /// publication index.
 fn assert_indexed_hierarchy_views_match_the_hierarchy(topology: &Topology) {
     let sites = topology.atom_sites().collect::<Vec<_>>();
-    assert_eq!(sites.len(), topology.hierarchy().atom_sites().len());
+    assert_eq!(sites.len(), topology.hierarchy().atom_site_count());
     for site in &sites {
-        let atom = site.local().atom();
+        let atom = topology.hierarchy().site_atom(site.id());
         assert_eq!(site.atom().id(), atom);
         assert_eq!(Some(site.atom_index()), topology.atom_index(atom));
         assert_eq!(site.atom().index(), site.atom_index());
-        assert_eq!(site.residue().id(), site.local().residue());
+        assert_eq!(
+            site.residue().id(),
+            topology.hierarchy().site_residue(site.id())
+        );
     }
     for residue in topology.residues() {
         assert_eq!(
@@ -911,11 +914,13 @@ fn assert_indexed_hierarchy_views_match_the_hierarchy(topology: &Topology) {
                 .atom_sites()
                 .map(AtomSiteView::id)
                 .collect::<Vec<_>>(),
-            residue.local().atom_sites()
+            topology.hierarchy().residue_sites(residue.id())
         );
     }
     for atom in topology.atoms() {
-        let expected = sites.iter().find(|site| site.local().atom() == atom.id());
+        let expected = sites
+            .iter()
+            .find(|site| topology.hierarchy().site_atom(site.id()) == atom.id());
         assert_eq!(
             atom.atom_site().map(AtomSiteView::id),
             expected.map(|site| site.id())
@@ -926,13 +931,13 @@ fn assert_indexed_hierarchy_views_match_the_hierarchy(topology: &Topology) {
         );
         assert_eq!(
             atom.residue().map(ResidueView::id),
-            expected.map(|site| site.local().residue())
+            expected.map(|site| topology.hierarchy().site_residue(site.id()))
         );
     }
     for instance in topology.instances() {
         let expected_sites = sites
             .iter()
-            .filter(|site| site.local().atom().instance() == instance.id())
+            .filter(|site| topology.hierarchy().site_atom(site.id()).instance() == instance.id())
             .map(|site| site.id())
             .collect::<Vec<_>>();
         let expected_residues = expected_sites
@@ -1083,7 +1088,7 @@ fn topology_global_hierarchy_crosses_molecule_boundaries() {
         .unwrap();
     let topology = Arc::new(builder.build().unwrap());
     assert_eq!(topology.definition_count(), 2);
-    assert_eq!(topology.hierarchy().chains().count(), 1);
+    assert_eq!(topology.chains().count(), 1);
     let first_molecule = topology.instance(first).unwrap();
     assert_eq!(first_molecule.molecule(), &molecule);
     assert_eq!(

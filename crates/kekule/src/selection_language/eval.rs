@@ -263,7 +263,7 @@ impl<'a> Evaluator<'a> {
 
     fn residue_atoms(&self, residue: ResidueView<'_>, bits: &mut Bits) {
         let atoms = self.site_atoms();
-        for site in residue.local().atom_sites() {
+        for site in residue.atom_sites().map(|site| site.id()) {
             bits.set(atoms[site.index()].index());
         }
     }
@@ -696,7 +696,7 @@ impl<'a> Evaluator<'a> {
                 );
                 for residue in topology.residues() {
                     let class = residue.class();
-                    for site in residue.local().atom_sites() {
+                    for site in residue.atom_sites().map(|site| site.id()) {
                         let index = atoms[site.index()].index();
                         let name = names.names()[site.index()] as usize;
                         if class == ResidueClass::AminoAcid && protein.get(index) {

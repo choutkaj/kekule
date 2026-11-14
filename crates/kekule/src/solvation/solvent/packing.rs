@@ -384,11 +384,10 @@ fn new_chain(builder: &mut StructureBuilder, prefix: &str) -> Result<ChainId, So
     let mut suffix = 1_u64;
     loop {
         let label = format!("{prefix}{suffix}");
-        if !builder
-            .hierarchy()
-            .storage()
-            .chains()
-            .any(|(_, c)| c.label_id() == label)
+        let staged = builder.hierarchy().storage();
+        if !staged
+            .chain_ids()
+            .any(|chain| staged.chain_label_id(chain) == label)
         {
             return Ok(builder.hierarchy_mut().add_chain(label, None)?);
         }

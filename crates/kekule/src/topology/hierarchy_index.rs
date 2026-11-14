@@ -88,9 +88,7 @@ impl HierarchyIndex {
             let site_instances = &site_instances;
             let residue_instances = |residue: ResidueId| {
                 hierarchy
-                    .residue(residue)
-                    .expect("chains list hierarchy residues")
-                    .atom_sites()
+                    .residue_sites(residue)
                     .iter()
                     .map(move |site| site_instances[site.index()])
             };
@@ -104,15 +102,15 @@ impl HierarchyIndex {
                 ),
                 residues: Groups::new(
                     instance_count,
-                    hierarchy.residues().flat_map(|(residue, _)| {
+                    hierarchy.residue_ids().flat_map(|residue| {
                         residue_instances(residue).map(move |instance| (instance, residue))
                     }),
                 ),
                 chains: Groups::new(
                     instance_count,
-                    hierarchy.chains().flat_map(|(id, chain)| {
-                        chain
-                            .residues()
+                    hierarchy.chain_ids().flat_map(|id| {
+                        hierarchy
+                            .chain_residues(id)
                             .iter()
                             .flat_map(|&residue| residue_instances(residue))
                             .map(move |instance| (instance, id))
@@ -186,11 +184,12 @@ impl SiteNames {
             })
         }
         let (mut table, mut numbers) = (Vec::new(), HashMap::new());
-        let mut names = Vec::with_capacity(hierarchy.atom_sites().len());
-        let mut labels = Vec::with_capacity(hierarchy.atom_sites().len());
-        for (_, site) in hierarchy.atom_sites() {
-            let label = site.metadata().label_atom_id();
-            let name = site.metadata().auth_atom_id().or(label);
+        let mut names = Vec::with_capacity(hierarchy.atom_site_count());
+        let mut labels = Vec::with_capacity(hierarchy.atom_site_count());
+        for site in hierarchy.atom_site_ids() {
+            let metadata = hierarchy.site_metadata(site);
+            let label = metadata.label_atom_id();
+            let name = metadata.auth_atom_id().or(label);
             names.push(number(&mut numbers, &mut table, name));
             labels.push(number(&mut numbers, &mut table, label));
         }

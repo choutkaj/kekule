@@ -144,43 +144,34 @@ impl<'a> SourceHierarchy<'a> {
     }
 
     pub(super) fn chain(self, index: usize) -> EditChain {
-        let chain = self
-            .source()
-            .hierarchy()
-            .chain(ChainId::new(index as u32))
-            .expect("source chain");
+        let (hierarchy, chain) = (self.source().hierarchy(), ChainId::new(index as u32));
         EditChain {
-            label: chain.label_id().to_owned(),
-            author: chain.author_id().map(str::to_owned),
+            label: hierarchy.chain_label_id(chain).to_owned(),
+            author: hierarchy.chain_author_id(chain).map(str::to_owned),
             slot: index,
         }
     }
 
     pub(super) fn residue(self, index: usize) -> EditResidue {
-        let residue = self
-            .source()
-            .hierarchy()
-            .residue(ResidueId::new(index as u32))
-            .expect("source residue");
+        let (hierarchy, residue) = (self.source().hierarchy(), ResidueId::new(index as u32));
         EditResidue {
-            chain: self.chains.handle(residue.chain().index()),
-            labels: residue.shared_labels(),
-            class: Some(residue.class()),
-            class_explicit: residue.explicit_class().is_some(),
+            chain: self.chains.handle(hierarchy.residue_chain(residue).index()),
+            labels: hierarchy.shared_residue_labels(residue),
+            class: Some(hierarchy.residue_class(residue)),
+            class_explicit: hierarchy.explicit_residue_class(residue).is_some(),
             slot: index,
         }
     }
 
     pub(super) fn site(self, index: usize) -> EditAtomSite {
         let source = self.source();
-        let site = source
-            .hierarchy()
-            .atom_site(AtomSiteId::new(index as u32))
-            .expect("source site");
+        let site = AtomSiteId::new(index as u32);
         EditAtomSite {
-            residue: self.residues.handle(site.residue().index()),
+            residue: self
+                .residues
+                .handle(source.hierarchy().site_residue(site).index()),
             atom: self.atoms.handle(source.site_atoms()[index].index()),
-            metadata: site.shared_metadata(),
+            metadata: source.hierarchy().shared_site_metadata(site),
             slot: index,
         }
     }
@@ -677,9 +668,7 @@ impl TopologyEditor {
         ) {
             (Some(source), Some(index)) => source
                 .hierarchy()
-                .chain(ChainId::new(index))
-                .expect("source chain")
-                .residues()
+                .chain_residues(ChainId::new(index))
                 .iter()
                 .map(|residue| residues.block().handle::<EditResidueId>(residue.index()))
                 .filter(|residue| residues.contains_key(residue))
@@ -776,9 +765,7 @@ impl TopologyEditor {
         source.into_iter().flat_map(move |(source, id)| {
             source
                 .hierarchy()
-                .residue(ResidueId::new(id))
-                .expect("source residue")
-                .atom_sites()
+                .residue_sites(ResidueId::new(id))
                 .iter()
                 .map(move |&site| atoms.handle(source.site_atoms()[site.index()].index()))
         })
@@ -817,9 +804,9 @@ impl TopologyEditor {
         // order, and reads the source nodes until an edit changes them.
         let hierarchy = source.hierarchy();
         self.hierarchy = EditHierarchy {
-            chains: Overlay::new(HandleBlock::reserve(hierarchy.chains().len())),
-            residues: Overlay::new(HandleBlock::reserve(hierarchy.residues().len())),
-            sites: Overlay::new(HandleBlock::reserve(hierarchy.atom_sites().len())),
+            chains: Overlay::new(HandleBlock::reserve(hierarchy.chain_count())),
+            residues: Overlay::new(HandleBlock::reserve(hierarchy.residue_count())),
+            sites: Overlay::new(HandleBlock::reserve(hierarchy.atom_site_count())),
             ..EditHierarchy::default()
         };
     }

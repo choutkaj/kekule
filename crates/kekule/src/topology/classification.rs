@@ -41,19 +41,11 @@ pub(super) fn finalize(
         residues,
     } = inputs;
     let infer = |residue: ResidueId, hierarchy: &Hierarchy| {
-        infer_residue_class(
-            hierarchy
-                .residue(residue)
-                .expect("classified residues exist"),
-            hierarchy,
-            definitions,
-            instances,
-        )
+        infer_residue_class(residue, hierarchy, definitions, instances)
     };
     match residues {
         ResiduePlan::All(overrides) => {
-            for index in 0..hierarchy.residue_count() {
-                let residue = ResidueId::new(index as u32);
+            for residue in hierarchy.residue_ids() {
                 let class = overrides
                     .get(&residue)
                     .copied()
@@ -132,15 +124,16 @@ pub(super) fn finalize(
 }
 
 fn infer_residue_class(
-    residue: super::Residue<'_>,
+    residue: ResidueId,
     hierarchy: &Hierarchy,
     definitions: &[MoleculeDefinition],
     instances: &[MoleculeInstance],
 ) -> ResidueClass {
-    let component = residue
+    let labels = hierarchy.residue_labels(residue);
+    let component = labels
         .label_comp_id()
-        .or(residue.author_comp_id())
-        .unwrap_or_else(|| residue.name())
+        .or(labels.author_comp_id())
+        .unwrap_or_else(|| labels.name())
         .trim()
         .to_ascii_uppercase();
     if AMINO_ACIDS.contains(&component.as_str()) {
@@ -159,11 +152,10 @@ fn infer_residue_class(
         return ResidueClass::Water;
     }
 
-    let atoms = residue
-        .atom_sites()
+    let atoms = hierarchy
+        .residue_sites(residue)
         .iter()
-        .filter_map(|site| hierarchy.atom_site(*site))
-        .filter_map(|site| topology_atom(site.atom(), definitions, instances))
+        .filter_map(|&site| topology_atom(hierarchy.site_atom(site), definitions, instances))
         .collect::<Vec<_>>();
     if atoms.len() == 1
         && (atoms[0].formal_charge != 0 || ION_COMPONENTS.contains(&component.as_str()))
@@ -194,23 +186,16 @@ fn infer_instance_class(
     hierarchy: &Hierarchy,
     site_of: &dyn Fn(InstanceAtomId) -> Option<AtomSiteId>,
 ) -> Option<MoleculeClass> {
-    let site = |atom: InstanceAtomId| site_of(atom).and_then(|site| hierarchy.atom_site(site));
-    let residue_of = |atom: InstanceAtomId| site(atom).map(|site| site.residue());
+    let residue_of = |atom: InstanceAtomId| site_of(atom).map(|site| hierarchy.site_residue(site));
     let name_of = |atom: InstanceAtomId| {
-        let site = site(atom)?;
-        let name = site
-            .metadata()
+        let metadata = hierarchy.site_metadata(site_of(atom)?);
+        let name = metadata
             .label_atom_id
             .as_deref()
-            .or(site.metadata().auth_atom_id.as_deref())?;
+            .or(metadata.auth_atom_id.as_deref())?;
         Some(normalize_atom_name(name))
     };
-    let class_of = |residue: ResidueId| {
-        hierarchy
-            .residue(residue)
-            .expect("sites name residues")
-            .class()
-    };
+    let class_of = |residue: ResidueId| hierarchy.residue_class(residue);
     let qualified_atoms = molecule
         .atom_ids()
         .map(|atom| InstanceAtomId::new(instance.id(), atom))

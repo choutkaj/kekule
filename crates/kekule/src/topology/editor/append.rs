@@ -103,7 +103,8 @@ impl TopologyEditor {
         // A renamed chain's sites take its new identifiers where they named
         // the old ones, so writers name the chain as it is now.
         let mut renamed = std::collections::HashMap::new();
-        for (id, chain) in source.hierarchy().chains() {
+        for chain in source.chains() {
+            let id = chain.id();
             let (label, author) = chain_ids(chain.label_id(), chain.author_id());
             if label != chain.label_id() || author.as_deref() != chain.author_id() {
                 renamed.insert(
@@ -117,9 +118,9 @@ impl TopologyEditor {
             let handle = self.add_chain(label, author)?;
             mapping.chains.insert(id, handle);
         }
-        for (id, residue) in source.hierarchy().residues() {
+        for residue in source.residues() {
             let handle = self.add_residue(
-                mapping.chains[&residue.chain()],
+                mapping.chains[&residue.chain().id()],
                 residue.name(),
                 residue.label_seq_id(),
                 residue.author_seq_id().map(str::to_owned),
@@ -130,16 +131,12 @@ impl TopologyEditor {
                 residue.label_comp_id().map(str::to_owned),
                 residue.author_comp_id().map(str::to_owned),
             )?;
-            mapping.residues.insert(id, handle);
+            mapping.residues.insert(residue.id(), handle);
         }
-        for (id, site) in source.hierarchy().atom_sites() {
+        for site in source.atom_sites() {
             let mut metadata = site.metadata().clone();
-            let chain = source
-                .hierarchy()
-                .residue(site.residue())
-                .map(|r| r.chain());
             if let Some(((old_label, new_label), (old_author, new_author))) =
-                chain.and_then(|chain| renamed.get(&chain))
+                renamed.get(&site.residue().chain().id())
             {
                 if metadata.label_asym_id.as_ref() == Some(old_label) {
                     metadata.label_asym_id = Some(new_label.clone());
@@ -149,20 +146,18 @@ impl TopologyEditor {
                 }
             }
             let handle = self.add_atom_site(
-                mapping.residues[&site.residue()],
-                mapping.atoms[&site.atom()],
+                mapping.residues[&site.residue().id()],
+                mapping.atoms[&site.atom().id()],
                 metadata,
             )?;
-            mapping.sites.insert(id, handle);
+            mapping.sites.insert(site.id(), handle);
         }
         // Insertion invalidates classification while the residue is incomplete.
-        for (id, residue) in source.hierarchy().residues() {
-            let target = self.residue_mut(mapping.residues[&id]);
-            target.class = Some(residue.class());
-            target.class_explicit = source
-                .hierarchy()
-                .residue(id)
-                .is_some_and(|residue| residue.explicit_class().is_some());
+        for residue in source.residues() {
+            let assignment = residue.class_assignment();
+            let target = self.residue_mut(mapping.residues[&residue.id()]);
+            target.class = Some(assignment.class());
+            target.class_explicit = assignment.is_explicit();
         }
         for (instance, value) in source.instance_records() {
             let definition = source.definition(value.definition()).unwrap();
@@ -187,26 +182,23 @@ impl TopologyEditor {
             .map(|id| self.bond_slot(mapping.bonds[id]))
             .collect::<Result<Vec<_>, _>>()?;
         let chain_rows = source
-            .hierarchy()
             .chains()
-            .map(|(id, _)| {
-                self.require_chain(mapping.chains[&id])
+            .map(|chain| {
+                self.require_chain(mapping.chains[&chain.id()])
                     .map(|chain| chain.slot)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let residue_rows = source
-            .hierarchy()
             .residues()
-            .map(|(id, _)| {
-                self.require_residue(mapping.residues[&id])
+            .map(|residue| {
+                self.require_residue(mapping.residues[&residue.id()])
                     .map(|residue| residue.slot)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let site_rows = source
-            .hierarchy()
             .atom_sites()
-            .map(|(id, _)| {
-                self.require_atom_site(mapping.sites[&id])
+            .map(|site| {
+                self.require_atom_site(mapping.sites[&site.id()])
                     .map(|site| site.slot)
             })
             .collect::<Result<Vec<_>, _>>()?;
