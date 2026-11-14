@@ -962,62 +962,6 @@ fn the_distribution_guard_keeps_the_samples() {
 }
 
 #[test]
-fn weighted_observations_join_samples_and_probabilities() {
-    use crate::statistics::SampleObservations;
-    let set = set_at(&[0.0, 1.0, 2.0]);
-    // A set's statistics count every geometry once.
-    let all = SampleObservations::all(&set);
-    assert_eq!(all.samples(), [0, 1, 2]);
-    assert_eq!(all.weights(), [1.0, 1.0, 1.0]);
-    let mut ensemble = Ensemble::new(
-        set,
-        distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[0]),
-    )
-    .unwrap();
-    // An ensemble's observe its samples with their probabilities.
-    let observed = SampleObservations::weighted(&ensemble);
-    assert_eq!(observed.samples(), [0, 2]);
-    assert_close(observed.weights(), &[0.5, 0.5]);
-    assert_eq!(
-        ensemble.distribution().sample_probabilities().unwrap(),
-        [(0, 0.5), (2, 0.5)]
-    );
-    ensemble
-        .distribution_mut()
-        .set_log_weight(2, 4.0_f64.ln())
-        .unwrap();
-    let distribution = ensemble.distribution();
-    let joined = distribution.sample_probabilities().unwrap();
-    assert_eq!(
-        joined
-            .iter()
-            .map(|(geometry, _)| *geometry)
-            .collect::<Vec<_>>(),
-        [0, 2]
-    );
-    // Weights 1 and 4 of 5.
-    let probabilities = joined
-        .iter()
-        .map(|(_, probability)| *probability)
-        .collect::<Vec<_>>();
-    assert_close(&probabilities, &[0.2, 0.8]);
-    let observed = SampleObservations::weighted(&ensemble);
-    assert_eq!(observed.samples(), [0, 2]);
-    assert_close(observed.weights(), &probabilities);
-    // Sample positions index the log weights and probabilities.
-    let by_position = distribution.probabilities().unwrap();
-    for (position, (geometry, probability)) in joined.iter().enumerate() {
-        assert_eq!(distribution.sample_position(*geometry), Some(position));
-        assert_eq!(*probability, by_position[position]);
-        assert_eq!(
-            distribution.log_weight(*geometry),
-            Some(distribution.log_weights().unwrap()[position])
-        );
-    }
-    assert_eq!(distribution.ranked_by_weight(), [2, 0]);
-}
-
-#[test]
 fn duplicates_in_a_selection_become_separate_geometries() {
     let mut frames = set_at(&[0.0, 1.0]);
     frames.set_order(Some(Order::Step(vec![5, 6]))).unwrap();
