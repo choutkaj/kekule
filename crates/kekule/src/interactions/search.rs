@@ -502,13 +502,18 @@ fn pairs(
             .map(|(index, candidate)| (candidate.point, index as u32)),
         (low, high),
         cutoff,
+        near.len(),
     );
     // Each near candidate meets the small candidates around it, in the
     // small list's order.
     let mut found = Vec::new();
     for b in near {
         found.clear();
-        grid.for_each_near(&b.point, within, |_, index| found.push(index));
+        grid.for_each_near(&b.point, |point, index| {
+            if within(&b.point, point) {
+                found.push(index);
+            }
+        });
         found.sort_unstable();
         for &index in &found {
             ordered(&small[index as usize], b);

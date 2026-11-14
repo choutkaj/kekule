@@ -178,6 +178,8 @@ through the workspace.
 - The default XYZ comment and DCD title name `kekule`, not `kekule-traj`.
 - Public modules are thin facades of docs and re-exports over private
   implementation modules; every public path is unchanged.
+- `measure::within` searches large selections through a spatial grid instead
+  of comparing every pair.
 - **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
   `StructureEditor` (`append_structure`), `StructureView`, `AsStructureView`,
   `StructureAtomView`, `StructureError`, and the other `Model*` items.

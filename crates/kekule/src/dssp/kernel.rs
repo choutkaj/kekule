@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::math::Point3;
+use crate::math::{bounding_box, Point3, PointGrid};
 use crate::structure::StructureView;
 use crate::topology::{
     Chain, ChainId, Hierarchy, MoleculeInstanceId, Residue, ResidueClass, ResidueId, Topology,
@@ -902,7 +902,7 @@ fn analyze_backbone(
     max_candidate_pairs: usize,
     executor: &dyn Executor,
 ) -> Result<CandidatePairs, DsspError> {
-    let grid = CellGrid::new(residues);
+    let grid = ca_grid(residues);
     let found = AtomicUsize::new(0);
     let shared = &*residues;
     let ranges = map_ranges(executor, shared.len(), MIN_CHUNK, |range| {
@@ -950,7 +950,7 @@ fn analyze_backbone(
 
 fn analyze_range(
     residues: &[BackboneResidue],
-    grid: &CellGrid,
+    grid: &PointGrid<usize>,
     range: Range<usize>,
     found: &AtomicUsize,
     max_candidate_pairs: usize,
@@ -1078,138 +1078,25 @@ fn angle_degrees(first: Vec3, second: Vec3) -> Option<f64> {
     })
 }
 
-/// The residues binned by the [`spatial_cell`] of their `CA`, with the
-/// `CA` coordinates stored in cell order so that a column scan reads them
-/// contiguously.
-#[derive(Debug)]
-struct CellGrid {
-    cells: CellIndex,
-    /// The residues in cell order.
-    members: Vec<usize>,
-    /// The `CA` of each of `members`.
-    points: Vec<Vec3>,
-}
-
-/// Where each cell's residues lie in [`CellGrid::members`].
-#[derive(Debug)]
-enum CellIndex {
-    /// Every cell of the residues' box, padded by one cell on each side, in
-    /// x, y, z order: members `starts[slot]..starts[slot + 1]` lie in cell
-    /// `slot`.
-    Dense {
-        origin: (i64, i64, i64),
-        dims: (usize, usize, usize),
-        starts: Vec<usize>,
-    },
-    /// Occupied cells only, for a box with many more cells than residues:
-    /// member `k` lies in `cells[k]`, sorted by cell.
-    Sparse { cells: Vec<(i64, i64, i64)> },
-}
-
-impl CellGrid {
-    /// A box is stored densely when it has at most this many cells per
-    /// residue, plus [`Self::DENSE_SPARE_CELLS`].
-    const DENSE_CELLS_PER_RESIDUE: usize = 8;
-    const DENSE_SPARE_CELLS: usize = 4096;
-
-    fn new(residues: &[BackboneResidue]) -> Self {
-        let cells = residues
-            .iter()
-            .map(|residue| spatial_cell(residue.ca))
-            .collect::<Vec<_>>();
-        let low = cells
-            .iter()
-            .fold((i64::MAX, i64::MAX, i64::MAX), |low, cell| {
-                (low.0.min(cell.0), low.1.min(cell.1), low.2.min(cell.2))
-            });
-        let high = cells
-            .iter()
-            .fold((i64::MIN, i64::MIN, i64::MIN), |high, cell| {
-                (high.0.max(cell.0), high.1.max(cell.1), high.2.max(cell.2))
-            });
-        // Representable cells lie well inside i64, so the padded spans fit
-        // in i128; a span that does not fit in usize is never dense.
-        let span = |low: i64, high: i64| usize::try_from(i128::from(high) - i128::from(low) + 3);
-        let budget = residues
-            .len()
-            .saturating_mul(Self::DENSE_CELLS_PER_RESIDUE)
-            .saturating_add(Self::DENSE_SPARE_CELLS);
-        let dense = match (
-            span(low.0, high.0),
-            span(low.1, high.1),
-            span(low.2, high.2),
-        ) {
-            (Ok(x), Ok(y), Ok(z)) => x
-                .checked_mul(y)
-                .and_then(|area| area.checked_mul(z))
-                .filter(|&count| count <= budget)
-                .map(|_| (x, y, z)),
-            _ => None,
-        };
-        let (cells, members) = match dense {
-            None => {
-                let mut sorted = cells.into_iter().zip(0..).collect::<Vec<_>>();
-                sorted.sort_unstable();
-                let (cells, members) = sorted.into_iter().unzip();
-                (CellIndex::Sparse { cells }, members)
-            }
-            Some(dims) => {
-                let origin = (low.0 - 1, low.1 - 1, low.2 - 1);
-                let slot = |(x, y, z): (i64, i64, i64)| {
-                    (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2
-                        + (z - origin.2) as usize
-                };
-                let mut starts = vec![0; dims.0 * dims.1 * dims.2 + 1];
-                for &cell in &cells {
-                    starts[slot(cell) + 1] += 1;
-                }
-                for index in 1..starts.len() {
-                    starts[index] += starts[index - 1];
-                }
-                let mut next = starts.clone();
-                let mut members = vec![0; cells.len()];
-                for (index, &cell) in cells.iter().enumerate() {
-                    members[next[slot(cell)]] = index;
-                    next[slot(cell)] += 1;
-                }
-                (
-                    CellIndex::Dense {
-                        origin,
-                        dims,
-                        starts,
-                    },
-                    members,
-                )
-            }
-        };
-        let points = members.iter().map(|&member| residues[member].ca).collect();
-        Self {
-            cells,
-            members,
-            points,
-        }
-    }
-
-    /// The residues in cells `(x, y, z - 1)` through `(x, y, z + 1)`, where
-    /// `(x, y, z)` is within one cell of a residue's cell, and their `CA`.
-    fn column(&self, x: i64, y: i64, z: i64) -> (&[usize], &[Vec3]) {
-        let span = match &self.cells {
-            CellIndex::Dense {
-                origin,
-                dims,
-                starts,
-            } => {
-                let base = (((x - origin.0) as usize * dims.1) + (y - origin.1) as usize) * dims.2;
-                let first = base + (z - 1 - origin.2) as usize;
-                starts[first]..starts[first + 3]
-            }
-            CellIndex::Sparse { cells } => {
-                cells.partition_point(|&cell| cell < (x, y, z - 1))
-                    ..cells.partition_point(|&cell| cell <= (x, y, z + 1))
-            }
-        };
-        (&self.members[span.clone()], &self.points[span])
-    }
+/// The residues' `CA` atoms in a grid for searches within 9 Å, each with its
+/// residue. Every `CA` is a float, so the grid's double copy converts back
+/// exactly.
+fn ca_grid(residues: &[BackboneResidue]) -> PointGrid<usize> {
+    let point = |residue: &BackboneResidue| {
+        Point3::new(
+            f64::from(residue.ca.x),
+            f64::from(residue.ca.y),
+            f64::from(residue.ca.z),
+        )
+    };
+    let mut grid = PointGrid::default();
+    grid.build(
+        residues.iter().map(point).zip(0..),
+        bounding_box(residues.iter().map(point)),
+        MAX_CA_PAIR_DISTANCE_ANGSTROMS,
+        residues.len(),
+    );
+    grid
 }
 
 /// The candidate partners after each residue in `range`: residues with
@@ -1217,7 +1104,7 @@ impl CellGrid {
 /// across ranges.
 fn candidate_pairs(
     residues: &[BackboneResidue],
-    grid: &CellGrid,
+    grid: &PointGrid<usize>,
     range: Range<usize>,
     found: &AtomicUsize,
     max_candidate_pairs: usize,
@@ -1231,17 +1118,13 @@ fn candidate_pairs(
     let mut partners = Vec::new();
     for first in range {
         let ca = residues[first].ca;
-        let (x, y, z) = spatial_cell(ca);
         partners.clear();
-        for dx in -1..=1 {
-            for dy in -1..=1 {
-                let (members, points) = grid.column(x + dx, y + dy, z);
-                partners.extend(members.iter().zip(points).filter_map(|(&second, &point)| {
-                    (second > first && dssp_distance_squared(ca, point) <= maximum_squared)
-                        .then_some(second)
-                }));
+        let candidate = Point3::new(f64::from(ca.x), f64::from(ca.y), f64::from(ca.z));
+        grid.for_each_near(&candidate, |&point, second| {
+            if second > first && dssp_distance_squared(ca, Vec3::from(point)) <= maximum_squared {
+                partners.push(second);
             }
-        }
+        });
         if found.fetch_add(partners.len(), Ordering::Relaxed) + partners.len() > max_candidate_pairs
         {
             return Err(DsspError::LimitExceeded(LimitExceeded::first_beyond(
@@ -1254,14 +1137,6 @@ fn candidate_pairs(
         analysis.later_starts.push(analysis.later.len());
     }
     Ok(analysis)
-}
-
-fn spatial_cell(point: Vec3) -> (i64, i64, i64) {
-    (
-        (point.x / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
-        (point.y / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
-        (point.z / MAX_CA_PAIR_DISTANCE_ANGSTROMS as f32).floor() as i64,
-    )
 }
 
 /// The DSSP energy of the bond from `donor`'s N-H to `acceptor`'s C=O;
@@ -2150,6 +2025,62 @@ mod tests {
                 .wrapping_mul(6_364_136_223_846_793_005)
                 .wrapping_add(1_442_695_040_888_963_407);
             (self.0 >> 33) % bound
+        }
+    }
+
+    /// Candidate pairs found through the grid match every pair of `CA`
+    /// atoms within 9 Å, by DSSP's float distance and in increasing order,
+    /// with pairs on 9 Å cell boundaries and exactly 9 Å apart.
+    #[test]
+    fn candidate_pairs_match_every_close_pair() {
+        for seed in 0..8 {
+            let mut random = Lcg(seed);
+            let count = 400;
+            let mut residues = backbone(count);
+            let spread = [30, 60, 200, 4000][seed as usize % 4];
+            for index in 0..count {
+                let ca = if index % 5 == 1 {
+                    // Exactly 9 Å from the previous residue's `CA`.
+                    let previous = residues[index - 1].ca;
+                    Vec3 {
+                        x: previous.x + 9.0,
+                        ..previous
+                    }
+                } else if index % 5 == 2 {
+                    // On a multiple of the 9 Å cell edge.
+                    Vec3 {
+                        x: 9.0 * random.below(8) as f32,
+                        y: 9.0 * random.below(8) as f32 - 36.0,
+                        z: random.below(10) as f32 * 0.5,
+                    }
+                } else {
+                    let mut axis =
+                        || random.below(spread * 100) as f32 * 0.01 - spread as f32 * 0.5;
+                    Vec3 {
+                        x: axis(),
+                        y: axis(),
+                        z: axis(),
+                    }
+                };
+                residues[index].ca = ca;
+            }
+            let grid = ca_grid(&residues);
+            let found = AtomicUsize::new(0);
+            let analysis = candidate_pairs(&residues, &grid, 0..count, &found, usize::MAX).unwrap();
+            let maximum_squared = MAX_CA_PAIR_DISTANCE_ANGSTROMS.powi(2);
+            let mut later = Vec::new();
+            let mut later_starts = vec![0];
+            for first in 0..count {
+                later.extend((first + 1..count).filter(|&second| {
+                    dssp_distance_squared(residues[first].ca, residues[second].ca)
+                        <= maximum_squared
+                }));
+                later_starts.push(later.len());
+            }
+            assert!(!later.is_empty(), "seed {seed}");
+            assert_eq!(analysis.later, later, "seed {seed}");
+            assert_eq!(analysis.later_starts, later_starts, "seed {seed}");
+            assert_eq!(found.into_inner(), later.len(), "seed {seed}");
         }
     }
 

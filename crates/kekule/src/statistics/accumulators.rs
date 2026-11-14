@@ -1499,11 +1499,15 @@ impl GroupContactOccupancyAccumulator {
                             points.iter().map(|point| (*point, ())),
                             scratch.bounds[large],
                             cutoff,
+                            0,
                         );
                         scratch.built[large] = true;
                     }
                     let points = &scratch.points[scratch.starts[small]..scratch.starts[small + 1]];
-                    scratch.grids[large].any_within(points, |a, b| within(a, b, cutoff))
+                    let grid = &scratch.grids[large];
+                    points
+                        .iter()
+                        .any(|point| grid.any_near(point, |other, ()| within(point, other, cutoff)))
                 }
             };
         }
