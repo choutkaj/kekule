@@ -12,8 +12,9 @@ use crate::structure::{
 use crate::topology::TopologyAtomIndex;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 
+use super::driver::{sample_index, undirected, Clustered};
 use super::run::{FirstFailure, Stop, Tracker};
-use super::{sample_index, undirected, Clustered, ClusteringError, ClusteringRun};
+use super::{ClusteringError, ClusteringRun};
 
 /// Symmetric pairwise distances between the samples of one ensemble's
 /// distribution, or the geometries of one structure set, stored once per

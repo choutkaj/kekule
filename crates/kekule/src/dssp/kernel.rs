@@ -2,13 +2,16 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::diagnostics::{LimitExceeded, Resource};
 use crate::math::Point3;
 use crate::structure::StructureView;
-use crate::topology::{Chain, ChainId, Hierarchy, Residue, ResidueClass, ResidueId, Topology};
+use crate::topology::{
+    Chain, ChainId, Hierarchy, MoleculeInstanceId, Residue, ResidueClass, ResidueId, Topology,
+};
 use crate::units::ANGSTROM;
 
 use super::*;
-use crate::parallel::{map_ranges, map_weighted_ranges};
+use crate::parallel::{map_ranges, map_weighted_ranges, Executor};
 
 /// Fewest residues a stage gives one thread.
 const MIN_CHUNK: usize = 256;
@@ -1938,7 +1941,10 @@ fn public_residue(
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::*;
+    use crate::parallel::ScopedThreads;
 
     fn serial() -> ScopedThreads {
         ScopedThreads::new(NonZeroUsize::MIN)

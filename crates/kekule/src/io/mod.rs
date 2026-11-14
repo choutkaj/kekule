@@ -9,13 +9,18 @@ mod lines;
 mod mmcif_category;
 mod mmcif_cell;
 mod mmcif_document;
+pub(crate) mod mmcif_entry_points;
 mod mmcif_write;
 mod molfile_document;
+pub(crate) mod molfile_entry_points;
 mod molfile_write;
 mod native;
+pub(crate) mod native_entry_points;
 mod pdb_document;
+pub(crate) mod pdb_entry_points;
 mod pdb_write;
 mod sdf_document;
+pub(crate) mod sdf_entry_points;
 mod sdf_structure_set;
 mod sdf_write;
 pub(crate) mod smiles;
@@ -28,6 +33,7 @@ mod v2000;
 mod v3000;
 pub(crate) mod write_error;
 mod xyz_document;
+pub(crate) mod xyz_entry_points;
 mod xyz_interpret;
 
 pub(crate) use components::dictionary_code;
@@ -77,10 +83,6 @@ pub(crate) use sdf_write::{write_sdf, write_sdf_to};
 pub use sdf_write::{
     SdfRecordSource, SdfWriteOptions, SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD,
     SDF_STEP_FIELD,
-};
-pub(crate) use smiles::{
-    parse_smiles_document, parse_smiles_reader, write_canonical_smiles, write_isomeric_smiles,
-    write_smiles,
 };
 pub use smiles::{
     SmilesAtomMapping, SmilesBondMapping, SmilesComponentInterpretation, SmilesCxField,

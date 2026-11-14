@@ -2,8 +2,9 @@
 
 use crate::structure::{Ensemble, GeometryStorage, Partition, StructureSet};
 
+use super::driver::Clustered;
 use super::hierarchical::ObjectiveDistances;
-use super::{Clustered, ClusteringError, DistanceMatrix};
+use super::{ClusteringError, DistanceMatrix};
 
 impl Clustered<'_> {
     fn cluster_k_medoids(

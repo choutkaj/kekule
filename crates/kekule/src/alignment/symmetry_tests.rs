@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::smiles;
+use crate::topology::AtomSelection;
 use crate::topology::Topology;
 
 fn topology(smiles: &str) -> Arc<Topology> {

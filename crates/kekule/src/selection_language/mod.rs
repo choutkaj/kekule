@@ -56,6 +56,24 @@ impl fmt::Display for NodeDisplay<'_> {
     }
 }
 
+/// Parses selection text. SMARTS patterns inside it are checked now, so
+/// evaluation fails only on the evaluated structure, never on the text.
+///
+/// # Errors
+///
+/// A [`FormatError`] of format
+/// [`Format::Selection`](crate::diagnostics::Format::Selection) with the
+/// byte [`span`](FormatError::span) of the offending text:
+/// [`DiagnosticKind::Syntax`](crate::diagnostics::DiagnosticKind::Syntax)
+/// for text outside the grammar,
+/// [`DiagnosticKind::InvalidValue`](crate::diagnostics::DiagnosticKind::InvalidValue)
+/// for a value a keyword cannot take, and
+/// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
+/// when `options` is exceeded.
+pub fn parse(text: &str, options: SelectParseOptions) -> Result<SelectionExpr, FormatError> {
+    SelectionExpr::parse(text, &options)
+}
+
 impl SelectionExpr {
     pub(crate) fn parse(text: &str, options: &SelectParseOptions) -> Result<Self, FormatError> {
         syntax::parse(text, options).map(|root| Self { root })

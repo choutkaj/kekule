@@ -748,6 +748,10 @@ items. An item that no public path reaches is `pub(crate)`. Workspace lints
 (`unreachable_pub`, `missing_docs`, `missing_debug_implementations`) enforce
 this.
 
+A public module's file holds only its docs, `mod` declarations, and re-export
+lists. Its implementation, entry-point functions included, lives in private
+child or sibling modules named for what they hold.
+
 The public modules of `kekule`, by domain:
 
 | Domain | Modules |

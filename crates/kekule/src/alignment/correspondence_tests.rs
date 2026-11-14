@@ -1,7 +1,10 @@
 use super::*;
+use crate::math::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use crate::structure::{Positions, Structure};
+use crate::topology::AtomSelection;
 use crate::topology::{InstanceAtomId, Topology};
+use crate::units::Quantity;
 use crate::units::{ANGSTROM, NANOMETER};
 
 fn structure(points: &[Point3]) -> Structure {
