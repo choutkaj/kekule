@@ -1,50 +1,20 @@
-use crate::math::{Lattice, LatticeError, Point3};
-use std::collections::BTreeMap;
+use crate::math::{Lattice, LatticeError, Point3, PointGrid};
 
-/// Fractional bins sized from reciprocal-vector norms. Every displacement within
-/// cutoff changes each wrapped fractional coordinate by at most one bin. Exact
-/// Cartesian nearest-image checks are still necessary for skewed cells.
+/// Points in a periodic grid of the lattice, measured by exact Cartesian
+/// nearest-image distance, which skewed cells need.
 pub(super) struct Neighbors<'a> {
     geometry: &'a Lattice,
-    bins: [usize; 3],
-    cells: BTreeMap<[usize; 3], Vec<usize>>,
-    points: Vec<Point3>,
+    grid: PointGrid<usize>,
 }
 impl<'a> Neighbors<'a> {
     pub(super) fn new(geometry: &'a Lattice, cutoff: f64) -> Result<Self, LatticeError> {
-        let spans = geometry.reciprocal_norms().map(|r| r * cutoff);
-        if cutoff <= 0.0 || spans.iter().any(|v| !v.is_finite() || *v <= 0.0) {
-            return Err(LatticeError::NumericalFailure);
-        }
-        let bins = spans.map(|span| {
-            (1.0 / (span * (1.0 + 128.0 * f64::EPSILON)))
-                .floor()
-                .clamp(1.0, 1_000_000.0) as usize
-        });
         Ok(Self {
             geometry,
-            bins,
-            cells: BTreeMap::new(),
-            points: Vec::new(),
+            grid: PointGrid::periodic(geometry, cutoff)?,
         })
     }
-    fn cell(&self, point: Point3) -> Result<[usize; 3], LatticeError> {
-        let fractional = self
-            .geometry
-            .fractional_canonical(point - Point3::origin())?;
-        if fractional.iter().any(|v| v.abs() >= 2.0_f64.powi(48)) {
-            return Err(LatticeError::NumericalFailure);
-        }
-        Ok(std::array::from_fn(|i| {
-            ((fractional[i].rem_euclid(1.0) * self.bins[i] as f64).floor() as usize)
-                .min(self.bins[i] - 1)
-        }))
-    }
     pub(super) fn insert(&mut self, point: Point3) -> Result<(), LatticeError> {
-        let key = self.cell(point)?;
-        self.cells.entry(key).or_default().push(self.points.len());
-        self.points.push(point);
-        Ok(())
+        self.grid.insert(point, self.grid.len())
     }
     /// Predicate gets insertion index and exact periodic distance in nm.
     pub(super) fn any(
@@ -52,44 +22,16 @@ impl<'a> Neighbors<'a> {
         point: Point3,
         mut predicate: impl FnMut(usize, f64) -> bool,
     ) -> Result<bool, LatticeError> {
-        let key = self.cell(point)?;
-        let axes: [[usize; 3]; 3] = std::array::from_fn(|i| {
-            [
-                (key[i] + self.bins[i] - 1) % self.bins[i],
-                key[i],
-                (key[i] + 1) % self.bins[i],
-            ]
-        });
-        for a in 0..3 {
-            if axes[0][..a].contains(&axes[0][a]) {
-                continue;
+        self.grid.try_any_near(&point, |other, index| {
+            let distance = self
+                .geometry
+                .minimum_image_canonical(point - *other)?
+                .norm();
+            if !distance.is_finite() {
+                return Err(LatticeError::NumericalFailure);
             }
-            for b in 0..3 {
-                if axes[1][..b].contains(&axes[1][b]) {
-                    continue;
-                }
-                for c in 0..3 {
-                    if axes[2][..c].contains(&axes[2][c]) {
-                        continue;
-                    }
-                    if let Some(indices) = self.cells.get(&[axes[0][a], axes[1][b], axes[2][c]]) {
-                        for &index in indices {
-                            let distance = self
-                                .geometry
-                                .minimum_image_canonical(point - self.points[index])?
-                                .norm();
-                            if !distance.is_finite() {
-                                return Err(LatticeError::NumericalFailure);
-                            }
-                            if predicate(index, distance) {
-                                return Ok(true);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(false)
+            Ok(predicate(index, distance))
+        })
     }
 }
 
@@ -167,5 +109,61 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Packing's per-point cutoffs and incremental insertion, against an
+    /// exhaustive search over seeded points in several cell images.
+    #[test]
+    fn incremental_packing_matches_exhaustive_search() {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut unit = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let geometry = Lattice::new(
+            PeriodicCell::new(
+                Quantity::new(
+                    [
+                        Vector3::new(2.2, 0.0, 0.0),
+                        Vector3::new(0.9, 2.0, 0.0),
+                        Vector3::new(0.3, -0.4, 1.8),
+                    ],
+                    NANOMETER,
+                ),
+                [true; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let cutoffs: Vec<f64> = (0..150).map(|_| 0.1 + unit() * 0.3).collect();
+        let max_cutoff = cutoffs.iter().copied().fold(0.0, f64::max);
+        let mut search = Neighbors::new(&geometry, max_cutoff).unwrap();
+        let mut accepted: Vec<Point3> = Vec::new();
+        for _ in 0..600 {
+            let point = Point3::origin()
+                + geometry.cartesian_canonical([
+                    unit() * 3.0 - 1.0,
+                    unit() * 2.0 - 0.5,
+                    unit() * 3.0 - 2.0,
+                ]);
+            let observed = search
+                .any(point, |index, distance| distance < cutoffs[index])
+                .unwrap();
+            let expected = accepted.iter().enumerate().any(|(index, other)| {
+                geometry
+                    .minimum_image_canonical(point - *other)
+                    .unwrap()
+                    .norm()
+                    < cutoffs[index]
+            });
+            assert_eq!(observed, expected, "{point:?}");
+            if !observed && accepted.len() < cutoffs.len() {
+                search.insert(point).unwrap();
+                accepted.push(point);
+            }
+        }
+        assert!(accepted.len() > 20);
     }
 }

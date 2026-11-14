@@ -797,3 +797,85 @@ fn spatial_selection_is_inclusive_unit_aware_and_specific_to_each_view() {
         10.0,
     );
 }
+
+/// Large selections, which `within` searches through a grid, select what
+/// measuring every pair selects, in candidate order: seeded atoms, atoms on
+/// a 0.25 nm lattice, and atoms exactly at the cutoff.
+#[test]
+fn spatial_selection_of_many_atoms_matches_every_pair() {
+    let count = 400;
+    let mut state = 0x853c_49e6_748f_ea9b_u64;
+    let mut unit = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        (state >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let molecule = smiles::to_molecules(&"C".repeat(count))
+        .unwrap()
+        .pop()
+        .unwrap();
+    for (spread, cutoff) in [
+        (3.0, 0.0),
+        (3.0, 0.25),
+        (3.0, 0.4),
+        (8.0, 1.0),
+        (1e250, 0.5),
+    ] {
+        let mut points = Vec::new();
+        for index in 0..count {
+            let point = match index % 4 {
+                0 if index > 0 => {
+                    let previous: Point3 = points[index - 1];
+                    Point3::new(previous.x, previous.y + cutoff, previous.z)
+                }
+                1 => Point3::new(
+                    (unit() * 12.0).floor() * 0.25,
+                    (unit() * 12.0).floor() * 0.25,
+                    (unit() * 12.0).floor() * 0.25,
+                ),
+                _ => Point3::new(unit() * spread, unit() * 3.0, unit() * 3.0),
+            };
+            points.push(point);
+        }
+        let structure = Structure::from_molecule(
+            molecule.clone(),
+            &Positions::new(Quantity::new(&points[..], NANOMETER)).unwrap(),
+        )
+        .unwrap();
+        let top = structure.shared_topology();
+        let ids = top.atom_ids();
+        let candidates = AtomSelection::from_atoms(
+            top.clone(),
+            ids.iter()
+                .copied()
+                .step_by(2)
+                .chain(ids.iter().copied().skip(1).step_by(6)),
+        )
+        .unwrap();
+        let reference =
+            AtomSelection::from_atoms(top.clone(), ids.iter().copied().skip(1).step_by(3)).unwrap();
+        let index = |atom: InstanceAtomId| ids.iter().position(|id| *id == atom).unwrap();
+        let expected = candidates
+            .atom_ids()
+            .filter(|&atom| {
+                reference
+                    .atom_ids()
+                    .any(|other| (points[index(atom)] - points[index(other)]).norm() <= cutoff)
+            })
+            .collect::<Vec<_>>();
+        assert!(!expected.is_empty());
+        let selected = measure::within(
+            structure.as_structure_view(),
+            &candidates,
+            &reference,
+            Quantity::new(cutoff, NANOMETER),
+        )
+        .unwrap();
+        assert_eq!(
+            selected.atom_ids().collect::<Vec<_>>(),
+            expected,
+            "{spread} {cutoff}"
+        );
+    }
+}
