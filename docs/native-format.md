@@ -1,11 +1,12 @@
 # Native serialization format
 
 Kekule's native format is the exact persistence of one canonical owner:
-a `Molecule`, `Topology`, `Structure`, or `StructureSet`. A `Structure` or `StructureSet`
+a `Molecule`, `Topology`, `Structure`, `StructureSet`, or `Ensemble`. A `Structure` or `StructureSet`
 may carry its structure interpretation reports, as a
 `StructureInterpretation` or `StructureSetInterpretation`. A structure set
 record may also store only the number of its geometries, kept elsewhere, as a
-`StructureSetDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+`StructureSetDescription`, and an ensemble record likewise with its
+distribution, as an `EnsembleDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../SPEC.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
@@ -63,25 +64,9 @@ incompatibly, but every incompatible change increments the version. Unknown
 header flags are rejected the same way, so a newer optional section is never
 silently ignored.
 
-Version 2 stores an ensemble as samples grouped into states, with energies on
-states and an optional temperature; version 1 stored ensemble members with
-their own weights and energies. Series, kind 6, joined version 2 without
-changing the layout of any other kind, so every earlier version 2 file still
-reads the same; readers that predate them reject a series as an unknown
-kind. Version 3 stores resonance delocalization with its model; version 2
-stored conjugated groups without one. Interpreted models and ensembles,
-kinds 7 and 8, joined version 3 in the same way: every earlier version 3 file
-still reads the same, and readers that predate them reject them as unknown
-kinds. Version 4 stores the biological assemblies of each interpretation
-report; version 3 reports had none. Version 5 stores ensembles,
-trajectories, and series as sample sets, kinds 9 and 10, and retires kinds
-4, 5, 6, and 8; a version 5 reader reads no version 4 file. A reader meets
-a retired kind only in a version 5 header, which no writer produces, and
-rejects it as an unknown kind with `DiagnosticKind::InvalidValue`; an older file
-that holds one fails on its version first. Version 6 moves the distribution
-out of the structure set record into the ensemble record, kind 11, and
-stores natural logarithms of weights in place of weights; a version 6 reader
-reads no version 5 file.
+The current version is 6 and reads no earlier version. Version 6 keeps the
+distribution in the ensemble record, kind 11, apart from the structure set
+record, and stores natural logarithms of weights.
 
 ## Layout
 

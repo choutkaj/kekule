@@ -925,7 +925,7 @@ pub mod sdf {
     /// Records convert from structures, geometries of a structure set, and
     /// trajectory frames (`sdf::write(&set, options)` writes one record per
     /// geometry, which [`structure_set`] reads back with its step or
-    /// coordinate; a distribution is never a field of a record), or
+    /// coordinate), or
     /// interpreted records, which keep their titles and data fields.
     ///
     /// # Errors
@@ -1410,7 +1410,7 @@ pub mod pdb {
 ///
 /// One frame becomes a [`Structure`](crate::structure::Structure); several frames of
 /// the same atoms become a [`StructureSet`](crate::structure::StructureSet) without
-/// an order or distribution, and every frame must infer the same bonds. Interpretation keeps atom lines in source order as dense atom
+/// an order, and every frame must infer the same bonds. Interpretation keeps atom lines in source order as dense atom
 /// order, so a trajectory reader such as [`crate::traj::io::xyz::XyzReader`] can
 /// stream the frames of the same file against the interpreted topology when
 /// the file spells every element as a symbol in its standard letter case,
@@ -1488,7 +1488,7 @@ pub mod xyz {
 /// chemistry, definitions and instances, semantic IDs, dense order,
 /// hierarchy, classifications with their explicit or inferred assignment,
 /// properties at every scope with units, coordinates as exact bits, and every
-/// structure, geometry, order, and distribution field. A structure or structure
+/// structure, geometry, order, and ensemble distribution field. A structure or structure
 /// set may carry its structure interpretation
 /// reports: write a
 /// [`StructureInterpretation`](crate::macromolecular::StructureInterpretation)

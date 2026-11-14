@@ -2324,7 +2324,7 @@ fn header_records(
     let mut records = Vec::new();
     let mut title = vec![0_u8; 84];
     title[..4].copy_from_slice(&options.endian.encode_i32(1));
-    let text = b"Created by kekule-traj";
+    let text = b"Created by kekule";
     title[4..4 + text.len()].copy_from_slice(text);
     let atoms = options
         .endian

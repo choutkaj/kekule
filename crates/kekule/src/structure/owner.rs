@@ -426,7 +426,7 @@ impl<'a> From<&'a Structure> for StructureView<'a> {
 /// set or trajectory frame source with what its source records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
-/// it so that a geometry's place, membership, velocities, and forces are
+/// it so that a geometry's place, velocities, and forces are
 /// written, rejected, or deliberately omitted, never silently dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
@@ -482,7 +482,7 @@ impl<'a> StructureView<'a> {
     }
 
     /// Whether this view borrows a structure or a geometry, with the geometry's
-    /// place, membership, velocities, and forces.
+    /// place, velocities, and forces.
     ///
     /// ```
     /// use kekule::{smiles, structure::{Structure, Positions, StructureKind}};

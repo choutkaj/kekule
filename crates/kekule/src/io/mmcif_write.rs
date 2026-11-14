@@ -96,17 +96,13 @@ impl MmcifWriteOptions {
     }
 
     /// The state of geometries that mmCIF cannot carry, whether of a structure set
-    /// or a trajectory frame. An mmCIF reader gives one state of equally
-    /// weighted geometries without an order, represented by the first geometry,
-    /// so by default a set fails to write when a geometry is outside its
-    /// distribution, weights are unequal, it has more than one state, a
-    /// state energy, state properties, another representative, a
-    /// temperature, or an order, a time order without times or steps
-    /// included, or a geometry has velocities or forces; so does a structure
-    /// block of one geometry with a membership, a place (a frame's time and
-    /// MD step among them), velocities, or forces. [`UnrepresentablePolicy::Omit`] writes
-    /// the models without them and reports a
-    /// [`WriteOmission::GeometryState`] for each field.
+    /// or a trajectory frame. An mmCIF reader gives geometries without an
+    /// order, so by default a set fails to write when a geometry has a place
+    /// in its order (a frame's time and MD step among them), velocities, or
+    /// forces, or when its time order has neither times nor steps; so does a
+    /// structure block of one geometry with a place, velocities, or forces.
+    /// [`UnrepresentablePolicy::Omit`] writes the models without them and
+    /// reports a [`WriteOmission::GeometryState`] for each field.
     pub const fn geometry_metadata(&self) -> UnrepresentablePolicy {
         self.geometry_metadata
     }
@@ -332,7 +328,7 @@ pub enum MmcifWriteIssue {
     EmptyStructureSet,
     /// The 1-based geometry `geometry` of a structure set has state mmCIF cannot
     /// represent, with [`MmcifWriteOptions::geometry_metadata`] set to fail. A
-    /// temperature is reported for the first geometry.
+    /// bare time order is reported for the first geometry.
     UnrepresentableGeometry {
         /// The 1-based geometry number.
         geometry: usize,

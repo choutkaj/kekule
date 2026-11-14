@@ -71,7 +71,7 @@ the altloc policy within each. A file with one coordinate model produces one
 geometry, whether or not it has alternate locations. No A/B expansion occurs.
 
 `interpret_conformations(&[options_a, options_b])` explicitly interprets the
-caller-supplied selections as a structure set of one unweighted state in that order. It permits
+caller-supplied selections as a structure set, one geometry per selection in that order. It permits
 repeated selections and selecting several alternatives of the same source model.
 Each selection must produce the same atom identities, chemistry, connectivity and
 compatible topology layout. Changed chemistry or atom sets produce an error;

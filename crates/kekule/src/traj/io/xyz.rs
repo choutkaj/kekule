@@ -157,7 +157,7 @@ impl Default for XyzWriteOptions {
         Self {
             length_unit: ANGSTROM,
             decimal_places: 8,
-            comment: "written by kekule-traj".into(),
+            comment: "written by kekule".into(),
             cell: UnrepresentablePolicy::Fail,
             frame_metadata: UnrepresentablePolicy::Fail,
             frame_properties: UnrepresentablePolicy::Fail,
@@ -230,7 +230,7 @@ impl XyzWriteOptions {
     }
 
     /// The comment line written in every frame, without line breaks and at
-    /// most 1 MiB; `"written by kekule-traj"` by default.
+    /// most 1 MiB; `"written by kekule"` by default.
     pub fn comment(&self) -> &str {
         &self.comment
     }
@@ -1484,7 +1484,7 @@ impl<W: Write> XyzWriter<W> {
     /// geometry's positions.
     ///
     /// The whole set is checked before its first frame is written. The
-    /// geometries' membership, places, velocities, and forces follow
+    /// geometries' places, velocities, and forces follow
     /// [`XyzWriteOptions::geometry_metadata`], their atom, bond, and own
     /// properties [`XyzWriteOptions::frame_properties`], and their cells
     /// [`XyzWriteOptions::cell`]; occupancies and B factors are always left
