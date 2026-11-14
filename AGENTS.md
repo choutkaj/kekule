@@ -50,7 +50,9 @@ Follow the "Tests" rules in `SPEC.md`:
 - Shared unit-test fixtures go in `crates/kekule/src/test_fixtures.rs`; import
   them by name.
 - A test that needs only the public API goes in the integration binary of its
-  domain, `crates/kekule/tests/<domain>/`. Keep each topic in one tree.
+  domain, `crates/kekule/tests/<domain>/`; unit tests are for behaviour that
+  needs crate internals. When you touch a unit test that needs only the public
+  API, move it.
 
 ## Branches and commits
 
