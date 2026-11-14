@@ -176,6 +176,8 @@ through the workspace.
   Items keep their names under the new path; replace the `kekule-traj`
   dependency with `kekule`.
 - The default XYZ comment and DCD title name `kekule`, not `kekule-traj`.
+- Public modules are thin facades of docs and re-exports over private
+  implementation modules; every public path is unchanged.
 - **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
   `StructureEditor` (`append_structure`), `StructureView`, `AsStructureView`,
   `StructureAtomView`, `StructureError`, and the other `Model*` items.

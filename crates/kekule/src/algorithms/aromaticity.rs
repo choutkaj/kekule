@@ -825,8 +825,7 @@ mod tests {
     #[test]
     fn fused_ten_electron_system_marks_its_explicit_single_fusion_bond_aromatic() {
         let source = "On2c1-c(ccc2)ccn1";
-        let document =
-            crate::io::parse_smiles_document(source, Default::default()).expect("parses");
+        let document = crate::smiles::parse_str(source, Default::default()).expect("parses");
         let (mut molecule, report) = document
             .interpret(Default::default())
             .expect("interprets")

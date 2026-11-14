@@ -1,7 +1,9 @@
 use super::*;
+use crate::math::Point3;
 use crate::structure::{Positions, Structure};
 use crate::topology::{AtomSelection, InstanceAtomId, Topology, TopologyAtomIndex};
 use crate::units::ANGSTROM;
+use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use crate::{mmcif, pdb, smiles};
 
 /// One PDB coordinate record.

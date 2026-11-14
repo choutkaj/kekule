@@ -5,7 +5,8 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::structure::{AsStructureView, Positions, StructureSetError, StructureView};
 use crate::topology::{AtomSelection, Topology, TopologyAtomIndex};
 
-use super::{checked_image, positions, Lattice, MoleculePlan, PeriodicError};
+use super::imaging::{checked_image, positions, Lattice, MoleculePlan};
+use super::PeriodicError;
 use crate::traj::{FrameBuffer, FrameView};
 
 /// A reusable bond traversal for making molecules whole and imaging them.
