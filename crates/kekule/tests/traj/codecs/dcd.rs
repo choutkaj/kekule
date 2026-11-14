@@ -1110,11 +1110,12 @@ fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
         )
         .unwrap_err();
     assert_eq!(
-        (error.kind(), error.source_label(), error.detail()),
+        (error.kind(), error.source_label(), error.to_string()),
         (
             TrajectoryIoErrorKind::InconsistentMetadata,
             Some("DCD writer options"),
-            Some("The DCD time-policy unit is incompatible.")
+            "Cannot open the DCD trajectory \"DCD writer options\". The DCD time-policy unit is incompatible."
+                .to_owned()
         )
     );
 
