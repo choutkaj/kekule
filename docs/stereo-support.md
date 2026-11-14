@@ -56,7 +56,6 @@ errors, never ties or evidence of nonstereogenicity. Failed assignment leaves th
 previous installed perception intact. Callers requiring different bounds must
 select them explicitly and handle failure.
 
-These contracts are enforced by focused regressions and format round trips. The
-optional [external validation procedure](stereo-validation.md) compares complete
-outputs and retains unsupported inputs, unavailable reference results, and known
-differences. Finite testing does not establish universal chemical completeness.
+These contracts are enforced by focused regressions and format round trips; the
+optional [scientific benchmark](../benchmarks/README.md) compares complete outputs
+with RDKit. Finite testing does not establish universal chemical completeness.

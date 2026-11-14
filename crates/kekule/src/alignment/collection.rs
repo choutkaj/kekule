@@ -562,7 +562,7 @@ impl StructureSet {
     /// [`SymmetricSelection`](super::SymmetricSelection) of this layout, or an
     /// [`AtomCorrespondence`](super::AtomCorrespondence) to an independent
     /// reference. Positions move; cells, velocities, and forces rotate; all
-    /// other state, the order and the distribution among it, is kept. The fit
+    /// other state, the order among it, is kept. The fit
     /// is transactional: on failure nothing changes. Coordinates are fitted as
     /// stored; no imaging or unwrapping is performed. Clone first to keep the
     /// original; a clone shares coordinates until this fit replaces them.

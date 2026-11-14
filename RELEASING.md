@@ -17,7 +17,9 @@ cargo semver-checks check-release --workspace
 
 ## 2. Bump the version sites
 
-On a release branch based on current `main`:
+On a release branch based on current `main`. A pull request may already have
+bumped the version, for example so that semver checks judge `main` as the
+next release; then only check the sites below.
 
 | Site | What changes |
 | --- | --- |

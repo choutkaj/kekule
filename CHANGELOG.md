@@ -9,1704 +9,320 @@ are marked **Breaking:**.
 
 ## [Unreleased]
 
+This release rebuilds the structure layer around one word per concept: a
+`Topology`, a `Geometry`, a `Structure` of one geometry, a `StructureSet` of
+many, and an `Ensemble` that adds a `Distribution`. `kekule-traj` becomes the
+`kekule::traj` module, and structure sets read lazily from trajectory files,
+including files still being written. It adds a native binary format, a
+selection language, a PDB writer, XYZ interpretation, builder geometry,
+non-covalent interactions, sequences and assemblies, and parallel,
+cancellable analyses. Error messages are sentences, and breaking changes run
+through the workspace.
+
 ### Added
 
-- Structure set follow-ups (SeekDelta K75). `Geometry::bind(&topology)` gives
-  a geometry held apart from a set the bond rows of a topology, so
-  `FrameView::new` lends it as a frame; it copies no positions of a geometry
-  only it holds. `Distribution::states` views the states, and
-  `Distribution::extended_to(len)` re-expresses a distribution over the
-  first geometries of a longer set, as `refresh` of a growing file does
-  (`Members::All` becomes a subset of the geometries it covered).
-  `StructureSetDescription::extended_to(geometry_count, order)` does the same
-  to a saved description and takes the longer set's order, checked
-  against `geometry_count`. `FrameIndex::prefix_fingerprint(path, frames)` fingerprints
-  a file's first frames through the frame index, as `fingerprint` geometries
-  a whole file, so a host learns whether the frames it used are unchanged
-  after the file grew or its tail was rewritten. A `StructureSet<IndexedFile>`
-  is `Clone`: a clone reads nothing, shares the open file, reader and frame
-  index, and refreshes on its own. `Processed::skipped_periodic_steps(&geometry)`
-  says whether making whole or wrapping skipped a geometry because it has no
-  cell.
-- `StructureSet::clear_velocities_and_forces` removes every geometry's
-  velocities and forces; a geometry without them stays shared (SeekDelta
-  K74).
-- `TrajectoryField::Occupancies` and `TrajectoryField::BFactors`, and
-  `TrrWriteOptions::frame_metadata` with `with_frame_metadata` (SeekDelta
-  K74).
-- Store follow-ups (SeekDelta K73).
-  `IndexedFileTrajectoryReader::into_structure_set` makes a
-  `StructureSet<IndexedFile>` from a reader the host opened, so a host that
-  opens the reader itself, for the scan's progress or a file still being
-  written, does not open and scan the file twice.
-  `Processed` keeps the geometry 0 its construction
-  processes and lends it through `peek`, and `read(0)` returns it, so a
-  cache in front of the reader does not process it again. The
-  `clustering_fits` benchmark times the pairwise fitted RMSD matrix,
-  hierarchical clustering, and leader clustering of a set in memory, and
-  `pooled_reads` reads one set over an XTC file in bursts from a pool of
-  threads and counts the arrays freed on another thread.
-- Structure sets read from files, and lazy processing (SeekDelta K73).
-  `StructureSet<S = InMemory>` takes its storage as a type parameter.
-  `traj::io::open_indexed_structure_set` and
-  `open_indexed_structure_set_from_index` open an indexed XYZ, DCD, TRR, or XTC
-  file as a `StructureSet<IndexedFile>`, which holds no geometries, has the time
-  order of the frame index, and exposes the index, its fingerprint, and the
-  path through `storage()`. Its geometries are read through the
-  `structure::StructureSetRead` trait (`topology`, `len`, `order`,
-  `distribution`, `peek`, `read`), which sets in memory implement too and a
-  host can implement; `StructureSetReadError::reader` carries a host reader's own
-  error, and `StructureSetReadError::Trajectory { geometry, source }` names the
-  geometry a trajectory codec fails on ("Cannot read geometry 7."). `read`
-  decodes one frame once into the arrays of an owned `Geometry` and runs
-  from many threads at once, with a pool of indexed readers that
-  read the one open file and share the frame index, and no lock held while
-  decoding. A file truncated while open fails the reads of the frames it
-  lost with one error. `StructureSet<IndexedFile>::refresh` takes the frames a
-  writer appended and keeps the pool; a distribution over every geometry
-  becomes one over the geometries it covered. `state` and `states` view the
-  states of a set of either storage; a state of a set in memory lends its
-  representative geometry, and one of a set in a file names its index. A
-  reader lends geometries as `GeometryView<'_, dyn StructureSetRead>`. `load` reads every geometry, or listed ones, into a set in memory that
-  keeps order values and restricts the distribution. `GeometryView::new`
-  checks a geometry a host's reader lends. `traj::Processed` runs
-  `ProcessingSteps` on every geometry of another reader as it is read: make
-  whole or wrap, center, fit (`FitReference`), smooth over an odd window,
-  and atom subset, changing the geometry in place. Analyses read
-  `ProcessingSteps::without_smoothing`, and failures to set up are
-  `ProcessingError`s naming the `ProcessingStep`. Each step gives the bits
-  of the in-memory periodic functions, `MoleculeImager`, and
-  `FrameSuperposer`. `statistics::SampleObservations` lists every member or
-  listed geometries of a reader with the distribution restricted to them;
-  `RmsfAccumulator`, `ContactOccupancyAccumulator`, and
-  `GroupContactOccupancyAccumulator` gain `observe_samples` and
-  `observe_samples_cancellable`. `alignment::geometry_rmsd` and
-  `geometry_aligned_rmsd` (each with a `_cancellable` form) measure listed
-  geometries against a geometry of the reader or a structure, and
-  `clustering::pairwise_fitted_rmsd` fits the members of a reader, keeping
-  only the fitted atoms. `StructureSet::rmsf`, `contact_occupancy`,
-  `group_contact_occupancy`, `cluster_hierarchical`, `cluster_k_medoids`,
-  and `native::StructureSetDescription::of` work for sets of either storage,
-  each equal to the result of the set in memory.
-- Structure sets (SeekDelta K72). `structure::StructureSet` holds many structures
-  of one topology as `Geometry`s, each shared and copied on write, with an
-  optional `Order` and an optional `Distribution`. An order gives every
-  geometry a place: a `TimeAxis` of times and steps, steps, or values of one
-  coordinate in a unit. A distribution covers all geometries or a sorted
-  subset (`Members`), with optional finite positive weights, a partition
-  into states (`Partition`), one `State` per state, and a temperature. Every
-  geometry may carry occupancies, B factors, velocities, and forces.
-  Selecting keeps each geometry's order value and remaps the members;
-  `select_states` keeps whole states, and `collapse` keeps one
-  representative per state and drops the order. Regrouping, reweighting,
-  selecting, and collapsing copy no coordinates. `GeometryView`, `StateView`,
-  and the `GeometryMut` and `DistributionMut` guards read and edit geometries,
-  states, and the distribution; a geometry's view implements `AsStructureView`,
-  so writers and kernels take it as they take a structure.
-  `StructureSet::weighted_samples` and `Distribution::weighted_members` give
-  the geometries statistics see, with their weights. The set's operations fail
-  with one `StructureSetError`, and `StructureSetError::Missing` names the
-  `Requirement` that is absent, such as a time order.
-  `StructureSet::from_structures` takes structures whose topologies have equal layouts
-  (`Topology::same_layout`), so structures read from separate files become
-  geometries, each keeping its structure's positions, cell, occupancies,
-  B-factors, and geometry properties, bound to the first structure's
-  topology. A structure of another layout fails with
-  `StructureSetError::TopologyMismatch`.
-- Structure sets in formats (SeekDelta K72c). `native::read` and `write` store
-  a `StructureSet` (`NativeKind::StructureSet`) and a structure set with one report
-  per geometry (`NativeKind::StructureSetInterpretation`, read as
-  `NativeObject::StructureSetInterpretation`); `NativeSource::interpreted_structure_set`
-  pairs a set with its reports. A `native::StructureSetDescription` is a geometry
-  set record that stores only the number of its geometries, with its topology,
-  properties, order, and distribution, for geometries kept elsewhere;
-  `NativeObject::into_structure_set_description` reads it from any structure set
-  record, and `into_structure_set` fails on such a record with
-  `FormatErrorDetail::NativeExternalGeometries`.
-  `pdb::PdbDocument::interpret_structure_set` and the mmCIF document's and
-  block's `interpret_structure_set` give a
-  `macromolecular::StructureSetInterpretation` of one state without
-  weights and one report per geometry; `sdf::structure_set` assembles records
-  into a set ordered by their steps or coordinates, with a distribution
-  only when a record has a weight, state, representative, energy, or
-  temperature field; `xyz::XyzDocument::interpret_structure_set` gives an
-  `xyz::XyzStructureSetInterpretation` without order or distribution; and
-  `traj::io::read_structure_set` reads a trajectory file as a set of a time
-  order. `pdb::PdbSource`, `mmcif::MmcifBlockSource`, and
-  `sdf::SdfRecordSource` take a `StructureSet` (SDF one record per geometry) or a
-  `GeometryView`, and `pdb::write`, `mmcif::write`, and `sdf::write` take a
-  set directly. `traj::io::write_structure_set` and `write_structure_set_to`
-  write a set of a time order or of none, without a distribution or set
-  properties, one frame per geometry. The new `geometry_metadata` option of the
-  Molfile, SDF, PDB, mmCIF, and XYZ writers decides what happens to the
-  state of a geometry a format cannot carry, including a geometry outside the
-  distribution (`GeometryField::Membership`). The PDB, mmCIF, and XYZ
-  writers also refuse or report state properties, a lone state's
-  representative that is not its first member, and a time order without
-  times or steps (`GeometryField::StateProperties`, `Representative`, and
-  `Order`; `TrajectoryField::Representative` and `Order`). An SDF coordinate
-  unit is the symbol of a unit constant, which the writer and the reader
-  take from one table; a set's coordinate in another unit fails to write
-  unless `geometry_metadata` omits it. `PdbWriteIssue` and `MmcifWriteIssue`
-  gain `UnrepresentableGeometry` and `EmptyStructureSet`, and `TrajectoryField`
-  gains `Membership` and `Distribution`.
-- Analysis of structure sets (SeekDelta K72b). `StructureSet::superpose`, `rmsd`,
-  and `aligned_rmsd` act on every geometry. `StructureSet::rmsf`,
-  `contact_occupancy`, and `group_contact_occupancy` observe the members of
-  the distribution, each with its probability, and leave the other geometries
-  out; without a distribution they observe every geometry with weight one.
-  `StructureSet::cluster_by_radius(_with)`, `pairwise_fitted_rmsd(_with)`,
-  `cluster_hierarchical`, and `cluster_k_medoids` cluster the members, or
-  every geometry without a distribution. Their distance matrices and
-  partitions are indexed by member position, so `DistributionMut::regroup`
-  installs a partition directly, and their errors name geometry indices.
-  `DistributionMut::assign_boltzmann_populations` sets state populations
-  from state energies and records the temperature, refusing with
-  `Missing(StateEnergies)`. `ClusteringError::StructureSet` wraps what a set
-  lacks for clustering, such as the state energies `ClusterOrder::Energy`
-  needs.
-- Biological assemblies (SeekDelta K66, K67). Interpretation reports list
-  the assemblies an entry states: `StructureInterpretationReport::assemblies`
-  reads mmCIF `_pdbx_struct_assembly`, `_pdbx_struct_assembly_gen` and
-  `_pdbx_struct_oper_list`, and PDB `REMARK 350` biomolecules. A
-  `macromolecular::Assembly` has its identifier, details, oligomeric state,
-  and `AssemblyGenerator`s: chains by label identifier and the
-  `AssemblyOperation`s that place their copies. Operator expressions such as
-  `1,2`, `(1-60)` and `(1-60)(61-88)` are expanded, products composed with the
-  rightmost operator first. An assembly whose expression, operators, or
-  chains cannot be read is left out with the new issue
-  `StructureInterpretIssue::AssemblyOmitted` and its
-  `AssemblyOmissionReason`; a mirror or scaling is not a rotation. A stated
-  rotation within the tolerance is made exactly orthonormal, so products of
-  many stay rigid. A source's assemblies use at most 100,000 operators
-  together, counted before anything expands; those beyond are left out.
-  `Assembly::to_structure` builds the assembly from the interpreted structure as one
-  new structure, with cancellation: a copy under the identity keeps its chains'
-  identifiers, and other copies append the operation's name, label and
-  author alike, on chains and atom sites (`A-2`, `A-12-60`), so the mmCIF
-  and PDB writers name each copy. Copies share their molecules'
-  definitions. `Assembly::atom_count` gives the size before building.
-  Reports keep their assemblies in native files.
-- Interpretation reports in native files. A structure or structure set keeps its
-  structure interpretation reports through native write and read, so an
-  application that saves structures in native files keeps what the source
-  stated beyond the structure: metal coordination, which the mmCIF and PDB
-  writers state again, polymer entities with their canonical sequences,
-  provenance, alternate-location decisions, assemblies, and issues.
-  `native::write` takes a `StructureInterpretation` or
-  `StructureSetInterpretation`, or `NativeSource::interpreted_structure`
-  and `NativeSource::interpreted_structure_set` pair a structure or set with
-  reports held apart from it. `NativeObject::into_interpretation` and
-  `NativeObject::into_structure_set_interpretation` read them back, and the
-  reports compare equal to those written. `into_structure` and
-  `into_structure_set` also read these files and drop the reports. They are
-  the `NativeKind`s `StructureInterpretation` (kind 7) and
-  `StructureSetInterpretation` (kind 10). Report columns store each repeated
-  string once. The report of PDB 7K00 (149,338 atoms) adds 8.1 MB to its
-  15.8 MB structure, about 70 ms to writing, and about 130 ms to reading. The
-  `native_interpretation` benchmark measures an entry.
-- PDB export of metal coordination (SeekDelta K65). The PDB writer takes
-  interpretation reports as the mmCIF writer does:
-  `PdbSource::with_reports` takes one report for a structure and one per
-  geometry for a structure set, and `PdbSource` converts from
-  `&StructureInterpretation` and `&StructureSetInterpretation`. The
-  writer states the reports' coordination as `LINK` records before the
-  coordinates, in the columns of PDB format version 3.3: each partner as
-  its atom record names it, the symmetry operator `1555`, and the distance
-  in the first structure. `LINK` records belong to the entry, so a geometry
-  set states the coordination every report states.
-  `WriteOmission::Coordination` counts the records left out: those that no
-  longer match the structure, those another geometry does not state, those
-  that name a chain written as a segment identifier, those whose partners
-  are not one metal and one non-metal, which readers would take for a
-  bond, and those whose partner identifiers also name another atom, as a
-  blank insertion code names residue `10A` beside `10`. A report count
-  that does not match the structures fails with
-  `PdbWriteIssue::ReportCountMismatch`. Without reports the output is
-  unchanged.
-- Interpretation issues as sentences (SeekDelta K62b).
-  `StructureInterpretIssue` implements `Display`, one or two sentences per
-  issue, such as `Residue 5 of chain "A" in model "1" (component "7MG") has
-  no template charges. Atom "N7" (+1) takes charges from its bonds.`
-  `CellOmissionReason` writes a sentence and `EntityKind` its
-  `_entity.type` value. `MolfileUnsupported` writes its content and line,
-  such as `The V3000 option "HCOUNT" of atom 3 at line 12 is not read.`
-- Error chains as one message (SeekDelta K62).
-  `kekule::diagnostics::ErrorChain` writes an error and every error of its
-  `source()` chain as consecutive sentences, such as `Cannot build the
-  solvated structure. Atom 12 overlaps atom 3.`; `{:#}` writes one error per
-  line. Errors from outside Kekule in the chain, such as I/O errors, get a
-  capital letter and a full stop, and a cause that repeats the previous text
-  appears once. `LimitExceeded::describe` writes a limit with its observed
-  value and bound, `work limit: 69,400,898 steps of 69,248,000`, for an error
-  that names its operation. `BondOrder`, `StereoCarrier`, `StereoDescriptor`,
-  `ValenceIssue` and `CipAssignmentIssue` implement `Display`.
-- One-letter residue codes and polymer sequences (SeekDelta K21). The new
-  `kekule::sequence` gives a residue its code from its chemical component
-  (`residue_code`, `component_code`): the code a caller's library
-  (`SequenceOptions::with_components`), the bundled templates, or the
-  Chemical Component Dictionary state, else the codes of the components it
-  derives from, so phosphothreonine is `T` and pseudouridine `U`, else the
-  explicit unknown, `X` for peptides and `N` for nucleic acids. Only
-  monomers have codes, so a ligand such as `GTP` has none. Kekule now
-  bundles the dictionary's codes and parents of every component that links
-  into a polypeptide or a polynucleotide (about 2,700), generated by
-  `tools/components/codes.py`. `ResidueCode` says where its code comes from
-  (`CodeOrigin`). `chain_sequences` lists each chain's residues that have
-  codes, in chain order, with their joined sequence, for any topology.
-  `StructureInterpretationReport::polymer_entities` gives each polymer
-  entity an mmCIF block states (`PolymerEntity`): its `PolymerType`, its
-  monomers from `_entity_poly_seq` (or the atom sites) with their codes,
-  where the block's own `_chem_comp` codes and parents come first and its
-  stated canonical sequence (`_entity_poly.pdbx_seq_one_letter_code_can`)
-  gives the letters, the sequence itself (or one joined from the
-  monomers' codes), and each instance's chain and, position by position,
-  the model's residue and the author numbering of `_pdbx_poly_seq_scheme`,
-  unobserved monomers included. `Component::one_letter_code` and
-  `Component::parent_ids` read the dictionary items.
-- Parents of modified residues (SeekDelta K21b). `ResidueCode::parents`
-  names the components a residue's component derives from, such as `MET`
-  for selenomethionine (`MSE`) or `THR`, `TYR` and `GLY` for the chromophore
-  `CRO`, and `ResidueCode::is_modified` says whether it has any, so a
-  sequence view can mark modified residues.
-- Continuing a trajectory file after a restart (SeekDelta K60), as a
-  simulation restarted from a checkpoint does.
-  `traj::io::append_trajectory` verifies and indexes the frames a
-  file holds as a reader of a growing file does, keeps those `KeepFrames`
-  selects (the first `n`, or the frames before the first whose step exceeds
-  the checkpoint's), cuts the file after them, and returns the
-  `TrajectoryStreamWriter` that appends after them, with a
-  `TrajectoryAppendReport` of the frames kept and of the frames and bytes
-  removed; `TrajectoryAppendOptions` add a cancellation and a progress
-  callback to the scan of the file, and plain write options convert. The
-  writer settings the file records (the DCD header, the XTC
-  magic and precision, the TRR scalar width) must be those of the write
-  options, so that the continued file is, byte for byte, the one an
-  uninterrupted run writes. A process that dies at any point leaves a file
-  that a later call continues, and a reader following the file sees the cut
-  of frames it indexed as `IndexMismatch`, opens the file again, and picks
-  up the appended frames. XTC, TRR, DCD, and XYZ (by frame count, as XYZ
-  frames record no step).
-- PDB export of chain identifiers longer than PDB's chain column (SeekDelta
-  K61), such as the `SOL1` and `ION1` chains solvation adds.
-  `PdbWriteOptions::with_chain_ids(PdbChainIdPolicy::SegmentId)` writes an
-  identifier of up to four printable characters in the segment identifier
-  columns 73-76 and leaves the chain column blank, as CHARMM and NAMD name
-  segments; kekule's PDB reader, like CHARMM and VMD, reads such a segment
-  back as the chain, and the write report counts the chains as the new
-  `WriteOmission::ChainIds`. Each such chain's polymer still ends in its own
-  `TER` record. By default these identifiers still fail, and
-  `PdbWriteIssue::ChainIdTooLong` names the policy.
-- Structure sets ordered by step or coordinate (SeekDelta K7), for
-  optimization histories, relaxed scans, and reaction paths. `Order::Step`
-  gives each geometry its step in the order a computation produced them, and
-  `Order::Coordinate { unit, values }` the value of one coordinate, stored
-  in the unit and finite (`StructureSetError::NonFiniteOrderValue`); values
-  need not increase, as a scan swept back and forth shows. A geometry's
-  scalar results, such as its energy or gradient norm, are owner properties
-  of its geometry properties. PDB writes such a set as one `MODEL` per
-  geometry and XYZ as one frame per geometry; both fail on the steps or
-  coordinates unless `geometry_metadata` omits them with a report
-  (`GeometryField::OrderStep` and `OrderCoordinate`,
-  `TrajectoryField::OrderStep` and `OrderCoordinate`), as Molfile and mmCIF
-  do for a lone geometry. SDF writes a geometry's step as the `kekule.step`
-  data field, or its coordinate as `kekule.coordinate` with its unit as
-  `kekule.coordinate.unit` (`sdf::STEP_FIELD`, `sdf::COORDINATE_FIELD`,
-  `sdf::COORDINATE_UNIT_FIELD`).
-- Reading trajectory files that are still being written (SeekDelta K13), so
-  a host shows the trajectory of a running simulation as it grows.
-  `IndexedFileTrajectoryReader::refresh` indexes the frames appended since
-  the reader opened or last refreshed, verifying each as opening does but
-  without scanning the indexed frames again, and returns how many there
-  are; sequential reads continue into them. It reads the file the path
-  names when it runs, checking first that the file still begins with the
-  indexed bytes, and fails with `IndexMismatch`, changing nothing, when
-  they changed; a file moved to the path that begins with them is read on. `TrajectoryOpenOptions::with_growing`
-  opens a file a writer is appending to: a final frame the writer has not
-  finished is not yet an error but pending
-  (`IndexedFileTrajectoryReader::pending_byte_count`) until a refresh finds
-  it complete, DCD frames are counted in the file rather than checked
-  against the header's `NSET`, and an XYZ line counts once its line break
-  is written. Corrupt data is an error wherever it lies. A growing file that
-  does not yet hold a complete frame, or for DCD a complete header, fails
-  with the new `TrajectoryIoErrorKind::Incomplete`, to be opened again
-  later. This covers XTC, TRR, DCD, and XYZ.
-  `TrajectoryFileFingerprint::is_prefix_of_path` and `is_prefix_of_file`
-  tell whether a file begins with the content a fingerprint describes: a
-  file that only grew by appending is the same file with more bytes, and
-  one whose existing bytes changed is not. `TrajectoryWriter::flush` makes
-  every frame written so far reach the destination whole: codec writers
-  append each frame after the previous one and never rewrite one, so after
-  a flush the stream holds a complete trajectory, and `DcdWriter` then
-  writes the header's `NSET` for the frames written, after them, so that a
-  strict reader opens the file at every flush. A simulation viewed while it
-  runs writes through `create_trajectory_stream_writer` over its
-  destination file and flushes after each frame.
-- Placed fragments name their ring atoms by locant (SeekDelta K3d), so a
-  host or user reading "C4" finds ring position 4.
-  `StructureEditor::place_fragment` names a ring's atoms by element and IUPAC
-  locant (pyridine N1, C2, …, C6; naphthalene C1, …, C4, C4A, C5, …, C8,
-  C8A; indole N1, C2, C3, C3A, C4, …, C7, C7A), other heavy atoms by element
-  and number, and hydrogens after the atom carrying them, as PDB names them:
-  H2 on C2, and H21 and H22 for two on one atom; where atoms of two elements
-  share a number, a hydrogen on the one that is not carbon names its element
-  too (methylamine's HN11). Benzene is still C1 to C6 and H1 to H6. Before,
-  pyridine came out N1, C1, …, C5, so its C4 was ring position 5, and
-  naphthalene's C5 was C4a. `Fragment::locant` gives each ring atom's
-  locant, which the bundled records now carry (`tools/fragments`).
-  `StructureEditor::attach_fragment` into an existing residue keeps naming new
-  atoms by the residue's next free numbers, since locants could collide
-  with names already there.
-- Fragment atoms follow ring numbering (SeekDelta K3c), so names of placed
-  fragments say where atoms sit: a ring's atoms come first in its
-  conventional numbering (IUPAC locants, fused rings by their fused-ring
-  numbering), a group's attachment atom first, and hydrogens after the atoms
-  that carry them. A placed benzene is named C1 to C6 around the ring, so C1
-  and C4 are para.
-- Builder fragments (SeekDelta K3b). `structure::placement::fragments` is a
-  library of 48 named fragments with ideal 3D coordinates (PubChem computed
-  conformers of their capped parent compounds): 23 rings from benzene to
-  benzimidazole and 25 groups from methyl to thiol, each with an attachment
-  atom and a leaving atom (`Fragment`, `FragmentKind`, `fragment` by name).
-  `StructureEditor::attach_fragment` bonds one to an atom in place of an explicit
-  hydrogen or at the free position nearest a direction, at the ideal length,
-  turned to the clearest of a few staggered torsions about the new bond (and
-  of 15° steps when none clears 2 Å), and `StructureEditor::place_fragment`
-  places one as a new capped molecule centered on a point, with its own chain
-  and `UNL` residue. `Fragment::with_attachment` attaches through another
-  atom that carries a hydrogen. New atoms join the parent's residue under the
-  next free names. Choosing a torsion reads the draft's position rows once.
-- OpenFF failures that name their atoms (SeekDelta K58), so a host reports
-  which atoms a force field or charge model cannot handle without parsing
-  error text. `kekule_openff::Error::atoms` lists every atom a failure
-  concerns, as IDs of the molecule of `Error::definition` or of the molecule
-  passed in: all atoms with implicit hydrogens or radicals, all atoms of
-  elements outside the charge model's domain, all atoms a forbidden domain
-  pattern matches, every atom of the interactions a handler leaves
-  unassigned, the atoms without vdW parameters, and the atoms whose element,
-  connectivity, or delocalized bonds NAGL features cannot encode; it is empty
-  for failures that concern no atom. The detail text names them too, and an
-  unassigned handler now reports how many interactions it left, not only the
-  first. `NaglModel::elements` and `NaglModel::supports_element` give the
-  elements a charge model covers (Ash: H, C, N, O, F, P, S, Cl, Br, I), so a
-  host can refuse a molecule before parameterizing it.
-- Non-covalent interactions (SeekDelta K6), in the new `kekule::interactions`
-  module, for a host that draws and lists the interactions of marked atoms
-  and follows them through trajectory playback. `InteractionFeatures::new`
-  classifies a topology's hydrogen-bond donors (with their explicit
-  hydrogens) and acceptors, charged groups (formal charges, and carboxylates,
-  phosphates, sulfonates, aliphatic amines, amidines, and guanidines charged
-  at pH 7), aromatic rings, C–Cl/Br/I halogen-bond donors, metals and the
-  atoms that can coordinate them, and hydrophobic carbons once, per reusable
-  definition, for every structure sharing the layout.
-  `find_interactions_within` searches two possibly overlapping atom sets of
-  one structure, reporting each interaction once and skipping ends of one
-  molecule fewer than `min_bond_separation` bonds apart;
-  `find_interactions_between` searches two structures, each
-  `InteractionSide` with features of its own topology. Each `Interaction`
-  has its `InteractionKind` (hydrogen bond, salt bridge, parallel and
-  T-shaped π stacking, cation–π, halogen bond, metal coordination,
-  hydrophobic contact), both ends' roles, atoms (a ring's atoms for π
-  interactions, a donor's explicit hydrogen), and drawing points (ring
-  centers and normals, charge centers), and its distance, hydrogen distance,
-  offset, and angles. Hydrogen bonds are measured from explicit hydrogens
-  or, when hydrogens are implicit, from the heavy atoms. `InteractionCriteria`
-  holds every threshold as a `Quantity` with documented literature defaults
-  (Baker & Hubbard, HBPLUS, Kumar & Nussinov, PLIP, Gallivan & Dougherty,
-  Auffinger) and switches each type on or off. The side with fewer atoms
-  lists its features and the other reads only atoms within reach, paired on
-  the uniform grid that group contact occupancy uses, now shared between
-  them. `HydrogenBondOccupancyAccumulator` reduces
-  weighted observations to hydrogen-bond occupancies and merges partial
-  accumulators, as the K28 and K48 statistics accumulators do.
-- Dense edit correspondence (SeekDelta K56), so a host remaps its per-atom
-  columns after a structural edit in one pass instead of looking up every
-  atom's draft handle. `EditCorrespondence::atoms`, `bonds`, `residues`, and
-  `chains` return a `DenseCorrespondence` of the editor's source topology and
-  the published one: `to_published` has one entry per source index, the
-  published index or `None` for a deleted entity, and `to_source` one entry
-  per published index, the source index or `None` for an added one;
-  `published` and `source` look up one index. The source is the topology the
-  editor started from; entities added or appended since have no source.
-  The handle lookups `EditCorrespondence::atom` and `bond` are unchanged.
-- An informational benchmark of reading a large mmCIF entry
-  (`cargo bench -p kekule --bench structure_interpretation -- <mmCIF>`),
-  which times parsing, interpretation, and default perception of an
-  externally supplied entry such as PDB 6SPB or 7K00.
-- An informational benchmark of a ligand edit in a large structure
-  (`cargo bench -p kekule --bench structure_edit_scale -- <mmCIF> <ligand>`),
-  which merges 66 copies of an externally supplied entry such as PDB 9UOH.
-- Minimization with fixed atoms and position restraints (SeekDelta K57), so
-  a host cleans up an edited group while the rest of its molecule keeps its
-  pose. `minimize_scoped` and `minimize_scoped_with_observer` take a
-  `MinimizationScope`: `MinimizationScope::moving` moves the atoms of an
-  `AtomSelection` and fixes the others, which keep their input coordinates
-  bit for bit but still enter every potential evaluation, and
-  `with_position_restraint` adds `k/2 |r - r_ref|^2` on an atom
-  (`PositionRestraint`; an unusable one is
-  `MinimizationError::InvalidRestraint` with a `RestraintProblem`). The step
-  bound and convergence consider moving atoms only:
-  `Minimization::max_gradient` and `MinimizationStep::max_gradient` report the
-  largest norm of the minimized energy's gradient over them, and
-  `restraint_energy` on both reports the restraints' share, which
-  `final_evaluation` and `energy` leave out. `minimize` and
-  `minimize_with_observer` are unchanged. The `clean_up` example cleans up a
-  group of a ligand inside a larger structure with OpenFF Rosemary and Ash
-  charges.
-- Builder geometry on structure drafts (SeekDelta K3a), so a host that edits a
-  `StructureEditor` draft gets coordinates for the atoms it adds as part of that
-  edit's one publication. The new `structure::placement` module documents the
-  rules. `StructureEditor::add_hydrogens` makes the implicit hydrogens of chosen
-  atoms explicit at ideal positions, from fixed counts or the valence model's
-  inference on the draft's current graph, without perception, and
-  `StructureEditor::remove_hydrogens` collapses their explicit hydrogens back
-  into counts as `Molecule::remove_hydrogens` does; both report per atom what
-  they added or removed (`PlacedHydrogensReport`, `RemovedHydrogensReport`),
-  keep represented stereo, and fail with `PlacementError::InvalidValence`
-  naming an atom over its valence. `StructureEditor::atom_domains` perceives an
-  atom's `AtomShape` (terminal, linear, trigonal planar, tetrahedral,
-  trigonal bipyramidal, octahedral) from its element, charge, radical
-  electrons, bond orders, neighbors, and implicit hydrogens, and
-  `StructureEditor::free_directions` gives where its next substituents go,
-  staggered and anti against a single neighbor's substituents.
-  `StructureEditor::attach_atom` bonds a new atom in place of an explicit
-  hydrogen or at the free position nearest a direction (`AttachmentSite`),
-  and `StructureEditor::place_atom` starts a new molecule at a point with a chain
-  and `UNL` residue of its own. `ideal_bond_length` gives lengths by element
-  pair and bond order. New atoms join the residue of the atom they bond to,
-  named by element and the next free number (`C21`, `H31`), and
-  `StructureEditor::next_atom_name` and `StructureEditor::rename_atom` apply the rule
-  to existing atoms. Placement works inside the edited occurrences, so its
-  cost follows the edited atoms rather than the structure.
-- XYZ documents built from atoms (SeekDelta K54), so a host that holds a
-  molecule as elements and positions, such as one reading the atoms a
-  Gaussian cube file lists beside its grids, has it interpreted as XYZ
-  without writing XYZ text. `XyzAtom::new` takes an element and a position,
-  `XyzFrame::new` a comment and atoms, and `XyzDocument::new` frames;
-  `XyzDocument::interpret` and `interpret_structure_set` then infer bonds from
-  distances and report them as for a parsed file. A built atom's location is
-  its 1-based position in its frame, and a built frame's its 1-based position
-  in its document; parsed atoms and frames keep their lines. Interpretation
-  now rejects a frame without atoms and a coordinate that is not finite with
-  `InvalidValue`, as parsing already rejects them, so it fails a built
-  document as parsing would. Parsing is unchanged.
-- Trajectory writers leave out and report the frame state their format
-  cannot carry (SeekDelta K51), as the structure writers do, so a host writes
-  a trajectory read from XTC as DCD or XYZ without first copying every frame
-  without that state. The XYZ, DCD, and XTC write options take a
-  `frame_metadata` policy for frame velocities, forces, times, and steps
-  (XYZ: all four; DCD: velocities, forces, and times under
-  `DcdTimePolicy::Absent`; XTC: velocities and forces), and all four codecs'
-  options a `frame_properties` policy for atom, bond, and frame properties
-  (TRR: all but the lambda its `FrameProperty` lambda policy writes). Both
-  fail by default, as before; under `UnrepresentablePolicy::Omit` the frame
-  is written without that state, and the new `DcdWriter::report`,
-  `TrrWriter::report`, and `XtcWriter::report`, like `XyzWriter::report`,
-  count each kind left out as a `WriteOmission::GeometryState` of the new
-  `GeometryField::AtomProperties`, `BondProperties`, or `Properties`, or of
-  `Time`, `Step`, `Velocities`, or `Forces`. A frame left without its time
-  writes the same bytes as one that never had it.
-  `TrajectoryWriteOptions::with_frame_metadata` and `with_frame_properties`
-  set the policy of every codec that has it, and
-  `FileTrajectoryWriter::report`, `write_structure_set`, and
-  `write_structure_set_to` return each codec's report.
-- XTC and TRR frames numbered when they have no time or step (SeekDelta
-  K52), as frames read from DCD or XYZ do not. Under the new
-  `FrameTimingPolicy::Number { interval }`, set through
-  `XtcWriteOptions::with_frame_timing`, `TrrWriteOptions::with_frame_timing`,
-  or `TrajectoryWriteOptions::with_frame_timing`, frame `n` of the frames
-  written gets step `n` when it has none and time `n × interval` when it has
-  none; a frame's own time and step are kept, such as the steps of DCD
-  frames. The default, `FrameTimingPolicy::Require`, fails such frames as
-  before. An interval that is not a finite, nonnegative time fails when the
-  writer is created.
-- DCD frames numbered on the header's step sequence (SeekDelta K55), so a
-  host writes frames read from XYZ, which have no steps, or a stride whose
-  steps are off the sequence, as DCD without first copying them to give them
-  the sequence's steps. Under the new `DcdFrameTimingPolicy::Number`, set
-  through `DcdWriteOptions::with_frame_timing`, frame `n` of the frames
-  written is written at step `start_step + n × step_interval` of
-  `with_step_sequence` and, under `DcdTimePolicy::HeaderDelta`, at that step
-  × `DELTA`. A frame without a step or time is given them; a frame whose own
-  step or time disagrees has it replaced, and `DcdWriter::report` counts the
-  frames whose steps and times were replaced as `WriteOmission::GeometryState`
-  of `GeometryField::Step` and `Time`. Frames on the sequence write the same
-  bytes and report nothing, as before. The default,
-  `DcdFrameTimingPolicy::Require`, fails such frames as before.
-- Trajectory writers over a host's stream (SeekDelta K53), so that a host
-  places the file itself, for example writing under a temporary name of its
-  own and replacing the destination with retries where
-  `create_trajectory_writer`'s single `std::fs::rename` fails because another
-  program briefly holds the destination on Windows.
-  `create_trajectory_stream_writer` writes the format `TrajectoryWriteOptions`
-  names into any `Write + Seek` stream from its current position, and
-  `TrajectoryStreamWriter::finish` finalizes and flushes it (patching the DCD
-  frame count) and returns it; `write_structure_set_to` writes a set in
-  memory, as `mmcif::write_to` writes structures, and returns the report.
-  A stream writer writes the bytes the path writer publishes and, like it,
-  refuses to continue or finish after a failed frame write. The path writer
-  is unchanged and now writes through it.
-
-- Mergeable RMSF and contact occupancy accumulators (SeekDelta K48), so a
-  host observes ranges of structures in parallel instead of one structure
-  after another in order. `RmsfAccumulator::merge` combines the weighted
-  moments of another accumulator over the same selection with Chan et al.'s
-  pairwise update, and `ContactOccupancyAccumulator::merge` and
-  `GroupContactOccupancyAccumulator::merge` add the weights of another
-  accumulator of the same pairs (and groups) and cutoff. Partials merged in
-  range order give, for a given split, the same result on every executor and
-  thread count, and the serial result up to rounding: within 10⁻¹⁴ of the
-  RMSF, or 10⁻¹¹ with a common translation of 1000 nm, in the tests, and
-  exactly for contact weights of one. Merging accumulators of another
-  topology layout, selection, groups, pairs, pair order, or cutoff fails with the
-  new `StatisticsError::MergeMismatch` (`MergeMismatch`), and overflowing
-  with `MergeWeightOverflow` or `MergeNumericalFailure`; a failed merge
-  changes nothing. The accumulators are now `Clone`. An RMSF observation
-  measures squared lengths instead of `hypot`, updates the moments in place
-  when a bound on the coordinates and the total weight proves that nothing
-  can overflow, and copies them only otherwise; contacts compare squared
-  distances, deciding by the distance itself near the cutoff. On 100,000
-  atoms (the new `statistics_accumulators` benchmark, release, i5-11400F,
-  rounds alternating with `main` while other sessions compiled), an RMSF
-  observation takes 1.0–1.4 ms instead of 1.35–1.8 ms, a merge 0.4–0.6 ms,
-  and 50,000 contact pairs 0.21–0.26 ms instead of 0.71–0.92 ms. Observing
-  96 frames in ranges on four scoped threads reaches 1,700–2,300 RMSF
-  frames/s, against 550–740 serially on `main`.
-- Contact occupancy of pairs of atom groups (SeekDelta K46), such as a
-  pocket's residues against a ligand or the residues on both sides of an
-  interface: a pair of groups is in contact in an observation when any atom
-  of one is within the cutoff of any atom of the other, which the atom pairs'
-  occupancies cannot give, since their contacts overlap across observations.
-  `GroupContactOccupancyAccumulator` takes the groups as atom selections and
-  the pairs as indices into them, observes structures with explicit weights
-  as `ContactOccupancyAccumulator` does, and finishes with a
-  `GroupContactOccupancyResult` of contact weights and occupancies in pair
-  order. `StructureSet::group_contact_occupancy` observes each member of the
-  distribution with its probability, or every geometry with weight one
-  without a distribution. A pair of one-atom groups has its atom pair's occupancy. State
-  is one sum per pair plus scratch for the grouped atoms, whatever the number
-  of observations. An observation reads only the grouped atoms, rejects
-  pairs whose bounding boxes lie farther apart than the cutoff, and searches
-  a grid of the larger group, built once per observation, for pairs of large
-  groups. Groups that are empty, pairs naming a group past the last, one
-  group twice, a repeated pair, or groups sharing an atom are refused with
-  the new `StatisticsError::EmptyGroup`, `UnknownGroup`, and
-  `OverlappingGroups`, or `SelfPair` and `DuplicatePair`. In 103,823 lattice
-  atoms at protein density (the new `group_contacts` benchmark, release,
-  i5-11400F, 0.45 nm cutoff), one observation of 100 pocket residues
-  against a 40-atom ligand takes 0.11 ms, against 0.67 ms for their 40,000
-  atom pairs through `ContactOccupancyAccumulator`; 3,975 residue pairs
-  across an interface take 0.60 ms, and its two sides as one pair 0.09 ms.
-- Atom correspondence by hierarchy labels (SeekDelta K47), so two different
-  structures of one molecule (two crystal structures of a protein, or a model
-  and its template) are superposed without the host pairing their atoms.
-  `AtomCorrespondence::from_labels` pairs the atoms of a moving and a
-  reference `AtomSelection`, each on its own topology, whose chain, residue
-  number, insertion code, and atom name are equal, in the moving selection's
-  dense order. `LabelScheme::Author` (the default) reads the identifiers the
-  selection language's `chain`, `resid`, and `name` terms read: author chain,
-  sequence, and atom IDs, each falling back to its label ID, with insertion
-  codes; `LabelScheme::Label` reads mmCIF `label_asym_id`, `label_seq_id`,
-  and `label_atom_id`, as `labelchain`, `labelresid`, and `labelname` do.
-  Residue names are not compared, so a mutated residue pairs its backbone.
-  The `LabelCorrespondence` it returns holds the `AtomCorrespondence`, which
-  fits take as any other (or the `LabelCorrespondence` itself), and the
-  selected atoms of each side left unpaired, unlabeled atoms among them.
-  A label that names more than one selected atom on a side, such as
-  alternate locations kept as atoms or a repeated residue number, is refused
-  with the new `AtomCorrespondenceError::AmbiguousLabels`, which names the
-  side and every such `AmbiguousLabel` with its `AtomLabel` and atoms.
-- Atom selections from and to dense order (SeekDelta K43), so a host that
-  holds atom sets as sorted indices or bit masks (a resolver's `selected`,
-  `visible`, or secondary-structure terms) makes and reads selections in
-  linear time without translating atoms to IDs.
-  `AtomSelection::from_sorted_indices` keeps a strictly increasing index
-  vector as the selection after one checking pass, and
-  `AtomSelection::from_mask` reads a mask of one bit per atom in 64-bit
-  words, least significant bit first. `AtomSelection::to_mask` and
-  `AtomSelection::ranges` give the selection back as such a mask or as runs
-  of consecutive indices. Input that is out of order, repeated, past the
-  last atom, or of the wrong length is refused with the new
-  `SelectionError::UnsortedAtomIndex` and `SelectionError::AtomMaskLength`,
-  or `InvalidAtomIndex`. `AtomSelection::from_indices` no longer translates
-  each index to an atom ID and back. The selection language builds its
-  result from its bit mask the same way. On 1,000,000 atoms (the new
-  `selection_dense` benchmark, release, i5-11400F), selecting all of them
-  takes 0.7 ms from sorted indices, 1.1 ms from a mask (allocating and
-  writing the indices alone takes 1.4 ms), and 4.6 ms through `from_indices`,
-  against 9–11 ms through atom IDs. `to_mask` takes 1.1 ms and `ranges` 0.7 ms.
-- `AtomSiteView::atom_index` gives a site's dense atom index and
-  `Topology::atom_site_at` the site of the atom at a dense index, both in
-  constant time without reading the atom (SeekDelta K44). On 973,824 atoms,
-  the dense indices of every residue's sites take 1.0 ms, as does the
-  residue of every dense index.
-- Native binary serialization in the new `kekule::native` format module:
-  exact, versioned persistence of a `Molecule`, `Topology`, `Structure`, or
-  in-memory `StructureSet`, in format version 5. `native::write_to` streams to a
-  `Write` and `native::read` reads exactly one object from a `Read`. A round
-  trip keeps represented chemistry, adjacency order, definitions and
-  instances, semantic IDs, dense order, hierarchy, explicit and inferred
-  classes, properties at every scope with units, coordinates as exact bits,
-  and every structure and collection field; installed perception is stored
-  with its provenance and validated on load, or omitted. A decoded topology
-  has a fresh layout identity. Decoding validates untrusted input through
-  reconstruction, bounds allocations by `NativeReadOptions`
-  (`LimitExceeded`), and fails with a `FormatError` of the new
-  `Format::Native`, which carries a `byte_offset`, never a panic. Unknown
-  versions fail with `FormatErrorDetail::NativeVersion`. The layout is
-  specified in `docs/native-format.md`, and the new `native` fuzz target
-  covers the decoder.
+- `structure::StructureSet` holds many `Geometry`s of one topology, copied on
+  write, each with optional occupancies, B factors, velocities, and forces;
+  `from_structures` takes structures of equal layout (`Topology::same_layout`).
+- An optional `Order` places each geometry (`Place`): `Order::Time(TimeAxis)`,
+  `Order::Step`, or `Order::Coordinate { unit, values }`;
+  `StructureSetError::Missing` names an absent `Requirement`, such as times.
+- `structure::StructureSetRead` (`peek`, `read`, `order`, `properties`) reads
+  geometries from any set or a host's own reader (`StructureSetReadError`;
+  `GeometryView::new` checks a host-lent geometry).
+- `traj::io::open_indexed_structure_set` (and `_from_index`) and
+  `IndexedFileTrajectoryReader::into_structure_set` give a set that decodes
+  XYZ, DCD, TRR, or XTC geometries on demand, from many threads at once.
+- `StructureSet<IndexedFile>` and `Ensemble<IndexedFile>` are `Clone`, take
+  appended frames with `refresh`, and `load` geometries into memory; for a
+  growing file, `Distribution` and the native descriptions gain `extended_to`.
+- `traj::Processed` applies `ProcessingSteps` (make whole or wrap, center, fit
+  to a `FitReference`, smooth, atom subset) to each geometry as it is read;
+  `skipped_periodic_steps` and `ProcessingError` report what it skipped.
+- `StructureSet::from_reader(reader, indices)` copies chosen geometries of any
+  `StructureSetRead`, whole and in the given order, with their order values.
+- Analyses read any `StructureSetRead`: `statistics::SampleObservations`,
+  `observe_samples(_cancellable)`, `alignment::geometry_rmsd` and
+  `geometry_aligned_rmsd` (`_cancellable`), `clustering::pairwise_fitted_rmsd`.
+- `StructureSet` gains `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, contact
+  occupancy, and clustering, weighing every geometry 1; their errors gain
+  `Read`, `Cancelled`, and `ObservationsOutOfRange`.
+- `interpret_structure_set` on `pdb::PdbDocument`, mmCIF documents and blocks,
+  and `xyz::XyzDocument`; `sdf::structure_set` assembles records into a set;
+  `traj::io::read_structure_set` reads a trajectory file as a time-ordered set.
+- `pdb::PdbSource`, `mmcif::MmcifBlockSource`, and `sdf::SdfRecordSource` take
+  a `StructureSet` or `GeometryView`; `XyzWriter::write_structure_set` and
+  `traj::io::write_structure_set(_to)` write a set one frame per geometry.
+- SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
+  `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
+  `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
+- The `kekule::native` binary format stores a `Molecule`, `Topology`,
+  `Structure`, `StructureSet`, or `Ensemble` exactly (`native::write_to`,
+  `native::read`; format version 6, specified in `docs/native-format.md`).
+- Native decoding validates untrusted input within `NativeReadOptions` and
+  fails with a `FormatError` of `Format::Native`, never a panic.
+- Native files keep interpretation reports (`NativeSource::interpreted_structure`,
+  `NativeObject::into_interpretation`) and sets described without their
+  geometries (`StructureSetDescription`, `EnsembleDescription`).
 - `InstanceAtomId::to_bits`/`from_bits` and `InstanceBondId::to_bits`/`from_bits`
-  give instance-qualified IDs a documented stable `u64` encoding; the `raw()`
-  value of every other identifier is documented as stable.
-- The selection language in the new `kekule::select` module: text such as
-  `within 5 of resname LIG and not water` evaluates to an `AtomSelection`.
-  `select::parse` returns a `SelectionExpr` whose `Display` is canonical
-  text; `evaluate` runs topology terms and `evaluate_structure` also spatial
-  and site terms against any `AsStructureView`. Terms cover elements, names,
-  charges, isotopes, B factors, occupancies, properties with units,
-  residues with insertion codes, residue and molecule classes, chains,
-  instances, aromaticity, rings, SMARTS, hydrogens, the `protein`,
-  `nucleic`, `water`, `ion`, `ligand`, `backbone`, and `sidechain` macros,
-  grid-based `within`, and residue, chain, molecule, and bond expansion.
-  Author identifiers are the default, with `label_*` terms for label
-  identifiers. Parse errors are `FormatError`s of the new `Format::Selection`
-  with a byte `span`; evaluation errors are `SelectEvaluateError`. The
-  `SelectionResolver` extension trait resolves host `#...`, `$name`, and
-  keyword terms, including points of other objects for `within`. The grammar
-  is documented in `docs/selection-language.md`, with a conformance suite in
-  `tests/fixtures/select/conformance.txt` and a new `select` fuzz target.
-- `SelectionResolver::reference_points` lets a host add points to a `within`
-  reference written as an expression rather than a host term, so
-  `within 5 of ligand` evaluated on a receptor measures against a ligand held
-  in another structure. The resolver receives the reference as a
-  `SelectionExpr`, evaluates it on its other structures, and returns the
-  positions of the atoms it selects there; `within` measures against them
-  together with the atoms the reference selects in the evaluated structure.
-  References nested in it reach the resolver again. The default adds no
-  points, so existing resolvers keep their results. A failure is
-  `SelectEvaluateError::Host`, naming the reference and its span.
-- `select::ReferencePoints` carries a host's points for `within`, both from
-  `SelectionResolver::reference_points` and in `HostValue::Points`. It wraps
-  `Positions` (`ReferencePoints::new`, or `From<Positions>`), builds its
-  spatial grid on first use for each cutoff, and shares points and grids
-  among clones. A host that evaluates one selection over many structures
-  builds the points of a reference once, over every structure including the
-  evaluated one, and returns a clone for each structure, so `within` costs
-  time in the atoms plus the reference points instead of their product; a
-  reference's own atoms of the evaluated structure among the points change
-  nothing. The grid of `within` stores every cell of its box in one array
-  when the box has at most eight cells per point, and otherwise only its
-  occupied cells behind a filter that answers most empty cells without a
-  hash lookup. On 27 copies of 1AKE without water (92,502 atoms; release
-  build), `within 5 of protein` evaluated over every copy takes 16 ms with
-  shared points, against 96 ms when each copy gathers and grids the other
-  copies' points, and 360 ms that way with the previous grid; `byres
-  (within 5 of ligand) and protein` takes 21 ms (70 ms with the previous
-  grid).
+  give a stable `u64` encoding; every other identifier's `raw()` is stable.
+- The selection language in `kekule::select`: `select::parse` reads text such
+  as `within 5 of resname LIG and not water`, and `evaluate` or
+  `evaluate_structure` gives an `AtomSelection` (`docs/selection-language.md`).
+- `SelectionResolver` resolves host `#...`, `$name`, and keyword terms and adds
+  `select::ReferencePoints` from other structures to `within`;
+  `SelectEvaluateOptions::with_executor` runs `within` in parallel.
+- `AtomSelection::from_sorted_indices`, `from_mask`, `to_mask`, and `ranges`
+  convert selections in linear time, and `from_indices` is faster.
+- `AtomSiteView::atom_index` and `Topology::atom_site_at` map between sites
+  and dense atom indices in constant time.
 - `FormatError::span` returns the byte range a failure concerns.
-- `VanDerWaalsRadiusSource::Bondi`, `BondiMantina`, and `Alvarez` select three
-  classic van der Waals radius columns, tabulated in ångström.
-  - `Bondi` transcribes Bondi (1964), Tables I and XIV, for 38 elements, with
-    hydrogen at Bondi's 1.20 Å, and completes 16 main-group elements from
-    Mantina et al. (2009).
-  - `BondiMantina` is Mantina et al.'s Table 12: 44 main-group elements, with
-    Rowland and Taylor's hydrogen at 1.10 Å.
-  - `Alvarez` covers the 93 elements of Alvarez (2013).
-  - None of the three falls back to another column, and the default stays
-    `FreeAtom`.
-- XYZ structure interpretation in the new `kekule::xyz` format module.
-  `xyz::parse_str` and `xyz::parse_reader` return an `XyzDocument` of typed
-  frames. `XyzDocument::interpret` builds a `Structure` from one frame, and
-  `interpret_structure_set` builds a `StructureSet` from frames of the same
-  atoms.
-  - Connectivity is inferred from distances with the macromolecular
-    resolver's rule: covalent radii plus 0.45 Å.
-  - Every bond is single, or dative between a metal and a non-metal, and
-    implicit hydrogens are fixed at zero.
-  - Bond orders, charges and stereo are not assigned.
-  - Frames of a structure set must infer the same bonds.
-  - `XyzInterpretationReport` lists every inferred bond with its distance and
-    cutoff, plus fallback radii, close contacts and omitted columns.
-  - Extended XYZ columns are rejected unless reported as omitted.
-  - Errors are `FormatError`s of the new `Format::Xyz`.
-  - Atom-line order is dense order, so `kekule::traj` streams the same file
-    against the interpreted topology when its element tokens are symbols in
-    standard letter case, the only form that reader accepts.
-  - The new `xyz` fuzz target covers the parser and interpretation.
-- The PDB writer: `pdb::write` and `pdb::write_to` write a structure, a
-  geometry's view (`PdbSource::structure`), or a structure set (one `MODEL` per
-  geometry) as one entry that reads back with the same atoms, identities,
-  bonds, coordinates, occupancies, and B factors at PDB precision.
-  - Records follow dense atom order.
-  - Standard polymer residues are `ATOM` records with a `TER` after each
-    chain's polymer; everything else is `HETATM`.
-  - `CONECT` lists every bond the reader cannot derive from the bundled
-    component dictionary, once per step of bond order.
-  - Serial and residue numbers beyond their decimal range use hybrid-36.
-  - A representable cell is a `CRYST1` record in P 1.
-  - Identifiers that do not fit their columns always fail with a typed
-    `PdbWriteIssue` (`FormatErrorDetail::PdbWrite`): chain IDs longer than
-    one character, residue names longer than three, atom names longer than
-    four, insertion codes, and residue numbers. So do non-consecutive
-    residues and values outside their columns.
-  - Chemistry PDB cannot carry fails unless `PdbWriteOptions` omits it:
-    isotopes, radicals, fixed implicit hydrogens, atom maps, stereo, bonds
-    `CONECT` cannot state, and residues whose bonds differ from the
-    dictionary template a reader applies. So do geometry state and cells
-    `CRYST1` cannot carry.
-  - The curated `bio` benchmark entries round-trip in a new acceptance test,
-    and the `pdb` fuzz target checks that written entries read back.
-- Cooperative cancellation of long-running structure work. A
-  `diagnostics::Cancellation` wraps a host check, such as
-  `Cancellation::from_flag` over an `AtomicBool`.
-  - `StructureInterpretOptions::with_cancellation` and
-    `StructureSetInterpretOptions::with_cancellation` make mmCIF and PDB
-    interpretation poll it between stages and periodically inside them.
-    Once it turns true, interpretation fails with a `FormatError` of the new
-    `DiagnosticKind::Cancelled`, whose source is `diagnostics::Cancelled`.
-  - `Structure::perceive_cancellable`, `StructureSet::perceive_cancellable`, and
-    `Topology::perceived_cancellable` poll it between definitions and
-    stages and during ring perception. They fail with the new
-    `PerceptionError::Cancelled` and leave the owner unchanged.
-  - No partial result is returned, and a check that never turns true does
-    not change any result. Without a cancellation, nothing is polled.
-  - On 7K00 (149k atoms), polls are at most 66 ms apart. A cancelled
-    interpretation returns 80–115 ms after its check turns true; most of
-    that time is spent freeing intermediate data. Perception of 6SPB returns
-    within 15 ms.
-- `MmcifBlockSource::with_block_name` names one mmCIF data block, so a file
-  of several objects keeps each object's name; reading it back gives the name
-  as `MmcifBlock::name`. Names are validated as `MmcifWriteOptions` block
-  names are, and two blocks whose names match case-insensitively, including
-  the `{block_name}_n` names unnamed blocks keep, fail the write with the new
-  `MmcifWriteIssue::DuplicateBlockName` before anything is written.
-- The trajectory XYZ writer reports the topology content its files leave
-  out, as `XyzWriter::report` and `FileTrajectoryWriter::report`, in the
-  `WriteReport` vocabulary of the PDB and mmCIF writers: bonds, implicit
-  hydrogens XYZ readers would not recover (nonzero or unperceived counts),
-  formal charges, isotopes, radicals, atom maps, named atom sites, and stereo.
-  What it writes is unchanged, and frame fields it cannot store still fail.
-  DCD, TRR, and XTC report nothing, since their readers take the topology
-  separately. `WriteOmission` gains `FormalCharges` and `AtomSites`, and
-  `WriteReport` gains `is_empty`, `Default`, and `FromIterator`, which merges
-  repeated kinds as writers do.
-- `XyzWriter::write_structure_set` writes a `StructureSet` as XYZ, one frame per
-  geometry in geometry order (SeekDelta K33), so a host no longer turns geometries
-  into frames and reports the loss itself. The whole set is checked before
-  its first frame. Geometry state follows the PDB and mmCIF rules under the
-  new `XyzWriteOptions::geometry_metadata`: unequal weights, more than one
-  state, state energies, and a temperature fail by default
-  (`TrajectoryIoErrorKind::UnsupportedField`, naming the geometry's frame) and
-  are reported as `WriteOmission::GeometryState` under
-  `UnrepresentablePolicy::Omit`; the file reads back as one state of equally
-  weighted geometries. The new `XyzWriteOptions::cell` lets frames and geometries
-  with a periodic cell be written without it, reported as
-  `WriteOmission::Cell`; cells still fail by default. A geometry's
-  occupancies and B factors are always left out and reported, as the new
-  `WriteOmission::Occupancies` and `WriteOmission::BFactors`; set and state
-  properties fail, and a geometry's own properties follow `frame_properties`.
-  `XyzWriter::report` and `FileTrajectoryWriter::report` cover everything
-  written so far. `TrajectoryField` gains `Weight`, `Energy`, `State`,
-  `Temperature`, and `StateProperties`.
-- Imaging a frame onto a reference structure in `kekule::traj::periodic`:
-  `MoleculeImager::image_onto` moves each whole molecule of a buffered frame
-  by the lattice vector of the frame's cell that brings its center nearest the
-  same molecule in a borrowed reference of the same layout, using the exact
-  nearest-image search for triclinic and partially periodic cells. Frames can
-  be imaged onto references before or after them, in any order, so a window of
-  frames can be brought onto one frame, for example before averaging them for
-  display. `traj::periodic::image_onto` is the in-memory form for every
-  geometry of a set. The frame's cell defines the images, and the reference's
-  cell is not used; a frame without a cell fails with `MissingCell`. Only
-  positions change, and failures leave the buffer or set unchanged.
-  `PeriodicError` gains `ReferenceTopologyMismatch`.
-- Reusable trajectory frame indexes, so a large trajectory is scanned
-  once rather than on every open.
-  - `IndexedFileTrajectoryReader::to_frame_index` exports the verified frame
-    offsets as a `TrajectoryFrameIndex`: the format, the frame count and
-    offsets, and a `TrajectoryFileFingerprint` of the file (its size,
-    modification time where available, and an FNV-1a hash of its size and
-    sampled content). `to_bytes` and `from_bytes` give it a stable, versioned,
-    checksummed little-endian encoding, specified on the type.
-  - `open_indexed_trajectory_from_index` opens the file from an index without
-    scanning it. Opening checks the fingerprint, format, header, and first
-    frame, and fails with the new `TrajectoryIoErrorKind::IndexMismatch` for
-    an index of another or a changed file. Every frame is still verified as it
-    is decoded, and a random read must end where the index places the next
-    frame, so a stale index is an error, never a wrong frame.
-  - `TrajectoryFrameIndex::times` and `steps` give every frame's time, in the
-    canonical time unit, and step, collected while the index is built, so a
-    host need not read the file again for times that are not evenly spaced.
-    TRR and XTC record both, DCD records steps and, under
-    `DcdTimePolicy::HeaderDelta`, times, and XYZ records neither (`None`). A
-    random read through an imported index fails with `IndexMismatch` for a
-    frame that records another time or step, and a DCD index opens only under
-    the time policy it was built with. The encoding is version 2; indexes of
-    version 1, from earlier development builds, which recorded no times, are
-    refused with `InvalidIndex` and must be built again.
-  - An imported index is untrusted input: `from_bytes` checks its frame count
-    against `TrajectoryIoLimits` before allocating and rejects malformed,
-    corrupted, or other-version encodings with the new
-    `TrajectoryIoErrorKind::InvalidIndex`. The new `trajectory_index` fuzz
-    target covers decoding and reading through fuzzed offsets of every format.
-  - `TrajectoryOpenOptions::with_index_cancellation` and
-    `with_index_progress` make `open_indexed_trajectory` poll a
-    `diagnostics::Cancellation` and report a `TrajectoryIndexProgress`
-    (frames and bytes verified of the file's size) before the first frame
-    and after every frame. A cancelled scan fails with the new
-    `TrajectoryIoErrorKind::Cancelled`, whose source is
-    `diagnostics::Cancelled`, and returns no reader. The file is fingerprinted
-    before and after the scan, and a file that changes meanwhile fails with
-    `IndexMismatch`.
-  - `Cancellation::check` returns `Cancelled` once cancellation is requested,
-    for cancellable operations in companion crates.
-  - `TrajectoryFileFingerprint::of_path` and `of_file` fingerprint a file
-    without building an index, `matches_path` and `matches_file` check a file
-    against a fingerprint, and `same_content` compares size and content hash
-    regardless of modification time, so a host can tell whether a moved or
-    copied file is the one it recorded. `to_bytes` and `from_bytes` give the
-    fingerprint a stable, versioned, checksummed encoding that shares the
-    index's field layout but has its own version, and `Display`/`FromStr`
-    write and read it as 112 lowercase hexadecimal digits for project files
-    and cache keys.
-    Decoding either form rejects anything else with `InvalidIndex`, never a
-    panic, and the `trajectory_index` fuzz target covers both decoders.
-- DSSP assignment runs on several threads (SeekDelta K34), so per-frame
-  secondary structure of large systems keeps up with playback.
-  `DsspOptions::with_threads` runs `dssp::assign` on scoped
-  standard-library threads, the default `parallel::ScopedThreads` executor;
-  the default, one thread, spawns none. `dssp::assign_with` runs it on a
-  host's own thread pool through the `parallel::Executor` trait, a
-  parallel-for that reports its `parallelism` and runs indexed work items in
-  any order on any threads, passing a work item's panic to the caller. Both
-  live in the new `kekule::parallel` module, shared by every parallel
-  analysis.
-  Chain ordering with backbone-atom lookup, coordinate reading, backbone
-  geometry with candidate pairs and hydrogen-bond energies, bridge tests,
-  and helix, turn, bend and polyproline classification with publishing
-  split into contiguous ranges whose results are combined in DSSP order,
-  so every executor and thread count returns exactly the single-threaded
-  result, including tied hydrogen bonds, ladder, sheet and strand numbers,
-  reports, and errors (SeekDelta K45). Chain ordering is shared by atom
-  sites rather than by chains, and classification of each range reads a
-  window ten residues beyond it. Tiled 1AKE, release, i5-11400F: 100,000
-  atoms take 8.0 ms on a 6-thread host pool with mimalloc and 11.5 ms on
-  6 scoped threads with the system allocator, against 15 ms and 19 ms on
-  one thread (38 ms before this release); 1,000,000 atoms take 87 ms and
-  123 ms. Starting scoped threads costs a fraction of a millisecond per
-  stage, which a host pool passed to `assign_with` avoids.
-- `dssp::DsspPlan` prepares DSSP assignment once per topology layout, for
-  the geometries of a set, such as the frames of a trajectory (SeekDelta K45).
-  `DsspPlan::new(topology, options)` (or `new_with` on an executor) reads
-  which instances the hierarchy leaves out, the chains and residues in DSSP
-  order, and each residue's backbone atoms; `assign` and `assign_with` then
-  read only backbone coordinates and return what `dssp::assign` returns for
-  the same structure and options, errors included. A structure whose
-  topology does not share the plan's layout fails with the new
-  `DsspError::TopologyMismatch`. On the same tiled 1AKE, a plan assigns
-  100,000 atoms in 6.0 ms on the 6-thread pool (8.3 ms for `dssp::assign`
-  before this change) and 1,000,000 atoms in 69 ms (103 ms).
-- Pairwise fitted RMSD and leader clustering run on several threads, report
-  progress, and can be cancelled (SeekDelta K38).
-  `StructureSet::pairwise_fitted_rmsd_with` and `StructureSet::cluster_by_radius_with`
-  take a `clustering::ClusteringRun` naming a `parallel::Executor`, a
-  `diagnostics::Cancellation`, and a callback of `ClusteringProgress` (pairs
-  fitted or members placed, of the total), called one at a time with
-  nondecreasing counts; by default fits run on the calling thread as before.
-  The matrix splits its pairs, in condensed order, into contiguous ranges.
-  Leader clustering still places members one at a time in visiting order,
-  splitting one member's fits against many representatives into ranges and
-  choosing the nearest in cluster order. Ranges merge in order, so every
-  executor and thread count returns exactly the single-threaded matrix or
-  partition, and a failed fit reports the same first failing pair or member.
-  A cancelled run fails with the new `ClusteringError::Cancelled` and returns
-  no partial result. 1,000 geometries of the first 352 alpha carbons of 1AKE,
-  release, i5-11400F, shared machine: the matrix takes 9.5 s on one thread,
-  2.8 s on four and 2.0 s on eight; leader clustering into 528 clusters
-  within 1 Å takes 6.2 s, 1.8 s and 1.2 s.
-- `SelectEvaluateOptions::with_executor` runs a selection's `within` terms on
-  a `parallel::Executor` (SeekDelta K42): ranges of the evaluated atoms are
-  measured as separate work items, and every executor selects the same atoms
-  as the calling thread alone, the default.
+- `VanDerWaalsRadiusSource::Bondi`, `BondiMantina`, and `Alvarez` select
+  classic van der Waals radius tables; the default stays `FreeAtom`.
+- XYZ interpretation in `kekule::xyz`: `xyz::parse_str`, `parse_reader`, or
+  `XyzDocument::new` from `XyzAtom`s, then `interpret` infers bonds from
+  distances (`XyzInterpretationReport`, `Format::Xyz`).
+- The PDB writer: `pdb::write` and `write_to` write a structure or set, one
+  `MODEL` per geometry, and return a `WriteReport`; what PDB cannot hold fails
+  (`PdbWriteIssue`) unless `PdbWriteOptions` omits it.
+- `MmcifWriteOptions::with_implicit_hydrogens`, like PDB's, omits fixed
+  implicit-hydrogen counts, so XYZ interpretations export.
+- `PdbWriteOptions::with_chain_ids(PdbChainIdPolicy::SegmentId)` writes chain
+  identifiers of up to four characters as segment identifiers.
+- The PDB writer states reports' metal coordination as `LINK` records
+  (`PdbSource::with_reports`, `WriteOmission::Coordination`).
+- `diagnostics::Cancellation` (`from_flag`, `check`) cancels mmCIF and PDB
+  interpretation (`with_cancellation`, `DiagnosticKind::Cancelled`) and
+  perception (`perceive_cancellable`, `PerceptionError::Cancelled`).
+- `MmcifBlockSource::with_block_name` names a data block; duplicate names fail
+  with `MmcifWriteIssue::DuplicateBlockName`.
+- `XyzWriter::report` and `FileTrajectoryWriter::report` list what XYZ leaves
+  out, and `XyzWriteOptions::cell` omits cells; `WriteOmission` gains
+  `FormalCharges` and `AtomSites`, `WriteReport` `is_empty` and `FromIterator`.
+- `MoleculeImager::image_onto` and `traj::periodic::image_onto` image each
+  molecule of a frame nearest a reference structure.
+- `IndexedFileTrajectoryReader::to_frame_index` exports a `TrajectoryFrameIndex`
+  (with `times`, `steps`, `to_bytes`), and `open_indexed_trajectory_from_index`
+  opens a file without scanning it; a stale index fails with `IndexMismatch`.
+- `TrajectoryOpenOptions::with_index_progress` and `with_index_cancellation`
+  report and cancel the scan (`TrajectoryIoErrorKind::Cancelled`).
+- `TrajectoryFileFingerprint` (`of_path`, `matches_path`, `same_content`,
+  `is_prefix_of_path`, `Display`/`FromStr`) identifies a file, and
+  `TrajectoryFrameIndex::prefix_fingerprint` its first frames.
+- Files still being written: `TrajectoryOpenOptions::with_growing`,
+  `IndexedFileTrajectoryReader::refresh`, `TrajectoryIoErrorKind::Incomplete`;
+  indexes open grown files, and `TrajectoryWriter::flush` leaves complete files.
+- `traj::io::append_trajectory` continues a trajectory after a restart, keeping
+  the frames `KeepFrames` selects (`TrajectoryAppendReport`), for XTC, TRR,
+  DCD, and XYZ.
+- Trajectory writers' `frame_metadata` and `frame_properties` policies omit and
+  report state a format cannot carry (`DcdWriter::report`, `TrrWriter::report`,
+  `XtcWriter::report`, `TrajectoryWriteOptions::with_frame_metadata`).
+- `FrameTimingPolicy::Number { interval }` numbers XTC and TRR frames without
+  time or step (`with_frame_timing`); `DcdFrameTimingPolicy::Number` puts DCD
+  frames on the header's step sequence.
+- `create_trajectory_stream_writer` writes into any `Write + Seek` stream, and
+  `TrajectoryStreamWriter::finish` finalizes and returns it.
+- `kekule::parallel` (`Executor`, `ScopedThreads`) runs DSSP in parallel
+  (`DsspOptions::with_threads`, `dssp::assign_with`) with exactly the serial
+  result; `dssp::DsspPlan` prepares DSSP once per topology layout.
+- `clustering::ClusteringRun` runs `pairwise_fitted_rmsd_with` and
+  `cluster_by_radius_with` on an executor with progress (`ClusteringProgress`)
+  and cancellation, with unchanged results.
+- `RmsfAccumulator::merge`, `ContactOccupancyAccumulator::merge`, and
+  `GroupContactOccupancyAccumulator::merge` combine partial accumulators
+  (`StatisticsError::MergeMismatch`); the accumulators are `Clone`.
+- `GroupContactOccupancyAccumulator` gives the contact occupancy of pairs of
+  atom groups, such as a pocket's residues against a ligand.
+- `AtomCorrespondence::from_labels` pairs atoms of two structures by chain,
+  residue, insertion code, and atom name (`LabelScheme`, `LabelCorrespondence`,
+  `AtomCorrespondenceError::AmbiguousLabels`).
+- `EditCorrespondence::atoms`, `bonds`, `residues`, and `chains` return a
+  `DenseCorrespondence` for remapping per-atom columns after an edit.
+- Builder geometry on `StructureEditor` (`structure::placement`):
+  `add_hydrogens`, `remove_hydrogens`, `atom_domains`, `free_directions`,
+  `attach_atom`, `place_atom`, `rename_atom`, and `ideal_bond_length`.
+- `structure::placement::fragments` has 48 ring and group fragments that
+  `StructureEditor::attach_fragment` and `place_fragment` add, naming ring
+  atoms by IUPAC locant (`Fragment::locant`).
+- `kekule-potentials`: `minimize_scoped` and `minimize_scoped_with_observer`
+  take a `MinimizationScope` that fixes atoms and adds `PositionRestraint`s.
+- `kekule-openff`: `Error::atoms` lists the atoms a failure concerns, and
+  `NaglModel::elements` and `supports_element` give a charge model's elements.
+- `kekule::interactions`: `find_interactions_within` and
+  `find_interactions_between` find hydrogen bonds, salt bridges, π stacking,
+  cation–π, halogen bonds, metal coordination, and hydrophobic contacts.
+- `InteractionFeatures` classifies atoms once per layout, `InteractionCriteria`
+  holds every threshold, and `HydrogenBondOccupancyAccumulator` gives
+  hydrogen-bond occupancies.
+- One-letter codes in `kekule::sequence`: `residue_code`, `component_code`,
+  `chain_sequences`, and `ResidueCode` (`CodeOrigin`, `parents`,
+  `is_modified`), for monomers of a polymer.
+- `StructureInterpretationReport::polymer_entities` lists mmCIF polymer
+  entities (`PolymerEntity`); `Component::one_letter_code` and `parent_ids`
+  read the dictionary.
+- Biological assemblies: `StructureInterpretationReport::assemblies` reads
+  mmCIF and PDB assemblies (`macromolecular::Assembly`), and
+  `Assembly::to_structure` builds one.
+- `diagnostics::ErrorChain` writes an error and its sources as one message;
+  `LimitExceeded::describe`, and `Display` for `StructureInterpretIssue`,
+  `BondOrder`, `ValenceIssue`, and other issue and stereo types.
+- Benchmarks of large interpretation, edits, clustering, pooled reads,
+  statistics, and selections over externally supplied entries.
 
 ### Changed
 
-- **Breaking:** A distribution belongs to an `Ensemble`, never to a
-  `StructureSet`. `Ensemble` owns one set and one `Distribution` over it,
-  validated together (`Ensemble::new`, `uniform`, `weighted`, `into_parts`);
-  edits that change which geometries exist (`push`, `push_member`,
-  `push_state`, `remove`, `select`, `select_states`, `collapse`, `subset`)
-  and `state`/`states` move from the set to the ensemble, and
-  `Ensemble<IndexedFile>` has `refresh` and `load`. `StructureSet` loses
-  `distribution`, `distribution_mut`, `set_distribution` and
-  `weighted_samples`; `GeometryView` loses `weight`, `state` and
-  `is_representative`; `SetContext::membership`, `Membership`,
-  `StructureSetRead::distribution`, `Requirement::Distribution` and
-  `Requirement::Weights` are gone. A distribution stores natural logarithms
-  of weights, so weights spanning hundreds of orders of magnitude neither
-  underflow nor are rejected: `with_log_weights`, `log_weights`,
-  `log_weight`, `DistributionMut::set_log_weights`, `set_log_weight` and
-  `normalize_log_weights` replace their weight counterparts, and
-  `StateView::log_population` replaces `population`. Errors follow:
-  `NotSample`, `LogWeightCountMismatch`, `NonFiniteLogWeight` and
-  `LogWeightRequired`, and `UnrepresentablePopulation` refuses Boltzmann
-  populations too small for a finite log weight. RMSF, contact occupancy
-  and clustering on a `StructureSet` observe every geometry with weight
-  one; the same methods on an `Ensemble` observe its samples by
-  probability, and
-  `SampleObservations::weighted` and `weighted_of` read an ensemble.
-- **Breaking:** Interchange formats carry no distribution. SDF no longer
-  reads or writes `kekule.weight`, `kekule.state`, `kekule.representative`,
-  `kekule.energy`, `kekule.temperature` or `kekule.member` (their constants
-  are gone, and such fields are ordinary data); multi-model PDB and mmCIF
-  read as a plain structure set. `GeometryField` and `TrajectoryField` lose
-  `Weight`, `Energy`, `State`, `Temperature`, `StateProperties`,
-  `Representative` and `Membership`, and `TrajectoryField` loses
-  `Distribution`.
-- **Breaking:** Native format version 6. A structure set record stores no
-  distribution; an ensemble record, kind 11 (`NativeKind::Ensemble`), stores
-  the set and its distribution with log weights, read as
-  `NativeObject::Ensemble` or, with external geometries,
-  `NativeObject::EnsembleDescription`, through `into_ensemble` and
-  `into_ensemble_description`. `StructureSetDescription` loses
-  `with_distribution` and `distribution`; the new `EnsembleDescription` pairs
-  it with a distribution. Version 5 files are not read.
-- **Breaking:** One word names each concept of the structure layer
-  (SeekDelta K76). `Topology` is what is bonded to what; a `Geometry` is
-  where the atoms are, plus the per-atom state recorded at that arrangement;
-  a `Structure` is a topology and one geometry of it; a `StructureSet` holds
-  many geometries of one shared topology. `Sample` and `state` now belong to
-  the statistical reading alone. `Model` becomes `Structure`, with
-  `StructureBuilder`, `StructureEditor`, `StructureView`, `AsStructureView`,
-  `StructureAtomView`, `StructureTopologyMut`, `StructureAppend`,
-  `StructureError`, `StructureBuildError` and `StructureEditError`, and
-  `StructureKind::Model` becomes `StructureKind::Standalone`. `Sample`
-  becomes `Geometry`, with `GeometryMut`, `GeometryView`, `GeometryIter`,
-  `GeometryStorage` and `SetContext`; `SampleSet` becomes `StructureSet`,
-  with `StructureSetError`, `StructureSetRead`, `StructureSetReadError` and
-  `StructureSetDescription`. The accessors follow: `as_structure_view`,
-  `to_structure`, `into_structure`, `from_structure`, `from_structures`, and
-  `structure()` where an interpretation or write source returned a model.
-  Messages follow the words: "The geometry properties of the structure have
-  no PDB representation." and "The input holds a structure, not an
-  interpreted structure." `StructureProperties` and `StructureError` become
-  `GeometryProperties` and `GeometryError`;
-  `TrajectoryIoErrorKind::InvalidStructure`, whose source is that error,
-  becomes `InvalidGeometry`; `StructureField` becomes `GeometryField`;
-  `StructureAtomView::structure_property` becomes `geometry_property`; the
-  append and solvation reports' `cleared_model_properties` and
-  `omitted_model_properties` become `cleared_geometry_properties` and
-  `omitted_geometry_properties`; and `PropertyDomain`'s rows of a
-  structure's own state become `GeometryAtoms` and `GeometryBonds`.
-  `kekule::geometry` becomes `kekule::math`, `PeriodicGeometry` becomes
-  `Lattice` with `LatticeError`, whose wrappers `SolvationError::Geometry`
-  and `PeriodicBoxError::Geometry` become `Lattice`, and `AtomGeometry`
-  becomes `AtomDomains`, freeing the word geometry. `Model` keeps its other
-  meanings: perception models, physical and machine-learning models, and the
-  `MODEL` records of PDB and mmCIF. Native format bytes are unchanged.
-- A flat Molfile or SDF drawing gives E/Z only to a double bond that can
-  have it, as a conformation does: not to an aromatic bond or one whose
-  endpoint bears two identical terminal ligands, such as the drawn
-  `C(CH3)2=CH` of 2-methylbut-2-ene or a vinyl `=CH2` drawn with its
-  hydrogens. Such a drawing asserted a configuration that no conformation
-  of the molecule could be written with. Writing an unasserted molecule as a
-  drawing no longer marks such a bond crossed (either), and writing one with
-  a specified E/Z there fails as unsupported, flat or not.
-- **Breaking:** the Molfile and SDF writers return a `WriteReport`, as the
-  PDB and mmCIF writers do (SeekDelta K75). `molfile::write` and
-  `sdf::write` return `(String, WriteReport)`, and `molfile::write_to` and
-  `sdf::write_to` return `WriteReport`; the report names the cells and the
-  geometry state that `UnrepresentablePolicy::Omit` left out, with the number
-  of records. Migration: take `.0` of `write`, or bind `(text, report)`.
-- **Breaking:** SDF writes a distribution over some geometries so it reads
-  back (SeekDelta K75). A geometry outside the distribution writes a record
-  marked `kekule.member` with `false` (`sdf::MEMBER_FIELD`), and
-  `sdf::structure_set` takes only a marked record as outside the distribution.
-  A record without the fields the other records carry stays an error ("The
-  data field "kekule.state" is missing. Other records have it."). An
-  output of records all outside the distribution reads back as a set whose
-  distribution has no members. A marked record that carries another
-  distribution field fails ("... is on a record outside the
-  distribution."), as does a marker other than `false`. A geometry of a set
-  with a distribution reserves the distribution's field names, the marker
-  included. Migration: none for members; files written earlier without
-  markers read as before when every record is a member.
-- **Breaking:** SDF writes `kekule.weight` only when the distribution has
-  weights (SeekDelta K75), so an unweighted distribution reads back
-  unweighted, over every geometry or some. Outputs of unweighted
-  distributions change: they lose the `kekule.weight` field of 1.
-- **Breaking:** every structure writer refuses or reports the state it
-  cannot store (SeekDelta K75). `PdbWriteOptions`, `MmcifWriteOptions`,
-  `MolfileWriteOptions`, and `SdfWriteOptions` gain `properties` with
-  `with_properties`: a structure's per-atom, per-bond, and own properties
-  and its structure set's properties fail by default ("The geometry
-  properties of the structure have no PDB representation.", "The structure set
-  properties have no SDF representation.") and are reported as
-  `WriteOmission::GeometryState` under `UnrepresentablePolicy::Omit`.
-  PDB and mmCIF dropped them silently before. Molfile and SDF also refuse
-  occupancies and B factors ("The occupancies of the structure have no SDF
-  representation."), reported as `WriteOmission::Occupancies` and
-  `WriteOmission::BFactors`, and state properties on the representative's
-  record, all under `geometry_metadata`. `GeometryField` gains
-  `SetProperties`, `Occupancies`, and `BFactors`; `StructureSetRead` gains a
-  provided `properties`, the set's properties, so writers see them through
-  any reader. Migration: a host that wrote such structures on purpose sets
-  `properties`, or `geometry_metadata` for Molfile and SDF sites, to `Omit`.
-- **Breaking:** SDF reading names the reference record in a disagreement
-  (SeekDelta K75): "The data field "kekule.temperature.K" differs from
-  that of record 2." and "The data field "kekule.coordinate.unit"
-  differs from that of record 1." replace "differs from that of the first
-  record.".
-- **Breaking:** `StructureSet<IndexedFile>::snapshot` is removed; the set is
-  `Clone` (SeekDelta K75). Migration: `set.snapshot()?` becomes
-  `set.clone()`, which reads nothing and cannot fail.
-- **Breaking:** atom field texts agree with their subjects (SeekDelta K75).
-  mmCIF reads "The radical electrons of atom 0 of instance 0 have no mmCIF
-  representation." and "The implicit hydrogens of atom 0 of instance 0
-  have no mmCIF representation.", and PDB "The radical electrons of atom 0
-  of instance 0 have no PDB representation."; singular fields keep "has".
-- **Breaking:** one container for many structures (SeekDelta K74).
-  `StructureSet` replaces `Ensemble` and `Trajectory`, which are removed with
-  everything that existed only for them (see Removed).
-  Renames: `StructureEnsembleInterpretOptions` is
-  `StructureSetInterpretOptions`, `MmcifWriteIssue`'s
-  `IncompatibleEnsembleMember` and `UnrepresentableEnsembleMember` are
-  `IncompatibleGeometry` and `UnrepresentableGeometry`, `MmcifMemberField` is
-  `MmcifGeometryField` (without `Weight` and `Energy`), and
-  `MmcifCellReason::MemberCellsDiffer` is `GeometryCellsDiffer`.
-- **Breaking:** trajectory writers take a `FrameView`, a borrowed `Geometry`
-  with its time and step (SeekDelta K74). `FrameView::new(topology, geometry,
-  time, step)` lends a geometry held apart from a set and
-  `FrameView::from_geometry` one of a time-ordered set, neither copying
-  arrays; `to_structure` copies a frame out as a structure. A `FrameBuffer` holds a
-  `Geometry`: `FrameBuffer::from_geometry` binds one, `geometry_mut` edits it,
-  and `set_time` and `set_step` set the frame's place. `into_geometry`
-  returns the geometry with its `Place` without copying, so a host keeps
-  decoded frames, in a frame cache for example. Its `Deref` target is
-  `Geometry`.
-  `MemoryTrajectoryWriter` collects frames into a time-ordered `StructureSet`
-  (`into_structure_set`), sharing each frame's structure without a copy.
-- `FrameBuffer::replace_from_data` and `reset_dynamic_state` clear
-  occupancies and B-factors, and `copy_from` takes the source frame's
-  (`FrameData::from_frame_view` carries them), so a buffer never keeps a
-  previous frame's (SeekDelta K74).
-- **Breaking:** the XYZ, DCD, TRR, and XTC writers refuse a frame's
-  occupancies and B-factors, which no trajectory format stores, under their
-  `frame_metadata` policy (SeekDelta K74). By default such a frame fails to
-  write ("DCD cannot store the occupancies."); `UnrepresentablePolicy::Omit`
-  writes the frame without them and reports `WriteOmission::Occupancies`
-  and `WriteOmission::BFactors`. `TrajectoryWriteOptions::with_frame_metadata`
-  sets TRR's policy too. `write_structure_set` and `write_structure_set_to`
-  return the codec's report as it is and add no occupancies or B-factors
-  themselves, so under the default policy a set with occupancies fails to
-  save. `XyzWriter::write_structure_set` still leaves a geometry's occupancies
-  and B-factors out and reports them under every policy.
-- **Breaking:** `MemoryTrajectoryWriter` and `read_structure_set` refuse a
-  frame whose time or step columns differ from the first frame's
-  (SeekDelta K74). The error names the frame (`TrajectoryIoError::frame`)
-  and reads "Cannot write frame 1 of the trajectory. The frame has a time
-  or step the first frame lacks, or lacks one it has." (`read_structure_set`:
-  "Cannot read frame 1 of the XYZ trajectory …").
-- **Breaking:** `StructureSet::from_reader(reader, indices)` loads the chosen
-  geometries of any `StructureSetRead`, in the order given, as a faithful copy: each
-  geometry whole (velocities, forces, occupancies, B-factors), the reader's
-  order values and its distribution for the picked geometries (SeekDelta
-  K74). It keeps no set properties. Indices may repeat and come in any
-  order; a repeated index is read once and its geometry shared; every index
-  is checked against the reader's length before anything is read. Geometries
-  picked out of ascending order keep their times, so
-  `validate_monotonic_time` refuses the set when a time decreases. Removed
-  shows how it builds an ensemble of trajectory frames. A host that
-  needs progress or cancellation reads geometry by geometry through
-  `StructureSetRead`. Reading through `Processed` loads processed geometries.
-- **Breaking:** the Molfile, SDF, PDB, and mmCIF writers hold a geometry to
-  one policy, `geometry_metadata`, whether it belongs to a set or is a
-  trajectory frame (SeekDelta K74). XYZ keeps `frame_metadata` for the
-  frames it streams and `geometry_metadata` for the geometry state of a set.
-- **Breaking:** writer failure texts name geometries (SeekDelta K74). A geometry
-  state a format cannot carry reads "The {field} of geometry {n} has no
-  {format} representation." ("of the geometry" for one geometry). Plural
-  fields take "have": "The velocities of geometry 1 have no PDB
-  representation." (velocities, forces, state properties, and per-atom,
-  per-bond, and geometry properties). The temperature reads "The ensemble
-  temperature has no {format} representation.", and the order "The geometry
-  order has no {format} representation." mmCIF's "Geometry {n} has a
-  different {field} from the first geometry." and PDB's and mmCIF's "The
-  geometries have different cells." replace the ensemble wordings, SDF
-  reserves a field "of the geometry", and interpretation fails with "The
-  records do not form a structure set.", "Cannot assemble the structure set.", or
-  "Cannot add the frame to the structure set." In SDF, an invalid
-  `kekule.weight` names only its record ("Cannot interpret the SDF input in
-  record 2. The data field "kekule.weight" holds an invalid weight.", with
-  no source error), and a missing state field reads "… is missing. Other
-  records have it." The XYZ writer says "XYZ cannot store the {field}." for
-  a weight, state, state energy, temperature, state properties, order
-  step, or order coordinate. `StructureError::NonFiniteEnergy` reads "The
-  state energy is not finite."
-- **Breaking:** `interpret_conformations` of mmCIF and PDB gives a geometry
-  set of one state without weights; `sdf::structure_set` of records without
-  any distribution field gives a set without a distribution
-  (SeekDelta K74).
-- `StatisticsError`, `AlignmentError`, and `ClusteringError` gain variants
-  for geometries that cannot be read and for cancellation (`Read`,
-  `Cancelled`, `ObservationsOutOfRange`) (SeekDelta K73).
-- `IndexedFileTrajectoryReader::refresh` of a file whose indexed bytes
-  changed says to open the file again (SeekDelta K73).
-- Clustering error texts name geometries and members (SeekDelta K72b):
-  `ClusteringError::PairFit` reads "Cannot fit geometries 0 and 4." and
-  `ClusteringError::MatrixMismatch` "The distance matrix covers 2 members,
-  but there are 3 to cluster."
-- **Breaking:** `StructureKind` has two variants (SeekDelta K72):
-  `StructureKind::Standalone`, and `StructureKind::InSet` with a
-  `SetContext`. The context reports the geometry's place in its order
-  (`Place`), its membership in a distribution (`Membership`: weight, state,
-  whether it represents the state, `state_energy`, and the temperature),
-  and its velocities and forces. Geometry views and frame buffers report
-  their state through it, so match `StructureKind::InSet(context)` where
-  code matched `StructureKind::Member { .. }` or `Frame { .. }`. Every
-  writer writes byte for byte as before.
-- **Breaking:** the `kekule-traj` crate is now the `kekule::traj` module
-  (SeekDelta K71), and the crate is gone. Items keep their names under the
-  new path, except those K74 replaces (see Removed):
-  `kekule_traj::io::open_indexed_trajectory` is
-  `kekule::traj::io::open_indexed_trajectory`, and `kekule_traj::FrameBuffer`
-  is `kekule::traj::FrameBuffer`. The `io` (with `xyz`, `dcd`, `trr` and
-  `xtc`), `periodic` and `analysis` modules and the root items move
-  together. Replace the `kekule-traj` dependency with `kekule`.
-- The mmCIF writer leaves out a coordination record whose partner no
-  longer has the atom names, type symbol, or component the report recorded,
-  as the PDB writer does, and counts it as `WriteOmission::Coordination`.
-  It left out only records whose partner was missing.
-- **Breaking:** hydrophobic contacts are reduced as PLIP reduces them
-  (SeekDelta K63). Before, every pair of hydrophobic atoms within the cutoff
-  was a contact. Now contacts between two rings that π-stack are dropped,
-  since the stacking covers them, whether or not the search reports π
-  stacking (SeekDelta K63b). Then each atom of the first set keeps only
-  its closest contact with each residue, and each atom of the second set its
-  closest remaining contact with each residue, whichever end it is. An atom outside any residue
-  counts its molecule as its residue. Both `find_interactions_within` and
-  `find_interactions_between` reduce. KRas G12C's inhibitor (PDB 9UOH) has 10
-  hydrophobic contacts instead of 20.
-- **Breaking:** appending a structure shares identical definitions (SeekDelta
-  K23b). `StructureEditor::append_structure` gives an appended molecule the
-  definition the draft already holds for an identical one, from the draft's
-  source or an earlier append, by the identity interpretation uses (K23):
-  equal graph in local atom order, properties, and per-atom component and
-  atom names, and also equal perception and class. A 9UOH structure with two
-  copies of itself appended has 6 definitions instead of 18, and each
-  definition three times the instances. Editing one instance still copies
-  its definition and leaves the others unchanged. Consumers that counted
-  definitions per appended structure count instances instead.
-- **Breaking:** only monomers of a polymer have one-letter codes (SeekDelta
-  K21b). `residue_code` and `chain_sequences` give a code to a residue whose
-  component links into a polymer, or an amino-acid or nucleotide residue,
-  only when its molecule holds another such residue, the file numbers it in
-  a polymer sequence (`label_seq_id`), or its atoms have no bonds, as in a
-  Cα trace. A free nucleotide or amino acid bound as a ligand, such as the
-  `GDP` of KRas, has no code, so it no longer adds a one-letter sequence to
-  its chain. `component_code` is unchanged.
-- mmCIF and PDB interpretation of large entries is faster, with unchanged
-  results (SeekDelta K24). Rows pass through interpretation by index
-  instead of being copied at each stage, connection partners are found
-  through residue and atom-name indices instead of a scan of every row,
-  residues and chains are looked up once per run of their rows, molecules
-  split into components in one pass, and close contacts come from a sorted
-  cell grid. PDB 6SPB (90,351 atoms) interprets in 0.6 s instead of
-  1.7 s, and 7K00 (149,338 atoms) in 1.1 s instead of 3.2 s
-  (medians, release, one thread).
-- **Breaking:** mmCIF and PDB interpretation errors are sentences too
-  (SeekDelta K62), as the rest of Kekule's messages: atom-site, residue,
-  coordinate-model, alternate-location, connection and template failures
-  name their records, atoms and values, such as `The _cell.length_b value
-  "abc" is not a number.` or `Residue 7 of chain "A" in model "1" has
-  alternate locations.` `ConnectionResolutionReason` displays as a
-  sentence, and the new `Display` for `SourceResidueId` writes `residue 12
-  insertion code "A" of chain "B" in model "1"`. A cancelled interpretation
-  has an empty message and keeps `Cancelled` as its source.
-- **Breaking:** error messages are sentences (SeekDelta K62). The `Display`
-  text of every public error and issue in `kekule`, `kekule-openff` and
-  `kekule-potentials` is one or two short sentences with
-  a capital letter and a full stop: what failed and why, naming the atoms,
-  bonds, residues, records, lines, files and values with units, then the
-  one action if there is an obvious one. Texts name no Rust API; the
-  variants' documentation does. Applications that match message text must
-  update.
-  - `FormatError` writes the stage, format and place as its first sentence,
-    `Cannot parse the PDB input at line 12.`, then its message.
-    `FormatError::message` holds only the sentences after it, and is empty
-    when the source says it all.
-  - Limits name their operation, limit, observed value and bound:
-    `Ring perception exceeded its work limit: 69,400,898 steps of
-    69,248,000.` A bare `LimitExceeded` writes `Exceeded the work limit: …`.
-    The trajectory codecs' limit failures carry these values too.
-  - `Cancelled` writes `The operation was cancelled.`, and the cancelled
-    variants of ring, resonance and default perception and of clustering
-    write `… stopped.` and return `Cancelled` from `source()`.
-  - `InstanceAtomId` and `InstanceBondId` display as `atom 5 of instance 2`,
-    and `HierarchyIdKind::AtomSite` as `atom site`.
-  - `StereoValidationError` and `CipAssignmentError` display their first
-    issue; the list holds them all. `ValenceError` adds the number of atoms
-    with an invalid valence state.
-  - A `kekule-openff` error writes the file or molecule definition that
-    failed as its first sentence, `Cannot parameterize molecule definition
-    2.`, then the detail, naming every atom it concerns; `Error::detail` is
-    empty when the path and the source say it all.
-- **Breaking:** wrapper errors keep their causes (SeekDelta K62). Causes
-  that were written into a message are now typed sources: in CXSMILES and
-  V3000 stereo groups, Molfile writing, XYZ interpretation,
-  `ClusteringError::PairFit`, the selection language's SMARTS term,
-  `kekule-openff`'s unit conversions and the trajectory codecs and cell
-  checks. `TopologyPerceptionError` no longer repeats its source. Variants
-  that add nothing to their cause are transparent: they display the cause
-  and return the cause's own source. These are `DraftError`, whose cause
-  stays available through `DraftError::error`, `StructureError::Geometry`,
-  `StructureBuildError::Structure`, `GeometryError::{Array, Property, Cell, Unit}`,
-  `StructureEditError::{Topology, Position, Property, Geometry, Structure}`,
-  `PlacementError::Edit`, `TopologyEditError::Property`,
-  `TopologyBuildError::Property`, `TopologySubsetError::Selection`,
-  `MeasurementError::{Selection, Unit}`, `BondDihedralError::Measurement`,
-  `GeometryEditError::Unit`, `StructureSetError::Unit`,
-  `PeriodicBoxError::{Cell, Geometry}`, `SolvationError::{Unit, Geometry,
-  Position}`, `StagedCoordinateError::{Unit, Position}`,
-  `InteractionError::Selection`, `TaggedMatchError::Match`,
-  `AlignmentError::Correspondence` and `CipRankingError::InvalidStereo`.
-  `NormalizationError` returns the `MoleculeError` of a stereo element it
-  could not create. `PlacementError::LimitExceeded` no
-  longer returns its limit as a source.
-- **Breaking:** default perception installs resonance delocalization
-  (SeekDelta K19): whether resonance delocalizes each bond, and the bond's
-  connected group. `ResonanceModel::ChargeMoves` moves each formal charge of
-  ±1 along simple paths of alternately raised and lowered bond orders to an
-  atom that can carry the same kind of charge, and marks every bond of such
-  a path: carboxylates, guanidinium and amidinium, nitro groups, the terminal
-  P–O and S–O bonds of phosphates and sulfonates, enolates. Amides and other
-  neutral push-pull systems stay localized, aromatic bonds are left to
-  aromaticity, and ylidic P⁺–O⁻ drawings delocalize as P=O does. Only
-  charged atoms start a search, so the cost on a protein is about a
-  millisecond. `perceive_resonance(mol, model)` installs it standalone and
-  requires aromaticity, not conjugation, with the new
-  `ResonancePerceptionError`; `PerceptionError::Resonance` reports it from
-  default perception. `ResonancePerception` records its model and answers
-  `bond_is_delocalized`, `bonds`, `bond_group` and `atom_group`. The section
-  no longer holds RDKit's connected conjugated groups:
-  `enumerate_resonance` prepares those itself and returns them from
-  `ResonanceStructures::groups`. `PerceptionBuilder::with_resonance_groups`
-  became `with_resonance(model, groups)`, installation checks groups against
-  aromaticity rather than as a partition of conjugation, and
-  `DelocalizationIssue` changed accordingly. Replacing conjugation no longer
-  clears resonance.
-- **Breaking:** mmCIF, PDB, and XYZ interpretation gives identical molecules
-  one definition (SeekDelta K23), so instances map atom for atom and default
-  perception runs once per distinct molecule. Molecules are identical when,
-  in local atom order, their atoms, bonds, represented stereo, properties,
-  and per-atom labels (component and atom name; none for XYZ) are equal.
-  Each instance keeps its own hierarchy, and an edit of one instance leaves
-  the others unchanged. PDB 9UOH's 98 molecules now have 6 definitions
-  (93 waters share one) and 7K00's 7,640 molecules 69. Consumers that
-  counted definitions as molecules count instances instead.
-- **Breaking:** metal coordination between residues no longer joins
-  molecules (SeekDelta K22). Covalent connectedness alone decides molecule
-  boundaries, so in a metalloprotein the protein, a metal ion, and a
-  nucleotide it holds are separate molecules with their own formulas and
-  classes: in PDB 9UOH, KRas, GDP, and Mg²⁺ were one molecule and are now
-  three. mmCIF `metalc` links, and PDB `LINK` and `CONECT` records between a
-  metal and a non-metal, are recorded instead as the new
-  `CoordinationProvenance` (partners, connection ID and type, source line)
-  in `StructureInterpretationReport::coordination`, and consumers perceive
-  coordination geometrically through `kekule::interactions`. Coordination
-  within one residue, such as heme's or an iron-sulfur cluster's, stays a
-  dative bond, and XYZ, Molfile, SDF, and SMILES keep their dative bonds.
-  The mmCIF writer states the report's coordination as `metalc` rows when it
-  is given the report (writing an interpretation does), so mmCIF reads,
-  writes, and reads back with the same records; a structure written alone, such
-  as an edited one, has none. A record that names an atom the structure lacks
-  is left out and counted as the new `WriteOmission::Coordination`. A
-  structure's own dative bond between residues, as an editor can add, is still
-  written as `metalc` or PDB `CONECT` but reads back as coordination, and
-  both writers count it as the new `WriteOmission::CoordinationBonds`.
-- **Breaking:** default aromaticity perception (`AromaticityModel::RdkitLike`)
-  marks fused aromatic systems whole (SeekDelta K20). A fusion bond is
-  aromatic when the rings it joins are aromatic together, as azulene's,
-  lumiflavin's isoalloxazine's, and cyclopenta[c]pyran's are, so every bond
-  of an aromatic ring is aromatic. Before, as in RDKit, a fused subset marked
-  only its perimeter, and a fusion bond was aromatic only when one of its
-  rings was aromatic alone. Aromatic atoms are as before, except an atom
-  inside three or more rings of such a system, which is now aromatic with
-  it. SMILES written from such molecules no longer mark the fusion bond as
-  an explicit single (`-`), and SMARTS aromatic bonds (`:`) match it.
-  `AromaticityModel::Mdl` still marks perimeters only, as RDKit's MDL model
-  does, so OpenFF typing is unchanged.
-- **Breaking:** listed hydrogen bonds no longer flood the interpretation
-  report (SeekDelta K26). mmCIF `_struct_conn` records of a non-covalent
-  type, such as `hydrog` and `saltbr`, still never become bonds, and the
-  report now names each such type once with its record count:
-  `StructureInterpretIssue::ConnectionIgnored { connection_type }`, one per
-  record, became `ConnectionsIgnored { connection_type, count }`, so an
-  entry that lists 2,895 hydrogen bonds reports one issue.
-- **Breaking:** a solvated system writes to PDB and mmCIF and reads back as
-  written (SeekDelta K61). Solvation's waters and ions leave their
-  implicit-hydrogen counts, still zero, to valence inference, with
-  perception installed, as PDB and mmCIF readers give them, rather than
-  fixing them, which those writers refuse unless told to omit them. An ion's
-  residue and atom are named by its Chemical Component Dictionary entry
-  (`NA`, `CL`, `K`, `LI`, `RB`, `CS`, `F`, `BR`, and `IOD` with atom `I`),
-  which the readers check, rather than by its element symbol (`Na`, and
-  residue `I` for iodide).
-- **Breaking:** trajectory frame indexes and fingerprints follow files that
-  grow by appending (SeekDelta K13). A `TrajectoryFrameIndex` is bound to
-  the fingerprint of the bytes it covers, the file up to the end of its last
-  frame, and `open_indexed_trajectory_from_index` opens a file that begins
-  with those bytes, comparing content and no longer the modification time,
-  and verifies and indexes the frames appended after them, with the index
-  progress and cancellation of the options; before, any change of size,
-  content, or modification time was `IndexMismatch`. Building an index
-  keeps frames appended during the scan rather than failing, and still
-  fails when bytes present at opening change. A DCD index of fewer frames
-  than the header's `NSET` opens when the frames after it make up the count.
-  A `TrajectoryFileFingerprint` hashes the frame-count fields `NSET` and
-  `NSTEP` of a DCD header as zeros, since DCD writers rewrite them as they
-  append, so fingerprints of DCD files recorded by earlier versions no
-  longer match. Sequential reads through an indexed reader end after its
-  last indexed frame. `TrajectoryWriter` gains `flush`, which replaces the
-  codec writers' own `flush` methods that returned `std::io::Result`; the
-  DCD writer's also writes the header's frame count.
-- **Breaking:** the selection language's `polar_hydrogen` term selects
-  hydrogens bonded to N, O, or S (SeekDelta K59), so a thiol hydrogen such
-  as cysteine's HG is now selected. Before, it took only hydrogens bonded to
-  N or O; selections using the term now also return S–H hydrogens.
-- **Breaking:** an edit of a large system costs what it changes (SeekDelta
-  K56b). A topology or structure draft started from a snapshot stores nothing
-  per source atom, bond, or hierarchy node: it reads the source until an
-  edit changes, moves, or deletes one, and a structure draft shares the source's
-  positions, occupancies, and B factors until it writes them (`Positions`
-  and the per-atom scalar columns are copied on write, so cloning a structure
-  copies no coordinates). The source snapshot is never written, so earlier
-  snapshots, as an undo history keeps them, stay intact. Publication carries
-  untouched occurrences, residues, and atom sites over by index, builds the
-  dense orders and the hierarchy in a few passes over plain arrays,
-  classifies only the residues and definitions the edit cleared, and fills
-  the dense correspondence in the same passes; hierarchies store residue
-  labels and site metadata in row tables shared between snapshots. The
-  per-instance lists behind `InstanceView::chains`, `residues`, and
-  `atom_sites` are built on first use. Results are unchanged. Definitions
-  appended from a perceived structure (`StructureEditor::append_structure`) keep the
-  record that their perception is the default profile's, as definitions
-  shared from the source do, so a structure merged from perceived copies and
-  never perceived again perceives only what an edit changed, not every
-  definition (63–83 ms before on the structure below, 0.5 ms now). One edit of a
-  ligand in a 100,716-atom structure (66 perceived copies of PDB 9UOH appended,
-  6,336 definitions), whole cycle of starting the editor, editing, publishing with
-  correspondence, and perceiving: deleting an atom takes 6.8 ms instead of
-  64 ms, attaching one 6.9 ms instead of 58 ms, and changing an atom's
-  element or formal charge 3.4 ms instead of 57 ms; starting the editor takes
-  0.05 ms instead of 23–28 ms (fastest of 15 rounds, three alternations of
-  builds, on a busy x86-64 Windows desktop; with a caching allocator the
-  cycle takes 3.5–4.8 ms, as about half the rest is the system allocator
-  mapping fresh pages for the published arrays). The breaking change:
-  `TopologyEditor::chain`, `residue`, and `atom_site` and the `chains`,
-  `residues`, and `atom_sites` iterators return `EditChain`, `EditResidue`,
-  and `EditAtomSite` by value, since a draft no longer stores the source
-  nodes it has not changed.
-- A structural edit of a large system costs about what it changes (SeekDelta
-  K56). Publishing a topology or structure draft shares every definition the
-  edit left untouched with the source snapshot, with its perception, even
-  while the source is still shared, as by an undo history; before, it cloned
-  them. Perceiving the result (`Topology::perceived` and structure and structure
-  set perception) perceives only the definitions whose perception the
-  edit cleared and shares the others, with the same result as perceiving
-  every definition. Editors index source atoms, bonds, and hierarchy nodes in
-  vectors rather than ordered maps, snapshots share atom-site and residue
-  labels, and publication reclassifies only the definitions whose evidence
-  changed. Deleting one atom of a ligand in a 100,716-atom structure (66 merged
-  copies of PDB 9UOH, 6,336 definitions) now publishes in about 35–55 ms
-  instead of 180–235 ms and perceives in under 1 ms instead of 90–125 ms;
-  starting the editor takes 20–40 ms instead of 100–140 ms (fastest of 15
-  rounds, alternating builds, on a busy x86-64 Windows desktop).
-- **Breaking:** `TrrWriteOptions` is no longer `Eq`, since it holds a
-  `FrameTimingPolicy` with an `f64` interval; it remains `PartialEq`.
-- The DCD writer's refusal of a frame time under `DcdTimePolicy::Absent`
-  names the source and the frame, as its other frame-state refusals do, and
-  the XTC and TRR refusals of a frame without a time or step name
-  `FrameTimingPolicy::Number`.
-- The DCD writer's refusals of a frame step off the sequence and of a
-  missing frame time under `DcdTimePolicy::HeaderDelta` name
-  `DcdFrameTimingPolicy::Number`.
-- **Breaking:** The mmCIF writer writes chains that share a label, as
-  `StructureEditor::append_structure` makes from copies of one structure, instead of
-  failing with `duplicate mmCIF structural-instance ID` (SeekDelta K50). So a
-  structure merged from copies, such as 66 copies of a protein or a crystal's
-  symmetry mates, is exported as mmCIF. Every hierarchy chain remains a
-  structural instance of its own: the first chain with a label keeps it as
-  `label_asym_id`, each later one is written as the label with a copy serial
-  (`A-2`, `A-3`, skipping IDs another chain or asym uses), and
-  `auth_asym_id` keeps the author chain name, so the reader gives back the
-  same chains, atoms, bonds, and author names, with the written IDs as their
-  labels. `_struct_conn` rows name each copy's own asyms. The hierarchy and
-  `append_structure` keep labels as they are. `MmcifWriteIssue::DuplicateAsymId`,
-  which the writer no longer returns, is removed.
-- `within` over many small structures is fast again (SeekDelta K49), with
-  unchanged results. Since K42 each structure gathered the near lists of the
-  cells it visited again, from the shared reference points and from its own
-  reference atoms alike, and the shared grid sorted every repeated point.
-  The grid of shared `ReferencePoints` now drops repeated points before
-  sorting the rest and keeps the lists it gathers for every structure
-  measured against it, up to 2²⁰ points, read by each measurement without
-  holding its lock. A grid measured once, by at most four candidates per
-  distinct point, gathers no lists: each candidate tries the point that last
-  matched, then searches the cells around its own and stops at the first
-  point within the cutoff, and a cell gathers its list only when a search
-  finds none or it is searched often. On 66 copies of KRas G12C (9UOH) in
-  one place, each its own structure (100,716 atoms, release, i5-11400F,
-  rounds alternating with `main`), `within 5 of #2` takes 2.7–3.0 ms instead
-  of 19–20 ms (11–12 ms before K42), and `within 5 of protein` 14–15 ms
-  instead of 33–40 ms (17 ms before K42). The million-atom figures of K42
-  are unchanged.
-- Selection terms over a million atoms run within a frame (SeekDelta K42),
-  with unchanged results. `name` and `label_name` decide each distinct atom
-  name once, against a table of the sites' names that the topology numbers on
-  first use and shares with every snapshot of its layout; residue, chain, and
-  backbone terms set dense atoms through the hierarchy index instead of
-  looking up each site's atom; a host term selecting every atom becomes a
-  full set without reading its indices. `within` grids each distinct
-  reference point once, so copies stacked in one place cost what one copy
-  does; maps every cell of a box up to many times larger than before at under
-  two bits a cell, where it used to fall back to hashing; and measures the
-  candidates of one cell against one list of the points that can reach it.
-  On 1,000,452 atoms of tiled 1AKE (release, i5-11400F, shared machine):
-  `name CA` takes 0.8 ms instead of 67 ms, `chain A` 5 ms instead of 28 ms,
-  a host term naming every atom 1.6 ms instead of 6.6 ms, and
-  `within 5 of resname GLY` (42,606 reference atoms) 65 ms instead of
-  487 ms, 36 ms on 12 threads; with the copies stacked in one place it takes
-  23 ms instead of 4.2 s, 13.5 ms on 12 threads.
-- **Breaking:** The mmCIF writer states as `_struct_conn` rows only the bonds
-  its reader cannot derive, as the PDB's own files do (SeekDelta K41). Bonds
-  of residues that their bundled component template (or the protonation
-  variant their hydrogens select) rebuilds exactly, and peptide and
-  phosphodiester links within bonding distance, are left out; links between
-  residues, metal coordination, and every bond of a residue without such a
-  template, such as a ligand or an XYZ structure, are still rows. A
-  100,000-atom export of 66 KRas copies states 3,432 rows instead of one per
-  bond and round-trips in about 4 s in release. Every bond reads back with its
-  order; bonds may come back in another order within a molecule. Rows now
-  also select partners by `ptnr*_auth_seq_id` and
-  `pdbx_ptnr*_PDB_ins_code`, so metal coordination to waters of one asym,
-  which failed with `AmbiguousConnectionSelector`, is written, and the
-  writer checks selectors in linear rather than quadratic time.
-- mmCIF and PDB interpretation resolve connection records through an index
-  of atom sites by asym and atom name instead of scanning every site per
-  record: reading 32,000 `_struct_conn` rows over 40,000 atoms takes 1.6 s
-  instead of 69 s in release.
-- Hierarchy walks cost what they return (SeekDelta K44). Publication indexes
-  the hierarchy once, and every snapshot of the layout shares the index:
-  each site's dense atom and residue, each dense atom's site, each residue's
-  sites, and each molecule instance's sites, residues, and chains.
-  `InstanceView::residues`, `chains`, and `atom_sites` no longer build sets
-  on every call, and `ResidueView::atom_sites`, `AtomSiteView::atom` and
-  `residue`, and `AtomView::atom_site`, `residue`, and `chain` no longer read
-  the larger hierarchy nodes or search the atom lookup. Results are
-  unchanged. On 973,824 atoms (256 copies of 1AKE), the residues of every
-  molecule take 0.3 ms instead of 94 ms, their atom sites 0.3 ms instead of
-  78 ms, their chains 0.2 ms instead of 99 ms, the atoms of every residue's
-  sites 8 ms instead of 18 ms, and the residue of every atom 6 ms instead of
-  57 ms. Building the index adds about 45 ms to publishing those atoms.
-- DSSP assignment is faster on one thread with unchanged results: candidate
-  pairs come from a dense cell grid that keeps its `CA` coordinates in cell
-  order, each residue's hydrogen bonds are installed from its own pairs,
-  ladders extend from the bridges of the previous residue, bulge merging
-  examines only ladders starting within five residues, and sheets and
-  strands are numbered in linear time. Ladder and sheet assembly no longer
-  grows quadratically with the number of ladders: 1,000,000 atoms take
-  0.22 s instead of 1.4 s.
-- **Breaking:** RMSF and contact occupancy are weighted statistics in the new
-  `kekule::statistics` module (SeekDelta K28), so structure sets are reduced
-  with their weights and trajectory reductions become the equal-weight case.
-  - `RmsfAccumulator::observe` and `ContactOccupancyAccumulator::observe`
-    take any `AsStructureView` structure and an explicit, finite, positive
-    weight. Weighted RMSF is `√(Σ wₖ |xₖ − μ|² / Σ wₖ)` about the weighted
-    mean, the population RMSF for equal weights; contact occupancy is the
-    fraction of the total weight in contact.
-  - `kekule_traj::analysis::rmsf` and `contact_occupancy` are
-    `StructureSet::rmsf` and `StructureSet::contact_occupancy`, which observe each
-    member of the distribution with its probability, or every geometry with
-    weight one without a distribution; reweighted frames go through the
-    accumulators.
-  - Streamed frames are observed through `buffer.as_structure_view()`; the
-    sealed `kekule_traj::analysis::AsFrameView` is removed.
-  - `ReductionError` becomes `StatisticsError`: `NoFrames` becomes
-    `NoObservations`, `frame` fields become `index`, the new `InvalidWeight`
-    and `WeightOverflow` report weights, and `FrameCountOverflow` is removed.
-    Results report `observation_count` and `total_weight` in place of
-    `frame_count`, and `ContactOccupancyResult::contact_weights` replaces
-    `hit_counts`; with weights of one it holds the frame counts.
-- **Breaking:** geometries grouped into states (SeekDelta K27). An ensemble
-  member was a geometry in one ensemble and a state in another, so its
-  weight and energy meant different things. A `Distribution` groups
-  geometries into states: a geometry has a weight and no energy, and a `State`
-  holds an optional energy, on one scale per distribution, and owner
-  properties. Boltzmann weighting counts the Boltzmann factor once for
-  simulation geometries, and collapsing keeps each state's population.
-  - `clustering::EnsemblePartition` is `structure::Partition`, and
-    `PartitionError` moves with it, with state vocabulary (`geometry_count`,
-    `state_count`, `geometries`, `StateOutOfRange`,
-    `RepresentativeNotInState`) and the constructors `one_state` and
-    `state_per_sample`. Every geometry is in exactly one state, and every
-    state contains its representative. Regrouping, weighting, and state
-    edits never reorder geometries.
-  - `assign_boltzmann_weights` is
-    `DistributionMut::assign_boltzmann_populations`: it sets state
-    populations in proportion to exp(-ΔE/RT), scaling each state's geometries
-    together and keeping the total weight, so a one-state distribution is
-    unchanged; it refuses a state without an energy and records the
-    temperature. `ranked_by_energy` and `within_energy_window` rank states;
-    `covering_weight` is `covering_population`, and `ranked_by_population`
-    and `state_probabilities` are new. `probabilities`,
-    `effective_sample_size`, and `ranked_by_weight` stay over geometries.
-  - `DistributionMut::regroup` applies a partition, such as a clustering
-    result, without changing any weight. A new state that contains every
-    geometry of an old state keeps the energy and properties of its
-    representative's old state; a state split apart loses them.
-    `StructureSet::collapse` takes no partition and makes a new set of each
-    state's representative carrying its population;
-    `ClusteringError::PartitionMismatch` is
-    `StructureSetError::PartitionMismatch`. `ClusterOrder::Energy` orders
-    geometries by their state's energy.
-  - `GeometryField` gains `State` and `Temperature`.
-  - SDF writes each geometry's weight and state (`sdf::STATE_FIELD`), marks
-    representatives (`sdf::REPRESENTATIVE_FIELD`), writes a state's energy on
-    its representative's record, and writes the temperature
-    (`sdf::TEMPERATURE_FIELD`), so distributions of one state, of one state
-    per geometry, and of clustered states round-trip.
-  - PDB and mmCIF structure sets, which read back as one state of equal
-    weights without an energy, also fail on several states or a temperature
-    unless `geometry_metadata` omits them.
-- **Breaking:** `pdb::write` and `mmcif::write` return the text together with
-  a `diagnostics::WriteReport`, and `pdb::write_to` and `mmcif::write_to`
-  return the report. The report lists every omission an
-  `UnrepresentablePolicy::Omit` made as a typed `WriteOmission` with the
-  number of atoms, bonds, residues, molecules, or structures affected:
-  implicit-hydrogen counts, isotopes, radicals, atom maps, stereo, unstatable
-  bonds, dictionary bond conflicts, cells, and geometry or frame state.
-- `PdbWriteOptions::with_implicit_hydrogens` and
-  `MmcifWriteOptions::with_implicit_hydrogens` omit fixed implicit-hydrogen
-  counts alone, so structures that fix them, such as XYZ interpretations,
-  export to PDB and mmCIF. The default still fails.
-  - **Breaking:** `PdbWriteOptions::with_chemistry` no longer covers fixed
-    implicit-hydrogen counts; it covers isotopes, radicals, atom maps,
-    stereo, unstatable bonds, and dictionary bond conflicts.
-
-- mmCIF interpretation treats a `_chem_comp_bond` row whose
-  `pdbx_metal_coordination_flag` the source leaves unstated, as wwPDB entry
-  files do, as metal coordination when the component template flags that bond
-  (the caller's library first, then the bundled one). Without a template, a
-  bond between a metal and a non-metal is coordination, as for PDB `LINK` and
-  `CONECT`. Coordination is a `Dative` bond, so heme Fe–N and iron–sulfur Fe–S
-  bonds are now dative from mmCIF, as they already were from PDB. A stated
-  flag still decides.
+- **Breaking:** The `kekule-traj` crate is now the `kekule::traj` module.
+  Items keep their names under the new path; replace the `kekule-traj`
+  dependency with `kekule`.
+- The default XYZ comment and DCD title name `kekule`, not `kekule-traj`.
+- **Breaking:** `Model` becomes `Structure`, with `StructureBuilder`,
+  `StructureEditor` (`append_structure`), `StructureView`, `AsStructureView`,
+  `StructureAtomView`, `StructureError`, and the other `Model*` items.
+- **Breaking:** `StructureProperties`, `StructureError`, and `StructureField`
+  become `GeometryProperties`, `GeometryError`, and `GeometryField`;
+  `TrajectoryIoErrorKind::InvalidStructure` becomes `InvalidGeometry`.
+- **Breaking:** `structure_property` becomes `geometry_property`,
+  `cleared_model_properties` becomes `cleared_geometry_properties`, and the
+  matching `PropertyDomain` rows become `GeometryAtoms` and `GeometryBonds`.
+- **Breaking:** `kekule::geometry` becomes `kekule::math`, and
+  `PeriodicGeometry` becomes `Lattice` (`LatticeError`;
+  `SolvationError::Lattice`, `PeriodicBoxError::Lattice`).
+- **Breaking:** `StructureKind` is `Standalone` or `InSet(SetContext)`, whose
+  context gives the geometry's `Place`, velocities, and forces; match
+  `InSet` where code matched `Model`, `Member`, or `Frame`.
+- **Breaking:** `Ensemble` now owns one `StructureSet` and one `Distribution`
+  (`Ensemble::new`, `uniform`, `weighted`, `into_parts`); geometry edits,
+  `select_states`, `collapse`, and `state`/`states` go through it.
+- **Breaking:** A `Distribution` holds samples (`Members`), optional natural-log
+  weights (`with_log_weights`), a `Partition` into states with one `State`
+  each (energy, properties), and a temperature; `DistributionMut` edits it.
+- **Breaking:** Log weights span hundreds of orders of magnitude without
+  underflow; `probabilities`, rankings, and `effective_sample_size` move from
+  the old `Ensemble` to `Distribution`.
+- **Breaking:** `clustering::EnsemblePartition` is `structure::Partition`
+  (`one_state`, `state_per_sample`), and `ClusteringError::PartitionMismatch`
+  is `StructureSetError::PartitionMismatch`.
+- **Breaking:** `assign_boltzmann_weights` is `assign_boltzmann_populations`,
+  `covering_weight` is `covering_population`, and `normalize_weights` is
+  `normalize_log_weights`; `regroup` and `ranked_by_population` are new.
+- **Breaking:** `StructureEnsembleInterpretOptions` is
+  `StructureSetInterpretOptions`, and `interpret_conformations` and multi-model
+  PDB and mmCIF give a plain `StructureSet`.
+- **Breaking:** SDF no longer writes or reads `kekule.weight` and
+  `kekule.energy.kJ_per_mol`; such fields are ordinary data, and
+  `sdf::WEIGHT_FIELD` and `ENERGY_FIELD` are gone.
+- **Breaking:** `MmcifWriteIssue`'s `*EnsembleMember` and `EmptyEnsemble` are
+  `IncompatibleGeometry`, `UnrepresentableGeometry`, and `EmptyStructureSet`;
+  `MmcifMemberField` is `MmcifGeometryField`, without `Weight` and `Energy`.
+- **Breaking:** `MmcifCellReason::MemberCellsDiffer` is `GeometryCellsDiffer`.
+- **Breaking:** `mmcif::write`, `molfile::write`, and `sdf::write` return
+  `(String, WriteReport)`, and their `write_to` returns the `WriteReport` of
+  omissions `UnrepresentablePolicy::Omit` made. Migration: take `.0`.
+- **Breaking:** Molfile, SDF, PDB, and mmCIF writers hold every geometry to
+  one `geometry_metadata` policy, which replaces `ensemble_metadata` and
+  `frame_metadata`; `GeometryField` loses `Weight` and `Energy`.
+- **Breaking:** Structure writers refuse per-atom, per-bond, geometry, and set
+  properties unless `with_properties` omits them, and Molfile and SDF refuse
+  occupancies and B factors unless `geometry_metadata` omits them.
+- **Breaking:** Trajectory writers take a `FrameView` (`from_geometry`, or
+  `new` with `Geometry::bind`), and `FrameBuffer` holds a `Geometry`
+  (`from_geometry`, `geometry_mut`, `set_time`, `into_geometry`).
+- **Breaking:** `MemoryTrajectoryWriter` collects frames into a time-ordered
+  `StructureSet` (`into_structure_set`), and it and `read_structure_set` refuse
+  a frame whose time or step columns differ from the first frame's.
+- **Breaking:** XYZ, DCD, TRR, and XTC writers refuse a frame's occupancies and
+  B factors (`TrajectoryField::Occupancies`, `BFactors`) unless
+  `frame_metadata` omits them.
+- **Breaking:** `TrajectoryWriter::flush` replaces the codec writers' own
+  `flush`; `TrrWriteOptions` is no longer `Eq`.
+- **Breaking:** Frame-index fingerprints compare content, not modification
+  time, and hash DCD `NSET` and `NSTEP` as zero; sequential reads of an
+  indexed reader end after its last indexed frame.
+- **Breaking:** RMSF and contact occupancy move to `kekule::statistics` as
+  weighted statistics: accumulators observe an `AsStructureView` with a weight,
+  and `kekule_traj::analysis::rmsf` is `StructureSet::rmsf` or `Ensemble::rmsf`.
+- **Breaking:** `ReductionError` is `StatisticsError` (`NoObservations`,
+  `index`, `InvalidWeight`, `WeightOverflow`); results report
+  `observation_count`, `total_weight`, and `contact_weights`.
+- **Breaking:** Every public error's `Display` text is one or two sentences
+  naming atoms, records, lines, files, geometries, and values, and no Rust
+  API; applications that match message text must update.
+- **Breaking:** `FormatError` writes stage, format, and place first
+  (`FormatError::message` holds the rest), `InstanceAtomId` displays as
+  `atom 5 of instance 2`, and limits name their observed value and bound.
+- **Breaking:** Wrapper errors keep their causes as typed sources, and
+  variants that add nothing, such as `DraftError` and
+  `StructureEditError::Topology`, display their cause transparently.
+- **Breaking:** Default perception installs resonance delocalization
+  (`ResonanceModel::ChargeMoves`, `perceive_resonance`); `PerceptionBuilder`'s
+  `with_resonance_groups` is `with_resonance(model, groups)`.
+- **Breaking:** `AromaticityModel::RdkitLike` marks fused aromatic systems
+  whole, fusion bonds included; `AromaticityModel::Mdl` is unchanged.
+- **Breaking:** mmCIF, PDB, and XYZ interpretation and
+  `StructureEditor::append_structure` give identical molecules one definition;
+  count instances, not definitions. An instance's hierarchy edits stay its own.
+- **Breaking:** Metal coordination between residues no longer joins molecules;
+  it is reported as `CoordinationProvenance` in
+  `StructureInterpretationReport::coordination`.
+- The mmCIF writer states a report's coordination as `metalc` rows, leaving
+  out stale records (`WriteOmission::Coordination`, `CoordinationBonds`).
+- mmCIF interpretation treats an unstated `pdbx_metal_coordination_flag` as
+  coordination when the component template flags the bond.
+- **Breaking:** `StructureInterpretIssue::ConnectionIgnored` is
+  `ConnectionsIgnored { connection_type, count }`, one issue per type.
+- **Breaking:** Solvation's ions use their Chemical Component Dictionary names
+  (`NA`, `CL`, `IOD`) and leave implicit hydrogens to valence inference, so a
+  solvated system writes to PDB and mmCIF and reads back.
+- **Breaking:** `TopologyEditor::chain`, `residue`, and `atom_site` and their
+  iterators return `EditChain`, `EditResidue`, and `EditAtomSite` by value.
+- An edit of a large system, and a hierarchy walk such as
+  `InstanceView::residues`, cost what they change or return; cloning a
+  structure copies no coordinates.
+- **Breaking:** The mmCIF writer writes chains that share a label as copies
+  (`A-2`, `A-3`); `MmcifWriteIssue::DuplicateAsymId` is removed.
+- **Breaking:** The mmCIF writer states as `_struct_conn` rows only bonds its
+  reader cannot derive, and selects partners by author sequence and insertion
+  code.
+- A flat Molfile or SDF drawing gives E/Z only to a double bond that can have
+  it, and writing a specified E/Z on another bond fails.
+- mmCIF and PDB interpretation of large entries, and DSSP on one thread, are
+  several times faster, with unchanged results.
 
 ### Removed
 
-- **Breaking:** `Ensemble`, `Trajectory`, `Series`, and their payloads,
-  views, guards, iterators, and errors (SeekDelta K74). A host migrates as
-  follows:
-
-  | Removed | Instead |
-  | --- | --- |
-  | `Ensemble`, `EnsembleSample`, `EnsembleSampleView`, `EnsembleSampleMut`, `EnsembleIter`, `EnsembleStateView`, `EnsembleStateIter`, `EnsembleError` | `StructureSet` with a `Distribution`; `Geometry`, `GeometryView`, `GeometryMut`, `StateView`, `StructureSetError` |
-  | `Trajectory`, `TrajectoryFrame`, `TrajectoryFrameView`, `TrajectoryFrameMut`, `TrajectoryIter`, `TrajectoryError` | `StructureSet` with `Order::Time(TimeAxis)`; `Geometry` and its `Place::Time { time, step }`; `FrameView` for writers |
-  | `Series`, `SeriesItem`, `SeriesItemView`, `SeriesItemMut`, `SeriesIter`, `SeriesAxis`, `SeriesError` | `StructureSet` with `Order::Step` or `Order::Coordinate`; `Place::Step` or `Place::Coordinate` |
-  | `EnsemblePartition`, `EnsembleState` | `Partition`, `State` |
-  | `Ensemble::from_models(models, partition)` | `StructureSet::from_structures(structures)` then `set_distribution(Some(Distribution::new(Members::All, partition)?))` |
-  | `Ensemble::from_molecule_positions` | `Topology::from_molecule`, `StructureSet::from_geometries` of `Geometry::new(positions)`, then `set_distribution` |
-  | `Ensemble` and `Trajectory` methods (`select`, `subset`, `superpose`, `rmsd`, `aligned_rmsd`, `rmsf`, `contact_occupancy`, `group_contact_occupancy`, clustering, `pairwise_fitted_rmsd`, populations, rankings, `collapse`, `assign_boltzmann_populations`) | The `StructureSet` and `DistributionMut` methods of the same names |
-  | `Trajectory::validate_monotonic_time(MissingTimePolicy)` | `StructureSet::validate_monotonic_time()`, which fails with `Missing(Times)` on an axis without times |
-  | `TrajectorySampler`, `TrajectorySampling`, `Trajectory::to_ensemble`, `Trajectory::into_ensemble`, `traj::read_ensemble`, `read_ensemble_seekable`, `EnsembleReadOptions`, `EnsembleReadProgress` | `StructureSet::from_reader(&reader, indices)`; see the migration below |
-  | `StructureSet::from_ensemble`, `from_trajectory`, `from_series`, `to_ensemble`, `into_ensemble`, `to_trajectory`, `into_trajectory`, `to_series`, `into_series`, `ConversionTarget`, `Unconvertible`, `StructureSetError::NotConvertible` | Build the `StructureSet` directly |
-  | `NativeObject::into_ensemble`, `into_ensemble_interpretation`, `into_trajectory`, `into_series`, `NativeSource::interpreted_ensemble`, `FormatErrorDetail::NativeStructureSetShape` | `NativeObject::into_structure_set`, `into_structure_set_interpretation`; `NativeSource::interpreted_structure_set` |
-  | `traj::io::read_trajectory`, `write_trajectory`, `write_trajectory_to` | `read_structure_set`, `write_structure_set`, `write_structure_set_to` |
-  | `FrameBuffer::from_frame`, `into_trajectory`, `frame_mut` | `FrameBuffer::from_geometry`, `into_geometry`, `geometry_mut` (time and step through `set_time` and `set_step`) |
-  | `XyzWriter::write_ensemble`, `write_series` | `XyzWriter::write_structure_set` |
-  | `MmcifDocument::interpret_ensemble`, `PdbDocument::interpret_ensemble`, `XyzDocument::interpret_ensemble`, `StructureEnsembleInterpretation`, `XyzEnsembleInterpretation` | `interpret_structure_set`, `StructureSetInterpretation`, `XyzStructureSetInterpretation` |
-  | `sdf::ensemble` | `sdf::structure_set` |
-  | `PdbSource::ensemble`, `series`, `MmcifBlockSource::ensemble`, and the conversions from `&Ensemble`, `&Series`, `&StructureEnsembleInterpretation` | `PdbSource::structure_set`, `MmcifBlockSource::structure_set`, and the conversions from `&StructureSet` and `&StructureSetInterpretation` |
-  | `ensemble_metadata`, `series_metadata`, and the Molfile, SDF, PDB, and mmCIF `frame_metadata` writer options with their `with_` setters | `geometry_metadata` and `with_geometry_metadata` |
-  | `PdbWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`, `UnrepresentableSeriesItem`, `EmptySeries`; `MmcifWriteIssue::UnrepresentableEnsembleSample`, `EmptyEnsemble`; `MmcifMemberField::Weight`, `Energy` | `UnrepresentableGeometry`, `EmptyStructureSet` |
-  | `diagnostics::check_multi_model_ensemble`, `UnrepresentableSampleState` | none: writers check geometry state themselves |
-  | `StructureError::InvalidWeight`, `NonFiniteCoordinate` | `StructureSetError::InvalidWeight`, `NonFiniteOrderValue` |
-
-  An ensemble of trajectory frames, as `Trajectory::to_ensemble` made it
-  from a `TrajectorySampling` of `indices` with `weights` and `atoms`, is now
-  these calls:
-
-  ```rust
-  let mut ensemble = StructureSet::from_reader(&frames, indices)?;
-  ensemble.set_order(None)?; // drop the times and steps
-  ensemble.clear_velocities_and_forces();
-  let mut ensemble = ensemble.subset(&atoms)?; // only for an atom subset
-  ensemble.set_distribution(Some(
-      Distribution::new(Members::All, Partition::one_state(ensemble.len()))?
-          .with_weights(weights)?, // without weights, every geometry weighs 1
-  ))?;
-  ```
-
-  `from_reader` keeps each geometry whole, so the order and the velocities and
-  forces are dropped explicitly. Without an atom subset, `to_ensemble` kept
-  the trajectory properties, which `from_reader` does not: copy them with
-  `*ensemble.properties_mut() = frames.properties().clone()`. These calls
-  write the same PDB and mmCIF bytes as `to_ensemble` did.
+- **Breaking:** `EnsembleMember`, its views, `EnsembleIter`, `EnsembleError`,
+  `Ensemble::from_models`, and `from_molecule_positions`; build a
+  `StructureSet` (`from_structures`, `from_geometries`), then `Ensemble::new`.
+- **Breaking:** `Trajectory`, `TrajectoryFrame`, their views, `TrajectoryIter`,
+  `TrajectoryError`, and `MissingTimePolicy`; use a `StructureSet` with
+  `Order::Time(TimeAxis)`, whose `validate_monotonic_time` requires times.
+- **Breaking:** `Trajectory::into_ensemble`; use
+  `StructureSet::from_reader`, `set_order(None)`,
+  `clear_velocities_and_forces`, then `Ensemble::uniform` or `weighted`.
+- **Breaking:** `read_trajectory`, `write_trajectory`, and `FrameBuffer`'s
+  `from_frame`, `into_trajectory`, and `frame_mut`; use `read_structure_set`,
+  `write_structure_set`, `from_geometry`, `into_geometry`, and `geometry_mut`.
+- **Breaking:** `interpret_ensemble`, `StructureEnsembleInterpretation`,
+  `sdf::ensemble`, and `MmcifBlockSource::ensemble`; use
+  `interpret_structure_set`, `StructureSetInterpretation`, and `structure_set`.
+- **Breaking:** `kekule_traj::analysis::AsFrameView`; pass
+  `buffer.as_structure_view()`.
+- **Breaking:** `StructureError::InvalidWeight`; log weights are checked by
+  `StructureSetError::NonFiniteLogWeight`.
 
 ### Fixed
 
-- SMILES interpretation omits E/Z that directional marks assert at a double
-  bond without E/Z: an aromatic bond, or one whose endpoint bears two
-  identical terminal ligands, as in `C/C(C)=C\CN1CCN(CC#Cc2ccccc2)C[C@H]1CCO`
-  from GEOM-drugs. Such a molecule parsed with a specified configuration
-  that no conformation can carry, so writing any 3D model of it as Molfile
-  or SDF failed ("Cannot encode the specified stereo of bond 2. ..."). The
-  test is the one the Molfile reader and writer apply to coordinates, so
-  E/Z at a bond that only symmetry analysis shows is not stereogenic, as
-  in `C/C=C(/CC)CC`, is still kept. The new
+- SMILES interpretation omits E/Z that directional marks assert on a bond
+  without E/Z, so such molecules write as Molfile or SDF;
   `SmilesInterpretationReport::omitted_double_bond_stereo` names the bonds.
-- Memory of a set over a file read from several threads (SeekDelta K73
-  follow-ups). A pooled indexed reader allocated the next geometry's arrays
-  at the end of each read, on the thread that read; the next read, often on
-  another thread, filled them, and that thread freed them. Allocators that
-  do not promptly reuse memory freed by another thread, such as mimalloc,
-  grew by gigabytes over a 100,000-atom trajectory read in bursts. A read
-  of XYZ, DCD, TRR, or XTC through a set now allocates the geometry's arrays
-  on the thread that reads it, and a set's pooled readers keep none between
-  reads, after a failed read too. The scratch limit counts the arrays a
-  read allocates, so a frame passes or fails it whatever the reader read
-  before.
-- Fitting speed (SeekDelta K73 follow-ups). Since K73 the rigid fit was
-  inlined into each caller, where it compiled to slower code: the pairwise
-  fitted RMSD matrix took about 40 % longer, and leader clustering and
-  single fits about 35 % longer. The fit is compiled once again, and every
-  result is bit for bit as before.
-- A hierarchy edit of one instance of a shared definition no longer
-  changes the class of the others (SeekDelta K23b). Setting a residue's
-  class, or adding, changing, moving or deleting an atom site, published the whole
-  definition for classification again, so changing one of 9UOH's 93 waters
-  to an ion made all of them `Other`. The edited instance now gets a
-  definition of its own, which shares the molecule, and the others keep
-  theirs.
-- Ring perception of large nucleic acids (SeekDelta K25). A ring that two
-  degree-two roots find again was recovered on a copy of the whole graph for
-  each root, so the work grew with rings times molecule size. Ribosomes such
-  as PDB 6SPB and 7K00 exceeded the work limit. Recovery now trims and
-  restores the roots in place. The rings of 6SPB's largest molecule
-  (32,657 atoms) now take 0.3 % of the limit.
+- Ring perception of large nucleic acids, such as ribosomes, no longer
+  exceeds its work limit.
 - A residue without template charges takes the charges its bonds imply
-  (SeekDelta K25). wwPDB entry files state component bond orders but no
-  charges, so the methylated N7 of 7-methylguanosine (`G7M`) was a neutral
-  nitrogen with four bonds and failed valence perception. An atom with more
-  bonds than a neutral atom allows now takes +1, or else -1, when that
-  charge makes its valence valid. The report names these atoms
-  (`StructureInterpretIssue::ChargesFromBonds`). Stated charges are kept.
-- A DCD unit-cell or coordinate record whose marker gives another size than
-  the frame layout fixes is corrupt. Before, a reader of a growing file took
-  one claiming more bytes than the file held for a frame still being
-  written, and waited for it.
+  (`StructureInterpretIssue::ChargesFromBonds`), so 7-methylguanosine passes
+  valence perception.
+- A DCD unit-cell or coordinate record whose size marker disagrees with the
+  frame layout is corrupt.
 
 ## [0.4.0] - 2026-10-17
 
