@@ -455,7 +455,8 @@ impl IndexedFileTrajectoryReader {
     /// A refresh reads the file the path names when it runs: a file moved
     /// to the path in place of the one read so far is read from then on
     /// when it begins with the indexed bytes, as a copy of the file grown
-    /// further does.
+    /// further does. The refresh checks, scans, and fingerprints that one
+    /// file, so the index and its fingerprint always describe the same bytes.
     ///
     /// # Errors
     ///

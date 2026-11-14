@@ -16,10 +16,11 @@
 //!   topology, each with positions and optional cell, velocities, and forces.
 //!   An optional [`structure::Order`] places them in time, as the frames of a
 //!   trajectory, or at steps or coordinate values, as the points of an
-//!   optimization or a scan. An optional [`structure::Distribution`] weights
-//!   its members and groups them into states that may carry energies, as an
-//!   ensemble. File codecs and streaming analysis for trajectories live in
-//!   [`traj`].
+//!   optimization or a scan. File codecs and streaming analysis for
+//!   trajectories live in [`traj`].
+//! - [`structure::Ensemble`] reads a structure set as draws from a
+//!   [`structure::Distribution`]: which geometries are samples, what each
+//!   weighs, and how they group into states that may carry energies.
 //!
 //! A disconnected salt, solvent box, or protein-ligand complex is therefore a
 //! [`topology::Topology`] containing several connected molecules, not one
@@ -30,15 +31,17 @@
 //!
 //! # Modules
 //!
-//! | Area | Modules |
+//! | Domain | Modules |
 //! | --- | --- |
-//! | Molecules and systems | [`molecule`], [`topology`] (with [`topology::edit`]), [`structure`] (with [`structure::measure`]), [`prelude`] |
-//! | Values and diagnostics | [`units`], [`properties`], [`math`], [`diagnostics`], [`parallel`] |
-//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
-//! | Chemical perception | [`perception`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`hydrogens`], [`descriptors`] |
+//! | Foundations | [`units`], [`math`], [`properties`], [`diagnostics`], [`parallel`] |
+//! | Chemistry | [`molecule`], [`stereo`] ([`stereo::cip`], [`stereo::coordinates`], [`stereo::cleanup`]), [`perception`], [`hydrogens`], [`descriptors`], [`sequence`] |
 //! | Queries | [`query`], [`smarts`], [`substructure`], [`select`] |
-//! | Structure analysis and preparation | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`sequence`], [`solvation`] |
+//! | Systems and structures | [`topology`] ([`topology::edit`]), [`structure`] ([`structure::measure`], [`structure::placement`]), [`solvation`] |
+//! | Analysis | [`alignment`], [`clustering`], [`statistics`], [`dssp`], [`interactions`] |
+//! | Formats | [`smiles`], [`molfile`], [`sdf`], [`mmcif`], [`pdb`], [`xyz`], [`macromolecular`], [`components`], [`native`] |
 //! | Trajectories | [`traj`] ([`traj::io`], [`traj::periodic`], [`traj::analysis`]) |
+//!
+//! [`prelude`] re-exports the most used items.
 //!
 //! # Typical workflow
 //!
@@ -921,10 +924,9 @@ pub mod sdf {
     ///
     /// Records convert from structures, geometries of a structure set, and
     /// trajectory frames (`sdf::write(&set, options)` writes one record per
-    /// geometry, which [`structure_set`] reads back with its weight, state,
-    /// state energy, temperature, and step or coordinate, and a distribution
-    /// over some of the geometries), or interpreted records, which keep their
-    /// titles and data fields.
+    /// geometry, which [`structure_set`] reads back with its step or
+    /// coordinate; a distribution is never a field of a record), or
+    /// interpreted records, which keep their titles and data fields.
     ///
     /// # Errors
     ///
@@ -1307,10 +1309,11 @@ pub mod pdb {
     /// A write-stage [`FormatError`] of kind
     /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
     /// with a [`PdbWriteIssue`] when PDB cannot hold the content, and
-    /// `Inconsistent` for an empty ensemble or series or a report count that
+    /// `Inconsistent` for an empty structure set or a report count that
     /// does not match the structures. Identifiers
-    /// that do not fit their columns always fail: chain identifiers longer
-    /// than one character, residue names longer than three, atom names longer
+    /// that do not fit their columns fail: chain identifiers longer
+    /// than one character (unless [`PdbChainIdPolicy::SegmentId`] writes one
+    /// of up to four as a segment identifier), residue names longer than three, atom names longer
     /// than four, insertion codes longer than one, residue numbers outside
     /// -999..=2,436,111, more than 87,440,031 atom and `TER` records, and
     /// residues whose atoms are not consecutive. So do values outside their

@@ -18,8 +18,11 @@
 //!   object's chain against another object's ligand: each
 //!   [`InteractionSide`] brings its own features, structure, and atoms.
 //!
-//! Both read only the features of the selected atoms, discard the far ones by
-//! bounding box, and pair the rest on a uniform grid, so a ligand against a
+//! Features are a separate derived result, not perception state. Both
+//! searches read only the features of the selected atoms: the side with fewer
+//! atoms lists its features, the other reads only atoms within reach of them,
+//! far ones are discarded by bounding box, and the rest are paired on the
+//! uniform point grid that group contact occupancy also uses, so a ligand against a
 //! structure of 100,000 atoms takes about a millisecond. Coordinates are
 //! used as stored; cells are ignored, so image periodic structures first.
 //!

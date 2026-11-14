@@ -93,7 +93,8 @@
 //! Superposition and periodic operations change the set in place and leave
 //! it unchanged if they fail; clone it first to keep the original. Imaging
 //! and temporal unwrapping are explicit preprocessing steps; unwrap before
-//! discarding intermediate frames.
+//! discarding intermediate frames. Diagnostics of streaming operations are
+//! opt-in.
 //!
 //! Saving infers the format from the extension, protects existing files, and
 //! rejects unsupported metadata. [`io::TrajectoryOpenOptions`] and

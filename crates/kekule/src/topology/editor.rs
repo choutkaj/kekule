@@ -266,7 +266,10 @@ impl TopologyEditor {
     ///
     /// The draft reads the source until an edit changes something, so
     /// starting it costs nothing per atom: each edit copies only the
-    /// occurrences, atoms and hierarchy nodes it touches.
+    /// instances, atoms and hierarchy nodes it touches. The source snapshot
+    /// is never written, so undo histories keep every snapshot intact, and
+    /// publication shares every untouched definition with it whether or not
+    /// it is still shared elsewhere.
     pub fn from_topology(topology: impl Into<Arc<Topology>>) -> Self {
         let source = topology.into();
         // Source slots are source dense indices, so an unedited draft

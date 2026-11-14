@@ -41,6 +41,27 @@ pub enum ModelSelection {
 /// inferred from covalent radii when
 /// [`infer_bonds_from_distance`](Self::infer_bonds_from_distance) is set, and
 /// fails otherwise.
+///
+/// A residue whose internal bonds the source enumerates, as files that write
+/// complete connectivity do, takes exactly those bonds; templates and
+/// inference fill only residues the source leaves without them. A heavy atom
+/// whose name its residue's template does not list is an error, never a
+/// silently separate molecule.
+///
+/// Formal charges come from the source when stated, otherwise from the
+/// template, also when the source's own bond table supplies the bonds.
+/// Hydrogens present in the model are atoms, and the remaining hydrogens
+/// follow from valence, so a template's protonation is never asserted as a
+/// fixed hydrogen count. When a residue's model hydrogens on a heteroatom
+/// differ from its template, a variant template that matches them exactly is
+/// selected; otherwise each added or removed hydrogen on a heteroatom whose
+/// template bonds are all single, or on a ring nitrogen, changes its charge by
+/// one, and any other difference fails interpretation. Hydrogens absent from
+/// carbon are left to valence.
+///
+/// Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
+/// Formats without residues (XYZ, Molfile, SDF, SMILES) have no
+/// inter-residue coordination, so their dative bonds are bonds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectivityOptions {
     components: Option<Arc<ComponentLibrary>>,
