@@ -115,10 +115,12 @@ impl Molecule {
 /// Mutable access to one live atom of a draft, from
 /// [`MoleculeEditor::atom_mut`].
 ///
-/// Read the atom through `Deref` and change it with the setters or
-/// `DerefMut`. Mutable access clears installed perception and owner
-/// properties immediately, even if no change is made or the guard is then
-/// forgotten.
+/// Read the atom through `Deref`. Change one field with a setter, or replace
+/// the whole atom through `DerefMut` (`*guard = atom`). Each setter call and
+/// each `DerefMut` borrow clears installed perception and owner properties
+/// at once, even when the value is unchanged; borrowing or reading the guard
+/// clears nothing. Use [`MoleculeEditor::replace_atom`] to keep cached state
+/// for an identical replacement.
 pub struct AtomMut<'a> {
     editor: &'a mut MoleculeEditor,
     id: AtomId,
@@ -296,8 +298,8 @@ impl MoleculeEditor {
         self.perception = Perception::default();
     }
 
-    fn invalidate_stereo(&mut self) {
-        self.perception.stereo = None;
+    fn invalidate_cip(&mut self) {
+        self.perception.cip = None;
     }
 
     /// Records a chemical edit: perception and owner properties no longer
@@ -639,7 +641,7 @@ impl MoleculeEditor {
     }
 
     /// Appends another draft, as topology edits do when they join two
-    /// occurrences that are both being edited.
+    /// instances that are both being edited.
     pub(crate) fn append_draft(
         &mut self,
         source: &MoleculeEditor,

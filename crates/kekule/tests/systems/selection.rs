@@ -128,14 +128,14 @@ fn construction_and_click_mutations_validate_sort_and_deduplicate() {
     for (index, id) in a.iter().enumerate() {
         assert_eq!(selected.contains(*id), index == 0 || index == 2);
         assert_eq!(
-            selected.contains_index(TopologyAtomIndex::new(index as u32)),
+            selected.contains_at(TopologyAtomIndex::new(index as u32)),
             index == 0 || index == 2
         );
     }
     for (index, id) in b.iter().enumerate() {
         assert_eq!(selected_bonds.contains(*id), index == 0 || index == 2);
         assert_eq!(
-            selected_bonds.contains_index(TopologyBondIndex::new(index as u32)),
+            selected_bonds.contains_at(TopologyBondIndex::new(index as u32)),
             index == 0 || index == 2
         );
     }
@@ -171,8 +171,8 @@ fn construction_and_click_mutations_validate_sort_and_deduplicate() {
     assert_eq!(selected_bonds, bonds_before);
     assert!(!selected.contains(invalid_atom));
     assert!(!selected_bonds.contains(invalid_bond));
-    assert!(!selected.contains_index(TopologyAtomIndex::new(u32::MAX)));
-    assert!(!selected_bonds.contains_index(TopologyBondIndex::new(u32::MAX)));
+    assert!(!selected.contains_at(TopologyAtomIndex::new(u32::MAX)));
+    assert!(!selected_bonds.contains_at(TopologyBondIndex::new(u32::MAX)));
     assert_eq!(
         BondSelection::from_bonds(Arc::clone(&top), [b[0], invalid_bond]),
         Err(SelectionError::InvalidBondId(invalid_bond))
@@ -368,7 +368,7 @@ fn predicates_and_graph_expansion_respect_membership_and_instance_boundaries() {
         atoms(&top, 0b100)
     );
     let doubles =
-        BondSelection::from_predicate(Arc::clone(&top), |bond| bond.order == BondOrder::Double);
+        BondSelection::from_predicate(Arc::clone(&top), |bond| bond.order() == BondOrder::Double);
     assert_eq!(doubles, bonds(&top, 0b1010));
     assert_eq!(
         doubles.filter(|bond| bond.id().instance() == top.atom_ids()[0].instance()),

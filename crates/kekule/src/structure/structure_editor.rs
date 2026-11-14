@@ -130,7 +130,7 @@ impl StructureEditor {
     pub fn properties_mut(&mut self) -> StructureEditorPropertiesMut<'_> {
         StructureEditorPropertiesMut { editor: self }
     }
-    /// Replaces represented stereo for an intact source occurrence; see
+    /// Replaces represented stereo for an intact source instance; see
     /// [`TopologyEditor::replace_source_instance_stereo`] for identity semantics.
     pub fn replace_source_instance_stereo(
         &mut self,
@@ -165,7 +165,7 @@ impl StructureEditor {
             .set(slot, Quantity::new(point, CANONICAL_LENGTH_UNIT))?;
         Ok(id)
     }
-    /// Adds a complete molecule occurrence with positions in the molecule's atom
+    /// Adds a complete molecule instance with positions in the molecule's atom
     /// order; see [`TopologyEditor::add_molecule`].
     ///
     /// # Errors
@@ -222,7 +222,7 @@ impl StructureEditor {
     ) -> Result<Vec<(EditAtomId, Atom)>, StructureEditError> {
         self.structural(|t| t.retain_atoms(ids))
     }
-    /// Deletes surviving atoms of a source occurrence and their geometry.
+    /// Deletes surviving atoms of a source instance and their geometry.
     /// See [`TopologyEditor::delete_instance`] for semantics after splits/merges.
     pub fn delete_instance(
         &mut self,
@@ -231,7 +231,7 @@ impl StructureEditor {
         self.structural(|t| t.delete_instance(id))
     }
     /// Adds an asserted bond between two live atoms; atoms of different
-    /// occurrences are merged. See [`TopologyEditor::add_bond`].
+    /// instances are merged. See [`TopologyEditor::add_bond`].
     pub fn add_bond(
         &mut self,
         a: EditAtomId,

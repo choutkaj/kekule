@@ -55,7 +55,7 @@ pub(super) type PartnerSpec = Result<ConnectionPartnerSelector, ConnectionResolu
 pub(super) struct DeclaredConnection {
     /// The partners' source rows, as [`AtomRow::row_index`].
     pub(super) rows: [usize; 2],
-    /// The instance of the left atom; both atoms end up in one molecule group.
+    /// The instance of the left atom; both atoms end up in one instance.
     pub(super) instance_key: String,
     pub(super) order: BondOrder,
     pub(super) connection_id: Option<String>,

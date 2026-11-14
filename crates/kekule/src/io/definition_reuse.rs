@@ -1,9 +1,9 @@
 //! Shared definitions for identical molecules of one interpreted structure.
 //!
-//! A structure file lists every occurrence of a molecule, such as each water
+//! A structure file lists every copy of a molecule, such as each water
 //! of a crystal or a solvent box, as atoms of its own. Interpretation stages
-//! one definition per distinct molecule and an instance per occurrence, so
-//! occurrences map atom for atom and per-definition work, such as perception,
+//! one definition per distinct molecule and an instance per copy, so
+//! instances map atom for atom and per-definition work, such as perception,
 //! runs once per distinct molecule.
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, Hasher};

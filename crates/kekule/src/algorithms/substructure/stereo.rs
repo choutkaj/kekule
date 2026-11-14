@@ -16,7 +16,7 @@ impl GroupMatches {
         &mut self,
         target: &Molecule,
         center: AtomId,
-        occurrence: usize,
+        instance: usize,
         query: &QueryGraph,
         query_center: crate::query::QueryAtomId,
         inverted: Option<bool>,
@@ -57,7 +57,7 @@ impl GroupMatches {
             return true;
         };
         let qvariable = qgroup.and_then(|(i, g)| (g.kind != K::Absolute).then_some(i));
-        let key = (occurrence, tgroup.unwrap().0);
+        let key = (instance, tgroup.unwrap().0);
         let value = (qvariable, inverted);
         match self.target_variables.get(&key) {
             Some(previous) => *previous == value,

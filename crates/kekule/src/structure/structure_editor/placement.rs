@@ -604,7 +604,7 @@ impl StructureEditor {
         }
     }
 
-    /// Bonds `atom` to `parent` in its occurrence, replacing `replaced`, and
+    /// Bonds `atom` to `parent` in its instance, replacing `replaced`, and
     /// consumes a fixed implicit count on the parent by the valence the bond
     /// takes from it. Its position is the caller's.
     fn attach_first(
@@ -615,11 +615,11 @@ impl StructureEditor {
         order: BondOrder,
         replaced: Option<EditAtomId>,
         revision: u64,
-    ) -> Result<crate::topology::AttachedInOccurrence, PlacementError> {
+    ) -> Result<crate::topology::AttachedInInstance, PlacementError> {
         let taken = bond_valence_of(order).saturating_sub(usize::from(replaced.is_some()));
         let attached = self
             .topology
-            .attach_in_occurrence(parent, atom, order, replaced)?;
+            .attach_in_instance(parent, atom, order, replaced)?;
         self.sync_slots(revision);
         if let Some((atom_slot, bond_slots)) = &attached.dead {
             self.slots.clear_atom_rows(&[*atom_slot]);

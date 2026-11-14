@@ -90,7 +90,7 @@ fn mapped_polyene(source: &Molecule, reverse: bool) -> Molecule {
             };
             (
                 id,
-                editor.add_bond(atoms[&a], atoms[&b], bond.order).unwrap(),
+                editor.add_bond(atoms[&a], atoms[&b], bond.order()).unwrap(),
             )
         })
         .collect::<BTreeMap<_, _>>();

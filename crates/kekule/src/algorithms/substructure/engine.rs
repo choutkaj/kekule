@@ -23,7 +23,7 @@ pub(super) struct AtomFacts {
 pub(super) struct TargetAtom<'a> {
     pub molecule: &'a Molecule,
     pub local: AtomId,
-    pub occurrence: usize,
+    pub instance: usize,
     pub neighbors: Vec<(usize, BondId)>,
     facts: Arc<AtomFacts>,
 }
@@ -37,7 +37,7 @@ impl<'a> TargetData<'a> {
     pub(crate) fn new(molecules: impl IntoIterator<Item = &'a Molecule>) -> Self {
         let mut atoms = Vec::new();
         let mut facts_cache = BTreeMap::new();
-        for (occurrence, molecule) in molecules.into_iter().enumerate() {
+        for (instance, molecule) in molecules.into_iter().enumerate() {
             let offset = atoms.len();
             let indices: BTreeMap<_, _> = molecule
                 .atom_ids()
@@ -95,7 +95,7 @@ impl<'a> TargetData<'a> {
                     .map(|(id, b)| (indices[&if b.a() == local { b.b() } else { b.a() }], id))
                     .collect();
                 atoms.push(TargetAtom {
-                    occurrence,
+                    instance,
                     molecule,
                     local,
                     neighbors,
@@ -616,7 +616,7 @@ impl Context<'_, '_> {
                     || !relationships.add(
                         target.molecule,
                         target.local,
-                        target.occurrence,
+                        target.instance,
                         state.query,
                         crate::query::QueryAtomId::from_index(focus),
                         (matches != inverse_matches).then_some(!matches),
@@ -672,7 +672,7 @@ impl Context<'_, '_> {
                         && !relationships.add(
                             target.molecule,
                             target.local,
-                            target.occurrence,
+                            target.instance,
                             state.query,
                             qa,
                             (matched != inverted).then_some(!matched),

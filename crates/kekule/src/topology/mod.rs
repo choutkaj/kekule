@@ -1,7 +1,7 @@
 //! Coordinate-free molecular systems and biological hierarchy.
 //!
 //! A [`Topology`] turns connected molecular definitions
-//! ([`MoleculeDefinition`]) into explicit occurrences in one system. Repeated
+//! ([`MoleculeDefinition`]) into explicit instances in one system. Repeated
 //! definitions can be reused—for example, a solvent box can contain many
 //! instances of one water definition—while each instance still receives
 //! distinct [`InstanceAtomId`] and [`InstanceBondId`] identities.
@@ -80,7 +80,7 @@ use crate::properties::{
 };
 pub use builder::{TopologyBuildError, TopologyBuilder};
 use dense_order::DenseOrder;
-pub(crate) use editor::{AppendMapping, AttachedInOccurrence, ChainIds, DraftHydrogenError};
+pub(crate) use editor::{AppendMapping, AttachedInInstance, ChainIds, DraftHydrogenError};
 pub use entity_views::{AtomView, BondView};
 pub use hierarchy::{
     AtomSiteId, AtomSiteMetadata, ChainId, HierarchyBuilder, HierarchyError, HierarchyIdKind,
@@ -113,7 +113,7 @@ pub use transform::{TopologySubset, TopologySubsetCorrespondence, TopologySubset
 /// ```
 /// use kekule::{molecule::BondOrder, smiles, topology::{Topology, edit::TopologyEditor}};
 ///
-/// // Bonding two separate occurrences merges them into one molecule.
+/// // Bonding two separate instances merges them into one molecule.
 /// let topology = Topology::from_molecules(smiles::to_molecules("C.O")?)?;
 /// let [carbon, oxygen] = [topology.atom_ids()[0], topology.atom_ids()[1]];
 /// let mut editor = TopologyEditor::from_topology(topology);
@@ -146,7 +146,7 @@ fixed_u32_id!(
     "definition"
 );
 fixed_u32_id!(
-    /// Stable semantic identifier of one molecule instance (occurrence) in a
+    /// Stable semantic identifier of one molecule instance in a
     /// [`Topology`].
     ///
     /// Not a dense atom or bond index. Published instance IDs are contiguous
@@ -281,7 +281,7 @@ impl InstanceAtomId {
         Self { molecule, atom }
     }
 
-    /// The molecule occurrence containing the atom.
+    /// The molecule instance containing the atom.
     pub const fn instance(self) -> MoleculeInstanceId {
         self.molecule
     }
@@ -339,7 +339,7 @@ impl InstanceBondId {
         Self { molecule, bond }
     }
 
-    /// The molecule occurrence containing the bond.
+    /// The molecule instance containing the bond.
     pub const fn instance(self) -> MoleculeInstanceId {
         self.molecule
     }
@@ -649,7 +649,7 @@ impl MoleculeDefinition {
     }
 }
 
-/// One explicit occurrence of a reusable molecule definition.
+/// One explicit instance of a reusable molecule definition.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MoleculeInstance {
     id: MoleculeInstanceId,
@@ -670,11 +670,11 @@ impl MoleculeInstance {
     }
 }
 
-/// One explicit molecule occurrence borrowed from a [`Topology`].
+/// One explicit molecule instance borrowed from a [`Topology`].
 ///
 /// This is the instance-first system view. The underlying [`Molecule`] retains
 /// definition-local identities, while atoms and bonds reached through this
-/// view are qualified by this occurrence's [`MoleculeInstanceId`]. Hierarchy
+/// view are qualified by this instance's [`MoleculeInstanceId`]. Hierarchy
 /// methods are projections over the one topology-owned hierarchy.
 #[derive(Clone, Copy)]
 pub struct InstanceView<'a> {
@@ -697,32 +697,32 @@ impl<'a> InstanceView<'a> {
         Self { topology, id }
     }
 
-    /// Returns this occurrence's topology-wide molecule identity.
+    /// Returns this instance's topology-wide molecule identity.
     pub const fn id(self) -> MoleculeInstanceId {
         self.id
     }
 
-    /// Returns the reusable definition referenced by this occurrence.
+    /// Returns the reusable definition referenced by this instance.
     pub fn definition_id(self) -> MoleculeDefinitionId {
         self.topology.instances[self.id.index()].definition()
     }
 
-    /// Returns the reusable definition referenced by this occurrence.
+    /// Returns the reusable definition referenced by this instance.
     pub fn definition(self) -> &'a MoleculeDefinition {
         &self.topology.definitions[self.definition_id().index()]
     }
 
-    /// Returns the definition-owned molecular state for this occurrence.
+    /// Returns the definition-owned molecular state for this instance.
     pub fn molecule(self) -> &'a Molecule {
         self.definition().molecule()
     }
 
-    /// Returns the canonical class of this occurrence's reusable definition.
+    /// Returns the canonical class of this instance's reusable definition.
     pub fn class(self) -> MoleculeClass {
         self.definition().class()
     }
 
-    /// The class of this occurrence's definition and whether it was assigned
+    /// The class of this instance's definition and whether it was assigned
     /// explicitly.
     pub fn class_assignment(self) -> ClassAssignment<MoleculeClass> {
         let explicit = self
@@ -732,7 +732,7 @@ impl<'a> InstanceView<'a> {
         ClassAssignment::new(self.class(), explicit)
     }
 
-    /// One static topology annotation of this occurrence.
+    /// One static topology annotation of this instance.
     pub fn property(self, key: &PropertyKey) -> Option<PropertyValue> {
         self.property_ref(key).map(PropertyValueRef::to_value)
     }
@@ -743,10 +743,10 @@ impl<'a> InstanceView<'a> {
             .properties
             .molecule_instances()
             .value_ref(key, self.id)
-            .expect("dense instance rows cover every occurrence")
+            .expect("dense instance rows cover every instance")
     }
 
-    /// This occurrence's atoms in local atom-ID order.
+    /// This instance's atoms in local atom-ID order.
     pub fn atoms(self) -> impl Iterator<Item = AtomView<'a>> + 'a {
         let topology = self.topology;
         let instance = self.id;
@@ -757,7 +757,7 @@ impl<'a> InstanceView<'a> {
         })
     }
 
-    /// This occurrence's bonds in local bond-ID order.
+    /// This instance's bonds in local bond-ID order.
     pub fn bonds(self) -> impl Iterator<Item = BondView<'a>> + 'a {
         let topology = self.topology;
         let instance = self.id;
@@ -768,10 +768,10 @@ impl<'a> InstanceView<'a> {
         })
     }
 
-    /// Complete chains that contain at least one atom of this occurrence, in
+    /// Complete chains that contain at least one atom of this instance, in
     /// hierarchy order. A chain is not clipped and may contain other atoms.
     ///
-    /// Costs what it returns: the chains of every occurrence are indexed on
+    /// Costs what it returns: the chains of every instance are indexed on
     /// first use, once per layout.
     pub fn chains(self) -> impl ExactSizeIterator<Item = ChainView<'a>> + 'a {
         let topology = self.topology;
@@ -782,10 +782,10 @@ impl<'a> InstanceView<'a> {
             .map(move |&chain| ChainView::new(topology, chain))
     }
 
-    /// Complete residues that contain at least one atom of this occurrence, in
+    /// Complete residues that contain at least one atom of this instance, in
     /// hierarchy order. A residue is not clipped and may contain other atoms.
     ///
-    /// Costs what it returns: the residues of every occurrence are indexed on
+    /// Costs what it returns: the residues of every instance are indexed on
     /// first use, once per layout.
     pub fn residues(self) -> impl ExactSizeIterator<Item = ResidueView<'a>> + 'a {
         let topology = self.topology;
@@ -796,9 +796,9 @@ impl<'a> InstanceView<'a> {
             .map(move |&residue| ResidueView::new(topology, residue))
     }
 
-    /// Atom sites of this occurrence's atoms, in hierarchy order.
+    /// Atom sites of this instance's atoms, in hierarchy order.
     ///
-    /// Costs what it returns: the sites of every occurrence are indexed on
+    /// Costs what it returns: the sites of every instance are indexed on
     /// first use, once per layout.
     pub fn atom_sites(self) -> impl ExactSizeIterator<Item = AtomSiteView<'a>> + 'a {
         let topology = self.topology;
@@ -809,12 +809,12 @@ impl<'a> InstanceView<'a> {
             .map(move |&site| AtomSiteView::new(topology, site))
     }
 
-    /// Qualifies a local atom ID with this occurrence. Nothing is validated.
+    /// Qualifies a local atom ID with this instance. Nothing is validated.
     pub const fn qualify_atom(self, atom: AtomId) -> InstanceAtomId {
         InstanceAtomId::new(self.id, atom)
     }
 
-    /// Qualifies a local bond ID with this occurrence. Nothing is validated.
+    /// Qualifies a local bond ID with this instance. Nothing is validated.
     pub const fn qualify_bond(self, bond: BondId) -> InstanceBondId {
         InstanceBondId::new(self.id, bond)
     }
@@ -908,7 +908,7 @@ impl Topology {
         TopologyBuilder::from_topology(self)
     }
 
-    /// Builds a topology containing one explicit occurrence of `molecule`.
+    /// Builds a topology containing one explicit instance of `molecule`.
     ///
     /// The molecule is installed as its own definition and instance. No
     /// hierarchy is fabricated and no chemical perception is run.
@@ -921,7 +921,7 @@ impl Topology {
         Self::from_molecules([molecule])
     }
 
-    /// Builds a topology containing one explicit occurrence per input molecule.
+    /// Builds a topology containing one explicit instance per input molecule.
     ///
     /// Input order becomes authoritative instance order. Each input is
     /// installed as a fresh definition; definition reuse and interning remain
@@ -1009,18 +1009,18 @@ impl Topology {
         self.definitions.len()
     }
 
-    /// The number of molecule instances (occurrences).
+    /// The number of molecule instances.
     pub fn instance_count(&self) -> usize {
         self.instances.len()
     }
 
-    /// One instance-qualified molecule occurrence, or `None` when `id` names no
+    /// One molecule instance, or `None` when `id` names no
     /// instance here.
     pub fn instance(&self, id: MoleculeInstanceId) -> Option<InstanceView<'_>> {
         (id.index() < self.instances.len()).then(|| InstanceView::new(self, id))
     }
 
-    /// Molecule occurrences in authoritative instance order.
+    /// Molecule instances in authoritative instance order.
     pub fn instances(
         &self,
     ) -> impl ExactSizeIterator<Item = InstanceView<'_>> + DoubleEndedIterator {
@@ -1029,7 +1029,7 @@ impl Topology {
             .map(|instance| InstanceView::new(self, instance.id))
     }
 
-    /// Occurrences of one definition in instance order.
+    /// Instances of one definition in instance order.
     pub fn instances_of(
         &self,
         definition: MoleculeDefinitionId,
@@ -1252,7 +1252,7 @@ impl Topology {
         self.instances.get(id.index())
     }
 
-    /// The definition molecule of one valid occurrence.
+    /// The definition molecule of one valid instance.
     pub(crate) fn definition_molecule(&self, instance: MoleculeInstanceId) -> &Molecule {
         let definition = self.instances[instance.index()].definition;
         self.definitions[definition.index()].molecule()

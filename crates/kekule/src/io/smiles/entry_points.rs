@@ -177,7 +177,7 @@ pub fn to_molecules(input: &str) -> Result<Vec<Molecule>, FormatError> {
 /// topology.
 ///
 /// Every connected component becomes one explicit molecule
-/// occurrence in source order. No hierarchy or perception is fabricated.
+/// instance in source order. No hierarchy or perception is fabricated.
 ///
 /// # Errors
 ///
@@ -202,7 +202,7 @@ pub fn to_topology(input: &str) -> Result<Arc<Topology>, FormatError> {
 }
 
 /// What one SMILES record describes: one connected molecule, or every
-/// molecule occurrence of a topology joined with `.`, with an optional
+/// molecule instance of a topology joined with `.`, with an optional
 /// record name written after the SMILES as `.smi` files carry it.
 ///
 /// Convert from `&Molecule`, `&Topology`, or `&Arc<Topology>`, or build
@@ -226,7 +226,7 @@ pub struct SmilesSource<'a> {
 #[derive(Debug, Clone, Copy)]
 enum SmilesContent<'a> {
     Molecule(&'a Molecule),
-    /// Every molecule occurrence of a topology.
+    /// Every molecule instance of a topology.
     Topology(&'a Topology),
 }
 
@@ -239,7 +239,7 @@ impl<'a> SmilesSource<'a> {
         }
     }
 
-    /// Every molecule occurrence of a topology, joined with `.`.
+    /// Every molecule instance of a topology, joined with `.`.
     pub const fn topology(topology: &'a Topology) -> Self {
         Self {
             content: SmilesContent::Topology(topology),
@@ -288,7 +288,7 @@ impl<'a> From<&'a Arc<Topology>> for SmilesSource<'a> {
 /// for one, two or three electrons (`^1`, `^2`, `^5`); explicit spin
 /// multiplicities remain unsupported.
 ///
-/// A topology emits each occurrence of a reused definition once, joined
+/// A topology emits each instance of a reused definition once, joined
 /// with `.`; canonical mode sorts components, other modes keep instance
 /// order. Enhanced groups share one CX extension with record-global atom
 /// indices.

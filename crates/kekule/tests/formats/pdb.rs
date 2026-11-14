@@ -227,7 +227,7 @@ fn bonds(result: &StructureInterpretation) -> Vec<(String, String, BondOrder, Bo
             (
                 a,
                 b,
-                molecule.bond(id).unwrap().order,
+                molecule.bond(id).unwrap().order(),
                 bond.evidence().clone(),
             )
         })

@@ -200,7 +200,7 @@ fn mmcif_public_facade_requires_parse_then_interpret() -> Result<(), Box<dyn std
     assert_eq!(
         owned_topology
             .instances()
-            .map(|occurrence| occurrence.molecule())
+            .map(|instance| instance.molecule())
             .collect::<Vec<_>>(),
         owned_molecules.iter().collect::<Vec<_>>()
     );

@@ -4,7 +4,7 @@
 `QueryGraph` is the reusable compiled query: parse once and match many targets.
 `substructure::PreparedTarget` caches target facts behind an immutable borrow.
 `PreparedTopologyTarget` also reuses connected, component-local searches once per
-molecule definition and expands their mappings to occurrences. Queries with
+molecule definition and expands their mappings to instances. Queries with
 disconnected outer or recursive graphs search the full topology instead.
 
 The practical reference is RDKit **2026.03.3**, with OpenFF Toolkit **0.18.0**
@@ -29,7 +29,7 @@ to implement every Daylight, RDKit, or CXSMARTS extension.
 | `!`, `&`, implicit AND, `,`, `;` | Atom and bond Boolean logic, in descending precedence | `bond_boolean_operators_and_precedence`, `query` |
 | `$()` | Nested existential subquery, first atom anchored to the tested atom; independent of the outer embedding | `recursive_queries_are_anchored_nested_and_independent_of_outer_embedding` |
 | Branches / ring closures | Non-induced injective graph matching | `query` |
-| `.` | Query fragments may match in the same or different target components | `topology_disconnected_queries_keep_occurrences_and_snapshot` |
+| `.` | Query fragments may match in the same or different target instances | `topology_disconnected_queries_keep_instances_and_snapshot` |
 | `:n` | Query label, never a test of target atom maps | `tags_are_outputs_and_do_not_match_target_map_values` |
 | `@`, `@@`, `@TH1`, `@TH2` | Local represented tetrahedral configuration, checked under atom mapping | `query`, `boolean_stereo_keeps_atom_expression_context` |
 | `/`, `\` | Relative bond directions, jointly evaluated under a complete mapping; lone directions impose no stereo relationship | `query`, `directional_alternatives_keep_boolean_context` |
@@ -71,7 +71,7 @@ to implement every Daylight, RDKit, or CXSMARTS extension.
   independent query groups cannot collapse into one correlated target group.
   An incomplete carrier frame imposes no orientation relationship. Group members
   still require specified stereo and compatible group kinds, even in a Boolean
-  expression that accepts both orientations. Separate topology occurrences have
+  expression that accepts both orientations. Separate topology instances have
   independent group identities. Recursive queries keep their own group scope.
 
 ### Enumeration and errors
