@@ -9,7 +9,7 @@ use kekule::traj::io::dcd::{
     DcdEndian, DcdReadOptions, DcdReader, DcdTimePolicy, DcdWriteOptions, DcdWriter,
     IndexedDcdReader,
 };
-use kekule::traj::io::TrajectoryIoLimits;
+use kekule::traj::io::{TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions};
 use kekule::traj::{
     FrameBuffer, SeekableTrajectoryReader, TrajectoryFormat, TrajectoryIoErrorKind,
     TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
@@ -63,10 +63,12 @@ fn dcd_acute_cell_angles_round_trip_without_degree_cosine_ambiguity() {
         let mut writer = DcdWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            DcdWriteOptions::default()
-                .with_endian(endian)
-                .with_unit_cells(true),
-            "acute.dcd",
+            TrajectoryWriteOptions::from(
+                DcdWriteOptions::default()
+                    .with_endian(endian)
+                    .with_unit_cells(true),
+            )
+            .with_source_label("acute.dcd"),
         )
         .unwrap();
         let mut cells = Vec::new();
@@ -163,8 +165,7 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
             let mut writer = DcdWriter::new(
                 Cursor::new(Vec::new()),
                 Arc::clone(&topology),
-                DcdWriteOptions::default(),
-                "scratch.dcd",
+                TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("scratch.dcd"),
             )
             .unwrap();
             let mut frame = FrameBuffer::new(Arc::clone(&topology));
@@ -188,7 +189,7 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
             DcdReader::new(
                 Cursor::new(bytes.clone()),
                 Arc::clone(&topology),
-                DcdReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
             )
         };
@@ -196,7 +197,7 @@ fn dcd_scratch_limit_includes_records_fixed_atoms_and_indexed_reuse() {
             IndexedDcdReader::new(
                 Cursor::new(bytes.clone()),
                 Arc::clone(&topology),
-                DcdReadOptions::default()
+                TrajectoryOpenOptions::default()
                     .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(limit)),
             )
         };
@@ -228,8 +229,7 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default(),
-        "growth.dcd",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("growth.dcd"),
     )
     .unwrap();
     let mut frame = FrameBuffer::new(Arc::clone(&topology));
@@ -242,7 +242,7 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     let mut reader = DcdReader::new(
         stream,
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(required - 1)),
     )
     .unwrap();
@@ -261,7 +261,7 @@ fn dcd_record_growth_is_bounded_before_reading_or_publishing_coordinates() {
     let mut reader = IndexedDcdReader::new(
         Cursor::new(bytes),
         topology,
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default().with_max_scratch_bytes(required)),
     )
     .unwrap();
@@ -303,8 +303,8 @@ fn dcd_rejects_oriented_cells_before_appending_bytes_and_can_retry() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default().with_unit_cells(true),
-        "oriented.dcd",
+        TrajectoryWriteOptions::from(DcdWriteOptions::default().with_unit_cells(true))
+            .with_source_label("oriented.dcd"),
     )
     .unwrap();
     let canonical = PeriodicCell::new(
@@ -408,6 +408,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
             .with_endian(endian)
             .with_unit_cells(true)
             .with_step_sequence(10, 2)
+            .unwrap()
             .with_header_delta(
                 Quantity::new(0.5, PICOSECOND),
                 DcdTimePolicy::HeaderDelta { unit: PICOSECOND },
@@ -416,8 +417,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         let mut writer = DcdWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            options,
-            "memory.dcd",
+            TrajectoryWriteOptions::from(options).with_source_label("memory.dcd"),
         )
         .unwrap();
         let cell = PeriodicCell::new(
@@ -452,12 +452,12 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         let bytes = writer.finish().unwrap().into_inner();
 
         let options = DcdReadOptions::default()
-            .with_time_policy(DcdTimePolicy::HeaderDelta { unit: PICOSECOND });
+            .with_time_policy(DcdTimePolicy::HeaderDelta { unit: PICOSECOND })
+            .unwrap();
         let mut reader = DcdReader::new(
             Cursor::new(bytes.clone()),
             Arc::clone(&topology),
-            options
-                .clone()
+            TrajectoryOpenOptions::from(options.clone())
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.dcd"),
         )
@@ -477,7 +477,7 @@ fn canonical_dcd_round_trips_both_endians_cells_steps_and_explicit_time() {
         let mut indexed = IndexedDcdReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
-            options
+            TrajectoryOpenOptions::from(options)
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("memory.dcd"),
         )
@@ -497,7 +497,7 @@ fn fixed_atom_dcd_reconstructs_complete_frames_and_random_access() {
     let mut reader = IndexedDcdReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("fixed.dcd"),
     )
@@ -542,8 +542,7 @@ fn indexed_dcd_addresses_frames_from_the_stream_position_it_was_opened_at() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default(),
-        "memory.dcd",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("memory.dcd"),
     )
     .unwrap();
     let mut source = FrameBuffer::new(Arc::clone(&topology));
@@ -594,7 +593,7 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
     let mut reader = DcdReader::new(
         Cursor::new(bytes.clone()),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits.clone())
             .with_source_label("exact-limit.dcd"),
     )
@@ -607,7 +606,7 @@ fn dcd_exact_frame_and_index_limits_still_allow_clean_eof() {
     let indexed = IndexedDcdReader::new(
         Cursor::new(bytes),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("exact-index-limit.dcd"),
     )
@@ -626,7 +625,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
         let mut sequential = DcdReader::new(
             Cursor::new(bytes.clone()),
             Arc::clone(&topology),
-            DcdReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("declared-sequential.dcd"),
         )
@@ -643,7 +642,7 @@ fn dcd_declared_frame_count_is_strict_in_sequential_and_indexed_modes() {
         let error = IndexedDcdReader::new(
             Cursor::new(bytes),
             Arc::clone(&topology),
-            DcdReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(TrajectoryIoLimits::default())
                 .with_source_label("declared-indexed.dcd"),
         )
@@ -663,7 +662,7 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
     let mut indexed = IndexedDcdReader::new(
         stream,
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("restore-failure.dcd"),
     )
@@ -695,12 +694,11 @@ fn indexed_dcd_restoration_failure_does_not_publish_or_change_destination() {
 #[test]
 fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let topology = topology();
-    let options = DcdWriteOptions::default().with_step_sequence(0, 1);
+    let options = DcdWriteOptions::default().with_step_sequence(0, 1).unwrap();
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        options,
-        "guarded.dcd",
+        TrajectoryWriteOptions::from(options).with_source_label("guarded.dcd"),
     )
     .unwrap();
     let mut frame = FrameBuffer::new(Arc::clone(&topology));
@@ -728,7 +726,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
     let mut reader = DcdReader::new(
         stream,
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(sequential_limits)
             .with_source_label("guarded-sequential.dcd"),
     )
@@ -751,7 +749,7 @@ fn dcd_limits_probe_but_do_not_decode_or_consume_frame_n_plus_one() {
         let error = IndexedDcdReader::new(
             stream,
             Arc::clone(&topology),
-            DcdReadOptions::default()
+            TrajectoryOpenOptions::default()
                 .with_limits(limits)
                 .with_source_label("guarded-index.dcd"),
         )
@@ -772,8 +770,7 @@ fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default(),
-        "no-probe.dcd",
+        TrajectoryWriteOptions::new(TrajectoryFormat::Dcd).with_source_label("no-probe.dcd"),
     )
     .unwrap();
     let mut frame = FrameBuffer::new(Arc::clone(&topology));
@@ -787,7 +784,7 @@ fn dcd_ordinary_frames_do_not_require_backward_eof_probe_seeks() {
     let mut reader = DcdReader::new(
         stream,
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("no-probe.dcd"),
     )
@@ -808,7 +805,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let error = IndexedDcdReader::new(
         Cursor::new(wrong_count),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("count.dcd"),
     )
@@ -824,7 +821,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let mut reader = DcdReader::new(
         Cursor::new(bad_marker),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("marker.dcd"),
     )
@@ -847,7 +844,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let error = IndexedDcdReader::new(
         Cursor::new(truncated),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("truncated.dcd"),
     )
@@ -862,7 +859,7 @@ fn dcd_truncation_marker_counts_limits_and_publication_are_strict() {
     let mut reader = DcdReader::new(
         Cursor::new(valid),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(limits)
             .with_source_label("limited.dcd"),
     )
@@ -879,12 +876,12 @@ fn dcd_writer_validates_the_complete_frame_before_writing_any_record() {
     let topology = topology();
     let options = DcdWriteOptions::default()
         .with_unit_cells(true)
-        .with_step_sequence(0, 1);
+        .with_step_sequence(0, 1)
+        .unwrap();
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        options,
-        "late-invalid.dcd",
+        TrajectoryWriteOptions::from(options).with_source_label("late-invalid.dcd"),
     )
     .unwrap();
     let header_bytes = writer.writer().get_ref().len();
@@ -965,7 +962,7 @@ fn independently_generated_mdanalysis_fixture_is_interoperable() {
     let mut reader = DcdReader::new(
         Cursor::new(fixture),
         Arc::clone(&topology),
-        DcdReadOptions::default()
+        TrajectoryOpenOptions::default()
             .with_limits(TrajectoryIoLimits::default())
             .with_source_label("mdanalysis-2.9.0-three-atoms.dcd"),
     )
@@ -990,11 +987,14 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
     let mut writer = DcdWriter::new(
         Cursor::new(Vec::new()),
         Arc::clone(&topology),
-        DcdWriteOptions::default()
-            .with_step_sequence(0, 1000)
-            .with_header_delta(Quantity::new(TIMESTEP, PICOSECOND), time_policy)
-            .unwrap(),
-        "timestep.dcd",
+        TrajectoryWriteOptions::from(
+            DcdWriteOptions::default()
+                .with_step_sequence(0, 1000)
+                .unwrap()
+                .with_header_delta(Quantity::new(TIMESTEP, PICOSECOND), time_policy)
+                .unwrap(),
+        )
+        .with_source_label("timestep.dcd"),
     )
     .unwrap();
     let coordinates = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]];
@@ -1033,7 +1033,9 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
     let mut reader = DcdReader::new(
         Cursor::new(bytes),
         topology,
-        DcdReadOptions::default().with_time_policy(time_policy),
+        DcdReadOptions::default()
+            .with_time_policy(time_policy)
+            .unwrap(),
     )
     .unwrap();
     let mut destination = reader.frame_buffer();
@@ -1050,5 +1052,78 @@ fn dcd_header_delta_accepts_frame_times_that_agree_at_f32_precision() {
             (Some(1000), Some(1000.0 * stored)),
             (Some(2000), Some(2000.0 * stored)),
         ]
+    );
+}
+
+#[test]
+fn dcd_options_refuse_values_the_header_cannot_hold_when_set() {
+    let writer_error = |detail: &str| {
+        codec_error(
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            TrajectoryIoOperation::Open,
+            TrajectoryFormat::Dcd,
+            "DCD writer options",
+            None,
+            detail,
+        )
+    };
+    let options = DcdWriteOptions::default();
+    assert_eq!(
+        options.with_step_sequence(0, 0).map(|_| ()),
+        Err(writer_error("The step interval is zero."))
+    );
+    let beyond = i32::MAX as u64 + 1;
+    for (start, interval) in [(beyond, 1), (0, beyond)] {
+        assert_eq!(
+            options.with_step_sequence(start, interval).map(|_| ()),
+            Err(writer_error(
+                "The first step or the step interval exceeds the 32-bit header field."
+            ))
+        );
+    }
+    let largest = i32::MAX as u64;
+    assert!(options.with_step_sequence(largest, largest).is_ok());
+
+    let policy = DcdTimePolicy::HeaderDelta { unit: PICOSECOND };
+    for (delta, shown) in [(-1.0, "-1"), (f64::NAN, "NaN"), (1e300, "inf")] {
+        assert_eq!(
+            options
+                .with_header_delta(Quantity::new(delta, PICOSECOND), policy)
+                .map(|_| ()),
+            Err(writer_error(&format!(
+                "The time step DELTA is {shown}. It is not a finite, nonnegative number."
+            )))
+        );
+    }
+    assert!(options
+        .with_header_delta(Quantity::new(0.0, PICOSECOND), policy)
+        .is_ok());
+
+    // A length is not a time, even when DELTA has the policy's unit.
+    let error = options
+        .with_header_delta(
+            Quantity::new(1.0, ANGSTROM),
+            DcdTimePolicy::HeaderDelta { unit: ANGSTROM },
+        )
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.source_label(), error.detail()),
+        (
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            Some("DCD writer options"),
+            Some("The DCD time-policy unit is incompatible.")
+        )
+    );
+
+    let error = DcdReadOptions::default()
+        .with_time_policy(DcdTimePolicy::HeaderDelta { unit: ANGSTROM })
+        .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.source_label(), error.detail()),
+        (
+            TrajectoryIoErrorKind::InconsistentMetadata,
+            Some("DCD reader options"),
+            Some("The DCD time-policy unit is incompatible.")
+        )
     );
 }

@@ -144,30 +144,32 @@ fn format_agnostic_public_api_opens_sequential_and_indexed_readers() {
 }
 
 #[test]
-fn path_options_enforce_global_limits_and_path_diagnostics() {
-    use kekule::traj::io::xyz::XyzReadOptions;
-
+fn path_readers_apply_the_limits_and_name_the_path_unless_labelled() {
     let path = temporary_xyz();
     fs::write(&path, b"1\nlimits\nC 1 2 3\n").unwrap();
     let topology = topology();
     let options = TrajectoryOpenOptions::default()
-        .with_limits(TrajectoryIoLimits::default().with_max_atoms(0))
-        .with_xyz_options(XyzReadOptions::default().with_source_label("custom stream"));
-    let errors = [
-        open_trajectory(&path, Arc::clone(&topology), options.clone())
-            .err()
-            .unwrap(),
-        open_indexed_trajectory(&path, topology, options)
-            .err()
-            .unwrap(),
-    ];
-    for error in errors {
-        assert_eq!(
-            support::codec_kind(&error),
-            Some(TrajectoryIoErrorKind::LimitExceeded)
-        );
-        let context = error;
-        assert_eq!(context.source_label(), Some(path.to_str().unwrap()));
+        .with_limits(TrajectoryIoLimits::default().with_max_atoms(0));
+    let labelled = options.clone().with_source_label("custom stream");
+    for (options, label) in [
+        (options, path.to_str().unwrap()),
+        (labelled, "custom stream"),
+    ] {
+        let errors = [
+            open_trajectory(&path, Arc::clone(&topology), options.clone())
+                .err()
+                .unwrap(),
+            open_indexed_trajectory(&path, Arc::clone(&topology), options)
+                .err()
+                .unwrap(),
+        ];
+        for error in errors {
+            assert_eq!(
+                support::codec_kind(&error),
+                Some(TrajectoryIoErrorKind::LimitExceeded)
+            );
+            assert_eq!(error.source_label(), Some(label));
+        }
     }
     fs::remove_file(path).unwrap();
 }

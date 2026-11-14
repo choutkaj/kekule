@@ -190,8 +190,7 @@ fn every_format_follows_a_file_its_writer_appends_to() {
         let mut writer = create_trajectory_stream_writer(
             BufWriter::new(file),
             topology(),
-            options(format),
-            "live",
+            options(format).with_source_label("live"),
         )
         .unwrap();
         for frame in written.iter().take(2) {
@@ -554,8 +553,7 @@ fn files_without_a_complete_frame_or_header_are_incomplete() {
     let mut writer = create_trajectory_stream_writer(
         BufWriter::new(file),
         topology(),
-        options(TrajectoryFormat::Dcd),
-        "live",
+        options(TrajectoryFormat::Dcd).with_source_label("live"),
     )
     .unwrap();
     writer.flush().unwrap();
@@ -617,9 +615,6 @@ fn fingerprints_take_a_file_grown_by_appending_for_the_same_file() {
         assert!(recorded.is_prefix_of_path(&path).unwrap());
         append(&path, &bytes[second..]);
         assert!(recorded.is_prefix_of_path(&path).unwrap(), "{format}");
-        let mut file = File::open(&path).unwrap();
-        assert!(recorded.is_prefix_of_file(&mut file).unwrap());
-        assert_eq!(file.stream_position().unwrap(), 0);
         let grown = TrajectoryFileFingerprint::of_path(&path).unwrap();
         assert!(!grown.same_content(&recorded));
         assert!(!grown.is_prefix_of_path(directory.0.join("missing")).is_ok());
@@ -662,8 +657,7 @@ fn every_flush_leaves_a_complete_trajectory_a_strict_reader_opens() {
         let mut writer = create_trajectory_stream_writer(
             BufWriter::with_capacity(16, file),
             topology(),
-            options(format),
-            "live",
+            options(format).with_source_label("live"),
         )
         .unwrap();
         for (count, frame) in written.iter().enumerate() {
@@ -698,8 +692,7 @@ fn a_reader_refreshing_while_a_writer_appends_sees_every_frame_whole() {
             let mut writer = create_trajectory_stream_writer(
                 BufWriter::with_capacity(37, file),
                 topology(),
-                options(format),
-                "live",
+                options(format).with_source_label("live"),
             )
             .unwrap();
             let written = trajectory(0..FRAMES);

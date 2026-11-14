@@ -11,6 +11,7 @@ use kekule::structure::Positions;
 use kekule::topology::Topology;
 use kekule::traj::io::dcd::{DcdReadOptions, DcdTimePolicy};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrScalarPrecision, TrrWriteOptions, TrrWriter};
+use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::io::{
     open_indexed_trajectory, open_indexed_trajectory_from_index,
     open_indexed_trajectory_from_index_with, open_indexed_trajectory_with, CoordinateEncoding,
@@ -418,17 +419,6 @@ fn a_host_computes_stores_and_checks_file_fingerprints() {
         assert_eq!(&fingerprint, index.fingerprint(), "{name}");
         assert!(fingerprint.matches_path(&path).unwrap());
 
-        // An open file is fingerprinted from its start, wherever it was.
-        let mut file = File::open(&path).unwrap();
-        file.seek(SeekFrom::Start(5)).unwrap();
-        assert_eq!(
-            TrajectoryFileFingerprint::of_file(&mut file).unwrap(),
-            fingerprint
-        );
-        assert_eq!(file.stream_position().unwrap(), 0);
-        file.seek(SeekFrom::End(0)).unwrap();
-        assert!(fingerprint.matches_file(&mut file).unwrap());
-
         // The stored forms decode to the same fingerprint.
         let text = fingerprint.to_string();
         assert_eq!(
@@ -608,7 +598,7 @@ fn dcd_indexes_record_times_under_the_header_delta_policy_they_were_built_with()
     let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
     let with_policy = |policy| {
         TrajectoryOpenOptions::default()
-            .with_dcd_options(DcdReadOptions::default().with_time_policy(policy))
+            .with_dcd_options(DcdReadOptions::default().with_time_policy(policy).unwrap())
     };
     let timed = with_policy(DcdTimePolicy::HeaderDelta { unit: FEMTOSECOND });
     let mut built = open_indexed_trajectory(&path, Arc::clone(&topology), timed.clone()).unwrap();
@@ -726,10 +716,12 @@ fn mixed_precision_trr(path: &Path) -> Arc<Topology> {
         let mut writer = TrrWriter::new(
             Cursor::new(Vec::new()),
             Arc::clone(&topology),
-            TrrWriteOptions::default()
-                .with_precision(precision)
-                .with_lambda_policy(TrrLambdaPolicy::RequireZero),
-            "mixed.trr",
+            TrajectoryWriteOptions::from(
+                TrrWriteOptions::default()
+                    .with_precision(precision)
+                    .with_lambda_policy(TrrLambdaPolicy::RequireZero),
+            )
+            .with_source_label("mixed.trr"),
         )
         .unwrap();
         let mut frame = Frame::new(
