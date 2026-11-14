@@ -18,7 +18,6 @@ use super::super::{PdbAtom, PdbAtomKind, PdbDocument, PdbPartner};
 use super::altloc::inventory;
 use super::assemblies::read_pdb_assemblies;
 use super::atom_site::{is_water, AtomRow};
-use super::cell::stated_cell;
 use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
@@ -30,7 +29,7 @@ use super::types::{
     StructureInterpretOptions, StructureInterpretation, StructureSetInterpretOptions,
     StructureSetInterpretation,
 };
-use super::{interpret_source, AltLocResidue, StructureSource};
+use super::{interpret_source, stated_cell, AltLocResidue, StructureSource};
 
 pub(crate) fn interpret_pdb(
     document: &PdbDocument,

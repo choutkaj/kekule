@@ -352,9 +352,11 @@ geometries, frames, and buffers, and read the geometry's velocities and forces
 from the view. A view's `kind()` is `StructureKind::Standalone` or
 `StructureKind::InSet` with a `SetContext` reporting the geometry's place and
 its set's properties, so writers and reductions never lose that state
-silently. Structure writers hold a geometry's place, velocities, and forces to
-one policy, `geometry_metadata`, and per-atom, per-bond, own, and set
-properties to a second, `properties`; each fails by default. Owned projections
+silently. Structure and trajectory writers hold a geometry's or frame's
+place, time, step, velocities, forces, occupancies, and B factors to one
+policy, `geometry_metadata`, per-atom, per-bond, own, and set properties to a
+second, `properties`, and a periodic cell to a third, `cell`; each fails by
+default. Owned projections
 (`to_structure`) materialize a structure with the whole geometry while sharing
 the topology. A set built from structures (`from_structures`) consumes them
 and requires equal layouts (`same_layout`), keeping the first structure's
@@ -702,7 +704,11 @@ that converts from the inputs the format can represent. Coordinate-bearing
 writers emit atoms in dense order. Unsupported representational content fails
 explicitly: set or frame state the format cannot carry fails unless the caller
 sets `UnrepresentablePolicy::Omit` for that kind of content, each kind with its
-own policy, and the writer's `WriteReport` names every omission. Writers state
+own policy, and the writer's `WriteReport` names every omission. Each writer
+states what its format carries as one constant, and one shared check builds
+both the error and the report entries, in one order: cell; place on an order;
+time and step; velocities and forces; occupancies and B factors; properties.
+Writers state
 what their reader cannot derive and no more, never invent assertions, and
 never write a distribution as a field of a record. There is no universal save
 trait or implicit trajectory-to-structure export. Writer failures say why no
@@ -870,7 +876,8 @@ Every operation has exactly one home.
   geometries.`), `LengthMismatch` (`There are 4 weights instead of 5.`),
   `TopologyMismatch`, `CapacityExceeded`, and `UnknownHydrogenCount`. A
   `Countable` names what is counted. An area error holds the payload in a
-  tuple variant and displays it unchanged.
+  tuple variant and displays it unchanged. Writers name what they cannot
+  write with the shared `GeometryField`, `AtomField`, and `CellReason`.
 - An error is at most 120 bytes, so a `Result` that carries it stays under
   the 128-byte `clippy::result_large_err` threshold, in Kekule and in
   callers. An error keeps at most one large payload inline and boxes the

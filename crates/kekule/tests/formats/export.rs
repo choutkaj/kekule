@@ -239,7 +239,7 @@ fn sdf_control_text_title_round_trips_or_is_rejected_before_writing() {
         .unwrap()
         .into_structure();
     for version in [MolfileWriteVersion::V2000, MolfileWriteVersion::V3000] {
-        let options = SdfWriteOptions::default().with_version(version);
+        let options = SdfWriteOptions::from(MolfileWriteOptions::default().with_version(version));
         let record = SdfRecordInterpretation::new("M  END", structure.clone(), Vec::new());
         let written = sdf::write(&[record], options).unwrap().0;
         let document = sdf::parse_str(&written, Default::default()).unwrap();

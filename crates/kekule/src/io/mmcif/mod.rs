@@ -12,6 +12,6 @@ pub use document::{
 };
 pub(crate) use write::{write_mmcif, write_mmcif_to};
 pub use write::{
-    MmcifAtomField, MmcifBlockSource, MmcifCellReason, MmcifEntityClassifications,
-    MmcifGeometryField, MmcifWriteErrorKind, MmcifWriteOptions,
+    MmcifBlockSource, MmcifEntityClassifications, MmcifSharedCategory, MmcifWriteErrorKind,
+    MmcifWriteOptions,
 };

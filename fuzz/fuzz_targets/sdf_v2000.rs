@@ -1,6 +1,6 @@
 #![no_main]
 
-use kekule::molfile::MolfileWriteVersion;
+use kekule::molfile::{MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{parse_str, records, write, SdfParseOptions, SdfWriteOptions};
 use libfuzzer_sys::fuzz_target;
 
@@ -11,7 +11,9 @@ fuzz_target!(|data: &[u8]| {
         .filter_map(Result::ok)
         .filter_map(|record| record.interpret(Default::default()).ok())
         .collect::<Vec<_>>();
-    let options = SdfWriteOptions::default().with_version(MolfileWriteVersion::V2000);
+    let options = SdfWriteOptions::from(
+        MolfileWriteOptions::default().with_version(MolfileWriteVersion::V2000),
+    );
     if let Ok((output, _)) = write(&interpreted, options) {
         if let Ok(document) = parse_str(&output, Default::default()) {
             for record in document.records() {

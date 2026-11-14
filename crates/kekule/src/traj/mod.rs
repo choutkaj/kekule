@@ -146,6 +146,6 @@ pub mod periodic;
 pub use processed::{FitReference, Processed, ProcessingError, ProcessingStep, ProcessingSteps};
 pub use trajectory::{
     FrameBuffer, FrameData, FrameView, MemoryTrajectoryWriter, SeekableTrajectoryReader,
-    TrajectoryField, TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind,
-    TrajectoryIoOperation, TrajectoryReader, TrajectoryWriter,
+    TrajectoryFormat, TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryIoOperation,
+    TrajectoryReader, TrajectoryWriter,
 };

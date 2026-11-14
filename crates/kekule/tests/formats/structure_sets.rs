@@ -515,7 +515,10 @@ fn sdf_coordinate_units_are_the_unit_constants() {
             ))
         );
         assert!(error.to_string().contains("coordinate unit"), "{error}");
-        let omit = SdfWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
+        let omit = SdfWriteOptions::from(
+            kekule::molfile::MolfileWriteOptions::default()
+                .with_geometry_metadata(UnrepresentablePolicy::Omit),
+        );
         let (text, report) = sdf::write(&set, omit).unwrap();
         assert!(!text.contains(sdf::COORDINATE_FIELD), "{text}");
         assert_eq!(

@@ -531,7 +531,10 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
     );
     let written = sdf::write(
         &[record],
-        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
+        sdf::SdfWriteOptions::from(
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
+        ),
     )
     .expect("representable field should write")
     .0;
@@ -562,7 +565,10 @@ fn sdf_v2000_fields_round_trip_leading_greater_than_lines_and_reject_unsafe_meta
         let record = SdfRecordInterpretation::new(title, test_structure(&molecule), vec![field]);
         let error = sdf::write(
             &[record],
-            sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
+            sdf::SdfWriteOptions::from(
+                molfile::MolfileWriteOptions::default()
+                    .with_version(molfile::MolfileWriteVersion::V2000),
+            ),
         )
         .expect_err("unrepresentable SDF metadata must fail");
         assert!(error.to_string().contains(expected), "{expected}: {error}");
@@ -847,7 +853,10 @@ $$$$
     let records = read_sdf_records(input).expect("sdf should parse");
     let sdf = sdf::write(
         &records,
-        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
+        sdf::SdfWriteOptions::from(
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
+        ),
     )
     .expect("sdf should write")
     .0;
@@ -966,7 +975,10 @@ fn v2000_charge_codes_and_chunked_metadata_round_trip_semantically() {
     ];
     let sdf_text = sdf::write(
         &records,
-        sdf::SdfWriteOptions::default().with_version(molfile::MolfileWriteVersion::V2000),
+        sdf::SdfWriteOptions::from(
+            molfile::MolfileWriteOptions::default()
+                .with_version(molfile::MolfileWriteVersion::V2000),
+        ),
     )
     .expect("two records should write")
     .0;
