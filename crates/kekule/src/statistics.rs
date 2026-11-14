@@ -70,6 +70,7 @@
 
 mod accumulators;
 
+pub(crate) use accumulators::{merged_total, next_total, observe_samples_of};
 pub use accumulators::{
     ContactOccupancyAccumulator, ContactOccupancyResult, GroupContactOccupancyAccumulator,
     GroupContactOccupancyResult, MergeMismatch, RmsfAccumulator, RmsfResult, SampleObservations,
