@@ -41,14 +41,14 @@ Molecule  = Graph + Perception + Properties
 Topology  = collection of Molecules (stored as definitions and instances) + Hierarchy
 Hierarchy = Chain -> Residue -> AtomSite
 ```
-Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. A `Structure` is a topology with one geometry of it. A `StructureSet` holds many geometries of one system. An optional order places every geometry: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An optional distribution reads the geometries as samples drawn from a distribution, grouping all or some of them into states, with weights and state energies, as for a conformer ensemble. `StructureSet::from_reader` loads chosen geometries of any set, such as every tenth frame of a file. A structure set read from an indexed trajectory file (`traj::io::open_indexed_structure_set`) holds no geometries in memory and decodes each one when it is read. `traj::Processed` makes molecules whole, wraps, centers, fits, smooths, and subsets geometries as they are read, and statistics, RMSD, and pairwise fits read any set through the `StructureSetRead` trait.
+Higher, modeling-oriented objects are built around `Topology` and contain actual instances of molecules including their coordinates. A `Structure` is a topology with one geometry of it. A `StructureSet` holds many geometries of one system. An optional order places every geometry: in time for a trajectory, by step for an optimization, or along one coordinate for a scan. An `Ensemble` reads a structure set as samples drawn from a distribution, grouping all or some of its geometries into states, with weights and state energies, as for a conformer ensemble. `StructureSet::from_reader` loads chosen geometries of any set, such as every tenth frame of a file. A structure set read from an indexed trajectory file (`traj::io::open_indexed_structure_set`) holds no geometries in memory and decodes each one when it is read. `traj::Processed` makes molecules whole, wraps, centers, fits, smooths, and subsets geometries as they are read, and statistics, RMSD, and pairwise fits read any set through the `StructureSetRead` trait.
 
 ```text
 Structure    = Topology + positions, cell, occupancies, B-factors, properties
 StructureSet = Topology + Geometries (positions, cell, occupancies, B-factors, velocities, forces, properties)
                + optional Order (times and steps, steps, or coordinate values)
-               + optional Distribution (members, weights, states with energies, temperature)
 StructureSet<IndexedFile> = the same, with each geometry read from a trajectory file
+Ensemble     = StructureSet + Distribution (samples, log weights, states with energies, temperature)
 ```
 
 ## Formats
