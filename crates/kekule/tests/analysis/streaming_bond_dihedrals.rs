@@ -8,7 +8,7 @@ use kekule::{
     units::{Quantity, NANOMETER},
 };
 
-use crate::support::{time_ordered, Frame};
+use crate::traj_support::{time_ordered, Frame};
 
 #[test]
 fn trajectory_frames_keep_the_same_tied_references_through_degenerate_geometry() {

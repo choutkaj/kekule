@@ -7,7 +7,7 @@ use kekule::topology::AtomSelection;
 use kekule::traj::{FrameBuffer, FrameView};
 use kekule::units::{Quantity, NANOMETER};
 
-use crate::support::{linear_carbon_topology, time_ordered, Frame};
+use crate::traj_support::{linear_carbon_topology, time_ordered, Frame};
 
 #[test]
 fn reused_streaming_buffers_agree_with_loaded_trajectory_statistics() {

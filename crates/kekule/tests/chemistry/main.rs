@@ -1,10 +1,13 @@
-//! Chemical perception, hydrogens, stereochemistry, and substructure search.
+//! Molecular graph construction, editing, and identity; chemical perception,
+//! hydrogens, and stereochemistry.
 
 #[path = "../support/mod.rs"]
 mod support;
 
 mod aromaticity;
+mod editor;
 mod enhanced_stereo;
 mod hydrogens;
+mod identity;
 mod resonance;
-mod substructure;
+mod stereo_edits;
