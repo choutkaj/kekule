@@ -838,16 +838,8 @@ fn infer_contacts(
         .map(|&element| covalent_bonding_radius(element).0)
         .fold(0.0_f64, f64::max);
     let cell = 2.0 * largest_radius + COVALENT_BOND_TOLERANCE_ANGSTROM;
-    // Contacts count toward the limit in order of these cells, then of atom
-    // lines, which decides the atom reported over it. Coordinates are
-    // bounded by `MAX_COORDINATE_ANGSTROM`, so every key is exact.
-    let key = |point: &Point3| {
-        (
-            (point.x / cell).floor() as i64,
-            (point.y / cell).floor() as i64,
-            (point.z / cell).floor() as i64,
-        )
-    };
+    // Each atom meets its later contacts in atom-line order, which decides
+    // the atom reported over the limit.
     let mut grid = PointGrid::default();
     grid.build(
         points.iter().copied().zip(0..),
@@ -873,11 +865,11 @@ fn infer_contacts(
                 + covalent_bonding_radius(elements[right]).0
                 + COVALENT_BOND_TOLERANCE_ANGSTROM;
             if distance_squared <= cutoff * cutoff {
-                near.push((key(other), right, distance_squared, cutoff));
+                near.push((right, distance_squared, cutoff));
             }
         });
-        near.sort_unstable_by_key(|&(key, right, _, _)| (key, right));
-        for &(_, right, distance_squared, cutoff) in &near {
+        near.sort_unstable_by_key(|&(right, _, _)| right);
+        for &(right, distance_squared, cutoff) in &near {
             for atom in [left, right] {
                 contacts[atom] += 1;
                 if contacts[atom] > max_contacts {
@@ -938,29 +930,17 @@ mod tests {
     type Contacts = (Vec<XyzInferredBond>, Vec<XyzInterpretIssue>);
 
     /// Every atom pair measured: each atom meets the later atoms within
-    /// bonding distance in order of the cells of the widest bonding distance
-    /// from the origin, then of atom lines.
+    /// bonding distance in atom-line order.
     fn brute(
         elements: &[Element],
         points: &[Point3],
         max_contacts: usize,
     ) -> Result<Contacts, (LimitExceeded, usize)> {
         let radius = |atom: usize| covalent_bonding_radius(elements[atom]).0;
-        let cell = 2.0 * (0..points.len()).map(radius).fold(0.0, f64::max)
-            + COVALENT_BOND_TOLERANCE_ANGSTROM;
-        let key = |point: &Point3| {
-            (
-                (point.x / cell).floor() as i64,
-                (point.y / cell).floor() as i64,
-                (point.z / cell).floor() as i64,
-            )
-        };
         let mut contacts = vec![0; points.len()];
         let (mut bonds, mut close) = (Vec::new(), Vec::new());
         for left in 0..points.len() {
-            let mut rights = (left + 1..points.len()).collect::<Vec<_>>();
-            rights.sort_by_key(|&right| (key(&points[right]), right));
-            for right in rights {
+            for right in left + 1..points.len() {
                 let (point, other) = (points[left], points[right]);
                 let distance_squared = (point.x - other.x).powi(2)
                     + (point.y - other.y).powi(2)
