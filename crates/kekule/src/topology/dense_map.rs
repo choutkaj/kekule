@@ -9,6 +9,11 @@ use std::fmt;
 use std::iter::FusedIterator;
 use std::ops::Index;
 
+use crate::fixed_u32_id::FixedId;
+use crate::molecule::{AtomId, BondId};
+
+use super::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
+
 /// A key with a position in a dense integer space.
 pub(crate) trait DenseKey: Copy + Ord {
     fn position(self) -> u64;
@@ -265,57 +270,47 @@ impl<K, V> DoubleEndedIterator for Iter<'_, K, V> {
 impl<K, V> ExactSizeIterator for Iter<'_, K, V> {}
 impl<K, V> FusedIterator for Iter<'_, K, V> {}
 
-macro_rules! dense_id {
-    ($($id:ty),*) => {$(
-        impl DenseKey for $id {
-            fn position(self) -> u64 {
-                u64::from(self.raw())
-            }
-            fn from_position(position: u64) -> Self {
-                // Out-of-range bounds only delimit ranges past every key.
-                Self::new(u32::try_from(position).unwrap_or(u32::MAX))
-            }
-        }
-    )*};
-}
-dense_id!(
-    crate::molecule::AtomId,
-    crate::molecule::BondId,
-    crate::topology::ChainId,
-    crate::topology::ResidueId,
-    crate::topology::AtomSiteId
-);
-
-/// An instance-qualified source ID with a dense local part.
-pub(crate) trait Qualified: Copy + Ord {
-    type Local: DenseKey;
-    fn split(self) -> (usize, Self::Local);
-    fn join(instance: usize, local: Self::Local) -> Self;
-}
-
-impl Qualified for crate::topology::InstanceAtomId {
-    type Local = crate::molecule::AtomId;
-    fn split(self) -> (usize, Self::Local) {
-        (self.instance().index(), self.atom())
+impl<T: FixedId> DenseKey for T {
+    fn position(self) -> u64 {
+        u64::from(self.raw())
     }
-    fn join(instance: usize, local: Self::Local) -> Self {
-        Self::new(
-            crate::topology::MoleculeInstanceId::new(instance as u32),
-            local,
-        )
+    fn from_position(position: u64) -> Self {
+        // Out-of-range bounds only delimit ranges past every key.
+        Self::new(u32::try_from(position).unwrap_or(u32::MAX))
     }
 }
 
-impl Qualified for crate::topology::InstanceBondId {
-    type Local = crate::molecule::BondId;
-    fn split(self) -> (usize, Self::Local) {
-        (self.instance().index(), self.bond())
+/// An instance-qualified ID: a local ID of one molecule instance.
+pub(crate) trait QualifiedId: Copy + Ord {
+    type Local: FixedId;
+    fn new(instance: MoleculeInstanceId, local: Self::Local) -> Self;
+    fn instance(self) -> MoleculeInstanceId;
+    fn local(self) -> Self::Local;
+}
+
+impl QualifiedId for InstanceAtomId {
+    type Local = AtomId;
+    fn new(molecule: MoleculeInstanceId, atom: AtomId) -> Self {
+        Self { molecule, atom }
     }
-    fn join(instance: usize, local: Self::Local) -> Self {
-        Self::new(
-            crate::topology::MoleculeInstanceId::new(instance as u32),
-            local,
-        )
+    fn instance(self) -> MoleculeInstanceId {
+        self.molecule
+    }
+    fn local(self) -> AtomId {
+        self.atom
+    }
+}
+
+impl QualifiedId for InstanceBondId {
+    type Local = BondId;
+    fn new(molecule: MoleculeInstanceId, bond: BondId) -> Self {
+        Self { molecule, bond }
+    }
+    fn instance(self) -> MoleculeInstanceId {
+        self.molecule
+    }
+    fn local(self) -> BondId {
+        self.bond
     }
 }
 
@@ -326,13 +321,13 @@ impl Qualified for crate::topology::InstanceBondId {
 /// an untrusted instance ID far past the others is stored sparsely rather
 /// than allocating every instance before it.
 #[derive(Clone)]
-pub(crate) struct QualifiedMap<K: Qualified, V> {
+pub(crate) struct QualifiedMap<K: QualifiedId, V> {
     instances: Vec<DenseMap<K::Local, V>>,
     // Keys of instances at or past `instances.len()`.
     sparse: BTreeMap<K, V>,
 }
 
-impl<K: Qualified, V> Default for QualifiedMap<K, V> {
+impl<K: QualifiedId, V> Default for QualifiedMap<K, V> {
     fn default() -> Self {
         Self {
             instances: Vec::new(),
@@ -341,17 +336,16 @@ impl<K: Qualified, V> Default for QualifiedMap<K, V> {
     }
 }
 
-impl<K: Qualified + fmt::Debug, V: fmt::Debug> fmt::Debug for QualifiedMap<K, V> {
+impl<K: QualifiedId + fmt::Debug, V: fmt::Debug> fmt::Debug for QualifiedMap<K, V> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.debug_map().entries(self.iter()).finish()
     }
 }
 
-impl<K: Qualified, V> QualifiedMap<K, V> {
+impl<K: QualifiedId, V> QualifiedMap<K, V> {
     pub(crate) fn get(&self, key: &K) -> Option<&V> {
-        let (instance, local) = key.split();
-        match self.instances.get(instance) {
-            Some(map) => map.get(&local),
+        match self.instances.get(key.instance().index()) {
+            Some(map) => map.get(&key.local()),
             None => self.sparse.get(key),
         }
     }
@@ -361,7 +355,7 @@ impl<K: Qualified, V> QualifiedMap<K, V> {
     }
 
     pub(crate) fn insert(&mut self, key: K, value: V) -> Option<V> {
-        let (instance, local) = key.split();
+        let (instance, local) = (key.instance().index(), key.local());
         let len = self.instances.len();
         // The sparse map must hold nothing the grown vector would cover.
         if instance >= len && self.sparse.is_empty() && instance <= 2 * len + 64 {
@@ -374,19 +368,16 @@ impl<K: Qualified, V> QualifiedMap<K, V> {
     }
 
     /// The entries of one instance in local order.
-    pub(crate) fn instance(&self, instance: usize) -> impl Iterator<Item = (K, &V)> + '_ {
-        let dense = self
-            .instances
-            .get(instance)
-            .into_iter()
-            .flat_map(move |map| {
-                map.iter()
-                    .map(move |(&local, value)| (K::join(instance, local), value))
-            });
+    fn instance(&self, index: usize) -> impl Iterator<Item = (K, &V)> + '_ {
+        let instance = MoleculeInstanceId::from_index(index);
+        let dense = self.instances.get(index).into_iter().flat_map(move |map| {
+            map.iter()
+                .map(move |(&local, value)| (K::new(instance, local), value))
+        });
         let sparse = self
             .sparse
             .iter()
-            .filter(move |(key, _)| key.split().0 == instance)
+            .filter(move |(key, _)| key.instance() == instance)
             .map(|(&key, value)| (key, value));
         dense.chain(sparse)
     }
@@ -399,13 +390,13 @@ impl<K: Qualified, V> QualifiedMap<K, V> {
     }
 }
 
-impl<K: Qualified + PartialEq, V: PartialEq> PartialEq for QualifiedMap<K, V> {
+impl<K: QualifiedId + PartialEq, V: PartialEq> PartialEq for QualifiedMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         self.iter().eq(other.iter())
     }
 }
 
-impl<K: Qualified, V> FromIterator<(K, V)> for QualifiedMap<K, V> {
+impl<K: QualifiedId, V> FromIterator<(K, V)> for QualifiedMap<K, V> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(entries: I) -> Self {
         let mut map = Self::default();
         for (key, value) in entries {
@@ -415,7 +406,7 @@ impl<K: Qualified, V> FromIterator<(K, V)> for QualifiedMap<K, V> {
     }
 }
 
-impl<K: Qualified, V> Index<&K> for QualifiedMap<K, V> {
+impl<K: QualifiedId, V> Index<&K> for QualifiedMap<K, V> {
     type Output = V;
 
     fn index(&self, key: &K) -> &V {
@@ -426,7 +417,6 @@ impl<K: Qualified, V> Index<&K> for QualifiedMap<K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::molecule::AtomId;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
     struct Key(u64);

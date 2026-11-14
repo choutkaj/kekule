@@ -4,6 +4,7 @@ use crate::alignment::{
     best_kabsch, check_fit_count, AlignmentOptions, Coordinates, FitAtoms, NormalizedWeights,
     Pairs, PeriodicPolicy,
 };
+use crate::fixed_u32_id::FixedId;
 use crate::math::Point3;
 use crate::parallel::map_ranges;
 use crate::structure::{
@@ -565,7 +566,7 @@ fn fitted_rmsd_of(
         let position = fitted
             .binary_search(&atom.index())
             .expect("every paired atom is fitted");
-        TopologyAtomIndex::new(u32::try_from(position).expect("no more fitted atoms than atoms"))
+        TopologyAtomIndex::from_index(position)
     };
     let sets = sets
         .iter()

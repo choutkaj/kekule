@@ -1,6 +1,7 @@
 use super::{
     default_bond_expression, syntax_error, unsupported_error, BondExpression, FormatError,
 };
+use crate::fixed_u32_id::FixedId;
 use crate::query::{QueryAtomId, QueryBondId, QueryGraphBuilder, QueryStereoConstraint};
 use crate::stereo::TetrahedralOrientation;
 use std::ops::Range;
@@ -238,9 +239,9 @@ impl StereoSyntax {
             };
             builder
                 .set_atom_stereo_frame(
-                    QueryAtomId::new(index as u32),
+                    QueryAtomId::from_index(index),
                     QueryStereoConstraint::Tetrahedral {
-                        center: QueryAtomId::new(index as u32),
+                        center: QueryAtomId::from_index(index),
                         carriers,
                         orientation,
                     },

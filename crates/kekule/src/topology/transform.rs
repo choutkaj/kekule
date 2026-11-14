@@ -4,6 +4,7 @@
 //! dense-state correspondence.
 
 use crate::diagnostics::TopologyMismatch;
+use crate::fixed_u32_id::FixedId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -167,13 +168,13 @@ impl Topology {
                 for (index, &source_atom) in definition.source_atoms.iter().enumerate() {
                     atom_targets.insert(
                         InstanceAtomId::new(molecule_view.id(), source_atom),
-                        InstanceAtomId::new(target_instance, AtomId::new(index as u32)),
+                        InstanceAtomId::new(target_instance, AtomId::from_index(index)),
                     );
                 }
                 for (index, &source_bond) in definition.source_bonds.iter().enumerate() {
                     bond_targets.insert(
                         InstanceBondId::new(molecule_view.id(), source_bond),
-                        InstanceBondId::new(target_instance, BondId::new(index as u32)),
+                        InstanceBondId::new(target_instance, BondId::from_index(index)),
                     );
                 }
             }
@@ -189,7 +190,7 @@ impl Topology {
             copy_filtered_hierarchy(this, builder.hierarchy_mut(), &atom_targets)?;
         for (target_index, &source_index) in hierarchy_projection.residues.iter().enumerate() {
             let residue = this
-                .residue(ResidueId::new(source_index as u32))
+                .residue(ResidueId::from_index(source_index))
                 .expect("projected residues are source residues");
             let complete = residue
                 .atom_sites()
@@ -197,7 +198,7 @@ impl Topology {
             if complete {
                 let assignment = residue.class_assignment();
                 builder.preserve_residue_class(
-                    ResidueId::new(target_index as u32),
+                    ResidueId::from_index(target_index),
                     assignment.class(),
                     assignment.is_explicit(),
                 )?;

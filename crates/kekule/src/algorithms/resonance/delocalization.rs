@@ -7,6 +7,7 @@ use super::super::rings::compute_ring_membership;
 use super::super::valence::{allowed_valences_with_charge, explicit_valence};
 use super::ResonancePerceptionError;
 use crate::diagnostics::{Cancellation, LimitExceeded, Resource, UnknownHydrogenCount};
+use crate::fixed_u32_id::FixedId;
 use crate::molecule::{
     AromaticityPerception, AtomId, BondId, BondOrder, Molecule, ResonanceGroup, RingMembership,
 };
@@ -145,7 +146,7 @@ impl Search<'_> {
         if let Some(state) = self.atoms[index] {
             return Ok(state);
         }
-        let id = index_atom(index);
+        let id = AtomId::from_index(index);
         let atom = self.mol.atom(id).expect("adjacency reaches live atoms");
         let hydrogens = self.mol.implicit_hydrogens(id).ok_or(
             ResonancePerceptionError::UnknownHydrogenCount(UnknownHydrogenCount::new(id)),
@@ -164,7 +165,7 @@ impl Search<'_> {
     /// zero-order, dative and quadruple bonds.
     fn order(&mut self, index: usize) -> u8 {
         if self.orders[index] == UNREAD {
-            let id = index_bond(index);
+            let id = BondId::from_index(index);
             let bond = self.mol.bond(id).expect("adjacency reaches live bonds");
             self.orders[index] = match bond.order {
                 _ if self.aromaticity.bond_is_aromatic(id) => FIXED,
@@ -222,7 +223,7 @@ impl Search<'_> {
     fn other(&self, bond: usize, atom: usize) -> usize {
         let bond = self
             .mol
-            .bond(index_bond(bond))
+            .bond(BondId::from_index(bond))
             .expect("adjacency reaches live bonds");
         let (a, b) = (bond.a().index(), bond.b().index());
         if a == atom {
@@ -278,7 +279,7 @@ impl Search<'_> {
     fn steps(&mut self, bond: usize, step: Step) -> bool {
         match (step, self.order(bond)) {
             (Step::Raise, 1) => true,
-            (Step::Raise, 2) => !self.rings.bond_in_ring(index_bond(bond)),
+            (Step::Raise, 2) => !self.rings.bond_in_ring(BondId::from_index(bond)),
             (Step::Lower, 2 | 3) => true,
             _ => false,
         }
@@ -361,7 +362,7 @@ impl Search<'_> {
                 cursor += 1;
                 let ends = self
                     .mol
-                    .bond(index_bond(bond))
+                    .bond(BondId::from_index(bond))
                     .expect("delocalized bonds are live");
                 for atom in [ends.a().index(), ends.b().index()] {
                     if std::mem::replace(&mut reached[atom], true) {
@@ -380,20 +381,12 @@ impl Search<'_> {
             atoms.sort_unstable();
             bonds.sort_unstable();
             groups.push(ResonanceGroup {
-                atoms: atoms.into_iter().map(index_atom).collect(),
-                bonds: bonds.into_iter().map(index_bond).collect(),
+                atoms: atoms.into_iter().map(AtomId::from_index).collect(),
+                bonds: bonds.into_iter().map(BondId::from_index).collect(),
             });
         }
         groups
     }
-}
-
-fn index_atom(index: usize) -> AtomId {
-    AtomId::new(u32::try_from(index).expect("atom slot within ID capacity"))
-}
-
-fn index_bond(index: usize) -> BondId {
-    BondId::new(u32::try_from(index).expect("bond slot within ID capacity"))
 }
 
 #[cfg(test)]

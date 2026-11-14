@@ -9,6 +9,7 @@ use super::{
 };
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::draft::{Draft, DraftError};
+use crate::fixed_u32_id::FixedId;
 use crate::math::{PeriodicCell, Point3};
 use crate::molecule::{Atom, BondOrder, Molecule};
 use crate::properties::{LiveRows, OwnerProperties, PropertyError, PropertyTableMut};
@@ -541,7 +542,7 @@ impl StructureEditor {
 }
 
 fn atom_row(slot: usize) -> TopologyAtomIndex {
-    TopologyAtomIndex::new(u32::try_from(slot).expect("editor slots fit topology indices"))
+    TopologyAtomIndex::from_index(slot)
 }
 
 /// The topology edits of a [`StructureEditor`] that need no coordination with

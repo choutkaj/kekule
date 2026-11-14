@@ -1,4 +1,5 @@
 use crate::diagnostics::TopologyMismatch;
+use crate::fixed_u32_id::FixedId;
 use std::sync::Arc;
 
 use crate::topology::{
@@ -89,7 +90,7 @@ impl BondSelection {
         Self {
             topology: Arc::clone(topology),
             indices: (0..topology.bond_count())
-                .map(|index| TopologyBondIndex::new(index as u32))
+                .map(TopologyBondIndex::from_index)
                 .collect(),
         }
     }

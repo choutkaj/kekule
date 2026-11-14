@@ -1,4 +1,4 @@
-use super::builder::{checked_future_len, checked_id, TopologyHierarchyError};
+use super::builder::TopologyHierarchyError;
 use super::*;
 use crate::diagnostics::{CapacityExceeded, Countable, TopologyMismatch};
 use std::sync::Arc;
@@ -792,57 +792,15 @@ fn builder_is_transactional_and_does_not_intern_equal_definitions() {
     builder.add_instance(first).unwrap();
     let second = builder.add_molecule_definition(molecule.clone()).unwrap();
     builder.add_instance(second).unwrap();
-    let topology = Arc::new(builder.build().unwrap());
-    assert_eq!(topology.definition_count(), 2);
-    assert_eq!(topology.instance_count(), 2);
     assert_eq!(
-        checked_future_len(usize::MAX, 1, Countable::Atom),
-        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
-            Countable::Atom
-        )))
-    );
-}
-
-#[cfg(target_pointer_width = "64")]
-#[test]
-fn every_topology_identifier_space_checks_its_boundary() {
-    let max_slot = usize::try_from(u64::from(u32::MAX)).expect("64-bit usize");
-    let first_unsupported_slot = usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
-
-    assert_eq!(
-        checked_id::<MoleculeDefinitionId>(max_slot, Countable::MoleculeDefinition,),
-        Ok(MoleculeDefinitionId::new(u32::MAX))
-    );
-    assert_eq!(
-        checked_id::<MoleculeDefinitionId>(first_unsupported_slot, Countable::MoleculeDefinition,),
-        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
-            Countable::MoleculeDefinition
-        )))
-    );
-    assert_eq!(
-        checked_id::<MoleculeInstanceId>(first_unsupported_slot, Countable::MoleculeInstance,),
+        builder.reserve_instances(usize::MAX),
         Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
             Countable::MoleculeInstance
         )))
     );
-    assert_eq!(
-        checked_id::<TopologyAtomIndex>(first_unsupported_slot, Countable::Atom,),
-        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
-            Countable::Atom
-        )))
-    );
-    assert_eq!(
-        checked_id::<TopologyBondIndex>(first_unsupported_slot, Countable::Bond,),
-        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
-            Countable::Bond
-        )))
-    );
-    assert_eq!(
-        checked_future_len(first_unsupported_slot, 1, Countable::Atom),
-        Err(TopologyBuildError::CapacityExceeded(CapacityExceeded::new(
-            Countable::Atom
-        )))
-    );
+    let topology = Arc::new(builder.build().unwrap());
+    assert_eq!(topology.definition_count(), 2);
+    assert_eq!(topology.instance_count(), 2);
 }
 
 #[test]

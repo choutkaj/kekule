@@ -1,6 +1,7 @@
 use std::fmt;
 
-use crate::diagnostics::{Capitalized, LimitExceeded, Resource};
+use crate::diagnostics::{Capitalized, Countable, LimitExceeded, Resource};
+use crate::fixed_u32_id::checked_id;
 
 /// Why a query stereo constraint or group is invalid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -358,13 +359,12 @@ impl QueryGraphBuilder {
     ///
     /// [`QueryGraphError::LimitExceeded`] when no query atom ID is left.
     pub fn add_atom(&mut self, expression: AtomExpression) -> Result<QueryAtomId, QueryGraphError> {
-        let raw = crate::molecule::checked_raw_id(self.atoms.len()).map_err(|_| {
+        let id = checked_id::<QueryAtomId>(self.atoms.len(), Countable::Atom).map_err(|_| {
             QueryGraphError::LimitExceeded(LimitExceeded::first_beyond(
                 Resource::Atoms,
                 u32::MAX as usize,
             ))
         })?;
-        let id = QueryAtomId::new(raw);
         self.atoms.push(QueryAtom {
             expression,
             tag: None,
@@ -428,13 +428,12 @@ impl QueryGraphBuilder {
         {
             return Err(QueryGraphError::DuplicateBond { a, b });
         }
-        let raw = crate::molecule::checked_raw_id(self.bonds.len()).map_err(|_| {
+        let id = checked_id::<QueryBondId>(self.bonds.len(), Countable::Bond).map_err(|_| {
             QueryGraphError::LimitExceeded(LimitExceeded::first_beyond(
                 Resource::Bonds,
                 u32::MAX as usize,
             ))
         })?;
-        let id = QueryBondId::new(raw);
         self.bonds.push(QueryBond { a, b, expression });
         self.adjacency[a.index()].push(id);
         self.adjacency[b.index()].push(id);

@@ -1,5 +1,6 @@
 //! Named fragments with ideal 3D coordinates and an attachment atom.
 use super::PlacementError;
+use crate::fixed_u32_id::FixedId;
 use crate::math::Point3;
 use crate::molecule::{AtomId, BondOrder, Molecule};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
@@ -217,9 +218,7 @@ fn load() -> Vec<Fragment> {
             let atom_at = |field_value: String| {
                 let index: usize = field_value.parse().expect("an atom number");
                 topology
-                    .atom_at(crate::topology::TopologyAtomIndex::new(
-                        u32::try_from(index - 1).expect("small"),
-                    ))
+                    .atom_at(crate::topology::TopologyAtomIndex::from_index(index - 1))
                     .expect("a bundled atom")
                     .id()
                     .atom()

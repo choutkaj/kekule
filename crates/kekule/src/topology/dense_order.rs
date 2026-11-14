@@ -1,30 +1,8 @@
 //! Dense topology orders with constant-time qualified-ID lookup.
 
-use super::{InstanceAtomId, InstanceBondId, MoleculeInstanceId};
+use crate::fixed_u32_id::FixedId;
 
-/// An instance-qualified local identifier stored in a [`DenseOrder`].
-pub(super) trait QualifiedId: Copy + Eq {
-    fn instance(self) -> MoleculeInstanceId;
-    fn local(self) -> usize;
-}
-
-impl QualifiedId for InstanceAtomId {
-    fn instance(self) -> MoleculeInstanceId {
-        self.instance()
-    }
-    fn local(self) -> usize {
-        self.atom().index()
-    }
-}
-
-impl QualifiedId for InstanceBondId {
-    fn instance(self) -> MoleculeInstanceId {
-        self.instance()
-    }
-    fn local(self) -> usize {
-        self.bond().index()
-    }
-}
+use super::dense_map::QualifiedId;
 
 /// The lookup entry of a local slot without a live ID.
 pub(super) const ABSENT: u32 = u32::MAX;
@@ -80,7 +58,9 @@ impl<Id: QualifiedId> DenseOrder<Id> {
             .get(instance + 1)
             .copied()
             .unwrap_or(self.lookup.len());
-        let slot = start.checked_add(id.local()).filter(|slot| *slot < end)?;
+        let slot = start
+            .checked_add(id.local().index())
+            .filter(|slot| *slot < end)?;
         let dense = self.lookup[slot];
         (dense != ABSENT).then_some(dense as usize)
     }
@@ -104,7 +84,7 @@ impl<Id: QualifiedId> DenseOrder<Id> {
         for id in ids {
             debug_assert_eq!(id.instance().index() + 1, self.starts.len());
             debug_assert!(self.order.len() < ABSENT as usize);
-            self.lookup[start + id.local()] = self.order.len() as u32;
+            self.lookup[start + id.local().index()] = self.order.len() as u32;
             self.order.push(id);
         }
     }
@@ -121,7 +101,7 @@ impl<Id: QualifiedId> DenseOrder<Id> {
         }
         let mut lookup = vec![ABSENT; total];
         for (dense, &id) in order.iter().enumerate() {
-            let slot = starts[id.instance().index()] + id.local();
+            let slot = starts[id.instance().index()] + id.local().index();
             debug_assert_eq!(lookup[slot], ABSENT, "each ID is listed once");
             lookup[slot] = dense as u32;
         }
@@ -168,7 +148,7 @@ impl<Id: QualifiedId> DenseOrder<Id> {
             previous.push(index);
         }
         for (dense, &id) in order.iter().enumerate() {
-            let slot = self.starts[id.instance().index()] + id.local();
+            let slot = self.starts[id.instance().index()] + id.local().index();
             self.lookup[slot] = dense as u32;
         }
         self.order = order;
