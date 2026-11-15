@@ -31,7 +31,8 @@
 //!   unit of work and as units complete, on the threads doing the work, one
 //!   call at a time, with counts that never decrease. It should be cheap,
 //!   such as storing atomics a progress bar reads. Each `*_with` form names
-//!   the unit it counts; one that names none reports no progress.
+//!   the unit it counts, and the [items](Progress::items) it counts beside
+//!   them, if any; one that names no unit reports no progress.
 //!
 //! ```
 //! use std::num::NonZeroUsize;

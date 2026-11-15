@@ -839,9 +839,10 @@ impl Distribution {
         let mut assignments = Vec::new();
         let mut representatives = Vec::with_capacity(indices.len());
         let mut states = Vec::with_capacity(indices.len());
+        let by_state = self.partition.samples_by_state();
         for (state, old) in indices.iter().enumerate() {
             let representative = self.partition.representatives()[*old];
-            for position in self.partition.samples(*old) {
+            for &position in &by_state[*old] {
                 if position == representative {
                     representatives.push(geometries.len());
                 }

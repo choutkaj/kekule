@@ -126,21 +126,41 @@ impl<'a> Run<'a> {
 
 /// How far one long operation has come: [`Self::completed`] units of
 /// [`Self::total`], in the unit its `*_with` form names, such as fitted
-/// pairs or scanned bytes.
+/// pairs or scanned bytes, and the [`Self::items`] done so far where that
+/// unit is not the items themselves, such as frames indexed.
+///
+/// ```
+/// use kekule::parallel::Progress;
+///
+/// // 4096 of 16384 bytes scanned, 12 frames indexed.
+/// let progress = Progress::new(4096, 16384).with_items(12);
+/// assert_eq!(progress.completed() * 4, progress.total());
+/// assert_eq!(progress.items(), Some(12));
+/// assert_eq!(Progress::new(1, 2).items(), None);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Progress {
     completed: u64,
     total: u64,
+    items: Option<u64>,
 }
 
 impl Progress {
-    /// `completed` units of `total`; a `total` below `completed` is raised
-    /// to it.
+    /// `completed` units of `total`, without items; a `total` below
+    /// `completed` is raised to it.
     pub const fn new(completed: u64, total: u64) -> Self {
         Self {
             completed,
             total: if total < completed { completed } else { total },
+            items: None,
         }
+    }
+
+    /// Sets [`Self::items`].
+    #[must_use]
+    pub const fn with_items(mut self, items: u64) -> Self {
+        self.items = Some(items);
+        self
     }
 
     /// The progress of `completed` units of `total`, counted as `usize`.
@@ -159,5 +179,12 @@ impl Progress {
     /// early, states a bound it may end below.
     pub const fn total(&self) -> u64 {
         self.total
+    }
+
+    /// Whole items done so far, such as frames indexed, when the operation's
+    /// unit is something else, such as scanned bytes. `None` when the
+    /// operation's `*_with` form names no items.
+    pub const fn items(&self) -> Option<u64> {
+        self.items
     }
 }

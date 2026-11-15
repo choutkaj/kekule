@@ -388,7 +388,7 @@ fn the_scan_of_the_file_to_continue_can_be_cancelled_and_reports_progress() {
     .unwrap();
     let steps = steps.into_inner().unwrap();
     assert_eq!(steps.len(), 4 + 1);
-    assert_eq!(steps.last(), Some(&Progress::new(size, size)));
+    assert_eq!(steps.last(), Some(&Progress::new(size, size).with_items(4)));
     assert_eq!(report.dropped_frames(), 2);
     write_frames(&mut writer, (2..4).map(frame));
     drop(writer.finish().unwrap());

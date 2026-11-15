@@ -780,8 +780,9 @@ pub fn open_indexed_trajectory(
 
 /// [`open_indexed_trajectory`] under a [`Run`], scanning on the calling
 /// thread. Its cancellation is polled before the first frame and after
-/// every verified frame, and progress counts the bytes verified, headers
-/// included, of the file's size when it was opened.
+/// every verified frame. Progress counts the bytes verified, headers
+/// included, of the file's size when it was opened, and its
+/// [items](crate::parallel::Progress::items) count the frames indexed so far.
 ///
 /// # Errors
 ///
@@ -804,9 +805,13 @@ pub fn open_indexed_trajectory(
 /// let topology = Topology::from_molecule(molecule)?;
 /// let cancel = Arc::new(AtomicBool::new(false));
 /// let cancellation = Cancellation::from_flag(Arc::clone(&cancel));
-/// let done = AtomicU64::new(0);
-/// let progress = |step: Progress| done.store(step.completed(), Ordering::Relaxed);
-/// // Another thread may read `done` for a progress bar and set `cancel`.
+/// let (done, frames) = (AtomicU64::new(0), AtomicU64::new(0));
+/// let progress = |step: Progress| {
+///     done.store(step.completed(), Ordering::Relaxed);
+///     frames.store(step.items().unwrap_or(0), Ordering::Relaxed);
+/// };
+/// // Another thread may read `done` and `frames` for a progress bar and set
+/// // `cancel`.
 /// let run = Run::new().with_cancellation(&cancellation).with_progress(&progress);
 /// let reader = open_indexed_trajectory_with("ethane.xtc", topology, Default::default(), run)?;
 /// let index = reader.to_frame_index();
@@ -870,7 +875,8 @@ pub fn open_indexed_trajectory_from_index(
 
 /// [`open_indexed_trajectory_from_index`] under a [`Run`], as
 /// [`open_indexed_trajectory_with`] runs; it scans only the appended
-/// bytes, and progress counts from the end of the indexed ones.
+/// bytes, and progress counts from the end of the indexed ones. Its items
+/// count every frame indexed so far, the imported ones included.
 ///
 /// # Errors
 ///
