@@ -596,8 +596,13 @@ Clustering groups the samples of an ensemble's distribution, weighted, or every
 geometry of a structure set, unweighted. It returns a `Partition`, the
 grouping type a distribution owns, and never changes the set.
 `DistributionMut::regroup` installs a partition without changing any weight or
-sample order: a new state containing every sample of an old state keeps that
-state's energy and properties, and a state split apart loses them. Collapsing
+sample order. A new state that is one old state keeps its energy; one merged
+from several whole old states has their free energy at the distribution's
+temperature, `-RT ln Σ exp(-E_i / RT)`, so that with Boltzmann populations
+energy differences match `-RT ln(p_a / p_b)`, and none without a temperature
+or when a merged state has no energy. A new state keeps its representative's
+old state's properties when that state stays whole, and a state split apart
+loses its energy and properties. Collapsing
 makes a new collection of each state's representative carrying the state's
 population. Pairwise distances are a separate `DistanceMatrix` result. See
 [clustering](crates/kekule/src/clustering.rs).

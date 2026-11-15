@@ -249,6 +249,12 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `assign_boltzmann_weights` is `assign_boltzmann_populations`,
   `covering_weight` is `covering_population`, and `normalize_weights` is
   `normalize_log_weights`; `regroup` and `ranked_by_population` are new.
+- **Breaking:** `DistributionMut::regroup` gives a state merged from several
+  whole states their free energy, `-RT ln Σ exp(-E_i / RT)` at the
+  distribution's temperature, instead of its representative's energy, so that
+  energy differences match Boltzmann populations. A merged state has no
+  energy when any merged state has none or the distribution has no
+  temperature; a state taking part of a split state has none.
 - **Breaking:** `StructureEnsembleInterpretOptions` is
   `StructureSetInterpretOptions`, and `interpret_conformations` and multi-model
   PDB and mmCIF give a plain `StructureSet`.

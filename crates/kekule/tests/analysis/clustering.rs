@@ -342,8 +342,8 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
     let mut ensemble = Ensemble::new(set, distribution).unwrap();
     set_energy(&mut ensemble, 2, Some(7.0));
 
-    // Each cluster merges whole conformer states, so it keeps the energy of
-    // its representative's state: none for sample 1, 7 kJ/mol for sample 2.
+    // Each cluster merges whole conformer states; a merged state has no
+    // energy when a member has none, nor without a temperature.
     let clustered = regrouped(&ensemble, &partition(&[0, 0, 1, 1], &[1, 2]));
     let collapsed = clustered.collapse();
     assert_eq!(collapsed.set().len(), 2);
@@ -362,19 +362,24 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
             collapsed.set().get(state).unwrap().positions(),
             ensemble.set().get(representative).unwrap().positions()
         );
-        assert_eq!(
-            collapsed.state(state).unwrap().energy(),
-            ensemble
-                .state(ensemble.distribution().state_of(representative).unwrap())
-                .unwrap()
-                .energy()
-        );
+        assert_eq!(collapsed.state(state).unwrap().energy(), None);
     }
-    assert_eq!(collapsed.state(0).unwrap().energy(), None);
-    assert_eq!(
-        collapsed.state(1).unwrap().energy(),
-        Some(Quantity::new(7.0, KILOJOULE_PER_MOLE))
-    );
+    // With every energy and a temperature, the collapsed state carries the
+    // free energy of its members, -RT ln(e^(-7/RT) + e^(-9/RT)).
+    let mut warm = ensemble.clone();
+    for (state, energy) in [(0, 1.0), (1, 3.0), (3, 9.0)] {
+        set_energy(&mut warm, state, Some(energy));
+    }
+    warm.distribution_mut()
+        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .unwrap();
+    let collapsed_warm = regrouped(&warm, &partition(&[0, 0, 1, 1], &[1, 2])).collapse();
+    let rt: f64 = 8.314_462_618_153_24e-3 * 300.0;
+    let free = |a: f64, b: f64| -rt * ((-a / rt).exp() + (-b / rt).exp()).ln();
+    for (state, expected) in [(0, free(1.0, 3.0)), (1, free(7.0, 9.0))] {
+        let energy = collapsed_warm.state(state).unwrap().energy().unwrap();
+        assert!((energy.value_in(KILOJOULE_PER_MOLE).unwrap() - expected).abs() < 1e-12);
+    }
     assert_eq!(
         collapsed.set().properties().get(&key),
         Some(&PropertyValue::Int(7))
