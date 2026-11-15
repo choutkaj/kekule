@@ -214,13 +214,23 @@ fn occupancies_and_b_factors_are_always_omitted_with_a_report() {
 }
 
 #[test]
-fn properties_are_rejected_at_every_level() {
+fn properties_are_rejected_or_omitted_at_every_level() {
     let key = || PropertyKey::new("label").unwrap();
     let value = || PropertyValue::Bool(true);
+    let omit_properties = || options().with_properties(UnrepresentablePolicy::Omit);
 
+    // The set's own properties fail once for the set, or are omitted from
+    // every geometry.
     let mut set = waters();
     set.properties_mut().insert(key(), value()).unwrap();
     assert_rejects(&set, options(), GeometryField::SetProperties, None);
+    assert_rejects(&set, omit(), GeometryField::SetProperties, None);
+    let (text, report) = write(&set, omit_properties()).unwrap();
+    assert_eq!(text, plain());
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(GeometryField::SetProperties, 3)]
+    );
 
     let mut set = waters();
     set.get_mut(1)
@@ -230,6 +240,12 @@ fn properties_are_rejected_at_every_level() {
         .insert(key(), value())
         .unwrap();
     assert_rejects(&set, options(), GeometryField::Properties, Some(2));
+    let (text, report) = write(&set, omit_properties()).unwrap();
+    assert_eq!(text, plain());
+    assert_eq!(
+        report.omissions(),
+        [BONDS, state_omission(GeometryField::Properties, 1)]
+    );
 }
 
 #[test]

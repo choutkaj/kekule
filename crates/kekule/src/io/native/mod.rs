@@ -586,7 +586,7 @@ impl NativeReadOptions {
     );
     native_limit!(
         /// Maximum geometries of a structure set, counting those a record stores
-        /// only the number of, and its distribution's states, and maximum
+        /// only the number of, and of an ensemble's states, and maximum
         /// entries of any other stored list that atoms or bonds do not
         /// bound: property columns and owner values, hierarchy chains and
         /// residues, and the residues listed by all chains together.

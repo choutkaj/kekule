@@ -240,7 +240,8 @@ impl XyzWriteOptions {
 
     /// The atom, bond, and own properties of a structure, geometry, or frame,
     /// which XYZ cannot carry; by default one with any of them fails to
-    /// write. A structure set's own properties always fail to write.
+    /// write. So do a structure set's own properties, which an omission
+    /// counts once per geometry.
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -407,7 +408,9 @@ pub(crate) fn write_xyz_to<'a>(
                     "The structure set has no geometries.",
                 ));
             }
-            if !set.properties().is_empty() {
+            // The set's properties fail once for the whole set. Omitted, the
+            // check of each geometry below records them.
+            if !set.properties().is_empty() && options.properties == UnrepresentablePolicy::Fail {
                 return Err(unrepresentable(GeometryField::SetProperties, 1));
             }
             let mut omitted = Vec::new();

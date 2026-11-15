@@ -73,8 +73,8 @@ pub fn parse_reader(
 /// [`Format::Xyz`](crate::diagnostics::Format::Xyz) and kind
 /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
 /// for a topology without atoms, a coordinate that is not finite in the
-/// output unit, a structure set's own properties, and state `options` do not
-/// omit, the last with
+/// output unit, and state `options` do not omit, such as a structure set's
+/// own properties, the last with
 /// [`FormatErrorDetail::UnrepresentableState`](crate::diagnostics::FormatErrorDetail::UnrepresentableState);
 /// and of kind
 /// [`DiagnosticKind::Inconsistent`](crate::diagnostics::DiagnosticKind::Inconsistent)

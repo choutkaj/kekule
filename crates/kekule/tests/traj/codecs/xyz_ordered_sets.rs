@@ -216,7 +216,8 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
         ]
     );
 
-    // Values of the whole set have nowhere to go.
+    // Values of the whole set fail once for the set, or are omitted from
+    // every geometry.
     history
         .properties_mut()
         .insert(
@@ -224,7 +225,18 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             PropertyValue::String("GFN2-xTB".into()),
         )
         .unwrap();
-    assert_rejects(&history, options, GeometryField::SetProperties, None);
+    assert_rejects(&history, omit_places(), GeometryField::SetProperties, None);
+    let (text, report) = write(&history, options).unwrap();
+    assert_eq!(text, TEXT);
+    assert_eq!(
+        report.omissions(),
+        [
+            BONDS,
+            state_omission(GeometryField::OrderStep, 3),
+            state_omission(GeometryField::SetProperties, 3),
+            state_omission(GeometryField::Properties, 2),
+        ]
+    );
 }
 
 fn cell() -> PeriodicCell {

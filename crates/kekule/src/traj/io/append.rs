@@ -200,8 +200,10 @@ pub fn append_trajectory(
 
 /// [`append_trajectory`] under a [`Run`], scanning on the calling thread.
 /// Its cancellation is polled before the first frame, after every frame
-/// verified, and once more before the file changes; progress counts the
-/// bytes verified, of the file's size.
+/// verified, and once more before the file changes. Progress counts the
+/// bytes verified, of the file's size, and its
+/// [items](crate::parallel::Progress::items) count the frames verified so
+/// far, kept or not.
 ///
 /// # Errors
 ///

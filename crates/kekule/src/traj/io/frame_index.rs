@@ -490,7 +490,7 @@ impl Fnv1a {
 }
 
 /// The run of one index build: bytes verified are its progress, of the
-/// file's size.
+/// file's size, and frames indexed its items.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct IndexBuildControl<'a> {
     run: Run<'a>,
@@ -514,8 +514,9 @@ impl<'a> IndexBuildControl<'a> {
         format: TrajectoryFormat,
         source_label: &str,
     ) -> Result<(), TrajectoryIoError> {
+        let frames = u64::try_from(frame_count).unwrap_or(u64::MAX);
         self.run
-            .report(Progress::new(byte_count, self.total_byte_count));
+            .report(Progress::new(byte_count, self.total_byte_count).with_items(frames));
         self.run.check().map_err(|cancelled| {
             TrajectoryIoError::codec(
                 TrajectoryIoErrorKind::Cancelled,
