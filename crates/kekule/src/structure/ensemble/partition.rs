@@ -138,7 +138,8 @@ impl Partition {
     }
 
     /// The samples of one state in sample order; empty for a state that
-    /// does not exist.
+    /// does not exist. It scans every sample, so
+    /// [`samples_by_state`](Self::samples_by_state) visits all states faster.
     pub fn samples(&self, state: usize) -> impl Iterator<Item = usize> + Clone + '_ {
         self.assignments
             .iter()
@@ -147,8 +148,31 @@ impl Partition {
             .map(|(sample, _)| sample)
     }
 
+    /// The samples of every state, in state order, each in sample order:
+    /// item `t` lists what [`samples(t)`](Self::samples) gives, in one pass
+    /// over the samples.
+    ///
+    /// ```
+    /// use kekule::structure::Partition;
+    /// let partition = Partition::new(vec![1, 0, 1, 1], vec![1, 0])?;
+    /// assert_eq!(partition.samples_by_state(), [vec![1], vec![0, 2, 3]]);
+    /// assert_eq!(partition.sizes(), [1, 3]);
+    /// # Ok::<(), kekule::structure::PartitionError>(())
+    /// ```
+    pub fn samples_by_state(&self) -> Vec<Vec<usize>> {
+        let mut states = self
+            .sizes()
+            .into_iter()
+            .map(Vec::with_capacity)
+            .collect::<Vec<_>>();
+        for (sample, &state) in self.assignments.iter().enumerate() {
+            states[state].push(sample);
+        }
+        states
+    }
+
     /// The number of samples of every state, in state order.
-    pub(crate) fn sizes(&self) -> Vec<usize> {
+    pub fn sizes(&self) -> Vec<usize> {
         let mut sizes = vec![0; self.state_count()];
         for state in &self.assignments {
             sizes[*state] += 1;

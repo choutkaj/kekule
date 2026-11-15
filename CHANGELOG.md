@@ -144,6 +144,9 @@ the main branch migrates by the table under "From the SampleSet API".
   a trajectory (`open_indexed_trajectory_with`, `_from_index_with`,
   `append_trajectory_with`) counts bytes and reports the frames indexed so
   far as items (`Progress::with_items`).
+- `Partition::samples_by_state` lists every state's samples in one pass over
+  the samples, where `samples(state)` scans them all for each state, and
+  `Partition::sizes` counts them.
 - `RmsfAccumulator::merge`, `ContactOccupancyAccumulator::merge`, and
   `GroupContactOccupancyAccumulator::merge` combine partial accumulators
   (`StatisticsError::MergeMismatch`); the accumulators are `Clone`.

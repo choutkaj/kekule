@@ -417,6 +417,18 @@ fn partitions_assign_every_sample_to_a_state_containing_its_representative() {
     assert_eq!(valid.representatives(), [2, 1]);
     assert_eq!(valid.samples(0).collect::<Vec<_>>(), [0, 2]);
     assert_eq!(valid.samples(5).count(), 0);
+    assert_eq!(valid.sizes(), [2, 1]);
+    assert_eq!(valid.samples_by_state(), [vec![0, 2], vec![1]]);
+    assert!(Partition::one_state(0).samples_by_state().is_empty());
+
+    // Grouping every state at once gives each state's samples.
+    let shuffled = partition(&[2, 0, 1, 2, 0, 0, 1], &[4, 6, 3]);
+    let by_state = shuffled.samples_by_state();
+    assert_eq!(by_state, [vec![1, 4, 5], vec![2, 6], vec![0, 3]]);
+    for (state, samples) in by_state.iter().enumerate() {
+        assert_eq!(&shuffled.samples(state).collect::<Vec<_>>(), samples);
+        assert_eq!(samples.len(), shuffled.sizes()[state]);
+    }
 
     assert_eq!(
         Partition::new(vec![0, 2], vec![0, 1]),
