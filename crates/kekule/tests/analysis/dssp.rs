@@ -673,6 +673,23 @@ fn dssp_runs_report_their_stages_and_stop_when_cancelled() {
         cancelled
     )
     .is_err());
+
+    // Requested after the first poll, before preparing reads the topology:
+    // only a poll inside preparation stops it, on every executor.
+    let threads = kekule::parallel::ScopedThreads::new(std::num::NonZeroUsize::new(3).unwrap());
+    let executors: [&dyn kekule::parallel::Executor; 2] = [&Reversed(3), &threads];
+    for executor in executors {
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let cancellation = Cancellation::new(move || {
+            polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 1
+        });
+        let run = Run::new()
+            .with_executor(executor)
+            .with_cancellation(&cancellation);
+        assert!(
+            DsspPlan::new_with(structure.shared_topology(), DsspOptions::default(), run).is_err()
+        );
+    }
 }
 
 #[test]

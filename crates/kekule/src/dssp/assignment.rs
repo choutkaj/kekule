@@ -5,7 +5,7 @@ use crate::diagnostics::{Cancelled, LimitExceeded, TopologyMismatch};
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::parallel::{Executor, Run};
+use crate::parallel::Run;
 use std::sync::Arc;
 
 use crate::structure::AsStructureView;
@@ -93,7 +93,9 @@ pub fn assign_with(
 ) -> Result<DsspResult, DsspError> {
     let structure = structure.as_structure_view();
     run.check().map_err(DsspError::Cancelled)?;
-    let prepared = super::kernel::Prepared::new(structure.topology(), run.executor());
+    let prepared =
+        super::kernel::Prepared::new(structure.topology(), run.executor(), run.cancellation())
+            .map_err(DsspError::Cancelled)?;
     super::kernel::assign(&prepared, structure, options, run)
 }
 
@@ -146,12 +148,20 @@ impl DsspPlan {
     /// Prepares assignment of `topology`'s structures with `options`, on
     /// the calling thread.
     pub fn new(topology: impl Into<Arc<Topology>>, options: DsspOptions) -> Self {
-        Self::prepare(topology.into(), options, Run::new().executor())
+        let topology = topology.into();
+        let prepared = super::kernel::Prepared::new(&topology, Run::new().executor(), None)
+            .expect("preparing without a cancellation never stops");
+        Self {
+            topology,
+            options,
+            prepared,
+        }
     }
 
     /// [`Self::new`] under a [`Run`]. Preparing splits the chains into
     /// ranges of near-equal atom sites on the run's executor, and returns the
-    /// plan [`Self::new`] returns on any executor. It reports no progress.
+    /// plan [`Self::new`] returns on any executor. It polls the cancellation
+    /// as it reads atom sites and residues, and reports no progress.
     ///
     /// ```
     /// use kekule::dssp::{DsspOptions, DsspPlan};
@@ -182,18 +192,13 @@ impl DsspPlan {
         run: Run<'_>,
     ) -> Result<Self, Cancelled> {
         run.check()?;
-        let plan = Self::prepare(topology.into(), options, run.executor());
-        run.check()?;
-        Ok(plan)
-    }
-
-    fn prepare(topology: Arc<Topology>, options: DsspOptions, executor: &dyn Executor) -> Self {
-        let prepared = super::kernel::Prepared::new(&topology, executor);
-        Self {
+        let topology = topology.into();
+        let prepared = super::kernel::Prepared::new(&topology, run.executor(), run.cancellation())?;
+        Ok(Self {
             topology,
             options,
             prepared,
-        }
+        })
     }
 
     /// The topology whose layout every assigned structure must share.
