@@ -1244,6 +1244,17 @@ fn kj(value: f64) -> Option<Quantity<f64>> {
     Some(Quantity::new(value, KILOJOULE_PER_MOLE))
 }
 
+/// The energy of state `state` in kJ/mol.
+fn kilojoules(ensemble: &Ensemble, state: usize) -> f64 {
+    ensemble
+        .state(state)
+        .unwrap()
+        .energy()
+        .unwrap()
+        .value_in(KILOJOULE_PER_MOLE)
+        .unwrap()
+}
+
 /// Sets the energy of every state, in kJ/mol where given.
 fn set_energies(set: &mut Ensemble, energies: &[Option<f64>]) {
     let mut distribution = set.distribution_mut();
@@ -1744,7 +1755,7 @@ fn editing_one_geometry_of_a_shared_set_copies_that_geometry_alone() {
 }
 
 #[test]
-fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
+fn regrouping_keeps_weights_and_gives_merged_states_their_free_energy() {
     // Four conformers, energies 0..3 kJ/mol, weights 1..4.
     let weights = ln(&[1.0, 2.0, 3.0, 4.0]);
     let mut set = energy_conformers(&[0.0, 1.0, 2.0, 3.0]);
@@ -1771,11 +1782,15 @@ fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
         before.state(1).unwrap().properties()
     );
 
-    // Merging conformers 0 and 1 under 1 keeps conformer 1's state.
+    // Merging conformers 0 and 1 under 1 gives their free energy at 300 K
+    // and keeps conformer 1's properties; whole states keep their energy.
     let merged = Partition::new(vec![0, 0, 1, 2], vec![1, 2, 3]).unwrap();
     set.distribution_mut().regroup(merged).unwrap();
     assert_eq!(log_weights(&set), weights);
-    assert_eq!(energies(&set), [kj(1.0), kj(2.0), kj(3.0)]);
+    let rt: f64 = 8.314_462_618_153_24e-3 * 300.0;
+    let free = -rt * (1.0 + (-1.0 / rt).exp()).ln();
+    assert!(close(kilojoules(&set, 0), free));
+    assert_eq!(energies(&set)[1..], [kj(2.0), kj(3.0)]);
     assert_eq!(
         set.state(0).unwrap().properties().get(&key("label")),
         Some(&PropertyValue::Int(1))
@@ -1797,12 +1812,11 @@ fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
     );
 
     // Splitting the merged state loses its energy and properties; the state
-    // that takes a whole old state with part of a split one keeps the whole
-    // one's energy when its representative comes from it.
+    // that takes a whole old state with part of a split one has no energy.
     let split = Partition::new(vec![0, 1, 0, 2], vec![2, 1, 3]).unwrap();
     set.distribution_mut().regroup(split).unwrap();
     assert_eq!(log_weights(&set), weights);
-    assert_eq!(energies(&set), [kj(2.0), None, kj(3.0)]);
+    assert_eq!(energies(&set), [None, None, kj(3.0)]);
     assert!(set.state(1).unwrap().properties().is_empty());
 
     // A partition of another sample count changes nothing.
@@ -1825,6 +1839,93 @@ fn regrouping_keeps_weights_and_the_energies_of_whole_states() {
         .unwrap();
     assert_eq!(energies(&one), [None, None]);
     assert_eq!(log_weights(&one), [0.0; 4]);
+}
+
+#[test]
+fn merged_free_energies_match_boltzmann_populations() {
+    // Five conformers; states {0, 1, 2} and {3, 4} after merging.
+    let energies_kj = [4.0, 0.5, 9.0, 2.0, 2.0];
+    let temperature = Quantity::new(310.0, KELVIN);
+    let rt: f64 = 8.314_462_618_153_24e-3 * 310.0;
+    let mut set = energy_conformers(&energies_kj);
+    set.distribution_mut()
+        .assign_boltzmann_populations(temperature)
+        .unwrap();
+    let source = set.clone();
+    let partition = Partition::new(vec![0, 0, 0, 1, 1], vec![0, 3]).unwrap();
+    set.distribution_mut().regroup(partition.clone()).unwrap();
+
+    // The medoid of state 0 lies at 4 kJ/mol, but its free energy is set by
+    // all members, and the states' free energy difference is the log ratio
+    // of their populations.
+    let free = |members: &[f64]| -rt * members.iter().map(|e| (-e / rt).exp()).sum::<f64>().ln();
+    assert!((kilojoules(&set, 0) - free(&energies_kj[..3])).abs() < 1e-12);
+    assert!((kilojoules(&set, 1) - (2.0 - rt * 2.0_f64.ln())).abs() < 1e-12);
+    let log_ratio = set.state(0).unwrap().log_population() - set.state(1).unwrap().log_population();
+    assert!((kilojoules(&set, 0) - kilojoules(&set, 1) + rt * log_ratio).abs() < 1e-12);
+
+    // Reassigning populations from the free energies at the same
+    // temperature changes no state population.
+    let mut reweighted = set.clone();
+    reweighted
+        .distribution_mut()
+        .assign_boltzmann_populations(temperature)
+        .unwrap();
+    for state in 0..2 {
+        assert!(
+            (reweighted.state(state).unwrap().log_population()
+                - set.state(state).unwrap().log_population())
+            .abs()
+                < 1e-12
+        );
+    }
+
+    // Merging in steps gives the free energy of merging at once.
+    let mut stepwise = source.clone();
+    stepwise
+        .distribution_mut()
+        .regroup(Partition::new(vec![0, 0, 1, 2, 2], vec![0, 2, 3]).unwrap())
+        .unwrap();
+    stepwise
+        .distribution_mut()
+        .regroup(partition.clone())
+        .unwrap();
+    for state in 0..2 {
+        assert!((kilojoules(&stepwise, state) - kilojoules(&set, state)).abs() < 1e-12);
+    }
+
+    // A changed temperature keeps the free energy of the merge temperature.
+    set.distribution_mut()
+        .set_temperature(Some(Quantity::new(400.0, KELVIN)))
+        .unwrap();
+    assert!((kilojoules(&set, 0) - free(&energies_kj[..3])).abs() < 1e-12);
+
+    // Without a temperature, or with a member lacking an energy, a merged
+    // state has none; a state of one old state keeps its energy.
+    let mut cold = source.clone();
+    cold.distribution_mut().set_temperature(None).unwrap();
+    cold.distribution_mut()
+        .regroup(Partition::new(vec![0, 0, 0, 1, 2], vec![0, 3, 4]).unwrap())
+        .unwrap();
+    assert_eq!(energies(&cold), [None, kj(2.0), kj(2.0)]);
+    let mut missing = source.clone();
+    set_energies(
+        &mut missing,
+        &[Some(4.0), None, Some(9.0), Some(2.0), Some(2.0)],
+    );
+    missing.distribution_mut().regroup(partition).unwrap();
+    assert_eq!(energies(&missing)[0], None);
+    assert!((kilojoules(&missing, 1) - (2.0 - rt * 2.0_f64.ln())).abs() < 1e-12);
+
+    // Energies far apart merge without overflow.
+    let mut wide = energy_conformers(&[0.0, 1.0e6]);
+    wide.distribution_mut()
+        .set_temperature(Some(temperature))
+        .unwrap();
+    wide.distribution_mut()
+        .regroup(Partition::one_state(2))
+        .unwrap();
+    assert_eq!(kilojoules(&wide, 0), 0.0);
 }
 
 #[test]

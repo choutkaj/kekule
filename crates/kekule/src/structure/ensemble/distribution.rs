@@ -1089,11 +1089,27 @@ impl DistributionMut<'_> {
     /// position, changing no weight and no sample.
     ///
     /// The distribution stays the same; only its description changes, and
-    /// populations follow the samples. A new state that contains every
-    /// sample of an old state keeps the energy and properties of its
-    /// representative's old state, so merging whole states keeps the
-    /// representative's energy, and an unchanged grouping keeps everything.
-    /// A state whose old state is split apart has neither. The temperature
+    /// populations follow the samples. A new state made of whole old states
+    /// has their free energy at the distribution's temperature `T`,
+    /// `F = -RT ln Σ exp(-E_i / RT)` over the old states' energies `E_i`.
+    /// With Boltzmann populations at `T`
+    /// ([`Self::assign_boltzmann_populations`]) the populations of two such
+    /// states then satisfy `F_a - F_b = -RT ln(p_a / p_b)`, and merging in
+    /// steps gives the energy of merging at once. A state that takes one
+    /// old state whole keeps its energy bit for bit, so an unchanged
+    /// grouping keeps everything. A new state has no energy when any of its
+    /// old states has none, when it takes only part of an old state that is
+    /// split apart, or when it merges several old states and the
+    /// distribution has no temperature.
+    ///
+    /// The free energy belongs to the temperature it was merged at:
+    /// [`Self::set_temperature`] and [`Self::assign_boltzmann_populations`]
+    /// at another temperature keep it, and assign populations from it as
+    /// from any state energy. For free energies at another temperature,
+    /// reweight before merging.
+    ///
+    /// A new state keeps the properties of its representative's old state
+    /// when that state stays whole, and has none otherwise. The temperature
     /// is kept.
     ///
     /// # Errors
@@ -1121,22 +1137,81 @@ impl DistributionMut<'_> {
                 Some(_) => {}
             }
         }
+        // The whole old states of each new state, and whether it takes part
+        // of a split one.
+        let mut members = vec![Vec::new(); partition.representatives().len()];
+        let mut partial = vec![false; members.len()];
+        for (state, target) in target.iter().enumerate() {
+            if let Some(target) = target {
+                if !split[state] {
+                    members[*target].push(state);
+                }
+            }
+        }
+        for (old, new) in old.iter().zip(new) {
+            partial[*new] |= split[*old];
+        }
+        let thermal_energy = self
+            .distribution
+            .temperature
+            .and_then(|temperature| thermal_energy(*temperature.value()));
+        let energies = members
+            .iter()
+            .zip(&partial)
+            .map(|(members, partial)| {
+                if *partial {
+                    return None;
+                }
+                match members.as_slice() {
+                    [state] => self.distribution.states[*state].energy(),
+                    members => {
+                        let energies = members
+                            .iter()
+                            .map(|state| {
+                                self.distribution.states[*state]
+                                    .energy()
+                                    .map(|energy| *energy.value())
+                            })
+                            .collect::<Option<Vec<_>>>()?;
+                        free_energy(&energies, thermal_energy?)
+                            .map(|energy| Quantity::new(energy, CANONICAL_ENERGY_UNIT))
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
         let mut previous = std::mem::take(&mut self.distribution.states);
         self.distribution.states = partition
             .representatives()
             .iter()
-            .map(|representative| {
+            .zip(energies)
+            .map(|(representative, energy)| {
                 let state = old[*representative];
-                if split[state] {
-                    StateData::new()
+                let properties = if split[state] {
+                    OwnerProperties::new()
                 } else {
-                    std::mem::take(&mut previous[state])
-                }
+                    std::mem::take(&mut previous[state].properties)
+                };
+                StateData { energy, properties }
             })
             .collect();
         self.distribution.partition = partition;
         Ok(())
     }
+}
+
+/// `-RT ln Σ exp(-E / RT)` over some energies in
+/// [`CANONICAL_ENERGY_UNIT`], relative to their lowest so that no term
+/// overflows, when it is finite.
+fn free_energy(energies: &[f64], thermal_energy: f64) -> Option<f64> {
+    let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
+    let free_energy = minimum
+        - thermal_energy
+            * log_sum_exp(
+                energies
+                    .iter()
+                    .map(|energy| -(energy - minimum) / thermal_energy),
+            );
+    free_energy.is_finite().then_some(free_energy)
 }
 
 /// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI.

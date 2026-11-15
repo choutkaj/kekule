@@ -47,8 +47,10 @@
 //! a [`SymmetricSelection`](crate::alignment::SymmetricSelection) and a small
 //! radius it merges rotamers, copies of one conformer that differ only by
 //! exchanged equivalent atoms. Weight the conformers by energy first; the
-//! merged state keeps its representative's energy and gains the population
-//! of every rotamer, its degeneracy:
+//! merged state gains the population of every rotamer, its degeneracy, and
+//! their free energy `-RT ln Σ exp(-E_i / RT)` at the distribution's
+//! temperature, so its energy difference to any other state is
+//! `-RT ln(p_a / p_b)`:
 //!
 //! ```
 //! use std::error::Error;
@@ -88,7 +90,16 @@
 //!
 //! conformers.distribution_mut().regroup(rotamers)?;
 //! assert_eq!(conformers.states().len(), 2);
-//! assert!(conformers.state(0).unwrap().energy().is_some());
+//! // Two rotamers at 0 kJ/mol make one state at -RT ln 2.
+//! let rt = 8.314_462_618e-3 * 298.15;
+//! let energy = |state: usize| {
+//!     let energy = conformers.state(state).unwrap().energy().unwrap();
+//!     energy.value_in(KILOJOULE_PER_MOLE).unwrap()
+//! };
+//! assert!((energy(0) + rt * 2.0_f64.ln()).abs() < 1e-9);
+//! let ratio = conformers.state(0).unwrap().log_population()
+//!     - conformers.state(1).unwrap().log_population();
+//! assert!((energy(0) - energy(1) + rt * ratio).abs() < 1e-9);
 //! let collapsed = conformers.collapse();
 //! assert_eq!(collapsed.set().len(), 2);
 //! assert_eq!(

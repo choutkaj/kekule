@@ -728,7 +728,11 @@ fn distribution_operations_keep_their_results() {
         Err(StructureSetError::InvalidTemperature)
     );
 
-    // Regrouping merges whole states with their representative's energy.
+    // Regrouping merges whole states into their free energy at the
+    // temperature, -RT ln(e^(-3/RT) + e^(-1/RT)); a state that is one old
+    // state keeps its energy.
+    let rt: f64 = 8.314_462_618_153_24e-3 * 300.0;
+    let merged = 1.0 - rt * ((-2.0 / rt).exp() + 1.0).ln();
     let partition = Partition::new(vec![0, 0, 1], vec![1, 2]).unwrap();
     energy_set
         .distribution_mut()
@@ -739,13 +743,13 @@ fn distribution_operations_keep_their_results() {
             .states()
             .map(|state| state.energy())
             .collect::<Vec<_>>(),
-        [1.0, 2.0].map(|energy| Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
+        [merged, 2.0].map(|energy| Some(Quantity::new(energy, KILOJOULE_PER_MOLE)))
     );
     let regrouped = Distribution::new(Samples::All, partition)
         .unwrap()
         .with_log_weights(vec![0.0; 3])
         .unwrap()
-        .with_states(vec![state(1.0), state(2.0)])
+        .with_states(vec![state(merged), state(2.0)])
         .unwrap()
         .with_temperature(temperature)
         .unwrap();
