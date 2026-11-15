@@ -158,8 +158,7 @@ impl MmcifDocument {
     }
 
     /// Interprets caller-supplied selections as an unordered structure set, one
-    /// geometry per selection in the supplied order, whose distribution covers
-    /// every geometry in one state and stores no weights. Repeated selections
+    /// geometry per selection in the supplied order. Repeated selections
     /// are retained. Exactly one atom-site
     /// block is required; atom identities, chemistry and topology layout must
     /// agree between selections. No combinations or statistical weights are inferred.
@@ -225,9 +224,9 @@ impl MmcifDocument {
 
     /// Interprets the coordinate models that `options` selects, by default
     /// all of them, in the exactly one structural block as an unordered
-    /// structure set with one report per geometry. Its distribution covers every
-    /// geometry in one state and stores no weights, as the models weigh the
-    /// same.
+    /// structure set with one report per geometry. The set has no weights or
+    /// states; [`Ensemble::uniform`](crate::structure::Ensemble::uniform)
+    /// weighs its models the same.
     ///
     /// # Errors
     ///

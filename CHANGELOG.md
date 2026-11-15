@@ -17,7 +17,8 @@ including files still being written. It adds a native binary format, a
 selection language, a PDB writer, XYZ interpretation, builder geometry,
 non-covalent interactions, sequences and assemblies, and parallel,
 cancellable analyses. Error messages are sentences, and breaking changes run
-through the workspace.
+through the workspace. Code written against the interim `SampleSet` API of
+the main branch migrates by the table under "From the SampleSet API".
 
 ### Added
 
@@ -483,6 +484,53 @@ through the workspace.
 - `xyz::write` omits and reports a structure set's own properties when
   `with_properties` omits them, as the PDB and mmCIF writers do, instead of
   always refusing them.
+
+### From the SampleSet API
+
+Between 0.4.0 and this release, the main branch had a `SampleSet` with an
+optional distribution of linear weights. A set now has no distribution: an
+`Ensemble` pairs a `StructureSet` with a `Distribution` of natural-log
+weights. The `Model` items became `Structure` items as listed under Changed.
+
+| SampleSet API | Current API |
+| --- | --- |
+| `structure::SampleSet<S>` | `StructureSet<S>`; `Ensemble<S>` adds a `Distribution` |
+| `Sample` (`from_model`) | `Geometry` (`from_structure`) |
+| `SampleView`, `SampleMut`, `SampleIter`, `SampleStorage` | `GeometryView`, `GeometryMut`, `GeometryIter`, `GeometryStorage` |
+| `SampleRead` (`distribution`) | `StructureSetRead`, without `distribution` |
+| `SampleReadError`, `SampleSetError` | `StructureSetReadError`, `StructureSetError` |
+| `SampleContext` (`membership`, `velocities`, `forces`) | `SetContext` (`place`); velocities and forces from the `StructureView` |
+| `SampleSet::from_samples`, `from_models`, `into_samples` | `StructureSet::from_geometries`, `from_structures`, `into_geometries` |
+| `SampleSet::distribution`, `distribution_mut`, `set_distribution` | `Ensemble::distribution`, `distribution_mut`, `Ensemble::new` |
+| `SampleSet::state`, `states`, `push_state`, `select_states`, `collapse` | The same methods of `Ensemble` |
+| `SampleSet::push_member` | `Ensemble::push_sample` |
+| `SampleSet::weighted_samples`, `Distribution::weighted_members` | `Distribution::sample_probabilities`, which gives probabilities |
+| `Members`, `Membership` | `Samples`; a geometry has no membership |
+| `State` | `StateData` |
+| `Distribution::with_weights`, `weights`, `weight` | `with_log_weights`, `log_weights`, `log_weight` |
+| `Distribution::members`, `member_count`, `member_position` | `samples`, `sample_count`, `sample_position` |
+| `DistributionMut::set_weights`, `set_weight`, `normalize_weights` | `set_log_weights`, `set_log_weight`, `normalize_log_weights` |
+| `SampleView::weight`, `state`, `is_representative` | `Distribution::log_weight`, `state_of`, `Partition::representatives` |
+| `StateView::samples`, `population` | `StateView::geometries`, `log_population` |
+| `SampleObservations::all`, `of` over a distribution | `SampleObservations::weighted`, `weighted_of`; `all` and `of` weigh every geometry 1 |
+| `alignment::sample_rmsd`, `sample_aligned_rmsd` | `geometry_rmsd`, `geometry_aligned_rmsd` |
+| `*_cancellable(.., &Cancellation)` | `*_with(.., Run)`, such as `perceive_with` |
+| `interpret_sample_set`, `StructureSampleSetInterpretation`, `StructureSampleSetInterpretOptions` | `interpret_structure_set`, `StructureSetInterpretation`, `StructureSetInterpretOptions` |
+| `XyzSampleSetInterpretation`, `XyzSampleSetInterpretOptions` | `XyzStructureSetInterpretation`, `XyzStructureSetInterpretOptions` |
+| `sdf::sample_set` | `sdf::structure_set`, without a distribution |
+| `traj::io::read_sample_set`, `write_sample_set(_to)` | `read_structure_set`, `write_structure_set(_to)` |
+| `open_indexed_sample_set(_from_index)`, `into_sample_set` | `open_indexed_structure_set(_from_index)`, `into_structure_set` |
+| `StructureField` | `GeometryField`, without `Weight`, `Energy`, `State`, `Temperature`, `StateProperties`, `Representative`, and `Membership` |
+| `sample_metadata`, `with_sample_metadata` | `geometry_metadata`, `with_geometry_metadata` |
+| `PdbWriteIssue`, `MmcifWriteIssue` (`UnrepresentableSample`, `EmptySampleSet`) | `PdbWriteErrorKind`, `MmcifWriteErrorKind` (`UnrepresentableGeometry`, `EmptyStructureSet`) |
+| `MmcifSampleField` | `MmcifSharedCategory` |
+| `kekule::geometry`, `PeriodicGeometry` | `kekule::math`, `Lattice` |
+| Native format version 5 | Version 7; version 5 files do not read |
+| `NativeKind::SampleSet`, `SampleSetInterpretation` | `NativeKind::StructureSet`, `Ensemble`, `StructureSetInterpretation` |
+| `NativeObject::into_sample_set`, `into_sample_set_interpretation` | `into_structure_set`, `into_ensemble`, `into_structure_set_interpretation` |
+| `native::SampleSetDescription`, `into_sample_set_description` | `StructureSetDescription`, `EnsembleDescription`, and their `into_*_description` |
+| `NativeSource::interpreted_sample_set` | `NativeSource::interpreted_structure_set` |
+| `FormatErrorDetail::NativeExternalSamples` | `FormatErrorDetail::NativeExternalGeometries` |
 
 ## [0.4.0] - 2026-10-17
 

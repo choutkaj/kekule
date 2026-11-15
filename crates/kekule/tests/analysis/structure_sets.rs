@@ -781,8 +781,8 @@ fn samples_alone(ensemble: &Ensemble) -> Ensemble {
 const EQUILIBRATED: [usize; 5] = [2, 3, 5, 6, 7];
 const EQUILIBRATED_WEIGHTS: [f64; 5] = [1.0, 2.0, 3.0, 0.5, 1.5];
 
-/// A time-ordered set of eight frames whose distribution covers frames 2,
-/// 3, 5, 6, and 7, weighted, in two states with energies.
+/// An ensemble of a time-ordered set of eight frames whose distribution
+/// samples frames 2, 3, 5, 6, and 7, weighted, in two states with energies.
 fn equilibrated() -> Ensemble {
     let states = [0.0, 2.5].map(|energy| {
         StateData::new()
