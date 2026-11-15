@@ -476,6 +476,9 @@ through the workspace.
   valence perception.
 - A DCD unit-cell or coordinate record whose size marker disagrees with the
   frame layout is corrupt.
+- `xyz::write` omits and reports a structure set's own properties when
+  `with_properties` omits them, as the PDB and mmCIF writers do, instead of
+  always refusing them.
 
 ## [0.4.0] - 2026-10-17
 
