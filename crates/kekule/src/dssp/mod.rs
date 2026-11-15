@@ -16,6 +16,7 @@
 //! A [`DsspPlan`] prepares what assignment reads from a topology once, so the
 //! frames of a trajectory, or the geometries of an ensemble, are each assigned
 //! from their backbone coordinates alone, with the same results.
+//! [`DsspPlan::new_with`] prepares a plan under a run, on any executor.
 //!
 //! Assignment does not parse structures, choose coordinate models or alternate
 //! locations, repair hierarchy data, or install derived state in the structure.

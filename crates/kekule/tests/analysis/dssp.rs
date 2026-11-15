@@ -591,9 +591,24 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
         let plan = DsspPlan::new(structure.shared_topology(), options);
         assert_eq!(plan.options(), options);
         assert!(plan.topology().shares_layout(structure.topology()));
+        // Plans prepared on other executors assign as the serial plan does.
+        let prepared_on = |executor: &dyn kekule::parallel::Executor| {
+            let run = Run::new().with_executor(executor);
+            DsspPlan::new_with(structure.shared_topology(), options, run).unwrap()
+        };
+        let parallel_plans = [prepared_on(&Reversed(4)), prepared_on(&threads)];
         for (index, frame) in frames.iter().enumerate() {
             let expected = dssp::assign(frame, options);
             assert_eq!(plan.assign(frame), expected, "frame {index}, {options:?}");
+            for parallel in &parallel_plans {
+                assert_eq!(parallel.options(), options);
+                assert!(parallel.topology().shares_layout(structure.topology()));
+                assert_eq!(
+                    parallel.assign_with(frame, Run::new().with_executor(&threads)),
+                    expected,
+                    "frame {index}, {options:?}, prepared on several threads"
+                );
+            }
             assert_eq!(
                 plan.assign_with(frame, Run::new().with_executor(&Reversed(4))),
                 expected,
@@ -652,6 +667,29 @@ fn dssp_runs_report_their_stages_and_stop_when_cancelled() {
         plan.assign_with(&structure, cancelled),
         Err(DsspError::Cancelled(_))
     ));
+    assert!(DsspPlan::new_with(
+        structure.shared_topology(),
+        DsspOptions::default(),
+        cancelled
+    )
+    .is_err());
+
+    // Requested after the first poll, before preparing reads the topology:
+    // only a poll inside preparation stops it, on every executor.
+    let threads = kekule::parallel::ScopedThreads::new(std::num::NonZeroUsize::new(3).unwrap());
+    let executors: [&dyn kekule::parallel::Executor; 2] = [&Reversed(3), &threads];
+    for executor in executors {
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let cancellation = Cancellation::new(move || {
+            polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 1
+        });
+        let run = Run::new()
+            .with_executor(executor)
+            .with_cancellation(&cancellation);
+        assert!(
+            DsspPlan::new_with(structure.shared_topology(), DsspOptions::default(), run).is_err()
+        );
+    }
 }
 
 #[test]
@@ -740,7 +778,8 @@ fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
                 std::num::NonZeroUsize::new(threads).expect("nonzero thread count"),
             );
             let run = Run::new().with_executor(&executor);
-            let plan = kekule::dssp::DsspPlan::new(structure.shared_topology(), options);
+            let plan = kekule::dssp::DsspPlan::new_with(structure.shared_topology(), options, run)
+                .unwrap();
             for (name, assign) in [
                 (
                     "",

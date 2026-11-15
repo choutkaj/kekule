@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::diagnostics::{Cancellation, LimitExceeded, Resource};
+use crate::diagnostics::{Cancellation, Cancelled, LimitExceeded, Resource};
 use crate::math::{bounding_box, Point3, PointGrid};
 use crate::structure::StructureView;
 use crate::topology::{
@@ -349,11 +349,17 @@ struct PreparedResidue {
 
 impl Prepared {
     /// Reads `topology`'s molecule instances, orders its chains and finds
-    /// each peptide residue's backbone atoms.
-    pub(super) fn new(topology: &Topology, executor: &dyn Executor) -> Self {
+    /// each peptide residue's backbone atoms, polling `cancellation` as it
+    /// goes.
+    pub(super) fn new(
+        topology: &Topology,
+        executor: &dyn Executor,
+        cancellation: Option<&Cancellation>,
+    ) -> Result<Self, Cancelled> {
         let hierarchy = topology.hierarchy();
         let mut represented = vec![false; topology.instance_count()];
-        for site in hierarchy.atom_site_ids() {
+        for (step, site) in hierarchy.atom_site_ids().enumerate() {
+            Cancellation::poll_every(cancellation, step)?;
             if let Some(flag) = represented.get_mut(hierarchy.site_atom(site).instance().index()) {
                 *flag = true;
             }
@@ -413,20 +419,22 @@ impl Prepared {
             logical_chains[range]
                 .iter()
                 .map(|logical| {
+                    Cancellation::poll(cancellation)?;
                     let mut residues = Vec::new();
-                    let entries = order_chain(hierarchy, logical)
-                        .iter()
-                        .map(|entry| {
-                            entry.peptide.then(|| {
-                                residues.push(prepare_residue(topology, entry));
-                                residues.len() - 1
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                    (entries, residues)
+                    let mut entries = Vec::new();
+                    for (step, entry) in order_chain(hierarchy, logical).iter().enumerate() {
+                        Cancellation::poll_every(cancellation, step)?;
+                        entries.push(entry.peptide.then(|| {
+                            residues.push(prepare_residue(topology, entry));
+                            residues.len() - 1
+                        }));
+                    }
+                    Ok((entries, residues))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>, Cancelled>>()
         });
+        // A range that saw the cancellation stopped early.
+        let prepared = prepared.into_iter().collect::<Result<Vec<_>, _>>()?;
         let mut chains = Vec::with_capacity(logical_chains.len());
         let mut residues = Vec::new();
         for (entries, chain_residues) in prepared.into_iter().flatten() {
@@ -450,12 +458,12 @@ impl Prepared {
             .map(|(residue, index)| (residue.key, index))
             .collect::<Vec<_>>();
         lookup.sort_unstable();
-        Self {
+        Ok(Self {
             ignored_instances,
             chains,
             residues,
             lookup,
-        }
+        })
     }
 
     /// How many residues assignment reads.
@@ -1101,17 +1109,20 @@ fn angle_degrees(first: Vec3, second: Vec3) -> Option<f64> {
 /// residue. Every `CA` is a float, so the grid's double copy converts back
 /// exactly.
 fn ca_grid(residues: &[BackboneResidue]) -> PointGrid<usize> {
-    let point = |residue: &BackboneResidue| {
-        Point3::new(
-            f64::from(residue.ca.x),
-            f64::from(residue.ca.y),
-            f64::from(residue.ca.z),
-        )
-    };
+    let points = residues
+        .iter()
+        .map(|residue| {
+            Point3::new(
+                f64::from(residue.ca.x),
+                f64::from(residue.ca.y),
+                f64::from(residue.ca.z),
+            )
+        })
+        .collect::<Vec<_>>();
     let mut grid = PointGrid::default();
     grid.build(
-        residues.iter().map(point).zip(0..),
-        bounding_box(residues.iter().map(point)),
+        points.iter().copied().zip(0..),
+        bounding_box(points.iter().copied()),
         MAX_CA_PAIR_DISTANCE_ANGSTROMS,
         residues.len(),
     );

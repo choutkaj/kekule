@@ -92,6 +92,7 @@ fn dense_and_sparse_grids_agree_with_brute_force_in_grid_order() {
         // A zero cutoff bins by a 2^50th of the box, too fine to index
         // densely.
         assert_eq!(dense.is_dense(), cutoff > 0.0, "{round}");
+        assert_eq!(dense.is_direct(), cutoff > 0.0, "{round}");
         // A far point makes the box too large to index densely.
         let mut sparse_points = points.clone();
         sparse_points.push(Point3::new(1.0e7, -1.0e7, 1.0e7));
@@ -122,6 +123,47 @@ fn dense_and_sparse_grids_agree_with_brute_force_in_grid_order() {
             expected.sort_unstable();
             assert_eq!(found, expected, "{round} {candidate:?}");
         }
+    }
+}
+
+/// A box with too many cells per point to keep each cell's first entry,
+/// but few enough to index every cell, finds what brute force finds, in
+/// grid order.
+#[test]
+fn scattered_points_index_every_cell_by_occupancy_in_grid_order() {
+    let mut random = Lcg(13);
+    let mut points = (0..60)
+        .map(|_| {
+            Point3::new(
+                random.unit() * 30.0,
+                random.unit() * 30.0,
+                random.unit() * 30.0,
+            )
+        })
+        .collect::<Vec<_>>();
+    // Copies and partners at the cutoff, across cell boundaries.
+    for index in 0..20 {
+        let point = points[index];
+        points.push(point);
+        points.push(Point3::new(point.x + 1.0, point.y, point.z));
+    }
+    let within = within(1.0);
+    let mut grid = PointGrid::default();
+    grid.build(
+        points.iter().copied().zip(0..),
+        bounding_box(points.iter().copied()),
+        1.0,
+        1 << 24,
+    );
+    assert!(grid.is_dense());
+    assert!(!grid.is_direct());
+    for candidate in points.iter().chain(&[Point3::new(-0.5, 31.0, 15.0)]) {
+        let mut expected = (0..points.len())
+            .filter(|&index| within(candidate, &points[index]))
+            .collect::<Vec<_>>();
+        let cell = |index: usize| grid.cell(&points[index]).unwrap();
+        expected.sort_by_key(|&index| (cell(index), index));
+        assert_eq!(near(&grid, candidate, &within), expected, "{candidate:?}");
     }
 }
 

@@ -20,6 +20,11 @@ const DENSE_CELLS_PER_POINT: usize = 256;
 const DENSE_CELLS_PER_QUERY: usize = 16;
 const DENSE_SPARE_CELLS: usize = 4096;
 
+/// A box of at most this many cells per point, plus [`DENSE_SPARE_CELLS`],
+/// keeps the first entry of each cell, so a search reads a run's bounds
+/// directly rather than counting occupied cells.
+const DIRECT_CELLS_PER_POINT: usize = 8;
+
 /// Points with payloads, binned into cells at least as wide as a cutoff, so
 /// the points within the cutoff of a point lie in the 27 cells around its
 /// own.
@@ -39,6 +44,8 @@ pub(crate) struct PointGrid<T> {
     entries: Vec<(Point3, T)>,
     /// A build's points with their cells, kept for its storage.
     keyed: Vec<(Cell, Point3, T)>,
+    /// A counting sort's next free entry of each cell, kept for its storage.
+    next: Vec<usize>,
     len: usize,
     /// How many cells along each axis a search reaches: 1, or 2 where
     /// rounding of cell coordinates far from the box's corner can move a
@@ -64,6 +71,14 @@ enum Space {
 
 #[derive(Debug, Clone)]
 enum Index<T> {
+    /// Every cell of the box of `dims` cells from `origin`, in x-major
+    /// order: the points of the cells before slot `s` are
+    /// `entries[..starts[s]]`.
+    Direct {
+        origin: Cell,
+        dims: Cell,
+        starts: Vec<usize>,
+    },
     /// Every cell of the box of `dims` cells from `origin`, in x-major
     /// order, as one bit each: set for a cell with points. The points of
     /// the cells before slot `s` are `entries[..starts[rank(s)]]`, where
@@ -108,6 +123,7 @@ impl<T> Default for PointGrid<T> {
             },
             entries: Vec::new(),
             keyed: Vec::new(),
+            next: Vec::new(),
             len: 0,
             reach: 1,
         }
@@ -175,12 +191,7 @@ impl<T: Copy> PointGrid<T> {
                 .into_iter()
                 .map(|(point, payload)| (open_cell(low, scale, &point), point, payload)),
         );
-        // A stable sort keeps the input order within a cell.
-        keyed.sort_by_key(|(cell, _, _)| *cell);
         self.len = keyed.len();
-        self.entries.clear();
-        self.entries
-            .extend(keyed.iter().map(|&(_, point, payload)| (point, payload)));
         let (origin, last) = keyed.iter().fold(
             (
                 (i64::MAX, i64::MAX, i64::MAX),
@@ -213,9 +224,24 @@ impl<T: Copy> PointGrid<T> {
                 })?;
             (self.len > 0 && count <= budget).then_some((dims, count))
         })();
-        let groups = keyed.chunk_by(|a, b| a.0 == b.0);
+        let direct = self
+            .len
+            .saturating_mul(DIRECT_CELLS_PER_POINT)
+            .saturating_add(DENSE_SPARE_CELLS);
         let previous = std::mem::replace(&mut self.index, Index::Lists(CellMap::default()));
         self.index = match (dense, previous) {
+            (Some((dims, count)), previous) if count <= direct => {
+                let mut starts = match previous {
+                    Index::Direct { starts, .. } | Index::Dense { starts, .. } => starts,
+                    _ => Vec::new(),
+                };
+                self.sort_by_bucket(&keyed, count, |cell| slot(origin, dims, cell), &mut starts);
+                Index::Direct {
+                    origin,
+                    dims,
+                    starts,
+                }
+            }
             (Some((dims, count)), previous) => {
                 let (mut occupied, mut ranks, mut starts) = match previous {
                     Index::Dense {
@@ -224,25 +250,27 @@ impl<T: Copy> PointGrid<T> {
                         starts,
                         ..
                     } => (occupied, ranks, starts),
+                    Index::Direct { starts, .. } => (Vec::new(), Vec::new(), starts),
                     _ => Default::default(),
                 };
                 occupied.clear();
                 occupied.resize(count.div_ceil(64), 0);
-                starts.clear();
-                let mut start = 0;
-                for group in groups {
-                    let slot = slot(origin, dims, group[0].0);
+                for &(cell, _, _) in &keyed {
+                    let slot = slot(origin, dims, cell);
                     occupied[slot / 64] |= 1 << (slot % 64);
-                    starts.push(start);
-                    start += group.len();
                 }
-                starts.push(start);
                 ranks.clear();
                 let mut rank = 0;
                 for word in &occupied {
                     ranks.push(rank);
                     rank += word.count_ones() as usize;
                 }
+                self.sort_by_bucket(
+                    &keyed,
+                    rank,
+                    |cell| dense_rank(&occupied, &ranks, slot(origin, dims, cell)),
+                    &mut starts,
+                );
                 Index::Dense {
                     origin,
                     dims,
@@ -256,9 +284,14 @@ impl<T: Copy> PointGrid<T> {
                     Index::Sparse { ranges, .. } => ranges,
                     _ => CellMap::default(),
                 };
+                // A stable sort keeps the input order within a cell.
+                keyed.sort_by_key(|(cell, _, _)| *cell);
+                self.entries.clear();
+                self.entries
+                    .extend(keyed.iter().map(|&(_, point, payload)| (point, payload)));
                 ranges.clear();
                 let mut start = 0;
-                for group in groups {
+                for group in keyed.chunk_by(|a, b| a.0 == b.0) {
                     ranges.insert(group[0].0, (start, start + group.len()));
                     start += group.len();
                 }
@@ -276,6 +309,39 @@ impl<T: Copy> PointGrid<T> {
         };
         keyed.clear();
         self.keyed = keyed;
+    }
+
+    /// Places the points of `keyed`, which is not empty, in `entries` by a
+    /// counting sort into `buckets` buckets, which keeps the input order
+    /// within a bucket. Sets `starts[b]` to the first entry of bucket `b`,
+    /// and `starts[buckets]` to the number of points.
+    fn sort_by_bucket(
+        &mut self,
+        keyed: &[(Cell, Point3, T)],
+        buckets: usize,
+        bucket: impl Fn(Cell) -> usize,
+        starts: &mut Vec<usize>,
+    ) {
+        starts.clear();
+        starts.resize(buckets + 1, 0);
+        for &(cell, _, _) in keyed {
+            starts[bucket(cell) + 1] += 1;
+        }
+        for index in 1..starts.len() {
+            starts[index] += starts[index - 1];
+        }
+        let (_, point, payload) = keyed[0];
+        self.entries.clear();
+        self.entries.resize(keyed.len(), (point, payload));
+        let mut next = std::mem::take(&mut self.next);
+        next.clear();
+        next.extend_from_slice(&starts[..buckets]);
+        for &(cell, point, payload) in keyed {
+            let free = &mut next[bucket(cell)];
+            self.entries[*free] = (point, payload);
+            *free += 1;
+        }
+        self.next = next;
     }
 
     /// An empty periodic grid over `lattice` for searches within `cutoff`,
@@ -333,7 +399,13 @@ impl<T: Copy> PointGrid<T> {
     /// Whether the grid indexes every cell of its box.
     #[cfg(test)]
     pub(crate) fn is_dense(&self) -> bool {
-        matches!(self.index, Index::Dense { .. })
+        matches!(self.index, Index::Direct { .. } | Index::Dense { .. })
+    }
+
+    /// Whether the grid keeps the first entry of every cell of its box.
+    #[cfg(test)]
+    pub(crate) fn is_direct(&self) -> bool {
+        matches!(self.index, Index::Direct { .. })
     }
 
     /// The cell of `point`; `None` when a periodic grid cannot wrap it.
@@ -371,6 +443,31 @@ impl<T: Copy> PointGrid<T> {
         let (x, y, z) = cell;
         let reach = self.reach;
         match &self.index {
+            Index::Direct {
+                origin,
+                dims,
+                starts,
+            } => {
+                let Some((x, y, z)) = relative(cell, *origin, *dims, reach) else {
+                    return false;
+                };
+                let (low, high) = ((z - reach).max(0), (z + reach).min(dims.2 - 1));
+                if low > high {
+                    return false;
+                }
+                // Cells sort x-major, so the cells along z around each (x, y)
+                // column are one run.
+                for x in (x - reach).max(0)..=(x + reach).min(dims.0 - 1) {
+                    for y in (y - reach).max(0)..=(y + reach).min(dims.1 - 1) {
+                        let first = starts[dense_slot(*dims, (x, y, low))];
+                        let end = starts[dense_slot(*dims, (x, y, high)) + 1];
+                        if first < end && each(&self.entries[first..end]) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
             Index::Dense {
                 origin,
                 dims,
@@ -611,6 +708,12 @@ fn slot(origin: Cell, dims: Cell, cell: Cell) -> usize {
         dims,
         (cell.0 - origin.0, cell.1 - origin.1, cell.2 - origin.2),
     )
+}
+
+/// The occupied cells before `slot` of a dense index, a slot inside its box.
+fn dense_rank(occupied: &[u64], ranks: &[usize], slot: usize) -> usize {
+    let (word, bit) = (slot / 64, slot % 64);
+    ranks[word] + (occupied[word] & ((1 << bit) - 1)).count_ones() as usize
 }
 
 /// The dense slot of a cell relative to its box of `dims` cells.

@@ -139,7 +139,8 @@ the main branch migrates by the table under "From the SampleSet API".
   long operations on an executor with progress and cancellation; DSSP
   (`dssp::assign_with`) and clustering (`pairwise_fitted_rmsd_with`,
   `cluster_by_radius_with`) give exactly the serial result, and
-  `dssp::DsspPlan` prepares DSSP once per topology layout.
+  `dssp::DsspPlan` prepares DSSP once per topology layout, on an executor
+  with `DsspPlan::new_with`.
 - `Progress::items` counts whole items beside an operation's unit: indexing
   a trajectory (`open_indexed_trajectory_with`, `_from_index_with`,
   `append_trajectory_with`) counts bytes and reports the frames indexed so

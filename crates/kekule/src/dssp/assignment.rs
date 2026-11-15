@@ -93,7 +93,9 @@ pub fn assign_with(
 ) -> Result<DsspResult, DsspError> {
     let structure = structure.as_structure_view();
     run.check().map_err(DsspError::Cancelled)?;
-    let prepared = super::kernel::Prepared::new(structure.topology(), run.executor());
+    let prepared =
+        super::kernel::Prepared::new(structure.topology(), run.executor(), run.cancellation())
+            .map_err(DsspError::Cancelled)?;
     super::kernel::assign(&prepared, structure, options, run)
 }
 
@@ -147,12 +149,56 @@ impl DsspPlan {
     /// the calling thread.
     pub fn new(topology: impl Into<Arc<Topology>>, options: DsspOptions) -> Self {
         let topology = topology.into();
-        let prepared = super::kernel::Prepared::new(&topology, Run::new().executor());
+        let prepared = super::kernel::Prepared::new(&topology, Run::new().executor(), None)
+            .expect("preparing without a cancellation never stops");
         Self {
             topology,
             options,
             prepared,
         }
+    }
+
+    /// [`Self::new`] under a [`Run`]. Preparing splits the chains into
+    /// ranges of near-equal atom sites on the run's executor, and returns the
+    /// plan [`Self::new`] returns on any executor. It polls the cancellation
+    /// as it reads atom sites and residues, and reports no progress.
+    ///
+    /// ```
+    /// use kekule::dssp::{DsspOptions, DsspPlan};
+    /// use kekule::parallel::{Run, ScopedThreads};
+    /// use std::num::NonZeroUsize;
+    ///
+    /// let text = std::fs::read_to_string(concat!(
+    ///     env!("CARGO_MANIFEST_DIR"),
+    ///     "/tests/fixtures/mmcif/1AKE.cif"
+    /// ))?;
+    /// let structure = kekule::mmcif::parse_str(&text, Default::default())?
+    ///     .interpret(Default::default())?
+    ///     .into_structure();
+    /// let threads = ScopedThreads::new(NonZeroUsize::new(4).unwrap());
+    /// let run = Run::new().with_executor(&threads);
+    /// let plan = DsspPlan::new_with(structure.shared_topology(), DsspOptions::default(), run)?;
+    /// let serial = DsspPlan::new(structure.shared_topology(), DsspOptions::default());
+    /// assert_eq!(plan.assign_with(&structure, run), serial.assign(&structure));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Cancelled`] once `run`'s cancellation is requested.
+    pub fn new_with(
+        topology: impl Into<Arc<Topology>>,
+        options: DsspOptions,
+        run: Run<'_>,
+    ) -> Result<Self, Cancelled> {
+        run.check()?;
+        let topology = topology.into();
+        let prepared = super::kernel::Prepared::new(&topology, run.executor(), run.cancellation())?;
+        Ok(Self {
+            topology,
+            options,
+            prepared,
+        })
     }
 
     /// The topology whose layout every assigned structure must share.
