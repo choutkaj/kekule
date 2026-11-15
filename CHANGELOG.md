@@ -138,7 +138,8 @@ through the workspace.
   long operations on an executor with progress and cancellation; DSSP
   (`dssp::assign_with`) and clustering (`pairwise_fitted_rmsd_with`,
   `cluster_by_radius_with`) give exactly the serial result, and
-  `dssp::DsspPlan` prepares DSSP once per topology layout.
+  `dssp::DsspPlan` prepares DSSP once per topology layout, on an executor
+  with `DsspPlan::new_with`.
 - `RmsfAccumulator::merge`, `ContactOccupancyAccumulator::merge`, and
   `GroupContactOccupancyAccumulator::merge` combine partial accumulators
   (`StatisticsError::MergeMismatch`); the accumulators are `Clone`.

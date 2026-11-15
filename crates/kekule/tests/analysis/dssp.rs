@@ -591,9 +591,24 @@ fn dssp_plan_assigns_every_structure_of_its_layout_as_assign_does() {
         let plan = DsspPlan::new(structure.shared_topology(), options);
         assert_eq!(plan.options(), options);
         assert!(plan.topology().shares_layout(structure.topology()));
+        // Plans prepared on other executors assign as the serial plan does.
+        let prepared_on = |executor: &dyn kekule::parallel::Executor| {
+            let run = Run::new().with_executor(executor);
+            DsspPlan::new_with(structure.shared_topology(), options, run).unwrap()
+        };
+        let parallel_plans = [prepared_on(&Reversed(4)), prepared_on(&threads)];
         for (index, frame) in frames.iter().enumerate() {
             let expected = dssp::assign(frame, options);
             assert_eq!(plan.assign(frame), expected, "frame {index}, {options:?}");
+            for parallel in &parallel_plans {
+                assert_eq!(parallel.options(), options);
+                assert!(parallel.topology().shares_layout(structure.topology()));
+                assert_eq!(
+                    parallel.assign_with(frame, Run::new().with_executor(&threads)),
+                    expected,
+                    "frame {index}, {options:?}, prepared on several threads"
+                );
+            }
             assert_eq!(
                 plan.assign_with(frame, Run::new().with_executor(&Reversed(4))),
                 expected,
@@ -652,6 +667,12 @@ fn dssp_runs_report_their_stages_and_stop_when_cancelled() {
         plan.assign_with(&structure, cancelled),
         Err(DsspError::Cancelled(_))
     ));
+    assert!(DsspPlan::new_with(
+        structure.shared_topology(),
+        DsspOptions::default(),
+        cancelled
+    )
+    .is_err());
 }
 
 #[test]
@@ -740,7 +761,8 @@ fn dssp_threads_timing_on_a_hundred_thousand_and_a_million_atoms() {
                 std::num::NonZeroUsize::new(threads).expect("nonzero thread count"),
             );
             let run = Run::new().with_executor(&executor);
-            let plan = kekule::dssp::DsspPlan::new(structure.shared_topology(), options);
+            let plan = kekule::dssp::DsspPlan::new_with(structure.shared_topology(), options, run)
+                .unwrap();
             for (name, assign) in [
                 (
                     "",

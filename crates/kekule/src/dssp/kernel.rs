@@ -1101,17 +1101,20 @@ fn angle_degrees(first: Vec3, second: Vec3) -> Option<f64> {
 /// residue. Every `CA` is a float, so the grid's double copy converts back
 /// exactly.
 fn ca_grid(residues: &[BackboneResidue]) -> PointGrid<usize> {
-    let point = |residue: &BackboneResidue| {
-        Point3::new(
-            f64::from(residue.ca.x),
-            f64::from(residue.ca.y),
-            f64::from(residue.ca.z),
-        )
-    };
+    let points = residues
+        .iter()
+        .map(|residue| {
+            Point3::new(
+                f64::from(residue.ca.x),
+                f64::from(residue.ca.y),
+                f64::from(residue.ca.z),
+            )
+        })
+        .collect::<Vec<_>>();
     let mut grid = PointGrid::default();
     grid.build(
-        residues.iter().map(point).zip(0..),
-        bounding_box(residues.iter().map(point)),
+        points.iter().copied().zip(0..),
+        bounding_box(points.iter().copied()),
         MAX_CA_PAIR_DISTANCE_ANGSTROMS,
         residues.len(),
     );
