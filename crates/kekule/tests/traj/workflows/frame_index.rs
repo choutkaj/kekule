@@ -196,7 +196,7 @@ fn exported_indexes_reopen_every_format_with_identical_frames_and_metadata() {
 
         // Progress starts before the first frame, then advances one verified
         // frame at a time to the whole file: report `count` ends where frame
-        // `count` starts.
+        // `count` starts, after `count` frames indexed.
         let steps = steps.lock().unwrap().clone();
         assert_eq!(steps.len(), expected.len() + 1, "{name}");
         let starts = built.to_frame_index().frame_offsets().to_vec();
@@ -207,6 +207,7 @@ fn exported_indexes_reopen_every_format_with_identical_frames_and_metadata() {
                 "{name}: report {count}"
             );
             assert_eq!(step.total(), size);
+            assert_eq!(step.items(), Some(count as u64), "{name}: report {count}");
         }
         assert!(steps
             .windows(2)
@@ -361,6 +362,13 @@ fn an_index_opens_the_file_grown_by_appending_and_indexes_only_the_new_frames() 
                 index.fingerprint().byte_count(),
                 fs::metadata(&path).unwrap().len()
             ],
+            "{name}"
+        );
+        // The frames counted include the imported ones.
+        let indexed = index.frame_count() as u64;
+        assert_eq!(
+            steps.iter().map(|step| step.items()).collect::<Vec<_>>(),
+            [Some(indexed), Some(indexed + 1)],
             "{name}"
         );
         assert_eq!(frames(&mut reopened), expected, "{name}");

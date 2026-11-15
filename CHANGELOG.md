@@ -139,6 +139,10 @@ through the workspace.
   (`dssp::assign_with`) and clustering (`pairwise_fitted_rmsd_with`,
   `cluster_by_radius_with`) give exactly the serial result, and
   `dssp::DsspPlan` prepares DSSP once per topology layout.
+- `Progress::items` counts whole items beside an operation's unit: indexing
+  a trajectory (`open_indexed_trajectory_with`, `_from_index_with`,
+  `append_trajectory_with`) counts bytes and reports the frames indexed so
+  far as items (`Progress::with_items`).
 - `RmsfAccumulator::merge`, `ContactOccupancyAccumulator::merge`, and
   `GroupContactOccupancyAccumulator::merge` combine partial accumulators
   (`StatisticsError::MergeMismatch`); the accumulators are `Clone`.
