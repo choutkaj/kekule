@@ -461,14 +461,27 @@ impl<R: Read> Decoder<'_, R> {
         }
         self.version = version;
         let code = self.u8()?;
-        let kind = NativeKind::from_code(code, self.version)
+        let kind = NativeKind::from_code(code)
             .ok_or_else(|| self.invalid(format!("The object kind {code} is unknown.")))?;
+        if self.version < kind.since() {
+            return Err(self.invalid(format!(
+                "The object kind {code}, {}, needs native format version {} or newer.",
+                kind.with_article(),
+                kind.since()
+            )));
+        }
         let flags = self.u8()?;
         if flags & !1 != 0 {
             return Err(self.error(
                 DiagnosticKind::Unsupported,
                 format!("The header flags {flags:#04x} are unknown."),
             ));
+        }
+        if flags & 1 != 0 && !kind.stores_perception() {
+            let kind = kind.with_article();
+            return Err(self.invalid(format!(
+                "The header flags say {kind} stores perception, but {kind} stores none."
+            )));
         }
         self.stored_perception = flags & 1 != 0;
         let reserved = u16::from_le_bytes(self.array()?);

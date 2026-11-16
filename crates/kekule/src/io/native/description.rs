@@ -198,6 +198,11 @@ impl EnsembleDescription {
         Ok(Self { set, distribution })
     }
 
+    /// `distribution`, already bound to the geometries `set` describes.
+    pub(super) const fn bound(set: StructureSetDescription, distribution: Distribution) -> Self {
+        Self { set, distribution }
+    }
+
     /// The description of `ensemble`, in memory or read from a file: the
     /// [`StructureSetDescription::of`] its set and its distribution.
     pub fn of<S: GeometryStorage>(ensemble: &Ensemble<S>) -> Self {

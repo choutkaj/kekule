@@ -1,9 +1,14 @@
 //! Frozen native files of every readable format version.
 //!
-//! `tests/fixtures/native/v<N>/` holds one file per object kind, written by
-//! the version `N` writer and never regenerated. Each decodes to the object
-//! its builder here gives, so a builder must keep building the object its
-//! files hold. A new format version records its files and fuzz seeds with
+//! `tests/fixtures/native/v<N>/` holds the files the version `N` writer
+//! wrote, never regenerated. The current writer encodes each decoded file to
+//! the bytes of the same file of the current version, so an older version's
+//! files read as the current ones do. A builder here gives the object of
+//! each file. Stable builders, built by hand, must keep giving the current
+//! files; builders that run perception or interpretation serve only to record
+//! new files. New content in an existing kind is a new fixture entry with
+//! `since: N`, never an edit of an existing builder. A new format version
+//! records its files and fuzz seeds with
 //! `cargo test -p kekule --test formats native_versions::record -- --ignored`,
 //! which writes only files that are missing.
 
@@ -37,14 +42,23 @@ use kekule::units::{
 
 use super::support::fixture;
 
-/// One frozen file: its name, the first version that has its kind, the kind,
-/// whether it stores perception, and the object it holds.
+/// One frozen file: its name, the first version that has its content, the
+/// kind, whether it stores perception, and how its object is built.
 struct Fixture {
     name: &'static str,
     since: u32,
     kind: NativeKind,
     perception: bool,
-    build: fn() -> Vec<u8>,
+    build: Build,
+}
+
+/// How a fixture's object is built.
+enum Build {
+    /// By hand: the builder keeps giving the current file.
+    Stable(fn() -> Vec<u8>),
+    /// By perception or interpretation, whose output may change: the builder
+    /// only records new files.
+    Recorded(fn() -> Vec<u8>),
 }
 
 const FIXTURES: &[Fixture] = &[
@@ -53,85 +67,114 @@ const FIXTURES: &[Fixture] = &[
         since: 7,
         kind: NativeKind::Molecule,
         perception: true,
-        build: || write(&perceived_molecule(), true),
+        build: Build::Stable(|| write(&perceived_molecule(), true)),
     },
     Fixture {
         name: "molecule_plain",
         since: 7,
         kind: NativeKind::Molecule,
         perception: false,
-        build: || write(&plain_molecule(), false),
+        build: Build::Stable(|| write(&plain_molecule(), false)),
+    },
+    Fixture {
+        name: "molecule_perceived",
+        since: 8,
+        kind: NativeKind::Molecule,
+        perception: true,
+        build: Build::Recorded(|| write(&fully_perceived_molecule(), true)),
     },
     Fixture {
         name: "topology",
         since: 7,
         kind: NativeKind::Topology,
         perception: true,
-        build: || write(&topology(), true),
+        build: Build::Stable(|| write(&topology(), true)),
     },
     Fixture {
         name: "structure",
         since: 7,
         kind: NativeKind::Structure,
         perception: true,
-        build: || write(&structure(), true),
+        build: Build::Stable(|| write(&structure(), true)),
     },
     Fixture {
         name: "interpreted_structure",
         since: 7,
         kind: NativeKind::StructureInterpretation,
         perception: true,
-        build: || {
+        build: Build::Recorded(|| {
             let interpretation = pdb_entry(false).interpret(Default::default()).unwrap();
             write(&interpretation, true)
-        },
+        }),
+    },
+    Fixture {
+        name: "interpreted_structure_assemblies",
+        since: 8,
+        kind: NativeKind::StructureInterpretation,
+        perception: true,
+        build: Build::Recorded(|| {
+            let interpretation = pdb_assemblies_and_alternates()
+                .interpret(Default::default())
+                .unwrap();
+            let report = interpretation.report();
+            assert!(!report.assemblies().is_empty());
+            assert!(!report.alternate_locations().is_empty());
+            write(&interpretation, true)
+        }),
     },
     Fixture {
         name: "structure_set",
         since: 7,
         kind: NativeKind::StructureSet,
         perception: true,
-        build: || write(&structure_set(), true),
+        build: Build::Stable(|| write(&structure_set(), true)),
+    },
+    Fixture {
+        name: "structure_set_steps",
+        since: 8,
+        kind: NativeKind::StructureSet,
+        perception: true,
+        build: Build::Stable(|| write(&structure_set_steps(), true)),
     },
     Fixture {
         name: "interpreted_structure_set",
         since: 7,
         kind: NativeKind::StructureSetInterpretation,
         perception: true,
-        build: || {
+        build: Build::Recorded(|| {
             let interpretation = pdb_entry(true)
                 .interpret_structure_set(Default::default())
                 .unwrap();
             write(&interpretation, true)
-        },
+        }),
     },
     Fixture {
         name: "structure_set_description",
         since: 7,
         kind: NativeKind::StructureSet,
         perception: true,
-        build: || write(&structure_set_description(), true),
+        build: Build::Stable(|| write(&structure_set_description(), true)),
     },
     Fixture {
         name: "ensemble",
         since: 7,
         kind: NativeKind::Ensemble,
         perception: true,
-        build: || write(&ensemble(), true),
+        build: Build::Stable(|| write(&ensemble(), true)),
     },
     Fixture {
         name: "ensemble_description",
         since: 7,
         kind: NativeKind::Ensemble,
         perception: true,
-        build: || write(&ensemble_description(), true),
+        build: Build::Stable(|| write(&ensemble_description(), true)),
     },
     Fixture {
         name: "distribution",
         since: 8,
         kind: NativeKind::Distribution,
-        perception: true,
-        build: || write(&distribution(), true),
+        perception: false,
+        build: Build::Stable(|| write(&distribution(), false)),
     },
 ];
 
@@ -168,7 +211,23 @@ fn path(version: u32, name: &str) -> PathBuf {
     directory(version).join(format!("{name}.bin"))
 }
 
-/// The files of `version`: every fixture whose kind the version has.
+fn read(version: u32, name: &str) -> Vec<u8> {
+    let path = path(version, name);
+    std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+}
+
+/// Decodes the file of `fixture` in `version`, checking its header.
+fn decode(version: u32, fixture: &Fixture) -> NativeObject {
+    let name = format!("v{version}/{}", fixture.name);
+    let bytes = read(version, fixture.name);
+    assert_eq!(bytes[8..12], version.to_le_bytes(), "{name}");
+    let decoded = native::read(bytes.as_slice(), NativeReadOptions::default())
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+    assert_eq!(decoded.kind(), fixture.kind, "{name}");
+    decoded
+}
+
+/// The files of `version`: every fixture whose content the version has.
 fn fixtures(version: u32) -> impl Iterator<Item = &'static Fixture> {
     FIXTURES
         .iter()
@@ -176,59 +235,84 @@ fn fixtures(version: u32) -> impl Iterator<Item = &'static Fixture> {
 }
 
 #[test]
-fn every_readable_version_has_a_file_of_every_kind() {
+fn every_readable_version_has_its_files_and_no_other() {
     for version in NATIVE_FORMAT_OLDEST..=NATIVE_FORMAT_VERSION {
         for fixture in fixtures(version) {
             let path = path(version, fixture.name);
             assert!(path.is_file(), "{} is missing", path.display());
         }
-    }
-}
-
-#[test]
-fn files_of_every_readable_version_decode_to_their_objects() {
-    for version in NATIVE_FORMAT_OLDEST..=NATIVE_FORMAT_VERSION {
-        for fixture in fixtures(version) {
-            let name = format!("v{version}/{}", fixture.name);
-            let bytes = std::fs::read(path(version, fixture.name)).unwrap();
-            assert_eq!(bytes[8..12], version.to_le_bytes(), "{name}");
-            let decoded = native::read(bytes.as_slice(), NativeReadOptions::default())
-                .unwrap_or_else(|error| panic!("{name}: {error}"));
-            assert_eq!(decoded.kind(), fixture.kind, "{name}");
-            // The current writer encodes the decoded object exactly as it
-            // encodes the object built here.
+        for entry in std::fs::read_dir(directory(version)).unwrap() {
+            let file = entry.unwrap().file_name().into_string().unwrap();
             assert!(
-                encode(&decoded, fixture.perception) == (fixture.build)(),
-                "{name} does not decode to its object"
+                fixtures(version).any(|fixture| file == format!("{}.bin", fixture.name)),
+                "v{version}/{file} is no fixture of version {version}"
             );
         }
     }
 }
 
 #[test]
-fn files_of_the_current_version_are_what_the_writer_writes() {
-    // A layout change without a new version fails here.
-    for fixture in fixtures(NATIVE_FORMAT_VERSION) {
-        let bytes = std::fs::read(path(NATIVE_FORMAT_VERSION, fixture.name)).unwrap();
-        let decoded = native::read(bytes.as_slice(), NativeReadOptions::default()).unwrap();
+fn files_exist_only_for_readable_versions() {
+    for entry in std::fs::read_dir(fixture("native")).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        let version = name
+            .strip_prefix('v')
+            .and_then(|version| version.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("native/{name} is no version directory"));
         assert!(
-            encode(&decoded, fixture.perception) == bytes,
-            "{} changed; a new layout needs a new version",
-            fixture.name
+            (NATIVE_FORMAT_OLDEST..=NATIVE_FORMAT_VERSION).contains(&version),
+            "native/{name} is outside the readable versions"
         );
     }
 }
 
+#[test]
+fn files_of_every_readable_version_read_as_the_current_files() {
+    for version in NATIVE_FORMAT_OLDEST..=NATIVE_FORMAT_VERSION {
+        for fixture in fixtures(version) {
+            let encoded = encode(&decode(version, fixture), fixture.perception);
+            // At the current version, a layout change without a new version
+            // fails here.
+            assert!(
+                encoded == read(NATIVE_FORMAT_VERSION, fixture.name),
+                "v{version}/{0} does not encode to v{NATIVE_FORMAT_VERSION}/{0}",
+                fixture.name
+            );
+        }
+    }
+}
+
+#[test]
+fn stable_builders_build_the_current_files() {
+    for fixture in fixtures(NATIVE_FORMAT_VERSION) {
+        if let Build::Stable(build) = fixture.build {
+            assert!(
+                build() == read(NATIVE_FORMAT_VERSION, fixture.name),
+                "the {} builder no longer builds its file",
+                fixture.name
+            );
+        }
+    }
+}
+
 /// Writes the current version's missing files, and the same files as seeds
-/// of the `native` fuzz target.
+/// of the `native` fuzz target. A file whose content the previous version
+/// has is that version's file encoded by the current writer.
 #[test]
 #[ignore = "records the files of a new format version"]
 fn record() {
     let version = NATIVE_FORMAT_VERSION;
+    let previous = version - 1;
     let seeds = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/native");
     std::fs::create_dir_all(directory(version)).unwrap();
     for fixture in fixtures(version) {
-        let bytes = (fixture.build)();
+        let bytes = if fixture.since <= previous {
+            encode(&decode(previous, fixture), fixture.perception)
+        } else {
+            match fixture.build {
+                Build::Stable(build) | Build::Recorded(build) => build(),
+            }
+        };
         for path in [
             path(version, fixture.name),
             seeds.join(format!("v{version}_{}.bin", fixture.name)),
@@ -307,6 +391,24 @@ fn plain_molecule() -> Molecule {
         .owner_mut()
         .insert(key("index"), PropertyValue::Int(-3))
         .unwrap();
+    molecule
+}
+
+/// A phenylalanine-like zwitterion with two stereo groups and every
+/// perception section: valence, rings with their basis, aromaticity,
+/// conjugation, resonance, and CIP descriptors.
+fn fully_perceived_molecule() -> Molecule {
+    let mut molecule = smiles::to_molecules("N[C@@H](Cc1ccccc1)[C@@H](C)C(=O)[O-] |&1:1,o1:9|")
+        .unwrap()
+        .remove(0);
+    molecule.perceive().unwrap();
+    kekule::stereo::cip::assign_cip_descriptors(&mut molecule, Default::default()).unwrap();
+    assert_eq!(molecule.stereo_groups().count(), 2);
+    let perception = molecule.perception();
+    assert!(perception.rings().and_then(|rings| rings.basis()).is_some());
+    assert!(perception.conjugation().is_some());
+    assert!(perception.resonance().is_some());
+    assert!(perception.cip().is_some());
     molecule
 }
 
@@ -473,6 +575,15 @@ fn structure_set() -> StructureSet {
     set
 }
 
+/// Three water geometries in a step order.
+fn structure_set_steps() -> StructureSet {
+    let geometries = [0.75, -1.0, 2.0].map(|seed| Geometry::new(positions(seed)));
+    let mut set = StructureSet::from_geometries(water_topology(), Vec::from(geometries)).unwrap();
+    set.set_order(Some(Order::Step(vec![u64::MAX, 0, 7])))
+        .unwrap();
+    set
+}
+
 /// Four geometries kept elsewhere, in a coordinate order.
 fn structure_set_description() -> StructureSetDescription {
     StructureSetDescription::new(water_topology(), 4)
@@ -562,6 +673,46 @@ fn pdb_entry(two_models: bool) -> pdb::PdbDocument {
         if two_models {
             text.push_str("ENDMDL\n");
         }
+    }
+    text.push_str("END\n");
+    pdb::parse_str(&text, Default::default()).unwrap()
+}
+
+/// Two glycines in chains A and B, one with two locations of its alpha
+/// carbon, and a biomolecule that copies chain B.
+fn pdb_assemblies_and_alternates() -> pdb::PdbDocument {
+    let mut text = String::from(
+        "\
+HEADER    TEST
+REMARK 350 BIOMOLECULE: 1
+REMARK 350 AUTHOR DETERMINED BIOLOGICAL UNIT: DIMERIC
+REMARK 350 APPLY THE FOLLOWING TO CHAINS: A, B
+REMARK 350   BIOMT1   1  1.000000  0.000000  0.000000        0.00000
+REMARK 350   BIOMT2   1  0.000000  1.000000  0.000000        0.00000
+REMARK 350   BIOMT3   1  0.000000  0.000000  1.000000        0.00000
+REMARK 350 IN ADDITION APPLY THE FOLLOWING TO CHAINS: B
+REMARK 350   BIOMT1   2  1.000000  0.000000  0.000000       10.00000
+REMARK 350   BIOMT2   2  0.000000  1.000000  0.000000        0.00000
+REMARK 350   BIOMT3   2  0.000000  0.000000  1.000000        0.00000
+",
+    );
+    let atoms = [
+        (" N  ", ' ', 'A', -1.195, 0.661, 1.0, "N"),
+        (" CA ", 'A', 'A', 0.0, 1.493, 0.6, "C"),
+        (" CA ", 'B', 'A', 0.1, 1.593, 0.4, "C"),
+        (" C  ", ' ', 'A', 1.29, 0.698, 1.0, "C"),
+        (" O  ", ' ', 'A', 1.29, -0.531, 1.0, "O"),
+        (" N  ", ' ', 'B', 3.805, 0.661, 1.0, "N"),
+        (" CA ", ' ', 'B', 5.0, 1.493, 1.0, "C"),
+        (" C  ", ' ', 'B', 6.29, 0.698, 1.0, "C"),
+        (" O  ", ' ', 'B', 6.29, -0.531, 1.0, "O"),
+    ];
+    for (serial, (name, alternate, chain, x, y, occupancy, element)) in atoms.iter().enumerate() {
+        text.push_str(&format!(
+            "ATOM  {:>5} {name}{alternate}GLY {chain}   1    {x:>8.3}{y:>8.3}{:>8.3}{occupancy:>6.2} 10.00          {element:>2}\n",
+            serial + 1,
+            0.0,
+        ));
     }
     text.push_str("END\n");
     pdb::parse_str(&text, Default::default()).unwrap()

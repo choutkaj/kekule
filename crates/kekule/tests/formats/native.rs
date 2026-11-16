@@ -549,16 +549,9 @@ fn reports_are_stored_only_when_given() {
     );
 
     // This reader rejects the retired kinds 4, 5, 6, and 8 and the unused
-    // kind 13 as unknown, and the distribution kind 12 in version 7, which
-    // has no such kind.
-    let mut version_7 = interpreted.clone();
-    version_7[8..12].copy_from_slice(&7u32.to_le_bytes());
-    for (bytes, code) in [4, 5, 6, 8, 13]
-        .map(|code| (&interpreted, code))
-        .into_iter()
-        .chain([(&version_7, 12)])
-    {
-        let mut unknown = bytes.clone();
+    // kind 13 as unknown.
+    for code in [4, 5, 6, 8, 13] {
+        let mut unknown = interpreted.clone();
         unknown[12] = code;
         let error = native::read(unknown.as_slice(), NativeReadOptions::default()).unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
@@ -569,6 +562,16 @@ fn reports_are_stored_only_when_given() {
             "{error}"
         );
     }
+    // Version 7 has no distribution kind 12.
+    let mut version_7 = interpreted.clone();
+    version_7[8..12].copy_from_slice(&7u32.to_le_bytes());
+    version_7[12] = 12;
+    let error = native::read(version_7.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(
+        error.to_string(),
+        "Cannot parse the native input at byte 13. The object kind 12, a distribution, needs native format version 8 or newer."
+    );
 }
 
 fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
@@ -1082,6 +1085,25 @@ fn distribution_records_store_a_distribution_and_its_geometry_count() {
 
     let bytes = native::write(&description, NativeWriteOptions::default()).unwrap();
     assert_header(&bytes, 12);
+    // A distribution stores no perception, so its perception flag is zero
+    // under either option, and the reader rejects a set flag.
+    assert_eq!(bytes[13], 0);
+    assert!(
+        native::write(
+            &description,
+            NativeWriteOptions::default().with_perception(false)
+        )
+        .unwrap()
+            == bytes
+    );
+    let mut flagged = bytes.clone();
+    flagged[13] = 1;
+    let error = native::read(flagged.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(
+        error.to_string(),
+        "Cannot parse the native input at byte 14. The header flags say a distribution stores perception, but a distribution stores none."
+    );
     let decoded = round_trip(&description);
     assert_eq!(decoded.kind(), NativeKind::Distribution);
     for (error, expected) in [

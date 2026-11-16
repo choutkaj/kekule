@@ -44,6 +44,9 @@ pub const NATIVE_FORMAT_VERSION: u32 = 8;
 /// changelog names the new value.
 pub const NATIVE_FORMAT_OLDEST: u32 = 7;
 
+/// The first format version with the distribution record.
+const DISTRIBUTION_SINCE: u32 = 8;
+
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;
 /// Default [`NativeReadOptions::max_atoms`].
@@ -96,9 +99,9 @@ impl NativeKind {
         }
     }
 
-    /// The kind of `code` in format `version`, or `None` when that version
-    /// has no such kind.
-    pub(super) const fn from_code(code: u8, version: u32) -> Option<Self> {
+    /// The kind of `code` in the current format version, or `None` for an
+    /// unknown code.
+    pub(super) const fn from_code(code: u8) -> Option<Self> {
         Some(match code {
             1 => Self::Molecule,
             2 => Self::Topology,
@@ -107,10 +110,23 @@ impl NativeKind {
             9 => Self::StructureSet,
             10 => Self::StructureSetInterpretation,
             11 => Self::Ensemble,
-            // The distribution record exists from version 8 on.
-            12 if version >= 8 => Self::Distribution,
+            12 => Self::Distribution,
             _ => return None,
         })
+    }
+
+    /// The oldest readable format version that has this kind.
+    pub(super) const fn since(self) -> u32 {
+        match self {
+            Self::Distribution => DISTRIBUTION_SINCE,
+            _ => NATIVE_FORMAT_OLDEST,
+        }
+    }
+
+    /// Whether a record of this kind can store perception. Its header flag
+    /// is zero when it cannot.
+    pub(super) const fn stores_perception(self) -> bool {
+        !matches!(self, Self::Distribution)
     }
 
     /// The kind with its indefinite article, such as "an interpreted structure".
@@ -416,7 +432,13 @@ impl NativeObject {
     pub fn into_ensemble_description(self) -> Result<EnsembleDescription, FormatError> {
         match self {
             Self::EnsembleDescription(description) => Ok(*description),
-            Self::Ensemble(ensemble) => Ok(EnsembleDescription::of(&ensemble)),
+            Self::Ensemble(ensemble) => {
+                let (set, distribution) = ensemble.into_parts();
+                Ok(EnsembleDescription::bound(
+                    StructureSetDescription::of(&set),
+                    distribution,
+                ))
+            }
             other => Err(other.kind_error(NativeKind::Ensemble)),
         }
     }
@@ -432,7 +454,10 @@ impl NativeObject {
     pub fn into_distribution_description(self) -> Result<DistributionDescription, FormatError> {
         match self {
             Self::DistributionDescription(description) => Ok(*description),
-            Self::Ensemble(ensemble) => Ok(DistributionDescription::of(&ensemble)),
+            Self::Ensemble(ensemble) => {
+                let (set, distribution) = ensemble.into_parts();
+                Ok(DistributionDescription::bound(set.len(), distribution))
+            }
             Self::EnsembleDescription(description) => {
                 let (set, distribution) = description.into_parts();
                 Ok(DistributionDescription::bound(
@@ -630,10 +655,11 @@ impl NativeReadOptions {
         with_max_bonds
     );
     native_limit!(
-        /// Maximum geometries of a structure set, counting those a record stores
-        /// only the number of and those a distribution partitions, and of a
-        /// distribution's states, and maximum
-        /// entries of any other stored list that atoms or bonds do not
+        /// Maximum geometries of a structure set, including geometries a
+        /// record stores only the number of and geometries a distribution
+        /// partitions. Also the maximum states of a distribution.
+        ///
+        /// It also bounds every other stored list that atoms or bonds do not
         /// bound: property columns and owner values, hierarchy chains and
         /// residues, and the residues listed by all chains together.
         max_items,

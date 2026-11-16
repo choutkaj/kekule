@@ -316,7 +316,7 @@ impl<W: Write> Encoder<'_, W> {
         self.bytes(&NATIVE_MAGIC)?;
         self.u32(NATIVE_FORMAT_VERSION)?;
         self.u8(kind.code())?;
-        self.u8(u8::from(self.perception))?;
+        self.u8(u8::from(self.perception && kind.stores_perception()))?;
         self.u16(0)
     }
 

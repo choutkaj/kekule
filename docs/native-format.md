@@ -79,9 +79,11 @@ versions before it. `NATIVE_FORMAT_OLDEST` rises only at a major release
 
 Every readable version has frozen files of every kind it has, written by that
 version's writer and never regenerated, in
-`crates/kekule/tests/fixtures/native/v<N>/`. Tests decode each to the object
-it holds, and fail when a readable version has no files. The same files seed
-the `native` fuzz target.
+`crates/kekule/tests/fixtures/native/v<N>/`. Tests decode each file and
+encode it with the current writer, which must give the bytes of the same file
+of the current version. Tests fail when a readable version lacks a file, or
+when files exist for a version outside the readable range. The same files
+seed the `native` fuzz target.
 
 ## Layout
 
@@ -109,13 +111,17 @@ magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
 kind      := 1 molecule | 2 topology | 3 structure | 7 interpreted structure
            | 9 structure set | 10 interpreted structure set | 11 ensemble
            | 12 distribution
-flags     := bit 0: perception stored; all other bits zero
+flags     := bit 0: perception stored, zero for a distribution; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
 ```
 
 Kinds 4, 5, 6, and 8 are retired and, like any other unlisted kind, rejected
 as unknown.
+
+A distribution stores no perception, so its bit 0 is zero, and the reader
+rejects a distribution with bit 0 set. A version that lacks a kind rejects
+it with a message naming the version that has it.
 
 `crc` is the CRC-32 (IEEE 802.3, reflected polynomial `0xEDB88320`, as used
 by zlib and PNG) of every preceding byte, header included. The decoded object
