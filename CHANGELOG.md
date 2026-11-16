@@ -66,12 +66,20 @@ the main branch migrates by the table under "From the SampleSet API".
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
 - The `kekule::native` binary format stores a `Molecule`, `Topology`,
   `Structure`, `StructureSet`, or `Ensemble` exactly (`native::write_to`,
-  `native::read`; format version 7, specified in `docs/native-format.md`).
+  `native::read`; format version 8, specified in `docs/native-format.md`).
+- Native readers read every format version from `NATIVE_FORMAT_OLDEST`, 7,
+  to `NATIVE_FORMAT_VERSION`, 8; the writer writes the newest. A version
+  outside the range fails with `FormatErrorDetail::NativeVersion { found,
+  oldest, newest }`. Frozen files of every readable version are tested.
 - Native decoding validates untrusted input within `NativeReadOptions` and
   fails with a `FormatError` of `Format::Native`, never a panic.
 - Native files keep interpretation reports (`NativeSource::interpreted_structure`,
   `NativeObject::into_interpretation`) and sets described without their
   geometries (`StructureSetDescription`, `EnsembleDescription`).
+- A native distribution record stores a `Distribution` with the number of
+  geometries it partitions (`native::DistributionDescription`,
+  `NativeObject::into_distribution_description`), so a host keeps a set's
+  distribution apart from its topology.
 - `InstanceAtomId::to_bits`/`from_bits` and `InstanceBondId::to_bits`/`from_bits`
   give a stable `u64` encoding; every other identifier's `raw()` is stable.
 - The selection language in `kekule::select`: `select::parse` reads text such
@@ -535,7 +543,8 @@ weights. The `Model` items became `Structure` items as listed under Changed.
 | `PdbWriteIssue`, `MmcifWriteIssue` (`UnrepresentableSample`, `EmptySampleSet`) | `PdbWriteErrorKind`, `MmcifWriteErrorKind` (`UnrepresentableGeometry`, `EmptyStructureSet`) |
 | `MmcifSampleField` | `MmcifSharedCategory` |
 | `kekule::geometry`, `PeriodicGeometry` | `kekule::math`, `Lattice` |
-| Native format version 5 | Version 7; version 5 files do not read |
+| Native format version 5 | Version 8; version 7 files read, version 5 files do not |
+| `FormatErrorDetail::NativeVersion { found, supported }` | `NativeVersion { found, oldest, newest }` |
 | `NativeKind::SampleSet`, `SampleSetInterpretation` | `NativeKind::StructureSet`, `Ensemble`, `StructureSetInterpretation` |
 | `NativeObject::into_sample_set`, `into_sample_set_interpretation` | `into_structure_set`, `into_ensemble`, `into_structure_set_interpretation` |
 | `native::SampleSetDescription`, `into_sample_set_description` | `StructureSetDescription`, `EnsembleDescription`, and their `into_*_description` |

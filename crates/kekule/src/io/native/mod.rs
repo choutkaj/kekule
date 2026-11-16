@@ -1,6 +1,7 @@
 //! Kekule's native binary serialization: exact, versioned persistence of one
-//! molecule, topology, structure, structure set, or ensemble, and of a
-//! structure or structure set with its structure interpretation reports.
+//! molecule, topology, structure, structure set, ensemble, or distribution,
+//! and of a structure or structure set with its structure interpretation
+//! reports.
 //!
 //! The byte layout is specified in `docs/native-format.md`; the encoder and
 //! decoder here implement that specification and nothing else.
@@ -22,7 +23,7 @@ use crate::structure::{Ensemble, Structure, StructureSet};
 use crate::topology::Topology;
 
 pub(crate) use decode::read_native;
-pub use description::{EnsembleDescription, StructureSetDescription};
+pub use description::{DistributionDescription, EnsembleDescription, StructureSetDescription};
 pub(crate) use encode::{write_native, write_native_to};
 
 /// The eight bytes every native input starts with.
@@ -31,12 +32,20 @@ pub(crate) use encode::{write_native, write_native_to};
 /// text-mode transfer damage, as in PNG.
 pub const NATIVE_MAGIC: [u8; 8] = [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0A];
 
-/// The native format version this crate writes and reads.
+/// The native format version this crate writes, and the newest it reads.
 ///
-/// Before Kekule 1.0 the format may change incompatibly, but every
-/// incompatible change increments this version, and readers reject versions
-/// they do not implement.
-pub const NATIVE_FORMAT_VERSION: u32 = 7;
+/// Every layout change increments it. The reader reads every version from
+/// [`NATIVE_FORMAT_OLDEST`] to this one.
+pub const NATIVE_FORMAT_VERSION: u32 = 8;
+
+/// The oldest native format version this crate reads.
+///
+/// It rises only at a major release (before 1.0, a minor release), and the
+/// changelog names the new value.
+pub const NATIVE_FORMAT_OLDEST: u32 = 7;
+
+/// The first format version with the distribution record.
+const DISTRIBUTION_SINCE: u32 = 8;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;
@@ -71,6 +80,9 @@ pub enum NativeKind {
     /// An [`Ensemble`], with its set's geometries or with only their number
     /// ([`EnsembleDescription`]).
     Ensemble,
+    /// A [`Distribution`](crate::structure::Distribution) with the number of
+    /// geometries it partitions, a [`DistributionDescription`].
+    Distribution,
 }
 
 impl NativeKind {
@@ -83,9 +95,12 @@ impl NativeKind {
             Self::StructureSet => 9,
             Self::StructureSetInterpretation => 10,
             Self::Ensemble => 11,
+            Self::Distribution => 12,
         }
     }
 
+    /// The kind of `code` in the current format version, or `None` for an
+    /// unknown code.
     pub(super) const fn from_code(code: u8) -> Option<Self> {
         Some(match code {
             1 => Self::Molecule,
@@ -95,8 +110,23 @@ impl NativeKind {
             9 => Self::StructureSet,
             10 => Self::StructureSetInterpretation,
             11 => Self::Ensemble,
+            12 => Self::Distribution,
             _ => return None,
         })
+    }
+
+    /// The oldest readable format version that has this kind.
+    pub(super) const fn since(self) -> u32 {
+        match self {
+            Self::Distribution => DISTRIBUTION_SINCE,
+            _ => NATIVE_FORMAT_OLDEST,
+        }
+    }
+
+    /// Whether a record of this kind can store perception. Its header flag
+    /// is zero when it cannot.
+    pub(super) const fn stores_perception(self) -> bool {
+        !matches!(self, Self::Distribution)
     }
 
     /// The kind with its indefinite article, such as "an interpreted structure".
@@ -121,6 +151,7 @@ impl fmt::Display for NativeKind {
             Self::StructureSet => "structure set",
             Self::StructureSetInterpretation => "interpreted structure set",
             Self::Ensemble => "ensemble",
+            Self::Distribution => "distribution",
         })
     }
 }
@@ -129,10 +160,10 @@ impl fmt::Display for NativeKind {
 ///
 /// Converts from a borrowed [`Molecule`], [`Topology`], [`Structure`],
 /// [`StructureSet`], [`StructureSetDescription`], [`Ensemble`],
-/// [`EnsembleDescription`], [`StructureInterpretation`], or
-/// [`StructureSetInterpretation`]. [`Self::interpreted_structure`] and
-/// [`Self::interpreted_structure_set`] pair a structure or structure set with
-/// reports held apart from it.
+/// [`EnsembleDescription`], [`DistributionDescription`],
+/// [`StructureInterpretation`], or [`StructureSetInterpretation`].
+/// [`Self::interpreted_structure`] and [`Self::interpreted_structure_set`]
+/// pair a structure or structure set with reports held apart from it.
 #[derive(Debug, Clone, Copy)]
 pub struct NativeSource<'a> {
     pub(super) content: NativeContent<'a>,
@@ -149,6 +180,7 @@ pub(super) enum NativeContent<'a> {
     StructureSetDescription(&'a StructureSetDescription),
     Ensemble(&'a Ensemble),
     EnsembleDescription(&'a EnsembleDescription),
+    DistributionDescription(&'a DistributionDescription),
 }
 
 impl<'a> NativeSource<'a> {
@@ -193,6 +225,7 @@ impl<'a> NativeSource<'a> {
             NativeContent::Ensemble(_) | NativeContent::EnsembleDescription(_) => {
                 NativeKind::Ensemble
             }
+            NativeContent::DistributionDescription(_) => NativeKind::Distribution,
         }
     }
 }
@@ -216,7 +249,8 @@ native_source_from!(
     StructureSet,
     StructureSetDescription,
     Ensemble,
-    EnsembleDescription
+    EnsembleDescription,
+    DistributionDescription
 );
 
 impl<'a> From<&'a StructureInterpretation> for NativeSource<'a> {
@@ -260,6 +294,9 @@ pub enum NativeObject {
     /// geometries: its set's topology, properties, and order, and its
     /// distribution.
     EnsembleDescription(Box<EnsembleDescription>),
+    /// A distribution record: a distribution and the number of geometries it
+    /// partitions.
+    DistributionDescription(Box<DistributionDescription>),
 }
 
 impl NativeObject {
@@ -273,6 +310,7 @@ impl NativeObject {
             Self::StructureSet(_) | Self::StructureSetDescription(_) => NativeKind::StructureSet,
             Self::StructureSetInterpretation(_) => NativeKind::StructureSetInterpretation,
             Self::Ensemble(_) | Self::EnsembleDescription(_) => NativeKind::Ensemble,
+            Self::DistributionDescription(_) => NativeKind::Distribution,
         }
     }
 
@@ -394,8 +432,40 @@ impl NativeObject {
     pub fn into_ensemble_description(self) -> Result<EnsembleDescription, FormatError> {
         match self {
             Self::EnsembleDescription(description) => Ok(*description),
-            Self::Ensemble(ensemble) => Ok(EnsembleDescription::of(&ensemble)),
+            Self::Ensemble(ensemble) => {
+                let (set, distribution) = ensemble.into_parts();
+                Ok(EnsembleDescription::bound(
+                    StructureSetDescription::of(&set),
+                    distribution,
+                ))
+            }
             other => Err(other.kind_error(NativeKind::Ensemble)),
+        }
+    }
+
+    /// The decoded distribution with the number of geometries it partitions:
+    /// of a distribution record, or of any ensemble, whose set it drops.
+    ///
+    /// # Errors
+    ///
+    /// A [`FormatError`] of kind [`DiagnosticKind::Inconsistent`] with
+    /// [`FormatErrorDetail::NativeKind`] when the object is neither a
+    /// distribution nor an ensemble.
+    pub fn into_distribution_description(self) -> Result<DistributionDescription, FormatError> {
+        match self {
+            Self::DistributionDescription(description) => Ok(*description),
+            Self::Ensemble(ensemble) => {
+                let (set, distribution) = ensemble.into_parts();
+                Ok(DistributionDescription::bound(set.len(), distribution))
+            }
+            Self::EnsembleDescription(description) => {
+                let (set, distribution) = description.into_parts();
+                Ok(DistributionDescription::bound(
+                    set.geometry_count(),
+                    distribution,
+                ))
+            }
+            other => Err(other.kind_error(NativeKind::Distribution)),
         }
     }
 
@@ -585,9 +655,11 @@ impl NativeReadOptions {
         with_max_bonds
     );
     native_limit!(
-        /// Maximum geometries of a structure set, counting those a record stores
-        /// only the number of, and of an ensemble's states, and maximum
-        /// entries of any other stored list that atoms or bonds do not
+        /// Maximum geometries of a structure set, including geometries a
+        /// record stores only the number of and geometries a distribution
+        /// partitions. Also the maximum states of a distribution.
+        ///
+        /// It also bounds every other stored list that atoms or bonds do not
         /// bound: property columns and owner values, hierarchy chains and
         /// residues, and the residues listed by all chains together.
         max_items,

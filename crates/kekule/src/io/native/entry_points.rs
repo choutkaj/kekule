@@ -45,7 +45,8 @@ pub fn write_to<'a>(
 /// for truncated input or wrong magic bytes,
 /// [`DiagnosticKind::Unsupported`](crate::diagnostics::DiagnosticKind::Unsupported)
 /// with [`FormatErrorDetail::NativeVersion`](crate::diagnostics::FormatErrorDetail::NativeVersion)
-/// for another format version,
+/// for a format version outside
+/// [`NATIVE_FORMAT_OLDEST`](crate::native::NATIVE_FORMAT_OLDEST)`..=`[`NATIVE_FORMAT_VERSION`](crate::native::NATIVE_FORMAT_VERSION),
 /// [`DiagnosticKind::Limit`](crate::diagnostics::DiagnosticKind::Limit)
 /// when `options` is exceeded, and `InvalidValue`, `InvalidReference`,
 /// `Inconsistent`, or `Chemistry` when stored values do not reconstruct

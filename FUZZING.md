@@ -23,8 +23,11 @@ format through checksummed indexes with fuzzed offsets, each with the step
 and time of a frame of the file: every frame read through one must be a frame
 of the file. Its seeds are the version 2 indexes of those fixtures.
 `native` decodes Kekule's native binary format under small resource limits;
-every successfully decoded object must encode, decode again, and re-encode to
-the same bytes. Its seeds are native encodings of small objects of every kind.
+every successfully decoded object, of any readable version, must encode in the
+current version, decode again, and re-encode to the same bytes. Its seeds,
+`v<N>_<fixture>.bin`, are the frozen files of every readable version
+(`crates/kekule/tests/fixtures/native/`); recording a new version's files
+writes its seeds too.
 `select` parses selection-language text; every accepted expression must print
 canonical text that parses back to an equal expression and prints the same,
 and every error must carry a span within the input.

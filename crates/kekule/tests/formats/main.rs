@@ -12,6 +12,7 @@ mod documents;
 mod export;
 mod mmcif;
 mod native;
+mod native_versions;
 mod pdb;
 mod pdb_write;
 mod sequences;

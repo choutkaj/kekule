@@ -2,9 +2,9 @@
 use kekule::native::{self, NativeObject, NativeReadOptions, NativeWriteOptions};
 use libfuzzer_sys::fuzz_target;
 
-fn encode(object: &NativeObject) -> Vec<u8> {
+fn encode(object: &NativeObject) -> Option<Vec<u8>> {
     let options = NativeWriteOptions::default();
-    match object {
+    let bytes = match object {
         NativeObject::Molecule(value) => native::write(value.as_ref(), options),
         NativeObject::Topology(value) => native::write(value, options),
         NativeObject::Structure(value) => native::write(value, options),
@@ -12,9 +12,12 @@ fn encode(object: &NativeObject) -> Vec<u8> {
         NativeObject::StructureSet(value) => native::write(value, options),
         NativeObject::StructureSetInterpretation(value) => native::write(value.as_ref(), options),
         NativeObject::StructureSetDescription(value) => native::write(value.as_ref(), options),
-        _ => return Vec::new(),
-    }
-    .expect("a decoded object encodes")
+        NativeObject::Ensemble(value) => native::write(value.as_ref(), options),
+        NativeObject::EnsembleDescription(value) => native::write(value.as_ref(), options),
+        NativeObject::DistributionDescription(value) => native::write(value.as_ref(), options),
+        _ => return None,
+    };
+    Some(bytes.expect("a decoded object encodes"))
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -33,10 +36,16 @@ fuzz_target!(|data: &[u8]| {
     let Ok(object) = native::read(&mut input, options) else {
         return;
     };
-    // A decoded object is valid: it encodes, decodes again, and reaches a
-    // fixed point, since equal values encode to equal bytes.
-    let bytes = encode(&object);
+    // A decoded object of any readable version is valid: it encodes in the
+    // current version, decodes again, and reaches a fixed point, since equal
+    // values encode to equal bytes.
+    let Some(bytes) = encode(&object) else {
+        return;
+    };
     let again = native::read(bytes.as_slice(), NativeReadOptions::default())
         .expect("an encoded object decodes");
-    assert!(encode(&again) == bytes, "re-encoding is not a fixed point");
+    assert!(
+        encode(&again).as_ref() == Some(&bytes),
+        "re-encoding is not a fixed point"
+    );
 });

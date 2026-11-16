@@ -10,8 +10,9 @@ use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::mmcif::MmcifWriteOptions;
 use kekule::molecule::{AtomId, Molecule};
 use kekule::native::{
-    self, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, NativeSource,
-    NativeWriteOptions, StructureSetDescription, NATIVE_FORMAT_VERSION,
+    self, DistributionDescription, EnsembleDescription, NativeKind, NativeObject,
+    NativeReadOptions, NativeSource, NativeWriteOptions, StructureSetDescription,
+    NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
 };
 use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
@@ -59,6 +60,9 @@ fn round_trip<'a>(source: impl Into<NativeSource<'a>>) -> NativeObject {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         NativeObject::EnsembleDescription(value) => {
+            native::write(value.as_ref(), NativeWriteOptions::default())
+        }
+        NativeObject::DistributionDescription(value) => {
             native::write(value.as_ref(), NativeWriteOptions::default())
         }
         _ => unreachable!("every kind is listed"),
@@ -520,8 +524,8 @@ fn reports_are_stored_only_when_given() {
         .unwrap();
     let plain = native::write(interpretation.structure(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    // Both are format version 7: a structure with its report is kind 7.
-    assert_eq!(NATIVE_FORMAT_VERSION, 7);
+    // Both are format version 8: a structure with its report is kind 7.
+    assert_eq!(NATIVE_FORMAT_VERSION, 8);
     for bytes in [&plain, &interpreted] {
         assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
     }
@@ -545,8 +549,8 @@ fn reports_are_stored_only_when_given() {
     );
 
     // This reader rejects the retired kinds 4, 5, 6, and 8 and the unused
-    // kind 12 as unknown.
-    for code in [4, 5, 6, 8, 12] {
+    // kind 13 as unknown.
+    for code in [4, 5, 6, 8, 13] {
         let mut unknown = interpreted.clone();
         unknown[12] = code;
         let error = native::read(unknown.as_slice(), NativeReadOptions::default()).unwrap_err();
@@ -558,6 +562,16 @@ fn reports_are_stored_only_when_given() {
             "{error}"
         );
     }
+    // Version 7 has no distribution kind 12.
+    let mut version_7 = interpreted.clone();
+    version_7[8..12].copy_from_slice(&7u32.to_le_bytes());
+    version_7[12] = 12;
+    let error = native::read(version_7.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(
+        error.to_string(),
+        "Cannot parse the native input at byte 13. The object kind 12, a distribution, needs native format version 8 or newer."
+    );
 }
 
 fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
@@ -613,11 +627,11 @@ fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
     assert_same_distribution(decoded.distribution(), source.distribution());
 }
 
-/// Asserts that the native header of `bytes` is version 7 of `kind`, with
+/// Asserts that the native header of `bytes` is version 8 of `kind`, with
 /// no flag but the perception flag and a zero reserved field.
 fn assert_header(bytes: &[u8], kind: u8) {
     assert_eq!(bytes[..8], [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0A]);
-    assert_eq!(bytes[8..12], 7u32.to_le_bytes());
+    assert_eq!(bytes[8..12], 8u32.to_le_bytes());
     assert_eq!(bytes[12], kind);
     assert_eq!(bytes[13] & !1, 0);
     assert_eq!(bytes[14..16], [0, 0]);
@@ -1039,6 +1053,166 @@ fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
     for len in 0..bytes.len() {
         assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
     }
+}
+
+#[test]
+fn distribution_records_store_a_distribution_and_its_geometry_count() {
+    let mut set = rich_set();
+    set.set_order(Some(Order::Step(vec![1, 2, 3]))).unwrap();
+    // Geometries 0 and 2 as one state represented by geometry 2, with an
+    // energy, state properties, log weights, and a temperature.
+    let mut state = StateData::new()
+        .with_energy(Quantity::new(-0.0, KILOJOULE_PER_MOLE))
+        .unwrap();
+    state
+        .properties_mut()
+        .insert(key("cluster"), PropertyValue::String("open".into()))
+        .unwrap();
+    let distribution = Distribution::new(
+        Samples::Subset(vec![0, 2]),
+        Partition::new(vec![0, 0], vec![1]).unwrap(),
+    )
+    .unwrap()
+    .with_log_weights(vec![f64::MIN, -0.0])
+    .unwrap()
+    .with_states(vec![state])
+    .unwrap()
+    .with_temperature(Quantity::new(310.0, kekule::units::KELVIN))
+    .unwrap();
+    let ensemble = Ensemble::new(set, distribution).unwrap();
+    let description = DistributionDescription::of(&ensemble);
+    assert_eq!(description.geometry_count(), 3);
+
+    let bytes = native::write(&description, NativeWriteOptions::default()).unwrap();
+    assert_header(&bytes, 12);
+    // A distribution stores no perception, so its perception flag is zero
+    // under either option, and the reader rejects a set flag.
+    assert_eq!(bytes[13], 0);
+    assert!(
+        native::write(
+            &description,
+            NativeWriteOptions::default().with_perception(false)
+        )
+        .unwrap()
+            == bytes
+    );
+    let mut flagged = bytes.clone();
+    flagged[13] = 1;
+    let error = native::read(flagged.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert_eq!(
+        error.to_string(),
+        "Cannot parse the native input at byte 14. The header flags say a distribution stores perception, but a distribution stores none."
+    );
+    let decoded = round_trip(&description);
+    assert_eq!(decoded.kind(), NativeKind::Distribution);
+    for (error, expected) in [
+        (
+            decoded.clone().into_ensemble().unwrap_err(),
+            NativeKind::Ensemble,
+        ),
+        (
+            decoded.clone().into_structure_set().unwrap_err(),
+            NativeKind::StructureSet,
+        ),
+    ] {
+        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+        assert_eq!(
+            error.detail(),
+            Some(&FormatErrorDetail::NativeKind {
+                expected,
+                found: NativeKind::Distribution,
+            })
+        );
+    }
+    let decoded = decoded.into_distribution_description().unwrap();
+    assert_eq!(decoded, description);
+    assert_eq!(decoded.geometry_count(), 3);
+    assert_same_distribution(decoded.distribution(), ensemble.distribution());
+    // The ensemble it describes is the set and the distribution read back.
+    let rebuilt = Ensemble::new(ensemble.set().clone(), decoded.into_distribution()).unwrap();
+    assert_same_distribution(rebuilt.distribution(), ensemble.distribution());
+
+    // Ensemble records give their distribution too; other records do not.
+    let projected = |bytes: Vec<u8>| {
+        native::read(bytes.as_slice(), NativeReadOptions::default())
+            .unwrap()
+            .into_distribution_description()
+    };
+    let full = native::write(&ensemble, NativeWriteOptions::default()).unwrap();
+    assert_eq!(projected(full).unwrap(), description);
+    let external = native::write(
+        &EnsembleDescription::of(&ensemble),
+        NativeWriteOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(projected(external).unwrap(), description);
+    let error = projected(native::write(ensemble.set(), NativeWriteOptions::default()).unwrap())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot interpret the native input. The input holds a structure set, not a distribution."
+    );
+
+    // A subset of every geometry is every geometry; the samples are checked
+    // against the geometry count.
+    let every = DistributionDescription::new(
+        2,
+        Distribution::new(Samples::Subset(vec![0, 1]), Partition::one_state(2)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(every.distribution().samples(), &Samples::All);
+    assert_eq!(
+        round_trip(&every).into_distribution_description().unwrap(),
+        every
+    );
+    assert!(matches!(
+        DistributionDescription::new(1, description.distribution().clone()).unwrap_err(),
+        StructureSetError::IndexOutOfRange(_)
+    ));
+    assert!(matches!(
+        DistributionDescription::new(
+            3,
+            Distribution::new(Samples::All, Partition::one_state(2)).unwrap()
+        )
+        .unwrap_err(),
+        StructureSetError::CoverageMismatch { .. }
+    ));
+    // A stored count the samples do not fit is refused.
+    let mut short = bytes.clone();
+    short[16..20].copy_from_slice(&2u32.to_le_bytes());
+    let error = native::read(short.as_slice(), NativeReadOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+
+    // The geometry count is bounded before anything is read for it; every
+    // truncation fails cleanly.
+    let limited = NativeReadOptions::default().with_max_items(2).unwrap();
+    let mut huge = bytes.clone();
+    huge[16..20].copy_from_slice(&u32::MAX.to_le_bytes());
+    for (input, options) in [(&bytes, limited), (&huge, NativeReadOptions::default())] {
+        let error = native::read(input.as_slice(), options).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Limit);
+        assert_eq!(
+            error.limit_exceeded().map(|limit| limit.resource()),
+            Some(Resource::Records)
+        );
+    }
+    for len in 0..bytes.len() {
+        assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
+    }
+
+    // Two more geometries arrive: they are not samples.
+    let grown = description.clone().extended_to(5).unwrap();
+    assert_eq!(grown.geometry_count(), 5);
+    assert_eq!(grown.distribution().samples(), &Samples::Subset(vec![0, 2]));
+    assert_same_distribution(grown.distribution(), ensemble.distribution());
+    assert!(matches!(
+        description.extended_to(2).unwrap_err(),
+        StructureSetError::CoverageMismatch {
+            covered: 3,
+            geometries: 2
+        }
+    ));
 }
 
 #[test]
@@ -1542,24 +1716,27 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.detail(), Some(&FormatErrorDetail::NativeMagic));
 
+    assert_eq!((NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION), (7, 8));
     let mut newer = bytes.clone();
-    newer[8..12].copy_from_slice(&(NATIVE_FORMAT_VERSION + 1).to_le_bytes());
+    newer[8..12].copy_from_slice(&9u32.to_le_bytes());
     let error = native::read(newer.as_slice(), NativeReadOptions::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::NativeVersion {
-            found: NATIVE_FORMAT_VERSION + 1,
-            supported: NATIVE_FORMAT_VERSION,
+            found: 9,
+            oldest: 7,
+            newest: 8,
         })
     );
     assert_eq!(error.byte_offset(), Some(12));
+    assert_eq!(
+        error.to_string(),
+        "Cannot parse the native input at byte 12. The input is in native format version 9, written by a newer Kekule. This reader reads versions 7 to 8."
+    );
 
-    // Version 4, whose ensemble, trajectory, and series kinds version 5
-    // replaced with structure sets, version 5, whose structure set records
-    // version 6 split from ensemble records, and version 6, whose structure
-    // records carry no velocities or forces, are rejected with no migration.
-    for version in [2u32, 4, 5, 6] {
+    // Versions before the oldest are no longer read.
+    for version in [0u32, 2, 6] {
         let mut older = bytes.clone();
         older[8..12].copy_from_slice(&version.to_le_bytes());
         let error = native::read(older.as_slice(), NativeReadOptions::default()).unwrap_err();
@@ -1568,11 +1745,14 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
             error.detail(),
             Some(&FormatErrorDetail::NativeVersion {
                 found: version,
-                supported: NATIVE_FORMAT_VERSION,
+                oldest: 7,
+                newest: 8,
             })
         );
         assert!(
-            error.to_string().contains(&format!("version {version}")),
+            error.to_string().ends_with(&format!(
+                "The input is in native format version {version}, which is no longer read. This reader reads versions 7 to 8."
+            )),
             "{error}"
         );
     }

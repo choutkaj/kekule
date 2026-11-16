@@ -6,7 +6,9 @@ may carry its structure interpretation reports, as a
 `StructureInterpretation` or `StructureSetInterpretation`. A structure set
 record may also store only the number of its geometries, kept elsewhere, as a
 `StructureSetDescription`, and an ensemble record likewise with its
-distribution, as an `EnsembleDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
+distribution, as an `EnsembleDescription`. A distribution record stores a
+`Distribution` alone, with the number of geometries it partitions, as a
+`DistributionDescription`. Scientific formats (SMILES, Molfile, mmCIF, PDB, trajectory codecs) remain
 interchange formats and are not native persistence; see
 [Identity and reconstruction](../SPEC.md#identity-and-reconstruction).
 The API lives in [`kekule::native`](../crates/kekule/src/lib.rs); the codec is
@@ -56,19 +58,32 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
 
 ## Versioning
 
-The header carries one format version, currently **7**. A reader accepts only
-the versions it implements and rejects any other with
-`FormatErrorDetail::NativeVersion { found, supported }` of kind
-`DiagnosticKind::Unsupported`. Before kekule 1.0 a version may change
-incompatibly, but every incompatible change increments the version. Unknown
-header flags are rejected the same way, so a newer optional section is never
-silently ignored.
+The header carries one format version. The writer writes only the newest,
+`NATIVE_FORMAT_VERSION`, currently **8**. The reader reads every version from
+`NATIVE_FORMAT_OLDEST`, currently **7**, to the newest. One decoder reads
+them all: it keeps the version the header states and branches on it where a
+layout differs. Any other version is rejected with
+`FormatErrorDetail::NativeVersion { found, oldest, newest }` of kind
+`DiagnosticKind::Unsupported`, whose message says whether a newer Kekule
+wrote the input or its version is no longer read. Unknown header flags are
+rejected the same way, so a newer optional section is never silently ignored.
 
-The current version is 7 and reads no earlier version. Version 7 stores a
-structure's geometry exactly as a structure set stores each of its
-geometries, velocities and forces included. Version 6 kept the distribution in
-the ensemble record, kind 11, apart from the structure set record, and stored
-natural logarithms of weights.
+Every layout change increments the version, and the reader keeps reading the
+versions before it. `NATIVE_FORMAT_OLDEST` rises only at a major release
+(before 1.0, a minor release), and the changelog names the new value.
+
+| Version | Layout |
+| --- | --- |
+| 8 | As specified here. |
+| 7 | As version 8, without the distribution record (kind 12). |
+
+Every readable version has frozen files of every kind it has, written by that
+version's writer and never regenerated, in
+`crates/kekule/tests/fixtures/native/v<N>/`. Tests decode each file and
+encode it with the current writer, which must give the bytes of the same file
+of the current version. Tests fail when a readable version lacks a file, or
+when files exist for a version outside the readable range. The same files
+seed the `native` fuzz target.
 
 ## Layout
 
@@ -95,13 +110,18 @@ header    := magic[8] version:u32 kind:u8 flags:u8 reserved:u16
 magic     := 0x89 'K' 'E' 'K' 0x0D 0x0A 0x1A 0x0A
 kind      := 1 molecule | 2 topology | 3 structure | 7 interpreted structure
            | 9 structure set | 10 interpreted structure set | 11 ensemble
-flags     := bit 0: perception stored; all other bits zero
+           | 12 distribution
+flags     := bit 0: perception stored, zero for a distribution; all other bits zero
 reserved  := 0
 trailer   := end:u32 = 0x444E_454B ("KEND") crc:u32
 ```
 
 Kinds 4, 5, 6, and 8 are retired and, like any other unlisted kind, rejected
 as unknown.
+
+A distribution stores no perception, so its bit 0 is zero, and the reader
+rejects a distribution with bit 0 set. A version that lacks a kind rejects
+it with a message naming the version that has it.
 
 `crc` is the CRC-32 (IEEE 802.3, reflected polynomial `0xEDB88320`, as used
 by zlib and PNG) of every preceding byte, header included. The decoded object
@@ -254,6 +274,7 @@ reclassification.
 structure      := topology geometry
 structure_set  := set_head geometries
 ensemble       := set_head distribution geometries
+distribution_record := geometry_count:count distribution
 set_head       := topology owner geometry_count:count order
 order          := 0                                (none)
                | 1 times:opt [f64; geometry_count] steps:opt [u64; geometry_count]
@@ -302,6 +323,13 @@ without them samples weigh the same. Each sample stores the index of its
 state, and each state the sample position of its representative. The reader
 validates the partition: every state index names a stored state, and every
 representative is a sample of its own state, so no state is empty.
+
+A distribution record is a distribution over `geometry_count` geometries
+kept elsewhere, a `DistributionDescription`. The count bounds the
+distribution as a set's geometry count does, and the reader validates the
+partition against it the same way. A host stores a set's distribution in such
+a record beside the set's own record, and checks the count against the set's
+geometries when it reads both.
 
 The geometries section is inline, or tag `1` for geometries stored elsewhere: such
 a structure set record is a `StructureSetDescription`, whose `geometry_count`
@@ -461,7 +489,7 @@ rotation, `6` too many operations; `2` to `5` with a `str`), and its line
 `NativeReadOptions` bounds the input bytes; the atoms and bonds of one
 molecule or topology (including the instance expansion of a topology), which
 also bound atom sites and residue site lists; the geometries, samples, and states of one
-structure set, hierarchy chains and residues, property columns and owner
+structure set or distribution, hierarchy chains and residues, property columns and owner
 values, and the entries of report lists; and the byte length of one string.
 The atoms and bonds of one report's instance provenance count against the
 atom and bond limits. The defaults are exported as
