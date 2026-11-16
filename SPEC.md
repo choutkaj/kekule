@@ -780,13 +780,17 @@ must be partitioned or rejected. Export to scientific formats is not exact
 persistence and must not weaken these boundaries.
 
 Exact persistence is the `native` format module, the one owner of Kekule's
-binary encoding of molecules, topologies, structures, structure sets, and
-ensembles. It stores each owner's authoritative state and reconstructs it only
+binary encoding of molecules, topologies, structures, structure sets,
+ensembles, and distributions. It stores each owner's authoritative state and reconstructs it only
 through the owners' validating paths; stored perception is reinstalled or
 discarded. A decoded topology keeps every semantic ID but is a new publication
 with a fresh layout identity. Decoding is bounded before allocation and never
 trusts the input. Semantic IDs have a stable encoding so applications can
-persist references next to native files. See the
+persist references next to native files. The writer writes only the newest
+format version, and every layout change increments it. The reader reads every
+version from `NATIVE_FORMAT_OLDEST` to the newest, and frozen files of each
+readable version are tested. `NATIVE_FORMAT_OLDEST` rises only at a major
+release (before 1.0, a minor release), and the changelog names it. See the
 [format specification](docs/native-format.md) and
 [topology reconstruction](crates/kekule/src/topology/reconstruct.rs).
 

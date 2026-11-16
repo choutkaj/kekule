@@ -3,8 +3,9 @@
 //! Scientific formats exchange chemistry with other tools; they are not exact
 //! persistence. The native format stores one [`Molecule`](crate::molecule::Molecule),
 //! [`Topology`](crate::topology::Topology), [`Structure`](crate::structure::Structure),
-//! [`StructureSet`](crate::structure::StructureSet), or
-//! [`Ensemble`](crate::structure::Ensemble) losslessly: represented
+//! [`StructureSet`](crate::structure::StructureSet),
+//! [`Ensemble`](crate::structure::Ensemble), or
+//! [`Distribution`](crate::structure::Distribution) losslessly: represented
 //! chemistry, definitions and instances, semantic IDs, dense order,
 //! hierarchy, classifications with their explicit or inferred assignment,
 //! properties at every scope with units, coordinates as exact bits, and every
@@ -22,7 +23,9 @@
 //! A [`StructureSetDescription`] stores a structure
 //! set whose geometries are kept elsewhere: its topology, properties, order,
 //! and the number of its geometries; an
-//! [`EnsembleDescription`] adds a distribution.
+//! [`EnsembleDescription`] adds a distribution. A
+//! [`DistributionDescription`] stores a distribution alone, with the number of
+//! geometries it partitions.
 //! Installed perception is stored with its provenance unless
 //! [`NativeWriteOptions::with_perception`]
 //! omits it.
@@ -34,8 +37,9 @@
 //! under the resource limits of [`NativeReadOptions`] and fails with a
 //! [`FormatError`](crate::diagnostics::FormatError), never a panic. A decoded
 //! topology keeps every semantic ID but is a new publication with a fresh
-//! layout identity. The byte layout and versioning policy are specified in
-//! `docs/native-format.md`.
+//! layout identity. The writer writes [`NATIVE_FORMAT_VERSION`], and the
+//! reader reads every version from [`NATIVE_FORMAT_OLDEST`] on. The byte
+//! layout and versioning policy are specified in `docs/native-format.md`.
 //!
 //! ```
 //! use kekule::native::{self, NativeReadOptions, NativeWriteOptions};
@@ -52,8 +56,8 @@
 
 pub use crate::io::native::entry_points::{read, write, write_to};
 pub use crate::io::{
-    EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, NativeSource,
-    NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,
+    DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
+    NativeSource, NativeWriteOptions, StructureSetDescription, DEFAULT_NATIVE_MAX_ATOMS,
     DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS,
-    DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };

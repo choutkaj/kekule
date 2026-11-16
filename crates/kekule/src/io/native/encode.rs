@@ -100,6 +100,10 @@ pub(crate) fn write_native_to<'a>(
             encoder.distribution(description.distribution())?;
             encoder.u8(GEOMETRIES_EXTERNAL)?;
         }
+        NativeContent::DistributionDescription(description) => {
+            encoder.count(description.geometry_count())?;
+            encoder.distribution(description.distribution())?;
+        }
     }
     encoder.finish()
 }

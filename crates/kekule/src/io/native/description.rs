@@ -1,5 +1,5 @@
-//! What a native structure set or ensemble record states besides its
-//! geometries.
+//! What a native structure set, ensemble, or distribution record states
+//! besides geometries.
 
 use std::sync::Arc;
 
@@ -241,5 +241,118 @@ impl EnsembleDescription {
     /// The set's description and the distribution.
     pub fn into_parts(self) -> (StructureSetDescription, Distribution) {
         (self.set, self.distribution)
+    }
+}
+
+/// A distribution without its set: the [`Distribution`] over the geometries
+/// of a set stored elsewhere, and the number of those geometries.
+///
+/// A native distribution record stores this, so a host keeps a set's
+/// weights, states, energies, and temperature apart from its topology and
+/// geometries. Writing one ([`NativeSource`](super::NativeSource) converts
+/// from it) gives such a record, and reading it gives
+/// [`NativeObject::DistributionDescription`](super::NativeObject::DistributionDescription).
+/// The distribution describes the geometries by index, so it is checked
+/// against the geometry count as an [`Ensemble`] checks it against its set.
+///
+/// ```
+/// use kekule::math::Point3;
+/// use kekule::native::{self, DistributionDescription, NativeReadOptions};
+/// use kekule::structure::{
+///     Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet,
+/// };
+/// use kekule::units::{Quantity, NANOMETER};
+///
+/// // Frames 1 and 2 of a three-frame set, reweighted, as one state.
+/// let distribution = Distribution::new(Samples::Subset(vec![1, 2]), Partition::one_state(2))?
+///     .with_log_weights(vec![-1.5, 0.0])?;
+/// let saved = DistributionDescription::new(3, distribution)?;
+/// let bytes = native::write(&saved, Default::default())?;
+/// let read = native::read(bytes.as_slice(), NativeReadOptions::default())?
+///     .into_distribution_description()?;
+/// assert_eq!(read, saved);
+///
+/// // The set it describes, kept elsewhere, has as many geometries.
+/// let geometry =
+///     |x| Positions::new(Quantity::new(vec![Point3::new(x, 0.0, 0.0)], NANOMETER)).map(Geometry::new);
+/// let topology = kekule::smiles::to_topology("O")?;
+/// let set = StructureSet::from_geometries(topology, [geometry(0.0)?, geometry(0.1)?, geometry(0.2)?])?;
+/// assert_eq!(set.len(), read.geometry_count());
+/// let ensemble = Ensemble::new(set, read.into_distribution())?;
+/// assert_eq!(ensemble.distribution().sample_count(), 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct DistributionDescription {
+    geometry_count: usize,
+    distribution: Distribution,
+}
+
+impl DistributionDescription {
+    /// `distribution` over `geometry_count` geometries. A subset listing
+    /// every geometry becomes [`Samples::All`](crate::structure::Samples::All).
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Ensemble::new`], against the geometry count.
+    pub fn new(
+        geometry_count: usize,
+        mut distribution: Distribution,
+    ) -> Result<Self, StructureSetError> {
+        distribution.bind(geometry_count)?;
+        Ok(Self {
+            geometry_count,
+            distribution,
+        })
+    }
+
+    /// A distribution already bound to `geometry_count` geometries.
+    pub(super) const fn bound(geometry_count: usize, distribution: Distribution) -> Self {
+        Self {
+            geometry_count,
+            distribution,
+        }
+    }
+
+    /// The distribution of `ensemble`, in memory or read from a file, over
+    /// its set's geometries.
+    pub fn of<S: GeometryStorage>(ensemble: &Ensemble<S>) -> Self {
+        Self::bound(ensemble.set().len(), ensemble.distribution().clone())
+    }
+
+    /// This description for `geometry_count` geometries whose first
+    /// [`Self::geometry_count`] are the geometries it describes, such as a
+    /// trajectory file that grew after the description was saved: the
+    /// distribution as [`Distribution::extended_to`] gives it, keeping its
+    /// log weights, partition, states, and temperature bit for bit.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::CoverageMismatch`] for fewer geometries than the
+    /// description describes.
+    pub fn extended_to(self, geometry_count: usize) -> Result<Self, StructureSetError> {
+        if geometry_count < self.geometry_count {
+            return Err(StructureSetError::CoverageMismatch {
+                covered: self.geometry_count,
+                geometries: geometry_count,
+            });
+        }
+        let distribution = self.distribution.extended_to(geometry_count)?;
+        Ok(Self::bound(geometry_count, distribution))
+    }
+
+    /// The number of geometries the distribution partitions.
+    pub const fn geometry_count(&self) -> usize {
+        self.geometry_count
+    }
+
+    /// The distribution over the geometries.
+    pub fn distribution(&self) -> &Distribution {
+        &self.distribution
+    }
+
+    /// The distribution, for [`Ensemble::new`] with the set it describes.
+    pub fn into_distribution(self) -> Distribution {
+        self.distribution
     }
 }

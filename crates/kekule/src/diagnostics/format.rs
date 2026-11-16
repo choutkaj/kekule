@@ -247,12 +247,16 @@ pub enum FormatErrorDetail {
     /// kind is [`DiagnosticKind::Syntax`].
     NativeMagic,
     /// The input is written in a native format version this reader does not
-    /// implement; the kind is [`DiagnosticKind::Unsupported`].
+    /// read; the kind is [`DiagnosticKind::Unsupported`]. A `found` above
+    /// `newest` comes from a newer Kekule; one below `oldest` is no longer
+    /// read ([`NATIVE_FORMAT_OLDEST`](crate::native::NATIVE_FORMAT_OLDEST)).
     NativeVersion {
         /// The version the input declares.
         found: u32,
-        /// The version this reader implements.
-        supported: u32,
+        /// The oldest version this reader reads.
+        oldest: u32,
+        /// The newest version this reader reads, the one its writer writes.
+        newest: u32,
     },
     /// The native input's checksum does not match its content; the kind is
     /// [`DiagnosticKind::Inconsistent`].

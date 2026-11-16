@@ -4,6 +4,10 @@
 //! before storage is reserved, storage grows only as bytes arrive, and every
 //! value reaches its owner through the owner's validating constructors, so a
 //! malformed input yields a [`FormatError`], never a panic.
+//!
+//! One decoder reads every version from [`NATIVE_FORMAT_OLDEST`] to
+//! [`NATIVE_FORMAT_VERSION`]. It keeps the version the header states, and a
+//! section whose layout changed between versions branches on it.
 
 use std::io::{ErrorKind, Read};
 use std::num::{NonZeroU16, NonZeroU32};
@@ -14,8 +18,8 @@ use super::encode::{
     ABSENT_STRING, BASE_DIMENSIONS, END_MARKER, GEOMETRIES_EXTERNAL, GEOMETRIES_INLINE,
 };
 use super::{
-    EnsembleDescription, NativeKind, NativeObject, NativeReadOptions, StructureSetDescription,
-    NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
+    StructureSetDescription, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
@@ -72,6 +76,7 @@ pub(crate) fn read_native(
         offset: 0,
         crc: Crc32::new(),
         options,
+        version: NATIVE_FORMAT_VERSION,
         stored_perception: false,
         scratch: Vec::new(),
     };
@@ -106,6 +111,14 @@ pub(crate) fn read_native(
                 )),
             }
         }
+        NativeKind::Distribution => {
+            let count = decoder.count(decoder.options.max_items(), Resource::Records)?;
+            let distribution = decoder.distribution(count)?;
+            NativeObject::DistributionDescription(Box::new(
+                DistributionDescription::new(count, distribution)
+                    .map_err(|error| decoder.structure_error(error))?,
+            ))
+        }
         NativeKind::StructureSetInterpretation => {
             let (Decoded::Inline(set), _) = decoder.structure_set(true, false)? else {
                 unreachable!("an interpreted structure set is read with its geometries")
@@ -129,6 +142,8 @@ struct Decoder<'r, R: Read> {
     offset: u64,
     crc: Crc32,
     options: NativeReadOptions,
+    /// The format version the header states.
+    version: u32,
     stored_perception: bool,
     scratch: Vec<u8>,
 }
@@ -420,21 +435,33 @@ impl<R: Read> Decoder<'_, R> {
                 .with_detail(FormatErrorDetail::NativeMagic));
         }
         let version = self.u32()?;
-        if version != NATIVE_FORMAT_VERSION {
+        if !(NATIVE_FORMAT_OLDEST..=NATIVE_FORMAT_VERSION).contains(&version) {
+            let source = if version > NATIVE_FORMAT_VERSION {
+                "written by a newer Kekule"
+            } else {
+                "which is no longer read"
+            };
+            let read = if NATIVE_FORMAT_OLDEST == NATIVE_FORMAT_VERSION {
+                format!("version {NATIVE_FORMAT_VERSION}")
+            } else {
+                format!("versions {NATIVE_FORMAT_OLDEST} to {NATIVE_FORMAT_VERSION}")
+            };
             return Err(self
                 .error(
                     DiagnosticKind::Unsupported,
                     format!(
-                        "The input is in native format version {version}. This reader reads version {NATIVE_FORMAT_VERSION}."
+                        "The input is in native format version {version}, {source}. This reader reads {read}."
                     ),
                 )
                 .with_detail(FormatErrorDetail::NativeVersion {
                     found: version,
-                    supported: NATIVE_FORMAT_VERSION,
+                    oldest: NATIVE_FORMAT_OLDEST,
+                    newest: NATIVE_FORMAT_VERSION,
                 }));
         }
+        self.version = version;
         let code = self.u8()?;
-        let kind = NativeKind::from_code(code)
+        let kind = NativeKind::from_code(code, self.version)
             .ok_or_else(|| self.invalid(format!("The object kind {code} is unknown.")))?;
         let flags = self.u8()?;
         if flags & !1 != 0 {
