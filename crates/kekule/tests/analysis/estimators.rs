@@ -79,26 +79,52 @@ fn a_common_offset_shifts_every_estimate_by_itself() {
         1000.0 + 2.0_f64.ln(),
         Estimator::Exponential,
     );
-    let largest = [f64::MAX, f64::MAX];
+    // Groups of the largest finite value, of sizes that divide it inexactly
+    // too.
+    for count in [2, 3, 5, 7, 1000] {
+        let largest = vec![f64::MAX; count];
+        for estimator in EVERY_ESTIMATOR {
+            assert_close(estimator.log_sum(&largest).unwrap(), f64::MAX, estimator);
+        }
+    }
+    let negative = vec![-f64::MAX; 3];
     for estimator in EVERY_ESTIMATOR {
-        assert_close(estimator.log_sum(&largest).unwrap(), f64::MAX, estimator);
+        assert_close(estimator.log_sum(&negative).unwrap(), -f64::MAX, estimator);
     }
 }
 
 #[test]
-fn the_moments_of_a_large_group_do_not_overflow_while_they_are_finite() {
-    // Each squared deviation is 1e308, so their sum overflows, but the
-    // variance is 1e308.
-    let reduced = (0..1000)
-        .map(|index| if index % 2 == 0 { 1.0e154 } else { -1.0e154 })
-        .collect::<Vec<_>>();
+fn moments_are_finite_whenever_the_estimate_is() {
     let second = Estimator::Cumulant(CumulantOrder::Second);
-    let estimate = second.log_sum(&reduced).unwrap();
-    let expected = 1000.0_f64.ln() + 1.0e308 / 2.0;
-    assert!(
-        (estimate - expected).abs() <= 1e-12 * expected,
-        "{estimate} != {expected}"
-    );
+    let third = Estimator::Cumulant(CumulantOrder::Third);
+    // Each squared deviation is 1e308, so their sum overflows, but the
+    // variance is 1e308 and the estimate ln n + 5e307.
+    for count in [4, 7, 1000] {
+        let reduced = (0..count)
+            .map(|index| if index % 2 == 0 { -1.0e154 } else { 1.0e154 })
+            .collect::<Vec<_>>();
+        let n = count as f64;
+        // An odd count leaves a mean of -1e154 / n.
+        let mean = if count % 2 == 0 { 0.0 } else { -1.0e154 / n };
+        let variance = 1.0e308 - mean * mean;
+        let expected = n.ln() + mean + variance / 2.0;
+        let estimate = second.log_sum(&reduced).unwrap();
+        assert!(
+            (estimate - expected).abs() <= 1e-12 * expected,
+            "{count}: {estimate} != {expected}"
+        );
+    }
+    // The cubes overflow, but the symmetric group's third central moment is
+    // zero: ln 6 + 2e206 / 6 / 2.
+    let symmetric = [-1.0e103, 0.0, 0.0, 0.0, 0.0, 1.0e103];
+    let expected = 6.0_f64.ln() + 2.0e206 / 12.0;
+    for estimator in [second, third] {
+        let estimate = estimator.log_sum(&symmetric).unwrap();
+        assert!(
+            (estimate - expected).abs() <= 1e-12 * expected,
+            "{estimator:?}: {estimate} != {expected}"
+        );
+    }
 }
 
 #[test]

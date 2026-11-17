@@ -72,7 +72,7 @@ impl Estimator {
     /// The estimated `ln Σ exp(b_i)` over the reduced values of a group.
     ///
     /// `None` when the group is empty, a reduced value is not finite, or the
-    /// estimate is not finite.
+    /// estimate or one of its cumulant terms is not finite.
     pub fn log_sum(self, reduced: &[f64]) -> Option<f64> {
         if reduced.is_empty() || reduced.iter().any(|value| !value.is_finite()) {
             return None;
@@ -85,36 +85,60 @@ impl Estimator {
     }
 }
 
-/// `κ1 + κ2 / 2 + κ3 / 6` up to `order`, with population moments about a
-/// mean refined by a second pass, so that the central moments keep their
-/// digits under a large common offset of the values.
+/// `κ1 + κ2 / 2 + κ3 / 6` up to `order`, with population moments.
+///
+/// The values are divided by a power of two near the largest magnitude, which
+/// is exact and leaves every scaled value below 2, so no sum overflows. The
+/// mean is refined by a second pass, so the central moments keep their digits
+/// under a large common offset of the values. Each cumulant is scaled back
+/// on its own, and a term that does not fit makes the sum not finite.
 fn cumulant_sum(values: &[f64], order: CumulantOrder) -> f64 {
-    let count = values.len() as f64;
-    // Each value is divided before summing, so the sum does not overflow
-    // for values near the largest finite one.
-    let estimate = values.iter().map(|value| value / count).sum::<f64>();
-    let mean = estimate
-        + values
-            .iter()
-            .map(|value| (value - estimate) / count)
-            .sum::<f64>();
-    if order == CumulantOrder::First {
-        return mean;
+    let largest = values
+        .iter()
+        .fold(0.0_f64, |largest, value| largest.max(value.abs()));
+    if largest == 0.0 {
+        return 0.0;
     }
-    // Each term is divided by the count as it is summed, as for the mean, so
-    // neither sum overflows while the moment it estimates is finite.
-    let root = count.sqrt();
-    let (second, third) = values.iter().fold((0.0, 0.0), |(second, third), value| {
+    if let [value] = values {
+        return *value;
+    }
+    let scale = power_of_two_below(largest);
+    let count = values.len() as f64;
+    let scaled = || values.iter().map(|value| value / scale);
+    let (lowest, highest) = scaled().fold(
+        (f64::INFINITY, f64::NEG_INFINITY),
+        |(lowest, highest), value| (lowest.min(value), highest.max(value)),
+    );
+    let estimate = scaled().map(|value| value / count).sum::<f64>();
+    // The mean lies between the extremes; rounding must not push it past
+    // them, where the largest finite values would overflow when scaled back.
+    let mean = (estimate
+        + scaled()
+            .map(|value| (value - estimate) / count)
+            .sum::<f64>())
+    .clamp(lowest, highest);
+    let mut sum = mean * scale;
+    if order == CumulantOrder::First {
+        return sum;
+    }
+    let (second, third) = scaled().fold((0.0, 0.0), |(second, third), value| {
         let deviation = value - mean;
-        let scaled = deviation / root;
-        let square = scaled * scaled;
-        (second + square, third + square * deviation)
+        let share = deviation * deviation / count;
+        (second + share, third + share * deviation)
     });
-    let mut sum = mean + second / 2.0;
+    sum += second / 2.0 * scale * scale;
     if order == CumulantOrder::Third {
-        sum += third / 6.0;
+        sum += third / 6.0 * scale * scale * scale;
     }
     sum
+}
+
+/// The largest power of two that is at most a positive, finite value, or the
+/// smallest normal one for a subnormal value.
+fn power_of_two_below(value: f64) -> f64 {
+    const EXPONENT_SHIFT: u32 = 52;
+    let exponent = value.to_bits() >> EXPONENT_SHIFT;
+    f64::from_bits(exponent.max(1) << EXPONENT_SHIFT)
 }
 
 /// `ln Σ exp(x)` over finite values, shifted by their largest so that no
