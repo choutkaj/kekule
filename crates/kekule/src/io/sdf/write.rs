@@ -1,11 +1,13 @@
 //! SDF writing: independent Molfile records, each with a title and data fields.
+use std::collections::BTreeSet;
 use std::io::Write;
 
+use crate::properties::PropertyValueRef;
 use crate::structure::{
-    AsStructureView, GeometryView, Place, Structure, StructureKind, StructureView,
+    AsStructureView, GeometryView, Place, RowView, Structure, StructureKind, StructureView,
 };
 use crate::traj::FrameView;
-use crate::units::named_unit;
+use crate::units::{named_unit, DIMENSIONLESS};
 
 use super::document::{SdfDataField, SdfRecordInterpretation};
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField};
@@ -16,7 +18,8 @@ use crate::io::{MolfileWriteOptions, UnrepresentablePolicy, WriteOmission, Write
 /// Options of SDF writing: the [`MolfileWriteOptions`] each record's CTAB is
 /// written with. The policies apply per record, and the report counts the
 /// records written without each kind of state, except that a geometry's step
-/// or coordinate is written as data fields ([`SdfRecordSource`]).
+/// or coordinate and its row of the set's columns are written as data
+/// fields ([`SdfRecordSource`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SdfWriteOptions {
     molfile: MolfileWriteOptions,
@@ -56,6 +59,7 @@ pub const SDF_COORDINATE_UNIT_FIELD: &str = "kekule.coordinate.unit";
 /// fields.
 const SDF_CARRIES: Carries = Carries {
     place: true,
+    columns: true,
     ..Carries::POSITIONS
 };
 
@@ -71,7 +75,12 @@ const PLACE_FIELDS: [&str; 3] = [
 /// Convert from `&Structure`, a borrowed geometry of a structure set, a trajectory
 /// frame, or `&SdfRecordInterpretation` (which keeps its title and data
 /// fields); `sdf::write(&set, options)` writes a record per geometry. A
-/// geometry's step place follows its data fields as [`SDF_STEP_FIELD`], and
+/// geometry's row of the set's columns follows its data fields, a field per
+/// cell named by the column's key: an integer or a boolean (`true`,
+/// `false`) as text, a real in the shortest decimal text that reads back to
+/// the same value, with a `<key>.unit` field naming a unit other than
+/// dimensionless, and a string as it is. A geometry's step place follows as
+/// [`SDF_STEP_FIELD`], and
 /// a coordinate place as [`SDF_COORDINATE_FIELD`] with
 /// [`SDF_COORDINATE_UNIT_FIELD`]. A coordinate
 /// unit must be one of the unit constants of [`crate::units`], which the
@@ -80,9 +89,12 @@ const PLACE_FIELDS: [&str; 3] = [
 /// time and MD step, and the velocities, forces, occupancies, and B factors
 /// of a geometry or structure, fail to write unless
 /// [`MolfileWriteOptions::geometry_metadata`] omits them; structure and set
-/// properties fail unless [`MolfileWriteOptions::properties`] omits them. Add
-/// the values a record should carry, such as a geometry's energy, as data
-/// fields.
+/// properties, and a cell SDF cannot carry (a real of a unit that is no
+/// unit constant of [`crate::units`], or an empty string, a string padded
+/// with spaces, or one SDF cannot frame), fail unless
+/// [`MolfileWriteOptions::properties`] omits them. A cell named like a
+/// place field or another field of the record fails with `Inconsistent`.
+/// Add other values a record should carry as data fields.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     structure: StructureView<'a>,
@@ -226,7 +238,14 @@ fn write_record(
         }
         place => place,
     };
-    let own_fields = written_place.map_or_else(Vec::new, place_fields);
+    let row = match record.structure.kind() {
+        StructureKind::InSet(context) => context.row(),
+        StructureKind::Standalone => None,
+    };
+    let row_fields = match row {
+        Some(row) => row_fields(row, options.properties(), omissions)?,
+        None => Vec::new(),
+    };
     for field in record.data_fields {
         validate_data_field(field)?;
         // A placed geometry owns these names, so a caller's field never
@@ -245,6 +264,30 @@ fn write_record(
             }));
         }
     }
+    // The reader takes a cell's field back as a cell only when no other
+    // field of the record has its name.
+    let mut names = record
+        .data_fields
+        .iter()
+        .map(SdfDataField::name)
+        .collect::<BTreeSet<_>>();
+    for field in &row_fields {
+        if PLACE_FIELDS.contains(&field.name()) || !names.insert(field.name()) {
+            return Err(FormatError::write(
+                Format::Sdf,
+                DiagnosticKind::Inconsistent,
+                format!(
+                    "The data field {:?} of the geometry's columns is already in the record.",
+                    field.name()
+                ),
+            )
+            .with_detail(FormatErrorDetail::DataField {
+                name: field.name().to_owned(),
+            }));
+        }
+    }
+    let mut own_fields = row_fields;
+    own_fields.extend(written_place.map_or_else(Vec::new, place_fields));
     let molfile = |error: FormatError| error.in_format(Format::Sdf);
     let ctab =
         render_structure(record.structure, record.title, options.version()).map_err(molfile)?;
@@ -255,6 +298,63 @@ fn write_record(
         writeln!(writer, ">  <{}>\n{}\n", field.name(), field.value()).map_err(sink)?;
     }
     writer.write_all(b"$$$$\n").map_err(sink)
+}
+
+/// The cells of a geometry's row as data fields, in key order. A cell SDF
+/// cannot carry fails under [`UnrepresentablePolicy::Fail`] and is
+/// otherwise left out, the record counting once.
+fn row_fields(
+    row: RowView<'_>,
+    policy: UnrepresentablePolicy,
+    omissions: &mut Omissions,
+) -> Result<Vec<SdfDataField>, FormatError> {
+    let mut fields = Vec::new();
+    let mut omitted = false;
+    for (key, value) in row.iter() {
+        let name = key.as_str();
+        let cell = match value {
+            PropertyValueRef::Bool(value) => Some(vec![SdfDataField::new(name, value.to_string())]),
+            PropertyValueRef::Int(value) => Some(vec![SdfDataField::new(name, value.to_string())]),
+            PropertyValueRef::Real { value, unit } => {
+                // `{:?}` keeps a decimal point or an exponent, so the reader
+                // takes the value back as a real.
+                let number = SdfDataField::new(name, format!("{value:?}"));
+                if unit == DIMENSIONLESS {
+                    Some(vec![number])
+                } else {
+                    let symbol = unit.to_string();
+                    (named_unit(&symbol) == Some(unit))
+                        .then(|| vec![number, SdfDataField::new(format!("{name}.unit"), symbol)])
+                }
+            }
+            PropertyValueRef::String(value) => {
+                let field = SdfDataField::new(name, value);
+                let framed = validate_data_field(&field).is_ok();
+                (framed && !value.is_empty() && value.trim() == value).then(|| vec![field])
+            }
+        };
+        match cell {
+            Some(cell) => fields.extend(cell),
+            None if policy == UnrepresentablePolicy::Fail => {
+                return Err(FormatError::write(
+                    Format::Sdf,
+                    DiagnosticKind::Unsupported,
+                    format!("SDF cannot represent the value {name:?} of the geometry's columns."),
+                )
+                .with_detail(FormatErrorDetail::UnrepresentableState(
+                    GeometryField::SetColumns,
+                )));
+            }
+            None => omitted = true,
+        }
+    }
+    if omitted {
+        omissions.record(WriteOmission::GeometryState {
+            field: GeometryField::SetColumns,
+            geometries: 1,
+        });
+    }
+    Ok(fields)
 }
 
 /// A geometry's step, or its coordinate and the coordinate's unit, as data

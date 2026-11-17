@@ -154,6 +154,10 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             ));
         }
         let properties = frame.properties();
+        // A frame of a set's geometry carries its row's cells, its lambda
+        // among them, as frame properties.
+        let owner = frame_owner(properties.owner(), frame.row());
+        let tables = properties.atoms().has_data() || properties.bonds().has_data();
         let mut omitted = check_frame_state(
             TrajectoryFormat::Trr,
             &self.source_label,
@@ -161,13 +165,20 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             frame,
             self.options.state_policies(),
         )?;
-        if self.options.properties == UnrepresentablePolicy::Omit
-            && has_unwritten_owner_properties(properties.owner(), self.options.lambda_policy)
-        {
-            omitted.push(WriteOmission::GeometryState {
-                field: GeometryField::Properties,
-                geometries: 1,
-            });
+        if self.options.properties == UnrepresentablePolicy::Omit {
+            let policy = self.options.lambda_policy;
+            let row = frame.row().map(RowView::to_properties).unwrap_or_default();
+            for (values, field) in [
+                (properties.owner(), GeometryField::Properties),
+                (&row, GeometryField::SetColumns),
+            ] {
+                if has_unwritten_owner_properties(values, policy) {
+                    omitted.push(WriteOmission::GeometryState {
+                        field,
+                        geometries: 1,
+                    });
+                }
+            }
         }
         if self.frame_count == usize::MAX {
             return Err(writer_limit(
@@ -220,7 +231,8 @@ impl<W: Write> TrajectoryWriter for TrrWriter<W> {
             .with_source(error)
         })?;
         let lambda = writer_lambda(
-            properties,
+            &owner,
+            tables,
             self.options.lambda_policy,
             self.options.properties,
             &self.source_label,
@@ -649,12 +661,30 @@ pub(super) fn has_unwritten_owner_properties(
     }
 }
 
-/// The lambda of a frame with `properties`. Under
-/// [`UnrepresentablePolicy::Omit`] for `properties`, properties
-/// [`has_unwritten_owner_properties`] names are ignored, and atom and bond
-/// properties are left to the caller.
+/// A frame's own values with its row's cells, which replace own values of
+/// the same key. A frame without row cells borrows its own values.
+fn frame_owner<'a>(own: &'a OwnerProperties, row: Option<RowView<'_>>) -> Cow<'a, OwnerProperties> {
+    match row.filter(|row| !row.is_empty()) {
+        None => Cow::Borrowed(own),
+        Some(row) => {
+            let mut owner = own.clone();
+            for (key, value) in row.iter() {
+                owner
+                    .insert(key.clone(), value.to_value())
+                    .expect("stored cells are valid");
+            }
+            Cow::Owned(owner)
+        }
+    }
+}
+
+/// The lambda of a frame with owner values `owner`, and with atom or bond
+/// properties when `tables`. Under [`UnrepresentablePolicy::Omit`] for
+/// `properties`, values [`has_unwritten_owner_properties`] names are
+/// ignored, and atom and bond properties are left to the caller.
 pub(super) fn writer_lambda(
-    properties: &GeometryProperties,
+    owner: &OwnerProperties,
+    tables: bool,
     policy: TrrLambdaPolicy,
     properties_policy: UnrepresentablePolicy,
     source_label: &str,
@@ -664,11 +694,9 @@ pub(super) fn writer_lambda(
     match policy {
         TrrLambdaPolicy::FrameProperty => {
             let other = if omit {
-                properties.owner().get(&trr_lambda_key()).is_none()
+                owner.get(&trr_lambda_key()).is_none()
             } else {
-                properties.owner().len() != 1
-                    || properties.atoms().has_data()
-                    || properties.bonds().has_data()
+                owner.len() != 1 || tables
             };
             if other {
                 return Err(codec_context(
@@ -679,7 +707,7 @@ pub(super) fn writer_lambda(
                     Reason::LambdaPolicyKey,
                 ));
             }
-            match properties.owner().get(&trr_lambda_key()) {
+            match owner.get(&trr_lambda_key()) {
                 Some(PropertyValue::Real { value, unit })
                     if value.is_finite() && *unit == DIMENSIONLESS =>
                 {
@@ -695,7 +723,7 @@ pub(super) fn writer_lambda(
             }
         }
         TrrLambdaPolicy::RequireZero => {
-            if !omit && !properties.is_empty() {
+            if !omit && (!owner.is_empty() || tables) {
                 return Err(writer_field_error(
                     TrajectoryFormat::Trr,
                     source_label,

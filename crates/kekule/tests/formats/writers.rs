@@ -610,6 +610,8 @@ fn sdf_never_writes_a_distribution() {
 
 #[test]
 fn sdf_reads_the_old_distribution_fields_as_ordinary_data() {
+    use kekule::properties::{PropertyColumn, PropertyKey};
+    use kekule::units::DIMENSIONLESS;
     // Records an earlier writer gave a distribution, a member marker, and a
     // malformed weight.
     let old = [
@@ -645,16 +647,49 @@ fn sdf_reads_the_old_distribution_fields_as_ordinary_data() {
     };
     assert_eq!(data_fields(&records), [owned(&old), owned(&outside)]);
     // The records form a structure set of both geometries, which has no
-    // distribution to state; the fields are neither read nor validated.
+    // distribution to state; the fields become ordinary columns, a field of
+    // another type in each record a text column.
     let read = sdf::structure_set(&records).unwrap();
     assert_eq!(read.len(), 2);
     assert_eq!(read.order(), None);
     for (left, right) in read.iter().zip(set.iter()) {
         assert_eq!(left.positions(), right.positions());
     }
-    // Writing the set again drops the fields, which belonged to the records.
+    let column = |name: &str| {
+        read.columns()
+            .get(&PropertyKey::new(name).unwrap())
+            .cloned()
+    };
+    assert_eq!(
+        column("kekule.weight"),
+        Some(PropertyColumn::String(vec![
+            Some("heavy".to_owned()),
+            Some("-3".to_owned())
+        ]))
+    );
+    assert_eq!(
+        column("kekule.state"),
+        Some(PropertyColumn::Int(vec![Some(1), None]))
+    );
+    assert_eq!(
+        column("kekule.representative"),
+        Some(PropertyColumn::Bool(vec![Some(true), None]))
+    );
+    assert_eq!(
+        column("kekule.member"),
+        Some(PropertyColumn::Bool(vec![None, Some(false)]))
+    );
+    assert_eq!(
+        column("kekule.energy.kJ_per_mol"),
+        Some(PropertyColumn::Real {
+            unit: DIMENSIONLESS,
+            values: vec![Some(-2.5), None]
+        })
+    );
+    // Writing the set again writes the columns as the fields.
     let rewritten = sdf::write(&read, SdfWriteOptions::default()).unwrap().0;
-    assert!(!rewritten.contains("kekule."), "{rewritten}");
+    let reread = sdf::structure_set(&interpret_records(&rewritten)).unwrap();
+    assert_eq!(reread.columns(), read.columns());
 }
 
 /// One-atom methane frames with exactly one piece of frame state each:
@@ -3003,12 +3038,13 @@ fn sdf_and_molfile_refuse_or_report_set_properties() {
 fn writers_refuse_or_report_set_columns() {
     use kekule::properties::{PropertyColumn, PropertyKey};
     use kekule::traj::io::{write_structure_set_to, TrajectoryWriteOptions};
-    use kekule::traj::{TrajectoryFormat, TrajectoryIoError};
+    use kekule::traj::{TrajectoryFormat, TrajectoryIoErrorKind};
     use kekule::xyz::{self, XyzWriteOptions};
     let omit = UnrepresentablePolicy::Omit;
+    // Geometry 0 alone has a cell in the columns.
     let columns = [WriteOmission::GeometryState {
         field: GeometryField::SetColumns,
-        geometries: 2,
+        geometries: 1,
     }];
 
     let mut set = methane_set(2);
@@ -3028,22 +3064,53 @@ fn writers_refuse_or_report_set_columns() {
         GeometryField::SetColumns,
     ));
 
-    // SDF writes each geometry as a record, which loses the set's columns.
-    let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
+    // SDF writes a geometry's cells as data fields of its record, a real
+    // with its unit, and reads them back as the set's columns.
+    let (text, report) = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    assert!(
+        text.contains(">  <bias>\n1.5\n\n>  <bias.unit>\nkJ/mol\n"),
+        "{text}"
+    );
+    let records = interpret_records(&text);
+    assert_eq!(
+        sdf::structure_set(&records).unwrap().columns(),
+        set.columns()
+    );
+    // A cell SDF cannot frame fails, or is omitted from its record.
+    let mut padded = set.clone();
+    padded
+        .columns_mut()
+        .insert(
+            PropertyKey::new("note").unwrap(),
+            PropertyColumn::String(vec![None, Some(" padded".to_owned())]),
+        )
+        .unwrap();
+    let error = sdf::write(&padded, SdfWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the SDF output in record 1. The structure set columns have no SDF \
-         representation."
+        "Cannot write the SDF output in record 2. SDF cannot represent the value \"note\" of \
+         the geometry's columns."
     );
     assert_eq!(error.detail(), detail.as_ref());
     let (text, report) = sdf::write(
-        &set,
+        &padded,
         SdfWriteOptions::from(MolfileWriteOptions::default().with_properties(omit)),
     )
     .unwrap();
-    assert_eq!(text, bare_sdf);
+    assert!(!text.contains("padded"), "{text}");
     assert_eq!(report.omissions(), columns);
-    // So does one geometry of the set, written on its own.
+    // A cell named like another field of its record is refused.
+    let fields = [SdfDataField::new("bias", "2")];
+    let error = sdf::write(
+        [sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&fields)],
+        SdfWriteOptions::default(),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_ne!(bare_sdf, text);
+    // A Molfile loses the cells of one geometry of the set, written on its
+    // own.
     assert_eq!(
         molfile::write(
             molfile::MolfileSource::structure(&set.get(0).unwrap()),
@@ -3081,13 +3148,14 @@ fn writers_refuse_or_report_set_columns() {
         [bare_report.omissions(), &columns[..]].concat()
     );
 
-    // No trajectory format stores them, so they must be cleared first.
+    // A trajectory XYZ writer refuses the first frame with row cells.
     let mut sink = std::io::Cursor::new(Vec::new());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz);
-    assert_eq!(
-        write_structure_set_to(&mut sink, &set, options.clone()).unwrap_err(),
-        TrajectoryIoError::unsupported_field(GeometryField::SetColumns)
-    );
+    let error = write_structure_set_to(&mut sink, &set, options.clone()).unwrap_err();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
+    assert_eq!(error.field(), Some(GeometryField::SetColumns));
+    assert_eq!(error.frame(), Some(0));
+    let mut sink = std::io::Cursor::new(Vec::new());
     set.columns_mut().clear().unwrap();
     write_structure_set_to(&mut sink, &set, options).unwrap();
 }
@@ -3218,8 +3286,7 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
         .unwrap();
     set.get_mut(1)
         .unwrap()
-        .properties_mut()
-        .atoms_mut()
+        .atom_properties_mut()
         .set_value(
             key(),
             TopologyAtomIndex::new(0),

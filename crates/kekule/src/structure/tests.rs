@@ -297,22 +297,21 @@ fn detached_geometries_get_bond_rows_only_when_bound() {
     let stored = set.get(0).unwrap();
     assert_eq!(stored.properties().atoms().len(), 2);
     assert_eq!(stored.properties().bonds().len(), 1);
+    assert!(stored.properties().owner().is_empty());
     assert_eq!(
-        stored.properties().owner().get(&label),
-        Some(&PropertyValue::Int(7))
+        stored.row().unwrap().get(&label),
+        Some(crate::properties::PropertyValueRef::Int(7))
     );
 
     let mut editor = set.get_mut(0).unwrap();
     let before = editor.properties().clone();
     assert!(editor
-        .properties_mut()
-        .bonds_mut()
+        .bond_properties_mut()
         .insert(label.clone(), PropertyColumn::Int(vec![Some(8); 2]))
         .is_err());
     assert_eq!(editor.properties(), &before);
     editor
-        .properties_mut()
-        .bonds_mut()
+        .bond_properties_mut()
         .insert(label.clone(), PropertyColumn::Int(vec![Some(8)]))
         .unwrap();
     assert_eq!(
@@ -451,8 +450,9 @@ fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_g
     // The replacement takes the replaced geometry's log weight and state.
     assert_eq!(set.distribution().log_weight(1), Some(0.5_f64.ln()));
     assert_eq!(set.distribution().state_of(1), Some(1));
+    assert!(member.properties().owner().is_empty());
     assert_eq!(
-        member.properties().owner(),
+        &member.row().unwrap().to_properties(),
         replacement.properties().owner()
     );
     assert_eq!(
@@ -482,22 +482,14 @@ fn geometry_editor_preserves_dimensions_and_validated_values() {
     {
         let mut member = set.get_mut(0).unwrap();
         let properties = member.properties().clone();
-        let detached = Geometry::new(Positions::zeros(2)).properties().clone();
-        assert_eq!(
-            member.set_properties(detached),
-            Err(GeometryError::BondCountMismatch(LengthMismatch::new(
-                Countable::Row,
-                1,
-                0
-            )))
-        );
-        let wrong_atoms = Geometry::new(Positions::zeros(1)).properties().clone();
-        assert_eq!(
-            member.set_properties(wrong_atoms),
-            Err(GeometryError::Array(Box::new(
-                DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 1))
-            )))
-        );
+        assert!(member
+            .atom_properties_mut()
+            .insert(key("short"), PropertyColumn::Int(vec![Some(1)]))
+            .is_err());
+        assert!(member
+            .bond_properties_mut()
+            .insert(key("long"), PropertyColumn::Int(vec![Some(1); 2]))
+            .is_err());
         assert_eq!(member.properties(), &properties);
         assert_eq!(
             member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
@@ -687,15 +679,20 @@ fn set_and_geometry_properties_are_separate() {
     set.properties_mut()
         .insert(key("collection"), PropertyValue::Bool(true))
         .unwrap();
-    set.get_mut(0)
-        .unwrap()
-        .properties_mut()
-        .owner_mut()
-        .insert(key("member"), PropertyValue::Int(1))
+    set.columns_mut()
+        .set_value(
+            key("member"),
+            GeometryIndex::new(0),
+            Some(PropertyValue::Int(1)),
+        )
         .unwrap();
     assert!(!set.properties().is_empty());
     let member = set.get(0).unwrap();
-    assert!(!member.properties().owner().is_empty());
+    assert!(member.properties().owner().is_empty());
+    assert_eq!(
+        member.row().unwrap().get(&key("member")),
+        Some(crate::properties::PropertyValueRef::Int(1))
+    );
     assert_eq!(
         member
             .properties()
@@ -719,7 +716,7 @@ fn set_and_geometry_properties_are_separate() {
         crate::topology::AtomSelection::from_atoms(set.shared_topology(), [atom]).unwrap();
     let subset = set.subset(&selection).unwrap();
     assert!(subset.properties().is_empty());
-    assert!(subset.get(0).unwrap().properties().owner().is_empty());
+    assert_eq!(subset.columns(), set.columns());
 }
 
 #[test]

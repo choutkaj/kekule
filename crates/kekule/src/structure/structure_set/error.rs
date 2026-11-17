@@ -252,6 +252,17 @@ pub enum StructureSetError {
         /// The column's key.
         key: PropertyKey,
     },
+    /// An owner value of a geometry entering a set has another type than the
+    /// set's column of that key, or a real value's unit does not convert to
+    /// the column's. A set keeps each geometry's owner values in its columns
+    /// ([`StructureSet::push`](super::StructureSet::push) and the other
+    /// constructors); convert or rename the value first.
+    ColumnTypeMismatch {
+        /// The value's key.
+        key: PropertyKey,
+        /// The index of the geometry the value belongs to.
+        geometry: usize,
+    },
     /// A column edit through
     /// [`SetColumnsMut`](super::SetColumnsMut) is invalid for the table, such
     /// as a column of another length or a value of another type; see the
@@ -408,6 +419,10 @@ impl fmt::Display for StructureSetError {
             Self::NonNumericColumn { key } => {
                 write!(formatter, "The column \"{key}\" holds no numbers.")
             }
+            Self::ColumnTypeMismatch { key, geometry } => write!(
+                formatter,
+                "The value \"{key}\" of geometry {geometry} has another type or unit than the column \"{key}\"."
+            ),
             Self::Column(_) => {
                 formatter.write_str("Cannot change the columns of the structure set.")
             }

@@ -146,8 +146,7 @@ fn annotated() -> StructureSet {
         set.push(geometry, Some(place)).unwrap();
         set.get_mut(index as usize)
             .unwrap()
-            .properties_mut()
-            .bonds_mut()
+            .bond_properties_mut()
             .insert(
                 PropertyKey::new("bond").unwrap(),
                 PropertyColumn::Int(vec![Some(4), Some(5)]),
@@ -163,10 +162,14 @@ fn buffered(buffer: &FrameBuffer) -> (Geometry, Place) {
     (frame.payload().clone(), frame.place())
 }
 
-/// Geometry `index` of `set` with its place.
+/// Geometry `index` of `set` with its place, carrying its row's cells as a
+/// frame read from the set does.
 fn stored(set: &StructureSet, index: usize) -> (Geometry, Place) {
     let geometry = set.get(index).unwrap();
-    (geometry.payload().clone(), geometry.place().unwrap())
+    (
+        geometry.payload().clone().with_row(geometry.row()),
+        geometry.place().unwrap(),
+    )
 }
 
 #[test]
@@ -274,7 +277,10 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
             .iter()
             .map(|geometry| (
                 geometry.positions().values().value()[0].x,
-                geometry.properties().owner().get(&frame_key).cloned()
+                geometry
+                    .row()
+                    .and_then(|row| row.get(&frame_key))
+                    .map(crate::properties::PropertyValueRef::to_value)
             ))
             .collect::<Vec<_>>(),
         [3, 1, 3].map(|frame| (f64::from(frame), Some(PropertyValue::Int(frame.into()))))
@@ -298,8 +304,8 @@ fn sampled_sets_are_the_same_in_memory_and_streamed() {
         .unwrap()
         .subset(&atoms)
         .unwrap();
-    // Frames 1 and 3, with the first two atoms of each, in their own box, and
-    // without frame properties, which belong to the whole geometry.
+    // Frames 1 and 3, with the first two atoms of each, in their own box,
+    // and with their rows.
     let cell = PeriodicCell::orthorhombic(
         Quantity::new(Vector3::new(2.0, 2.0, 2.0), NANOMETER),
         [true; 3],

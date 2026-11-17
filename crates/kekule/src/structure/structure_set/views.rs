@@ -5,12 +5,20 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+use crate::math::{PeriodicCell, Point3, RigidTransform};
+use crate::properties::PropertyTableMut;
 use crate::structure::geometry_validation::{is_bound, validate_binding};
 use crate::structure::view::sealed::Sealed;
-use crate::structure::{AsStructureView, GeometryError, Structure, StructureKind, StructureView};
-use crate::topology::Topology;
+use crate::structure::{
+    AsStructureView, Forces, GeometryError, GeometryMut, Structure, StructureKind, StructureView,
+    Velocities,
+};
+use crate::topology::{Topology, TopologyAtomIndex, TopologyBondIndex};
+use crate::units::Quantity;
 
-use super::{Geometry, Place, SetContext, StructureSet, StructureSetRead, StructureSetReadError};
+use super::{
+    Geometry, Place, RowView, SetContext, StructureSet, StructureSetRead, StructureSetReadError,
+};
 
 /// One topology-bound [`Geometry`] borrowed from a [`StructureSet`] or another
 /// [`StructureSetRead`], with its place in the reader's order.
@@ -133,6 +141,14 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
         self.reader.order().map(|order| order.place(self.index))
     }
 
+    /// The geometry's row of the set's columns: its own scalars. `None` for
+    /// a reader without columns.
+    pub fn row(self) -> Option<RowView<'a>> {
+        self.reader
+            .columns()
+            .and_then(|columns| RowView::new(columns, self.index))
+    }
+
     /// The topology the geometry is bound to, with the view's full lifetime.
     pub fn topology(self) -> &'a Topology {
         self.reader.topology()
@@ -163,9 +179,145 @@ impl<'a, R: ?Sized> GeometryView<'a, R> {
     }
 
     /// Materializes the geometry as an owned structure, dropping its place
-    /// and keeping its velocities and forces.
+    /// and keeping its velocities and forces. The cells of its row become
+    /// the structure's owner values, so the structure is whole; a row with
+    /// cells copies the geometry once.
     pub fn to_structure(self) -> Structure {
         self.as_structure_view().to_structure()
+    }
+}
+
+/// Dimension-preserving mutable access to a geometry of a set in memory
+/// ([`StructureSet::get_mut`]): a [`GeometryMut`] without owner values.
+///
+/// Reads use `Deref`. Positions, the cell, site values, velocities, forces,
+/// and the per-atom and per-bond property tables are editable. The
+/// geometry's own scalars are its row of the set's columns, edited through
+/// [`StructureSet::columns_mut`], so this guard offers no owner values:
+///
+/// ```compile_fail,E0599
+/// use kekule::structure::StructureSet;
+/// fn label(set: &mut StructureSet) {
+///     set.get_mut(0).unwrap().properties_mut();
+/// }
+/// ```
+#[derive(Debug)]
+pub struct SetGeometryMut<'a> {
+    geometry: GeometryMut<'a>,
+}
+
+impl<'a> SetGeometryMut<'a> {
+    pub(crate) fn new(geometry: &'a mut Geometry) -> Self {
+        Self {
+            geometry: GeometryMut::new(geometry),
+        }
+    }
+}
+
+impl std::ops::Deref for SetGeometryMut<'_> {
+    type Target = Geometry;
+
+    fn deref(&self) -> &Self::Target {
+        &self.geometry
+    }
+}
+
+impl SetGeometryMut<'_> {
+    /// Sets or clears velocities; see [`Geometry::set_velocities`].
+    pub fn set_velocities(&mut self, velocities: Option<Velocities>) -> Result<(), GeometryError> {
+        self.geometry.set_velocities(velocities)
+    }
+
+    /// Sets or clears forces; see [`Geometry::set_forces`].
+    pub fn set_forces(&mut self, forces: Option<Forces>) -> Result<(), GeometryError> {
+        self.geometry.set_forces(forces)
+    }
+
+    /// Removes velocities, returning them.
+    pub fn take_velocities(&mut self) -> Option<Velocities> {
+        self.geometry.take_velocities()
+    }
+
+    /// Removes forces, returning them.
+    pub fn take_forces(&mut self) -> Option<Forces> {
+        self.geometry.take_forces()
+    }
+
+    /// Applies a rigid transform transactionally: positions move; the cell,
+    /// velocities, and forces rotate.
+    pub fn apply_rigid_transform(
+        &mut self,
+        transform: &RigidTransform,
+    ) -> Result<(), GeometryError> {
+        self.geometry.apply_rigid_transform(transform)
+    }
+
+    /// Replaces every position; see [`Geometry::set_positions`].
+    pub fn set_positions<T: AsRef<[Point3]>>(
+        &mut self,
+        positions: Quantity<T>,
+    ) -> Result<(), GeometryError> {
+        self.geometry.set_positions(positions)
+    }
+
+    /// Sets one position; see [`Geometry::set_position_at`].
+    pub fn set_position_at(
+        &mut self,
+        atom: TopologyAtomIndex,
+        position: Quantity<Point3>,
+    ) -> Result<(), GeometryError> {
+        self.geometry.set_position_at(atom, position)
+    }
+
+    /// Replaces the periodic cell; see [`Geometry::set_cell`].
+    pub fn set_cell(&mut self, cell: Option<PeriodicCell>) {
+        self.geometry.set_cell(cell);
+    }
+
+    /// Mutable topology-atom columns of the geometry's properties. A shared
+    /// geometry is copied when the guard is taken.
+    pub fn atom_properties_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
+        self.geometry.atom_properties_mut()
+    }
+
+    /// Mutable topology-bond columns of the geometry's properties. A shared
+    /// geometry is copied when the guard is taken.
+    pub fn bond_properties_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
+        self.geometry.bond_properties_mut()
+    }
+
+    /// Sets or clears one occupancy; see [`Geometry::set_occupancy`].
+    pub fn set_occupancy(
+        &mut self,
+        atom: TopologyAtomIndex,
+        value: Option<f64>,
+    ) -> Result<(), GeometryError> {
+        self.geometry.set_occupancy(atom, value)
+    }
+
+    /// Replaces or clears every occupancy; see [`Geometry::set_occupancies`].
+    pub fn set_occupancies(
+        &mut self,
+        values: Option<Vec<Option<f64>>>,
+    ) -> Result<(), GeometryError> {
+        self.geometry.set_occupancies(values)
+    }
+
+    /// Sets or clears one B-factor; see [`Geometry::set_b_factor`].
+    pub fn set_b_factor(
+        &mut self,
+        atom: TopologyAtomIndex,
+        value: Option<Quantity<f64>>,
+    ) -> Result<(), GeometryError> {
+        self.geometry.set_b_factor(atom, value)
+    }
+
+    /// Replaces or clears every B-factor; see [`Geometry::set_b_factors`].
+    pub fn set_b_factors(
+        &mut self,
+        values: Option<Quantity<Vec<Option<f64>>>>,
+    ) -> Result<(), GeometryError> {
+        self.geometry.set_b_factors(values)
     }
 }
 

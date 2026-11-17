@@ -957,13 +957,18 @@ fn member_views_project_borrowed_and_owned_structures_in_stable_order() {
     assert!(Arc::ptr_eq(&owned.shared_topology(), &topology));
     assert_eq!(owned.positions(), member.positions());
     assert_eq!(owned.cell(), member.cell());
-    assert_eq!(owned.properties(), member.properties());
+    assert_eq!(owned.properties().atoms(), member.properties().atoms());
+    // The row's cells travel with the owned structure as owner values.
+    assert!(member.properties().owner().is_empty());
+    assert_eq!(
+        owned.properties().owner(),
+        &member.row().unwrap().to_properties()
+    );
 
     ensemble
         .get_mut(0)
         .unwrap()
-        .properties_mut()
-        .atoms_mut()
+        .atom_properties_mut()
         .set_value(score.clone(), ATOM0, Some(PropertyValue::Int(9)))
         .unwrap();
     assert_eq!(

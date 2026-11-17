@@ -409,6 +409,8 @@ impl FrameBuffer {
 
     /// Copies a complete frame of any snapshot sharing this buffer's layout,
     /// every field of it: what the frame lacks, the buffer then lacks too.
+    /// The cells of the frame's row ([`FrameView::row`]) become owner values,
+    /// replacing the frame's own values of the same key.
     ///
     /// # Errors
     ///
@@ -421,7 +423,16 @@ impl FrameBuffer {
                 TrajectoryIoErrorKind::TopologyMismatch,
             ));
         }
-        Ok(self.replace_from_data(FrameData::from_frame_view(frame))?)
+        self.replace_from_data(FrameData::from_frame_view(frame))?;
+        if let Some(row) = frame.row() {
+            let owner = self.geometry.data_in_place().properties.owner_mut();
+            for (key, value) in row.iter() {
+                owner
+                    .insert(key.clone(), value.to_value())
+                    .expect("stored cells are valid");
+            }
+        }
+        Ok(())
     }
 
     fn stage_velocities<T: AsRef<[Vector3]>>(

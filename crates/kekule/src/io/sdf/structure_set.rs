@@ -2,8 +2,11 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, TopologyMismatch,
 };
+use std::collections::BTreeMap;
+
+use crate::properties::{PropertyColumn, PropertyKey};
 use crate::structure::{Geometry, Order, StructureSet, StructureSetError};
-use crate::units::named_unit;
+use crate::units::{named_unit, Unit, DIMENSIONLESS};
 
 use super::document::SdfRecordInterpretation;
 use super::write::{SDF_COORDINATE_FIELD, SDF_COORDINATE_UNIT_FIELD, SDF_STEP_FIELD};
@@ -63,7 +66,8 @@ fn field<'r>(
 ///
 /// The geometries are ordered by the records' [`SDF_STEP_FIELD`] or, in the
 /// unit [`SDF_COORDINATE_UNIT_FIELD`] names, [`SDF_COORDINATE_FIELD`], when
-/// every record carries one.
+/// every record carries one. The other data fields become the set's columns
+/// ([`record_columns`]).
 pub(crate) fn sdf_structure_set<'a>(
     records: impl IntoIterator<Item = &'a SdfRecordInterpretation>,
 ) -> Result<StructureSet, FormatError> {
@@ -93,7 +97,162 @@ pub(crate) fn sdf_structure_set<'a>(
         )
         .with_source(error)
     })?;
+    for (key, column) in record_columns(&records) {
+        set.columns_mut().insert(key, column).map_err(set_error)?;
+    }
     Ok(set)
+}
+
+/// The columns the records' data fields state, one cell per record.
+///
+/// A data field becomes a column when its name is a property key, it is not
+/// a place field, and no record has it twice; the records keep every field.
+/// A record without the field, or with an empty value, has a missing cell.
+/// The column holds integers when every value is one, reals when every
+/// value is a finite number, booleans when every value is `true` or
+/// `false`, and the trimmed text otherwise, so a field whose type differs
+/// between records reads as text. A real field `<name>` whose records, and
+/// only those, carry `<name>.unit` with one symbol of a unit constant holds
+/// reals in that unit, and that unit field is no column of its own.
+fn record_columns(records: &[&SdfRecordInterpretation]) -> Vec<(PropertyKey, PropertyColumn)> {
+    let place = [
+        SDF_STEP_FIELD,
+        SDF_COORDINATE_FIELD,
+        SDF_COORDINATE_UNIT_FIELD,
+    ];
+    // Each candidate name's trimmed value per record; `None` marks a name
+    // that some record repeats.
+    let mut fields = BTreeMap::<&str, Option<Vec<Option<&str>>>>::new();
+    for (index, record) in records.iter().enumerate() {
+        for field in record.data_fields() {
+            let name = field.name();
+            if place.contains(&name) || PropertyKey::new(name).is_err() {
+                continue;
+            }
+            let entry = fields
+                .entry(name)
+                .or_insert_with(|| Some(vec![None; records.len()]));
+            if let Some(values) = entry {
+                if values[index].is_some() {
+                    *entry = None;
+                } else {
+                    values[index] = Some(field.value().trim());
+                }
+            }
+        }
+    }
+    let fields = fields
+        .into_iter()
+        .filter_map(|(name, values)| Some((name, values?)))
+        .map(|(name, values)| {
+            let values = values
+                .into_iter()
+                .map(|value| value.filter(|value| !value.is_empty()))
+                .collect::<Vec<_>>();
+            (name, values)
+        })
+        .filter(|(_, values)| values.iter().any(Option::is_some))
+        .collect::<BTreeMap<_, _>>();
+    let mut units = BTreeMap::<&str, Unit>::new();
+    for (name, values) in &fields {
+        if let Some(unit) = record_unit(&fields, name, values) {
+            units.insert(name, unit);
+        }
+    }
+    fields
+        .iter()
+        .filter(|(name, _)| {
+            !name
+                .strip_suffix(".unit")
+                .is_some_and(|base| units.contains_key(base))
+        })
+        .map(|(name, values)| {
+            let key = PropertyKey::new(*name).expect("the name was checked");
+            let column = units.get(name).map_or_else(
+                || text_column(values),
+                |&unit| PropertyColumn::Real {
+                    unit,
+                    values: values
+                        .iter()
+                        .map(|value| value.and_then(|value| value.parse().ok()))
+                        .collect(),
+                },
+            );
+            (key, column)
+        })
+        .collect()
+}
+
+/// The unit of the real field `name`: the one symbol its unit field holds on
+/// exactly the records that have a value of `name`.
+fn record_unit(
+    fields: &BTreeMap<&str, Vec<Option<&str>>>,
+    name: &str,
+    values: &[Option<&str>],
+) -> Option<Unit> {
+    if !values.iter().flatten().all(|value| real(value).is_some()) {
+        return None;
+    }
+    let symbols = fields.get(format!("{name}.unit").as_str())?;
+    if symbols
+        .iter()
+        .zip(values)
+        .any(|(symbol, value)| symbol.is_some() != value.is_some())
+    {
+        return None;
+    }
+    let mut present = symbols.iter().flatten();
+    let symbol = *present.next()?;
+    if present.any(|other| *other != symbol) {
+        return None;
+    }
+    named_unit(symbol)
+}
+
+/// A finite number.
+fn real(value: &str) -> Option<f64> {
+    value.parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+/// The column of a field's values, of the first type every value has:
+/// integer, real, boolean, then text.
+fn text_column(values: &[Option<&str>]) -> PropertyColumn {
+    fn all<T>(
+        values: &[Option<&str>],
+        parse: impl Fn(&str) -> Option<T>,
+    ) -> Option<Vec<Option<T>>> {
+        values
+            .iter()
+            .map(|value| {
+                value
+                    .map(&parse)
+                    .map_or(Some(None), |parsed| parsed.map(Some))
+            })
+            .collect()
+    }
+    if let Some(values) = all(values, |value| value.parse::<i64>().ok()) {
+        return PropertyColumn::Int(values);
+    }
+    if let Some(values) = all(values, real) {
+        return PropertyColumn::Real {
+            unit: DIMENSIONLESS,
+            values,
+        };
+    }
+    let boolean = |value: &str| match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    };
+    if let Some(values) = all(values, boolean) {
+        return PropertyColumn::Bool(values);
+    }
+    PropertyColumn::String(
+        values
+            .iter()
+            .map(|value| value.map(str::to_owned))
+            .collect(),
+    )
 }
 
 /// The step or coordinate order the records' fields state: none when no

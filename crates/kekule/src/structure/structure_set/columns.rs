@@ -1,9 +1,11 @@
-//! The per-geometry columns of a set: [`GeometryIndex`], [`SetColumnsMut`],
-//! and [`ColumnRef`].
+//! The per-geometry columns of a set: [`GeometryIndex`], [`RowView`],
+//! [`SetColumnsMut`], and [`ColumnRef`].
+
+use std::fmt;
 
 use crate::properties::{
-    LiveRows, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyTableMut,
-    PropertyValue,
+    LiveRows, OwnerProperties, PropertyColumn, PropertyError, PropertyKey, PropertyTable,
+    PropertyTableMut, PropertyValue, PropertyValueRef,
 };
 use crate::structure::sampling::is_energy;
 use crate::structure::Sampling;
@@ -35,6 +37,114 @@ impl GeometryIndex {
     pub const fn index(self) -> usize {
         self.0
     }
+}
+
+/// The cells of one geometry's row in its set's columns
+/// ([`StructureSet::row`], [`SetContext::row`](super::SetContext::row)): the
+/// geometry's own scalars, such as its energy or bias.
+///
+/// A geometry held by a set keeps its scalars here and not in its
+/// [`GeometryProperties`](crate::properties::GeometryProperties) owner
+/// values. Reads skip missing cells.
+#[derive(Clone, Copy)]
+pub struct RowView<'a> {
+    columns: &'a PropertyTable<GeometryIndex>,
+    index: usize,
+}
+
+impl<'a> RowView<'a> {
+    /// Row `index` of `columns`, or `None` past the last row.
+    pub(crate) fn new(columns: &'a PropertyTable<GeometryIndex>, index: usize) -> Option<Self> {
+        (index < columns.len()).then_some(Self { columns, index })
+    }
+
+    /// The geometry the row describes.
+    pub const fn geometry(self) -> GeometryIndex {
+        GeometryIndex(self.index)
+    }
+
+    /// The cell under `key`, or `None` when the set has no such column or
+    /// the cell is missing.
+    pub fn get(self, key: &PropertyKey) -> Option<PropertyValueRef<'a>> {
+        self.columns.get(key)?.value_ref(self.index).ok().flatten()
+    }
+
+    /// The present cells in key order.
+    pub fn iter(self) -> impl Iterator<Item = (&'a PropertyKey, PropertyValueRef<'a>)> + 'a {
+        self.columns.iter().filter_map(move |(key, column)| {
+            column
+                .value_ref(self.index)
+                .ok()
+                .flatten()
+                .map(|value| (key, value))
+        })
+    }
+
+    /// Whether every cell of the row is missing.
+    pub fn is_empty(self) -> bool {
+        self.iter().next().is_none()
+    }
+
+    /// The present cells as owner values, as a geometry taken out of the
+    /// set carries them.
+    pub fn to_properties(self) -> OwnerProperties {
+        let mut properties = OwnerProperties::new();
+        for (key, value) in self.iter() {
+            properties
+                .insert(key.clone(), value.to_value())
+                .expect("stored cells are finite");
+        }
+        properties
+    }
+}
+
+impl fmt::Debug for RowView<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_map().entries(self.iter()).finish()
+    }
+}
+
+/// Moves the owner values `owner` of geometry `geometry` into its row of
+/// `columns`: a new key adds a column with missing cells for the other rows,
+/// and a real value converts to its column's unit. Every value is checked
+/// before any is written, so a failure changes nothing.
+///
+/// # Errors
+///
+/// [`StructureSetError::ColumnTypeMismatch`] for a value of another type
+/// than its column, or a real value whose unit does not convert to it, and
+/// [`StructureSetError::Column`] for a real value that is not finite in the
+/// column's unit.
+pub(crate) fn move_owner_values(
+    columns: &mut PropertyTable<GeometryIndex>,
+    geometry: usize,
+    owner: &OwnerProperties,
+) -> Result<(), StructureSetError> {
+    if owner.is_empty() {
+        return Ok(());
+    }
+    for (key, value) in owner.iter() {
+        if let Some(column) = columns.get(key) {
+            column
+                .check_value(key, value)
+                .map_err(|error| match error {
+                    PropertyError::TypeMismatch { .. } | PropertyError::Unit(_) => {
+                        StructureSetError::ColumnTypeMismatch {
+                            key: key.clone(),
+                            geometry,
+                        }
+                    }
+                    error => StructureSetError::Column(Box::new(error)),
+                })?;
+        }
+    }
+    let mut table = PropertyTableMut::<GeometryIndex>::new(columns, LiveRows::All, None);
+    for (key, value) in owner.iter() {
+        table
+            .set_value(key.clone(), GeometryIndex(geometry), Some(value.clone()))
+            .expect("the values were checked against the columns");
+    }
+    Ok(())
 }
 
 /// A value per geometry that [`StructureSet::column_values`] reads: a value
@@ -228,6 +338,12 @@ impl<S: GeometryStorage> StructureSet<S> {
             table: PropertyTableMut::new(&mut self.columns, LiveRows::All, None),
             sampling: self.sampling.as_ref(),
         }
+    }
+
+    /// The cells of geometry `index` in the columns, or `None` past the
+    /// last geometry.
+    pub fn row(&self, index: usize) -> Option<RowView<'_>> {
+        RowView::new(&self.columns, index)
     }
 
     /// The values of `column` for every geometry, as numbers in their unit:

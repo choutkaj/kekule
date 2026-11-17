@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::structure::{
-    check_bound, AsStructureView, Geometry, GeometryView, Place, SetContext, Structure,
+    check_bound, AsStructureView, Geometry, GeometryView, Place, RowView, SetContext, Structure,
     StructureKind, StructureSetError, StructureView, StructureViewSealed,
 };
 use crate::topology::Topology;
@@ -21,7 +21,9 @@ use crate::diagnostics::GeometryField;
 /// ([`Geometry::bind`] binds one made outside a set).
 /// Frame state reads through `Deref` (`frame.positions()`,
 /// `frame.velocities()`, ...), and [`AsStructureView`] lends it to kernels as a
-/// geometry at a time place.
+/// geometry at a time place. A frame of a set's geometry also lends the
+/// geometry's row of the set's columns ([`Self::row`]), which writers that
+/// carry per-frame values write.
 ///
 /// ```
 /// use kekule::structure::{Order, Place, Positions, Geometry, StructureSet, TimeAxis};
@@ -48,6 +50,7 @@ pub struct FrameView<'a> {
     geometry: &'a Geometry,
     time: Option<Quantity<f64>>,
     step: Option<u64>,
+    row: Option<RowView<'a>>,
 }
 
 impl std::ops::Deref for FrameView<'_> {
@@ -95,11 +98,13 @@ impl<'a> FrameView<'a> {
             geometry,
             time,
             step,
+            row: None,
         }
     }
 
     /// The frame of a geometry of a set or another reader: its time and step
-    /// on a time order, or neither in an unordered set.
+    /// on a time order, or neither in an unordered set, and its row of the
+    /// reader's columns.
     ///
     /// # Errors
     ///
@@ -122,12 +127,10 @@ impl<'a> FrameView<'a> {
                 ))
             }
         };
-        Ok(Self::bound(
-            view.topology_handle(),
-            view.payload(),
-            time,
-            step,
-        ))
+        Ok(Self {
+            row: view.row(),
+            ..Self::bound(view.topology_handle(), view.payload(), time, step)
+        })
     }
 
     /// The topology the frame is bound to, with the view's full lifetime.
@@ -155,6 +158,13 @@ impl<'a> FrameView<'a> {
         self.step
     }
 
+    /// The frame's row of its set's columns: per-frame values such as an
+    /// energy. `None` for a frame made with [`Self::new`] or lent by a
+    /// [`FrameBuffer`](super::FrameBuffer).
+    pub const fn row(self) -> Option<RowView<'a>> {
+        self.row
+    }
+
     /// The frame's place on a time order: its time and step.
     pub const fn place(self) -> Place {
         Place::Time {
@@ -164,15 +174,17 @@ impl<'a> FrameView<'a> {
     }
 
     /// Borrows the frame as the common kernel input, with the view's full
-    /// lifetime: a geometry at its time place, without a membership.
+    /// lifetime: a geometry at its time place with its row, without a
+    /// membership.
     pub fn as_structure_view(self) -> StructureView<'a> {
         self.geometry.structure_view(
             self.topology,
-            StructureKind::InSet(SetContext::new(Some(self.place()))),
+            StructureKind::InSet(SetContext::new(Some(self.place()), self.row)),
         )
     }
 
-    /// Copies the frame out as an owned structure on the shared topology.
+    /// Copies the frame out as an owned structure on the shared topology,
+    /// with its row's cells as owner values.
     pub fn to_structure(self) -> Structure {
         self.as_structure_view().to_structure()
     }

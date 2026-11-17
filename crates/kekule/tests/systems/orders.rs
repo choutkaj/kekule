@@ -10,10 +10,10 @@ use std::sync::Arc;
 use kekule::alignment::AlignmentOptions;
 use kekule::math::{PeriodicCell, Point3, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::properties::{PropertyKey, PropertyValue};
+use kekule::properties::{PropertyKey, PropertyValue, PropertyValueRef};
 use kekule::structure::{
-    AsStructureView, Geometry, GeometryError, Order, Place, Positions, Structure, StructureKind,
-    StructureSet, StructureSetError,
+    AsStructureView, Geometry, GeometryError, GeometryView, Order, Place, Positions, Structure,
+    StructureKind, StructureSet, StructureSetError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{
@@ -107,6 +107,14 @@ fn coordinate(place: Option<Place>) -> Quantity<f64> {
     }
 }
 
+/// The energy in the row of a set's geometry.
+fn row_energy(geometry: GeometryView<'_>) -> Option<f64> {
+    match geometry.row()?.get(&energy())? {
+        PropertyValueRef::Real { value, .. } => Some(value),
+        other => panic!("not a real value: {other:?}"),
+    }
+}
+
 fn real(value: &PropertyValue) -> f64 {
     match value {
         PropertyValue::Real { value, .. } => *value,
@@ -122,7 +130,7 @@ fn a_history_keeps_its_geometries_steps_and_values_in_order() {
     assert_eq!(places(&set), steps(&[0, 5, 10, 15]));
     let energies = set
         .iter()
-        .map(|geometry| real(geometry.properties().owner().get(&energy()).unwrap()))
+        .map(|geometry| row_energy(geometry).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(energies, [-100.0, -101.0, -102.0, -103.0]);
     let geometry = set.get(2).unwrap();
@@ -241,7 +249,15 @@ fn geometry_views_borrow_as_structures_with_their_place() {
     );
     assert_eq!(structure.positions(), geometry.positions());
     assert_eq!(structure.cell(), Some(&cell));
-    assert_eq!(structure.properties(), geometry.properties());
+    assert_eq!(
+        structure.properties().atoms(),
+        geometry.properties().atoms()
+    );
+    // Its row's cells become the structure's own values.
+    assert_eq!(
+        real(structure.properties().owner().get(&energy()).unwrap()),
+        -3.0
+    );
 }
 
 #[test]
@@ -382,11 +398,27 @@ fn subsets_keep_places_and_drop_values_of_the_whole_structure() {
     assert!(perceived.topology().shares_layout(set.topology()));
     assert_eq!(perceived.len(), set.len());
     assert_eq!(perceived.order(), set.order());
+    // Each geometry leaves the set with its row's cells as its own values.
     let expected = set
         .iter()
-        .map(|geometry| geometry.payload().clone())
+        .map(|geometry| {
+            (
+                geometry.positions().clone(),
+                geometry.row().unwrap().to_properties(),
+            )
+        })
         .collect::<Vec<_>>();
-    assert_eq!(set.into_geometries(), expected);
+    let detached = set
+        .into_geometries()
+        .into_iter()
+        .map(|geometry| {
+            (
+                geometry.positions().clone(),
+                geometry.properties().owner().clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(detached, expected);
 }
 
 #[test]
@@ -405,9 +437,7 @@ fn ordered_sets_superpose_and_measure_rmsd_geometry_by_geometry() {
     assert_eq!(report.reference_index(), Some(0));
     // Superposition keeps every step and value.
     assert_eq!(places(&set), steps(&[0, 5, 10, 15]));
-    assert!(set
-        .iter()
-        .all(|geometry| geometry.properties().owner().get(&energy()).is_some()));
+    assert!(set.iter().all(|geometry| row_energy(geometry).is_some()));
     let aligned = set
         .aligned_rmsd(0, &atoms, &atoms, Default::default())
         .unwrap();

@@ -26,7 +26,8 @@
 //!   a search are structure sets. Its columns ([`StructureSet::columns`],
 //!   [`SetColumnsMut`]) hold one value per geometry ([`GeometryIndex`]), such
 //!   as a bias energy, and [`ColumnRef`] names one to read as numbers.
-//!   [`GeometryView`] and [`GeometryMut`] read and edit the geometries; the set's
+//!   [`GeometryView`] and [`SetGeometryMut`] read and edit the geometries, and
+//!   [`RowView`] reads one geometry's row; the set's
 //!   operations fail with a [`StructureSetError`]. Its storage ([`GeometryStorage`]) is a type
 //!   parameter: [`InMemory`] by default, or a file's
 //!   ([`crate::traj::io::IndexedFile`]), whose geometries are read on demand.
@@ -170,8 +171,8 @@ pub use structure_editor::{
 pub(crate) use structure_set::{check_bound, sealed as geometry_storage, visit_geometry};
 pub use structure_set::{
     ColumnRef, GeometryIndex, GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place,
-    Requirement, SetColumnsMut, SetContext, StructureSet, StructureSetError, StructureSetRead,
-    StructureSetReadError, TimeAxis,
+    Requirement, RowView, SetColumnsMut, SetContext, SetGeometryMut, StructureSet,
+    StructureSetError, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 pub use thermodynamics::ThermodynamicState;
 pub(crate) use view::sealed::Sealed as StructureViewSealed;

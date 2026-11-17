@@ -70,11 +70,16 @@ the main branch migrates by the table under "From the SampleSet API".
   column or the order's times, steps, or coordinates as numbers, and
   `steps()` gives the order's steps. `StructureSetRead::columns`,
   `StructureSetDescription::{columns, with_columns}`, and native format
-  version 9 carry them; sets read from versions 7 and 8 have no columns.
-  `from_reader` fails with `StructureSetReadError::ColumnRows` for a reader
-  whose columns do not have a row per geometry. Other writers refuse a set
-  with columns by default, or omit them under the `properties` policy
-  (`GeometryField::SetColumns`); trajectory writers always refuse them.
+  version 9 carry them; a set read from versions 7 and 8 moves its geometries'
+  owner values into columns. `StructureSet::row`, `GeometryView::row`,
+  `SetContext::row`, and `FrameView::row` read one geometry's cells
+  (`RowView`). `from_reader` fails with `StructureSetReadError::ColumnRows`
+  for a reader whose columns do not have a row per geometry. SDF writes a
+  geometry's cells as data fields, and `sdf::structure_set` reads the
+  records' data fields as columns, a field whose type differs between
+  records as text; TRR writes a frame's lambda cell. Other writers refuse a
+  geometry with cells by default, or omit them under the `properties` policy
+  (`GeometryField::SetColumns`).
 - `structure::Sampling` records how a set was sampled: a
   `ThermodynamicState`, the first sampled step, the potential-energy and bias
   columns, and a method label. `StructureSet::{sampling, set_sampling}`,
@@ -258,6 +263,23 @@ the main branch migrates by the table under "From the SampleSet API".
   group of samples, such as histogram bins.
 
 ### Changed
+
+- **Breaking:** A set's columns are the only home of its geometries'
+  scalars. `push`, `replace`, `from_geometries`, `from_structures`, and
+  `from_reader` move a geometry's owner values into its row, failing with
+  `StructureSetError::ColumnTypeMismatch` (`StructureSetReadError::ColumnTypeMismatch`
+  from `from_reader`) for a value of another type or unit than its column.
+  `remove`, `replace`'s returned geometry, `into_geometries`, `to_structure`,
+  `FrameBuffer::copy_from`, and `MemoryTrajectoryWriter` carry the row's
+  cells as owner values again. `StructureSet::get_mut` and `Ensemble::get_mut`
+  return a `SetGeometryMut`, which edits everything but owner values
+  (`atom_properties_mut`, `bond_properties_mut`). Geometries of a
+  `StructureSet<IndexedFile>` keep their codec's per-frame values, such as a
+  TRR lambda, as their own. Migration: write a geometry's scalar with
+  `set.columns_mut().set_value(key, GeometryIndex::new(i), Some(value))` and
+  read it with `set.row(i)` or `view.row()`; replace
+  `get_mut(i).properties_mut().atoms_mut()` with
+  `get_mut(i).atom_properties_mut()`.
 
 - **Breaking:** The `kekule-traj` crate is now the `kekule::traj` module.
   Items keep their names under the new path; replace the `kekule-traj`

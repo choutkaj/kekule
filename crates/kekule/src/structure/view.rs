@@ -171,9 +171,18 @@ impl<'a> StructureView<'a> {
 
     /// Materializes this borrowed structure as an owned structure sharing the
     /// topology and the geometry's storage, dropping the set context reported
-    /// by [`Self::kind`].
+    /// by [`Self::kind`] but its row: the cells of a set geometry's row
+    /// become owner values, replacing own values of the same key, and then
+    /// the geometry is copied once.
     pub fn to_structure(self) -> Structure {
-        Structure::bound(Arc::clone(self.topology), self.geometry.clone())
+        let row = match self.kind {
+            StructureKind::InSet(context) => context.row(),
+            StructureKind::Standalone => None,
+        };
+        Structure::bound(
+            Arc::clone(self.topology),
+            self.geometry.clone().with_row(row),
+        )
     }
 }
 

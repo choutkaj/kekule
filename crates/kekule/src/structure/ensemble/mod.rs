@@ -5,7 +5,7 @@ use crate::topology::AtomSelection;
 use crate::units::Quantity;
 
 use super::{
-    Geometry, GeometryMut, GeometryStorage, InMemory, Place, SetColumnsMut, StructureSet,
+    Geometry, GeometryStorage, InMemory, Place, SetColumnsMut, SetGeometryMut, StructureSet,
     StructureSetError,
 };
 
@@ -254,7 +254,7 @@ impl Ensemble {
     /// A dimension-preserving editor for one geometry, as
     /// [`StructureSet::get_mut`] gives it; the geometry stays a sample or
     /// not.
-    pub fn get_mut(&mut self, index: usize) -> Option<GeometryMut<'_>> {
+    pub fn get_mut(&mut self, index: usize) -> Option<SetGeometryMut<'_>> {
         self.set.get_mut(index)
     }
 
@@ -337,8 +337,10 @@ impl Ensemble {
         Ok(self.distribution.push_state(index, state, log_weight))
     }
 
-    /// Removes and returns one geometry, with its place and its sample,
-    /// shifting later geometries and samples down.
+    /// Removes and returns one geometry, with its place, its sample, and
+    /// its row, shifting later geometries and samples down. The geometry
+    /// carries its row's cells as owner values, as
+    /// [`StructureSet::remove`] gives it.
     ///
     /// Removing the only sample of a state removes the state, shifting later
     /// states down. The representative of a state with other samples cannot

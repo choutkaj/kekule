@@ -221,8 +221,9 @@ impl MemoryTrajectoryWriter {
             );
             self.set.set_order(Some(Order::Time(axis)))?;
         }
-        self.set
-            .push(frame.payload().clone(), Some(frame.place()))?;
+        // The frame's row moves into the set's row, as its own values do.
+        let geometry = frame.payload().clone().with_row(frame.row());
+        self.set.push(geometry, Some(frame.place()))?;
         Ok(())
     }
 }

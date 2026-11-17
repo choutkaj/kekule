@@ -320,8 +320,7 @@ fn structure_set_perception_preserves_geometries_and_set_properties() {
     // Bond rows exist once the member is bound to the set's topology.
     set.get_mut(0)
         .unwrap()
-        .properties_mut()
-        .bonds_mut()
+        .bond_properties_mut()
         .insert(key(), PropertyColumn::Int(vec![Some(12); 6]))
         .unwrap();
     set.properties_mut()

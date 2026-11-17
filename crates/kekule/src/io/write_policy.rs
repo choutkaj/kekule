@@ -2,7 +2,6 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField, LimitExceeded,
 };
-use crate::properties::PropertyTable;
 use crate::structure::{Order, Place, SetContext, StructureKind, StructureSet, StructureView};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
@@ -227,6 +226,9 @@ pub(crate) struct Carries {
     pub(crate) sites: bool,
     /// A geometry's or frame's own properties.
     pub(crate) properties: bool,
+    /// A set geometry's row of the set's columns. A writer that carries it
+    /// reports the cells it leaves out itself.
+    pub(crate) columns: bool,
 }
 
 impl Carries {
@@ -240,6 +242,7 @@ impl Carries {
         forces: false,
         sites: false,
         properties: false,
+        columns: false,
     };
 }
 
@@ -318,9 +321,10 @@ impl StatePolicies {
         {
             fields.push(GeometryField::SetProperties);
         }
-        if context
-            .and_then(SetContext::set_columns)
-            .is_some_and(PropertyTable::has_data)
+        if !carries.columns
+            && context
+                .and_then(SetContext::row)
+                .is_some_and(|row| !row.is_empty())
         {
             fields.push(GeometryField::SetColumns);
         }
@@ -580,7 +584,7 @@ fn frame_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> 
     .filter_map(|(present, field)| present.then_some(field))
 }
 
-/// The set-wide state of `set` that only the native format carries, in
+/// The set-wide state of `set` that a multi-model format cannot carry, in
 /// checking order: its properties, then its columns. An empty set has none.
 pub(crate) fn set_fields(set: &StructureSet) -> Vec<GeometryField> {
     if set.is_empty() {
@@ -602,7 +606,8 @@ pub(crate) fn set_fields(set: &StructureSet) -> Vec<GeometryField> {
 /// [`UnrepresentablePolicy::Fail`], returns the 1-based number of the first
 /// geometry with such properties and the field, geometry 1 for the set's.
 /// With [`UnrepresentablePolicy::Omit`], records the omissions, the set's
-/// counting every geometry.
+/// properties counting every geometry and its columns every geometry with
+/// cells.
 pub(crate) fn record_structure_set_properties(
     set: &StructureSet,
     policy: UnrepresentablePolicy,
@@ -621,10 +626,15 @@ pub(crate) fn record_structure_set_properties(
         return Ok(());
     }
     for field in set_fields {
-        omissions.record(WriteOmission::GeometryState {
-            field,
-            geometries: set.len(),
-        });
+        // Columns count the geometries with cells, as each geometry's check
+        // counts them.
+        let geometries = match field {
+            GeometryField::SetColumns => (0..set.len())
+                .filter(|&index| set.row(index).is_some_and(|row| !row.is_empty()))
+                .count(),
+            _ => set.len(),
+        };
+        omissions.record(WriteOmission::GeometryState { field, geometries });
     }
     for geometry in set {
         for field in property_fields(geometry.as_structure_view()) {

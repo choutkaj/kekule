@@ -18,6 +18,12 @@ use kekule::traj::{
 };
 use kekule::units::{Quantity, CANONICAL_TIME_UNIT};
 
+/// A set's geometry as it leaves the set, carrying its row's cells as owner
+/// values, as a frame streamed from the set does.
+pub(crate) fn detached(view: GeometryView<'_>) -> Geometry {
+    Geometry::from_structure(view.to_structure())
+}
+
 /// A frame a test expects or a reader decodes: a geometry with its time and
 /// MD step, compared as a whole.
 #[derive(Debug, Clone, PartialEq)]
@@ -56,14 +62,15 @@ impl Frame {
         }
     }
 
-    /// A geometry of a set as a frame: the time and step of a time order.
+    /// A geometry of a set as a frame: the time and step of a time order,
+    /// and its row's cells as owner values.
     pub(crate) fn of_set_geometry(view: GeometryView<'_>) -> Self {
         let (time, step) = match view.place() {
             Some(Place::Time { time, step }) => (time, step),
             _ => (None, None),
         };
         Self {
-            geometry: view.payload().clone(),
+            geometry: detached(view),
             time,
             step,
         }

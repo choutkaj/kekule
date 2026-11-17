@@ -72,7 +72,8 @@ use crate::diagnostics::{
 };
 use crate::io::write_policy::StatePolicies;
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::properties::{GeometryProperties, OwnerProperties, PropertyKey, PropertyValue};
+use crate::properties::{OwnerProperties, PropertyKey, PropertyValue};
+use crate::structure::RowView;
 use crate::topology::Topology;
 use crate::traj::io::DecodedGeometry;
 use crate::traj::{
@@ -83,6 +84,7 @@ use crate::units::{
     Quantity, CANONICAL_LENGTH_UNIT, DIMENSIONLESS, KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER,
     NANOMETER_PER_PICOSECOND, PICOSECOND,
 };
+use std::borrow::Cow;
 
 use super::codec::{
     frame_error, header_error, limit_error, read_exact, read_operation, validate_atom_count,

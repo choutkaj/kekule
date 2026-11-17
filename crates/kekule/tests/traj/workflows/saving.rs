@@ -8,7 +8,7 @@ use std::{
 };
 
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Forces, GeometryView, Positions, StructureSet, Velocities};
+use kekule::structure::{Forces, GeometryIndex, GeometryView, Positions, StructureSet, Velocities};
 use kekule::traj::io::dcd::DcdWriteOptions;
 use kekule::traj::io::trr::{TrrScalarPrecision, TrrWriteOptions};
 use kekule::traj::io::{
@@ -539,16 +539,14 @@ fn complete_loaded_and_streaming_workflows_save_equivalent_frames() {
     let topology = selected.shared_topology();
     for index in 0..selected.len() {
         selected
-            .get_mut(index)
-            .unwrap()
-            .properties_mut()
-            .owner_mut()
-            .insert(
+            .columns_mut()
+            .set_value(
                 PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap(),
-                PropertyValue::Real {
+                GeometryIndex::new(index),
+                Some(PropertyValue::Real {
                     value: 0.0,
                     unit: DIMENSIONLESS,
-                },
+                }),
             )
             .unwrap();
     }

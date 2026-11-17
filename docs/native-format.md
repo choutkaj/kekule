@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it has no columns and no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -336,6 +336,8 @@ time order stores times, steps, or both, each for every geometry; a step order
 a step per geometry; a coordinate order a coordinate per geometry in its unit,
 stored as property units are. Times and coordinates are finite. A set's
 columns are a property table with one row per geometry, in geometry order.
+They hold the geometries' scalars, so a set's geometry has an empty owner
+map, and the reader rejects one that has entries.
 
 A sampling record stores the sampled state's temperature in K and, in the
 isothermal-isobaric ensemble, its pressure in bar, both finite and positive;

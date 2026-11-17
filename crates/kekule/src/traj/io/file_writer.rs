@@ -651,10 +651,12 @@ impl Drop for FileTrajectoryWriter {
 /// and the extension names none, and
 /// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
 /// format stores, which must be cleared first: set properties
-/// ([`GeometryField::SetProperties`]), set columns
-/// ([`GeometryField::SetColumns`]), a sampling record
+/// ([`GeometryField::SetProperties`]), a sampling record
 /// ([`GeometryField::SetSampling`]), and a step or coordinate order
 /// ([`GeometryField::OrderStep`], [`GeometryField::OrderCoordinate`]).
+/// Each geometry's row of the set's columns is written where the format
+/// carries it, as a TRR frame's lambda, and is otherwise left out or
+/// refused under the properties policy ([`GeometryField::SetColumns`]).
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
 /// No file is published on error.
@@ -733,14 +735,18 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
     Ok(report)
 }
 
-/// Fails for structure set state no trajectory format stores: set properties,
-/// set columns, a sampling record, and a step or coordinate order.
+/// Fails for structure set state no trajectory format stores: set
+/// properties, a sampling record, and a step or coordinate order. Each
+/// frame's writer decides about its row of the set's columns.
 fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
-    let field = set_fields(set).first().copied().or(match set.order() {
-        Some(Order::Step(_)) => Some(GeometryField::OrderStep),
-        Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
-        _ => None,
-    });
+    let field = set_fields(set)
+        .into_iter()
+        .find(|&field| field != GeometryField::SetColumns)
+        .or(match set.order() {
+            Some(Order::Step(_)) => Some(GeometryField::OrderStep),
+            Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
+            _ => None,
+        });
     field.map_or(Ok(()), |field| {
         Err(TrajectoryIoError::unsupported_field(field))
     })

@@ -92,8 +92,7 @@ fn annotated() -> StructureSet {
         // Bond rows exist once the geometry is bound to the topology.
         set.get_mut(index as usize)
             .unwrap()
-            .properties_mut()
-            .bonds_mut()
+            .bond_properties_mut()
             .insert(
                 PropertyKey::new("bond").unwrap(),
                 PropertyColumn::Int(vec![Some(4), Some(5)]),
@@ -153,8 +152,14 @@ fn owned_frames_are_complete_and_independent_and_replacement_is_transactional() 
     assert_eq!(owned.velocities(), old.velocities());
     assert_eq!(owned.forces(), old.forces());
     assert_eq!(owned.cell(), old.cell());
-    assert_eq!(original.replace(1, owned.clone()).unwrap(), old);
+    // The replaced frame leaves with its row's cells; the replacement has
+    // none of its own, so the row keeps them.
+    let row = original.row(1).unwrap().to_properties();
+    let replaced = original.replace(1, owned.clone()).unwrap();
+    assert_eq!(replaced.positions(), old.positions());
+    assert_eq!(replaced.properties().owner(), &row);
     assert_eq!(original.get(1).unwrap().payload(), &owned);
+    assert_eq!(original.row(1).unwrap().to_properties(), row);
     // The replacement takes the replaced frame's time and step.
     assert_eq!(original.get(1).unwrap().place(), timed(0.5, 10));
     let before = format!("{original:?}");
@@ -173,7 +178,7 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
     let mut set = annotated();
     let key = PropertyKey::new("bond").unwrap();
     let before = set.get(0).unwrap().payload().clone();
-    let smaller = Geometry::new(Positions::zeros(2)).properties().clone();
+    let short = PropertyKey::new("short").unwrap();
     {
         let mut geometry = set.get_mut(0).unwrap();
         assert!(geometry.set_velocities(Some(Velocities::zeros(4))).is_err());
@@ -181,7 +186,10 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
         assert!(geometry
             .set_positions(Quantity::new([Point3::origin(); 2], NANOMETER))
             .is_err());
-        assert!(geometry.set_properties(smaller).is_err());
+        assert!(geometry
+            .atom_properties_mut()
+            .insert(short, PropertyColumn::Int(vec![None; 2]))
+            .is_err());
     }
     assert_eq!(
         set.set_place(0, timed(f64::NAN, 0)),
@@ -191,19 +199,18 @@ fn stored_editor_keeps_dimensions_even_after_columns_are_removed_or_editor_is_fo
     assert_eq!(set.get(0).unwrap().place(), timed(0.0, 0));
     {
         let mut geometry = set.get_mut(0).unwrap();
-        let mut properties = geometry.properties_mut();
-        properties.bonds_mut().remove(&key);
-        assert!(properties
-            .bonds_mut()
+        geometry.bond_properties_mut().remove(&key);
+        assert!(geometry
+            .bond_properties_mut()
             .insert(key.clone(), PropertyColumn::Int(vec![None; 1]))
             .is_err());
-        assert_eq!(properties.bonds().len(), 2);
-        properties
-            .bonds_mut()
+        assert_eq!(geometry.properties().bonds().len(), 2);
+        geometry
+            .bond_properties_mut()
             .insert(key.clone(), PropertyColumn::Int(vec![None; 2]))
             .unwrap();
-        properties
-            .bonds_mut()
+        geometry
+            .bond_properties_mut()
             .set_value(key, TopologyBondIndex::new(1), Some(PropertyValue::Int(9)))
             .unwrap();
         geometry
@@ -225,7 +232,11 @@ fn consuming_extraction_moves_complete_frames() {
     let set = annotated();
     let topology = set.shared_topology();
     let order = set.order().cloned();
-    let expected: Vec<_> = set.iter().map(|frame| frame.payload().clone()).collect();
+    // Each frame leaves the set with its row's cells as its own values.
+    let expected: Vec<_> = set
+        .iter()
+        .map(|frame| Geometry::from_structure(frame.to_structure()))
+        .collect();
     let pointers: Vec<_> = set
         .iter()
         .map(|frame| {
