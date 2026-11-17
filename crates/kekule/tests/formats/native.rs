@@ -18,15 +18,15 @@ use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Place, Positions, Samples,
-    StateData, Structure, StructureSet, StructureSetError, ThermodynamicState, TimeAxis,
+    Sampling, StateData, Structure, StructureSet, StructureSetError, ThermodynamicState, TimeAxis,
     Velocities, WeightModel,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
 };
 use kekule::units::{
-    Quantity, ANGSTROM, DALTON, DEGREE, ELEMENTARY_CHARGE, KILOJOULE_PER_MOLE, NANOMETER,
-    PICOSECOND,
+    Quantity, ANGSTROM, BAR, DALTON, DEGREE, ELEMENTARY_CHARGE, KELVIN, KILOJOULE_PER_MOLE,
+    NANOMETER, PICOSECOND,
 };
 use kekule::{mmcif, pdb, smiles};
 
@@ -588,6 +588,7 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
     }
     assert_eq!(decoded.order(), source.order());
     assert_eq!(decoded.columns(), source.columns());
+    assert_eq!(decoded.sampling(), source.sampling());
 }
 
 /// Asserts that `decoded` holds the set of `source` and its distribution bit
@@ -975,6 +976,51 @@ fn structure_set_descriptions_store_the_number_of_geometries() {
     for len in 0..bytes.len() {
         assert!(native::read(&bytes[..len], NativeReadOptions::default()).is_err());
     }
+}
+
+#[test]
+fn sets_and_descriptions_keep_their_sampling_record() {
+    let mut set = rich_set();
+    set.set_order(Some(Order::Step(vec![0, 500, 1000])))
+        .unwrap();
+    let state = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(300.0 + f64::EPSILON * 256.0, KELVIN),
+        Quantity::new(1e-300, BAR),
+    )
+    .unwrap();
+    let sampling = Sampling::new(state)
+        .with_from_step(u64::MAX)
+        .with_method("GaMD dual boost")
+        .with_potential_energy(key("potential_energy"))
+        .unwrap()
+        .with_bias([key("bias"), key("bias.dihedral")])
+        .unwrap();
+    set.set_sampling(Some(sampling.clone())).unwrap();
+    let decoded = round_trip_set(&set);
+    let state = decoded.sampling().unwrap().state();
+    assert_eq!(
+        state.temperature().value().to_bits(),
+        sampling.state().temperature().value().to_bits()
+    );
+    assert_eq!(
+        state.pressure().map(|pressure| pressure.value().to_bits()),
+        Some(1e-300_f64.to_bits())
+    );
+
+    let description = round_trip(&StructureSetDescription::of(&set))
+        .into_structure_set_description()
+        .unwrap();
+    assert_eq!(description.sampling(), Some(&sampling));
+    let ensemble = Ensemble::uniform(set.clone());
+    assert_eq!(
+        round_trip_ensemble(&ensemble).set().sampling(),
+        Some(&sampling)
+    );
+
+    // A canonical record without optional fields.
+    let canonical = ThermodynamicState::canonical(Quantity::new(310.0, KELVIN)).unwrap();
+    set.set_sampling(Some(Sampling::new(canonical))).unwrap();
+    round_trip_set(&set);
 }
 
 #[test]

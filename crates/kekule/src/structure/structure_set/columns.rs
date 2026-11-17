@@ -5,8 +5,9 @@ use crate::properties::{
     LiveRows, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyTableMut,
     PropertyValue,
 };
-
-use crate::units::{Quantity, CANONICAL_TIME_UNIT, DIMENSIONLESS};
+use crate::structure::sampling::is_energy;
+use crate::structure::Sampling;
+use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TIME_UNIT, DIMENSIONLESS};
 
 use super::{GeometryStorage, Order, Requirement, StructureSet, StructureSetError};
 
@@ -57,9 +58,15 @@ pub enum ColumnRef {
 /// transactional, as [`PropertyTableMut`]'s: on error the columns are
 /// unchanged. A failure of the table's own checks is
 /// [`StructureSetError::Column`].
+/// A column the set's [`Sampling`] record names stays a real column of
+/// energies: an edit that would put other values in it fails with
+/// [`StructureSetError::SamplingColumn`], and removing it fails with
+/// [`StructureSetError::ColumnInUse`]. Clearing all its cells is allowed; the
+/// column is then absent, which the record reads as missing values.
 #[derive(Debug)]
 pub struct SetColumnsMut<'a> {
     table: PropertyTableMut<'a, GeometryIndex>,
+    sampling: Option<&'a Sampling>,
 }
 
 impl std::ops::Deref for SetColumnsMut<'_> {
@@ -76,6 +83,8 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
+    /// [`StructureSetError::SamplingColumn`] for values other than real
+    /// energies in a column the sampling record names, and
     /// [`StructureSetError::Column`] with the errors of
     /// [`PropertyTableMut::insert`].
     pub fn insert(
@@ -83,6 +92,12 @@ impl SetColumnsMut<'_> {
         key: PropertyKey,
         column: PropertyColumn,
     ) -> Result<Option<PropertyColumn>, StructureSetError> {
+        if let Some(sampling) = self.sampling {
+            let energies = matches!(column, PropertyColumn::Real { unit, .. } if is_energy(unit));
+            if !energies && !column.is_all_missing() && sampling.names(&key) {
+                return Err(StructureSetError::SamplingColumn { key });
+            }
+        }
         Ok(self.table.insert(key, column)?)
     }
 
@@ -90,11 +105,17 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
-    /// None for now: every column can be removed.
+    /// [`StructureSetError::ColumnInUse`] for a present column the sampling
+    /// record names.
     pub fn remove(
         &mut self,
         key: &PropertyKey,
     ) -> Result<Option<PropertyColumn>, StructureSetError> {
+        if self.table.get(key).is_some()
+            && self.sampling.is_some_and(|sampling| sampling.names(key))
+        {
+            return Err(StructureSetError::ColumnInUse { key: key.clone() });
+        }
         Ok(self.table.remove(key))
     }
 
@@ -102,8 +123,14 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
-    /// None for now: every column can be removed.
+    /// [`StructureSetError::ColumnInUse`] when a column the sampling record
+    /// names is present.
     pub fn clear(&mut self) -> Result<(), StructureSetError> {
+        if let Some(sampling) = self.sampling {
+            if let Some(key) = sampling.columns().find(|key| self.table.get(key).is_some()) {
+                return Err(StructureSetError::ColumnInUse { key: key.clone() });
+            }
+        }
         self.table.clear();
         Ok(())
     }
@@ -113,6 +140,8 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
+    /// [`StructureSetError::SamplingColumn`] for a value other than a real
+    /// energy in a column the sampling record names, and
     /// [`StructureSetError::Column`] with the errors of
     /// [`PropertyTableMut::set_value`].
     pub fn set_value(
@@ -121,6 +150,9 @@ impl SetColumnsMut<'_> {
         geometry: GeometryIndex,
         value: Option<PropertyValue>,
     ) -> Result<(), StructureSetError> {
+        if let Some(sampling) = self.sampling {
+            sampling.check_value(&key, value.as_ref())?;
+        }
         Ok(self.table.set_value(key, geometry, value)?)
     }
 
@@ -144,13 +176,18 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::Column`] with the errors of
-    /// [`PropertyTableMut::set_values`].
+    /// As [`Self::set_value`] for the first update that fails.
     pub fn set_values(
         &mut self,
         key: PropertyKey,
         values: impl IntoIterator<Item = (GeometryIndex, Option<PropertyValue>)>,
     ) -> Result<(), StructureSetError> {
+        let values = values.into_iter().collect::<Vec<_>>();
+        if let Some(sampling) = self.sampling {
+            for (_, value) in &values {
+                sampling.check_value(&key, value.as_ref())?;
+            }
+        }
         Ok(self.table.set_values(key, values)?)
     }
 }
@@ -189,6 +226,7 @@ impl<S: GeometryStorage> StructureSet<S> {
     pub fn columns_mut(&mut self) -> SetColumnsMut<'_> {
         SetColumnsMut {
             table: PropertyTableMut::new(&mut self.columns, LiveRows::All, None),
+            sampling: self.sampling.as_ref(),
         }
     }
 
@@ -203,7 +241,9 @@ impl<S: GeometryStorage> StructureSet<S> {
     /// asked for: `TimeOrder` or `Times` for [`ColumnRef::Time`], `Steps` for
     /// [`ColumnRef::Step`], and `CoordinateOrder` for
     /// [`ColumnRef::Coordinate`]; [`StructureSetError::MissingColumn`] for a
-    /// key the set has no column of; and
+    /// key the set has no column of and its sampling record does not name (a
+    /// named column without values reads as missing energies, in kJ/mol);
+    /// and
     /// [`StructureSetError::NonNumericColumn`] for a boolean or string column.
     pub fn column_values(
         &self,
@@ -237,6 +277,13 @@ impl<S: GeometryStorage> StructureSet<S> {
                 ))
             }
             ColumnRef::Key(key) => match self.columns.get(key) {
+                None if self
+                    .sampling
+                    .as_ref()
+                    .is_some_and(|sampling| sampling.names(key)) =>
+                {
+                    Ok(Quantity::new(vec![None; self.len()], CANONICAL_ENERGY_UNIT))
+                }
                 None => Err(StructureSetError::MissingColumn { key: key.clone() }),
                 Some(PropertyColumn::Real { unit, values }) => {
                     Ok(Quantity::new(values.clone(), *unit))

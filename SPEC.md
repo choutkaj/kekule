@@ -20,9 +20,11 @@ cross-module rule.
 | `Hierarchy` | Chains, residues, and atom sites over live instance atoms, with source labels and author identifiers | Atoms, bonds, or molecule boundaries |
 | `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight |
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
-| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, and per-geometry columns (`PropertyTable<GeometryIndex>`) | An order value on a geometry; a weight, a state, or a distribution; a codec's frame state or a reader's failure types |
+| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), and an optional `Sampling` record | An order value on a geometry; a weight, a target state, or a distribution; a codec's frame state or a reader's failure types |
+| `Sampling` | The sampled `ThermodynamicState`, the first sampled step, and the keys of the set's potential-energy and bias columns | Column values; a weight or a target state; a method's parameters |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
 | `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, or Boltzmann populations), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
+| `FrameTable` | A run's per-step records keyed by MD step: typed columns, a time column, and a `Sampling` record | Geometries; weights |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
 
 ### Vocabulary
@@ -370,11 +372,11 @@ coordinate algorithms and writers share kernels across structures,
 geometries, frames, and buffers, and read the geometry's velocities and forces
 from the view. A view's `kind()` is `StructureKind::Standalone` or
 `StructureKind::InSet` with a `SetContext` reporting the geometry's place and
-its set's properties and columns, so writers and reductions never lose that state
-silently. Structure and trajectory writers hold a geometry's or frame's
+its set's properties, columns, and sampling record, so writers and reductions
+never lose that state silently. Structure and trajectory writers hold a geometry's or frame's
 place, time, step, velocities, forces, occupancies, and B factors to one
-policy, `geometry_metadata`, per-atom, per-bond, own, and set properties and
-set columns to a second, `properties`, and a periodic cell to a third, `cell`; each fails by
+policy, `geometry_metadata`, per-atom, per-bond, own, and set properties, set columns, and a
+set's sampling record to a second, `properties`, and a periodic cell to a third, `cell`; each fails by
 default. Owned projections
 (`to_structure`) materialize a structure with the whole geometry while sharing
 the topology. A set built from structures (`from_structures`) consumes them
@@ -443,6 +445,16 @@ row count, and `column_values` reads a real or integer column, or the order's
 times, steps, or coordinates (`ColumnRef`), as one number per geometry. Only
 the native format stores them; other writers treat them as set properties.
 
+How a set was sampled is recorded too, in one optional `Sampling` record: the
+sampled `ThermodynamicState`, the first step whose geometry samples it
+(earlier steps equilibrate or prepare the bias), the column of the unbiased
+potential energy, an optional label of the method, and the bias columns,
+whose sum is each geometry's bias. Kekule knows no method: its parameters are
+set properties. The named columns are real energy columns; a named column
+without values reads as missing energies, since selecting may leave one
+empty. Removing a named column fails until the record is removed. The
+operations that keep columns keep the record.
+
 A distribution is inferred, so it belongs to `Ensemble` and never to the set.
 Reweighting a biased run, MBAR, clustering into states, and Boltzmann
 populations from energies are interpretations, and one set often carries
@@ -490,9 +502,10 @@ geometry copies that geometry alone. Set and ensemble operations fail with one
 `StructureSetError`, whose `Missing` variant names the `Requirement` an
 operation lacks; a geometry's own edits fail with `GeometryError`.
 
-Kekule records no runs or segments: replica exchange, metadynamics walkers,
-umbrella windows, and repeated runs are the concern of the code that produced
-them, and a pooled weighting across them is still one ensemble. `Order`
+A set has one sampling record, so it holds one run's sampling. Pooling
+replica-exchange replicas, metadynamics walkers, umbrella windows, or repeated
+runs will name a per-geometry state column; kekule records none yet, and a
+pooled weighting is still one ensemble. `Order`
 holds one coordinate, so a multi-dimensional scan uses `Order::Step` with the
 coordinate values as set columns.
 
@@ -533,6 +546,20 @@ that no set holds. `StructureSetRead` is the random access to geometries;
 `FrameBuffer`.
 `read_structure_set` reads a file as a structure set of a time order, and
 `write_structure_set` writes a set of a time order or of none.
+
+A frame table (`kekule::traj::frames`) holds a run's per-step records, such as
+energies and bias, as tab-separated text beside its trajectory, with the
+run's `Sampling` record in its header. Its rows are keyed by MD step, so the
+trajectory's frames, usually fewer than the rows, join it by step:
+`StructureSet::join_frames` puts the real and integer columns into the set's
+columns and installs the sampling record, refusing another. Joining again
+after the table grew fills the new cells. A writer writes and flushes whole
+rows, so a crash or power loss leaves at most a pending tail that readers
+leave out. `append_frame_table` continues a checkpointed run's table: it
+requires the same header, cuts the rows after the checkpoint's step, and the
+file then equals one written straight through. A `FrameTableReader` reads the
+rows appended since its last read and fails when bytes it read changed. See
+[the frame-table format](docs/frame-table.md).
 
 A trajectory represents one fixed-topology epoch. Changing chemistry or
 hierarchy requires a new topology and explicitly constructed geometry for the
@@ -862,7 +889,7 @@ The public modules of `kekule`, by domain:
 | Systems and structures | `topology` (`edit`), `structure` (`measure`, `placement`), `solvation` |
 | Analysis | `alignment`, `clustering`, `statistics`, `dssp`, `interactions` |
 | Formats | `smiles`, `molfile`, `sdf`, `mmcif`, `pdb`, `xyz`, `macromolecular`, `components`, `native` |
-| Trajectories | `traj` (`io` with `xyz`, `dcd`, `trr`, `xtc`; `periodic`) |
+| Trajectories | `traj` (`io` with `xyz`, `dcd`, `trr`, `xtc`; `periodic`; `frames`) |
 
 A type lives in the module of the domain that owns it: perception state with
 its perception step, represented stereo in `stereo`, derived per-molecule

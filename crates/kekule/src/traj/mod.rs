@@ -158,10 +158,18 @@
 //! the kernels of [`periodic`] and [`FrameSuperposer`].
 //! [`crate::structure::StructureSet::from_reader`] loads chosen geometries of any
 //! reader, by range, stride, or explicit indices, into memory.
+//!
+//! # Frame tables
+//!
+//! [`frames`] writes, continues, reads, and follows a run's per-step
+//! records, such as energies and bias, in a text file beside the
+//! trajectory, and joins them into a set's columns by step with
+//! [`crate::structure::StructureSet::join_frames`].
 mod processed;
 mod superposer;
 mod trajectory;
 
+pub mod frames;
 pub mod io;
 pub mod periodic;
 

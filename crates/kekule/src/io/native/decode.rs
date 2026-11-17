@@ -20,7 +20,7 @@ use super::encode::{
 use super::{
     DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
     StructureSetDescription, COLUMNS_SINCE, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
-    NATIVE_MAGIC, WEIGHT_MODEL_SINCE,
+    NATIVE_MAGIC, SAMPLING_SINCE, WEIGHT_MODEL_SINCE,
 };
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
@@ -47,8 +47,8 @@ use crate::properties::{
     PropertyTable, PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
-    Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, Weights,
+    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, Sampling,
+    StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, Weights,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, MoleculeClass,
@@ -1365,6 +1365,11 @@ impl<R: Read> Decoder<'_, R> {
         } else {
             PropertyTable::new(count)
         };
+        let sampling = if self.version >= SAMPLING_SINCE && self.tag("sampling")? {
+            Some(self.sampling()?)
+        } else {
+            None
+        };
         let distribution = if ensemble {
             Some(self.distribution(count)?)
         } else {
@@ -1377,6 +1382,7 @@ impl<R: Read> Decoder<'_, R> {
                     .with_properties(owner)
                     .with_order(order)
                     .and_then(|description| description.with_columns(columns))
+                    .and_then(|description| description.with_sampling(sampling))
                     .map_err(|error| self.structure_error(error))?;
                 return Ok((Decoded::External(Box::new(description)), distribution));
             }
@@ -1399,7 +1405,44 @@ impl<R: Read> Decoder<'_, R> {
         set.set_order(order)
             .map_err(|error| self.structure_error(error))?;
         set.set_columns(columns);
+        set.set_sampling(sampling)
+            .map_err(|error| self.structure_error(error))?;
         Ok((Decoded::Inline(Box::new(set)), distribution))
+    }
+
+    /// A set's sampling record.
+    fn sampling(&mut self) -> Result<Sampling> {
+        let state = self.thermodynamic_state()?;
+        let from_step = self.u64()?;
+        let potential_energy = self.opt_str()?;
+        let method = self.opt_str()?;
+        let count = self.count(self.options.max_items(), Resource::Values)?;
+        let mut bias = Vec::with_capacity(count.min(CHUNK_BYTES));
+        for _ in 0..count {
+            let text = self.str()?;
+            bias.push(self.column_key(text)?);
+        }
+        let mut sampling = Sampling::new(state).with_from_step(from_step);
+        if let Some(method) = method {
+            sampling = sampling.with_method(method);
+        }
+        if let Some(text) = potential_energy {
+            let key = self.column_key(text)?;
+            sampling = sampling
+                .with_potential_energy(key)
+                .map_err(|error| self.structure_error(error))?;
+        }
+        sampling
+            .with_bias(bias)
+            .map_err(|error| self.structure_error(error))
+    }
+
+    /// A column key the sampling record names.
+    fn column_key(&self, text: String) -> Result<PropertyKey> {
+        PropertyKey::new(text).map_err(|error| {
+            self.invalid("A stored column key is not valid.")
+                .with_source(error)
+        })
     }
 
     /// The order of a set of `count` geometries.

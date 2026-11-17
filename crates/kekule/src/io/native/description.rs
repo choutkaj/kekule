@@ -6,13 +6,14 @@ use std::sync::Arc;
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
-    Distribution, Ensemble, GeometryIndex, GeometryStorage, Order, StructureSet, StructureSetError,
+    Distribution, Ensemble, GeometryIndex, GeometryStorage, Order, Sampling, StructureSet,
+    StructureSetError,
 };
 use crate::topology::Topology;
 
 /// A structure set without its geometries: the topology, set properties,
-/// order, and columns of a set whose geometries are stored elsewhere, such as
-/// in a trajectory file, and the number of them.
+/// order, columns, and sampling record of a set whose geometries are stored
+/// elsewhere, such as in a trajectory file, and the number of them.
 ///
 /// A native structure set record whose geometries are external stores this.
 /// Writing one ([`NativeSource`](super::NativeSource) converts from it)
@@ -46,11 +47,12 @@ pub struct StructureSetDescription {
     geometry_count: usize,
     order: Option<Order>,
     columns: PropertyTable<GeometryIndex>,
+    sampling: Option<Sampling>,
 }
 
 impl StructureSetDescription {
     /// A description of `geometry_count` geometries of `topology`, unordered,
-    /// without set properties or columns.
+    /// without set properties, columns, or a sampling record.
     pub fn new(topology: impl Into<Arc<Topology>>, geometry_count: usize) -> Self {
         Self {
             topology: topology.into(),
@@ -58,11 +60,13 @@ impl StructureSetDescription {
             geometry_count,
             order: None,
             columns: PropertyTable::new(geometry_count),
+            sampling: None,
         }
     }
 
     /// The description of `set`, in memory or read from a file: its
-    /// topology, set properties, order, columns, and number of geometries.
+    /// topology, set properties, order, columns, sampling record, and number
+    /// of geometries.
     pub fn of<S: GeometryStorage>(set: &StructureSet<S>) -> Self {
         Self {
             topology: set.shared_topology(),
@@ -70,6 +74,7 @@ impl StructureSetDescription {
             geometry_count: set.len(),
             order: set.order().cloned(),
             columns: set.columns().clone(),
+            sampling: set.sampling().cloned(),
         }
     }
 
@@ -98,7 +103,9 @@ impl StructureSetDescription {
     /// # Errors
     ///
     /// [`StructureSetError::GeometryCountMismatch`] when the columns have
-    /// another number of rows than the description has geometries.
+    /// another number of rows than the description has geometries, and
+    /// [`StructureSetError::SamplingColumn`] when a column the sampling
+    /// record names holds other values than real energies.
     pub fn with_columns(
         mut self,
         columns: PropertyTable<GeometryIndex>,
@@ -108,14 +115,31 @@ impl StructureSetDescription {
                 LengthMismatch::new(Countable::Geometry, self.geometry_count, columns.len()),
             ));
         }
+        if let Some(sampling) = &self.sampling {
+            sampling.check_columns(&columns)?;
+        }
         self.columns = columns;
+        Ok(self)
+    }
+
+    /// Returns this description with a sampling record, or without one.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`StructureSet::set_sampling`], against the columns.
+    pub fn with_sampling(mut self, sampling: Option<Sampling>) -> Result<Self, StructureSetError> {
+        if let Some(sampling) = &sampling {
+            sampling.check_columns(&self.columns)?;
+        }
+        self.sampling = sampling;
         Ok(self)
     }
 
     /// This description for `geometry_count` geometries whose first
     /// [`Self::geometry_count`] are the geometries it describes, such as a
     /// trajectory file that grew after the description was saved, keeping
-    /// the set properties and the columns, whose new cells are missing. A
+    /// the set properties, the sampling record, and the columns, whose new
+    /// cells are missing. A
     /// saved order describes the geometries it was made for, so `order`
     /// replaces it: the longer set's order, or `None` for an unordered set.
     ///
@@ -172,6 +196,11 @@ impl StructureSetDescription {
     /// The columns of the geometries, one row per geometry.
     pub fn columns(&self) -> &PropertyTable<GeometryIndex> {
         &self.columns
+    }
+
+    /// The sampling record of the geometries, when there is one.
+    pub fn sampling(&self) -> Option<&Sampling> {
+        self.sampling.as_ref()
     }
 }
 

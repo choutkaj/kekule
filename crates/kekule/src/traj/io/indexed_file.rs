@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
     geometry_storage, Ensemble, Geometry, GeometryIndex, GeometryStorage, GeometryView, Order,
-    StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
+    Sampling, StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use crate::topology::Topology;
 use crate::traj::{SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader};
@@ -381,6 +381,10 @@ impl StructureSetRead for StructureSet<IndexedFile> {
 
     fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
         Some(StructureSet::columns(self))
+    }
+
+    fn sampling(&self) -> Option<&Sampling> {
+        StructureSet::sampling(self)
     }
 
     fn peek(&self, _index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {

@@ -24,7 +24,7 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   preserves properties at every scope with their units, molecular adjacency
   order, every geometry of a structure or structure set with its positions,
   cell, occupancies, B factors, velocities, and forces, a set's order (times and steps, steps, or
-  coordinates with their unit), its columns, and its owner properties, and an ensemble's
+  coordinates with their unit), its columns, its sampling record, and its owner properties, and an ensemble's
   distribution (samples, weights, each sample's state, each state's
   representative, energy, and owner properties, and the target). Interpretation reports
   round-trip field by field and compare equal. Floating-point values are
@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it has no columns; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it has no columns and no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -287,6 +287,10 @@ structure_set  := set_head geometries
 ensemble       := set_head distribution geometries
 distribution_record := geometry_count:count distribution
 set_head       := topology owner geometry_count:count order columns:table(geometry_count)
+                  sampling:opt sampling
+sampling       := temperature:f64 pressure:opt f64 from_step:u64
+                  potential_energy:opt str method:opt str
+                  bias_count:count bias:str[bias_count]
 order          := 0                                (none)
                | 1 times:opt [f64; geometry_count] steps:opt [u64; geometry_count]
                                                    (time)
@@ -330,6 +334,12 @@ a step per geometry; a coordinate order a coordinate per geometry in its unit,
 stored as property units are. Times and coordinates are finite. A set's
 columns are a property table with one row per geometry, in geometry order.
 
+A sampling record stores the sampled state's temperature in K and, in the
+isothermal-isobaric ensemble, its pressure in bar, both finite and positive;
+the first sampled step; the keys of the potential-energy column and the bias
+columns, each named once; and the method's label. The reader checks that a
+named column the table holds is a real column of energies.
+
 An ensemble is a structure set and a distribution over its geometries; a
 structure set record states no weights or states. A distribution's samples
 are every geometry, or the geometries that a strictly ascending list of indices
@@ -356,7 +366,7 @@ bounds its order and columns as stored geometries would, and such an ensemble
 record an `EnsembleDescription`, whose `geometry_count` bounds its distribution
 too. `StructureSetDescription::of` and `EnsembleDescription::of` describe a set
 or ensemble in memory or read from a trajectory file, so a host stores a file's
-order, columns, and distribution beside the file. An interpreted structure set stores
+order, columns, sampling record, and distribution beside the file. An interpreted structure set stores
 its geometries inline.
 
 ### Interpretation reports

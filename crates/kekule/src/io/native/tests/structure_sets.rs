@@ -74,16 +74,18 @@ struct Layout {
 
 impl Layout {
     fn of(bytes: &[u8]) -> Self {
-        // The steps follow the order kind, and an empty column table (its
-        // row and column counts) follows them; then the distribution:
-        // the samples tag, the sample count and two samples, the weights tag
-        // and two log weights, two assignments, the state count, and the
-        // first state's representative. The target's temperature and its
-        // absent pressure end the distribution.
+        // The steps follow the order kind, an empty column table (its row
+        // and column counts) follows them, and the absent sampling record's
+        // tag follows it; then the distribution: the samples tag, the sample
+        // count and two samples, the weights tag and two log weights, two
+        // assignments, the state count, and the first state's representative.
+        // The target's temperature and its absent pressure end the
+        // distribution.
         let target = find(bytes, &TEMPERATURE.to_le_bytes());
         let steps = find(bytes, &STEPS[0].to_le_bytes());
         assert_eq!(bytes[steps - 1], 2, "a step order");
-        let start = steps + 24 + 8;
+        assert_eq!(bytes[steps + 32], 0, "no sampling record");
+        let start = steps + 24 + 8 + 1;
         assert_eq!(bytes[start], 1, "a subset distribution");
         let layout = Self {
             listed: start + 1,
@@ -316,14 +318,16 @@ fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
     assert_eq!(plain[12], 9);
     assert_eq!(bytes[13..plain.len() - 8], plain[13..plain.len() - 8]);
 
-    // An empty column table follows the two steps, the geometries tag
-    // follows it, and the first geometry's positions follow that: a
-    // structure set record holds no distribution.
+    // An empty column table follows the two steps, the absent sampling
+    // record's tag and the geometries tag follow it, and the first
+    // geometry's positions follow that: a structure set record holds no
+    // distribution.
     let steps = find(&bytes, &STEPS[0].to_le_bytes());
     assert_eq!(bytes[steps + 8..steps + 16], STEPS[1].to_le_bytes());
     assert_eq!(bytes[steps + 16..steps + 20], 2u32.to_le_bytes(), "rows");
     assert_eq!(bytes[steps + 20..steps + 24], 0u32.to_le_bytes(), "columns");
-    let geometries = steps + 24;
+    assert_eq!(bytes[steps + 24], 0, "no sampling record");
+    let geometries = steps + 25;
     assert_eq!(bytes[geometries], 0);
     let first = set.get(0).unwrap().positions().values().value()[0];
     let stored = [first.x, first.y, first.z]

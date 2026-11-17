@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::properties::{OwnerProperties, PropertyTable};
-use crate::structure::{GeometryError, GeometryIndex};
+use crate::structure::{GeometryError, GeometryIndex, Sampling};
 use crate::topology::Topology;
 
 use super::{Geometry, GeometryView, Order};
@@ -27,9 +27,11 @@ use crate::structure::StructureView;
 /// bound to the topology, and fails with [`StructureSetReadError::Geometry`]
 /// when one is not; it relies on the rest:
 ///
-/// - [`Self::len`], [`Self::order`], and [`Self::columns`] change only
-///   through `&mut` access to the reader. The order and the columns describe
-///   [`Self::len`] geometries, as a set's do.
+/// - [`Self::len`], [`Self::order`], [`Self::columns`], and
+///   [`Self::sampling`] change only through `&mut` access to the reader. The
+///   order and the columns describe [`Self::len`] geometries, as a set's do,
+///   and every column the sampling record names is a real column of energies
+///   or absent.
 /// - [`Self::read`] of an index below [`Self::len`] returns the same geometry
 ///   every time, bound to [`Self::topology`]: it has one position per atom
 ///   and one property row per atom and bond. An index past the last fails
@@ -80,6 +82,13 @@ pub trait StructureSetRead: Send + Sync + fmt::Debug {
         None
     }
 
+    /// The set's sampling record, for a reader that has one; `None` by
+    /// default. [`StructureSet::from_reader`](super::StructureSet::from_reader)
+    /// keeps it.
+    fn sampling(&self) -> Option<&Sampling> {
+        None
+    }
+
     /// Geometry `index` lent by reference, when the reader holds it: always
     /// for a set in memory, never for one in a file. `None` past the last
     /// geometry.
@@ -120,6 +129,10 @@ macro_rules! forward_structure_set_read {
 
             fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
                 (**self).columns()
+            }
+
+            fn sampling(&self) -> Option<&Sampling> {
+                (**self).sampling()
             }
 
             fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {

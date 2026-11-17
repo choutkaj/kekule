@@ -42,6 +42,8 @@
 //!   distribution; its operations fail with a [`StructureSetError`] too.
 //! - [`ThermodynamicState`]: a temperature and, in the isothermal-isobaric
 //!   ensemble, a pressure; the state a weight refers to.
+//! - [`Sampling`]: a set's sampling record, the state its geometries sample
+//!   from a step on and the columns of their potential energy and bias.
 //! - Borrowed access: [`StructureView`] is the common input of coordinate-dependent
 //!   kernels. Structures, geometries ([`GeometryView`]), and codec frames
 //!   ([`crate::traj::FrameView`]) all borrow as one without copying
@@ -140,6 +142,7 @@ pub mod measure;
 mod owned;
 pub mod placement;
 mod positions;
+pub(crate) mod sampling;
 pub(crate) mod scalars;
 mod structure_editor;
 mod structure_set;
@@ -159,6 +162,7 @@ pub use geometry::{Geometry, GeometryError, GeometryMut};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit};
 pub use owned::{Structure, StructureError};
 pub use positions::{DenseArrayError, Positions};
+pub use sampling::Sampling;
 pub use structure_editor::{
     StructureAppend, StructureAppendReport, StructureEditError, StructureEditor,
     StructureEditorProperties, StructureEditorPropertiesMut, StructureEditorTopologyMut,
