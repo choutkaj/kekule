@@ -7,11 +7,12 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
+use super::log_sum_exp;
 use crate::math::{Point3, PointGrid, Vector3};
 use crate::parallel::{Progress, Run};
 use crate::structure::{
-    log_sum_exp, visit_geometry, AsStructureView, Ensemble, GeometryStorage, StructureSet,
-    StructureSetRead, StructureSetReadError, StructureView,
+    visit_geometry, AsStructureView, Ensemble, GeometryStorage, StructureSet, StructureSetRead,
+    StructureSetReadError, StructureView,
 };
 use crate::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology, TopologyAtomIndex};
 use crate::units::{Quantity, UnitError, CANONICAL_LENGTH_UNIT};

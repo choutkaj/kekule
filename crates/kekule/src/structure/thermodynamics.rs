@@ -10,8 +10,8 @@ use crate::units::{
 ///
 /// A state is what a weight means something against: the state a run
 /// sampled, or the state an analysis reweights to. A state with a pressure
-/// is isothermal-isobaric (NpT) and one without is canonical (NVT). Weights
-/// are reweighted in temperature only; the pressure is a recorded fact.
+/// is isothermal-isobaric (NpT) and one without is canonical (NVT). The
+/// pressure is recorded, not reweighted.
 ///
 /// The temperature is finite and positive, and so is its thermal energy `RT`;
 /// the pressure is finite and positive. They are stored in
@@ -125,7 +125,9 @@ pub(crate) fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, Str
     }
 }
 
-/// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI.
+/// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI:
+/// [`constants::MOLAR_GAS_CONSTANT`](crate::units::constants::MOLAR_GAS_CONSTANT)
+/// in kilojoules.
 const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
 
 /// `R T` in [`CANONICAL_ENERGY_UNIT`] for a temperature in kelvin, when it is
@@ -134,3 +136,6 @@ pub(crate) fn thermal_energy(kelvin: f64) -> Option<f64> {
     let thermal_energy = MOLAR_GAS_CONSTANT * kelvin;
     (thermal_energy.is_finite() && thermal_energy > 0.0).then_some(thermal_energy)
 }
+
+#[cfg(test)]
+mod tests;

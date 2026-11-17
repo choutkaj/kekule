@@ -1,15 +1,14 @@
 //! Estimators of a group's population from the reduced values of its
 //! samples.
 
-use crate::structure::log_sum_exp;
-
 /// The highest cumulant that [`Estimator::Cumulant`] keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CumulantOrder {
     /// The mean alone.
     First = 1,
-    /// The mean and the variance; exact for Gaussian reduced values.
+    /// The mean and the variance; exact in expectation for Gaussian reduced
+    /// values.
     Second = 2,
     /// The mean, the variance, and the third central moment.
     Third = 3,
@@ -22,8 +21,8 @@ pub enum CumulantOrder {
 /// potential over the thermal energy, `βΔV`. The exponential sum is exact but
 /// dominated by the few largest values. The cumulant expansion trades bias for
 /// lower variance (Miao et al., J. Chem. Theory Comput. 10, 2677, 2014); to the
-/// second order, the default, it is exact when the reduced values are
-/// Gaussian.
+/// second order, the default, it is exact in expectation for Gaussian reduced
+/// values.
 ///
 /// For a group of `n` samples:
 ///
@@ -36,7 +35,7 @@ pub enum CumulantOrder {
 ///
 /// `κ1` is the mean, `κ2` the variance, and `κ3` the third central moment of
 /// the reduced values, each over `n`. Adding a constant to every reduced
-/// value of a group adds it to the group's estimate, with either estimator.
+/// value of a group adds it to the group's estimate, with every estimator.
 ///
 /// An estimator gives the totals of groups only. How a group's population is
 /// shared among its samples is not an estimate: each sample's share is
@@ -102,14 +101,35 @@ fn cumulant_sum(values: &[f64], order: CumulantOrder) -> f64 {
     if order == CumulantOrder::First {
         return mean;
     }
+    // Each term is divided by the count as it is summed, as for the mean, so
+    // neither sum overflows while the moment it estimates is finite.
+    let root = count.sqrt();
     let (second, third) = values.iter().fold((0.0, 0.0), |(second, third), value| {
         let deviation = value - mean;
-        let square = deviation * deviation;
+        let scaled = deviation / root;
+        let square = scaled * scaled;
         (second + square, third + square * deviation)
     });
-    let mut sum = mean + second / count / 2.0;
+    let mut sum = mean + second / 2.0;
     if order == CumulantOrder::Third {
-        sum += third / count / 6.0;
+        sum += third / 6.0;
     }
     sum
 }
+
+/// `ln Σ exp(x)` over finite values, shifted by their largest so that no
+/// term overflows; negative infinity for none.
+pub(crate) fn log_sum_exp(values: impl Iterator<Item = f64> + Clone) -> f64 {
+    let maximum = values.clone().fold(f64::NEG_INFINITY, f64::max);
+    if maximum == f64::NEG_INFINITY {
+        return maximum;
+    }
+    maximum
+        + values
+            .map(|value| (value - maximum).exp())
+            .sum::<f64>()
+            .ln()
+}
+
+#[cfg(test)]
+mod tests;

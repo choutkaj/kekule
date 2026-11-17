@@ -86,6 +86,22 @@ fn a_common_offset_shifts_every_estimate_by_itself() {
 }
 
 #[test]
+fn the_moments_of_a_large_group_do_not_overflow_while_they_are_finite() {
+    // Each squared deviation is 1e308, so their sum overflows, but the
+    // variance is 1e308.
+    let reduced = (0..1000)
+        .map(|index| if index % 2 == 0 { 1.0e154 } else { -1.0e154 })
+        .collect::<Vec<_>>();
+    let second = Estimator::Cumulant(CumulantOrder::Second);
+    let estimate = second.log_sum(&reduced).unwrap();
+    let expected = 1000.0_f64.ln() + 1.0e308 / 2.0;
+    assert!(
+        (estimate - expected).abs() <= 1e-12 * expected,
+        "{estimate} != {expected}"
+    );
+}
+
+#[test]
 fn empty_groups_and_values_without_an_estimate_have_none() {
     for estimator in EVERY_ESTIMATOR {
         assert_eq!(estimator.log_sum(&[]), None, "{estimator:?}");

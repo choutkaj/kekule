@@ -1,6 +1,6 @@
 //! Weighted structural statistics: per-atom RMS fluctuation and contact
 //! occupancy of atom pairs or atom groups over weighted structures, and the
-//! estimators that reweighting derives group populations with.
+//! estimators of group populations for reweighting.
 //!
 //! An observation is one structure with an explicit, finite, positive weight.
 //! Weights are relative: scaling every weight by one factor changes no
@@ -88,6 +88,7 @@ pub use accumulators::{
     GroupContactOccupancyResult, MergeMismatch, RmsfAccumulator, RmsfResult, SampleObservations,
     StatisticsError,
 };
+pub(crate) use estimators::log_sum_exp;
 pub use estimators::{CumulantOrder, Estimator};
 
 #[cfg(doc)]

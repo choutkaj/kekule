@@ -146,7 +146,6 @@ mod view;
 pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopologyMut};
 pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
-pub(crate) use ensemble::log_sum_exp;
 pub use ensemble::{
     Distribution, DistributionMut, Ensemble, Partition, PartitionError, Samples, StateData,
     StateIter, StateView,

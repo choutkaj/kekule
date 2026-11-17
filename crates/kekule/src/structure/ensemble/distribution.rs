@@ -3,6 +3,7 @@
 
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
+use crate::statistics::log_sum_exp;
 use crate::structure::thermodynamics::{checked_temperature, thermal_energy};
 use crate::structure::{Partition, Requirement, StructureSetError};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
@@ -1213,20 +1214,6 @@ fn free_energy(energies: &[f64], thermal_energy: f64) -> Option<f64> {
                     .map(|energy| -(energy - minimum) / thermal_energy),
             );
     free_energy.is_finite().then_some(free_energy)
-}
-
-/// `ln Σ exp(x)` over finite values, shifted by their largest so that no
-/// term overflows; negative infinity for none.
-pub(crate) fn log_sum_exp(values: impl Iterator<Item = f64> + Clone) -> f64 {
-    let maximum = values.clone().fold(f64::NEG_INFINITY, f64::max);
-    if maximum == f64::NEG_INFINITY {
-        return maximum;
-    }
-    maximum
-        + values
-            .map(|value| (value - maximum).exp())
-            .sum::<f64>()
-            .ln()
 }
 
 /// `exp(x) / Σ exp(x)` for each of some finite values, shifted by their
