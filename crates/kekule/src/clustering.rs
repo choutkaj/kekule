@@ -49,7 +49,7 @@
 //! exchanged equivalent atoms. Weight the conformers by energy first; the
 //! merged state gains the population of every rotamer, its degeneracy, and
 //! their free energy `-RT ln Σ exp(-E_i / RT)` at the distribution's
-//! temperature, so its energy difference to any other state is
+//! target temperature, so its energy difference to any other state is
 //! `-RT ln(p_a / p_b)`:
 //!
 //! ```
@@ -59,6 +59,7 @@
 //! use kekule::math::Point3;
 //! use kekule::structure::{
 //!     Distribution, Ensemble, Geometry, Partition, Positions, Samples, StateData, StructureSet,
+//!     ThermodynamicState,
 //! };
 //! use kekule::topology::AtomSelection;
 //! use kekule::units::{Quantity, ANGSTROM, KELVIN, KILOJOULE_PER_MOLE};
@@ -79,9 +80,8 @@
 //!     let state = StateData::new().with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))?;
 //!     conformers.push_state(Geometry::new(positions), None, state, None)?;
 //! }
-//! conformers
-//!     .distribution_mut()
-//!     .assign_boltzmann_populations(Quantity::new(298.15, KELVIN))?;
+//! let room = ThermodynamicState::canonical(Quantity::new(298.15, KELVIN))?;
+//! conformers.distribution_mut().assign_boltzmann_populations(room)?;
 //!
 //! let atoms = SymmetricSelection::new(&AtomSelection::all(topology.clone()))?;
 //! let radius = Quantity::new(0.125, ANGSTROM);

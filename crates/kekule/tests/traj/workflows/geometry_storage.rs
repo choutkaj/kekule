@@ -17,7 +17,8 @@ use kekule::native::{EnsembleDescription, StructureSetDescription};
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::structure::{
     ColumnRef, Distribution, Ensemble, Geometry, GeometryIndex, Order, Partition, Positions,
-    Samples, StructureSet, StructureSetRead, StructureSetReadError,
+    Samples, StructureSet, StructureSetRead, StructureSetReadError, ThermodynamicState,
+    WeightModel,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdEndian, DcdWriteOptions};
@@ -254,7 +255,10 @@ fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distributi
     // Of the listed geometries, only geometry 0 is a sample (kept: 0, 2, 3,
     // 5, 6), its first, with log weight ln 1; geometries 4 and 1 are not.
     assert_eq!(loaded.distribution().samples(), &Samples::Subset(vec![2]));
-    assert_eq!(loaded.distribution().log_weights(), Some([0.0].as_slice()));
+    assert_eq!(
+        loaded.distribution().weight_model(),
+        WeightModel::LogWeights(&[0.0])
+    );
     for (position, index) in listed.into_iter().enumerate() {
         assert_eq!(
             loaded.set().get(position).unwrap().payload(),
@@ -266,8 +270,8 @@ fn loading_gives_the_set_in_memory_with_its_order_and_an_ensemble_its_distributi
         Err(StructureSetReadError::IndexOutOfRange { .. })
     ));
     // The ensemble in memory is its own: editing it leaves the file's alone.
-    memory.distribution_mut().set_log_weights(None).unwrap();
-    assert!(ensemble.distribution().log_weights().is_some());
+    memory.distribution_mut().set_equal_weights();
+    assert_ne!(ensemble.distribution().weight_model(), WeightModel::Equal);
 }
 
 #[test]
@@ -1328,7 +1332,7 @@ fn saved_distribution() -> Distribution {
     .unwrap()
     .with_states(vec![labelled, other])
     .unwrap()
-    .with_temperature(Quantity::new(298.15, KELVIN))
+    .with_target(ThermodynamicState::canonical(Quantity::new(298.15, KELVIN)).unwrap())
     .unwrap()
 }
 
@@ -1380,21 +1384,20 @@ fn a_saved_distribution_binds_to_a_grown_file_as_a_refresh_extends_it() {
     let extended = distribution.clone().extended_to(5).unwrap();
     let reopened = Ensemble::new(reopened, extended.clone()).unwrap();
     assert_eq!(extended.samples(), &Samples::Subset(vec![0, 1, 2]));
-    assert_eq!(extended.log_weights(), distribution.log_weights());
+    assert_eq!(extended.weight_model(), distribution.weight_model());
     assert_eq!(extended.partition(), distribution.partition());
     assert_eq!(extended.states(), distribution.states());
-    assert_eq!(extended.temperature(), distribution.temperature());
-    let bits = |log_weights: Option<&[f64]>| {
+    assert_eq!(extended.target(), distribution.target());
+    let bits = |distribution: &Distribution| {
+        let WeightModel::LogWeights(log_weights) = distribution.weight_model() else {
+            panic!("the saved weights are log weights")
+        };
         log_weights
-            .unwrap()
             .iter()
             .map(|log_weight| log_weight.to_bits())
             .collect::<Vec<_>>()
     };
-    assert_eq!(
-        bits(extended.log_weights()),
-        bits(distribution.log_weights())
-    );
+    assert_eq!(bits(&extended), bits(&distribution));
     // The refresh and the public operation agree.
     assert_eq!(followed.distribution(), &extended);
     assert_eq!(reopened.distribution(), followed.distribution());

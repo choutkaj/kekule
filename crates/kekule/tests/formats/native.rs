@@ -18,7 +18,8 @@ use kekule::pdb::PdbWriteOptions;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Place, Positions, Samples,
-    StateData, Structure, StructureSet, StructureSetError, TimeAxis, Velocities,
+    StateData, Structure, StructureSet, StructureSetError, ThermodynamicState, TimeAxis,
+    Velocities, WeightModel,
 };
 use kekule::topology::{
     AtomSiteMetadata, InstanceAtomId, MoleculeClass, ResidueClass, Topology, TopologyBuilder,
@@ -590,19 +591,22 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
 }
 
 /// Asserts that `decoded` holds the set of `source` and its distribution bit
-/// for bit: samples, log weights, partition, states with their energies and
-/// properties, and the temperature.
+/// for bit: samples, weights, partition, states with their energies and
+/// properties, and the target.
 fn assert_same_distribution(decoded: &Distribution, source: &Distribution) {
     assert_eq!(decoded, source);
-    let log_weight_bits = |distribution: &Distribution| {
-        distribution.log_weights().map(|values| {
-            values
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>()
-        })
+    let bits = |values: &[f64]| {
+        values
+            .iter()
+            .map(|value| value.to_bits())
+            .collect::<Vec<_>>()
     };
-    assert_eq!(log_weight_bits(decoded), log_weight_bits(source));
+    let weight_bits = |distribution: &Distribution| match distribution.weight_model() {
+        WeightModel::LogWeights(values) => Some((1, bits(values))),
+        WeightModel::Boltzmann(values) => Some((2, bits(values))),
+        _ => None,
+    };
+    assert_eq!(weight_bits(decoded), weight_bits(source));
     let energy_bits = |distribution: &Distribution| {
         distribution
             .states()
@@ -615,12 +619,15 @@ fn assert_same_distribution(decoded: &Distribution, source: &Distribution) {
             .collect::<Vec<_>>()
     };
     assert_eq!(energy_bits(decoded), energy_bits(source));
-    let temperature_bits = |distribution: &Distribution| {
-        distribution
-            .temperature()
-            .map(|temperature| (temperature.value().to_bits(), temperature.unit()))
+    let target_bits = |distribution: &Distribution| {
+        distribution.target().map(|target| {
+            (
+                target.temperature().value().to_bits(),
+                target.pressure().map(|pressure| pressure.value().to_bits()),
+            )
+        })
     };
-    assert_eq!(temperature_bits(decoded), temperature_bits(source));
+    assert_eq!(target_bits(decoded), target_bits(source));
 }
 
 fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
@@ -776,7 +783,10 @@ fn ensembles_keep_their_distribution_bit_for_bit() {
                     .unwrap(),
             ])
             .unwrap()
-            .with_temperature(Quantity::new(298.15, kekule::units::KELVIN))
+            .with_target(
+                ThermodynamicState::canonical(Quantity::new(298.15, kekule::units::KELVIN))
+                    .unwrap(),
+            )
             .unwrap(),
         // A subset: geometries 0 and 2, clustered into one state represented by
         // geometry 2, with state properties.
@@ -984,7 +994,9 @@ fn ensemble_descriptions_store_the_distribution_over_external_geometries() {
         .with_energy(Quantity::new(-3.25, KILOJOULE_PER_MOLE))
         .unwrap()])
     .unwrap()
-    .with_temperature(Quantity::new(310.0, kekule::units::KELVIN))
+    .with_target(
+        ThermodynamicState::canonical(Quantity::new(310.0, kekule::units::KELVIN)).unwrap(),
+    )
     .unwrap();
     let ensemble = Ensemble::new(set, distribution).unwrap();
     let description = EnsembleDescription::of(&ensemble);
@@ -1096,7 +1108,9 @@ fn distribution_records_store_a_distribution_and_its_geometry_count() {
     .unwrap()
     .with_states(vec![state])
     .unwrap()
-    .with_temperature(Quantity::new(310.0, kekule::units::KELVIN))
+    .with_target(
+        ThermodynamicState::canonical(Quantity::new(310.0, kekule::units::KELVIN)).unwrap(),
+    )
     .unwrap();
     let ensemble = Ensemble::new(set, distribution).unwrap();
     let description = DistributionDescription::of(&ensemble);
@@ -1369,11 +1383,11 @@ fn distributions_of_one_state_keep_samples_log_weights_and_site_values() {
     let decoded = round_trip_ensemble(&ensemble);
     assert_eq!(decoded.distribution().state_count(), 1);
     assert_eq!(decoded.distribution().samples(), &Samples::All);
-    assert_eq!(
-        decoded.distribution().log_weights().unwrap()[2].to_bits(),
-        (-0.0_f64).to_bits()
-    );
-    assert_eq!(decoded.distribution().log_weights().unwrap()[3], f64::MIN);
+    let WeightModel::LogWeights(log_weights) = decoded.distribution().weight_model() else {
+        panic!("the decoded weights are log weights")
+    };
+    assert_eq!(log_weights[2].to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(log_weights[3], f64::MIN);
     assert_eq!(
         decoded.set().properties().get(&key("method")),
         Some(&PropertyValue::String("REMD".into()))
@@ -1392,7 +1406,9 @@ fn distributions_of_one_state_per_sample_keep_energies_and_the_temperature() {
             .unwrap();
     }
     distribution
-        .set_temperature(Some(Quantity::new(298.15, kekule::units::KELVIN)))
+        .set_target(Some(
+            ThermodynamicState::canonical(Quantity::new(298.15, kekule::units::KELVIN)).unwrap(),
+        ))
         .unwrap();
     let decoded = round_trip_ensemble(&ensemble);
     let distribution = decoded.distribution();

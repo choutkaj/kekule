@@ -381,19 +381,19 @@ fn log_weights_are_finite_and_equal_when_absent() {
         distribution(Samples::Subset(vec![0, 2]), &[0, 0], &[0]),
     );
     let mut distribution = set.distribution_mut();
-    assert_eq!(distribution.log_weights(), None);
+    assert_eq!(distribution.weight_model(), WeightModel::Equal);
     assert_eq!(distribution.log_weight(2), Some(0.0));
     assert_eq!(distribution.log_weight(1), None);
     assert_eq!(distribution.probabilities().unwrap(), [0.5, 0.5]);
     assert_eq!(distribution.effective_sample_size().unwrap(), 2.0);
     assert_eq!(
-        distribution.set_log_weights(Some(vec![0.0])),
+        distribution.set_log_weights(vec![0.0]),
         Err(StructureSetError::LogWeightCountMismatch(
             LengthMismatch::new(Countable::LogWeight, 2, 1)
         ))
     );
     assert_eq!(
-        distribution.set_log_weights(Some(vec![0.0, f64::NAN])),
+        distribution.set_log_weights(vec![0.0, f64::NAN]),
         Err(StructureSetError::NonFiniteLogWeight { geometry: 2 })
     );
     assert_eq!(
@@ -401,13 +401,16 @@ fn log_weights_are_finite_and_equal_when_absent() {
         Err(StructureSetError::NotSample { geometry: 1 })
     );
     // Failed edits keep every sample equally weighted.
-    assert_eq!(distribution.log_weights(), None);
+    assert_eq!(distribution.weight_model(), WeightModel::Equal);
     let three = 3.0_f64.ln();
     distribution.set_log_weight(2, three).unwrap();
-    assert_eq!(distribution.log_weights(), Some(&[0.0, three][..]));
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[0.0, three])
+    );
     assert_eq!(distribution.ranked_by_weight(), [2, 0]);
     distribution.normalize_log_weights().unwrap();
-    let normalized = distribution.log_weights().unwrap().to_vec();
+    let normalized = distribution.sample_log_weights();
     assert_close(&exponentials(&normalized), &[0.25, 0.75]);
     // Normalized weights sum to one, so the only state's log population is 0.
     let log_population = set.state(0).unwrap().log_population();
@@ -456,8 +459,8 @@ fn log_weights_are_finite_and_equal_when_absent() {
     let distribution = set.distribution();
     assert_eq!(distribution.samples(), &Samples::Subset(vec![0, 2, 3, 4]));
     assert_eq!(
-        distribution.log_weights(),
-        Some(&[normalized[0], normalized[1], half, 0.0][..])
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[normalized[0], normalized[1], half, 0.0])
     );
     assert_eq!(distribution.partition().assignments(), [0, 0, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 3]);
@@ -511,7 +514,10 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     assert_eq!(selected.set().order(), Some(&Order::Step(vec![4, 0, 3])));
     let distribution = selected.distribution();
     assert_eq!(distribution.samples(), &Samples::Subset(vec![0, 2]));
-    assert_eq!(distribution.log_weights(), Some(&[four, three][..]));
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[four, three])
+    );
     // States in state order: state 0 (geometry 3, a new representative),
     // then state 1 (geometry 4, its representative).
     assert_eq!(distribution.partition().assignments(), [1, 0]);
@@ -531,7 +537,10 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     let states = set.select_states([1]).unwrap();
     assert_eq!(xs(states.set()), [2.0, 4.0]);
     assert_eq!(states.set().order(), Some(&Order::Step(vec![2, 4])));
-    assert_eq!(states.distribution().log_weights(), Some(&[two, four][..]));
+    assert_eq!(
+        states.distribution().weight_model(),
+        WeightModel::LogWeights(&[two, four])
+    );
     assert_eq!(
         states.state(0).unwrap().energy(),
         Some(Quantity::new(2.0, KILOJOULE_PER_MOLE))
@@ -564,7 +573,10 @@ fn selecting_and_removing_geometries_remaps_the_samples() {
     let distribution = removed.distribution();
     assert_eq!(distribution.state_count(), 1);
     assert_eq!(distribution.samples(), &Samples::All);
-    assert_eq!(distribution.log_weights(), Some(&[four][..]));
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[four])
+    );
     assert_eq!(distribution.partition().representatives(), [0]);
     assert_eq!(
         removed.state(0).unwrap().energy(),
@@ -584,9 +596,7 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
         .regroup(Partition::state_per_sample(3))
         .unwrap();
     let weights = [1.0_f64, 2.0, 3.0].map(f64::ln);
-    distribution
-        .set_log_weights(Some(weights.to_vec()))
-        .unwrap();
+    distribution.set_log_weights(weights.to_vec()).unwrap();
     assert!(!Arc::ptr_eq(&regrouped, &shared));
     assert!(shares_every_geometry(regrouped.set(), shared.set()));
     assert_eq!(shared.distribution().state_count(), 1);
@@ -599,7 +609,10 @@ fn regrouping_reweighting_and_selecting_copy_no_structure() {
     // Each state of one sample keeps its log weight as its log population.
     let collapsed = regrouped.collapse();
     assert_eq!(collapsed.set().order(), None);
-    assert_eq!(collapsed.distribution().log_weights(), Some(&weights[..]));
+    assert_eq!(
+        collapsed.distribution().weight_model(),
+        WeightModel::LogWeights(&weights)
+    );
     assert!(shares_every_geometry(collapsed.set(), regrouped.set()));
     let states = regrouped.select_states([1]).unwrap();
     assert!(Arc::ptr_eq(
@@ -719,7 +732,7 @@ fn subsets_keep_the_order_and_the_distribution() {
             .unwrap()
             .with_states(vec![state])
             .unwrap()
-            .with_temperature(Quantity::new(300.0, KELVIN))
+            .with_target(ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap())
             .unwrap(),
     )
     .unwrap();
@@ -735,7 +748,7 @@ fn subsets_keep_the_order_and_the_distribution() {
     assert!(state.properties().is_empty());
     let distribution = subset.distribution();
     assert_eq!(distribution.samples(), &Samples::Subset(vec![1]));
-    assert_eq!(distribution.log_weights(), Some(&[2.0][..]));
+    assert_eq!(distribution.weight_model(), WeightModel::LogWeights(&[2.0]));
     assert_eq!(
         distribution.temperature(),
         Some(Quantity::new(300.0, KELVIN))
@@ -852,7 +865,10 @@ fn duplicates_in_a_selection_become_separate_geometries() {
     assert_eq!(twice.set().order(), Some(&Order::Step(vec![6, 6])));
     let distribution = twice.distribution();
     assert_eq!(distribution.samples(), &Samples::All);
-    assert_eq!(distribution.log_weights(), Some(&[two, two][..]));
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[two, two])
+    );
     assert_eq!(distribution.partition().assignments(), [0, 0]);
     assert_eq!(distribution.partition().representatives(), [0]);
     // Every sample of state 1 is selected, so it keeps its energy.
@@ -867,7 +883,10 @@ fn duplicates_in_a_selection_become_separate_geometries() {
     assert_eq!(xs(states.set()), [0.0, 0.0]);
     assert_eq!(states.set().order(), Some(&Order::Step(vec![5, 5])));
     let distribution = states.distribution();
-    assert_eq!(distribution.log_weights(), Some(&[0.0, 0.0][..]));
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[0.0, 0.0])
+    );
     assert_eq!(distribution.state_count(), 2);
     assert_eq!(distribution.partition().assignments(), [0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 1]);
@@ -889,8 +908,8 @@ fn collapse_keeps_population_shares_of_any_samples() {
     assert_eq!(collapsed.set().order(), None);
     // Two samples of weight 1 make a population of 2.
     assert_eq!(
-        collapsed.distribution().log_weights(),
-        Some(&[2.0_f64.ln()][..])
+        collapsed.distribution().weight_model(),
+        WeightModel::LogWeights(&[2.0_f64.ln()])
     );
     assert!(collapsed
         .set()
@@ -916,8 +935,8 @@ fn collapse_keeps_population_shares_of_any_samples() {
     }
     let collapsed = heavy.collapse();
     assert_eq!(
-        collapsed.distribution().log_weights(),
-        Some(&[1000.0 + 2.0_f64.ln(), 1000.0][..])
+        collapsed.distribution().weight_model(),
+        WeightModel::LogWeights(&[1000.0 + 2.0_f64.ln(), 1000.0])
     );
 }
 
@@ -946,7 +965,7 @@ fn samples_pushed_into_a_distribution_of_every_geometry() {
     );
     let distribution = set.distribution();
     assert_eq!(distribution.samples(), &Samples::All);
-    assert_eq!(distribution.log_weights(), None);
+    assert_eq!(distribution.weight_model(), WeightModel::Equal);
     assert_eq!(distribution.partition().assignments(), [0, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [0, 2]);
     assert_eq!(set.set().order(), Some(&Order::Step(vec![0, 1, 2])));

@@ -247,8 +247,8 @@ impl EnsembleDescription {
     /// describes, such as a trajectory file that grew after the description
     /// was saved: the set as [`StructureSetDescription::extended_to`] gives
     /// it, with `order` the longer set's, and the distribution as
-    /// [`Distribution::extended_to`] gives it, keeping its log weights,
-    /// partition, states, and temperature bit for bit.
+    /// [`Distribution::extended_to`] gives it, keeping its weights,
+    /// partition, states, and target bit for bit.
     ///
     /// # Errors
     ///
@@ -283,7 +283,7 @@ impl EnsembleDescription {
 /// of a set stored elsewhere, and the number of those geometries.
 ///
 /// A native distribution record stores this, so a host keeps a set's
-/// weights, states, energies, and temperature apart from its topology and
+/// weights, states, energies, and target apart from its topology and
 /// geometries. Writing one ([`NativeSource`](super::NativeSource) converts
 /// from it) gives such a record, and reading it gives
 /// [`NativeObject::DistributionDescription`](super::NativeObject::DistributionDescription).
@@ -359,7 +359,7 @@ impl DistributionDescription {
     /// [`Self::geometry_count`] are the geometries it describes, such as a
     /// trajectory file that grew after the description was saved: the
     /// distribution as [`Distribution::extended_to`] gives it, keeping its
-    /// log weights, partition, states, and temperature bit for bit.
+    /// weights, partition, states, and target bit for bit.
     ///
     /// # Errors
     ///

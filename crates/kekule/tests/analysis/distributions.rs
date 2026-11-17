@@ -7,10 +7,10 @@ use kekule::molecule::{Atom, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
     Distribution, Ensemble, Geometry, Partition, Positions, Samples, StateData, StructureSet,
-    StructureSetError,
+    StructureSetError, ThermodynamicState, WeightModel,
 };
 use kekule::topology::Topology;
-use kekule::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
+use kekule::units::{Quantity, BAR, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
 
 fn key(name: &str) -> PropertyKey {
     PropertyKey::new(name).unwrap()
@@ -139,22 +139,25 @@ fn temperature(ensemble: &Ensemble) -> Option<Quantity<f64>> {
     ensemble.distribution().temperature()
 }
 
+/// The canonical state at `kelvin`.
+fn at(kelvin: f64) -> ThermodynamicState {
+    ThermodynamicState::canonical(Quantity::new(kelvin, KELVIN)).unwrap()
+}
+
 #[test]
 fn regrouping_keeps_weights_and_gives_merged_states_their_free_energy() {
     // Four conformers, energies 0..3 kJ/mol, weights 1..4.
     let weights = ln(&[1.0, 2.0, 3.0, 4.0]);
     let mut set = energy_conformers(&[0.0, 1.0, 2.0, 3.0]);
     let mut distribution = set.distribution_mut();
-    distribution.set_log_weights(Some(weights.clone())).unwrap();
+    distribution.set_log_weights(weights.clone()).unwrap();
     distribution
         .state_mut(1)
         .unwrap()
         .properties_mut()
         .insert(key("label"), PropertyValue::Int(1))
         .unwrap();
-    distribution
-        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
-        .unwrap();
+    distribution.set_target(Some(at(300.0))).unwrap();
     let before = set.clone();
 
     // An unchanged grouping keeps everything.
@@ -230,7 +233,7 @@ fn regrouping_keeps_weights_and_gives_merged_states_their_free_energy() {
 fn merged_free_energies_match_boltzmann_populations() {
     // Five conformers; states {0, 1, 2} and {3, 4} after merging.
     let energies_kj = [4.0, 0.5, 9.0, 2.0, 2.0];
-    let temperature = Quantity::new(310.0, KELVIN);
+    let temperature = at(310.0);
     let rt: f64 = 8.314_462_618_153_24e-3 * 310.0;
     let mut set = energy_conformers(&energies_kj);
     set.distribution_mut()
@@ -280,15 +283,13 @@ fn merged_free_energies_match_boltzmann_populations() {
     }
 
     // A changed temperature keeps the free energy of the merge temperature.
-    set.distribution_mut()
-        .set_temperature(Some(Quantity::new(400.0, KELVIN)))
-        .unwrap();
+    set.distribution_mut().set_target(Some(at(400.0))).unwrap();
     assert!((kilojoules(&set, 0) - free(&energies_kj[..3])).abs() < 1e-12);
 
     // Without a temperature, or with a member lacking an energy, a merged
     // state has none; a state of one old state keeps its energy.
     let mut cold = source.clone();
-    cold.distribution_mut().set_temperature(None).unwrap();
+    cold.distribution_mut().set_target(None).unwrap();
     cold.distribution_mut()
         .regroup(Partition::new(vec![0, 0, 0, 1, 2], vec![0, 3, 4]).unwrap())
         .unwrap();
@@ -305,7 +306,7 @@ fn merged_free_energies_match_boltzmann_populations() {
     // Energies far apart merge without overflow.
     let mut wide = energy_conformers(&[0.0, 1.0e6]);
     wide.distribution_mut()
-        .set_temperature(Some(temperature))
+        .set_target(Some(temperature))
         .unwrap();
     wide.distribution_mut()
         .regroup(Partition::one_state(2))
@@ -322,7 +323,10 @@ fn distribution_operations_keep_their_results() {
     assert_eq!(set.set().len(), 4);
     let distribution = set.distribution();
     assert_eq!(distribution.samples(), &Samples::All);
-    assert_eq!(distribution.log_weights(), Some(&weights[..]));
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&weights)
+    );
     assert_eq!(distribution.partition().assignments(), [0, 1, 0, 1]);
     assert_eq!(distribution.partition().representatives(), [2, 1]);
     assert_eq!(distribution.temperature(), None);
@@ -382,22 +386,18 @@ fn distribution_operations_keep_their_results() {
         distribution.within_energy_window(Quantity::new(-1.0, KILOJOULE_PER_MOLE)),
         Err(StructureSetError::InvalidEnergyWindow)
     );
-    let temperature = Quantity::new(300.0, KELVIN);
     energy_set
         .distribution_mut()
-        .set_temperature(Some(temperature))
+        .set_target(Some(at(300.0)))
         .unwrap();
-    assert_eq!(energy_set.distribution().temperature(), Some(temperature));
-    // A temperature changes nothing else.
+    assert_eq!(
+        energy_set.distribution().temperature(),
+        Some(Quantity::new(300.0, KELVIN))
+    );
+    // A target changes nothing else.
     assert_eq!(
         energy_set.distribution(),
-        &expected.clone().with_temperature(temperature).unwrap()
-    );
-    assert_eq!(
-        energy_set
-            .distribution_mut()
-            .set_temperature(Some(Quantity::new(0.0, KELVIN))),
-        Err(StructureSetError::InvalidTemperature)
+        &expected.clone().with_target(at(300.0)).unwrap()
     );
 
     // Regrouping merges whole states into their free energy at the
@@ -423,7 +423,7 @@ fn distribution_operations_keep_their_results() {
         .unwrap()
         .with_states(vec![state(merged), state(2.0)])
         .unwrap()
-        .with_temperature(temperature)
+        .with_target(at(300.0))
         .unwrap();
     assert_eq!(energy_set.distribution(), &regrouped);
     assert_eq!(
@@ -442,12 +442,92 @@ fn distribution_operations_keep_their_results() {
     let before = set.distribution().clone();
     set.distribution_mut().normalize_log_weights().unwrap();
     let distribution = set.distribution();
-    assert_close(
-        &exponentials(distribution.log_weights().unwrap()),
-        &[0.1, 0.2, 0.3, 0.4],
-    );
+    assert!(matches!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(_)
+    ));
+    assert_close(&exponentials(&log_weights(&set)), &[0.1, 0.2, 0.3, 0.4]);
     assert_eq!(distribution.samples(), before.samples());
     assert_eq!(distribution.partition(), before.partition());
     assert_eq!(distribution.states(), before.states());
-    assert_eq!(distribution.temperature(), None);
+    assert_eq!(distribution.target(), None);
+}
+
+#[test]
+fn the_weight_model_says_how_the_weights_were_assigned() {
+    // Boltzmann populations record their target.
+    let room = at(298.15);
+    let mut set = energy_conformers(&[0.0, 1.0, 2.0]);
+    set.distribution_mut()
+        .assign_boltzmann_populations(room)
+        .unwrap();
+    let boltzmann = log_weights(&set);
+    assert_eq!(
+        set.distribution().weight_model(),
+        WeightModel::Boltzmann(&boltzmann)
+    );
+    assert_eq!(set.distribution().target(), Some(room));
+    assert_eq!(temperature(&set), Some(Quantity::new(298.15, KELVIN)));
+
+    // Edits to samples, states, and energies keep the tag: normalizing,
+    // regrouping, selecting, removing, adding a sample, collapsing, and
+    // setting the same target.
+    let is_boltzmann =
+        |set: &Ensemble| matches!(set.distribution().weight_model(), WeightModel::Boltzmann(_));
+    set.distribution_mut().normalize_log_weights().unwrap();
+    set.distribution_mut().set_target(Some(room)).unwrap();
+    set.distribution_mut()
+        .regroup(Partition::new(vec![0, 0, 1], vec![0, 2]).unwrap())
+        .unwrap();
+    assert!(is_boltzmann(&set));
+    assert!(is_boltzmann(&set.select([2, 0]).unwrap()));
+    let mut removed = set.clone();
+    removed.remove(1).unwrap();
+    assert!(is_boltzmann(&removed));
+    let mut grown = set.clone();
+    grown
+        .push_sample(Geometry::new(single_position(0.0)), None, 0, Some(0.0))
+        .unwrap();
+    assert!(is_boltzmann(&grown));
+    assert!(is_boltzmann(&set.collapse()));
+
+    // Setting a weight or a target at another temperature leaves plain log
+    // weights of the same values.
+    let normalized = log_weights(&set);
+    let mut warmer = set.clone();
+    warmer
+        .distribution_mut()
+        .set_target(Some(at(310.0)))
+        .unwrap();
+    assert_eq!(
+        warmer.distribution().weight_model(),
+        WeightModel::LogWeights(&normalized)
+    );
+    let mut edited = set.clone();
+    edited.distribution_mut().set_log_weight(0, 0.0).unwrap();
+    assert!(matches!(
+        edited.distribution().weight_model(),
+        WeightModel::LogWeights(_)
+    ));
+
+    // Equal weights keep the target.
+    set.distribution_mut().set_equal_weights();
+    assert_eq!(set.distribution().weight_model(), WeightModel::Equal);
+    assert_eq!(set.distribution().target(), Some(room));
+
+    // Populations follow the target's temperature; a pressure is recorded.
+    let isobaric = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(298.15, KELVIN),
+        Quantity::new(1.0, BAR),
+    )
+    .unwrap();
+    let mut npt = energy_conformers(&[0.0, 1.0, 2.0]);
+    npt.distribution_mut()
+        .assign_boltzmann_populations(isobaric)
+        .unwrap();
+    assert_eq!(log_weights(&npt), boltzmann);
+    assert_eq!(npt.distribution().target(), Some(isobaric));
+    // A pressure alone does not change Boltzmann populations.
+    npt.distribution_mut().set_target(Some(room)).unwrap();
+    assert!(is_boltzmann(&npt));
 }

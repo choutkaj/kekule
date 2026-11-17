@@ -24,7 +24,8 @@ use kekule::statistics::{
 };
 use kekule::structure::{
     Distribution, Ensemble, Geometry, Order, Partition, Positions, Requirement, Samples, StateData,
-    Structure, StructureSet, StructureSetError, StructureView, TimeAxis, Velocities,
+    Structure, StructureSet, StructureSetError, StructureView, ThermodynamicState, TimeAxis,
+    Velocities, WeightModel,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, Topology};
 use kekule::units::{
@@ -240,7 +241,10 @@ fn fixtures_hold_their_geometries_order_and_distribution() {
         assert_eq!(distribution.samples(), &Samples::All);
         assert_eq!(distribution.partition().assignments(), STATES);
         assert_eq!(distribution.partition().representatives(), [0, 2, 4, 7]);
-        assert_eq!(distribution.log_weights(), Some(&ln(&WEIGHTS)[..]));
+        assert_eq!(
+            distribution.weight_model(),
+            WeightModel::LogWeights(&ln(&WEIGHTS))
+        );
         assert_eq!(distribution.temperature(), None);
         let expected =
             ENERGIES.map(|energy| energies.then(|| Quantity::new(energy, KILOJOULE_PER_MOLE)));
@@ -279,8 +283,8 @@ fn fixtures_hold_their_geometries_order_and_distribution() {
     let distribution = extreme.distribution();
     assert_eq!(distribution.partition().assignments(), [0, 1, 1]);
     assert_eq!(
-        distribution.log_weights(),
-        Some(&ln(&[1.0e300, 1.0e-300, 2.0e-300])[..])
+        distribution.weight_model(),
+        WeightModel::LogWeights(&ln(&[1.0e300, 1.0e-300, 2.0e-300]))
     );
 }
 
@@ -833,7 +837,7 @@ fn statistics_over_part_of_a_time_ordered_set_observe_its_samples_alone() {
     // A distribution without weights observes each sample with probability
     // one in five.
     let mut equal = ensemble.clone();
-    equal.distribution_mut().set_log_weights(None).unwrap();
+    equal.distribution_mut().set_equal_weights();
     let topology = ensemble.set().shared_topology();
     let rmsf = equal.rmsf(&all(Arc::clone(&topology))).unwrap();
     assert!((rmsf.total_weight() - 1.0).abs() < 1.0e-15);
@@ -1345,7 +1349,10 @@ fn clustering_part_of_a_time_ordered_set_groups_its_samples_by_position() {
         .unwrap();
     let distribution = regrouped.distribution();
     assert_eq!(distribution.partition(), &states);
-    assert_eq!(distribution.log_weights(), set.distribution().log_weights());
+    assert_eq!(
+        distribution.weight_model(),
+        set.distribution().weight_model()
+    );
     assert_eq!(
         distribution.samples(),
         &Samples::Subset(EQUILIBRATED.to_vec())
@@ -1493,6 +1500,9 @@ fn extreme() -> Ensemble {
 /// proportion to their `prior` linear weights; the total weight is kept.
 fn check_boltzmann(ensemble: &Ensemble, kelvin: f64, energies: &[f64], prior_log_weights: &[f64]) {
     let distribution = ensemble.distribution();
+    let WeightModel::Boltzmann(log_weights) = distribution.weight_model() else {
+        panic!("the weights are Boltzmann populations")
+    };
     let partition = distribution.partition();
     let thermal = GAS_CONSTANT * kelvin;
     // In log space relative to the lowest energy, so nothing underflows.
@@ -1546,7 +1556,7 @@ fn check_boltzmann(ensemble: &Ensemble, kelvin: f64, energies: &[f64], prior_log
                 .ln()
     };
     assert_close(
-        log_sum(distribution.log_weights().unwrap()),
+        log_sum(log_weights),
         log_sum(prior_log_weights),
         1.0e-9 * log_sum(prior_log_weights).abs().max(1.0),
     );
@@ -1556,13 +1566,26 @@ fn check_boltzmann(ensemble: &Ensemble, kelvin: f64, energies: &[f64], prior_log
     );
 }
 
+/// The Boltzmann populations' log weights of `ensemble`.
+fn boltzmann(ensemble: &Ensemble) -> &[f64] {
+    let WeightModel::Boltzmann(log_weights) = ensemble.distribution().weight_model() else {
+        panic!("the weights are Boltzmann populations")
+    };
+    log_weights
+}
+
+/// The canonical state at `kelvin`.
+fn at(kelvin: f64) -> ThermodynamicState {
+    ThermodynamicState::canonical(Quantity::new(kelvin, KELVIN)).unwrap()
+}
+
 #[test]
 fn boltzmann_populations_follow_the_energies_and_keep_shares_within_states() {
     for kelvin in [1.0, 298.15, 5000.0] {
         let mut ensemble = ensemble(true);
         ensemble
             .distribution_mut()
-            .assign_boltzmann_populations(Quantity::new(kelvin, KELVIN))
+            .assign_boltzmann_populations(at(kelvin))
             .unwrap();
         check_boltzmann(&ensemble, kelvin, &ENERGIES, &ln(&WEIGHTS));
     }
@@ -1571,7 +1594,7 @@ fn boltzmann_populations_follow_the_energies_and_keep_shares_within_states() {
     let mut ensemble = ensemble(true);
     ensemble
         .distribution_mut()
-        .assign_boltzmann_populations(Quantity::new(298.15, KELVIN))
+        .assign_boltzmann_populations(at(298.15))
         .unwrap();
     assert_eq!(ensemble.distribution().ranked_by_population(), [1, 3, 0, 2]);
 
@@ -1579,7 +1602,7 @@ fn boltzmann_populations_follow_the_energies_and_keep_shares_within_states() {
     // state: geometry 2 weighs twice geometry 1.
     let mut set = extreme();
     set.distribution_mut()
-        .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))
+        .assign_boltzmann_populations(at(300.0))
         .unwrap();
     check_boltzmann(
         &set,
@@ -1587,18 +1610,18 @@ fn boltzmann_populations_follow_the_energies_and_keep_shares_within_states() {
         &[0.0, 1.0],
         &ln(&[1.0e300, 1.0e-300, 2.0e-300]),
     );
-    let log_weights = set.distribution().log_weights().unwrap();
+    let log_weights = boltzmann(&set);
     assert_close(log_weights[2] - log_weights[1], 2.0_f64.ln(), 1.0e-9);
 
     // A distribution over part of a set without weights gains them, equal
     // within each state.
     let mut part = equilibrated();
-    part.distribution_mut().set_log_weights(None).unwrap();
+    part.distribution_mut().set_equal_weights();
     part.distribution_mut()
-        .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))
+        .assign_boltzmann_populations(at(300.0))
         .unwrap();
     check_boltzmann(&part, 300.0, &[0.0, 2.5], &[0.0; 5]);
-    let log_weights = part.distribution().log_weights().unwrap();
+    let log_weights = boltzmann(&part);
     assert_eq!(log_weights.len(), 5);
     assert_eq!(log_weights[0], log_weights[2]);
     assert_eq!(log_weights[1], log_weights[3]);
@@ -1611,17 +1634,9 @@ fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
     let before = ensemble.distribution().clone();
     let mut distribution = ensemble.distribution_mut();
     assert_eq!(
-        distribution.assign_boltzmann_populations(Quantity::new(300.0, KELVIN)),
+        distribution.assign_boltzmann_populations(at(300.0)),
         Err(StructureSetError::Missing(Requirement::StateEnergies))
     );
-    assert_eq!(
-        distribution.assign_boltzmann_populations(Quantity::new(-1.0, KELVIN)),
-        Err(StructureSetError::InvalidTemperature)
-    );
-    assert!(matches!(
-        distribution.assign_boltzmann_populations(Quantity::new(300.0, NANOMETER)),
-        Err(StructureSetError::Unit(_))
-    ));
     assert_eq!(ensemble.distribution(), &before);
     assert_eq!(
         StructureSetError::Missing(Requirement::StateEnergies).to_string(),
@@ -1638,16 +1653,10 @@ fn boltzmann_populations_refuse_without_energies_and_change_nothing() {
             .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
             .unwrap();
     }
-    distribution
-        .assign_boltzmann_populations(Quantity::new(1.0, KELVIN))
-        .unwrap();
+    distribution.assign_boltzmann_populations(at(1.0)).unwrap();
     check_boltzmann(&ensemble, 1.0, &energies, &ln(&WEIGHTS));
     let distribution = ensemble.distribution();
-    assert!(distribution
-        .log_weights()
-        .unwrap()
-        .iter()
-        .all(|w| w.is_finite()));
+    assert!(boltzmann(&ensemble).iter().all(|w| w.is_finite()));
     let gap =
         ensemble.state(0).unwrap().log_population() - ensemble.state(1).unwrap().log_population();
     let expected = 1.0e6 / GAS_CONSTANT;

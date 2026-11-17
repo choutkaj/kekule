@@ -116,7 +116,7 @@ fn state_temperature(temperature: Quantity<f64>) -> Result<f64, StructureSetErro
 }
 
 /// A finite, positive temperature in [`CANONICAL_TEMPERATURE_UNIT`].
-pub(crate) fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, StructureSetError> {
+fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, StructureSetError> {
     let temperature = temperature.value_in(CANONICAL_TEMPERATURE_UNIT)?;
     if temperature.is_finite() && temperature > 0.0 {
         Ok(temperature)
@@ -132,7 +132,7 @@ const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
 
 /// `R T` in [`CANONICAL_ENERGY_UNIT`] for a temperature in kelvin, when it is
 /// finite and positive.
-pub(crate) fn thermal_energy(kelvin: f64) -> Option<f64> {
+fn thermal_energy(kelvin: f64) -> Option<f64> {
     let thermal_energy = MOLAR_GAS_CONSTANT * kelvin;
     (thermal_energy.is_finite() && thermal_energy > 0.0).then_some(thermal_energy)
 }

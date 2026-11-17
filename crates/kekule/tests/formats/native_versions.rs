@@ -36,11 +36,11 @@ use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyVal
 use kekule::smiles;
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, GeometryIndex, Order, Partition, Positions, Samples,
-    StateData, Structure, StructureSet, TimeAxis, Velocities,
+    StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuilder};
 use kekule::units::{
-    Quantity, ANGSTROM, DALTON, DEGREE, ELEMENTARY_CHARGE, KELVIN, KILOJOULE_PER_MOLE,
+    Quantity, ANGSTROM, BAR, DALTON, DEGREE, ELEMENTARY_CHARGE, KELVIN, KILOJOULE_PER_MOLE,
     KILOJOULE_PER_MOLE_PER_NANOMETER, NANOMETER, NANOMETER_PER_PICOSECOND, PICOSECOND,
     SQUARE_ANGSTROM,
 };
@@ -194,6 +194,13 @@ const FIXTURES: &[Fixture] = &[
         kind: NativeKind::Distribution,
         perception: false,
         build: Build::Stable(|| write(&distribution(), false)),
+    },
+    Fixture {
+        name: "distribution_boltzmann",
+        since: 9,
+        kind: NativeKind::Distribution,
+        perception: false,
+        build: Build::Stable(|| write(&boltzmann_distribution(), false)),
     },
 ];
 
@@ -698,7 +705,8 @@ fn structure_set_description_columns() -> StructureSetDescription {
         .unwrap()
 }
 
-/// Two states with energies and properties, log weights, and a temperature.
+/// Two states with energies and properties, log weights, and a canonical
+/// target.
 fn clustered_distribution(samples: Samples, sample_count: usize) -> Distribution {
     let assignments = (0..sample_count).map(|sample| sample % 2).collect();
     let mut open = StateData::new()
@@ -716,7 +724,7 @@ fn clustered_distribution(samples: Samples, sample_count: usize) -> Distribution
         .unwrap()
         .with_states(vec![open, StateData::new()])
         .unwrap()
-        .with_temperature(Quantity::new(298.15, KELVIN))
+        .with_target(ThermodynamicState::canonical(Quantity::new(298.15, KELVIN)).unwrap())
         .unwrap()
 }
 
@@ -737,6 +745,36 @@ fn ensemble_description() -> EnsembleDescription {
 fn distribution() -> DistributionDescription {
     DistributionDescription::new(5, clustered_distribution(Samples::Subset(vec![0, 2, 4]), 3))
         .unwrap()
+}
+
+/// Four geometries as two states with Boltzmann populations at an
+/// isothermal-isobaric target.
+fn boltzmann_distribution() -> DistributionDescription {
+    let target = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(310.0, KELVIN),
+        Quantity::new(1.013_25, BAR),
+    )
+    .unwrap();
+    let states = [0.0, 2.5].map(|energy| {
+        StateData::new()
+            .with_energy(Quantity::new(energy, KILOJOULE_PER_MOLE))
+            .unwrap()
+    });
+    let geometries = [0.5, 1.0, 1.5, 2.0].map(|seed| Geometry::new(positions(seed)));
+    let set = StructureSet::from_geometries(water_topology(), Vec::from(geometries)).unwrap();
+    let distribution = Distribution::new(
+        Samples::All,
+        Partition::new(vec![0, 1, 0, 1], vec![0, 1]).unwrap(),
+    )
+    .unwrap()
+    .with_states(Vec::from(states))
+    .unwrap();
+    let mut ensemble = Ensemble::new(set, distribution).unwrap();
+    ensemble
+        .distribution_mut()
+        .assign_boltzmann_populations(target)
+        .unwrap();
+    DistributionDescription::new(4, ensemble.into_parts().1).unwrap()
 }
 
 /// A peptide of two glycines and a water, in one model or in two.

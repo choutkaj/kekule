@@ -4,10 +4,12 @@
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use std::sync::Arc;
 
-use super::{Distribution, Ensemble, Samples, StateData};
+use super::{Distribution, Ensemble, Samples, StateData, WeightModel};
 use crate::math::Point3;
 use crate::statistics::log_sum_exp;
-use crate::structure::{Geometry, Partition, Positions, StructureSet, StructureSetError};
+use crate::structure::{
+    Geometry, Partition, Positions, StructureSet, StructureSetError, ThermodynamicState,
+};
 use crate::topology::Topology;
 use crate::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
 
@@ -26,6 +28,11 @@ fn assert_all_close(actual: &[f64], expected: &[f64]) {
     for (actual, expected) in actual.iter().zip(expected) {
         assert_close(*actual, *expected);
     }
+}
+
+/// The canonical state at `kelvin`.
+fn at(kelvin: f64) -> ThermodynamicState {
+    ThermodynamicState::canonical(Quantity::new(kelvin, KELVIN)).unwrap()
 }
 
 fn water() -> Arc<Topology> {
@@ -73,7 +80,7 @@ fn probabilities_are_normalized_weights() -> Result<(), StructureSetError> {
     // Without weights the samples weigh equally.
     let unweighted = Distribution::new(Samples::All, Partition::one_state(4))?;
     assert_eq!(unweighted.probabilities()?, vec![0.25; 4]);
-    assert_eq!(unweighted.log_weights(), None);
+    assert_eq!(unweighted.weight_model(), WeightModel::Equal);
     Ok(())
 }
 
@@ -168,7 +175,7 @@ fn normalizing_makes_log_weights_log_probabilities() -> Result<(), StructureSetE
     let mut ensemble = Ensemble::weighted(set_of(3), vec![10.0, 10.0 + 2.0_f64.ln(), 10.0])?;
     let before = ensemble.distribution().probabilities()?;
     ensemble.distribution_mut().normalize_log_weights()?;
-    let log_weights = ensemble.distribution().log_weights().unwrap().to_vec();
+    let log_weights = ensemble.distribution().sample_log_weights();
     assert_close(log_sum_exp(log_weights.iter().copied()), 0.0);
     assert_all_close(&log_weights, &[0.25_f64.ln(), 0.5_f64.ln(), 0.25_f64.ln()]);
     assert_all_close(&ensemble.distribution().probabilities()?, &before);
@@ -196,23 +203,18 @@ fn boltzmann_populations_follow_state_energies() -> Result<(), StructureSetError
             .with_states(states)?
             .with_log_weights(vec![0.0, 3.0_f64.ln(), 0.0])?,
     )?;
-    let total_before = log_sum_exp(
-        ensemble
-            .distribution()
-            .log_weights()
-            .unwrap()
-            .iter()
-            .copied(),
-    );
+    let total_before = log_sum_exp(ensemble.distribution().sample_log_weights().into_iter());
     ensemble
         .distribution_mut()
-        .assign_boltzmann_populations(Quantity::new(temperature, KELVIN))?;
+        .assign_boltzmann_populations(at(temperature))?;
     let distribution = ensemble.distribution();
     assert_all_close(
         &distribution.state_probabilities()?,
         &[2.0 / 3.0, 1.0 / 3.0],
     );
-    let log_weights = distribution.log_weights().unwrap();
+    let WeightModel::Boltzmann(log_weights) = distribution.weight_model() else {
+        panic!("the weights are Boltzmann populations")
+    };
     assert_close(log_weights[1] - log_weights[0], 3.0_f64.ln());
     assert_close(log_sum_exp(log_weights.iter().copied()), total_before);
     assert_eq!(
@@ -241,7 +243,7 @@ fn a_remote_state_keeps_a_finite_log_population() -> Result<(), StructureSetErro
     )?;
     ensemble
         .distribution_mut()
-        .assign_boltzmann_populations(Quantity::new(300.0, KELVIN))?;
+        .assign_boltzmann_populations(at(300.0))?;
     let gap =
         ensemble.state(1).unwrap().log_population() - ensemble.state(0).unwrap().log_population();
     assert_close(gap, -1.0e5 / (R * 300.0));
@@ -273,13 +275,16 @@ fn an_unrepresentable_population_is_refused() -> Result<(), StructureSetError> {
     assert_eq!(
         ensemble
             .distribution_mut()
-            .assign_boltzmann_populations(Quantity::new(1.0e-308, KELVIN)),
+            .assign_boltzmann_populations(at(1.0e-308)),
         Err(StructureSetError::UnrepresentablePopulation { state: 1 })
     );
     // Failure changes nothing.
     let distribution = ensemble.distribution();
-    assert_eq!(distribution.log_weights(), Some(&[0.0, 1.0][..]));
-    assert!(distribution.temperature().is_none());
+    assert_eq!(
+        distribution.weight_model(),
+        WeightModel::LogWeights(&[0.0, 1.0])
+    );
+    assert!(distribution.target().is_none());
     Ok(())
 }
 
@@ -296,7 +301,9 @@ fn collapse_gives_each_representative_its_state_population() -> Result<(), Struc
         (oxygen_x(&collapsed, 0), oxygen_x(&collapsed, 1)),
         (0.0, 3.0)
     );
-    let log_weights = collapsed.distribution().log_weights().unwrap();
+    let WeightModel::LogWeights(log_weights) = collapsed.distribution().weight_model() else {
+        panic!("collapsed weights are log weights")
+    };
     assert_close(log_weights[0], log_sum_exp([0.0, 2.0].into_iter()));
     assert_close(log_weights[1], log_sum_exp([1.0, 3.0].into_iter()));
     assert_all_close(
@@ -350,8 +357,8 @@ fn edits_keep_the_distribution_on_its_set() -> Result<(), StructureSetError> {
     ensemble.remove(2)?;
     assert_eq!(ensemble.distribution().samples(), &Samples::All);
     assert_eq!(
-        ensemble.distribution().log_weights(),
-        Some(&[0.0, 1.0, -2.0][..])
+        ensemble.distribution().weight_model(),
+        WeightModel::LogWeights(&[0.0, 1.0, -2.0])
     );
     // A new state's sample.
     let state = ensemble.push_state(

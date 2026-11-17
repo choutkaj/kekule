@@ -16,7 +16,7 @@ use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
     Ensemble, Geometry, Partition, PartitionError, Positions, Requirement, StructureSet,
-    StructureSetError,
+    StructureSetError, ThermodynamicState, WeightModel,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::units::{Quantity, UnitError, KELVIN, KILOJOULE_PER_MOLE, NANOMETER};
@@ -91,8 +91,8 @@ fn regrouped(ensemble: &Ensemble, partition: &Partition) -> Ensemble {
         .zip(ensemble.set().iter())
         .all(|(after, before)| after.payload() == before.payload()));
     assert_eq!(
-        regrouped.distribution().log_weights(),
-        ensemble.distribution().log_weights()
+        regrouped.distribution().weight_model(),
+        ensemble.distribution().weight_model()
     );
     assert_eq!(
         regrouped.distribution().samples(),
@@ -353,10 +353,10 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
         .shares_layout(ensemble.set().topology()));
     // Each log weight is its state's log population: the weights 1 + 3 and
     // 2 + 1.
-    assert_close(
-        collapsed.distribution().log_weights().unwrap(),
-        &[4.0_f64.ln(), 3.0_f64.ln()],
-    );
+    let WeightModel::LogWeights(log_weights) = collapsed.distribution().weight_model() else {
+        panic!("collapsed weights are log weights")
+    };
+    assert_close(log_weights, &[4.0_f64.ln(), 3.0_f64.ln()]);
     for (state, representative) in [(0, 1), (1, 2)] {
         assert_eq!(
             collapsed.set().get(state).unwrap().positions(),
@@ -371,7 +371,9 @@ fn collapsing_clusters_keeps_representatives_with_their_populations() {
         set_energy(&mut warm, state, Some(energy));
     }
     warm.distribution_mut()
-        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .set_target(Some(
+            ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap(),
+        ))
         .unwrap();
     let collapsed_warm = regrouped(&warm, &partition(&[0, 0, 1, 1], &[1, 2])).collapse();
     let rt: f64 = 8.314_462_618_153_24e-3 * 300.0;
@@ -842,7 +844,7 @@ fn k_medoids_minimizes_the_weighted_distance_to_medoids() {
     assert_eq!(two.assignments(), [0, 0, 0, 1, 1]);
     assert_eq!(two.representatives(), [1, 3]);
 
-    // Weighting 4 by 10 and 11.5 by 2 makes {4, 11.5} optimal at 8.5.
+    // WeightModel 4 by 10 and 11.5 by 2 makes {4, 11.5} optimal at 8.5.
     let weighted = weighted_members([1.0, 1.0, 10.0, 1.0, 2.0]);
     let two = weighted.cluster_k_medoids(&distances, 2).unwrap();
     assert_eq!(two.assignments(), [0, 0, 0, 1, 1]);

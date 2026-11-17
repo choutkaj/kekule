@@ -20,7 +20,7 @@ use super::encode::{
 use super::{
     DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
     StructureSetDescription, COLUMNS_SINCE, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
-    NATIVE_MAGIC,
+    NATIVE_MAGIC, WEIGHT_MODEL_SINCE,
 };
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
@@ -48,7 +48,7 @@ use crate::properties::{
 };
 use crate::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
-    Structure, StructureSet, TimeAxis, Velocities,
+    Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, Weights,
 };
 use crate::topology::{
     AtomSiteId, AtomSiteMetadata, HierarchyBuilder, InstanceAtomId, MoleculeClass,
@@ -57,8 +57,8 @@ use crate::topology::{
 };
 use crate::units::{
     unit_with_symbol, Dimension, Quantity, Unit, CANONICAL_ENERGY_UNIT, CANONICAL_FORCE_UNIT,
-    CANONICAL_LENGTH_UNIT, CANONICAL_TEMPERATURE_UNIT, CANONICAL_TIME_UNIT,
-    CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
+    CANONICAL_LENGTH_UNIT, CANONICAL_PRESSURE_UNIT, CANONICAL_TEMPERATURE_UNIT,
+    CANONICAL_TIME_UNIT, CANONICAL_VELOCITY_UNIT, SQUARE_NANOMETER,
 };
 
 mod report;
@@ -1460,10 +1460,17 @@ impl<R: Read> Decoder<'_, R> {
             Samples::Subset(indices) => indices.len(),
             _ => count,
         };
-        let log_weights = if self.tag("log weights")? {
-            Some(self.f64_array(sample_count)?)
+        let weights = if self.version >= WEIGHT_MODEL_SINCE {
+            match self.u8()? {
+                0 => Weights::Equal,
+                1 => Weights::Logarithmic(self.f64_array(sample_count)?),
+                2 => Weights::Boltzmann(self.f64_array(sample_count)?),
+                other => return Err(self.invalid(format!("The weights tag {other} is unknown."))),
+            }
+        } else if self.tag("log weights")? {
+            Weights::Logarithmic(self.f64_array(sample_count)?)
         } else {
-            None
+            Weights::Equal
         };
         let assignments = self
             .u32_array(sample_count)?
@@ -1483,23 +1490,54 @@ impl<R: Read> Decoder<'_, R> {
             *state.properties_mut() = self.owner()?;
             states.push(state);
         }
-        let temperature = self.opt_f64()?;
+        let target = if self.version >= WEIGHT_MODEL_SINCE {
+            if self.tag("target")? {
+                Some(self.thermodynamic_state()?)
+            } else {
+                None
+            }
+        } else {
+            self.opt_f64()?
+                .map(|temperature| {
+                    ThermodynamicState::canonical(Quantity::new(
+                        temperature,
+                        CANONICAL_TEMPERATURE_UNIT,
+                    ))
+                    .map_err(|error| self.structure_error(error))
+                })
+                .transpose()?
+        };
+        if matches!(weights, Weights::Boltzmann(_)) && target.is_none() {
+            return Err(self.invalid("Boltzmann weights need a target."));
+        }
         let partition = Partition::new(assignments, representatives)
             .map_err(|error| self.structure_error(error))?;
+        // The target goes first: setting it later would drop the Boltzmann
+        // tag.
         let mut distribution = Distribution::new(samples, partition)
             .and_then(|distribution| distribution.with_states(states))
             .map_err(|error| self.structure_error(error))?;
-        if let Some(log_weights) = log_weights {
+        if let Some(target) = target {
             distribution = distribution
-                .with_log_weights(log_weights)
+                .with_target(target)
                 .map_err(|error| self.structure_error(error))?;
         }
-        if let Some(temperature) = temperature {
-            distribution = distribution
-                .with_temperature(Quantity::new(temperature, CANONICAL_TEMPERATURE_UNIT))
-                .map_err(|error| self.structure_error(error))?;
-        }
-        Ok(distribution)
+        distribution
+            .with_weights(weights)
+            .map_err(|error| self.structure_error(error))
+    }
+
+    /// A thermodynamic state: a temperature and an optional pressure.
+    fn thermodynamic_state(&mut self) -> Result<ThermodynamicState> {
+        let temperature = Quantity::new(self.f64()?, CANONICAL_TEMPERATURE_UNIT);
+        let state = match self.opt_f64()? {
+            None => ThermodynamicState::canonical(temperature),
+            Some(pressure) => ThermodynamicState::isothermal_isobaric(
+                temperature,
+                Quantity::new(pressure, CANONICAL_PRESSURE_UNIT),
+            ),
+        };
+        state.map_err(|error| self.structure_error(error))
     }
 
     fn f64_array(&mut self, count: usize) -> Result<Vec<f64>> {

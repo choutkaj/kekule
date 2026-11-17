@@ -7,7 +7,7 @@ use kekule::statistics::{
     ContactOccupancyAccumulator, GroupContactOccupancyAccumulator, RmsfAccumulator, StatisticsError,
 };
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet,
+    Distribution, Ensemble, Geometry, Partition, Positions, Samples, StructureSet, WeightModel,
 };
 use kekule::topology::{AtomSelection, InstanceAtomId, SelectionError, Topology};
 use kekule::units::{Quantity, ANGSTROM, NANOMETER, PICOSECOND};
@@ -866,12 +866,15 @@ fn weighted_observations_join_samples_and_probabilities() {
     assert_close(observed.weights(), &probabilities);
     // Sample positions index the log weights and probabilities.
     let by_position = distribution.probabilities().unwrap();
+    let WeightModel::LogWeights(log_weights) = distribution.weight_model() else {
+        panic!("a set log weight makes log weights")
+    };
     for (position, (geometry, probability)) in joined.iter().enumerate() {
         assert_eq!(distribution.sample_position(*geometry), Some(position));
         assert_eq!(*probability, by_position[position]);
         assert_eq!(
             distribution.log_weight(*geometry),
-            Some(distribution.log_weights().unwrap()[position])
+            Some(log_weights[position])
         );
     }
     assert_eq!(distribution.ranked_by_weight(), [2, 0]);

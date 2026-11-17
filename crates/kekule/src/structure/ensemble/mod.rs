@@ -13,7 +13,8 @@ mod states;
 #[cfg(test)]
 mod tests;
 
-pub use distribution::{Distribution, DistributionMut, Samples, StateData};
+pub(crate) use distribution::Weights;
+pub use distribution::{Distribution, DistributionMut, Samples, StateData, WeightModel};
 pub use partition::{Partition, PartitionError};
 pub use states::{StateIter, StateView};
 
@@ -105,9 +106,7 @@ impl<S: GeometryStorage> Ensemble<S> {
         log_weights: Vec<f64>,
     ) -> Result<Self, StructureSetError> {
         let mut ensemble = Self::uniform(set);
-        ensemble
-            .distribution_mut()
-            .set_log_weights(Some(log_weights))?;
+        ensemble.distribution_mut().set_log_weights(log_weights)?;
         Ok(ensemble)
     }
 
@@ -272,8 +271,8 @@ impl Ensemble {
     /// Copies geometries in the requested order, as [`StructureSet::select`]
     /// does, with the distribution restricted to them.
     ///
-    /// The selected samples stay samples with their log weights, and the
-    /// temperature is kept. Every state with a selected sample becomes a
+    /// The selected samples stay samples with their weights, and the target
+    /// is kept. Every state with a selected sample becomes a
     /// state of the copy, in state order, represented by the first copy of
     /// its representative or, when that is not selected, by its first
     /// selected sample. A state whose samples are all selected keeps its
@@ -300,9 +299,9 @@ impl Ensemble {
     /// Copies the samples of whole states in the requested order, each state
     /// with all of its samples in geometry order (sharing their geometries),
     /// its representative, energy, and properties. Duplicates and reordering
-    /// are allowed. Log weights, the temperature, the geometries' order
-    /// values and column rows, and set properties are kept; geometries that
-    /// are not samples are left out. [`Distribution::covering_population`],
+    /// are allowed. Weights, the target, the geometries' order values and
+    /// column rows, and set properties are kept; geometries that are not
+    /// samples are left out. [`Distribution::covering_population`],
     /// [`Distribution::within_energy_window`], and
     /// [`Distribution::ranked_by_population`] give states to extract.
     ///
@@ -332,8 +331,8 @@ impl Ensemble {
     ///
     /// It coarse-grains, losing the spread within each state, and drops the
     /// order. Each state keeps its energy and properties; the topology, the
-    /// set properties, the representatives' column rows, and the temperature
-    /// are kept, and the source is unchanged.
+    /// set properties, the representatives' column rows, and the target are
+    /// kept, and the source is unchanged.
     pub fn collapse(&self) -> Self {
         let (geometries, distribution) = self.distribution.collapse();
         let mut set = self
@@ -347,8 +346,8 @@ impl Ensemble {
 
     /// Projects every geometry onto one induced topology subset, as
     /// [`StructureSet::subset`] does. Set, state, and geometry properties
-    /// are dropped; the set's columns, the samples, log weights, states,
-    /// energies, and temperature still describe the geometries and are kept.
+    /// are dropped; the set's columns, the samples, weights, states,
+    /// energies, and target still describe the geometries and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureSetError> {
         Ok(Self {
             set: self.set.subset(selection)?,

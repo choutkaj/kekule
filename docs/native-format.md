@@ -25,8 +25,8 @@ in [`io/native`](../crates/kekule/src/io/native/mod.rs).
   order, every geometry of a structure or structure set with its positions,
   cell, occupancies, B factors, velocities, and forces, a set's order (times and steps, steps, or
   coordinates with their unit), its columns, and its owner properties, and an ensemble's
-  distribution (samples, log weights, each sample's state, each state's
-  representative, energy, and owner properties, and the temperature). Interpretation reports
+  distribution (samples, weights, each sample's state, each state's
+  representative, energy, and owner properties, and the target). Interpretation reports
   round-trip field by field and compare equal. Floating-point values are
   stored as their IEEE-754 bits, so coordinates come back bitwise identical
   (`-0.0` stays `-0.0`).
@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` in the set head; a set read from it has no columns. |
+| 8 | As version 9, without `columns` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it has no columns; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -292,13 +292,17 @@ order          := 0                                (none)
                                                    (time)
                | 2 [u64; geometry_count]           (steps)
                | 3 unit [f64; geometry_count]      (a coordinate in that unit)
-distribution   := samples log_weights:opt [f64; sample_count]
+distribution   := samples weights
                   state:u32[sample_count]
-                  state_count:count state[state_count]
-                  temperature:opt f64
+                  state_count:count state_data[state_count]
+                  target:opt state
 samples        := 0                                (every geometry)
                | 1 sample_count:count geometry:u32[sample_count]
-state          := representative:u32 energy:opt f64 owner
+weights        := 0                                (equal)
+               | 1 [f64; sample_count]             (log weights)
+               | 2 [f64; sample_count]             (Boltzmann populations)
+state_data     := representative:u32 energy:opt f64 owner
+state          := temperature:f64 pressure:opt f64
 geometries     := 0 geometry[geometry_count]       (inline)
                | 1                                 (stored elsewhere)
 geometry       := geometry_state velocities:opt vectors forces:opt vectors
@@ -313,7 +317,7 @@ scalars        := 0 (absent) | 1 present:bits(atom_count) f64[populated]
 
 Values are in Kekule's canonical units: positions and cell vectors in nm,
 B factors in nm², velocities in nm/ps, forces in kJ/(mol·nm), energies in
-kJ/mol, temperatures in K, and time in ps. Cell vectors are the columns a, b, c;
+kJ/mol, temperatures in K, pressures in bar, and time in ps. Cell vectors are the columns a, b, c;
 `periodic_axes` bits 0–2 mark a, b, c. Positions and vectors have exactly
 the topology's atom count; geometry property tables have one row per
 topology atom and bond.
@@ -329,12 +333,15 @@ columns are a property table with one row per geometry, in geometry order.
 An ensemble is a structure set and a distribution over its geometries; a
 structure set record states no weights or states. A distribution's samples
 are every geometry, or the geometries that a strictly ascending list of indices
-names; `sample_count` is the geometry count for every geometry. Log weights,
-the natural logarithm of each sample's weight, one per sample, are finite;
-without them samples weigh the same. Each sample stores the index of its
-state, and each state the sample position of its representative. The reader
-validates the partition: every state index names a stored state, and every
-representative is a sample of its own state, so no state is empty.
+names; `sample_count` is the geometry count for every geometry. The weights
+are equal, or one finite log weight per sample, the natural logarithm of its
+weight, tagged as given or as Boltzmann populations of the state energies at
+the target. Each sample stores the index of its state, and each state the
+sample position of its representative. The reader validates the partition:
+every state index names a stored state, and every representative is a sample
+of its own state, so no state is empty. The target is a thermodynamic state:
+a finite, positive temperature and, at constant pressure, a finite, positive
+pressure.
 
 A distribution record is a distribution over `geometry_count` geometries
 kept elsewhere, a `DistributionDescription`. The count bounds the

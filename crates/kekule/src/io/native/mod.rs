@@ -51,6 +51,10 @@ const DISTRIBUTION_SINCE: u32 = 8;
 /// The first format version whose set head stores the set's columns.
 const COLUMNS_SINCE: u32 = 9;
 
+/// The first format version whose distributions store a weight model and a
+/// target, not log weights and a temperature.
+const WEIGHT_MODEL_SINCE: u32 = 9;
+
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;
 /// Default [`NativeReadOptions::max_atoms`].
