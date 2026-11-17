@@ -556,9 +556,12 @@ columns and installs the sampling record, refusing another. Joining again
 after the table grew fills the new cells. A writer writes and flushes whole
 rows, so a crash or power loss leaves at most a pending tail that readers
 leave out. `append_frame_table` continues a checkpointed run's table: it
-requires the same header, cuts the rows after the checkpoint's step, and the
-file then equals one written straight through. A `FrameTableReader` reads the
-rows appended since its last read and fails when bytes it read changed. See
+requires the same header, keeps the rows through the checkpoint's step up to
+the first line that is not a valid row, and syncs the cut; the file then
+equals one written straight through. A `FrameTableReader` reads the rows
+appended since its last read. It fails when the header or the last row it
+read changed or the file is shorter, and does not detect an edit in place
+of an earlier row. See
 [the frame-table format](docs/frame-table.md).
 
 A trajectory represents one fixed-topology epoch. Changing chemistry or

@@ -18,7 +18,9 @@ pub struct JoinReport {
 }
 
 impl JoinReport {
-    /// The keys of the joined columns, in the table's order.
+    /// The keys of the joined columns the set holds, in the table's order. A
+    /// joined column whose cells are all missing, because no geometry's
+    /// step has a value, is absent from the set and left out.
     pub fn columns(&self) -> &[PropertyKey] {
         &self.columns
     }
@@ -113,6 +115,7 @@ impl<S: GeometryStorage> StructureSet<S> {
             guard.insert(key.clone(), column)?;
             joined.push(key.clone());
         }
+        joined.retain(|key| columns.get(key).is_some());
         if let Some(sampling) = &sampling {
             sampling.check_columns(&columns)?;
         }

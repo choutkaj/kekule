@@ -34,7 +34,7 @@
 //! };
 //! use kekule::units::KILOJOULE_PER_MOLE;
 //!
-//! let path = std::env::temp_dir().join("kekule-frames-doc.tsv");
+//! let path = std::env::temp_dir().join(format!("kekule-frames-doc-{}.tsv", std::process::id()));
 //! let energy = PropertyKey::new("potential_energy")?;
 //! let header = FrameTableHeader::new(vec![ColumnSpec::new(
 //!     energy.clone(),
@@ -52,7 +52,7 @@
 //! // A run restarted from its checkpoint at step 500 continues the table.
 //! let (writer, report) = append_frame_table(&path, &header, KeepRows::ThroughStep(500))?;
 //! assert_eq!(report.last_step(), Some(500));
-//! assert_eq!(report.dropped_rows(), 1);
+//! assert_eq!(report.dropped_lines(), 1);
 //! drop(writer);
 //! assert_eq!(read_frame_table(&path)?.steps(), [0, 500]);
 //! # std::fs::remove_file(&path)?;

@@ -91,7 +91,8 @@ the main branch migrates by the table under "From the SampleSet API".
   growing `FrameTableReader`, `append_frame_table` with `KeepRows` to
   continue at a checkpoint, and `FrameTableError` with
   `FrameTableErrorKind`. `StructureSet::join_frames` joins a table's columns
-  by step and installs its sampling record (`JoinReport`).
+  by step and installs its sampling record (`JoinReport`). The `frame_table`
+  fuzz target reads them.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).

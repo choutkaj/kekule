@@ -25,6 +25,7 @@ on:
           - trajectory_trr
           - trajectory_xtc
           - trajectory_index
+          - frame_table
 
 permissions:
   contents: read

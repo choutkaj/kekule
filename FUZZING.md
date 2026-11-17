@@ -28,6 +28,10 @@ current version, decode again, and re-encode to the same bytes. Its seeds,
 `v<N>_<fixture>.bin`, are the files of every readable version
 (`crates/kekule/tests/fixtures/native/`); recording the newest version's files
 writes its seeds too.
+`frame_table` reads frame tables; every accepted table must write under its
+own header and read back to the same steps and cells. Its seeds hold a
+header with a sampling record, a pending tail, NUL blocks, and missing and
+escaped text.
 `select` parses selection-language text; every accepted expression must print
 canonical text that parses back to an equal expression and prints the same,
 and every error must carry a span within the input.

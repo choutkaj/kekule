@@ -1,0 +1,6 @@
+#kekule-frames	1
+#column	step	int
+#column	time	real	ps
+#column	stage	text
+#column	potential_energy	real	kJ/mol
+#column	b

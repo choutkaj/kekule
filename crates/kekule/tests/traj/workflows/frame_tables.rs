@@ -414,7 +414,7 @@ fn a_table_continued_at_a_checkpoint_equals_one_written_straight_through() {
         append_frame_table(&continued, &header(), KeepRows::ThroughStep(2_000)).unwrap();
     assert_eq!(report.kept_rows(), 5);
     assert_eq!(report.last_step(), Some(2_000));
-    assert_eq!(report.dropped_rows(), 2);
+    assert_eq!(report.dropped_lines(), 2);
     assert!(report.dropped_bytes() > 108);
     assert_eq!(writer.last_step(), Some(2_000));
     write_rows(&mut writer, 5..10);
@@ -440,6 +440,98 @@ fn a_table_continued_at_a_checkpoint_equals_one_written_straight_through() {
     write_rows(&mut writer, 1..10);
     drop(writer);
     assert_eq!(fs::read(&continued).unwrap(), fs::read(&straight).unwrap());
+}
+
+#[test]
+fn a_checkpoint_keeps_the_rows_before_a_damaged_line() {
+    let directory = Directory::new();
+    let straight = directory.path("straight.tsv");
+    let mut writer = create_frame_table(&straight, header()).unwrap();
+    write_rows(&mut writer, 0..10);
+    drop(writer);
+    let text = String::from_utf8(fs::read(&straight).unwrap()).unwrap();
+    let path = directory.path("frames.tsv");
+
+    // A corrupt line after the checkpoint is cut with the rows after it.
+    fs::write(&path, text.replacen("\n3000\t", "\n3000x\t", 1)).unwrap();
+    let error = append_frame_table(&path, &header(), KeepRows::All).unwrap_err();
+    assert_eq!(error.kind(), FrameTableErrorKind::Corrupt);
+    let (mut writer, report) =
+        append_frame_table(&path, &header(), KeepRows::ThroughStep(2_000)).unwrap();
+    assert_eq!(report.kept_rows(), 5);
+    assert_eq!(report.last_step(), Some(2_000));
+    assert_eq!(report.dropped_lines(), 5);
+    write_rows(&mut writer, 5..10);
+    drop(writer);
+    assert_eq!(fs::read(&path).unwrap(), fs::read(&straight).unwrap());
+
+    // A zeroed block followed by data ends the kept rows before the
+    // checkpoint; the last step shows the rows that are missing.
+    let row = text.find("\n1500\t").unwrap() + 1;
+    let mut bytes = text.clone().into_bytes();
+    bytes[row..row + 8].fill(0);
+    fs::write(&path, &bytes).unwrap();
+    let (mut writer, report) =
+        append_frame_table(&path, &header(), KeepRows::ThroughStep(2_000)).unwrap();
+    assert_eq!(report.kept_rows(), 3);
+    assert_eq!(report.last_step(), Some(1_000));
+    assert_eq!(report.dropped_lines(), 7);
+    write_rows(&mut writer, 3..10);
+    drop(writer);
+    assert_eq!(fs::read(&path).unwrap(), fs::read(&straight).unwrap());
+
+    // So does a row out of order.
+    fs::write(&path, text.replacen("\n1000\t", "\n100\t", 1)).unwrap();
+    let (_, report) = append_frame_table(&path, &header(), KeepRows::ThroughStep(2_000)).unwrap();
+    assert_eq!(report.last_step(), Some(500));
+}
+
+#[test]
+fn readers_take_crlf_line_ends_and_refuse_a_first_line_of_another_file() {
+    let mut writer = FrameTableWriter::new(Vec::new(), header()).unwrap();
+    write_rows(&mut writer, 0..3);
+    let text = String::from_utf8(writer.into_inner().unwrap()).unwrap();
+    let crlf = text.replace('\n', "\r\n");
+    assert_eq!(
+        read_frame_table_from(crlf.as_bytes()).unwrap(),
+        read_frame_table_from(text.as_bytes()).unwrap()
+    );
+    for (partial, kind) in [
+        ("#kekule-fr", FrameTableErrorKind::Pending),
+        ("#kekule-frames", FrameTableErrorKind::Pending),
+        ("#kekule-frames\t1", FrameTableErrorKind::Pending),
+        ("#kekule-framesX", FrameTableErrorKind::Corrupt),
+        ("step\tbias", FrameTableErrorKind::Corrupt),
+    ] {
+        let error = read_frame_table_from(partial.as_bytes()).unwrap_err();
+        assert_eq!(error.kind(), kind, "{partial:?}");
+    }
+}
+
+#[test]
+fn the_fuzz_seeds_read_as_their_names_say() {
+    let seeds = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus/frame_table");
+    let read = |name: &str| read_frame_table_from(fs::read(seeds.join(name)).unwrap().as_slice());
+    let table = read("sampling.tsv").unwrap();
+    assert_eq!(table.steps(), [0, 500, 1_000]);
+    assert!(table.header().sampling().is_some());
+    assert_eq!(table.pending_bytes(), 0);
+    assert_eq!(read("pending.tsv").unwrap().pending_bytes(), 12);
+    assert_eq!(read("nul_blocks.tsv").unwrap().pending_bytes(), 70);
+    let text = read("text_missing.tsv").unwrap();
+    assert_eq!(
+        text.column(&key("label")),
+        Some(&PropertyColumn::String(vec![
+            None,
+            Some(String::new()),
+            Some("\\N".into()),
+            Some("a\nb\rc".into()),
+        ]))
+    );
+    assert_eq!(
+        read("pending_header.tsv").unwrap_err().kind(),
+        FrameTableErrorKind::Pending
+    );
 }
 
 #[test]
@@ -557,7 +649,6 @@ fn joining_a_table_fills_columns_by_step_and_installs_its_sampling_record() {
             key("potential_energy"),
             key("bias.potential"),
             key("bias.dihedral"),
-            key("gamd.potential.k0"),
             key("replica"),
         ]
     );
@@ -570,7 +661,8 @@ fn joining_a_table_fills_columns_by_step_and_installs_its_sampling_record() {
         .unwrap();
     assert_eq!(bias.value(), &[Some(0.0), Some(0.2), Some(0.4), None]);
     assert_eq!(set.sampling(), table.header().sampling());
-    // The k0 column is all missing in the table, so the set has none.
+    // The k0 column is all missing in the table, so the set has none and the
+    // report leaves it out.
     assert!(set.columns().get(&key("gamd.potential.k0")).is_none());
 
     // A grown table fills the cells its new rows hold; joining is idempotent.

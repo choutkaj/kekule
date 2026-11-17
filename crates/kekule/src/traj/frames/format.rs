@@ -184,20 +184,24 @@ pub(super) fn parse_header(bytes: &[u8]) -> Result<ParsedHeader, FrameTableError
     let mut records = Records::default();
     loop {
         let Some(length) = bytes[offset..].iter().position(|&byte| byte == b'\n') else {
-            // A first line that cannot become the magic is no frame table;
-            // trailing NUL bytes are blocks lost at power loss.
-            let start = bytes
-                .iter()
-                .rposition(|&byte| byte != 0)
-                .map_or(0, |last| last + 1);
-            let start = &bytes[..start.min(MAGIC.len())];
-            if number == 0 && !MAGIC.as_bytes().starts_with(start) {
-                return Err(FrameTableError::corrupt(1, Reason::NotFrameTable));
+            // A first line that cannot become the magic and its tab is no
+            // frame table; trailing NUL bytes are blocks lost at power loss.
+            if number == 0 {
+                let end = bytes
+                    .iter()
+                    .rposition(|&byte| byte != 0)
+                    .map_or(0, |last| last + 1);
+                let start = &bytes[..end];
+                let lead = format!("{MAGIC}\t");
+                if !(lead.as_bytes().starts_with(start) || start.starts_with(lead.as_bytes())) {
+                    return Err(FrameTableError::corrupt(1, Reason::NotFrameTable));
+                }
             }
             return Err(pending());
         };
         let line = std::str::from_utf8(&bytes[offset..offset + length])
             .map_err(|_| FrameTableError::corrupt(number + 1, Reason::Encoding))?;
+        let line = line.strip_suffix('\r').unwrap_or(line);
         offset += length + 1;
         number += 1;
         if number == 1 {
@@ -424,6 +428,7 @@ impl Rows {
             let line = line
                 .strip_suffix(b"\n")
                 .expect("only complete lines are parsed");
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
             let line = std::str::from_utf8(line)
                 .map_err(|_| FrameTableError::corrupt(number, Reason::Encoding))?;
             let step = staged.push(header, line, number)?;

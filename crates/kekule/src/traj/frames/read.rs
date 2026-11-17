@@ -88,8 +88,6 @@ pub(super) struct Parsed {
     pub(super) last_row: Option<usize>,
     /// The number of complete lines.
     pub(super) lines: usize,
-    /// The end of each complete row.
-    pub(super) row_ends: Vec<usize>,
 }
 
 /// Parses a whole frame table.
@@ -101,19 +99,15 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Parsed, FrameTableError> {
         .map_or(end, |last| end + last + 1);
     let mut rows = Rows::new(&header);
     rows.extend(&header, &bytes[end..complete], lines + 1)?;
-    let mut row_ends = Vec::with_capacity(rows.steps.len());
-    for (offset, &byte) in bytes[end..complete].iter().enumerate() {
-        if byte == b'\n' {
-            row_ends.push(end + offset + 1);
-        }
-    }
-    let last_row = match row_ends.len() {
-        0 => None,
-        1 => Some(end),
-        count => Some(row_ends[count - 2]),
-    };
+    let row_count = rows.steps.len();
+    let last_row = (row_count > 0).then(|| {
+        bytes[end..complete - 1]
+            .iter()
+            .rposition(|&byte| byte == b'\n')
+            .map_or(end, |last| end + last + 1)
+    });
     Ok(Parsed {
-        lines: lines + row_ends.len(),
+        lines: lines + row_count,
         table: FrameTable {
             header,
             rows,
@@ -122,7 +116,6 @@ pub(super) fn parse(bytes: &[u8]) -> Result<Parsed, FrameTableError> {
         header_end: end,
         end: complete,
         last_row,
-        row_ends,
     })
 }
 
@@ -156,10 +149,13 @@ pub fn read_frame_table_from(mut input: impl BufRead) -> Result<FrameTable, Fram
 /// A frame table that its writer is still growing, read again as rows are
 /// appended.
 ///
-/// [`Self::refresh`] parses only the rows appended since the last read. When
-/// bytes already read change, as when a run is cut at a checkpoint and
-/// continued, it fails with [`FrameTableErrorKind::Changed`]; open the file
-/// again.
+/// [`Self::refresh`] parses only the rows appended since the last read. First
+/// it checks that the header and the last row read are unchanged and that the
+/// file is not shorter; otherwise, as when a run is cut at a checkpoint and
+/// continued, it fails with [`FrameTableErrorKind::Changed`], and the file is
+/// opened again. It does not detect an edit in place of an earlier row:
+/// writers only append, and a cut changes the last row read or shortens the
+/// file.
 #[derive(Debug, Clone)]
 pub struct FrameTableReader {
     path: PathBuf,

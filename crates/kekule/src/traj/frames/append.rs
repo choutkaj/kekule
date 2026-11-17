@@ -5,7 +5,7 @@ use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use super::error::{FrameTableError, FrameTableErrorKind, Reason};
-use super::format::header_text;
+use super::format::{header_text, parse_header, ParsedHeader, Rows};
 use super::header::FrameTableHeader;
 use super::read::parse;
 use super::write::FrameTableWriter;
@@ -17,9 +17,12 @@ use super::write::FrameTableWriter;
 pub enum KeepRows {
     /// The rows whose step is at most this one: those a run had written when
     /// it checkpointed at this step, which a run restarted from the
-    /// checkpoint does not write again.
+    /// checkpoint does not write again. The rows are kept in order up to the
+    /// first row of a later step or the first line that is not a valid row,
+    /// such as one a crash damaged; that line and everything after it are
+    /// removed.
     ThroughStep(u64),
-    /// Every complete row.
+    /// Every complete row. Every complete line must be a valid row.
     All,
 }
 
@@ -28,7 +31,7 @@ pub enum KeepRows {
 pub struct FrameTableAppendReport {
     kept_rows: usize,
     last_step: Option<u64>,
-    dropped_rows: usize,
+    dropped_lines: usize,
     dropped_bytes: u64,
 }
 
@@ -38,19 +41,20 @@ impl FrameTableAppendReport {
         self.kept_rows
     }
 
-    /// The step of the last kept row, when a row was kept; a run compares
-    /// it with its checkpoint to see that no row it counts is missing.
+    /// The step of the last kept row, when a row was kept. A run compares it
+    /// with its checkpoint: an earlier step means rows the checkpoint counts
+    /// are missing, as when a damaged line ended the kept rows.
     pub const fn last_step(&self) -> Option<u64> {
         self.last_step
     }
 
-    /// The complete rows removed after the kept ones.
-    pub const fn dropped_rows(&self) -> usize {
-        self.dropped_rows
+    /// The complete lines removed after the kept rows.
+    pub const fn dropped_lines(&self) -> usize {
+        self.dropped_lines
     }
 
-    /// The bytes removed: those of the dropped rows and of the pending tail,
-    /// or of the whole file when its header was not complete.
+    /// The bytes removed: those of the dropped lines and of the pending
+    /// tail, or of the whole file when its header was not complete.
     pub const fn dropped_bytes(&self) -> u64 {
         self.dropped_bytes
     }
@@ -66,10 +70,11 @@ impl FrameTableAppendReport {
 /// as it computes them; the file then holds, byte for byte, what one
 /// uninterrupted run would have written. A file whose header is not complete
 /// yet is started again with `header`. Otherwise its header must equal
-/// `header`, and every complete row must be valid; the scan reads the whole
-/// file.
+/// `header`: the same records with the same values, in any order, whatever
+/// its `##` comments.
 ///
-/// The file is cut after the kept rows before the writer is returned.
+/// The file is cut after the kept rows, and the cut is synced to the disk,
+/// before the writer is returned.
 /// Appending survives a process that dies at any point: before the cut, the
 /// file is as it was; after it, it holds the kept rows and maybe some
 /// appended ones, possibly with an unfinished line, which another call takes
@@ -83,7 +88,8 @@ impl FrameTableAppendReport {
 /// [`FrameTableErrorKind::Io`] when the file cannot be read, cut, or
 /// written; [`FrameTableErrorKind::Mismatch`] when its header differs from
 /// `header`; and the errors of [`read_frame_table`](super::read_frame_table)
-/// for a file that is not a valid frame table. The file is unchanged then.
+/// for a file whose header is not valid, or under [`KeepRows::All`] for a
+/// complete line that is not a valid row. The file is unchanged then.
 pub fn append_frame_table(
     path: impl AsRef<Path>,
     header: &FrameTableHeader,
@@ -97,17 +103,17 @@ pub fn append_frame_table(
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(FrameTableError::read)?;
-    let parsed = match parse(&bytes) {
-        Ok(parsed) => parsed,
+    let found = match parse_header(&bytes) {
+        Ok(ParsedHeader { header, .. }) => header,
         Err(error) if error.kind() == FrameTableErrorKind::Pending => {
             cut(&mut file, 0)?;
             file.write_all(header_text(header).as_bytes())
-                .and_then(|()| file.flush())
+                .and_then(|()| file.sync_data())
                 .map_err(FrameTableError::write)?;
             let report = FrameTableAppendReport {
                 kept_rows: 0,
                 last_step: None,
-                dropped_rows: 0,
+                dropped_lines: 0,
                 dropped_bytes: bytes.len() as u64,
             };
             let writer = FrameTableWriter::resumed(BufWriter::new(file), header.clone(), None);
@@ -115,35 +121,96 @@ pub fn append_frame_table(
         }
         Err(error) => return Err(error),
     };
-    if parsed.table.header() != header {
+    if &found != header {
         return Err(FrameTableError::new(
             FrameTableErrorKind::Mismatch,
             Reason::Mismatch,
         ));
     }
-    let steps = parsed.table.steps();
-    let kept = match keep {
-        KeepRows::ThroughStep(step) => steps.partition_point(|&row| row <= step),
-        KeepRows::All => steps.len(),
+    let Kept {
+        rows: kept,
+        last_step,
+        end,
+        lines,
+    } = match keep {
+        KeepRows::ThroughStep(step) => kept_through(&bytes, header, step)?,
+        KeepRows::All => {
+            let parsed = parse(&bytes)?;
+            Kept {
+                rows: parsed.table.len(),
+                last_step: parsed.table.steps().last().copied(),
+                end: parsed.end,
+                lines: 0,
+            }
+        }
     };
-    let end = kept
-        .checked_sub(1)
-        .map_or(parsed.header_end, |last| parsed.row_ends[last]);
     cut(&mut file, end as u64)?;
-    let last_step = kept.checked_sub(1).map(|last| steps[last]);
     let report = FrameTableAppendReport {
         kept_rows: kept,
         last_step,
-        dropped_rows: steps.len() - kept,
+        dropped_lines: lines,
         dropped_bytes: (bytes.len() - end) as u64,
     };
     let writer = FrameTableWriter::resumed(BufWriter::new(file), header.clone(), last_step);
     Ok((writer, report))
 }
 
-/// Cuts `file` to `length` bytes and moves to its end.
+/// The rows [`append_frame_table`] keeps and where they end.
+struct Kept {
+    rows: usize,
+    last_step: Option<u64>,
+    /// The end of the kept rows.
+    end: usize,
+    /// The complete lines after them.
+    lines: usize,
+}
+
+/// The rows of `bytes`, in order, up to the first row of a step after `step`
+/// or the first complete line that is not a valid row.
+fn kept_through(
+    bytes: &[u8],
+    header: &FrameTableHeader,
+    step: u64,
+) -> Result<Kept, FrameTableError> {
+    let ParsedHeader {
+        end: header_end,
+        lines: header_lines,
+        ..
+    } = parse_header(bytes)?;
+    let mut rows = Rows::new(header);
+    let mut end = header_end;
+    let mut complete = bytes[header_end..]
+        .split_inclusive(|&byte| byte == b'\n')
+        .filter(|line| line.ends_with(b"\n"));
+    let mut lines = 0;
+    for line in complete.by_ref() {
+        let first = line.split(|&byte| byte == b'\t').next().unwrap_or_default();
+        let later = std::str::from_utf8(first)
+            .ok()
+            .and_then(|text| text.parse::<u64>().ok())
+            .is_some_and(|row| row > step);
+        if later
+            || rows
+                .extend(header, line, header_lines + rows.steps.len() + 1)
+                .is_err()
+        {
+            lines = 1;
+            break;
+        }
+        end += line.len();
+    }
+    Ok(Kept {
+        rows: rows.steps.len(),
+        last_step: rows.steps.last().copied(),
+        end,
+        lines: lines + complete.count(),
+    })
+}
+
+/// Cuts `file` to `length` bytes, syncs the cut, and moves to its end.
 fn cut(file: &mut File, length: u64) -> Result<(), FrameTableError> {
     file.set_len(length)
+        .and_then(|()| file.sync_data())
         .and_then(|()| file.seek(SeekFrom::Start(length)).map(drop))
         .map_err(FrameTableError::write)
 }

@@ -9,12 +9,15 @@ join it by step. The API lives in
 The format must be appendable while a run grows, survive a crash, cut at a
 checkpoint, and keep every bit of a real number. One row is one line, so all
 four follow from complete lines. numpy and pandas read it with
-`sep='\t', comment='#'`.
+`sep='\t', comment='#'` when no text cell holds `#`: that option cuts a line
+at any `#`.
 
 ## Layout
 
 UTF-8 text, LF line ends, tab-separated fields. The header comes first, and
-the line naming the columns ends it.
+the line naming the columns ends it. Readers also take CRLF line ends: they
+strip one `\r` before each line feed, which no cell ends with, since the
+writer escapes `\r` in text.
 
 ```text
 #kekule-frames	1
@@ -50,14 +53,15 @@ step	time	stage	potential_energy	bias.potential	bias.dihedral
 | `#sampling potential_energy key` | The real column of the unbiased potential energy. |
 | `#sampling method text` | A label of the method, such as `GaMD dual boost`. |
 | `#bias key` | One bias column; each row's bias is the sum of these columns. |
-| `##…` | A comment, ignored. |
+| `##…` | A comment, ignored. Comments appear in the header only. |
 
 The `#state`, `#sampling`, and `#bias` records are the run's sampling record
 (`kekule::structure::Sampling`). A table with one has the temperature and
 `from_step`; the potential energy and bias records name real columns of
 energies. Any other record starting with `#` is unsupported, so a newer field
 is never silently ignored. Records after the magic may come in any order;
-`#column` and `#bias` records keep theirs.
+`#column` and `#bias` records keep theirs. A first line that cannot become
+`#kekule-frames` and a tab is no frame table, even before its line feed.
 
 Units are kekule's unit-constant symbols, such as `ps`, `kJ/mol`, `K`, `bar`,
 `nm^3`, and `1` for a pure number. Keys are kekule property keys. The line
@@ -91,19 +95,27 @@ complete line that does not parse is corrupt. A file whose header is not
 complete yet is pending; a follower reads it again later.
 
 A growing reader parses only the complete rows appended since its last read.
-If the bytes it read changed, as when a run was cut and continued, it fails
-and keeps the rows it had.
+First it checks that the header and the last row it read are unchanged and
+that the file is not shorter; otherwise, as when a run was cut and
+continued, it fails and keeps the rows it had. It does not detect an edit in
+place of an earlier row: writers only append, and a cut changes the last
+row read or shortens the file.
 
 ## Continuing at a checkpoint
 
 `append_frame_table` continues a table after a restart:
 
-1. It parses the file and requires its header to equal the run's. Otherwise
-   the file is unchanged. A file without a complete header starts again.
-2. It keeps the rows whose step is at most the checkpoint's and cuts the
-   later rows and the pending tail.
+1. It parses the header and requires it to equal the run's: the same records
+   with the same parsed values, in any order, whatever the comments.
+   Otherwise the file is unchanged. A file without a complete header starts
+   again.
+2. It keeps the rows in order up to the first row after the checkpoint's
+   step or the first line that is not a valid row, such as one a crash
+   damaged, and cuts the rest and the pending tail. It syncs the cut to the
+   disk. Keeping every row instead requires every complete line to be valid.
 3. It returns a writer after the kept rows and reports the last kept step,
-   which the run compares with its checkpoint.
+   which the run compares with its checkpoint: an earlier step means rows
+   the checkpoint counts are missing.
 
 With the same rows, the file then equals one written straight through, byte
 for byte. Sync the file before a checkpoint counts its rows.
@@ -114,8 +126,9 @@ for byte. Sync the file before a checkpoint counts its rows.
 set's columns by step: each geometry takes the row of its order's step, or of
 its integer column `step`. The step and time columns and boolean and text
 columns are not joined. A joined column replaces the set's column of the
-same key, so joining a grown table again fills the new cells. The set takes
-the table's sampling record and refuses a different one.
+same key, so joining a grown table again fills the new cells; a joined
+column whose cells are all missing is absent from the set. The set takes the
+table's sampling record and refuses a different one.
 
 More columns arrive as another table: `step` first, then its columns,
 usually without a sampling record. A file beside a trajectory is named
