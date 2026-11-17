@@ -61,14 +61,23 @@ the main branch migrates by the table under "From the SampleSet API".
   writes a set one frame per geometry.
 - `xyz::write` and `xyz::write_to` write a structure as one XYZ frame, or a
   structure set (`xyz::XyzSource`) as one frame per geometry.
+- A `StructureSet` has columns: per-geometry scalars in one
+  `PropertyTable<GeometryIndex>`, a row per geometry. `select`, `remove`,
+  `subset`, `from_reader`, `Processed`, and `refresh` keep each geometry's
+  row, and added geometries have missing cells. `columns_mut` edits them
+  (`SetColumnsMut`); `column_values(&ColumnRef)` reads a real or integer
+  column or the order's times, steps, or coordinates as numbers, and
+  `steps()` gives the order's steps. `StructureSetRead::columns`,
+  `StructureSetDescription::{columns, with_columns}`, and native format
+  version 9 carry them; sets read from versions 7 and 8 have no columns.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
 - The `kekule::native` binary format stores a `Molecule`, `Topology`,
   `Structure`, `StructureSet`, or `Ensemble` exactly (`native::write_to`,
-  `native::read`; format version 8, specified in `docs/native-format.md`).
+  `native::read`; format version 9, specified in `docs/native-format.md`).
 - Native readers read every format version from `NATIVE_FORMAT_OLDEST`, 7,
-  to `NATIVE_FORMAT_VERSION`, 8; the writer writes the newest. A version
+  to `NATIVE_FORMAT_VERSION`, 9; the writer writes the newest. A version
   outside the range fails with `FormatErrorDetail::NativeVersion { found,
   oldest, newest }`. Frozen files of every readable version are tested.
 - Native decoding validates untrusted input within `NativeReadOptions` and
@@ -543,7 +552,7 @@ weights. The `Model` items became `Structure` items as listed under Changed.
 | `PdbWriteIssue`, `MmcifWriteIssue` (`UnrepresentableSample`, `EmptySampleSet`) | `PdbWriteErrorKind`, `MmcifWriteErrorKind` (`UnrepresentableGeometry`, `EmptyStructureSet`) |
 | `MmcifSampleField` | `MmcifSharedCategory` |
 | `kekule::geometry`, `PeriodicGeometry` | `kekule::math`, `Lattice` |
-| Native format version 5 | Version 8; version 7 files read, version 5 files do not |
+| Native format version 5 | Version 9; versions 7 and 8 read, version 5 does not |
 | `FormatErrorDetail::NativeVersion { found, supported }` | `NativeVersion { found, oldest, newest }` |
 | `NativeKind::SampleSet`, `SampleSetInterpretation` | `NativeKind::StructureSet`, `Ensemble`, `StructureSetInterpretation` |
 | `NativeObject::into_sample_set`, `into_sample_set_interpretation` | `into_structure_set`, `into_ensemble`, `into_structure_set_interpretation` |

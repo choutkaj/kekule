@@ -27,11 +27,11 @@ use kekule::perception::aromaticity::AromaticityModel;
 use kekule::perception::rings::RingMembership;
 use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::perception::Perception;
-use kekule::properties::{PropertyKey, PropertyValue};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::smiles;
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
-    Structure, StructureSet, TimeAxis, Velocities,
+    Distribution, Ensemble, Forces, Geometry, GeometryIndex, Order, Partition, Positions, Samples,
+    StateData, Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuilder};
 use kekule::units::{
@@ -137,6 +137,13 @@ const FIXTURES: &[Fixture] = &[
         build: Build::Stable(|| write(&structure_set_steps(), true)),
     },
     Fixture {
+        name: "structure_set_columns",
+        since: 9,
+        kind: NativeKind::StructureSet,
+        perception: true,
+        build: Build::Stable(|| write(&structure_set_columns(), true)),
+    },
+    Fixture {
         name: "interpreted_structure_set",
         since: 7,
         kind: NativeKind::StructureSetInterpretation,
@@ -154,6 +161,13 @@ const FIXTURES: &[Fixture] = &[
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_description(), true)),
+    },
+    Fixture {
+        name: "structure_set_description_columns",
+        since: 9,
+        kind: NativeKind::StructureSet,
+        perception: true,
+        build: Build::Stable(|| write(&structure_set_description_columns(), true)),
     },
     Fixture {
         name: "ensemble",
@@ -293,6 +307,33 @@ fn stable_builders_build_the_current_files() {
             );
         }
     }
+}
+
+#[test]
+fn sets_of_versions_before_9_have_no_columns() {
+    for version in NATIVE_FORMAT_OLDEST..9 {
+        let set = decode(version, named("structure_set"))
+            .into_structure_set()
+            .unwrap();
+        assert_eq!(set.columns().len(), set.len(), "v{version}");
+        assert!(!set.columns().has_data(), "v{version}");
+        let description = decode(version, named("structure_set_description"))
+            .into_structure_set_description()
+            .unwrap();
+        assert_eq!(description.columns().len(), 4, "v{version}");
+        assert!(!description.columns().has_data(), "v{version}");
+    }
+    let columns = decode(9, named("structure_set_columns"))
+        .into_structure_set()
+        .unwrap();
+    assert_eq!(columns.columns(), structure_set_columns().columns());
+}
+
+fn named(name: &str) -> &'static Fixture {
+    FIXTURES
+        .iter()
+        .find(|fixture| fixture.name == name)
+        .unwrap()
 }
 
 /// Writes the current version's missing files, and the same files as seeds
@@ -598,6 +639,59 @@ fn structure_set_description() -> StructureSetDescription {
             unit: DEGREE,
             values: vec![-0.0, 30.0, 60.0, 90.0],
         }))
+        .unwrap()
+}
+
+/// A column of every type, each with a missing cell, for three geometries.
+fn columns_table() -> PropertyTable<GeometryIndex> {
+    let mut set = StructureSet::from_geometries(
+        water_topology(),
+        [0.0, 1.0, 2.0].map(|seed| Geometry::new(positions(seed))),
+    )
+    .unwrap();
+    let mut columns = set.columns_mut();
+    for (name, column) in [
+        (
+            "bias",
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(-0.0), None, Some(1e-300)],
+            },
+        ),
+        (
+            "replica",
+            PropertyColumn::Int(vec![None, Some(i64::MIN), Some(3)]),
+        ),
+        (
+            "accepted",
+            PropertyColumn::Bool(vec![Some(true), None, Some(false)]),
+        ),
+        (
+            "stage",
+            PropertyColumn::String(vec![Some("nvt".into()), Some("npt".into()), None]),
+        ),
+    ] {
+        columns.insert(key(name), column).unwrap();
+    }
+    set.columns().clone()
+}
+
+/// Three water geometries in a step order, with columns.
+fn structure_set_columns() -> StructureSet {
+    let mut set = structure_set_steps();
+    let mut columns = set.columns_mut();
+    for (key, column) in columns_table().iter() {
+        columns.insert(key.clone(), column.clone()).unwrap();
+    }
+    set
+}
+
+/// Three geometries kept elsewhere, in a step order, with columns.
+fn structure_set_description_columns() -> StructureSetDescription {
+    StructureSetDescription::new(water_topology(), 3)
+        .with_order(Some(Order::Step(vec![10, 20, 30])))
+        .unwrap()
+        .with_columns(columns_table())
         .unwrap()
 }
 

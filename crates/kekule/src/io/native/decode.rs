@@ -19,7 +19,8 @@ use super::encode::{
 };
 use super::{
     DistributionDescription, EnsembleDescription, NativeKind, NativeObject, NativeReadOptions,
-    StructureSetDescription, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
+    StructureSetDescription, COLUMNS_SINCE, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION,
+    NATIVE_MAGIC,
 };
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
@@ -43,7 +44,7 @@ use crate::perception::{
 };
 use crate::properties::{
     GeometryProperties, MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey,
-    PropertyValue, RawPropertyTable, TopologyProperties,
+    PropertyTable, PropertyValue, RawPropertyTable, TopologyProperties,
 };
 use crate::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
@@ -1359,6 +1360,11 @@ impl<R: Read> Decoder<'_, R> {
         let owner = self.owner()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
         let order = self.order(count)?;
+        let columns = if self.version >= COLUMNS_SINCE {
+            PropertyTable::from_raw(self.table(count)?)
+        } else {
+            PropertyTable::new(count)
+        };
         let distribution = if ensemble {
             Some(self.distribution(count)?)
         } else {
@@ -1370,6 +1376,7 @@ impl<R: Read> Decoder<'_, R> {
                 let description = StructureSetDescription::new(topology, count)
                     .with_properties(owner)
                     .with_order(order)
+                    .and_then(|description| description.with_columns(columns))
                     .map_err(|error| self.structure_error(error))?;
                 return Ok((Decoded::External(Box::new(description)), distribution));
             }
@@ -1391,6 +1398,7 @@ impl<R: Read> Decoder<'_, R> {
         *set.properties_mut() = owner;
         set.set_order(order)
             .map_err(|error| self.structure_error(error))?;
+        set.set_columns(columns);
         Ok((Decoded::Inline(Box::new(set)), distribution))
     }
 

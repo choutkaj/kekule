@@ -159,8 +159,9 @@ pub use structure_editor::{
 };
 pub(crate) use structure_set::{check_bound, sealed as geometry_storage, visit_geometry};
 pub use structure_set::{
-    GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place, Requirement, SetContext,
-    StructureSet, StructureSetError, StructureSetRead, StructureSetReadError, TimeAxis,
+    ColumnRef, GeometryIndex, GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place,
+    Requirement, SetColumnsMut, SetContext, StructureSet, StructureSetError, StructureSetRead,
+    StructureSetReadError, TimeAxis,
 };
 pub(crate) use view::sealed::Sealed as StructureViewSealed;
 pub use view::{AsStructureView, StructureAtomView, StructureKind, StructureView};

@@ -3,6 +3,7 @@
 use crate::diagnostics::{IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::fmt;
 
+use crate::properties::PropertyKey;
 use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
@@ -20,6 +21,10 @@ pub enum Requirement {
     AnyOrder,
     /// A time order whose axis has times.
     Times,
+    /// A step per geometry: a step order, or a time order with steps.
+    Steps,
+    /// An [`Order::Coordinate`](super::Order::Coordinate).
+    CoordinateOrder,
     /// An energy on every state of the distribution.
     StateEnergies,
     /// A distribution with a temperature.
@@ -36,6 +41,8 @@ impl fmt::Display for Requirement {
             Self::TimeOrder => "needs a time order",
             Self::AnyOrder => "needs an order",
             Self::Times => "needs times",
+            Self::Steps => "needs steps",
+            Self::CoordinateOrder => "needs a coordinate order",
             Self::StateEnergies => "needs an energy for every state",
             Self::Temperature => "needs a temperature",
             Self::Cell => "needs a periodic cell on every geometry",
@@ -175,6 +182,19 @@ pub enum StructureSetError {
     InvalidEnergyWindow,
     /// A population fraction is not in `(0, 1]`.
     InvalidFraction,
+    /// The set has no column under the key
+    /// ([`StructureSet::column_values`](super::StructureSet::column_values)).
+    /// A column without values is not stored.
+    MissingColumn {
+        /// The key.
+        key: PropertyKey,
+    },
+    /// A set column holds booleans or strings where numbers are asked for
+    /// ([`StructureSet::column_values`](super::StructureSet::column_values)).
+    NonNumericColumn {
+        /// The column's key.
+        key: PropertyKey,
+    },
     /// A geometry's structural state is invalid; see the source.
     Geometry(GeometryError),
     /// Projecting the topology onto a selection failed; see the source.
@@ -271,6 +291,12 @@ impl fmt::Display for StructureSetError {
             }
             Self::InvalidFraction => {
                 formatter.write_str("The population fraction is not greater than 0 and at most 1.")
+            }
+            Self::MissingColumn { key } => {
+                write!(formatter, "The structure set has no column \"{key}\".")
+            }
+            Self::NonNumericColumn { key } => {
+                write!(formatter, "The column \"{key}\" holds no numbers.")
             }
             Self::Geometry(_) => formatter.write_str("A geometry is invalid."),
             Self::Subset(_) => formatter.write_str("Cannot subset the structure set."),

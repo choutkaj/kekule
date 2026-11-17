@@ -7,10 +7,10 @@ use std::sync::{Arc, OnceLock};
 
 use crate::alignment::{self, AlignmentError, AlignmentOptions};
 use crate::math::{PeriodicCell, Point3, Vector3};
-use crate::properties::OwnerProperties;
+use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
-    subset_rows, DenseArrayError, Geometry, GeometryError, GeometryView, Order, Positions,
-    Structure, StructureError, StructureSetRead, StructureSetReadError,
+    subset_rows, DenseArrayError, Geometry, GeometryError, GeometryIndex, GeometryView, Order,
+    Positions, Structure, StructureError, StructureSetRead, StructureSetReadError,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
 
@@ -727,6 +727,10 @@ impl<R: StructureSetRead> StructureSetRead for Processed<R> {
 
     fn properties(&self) -> Option<&OwnerProperties> {
         self.inner.properties()
+    }
+
+    fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
+        self.inner.columns()
     }
 
     /// Geometry 0, which the reader keeps; `None` for every other geometry.

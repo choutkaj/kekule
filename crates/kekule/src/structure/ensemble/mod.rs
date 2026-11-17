@@ -325,8 +325,8 @@ impl Ensemble {
     ///
     /// It coarse-grains, losing the spread within each state, and drops the
     /// order. Each state keeps its energy and properties; the topology, the
-    /// set properties, and the temperature are kept, and the source is
-    /// unchanged.
+    /// set properties, the representatives' column rows, and the temperature
+    /// are kept, and the source is unchanged.
     pub fn collapse(&self) -> Self {
         let (geometries, distribution) = self.distribution.collapse();
         let mut set = self
@@ -340,8 +340,8 @@ impl Ensemble {
 
     /// Projects every geometry onto one induced topology subset, as
     /// [`StructureSet::subset`] does. Set, state, and geometry properties
-    /// are dropped; the samples, log weights, states, energies, and
-    /// temperature still describe the geometries and are kept.
+    /// are dropped; the set's columns, the samples, log weights, states,
+    /// energies, and temperature still describe the geometries and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureSetError> {
         Ok(Self {
             set: self.set.subset(selection)?,
