@@ -37,6 +37,8 @@
 //!   grouped into states by a [`Partition`], each with its [`StateData`].
 //!   [`StateView`] reads a state and [`DistributionMut`] edits the
 //!   distribution; its operations fail with a [`StructureSetError`] too.
+//! - [`ThermodynamicState`]: a temperature and, in the isothermal-isobaric
+//!   ensemble, a pressure; the state a weight refers to.
 //! - Borrowed access: [`StructureView`] is the common input of coordinate-dependent
 //!   kernels. Structures, geometries ([`GeometryView`]), and codec frames
 //!   ([`crate::traj::FrameView`]) all borrow as one without copying
@@ -138,6 +140,7 @@ mod positions;
 pub(crate) mod scalars;
 mod structure_editor;
 mod structure_set;
+mod thermodynamics;
 mod view;
 
 pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopologyMut};
@@ -162,6 +165,7 @@ pub use structure_set::{
     GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place, Requirement, SetContext,
     StructureSet, StructureSetError, StructureSetRead, StructureSetReadError, TimeAxis,
 };
+pub use thermodynamics::ThermodynamicState;
 pub(crate) use view::sealed::Sealed as StructureViewSealed;
 pub use view::{AsStructureView, StructureAtomView, StructureKind, StructureView};
 

@@ -161,6 +161,9 @@ pub enum StructureSetError {
     NonFiniteEnergy,
     /// A temperature is not finite and positive.
     InvalidTemperature,
+    /// A pressure is not finite and positive
+    /// ([`ThermodynamicState::isothermal_isobaric`](crate::structure::ThermodynamicState::isothermal_isobaric)).
+    InvalidPressure,
     /// A Boltzmann population is too small for a finite log weight: the
     /// state's energy lies so far above the lowest, relative to the thermal
     /// energy of
@@ -262,6 +265,7 @@ impl fmt::Display for StructureSetError {
             Self::InvalidTemperature => {
                 formatter.write_str("The temperature is not finite and positive.")
             }
+            Self::InvalidPressure => formatter.write_str("The pressure is not finite and positive."),
             Self::UnrepresentablePopulation { state } => write!(
                 formatter,
                 "The Boltzmann population of state {state} is too small to represent at this temperature. Raise the temperature."

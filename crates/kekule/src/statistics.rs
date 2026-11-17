@@ -1,5 +1,6 @@
 //! Weighted structural statistics: per-atom RMS fluctuation and contact
-//! occupancy of atom pairs or atom groups over weighted structures.
+//! occupancy of atom pairs or atom groups over weighted structures, and the
+//! estimators that reweighting derives group populations with.
 //!
 //! An observation is one structure with an explicit, finite, positive weight.
 //! Weights are relative: scaling every weight by one factor changes no
@@ -67,8 +68,19 @@
 //! assert!((occupancy - 0.75).abs() < 1e-15);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # Reweighting estimators
+//!
+//! An [`Estimator`] estimates the population `Σ exp(b_i)` of a group of
+//! samples, such as a state or a histogram bin, from dimensionless reduced
+//! values `b_i`: the log importance weights of the samples, for example a
+//! bias potential over the thermal energy. [`Estimator::log_sum`] returns its
+//! logarithm, so populations spanning hundreds of orders of magnitude stay
+//! finite. An estimator gives the totals of groups; within a group, each
+//! sample's share is exactly `exp(b_i) / Σ exp(b_j)`.
 
 mod accumulators;
+mod estimators;
 
 pub(crate) use accumulators::{merged_total, next_total, observe_samples_of};
 pub use accumulators::{
@@ -76,6 +88,7 @@ pub use accumulators::{
     GroupContactOccupancyResult, MergeMismatch, RmsfAccumulator, RmsfResult, SampleObservations,
     StatisticsError,
 };
+pub use estimators::{CumulantOrder, Estimator};
 
 #[cfg(doc)]
 use crate::structure::{AsStructureView, Ensemble, StructureSet, StructureSetRead};

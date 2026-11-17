@@ -197,6 +197,14 @@ the main branch migrates by the table under "From the SampleSet API".
   `BondOrder`, `ValenceViolation`, and other report and stereo types.
 - Benchmarks of large interpretation, edits, clustering, pooled reads,
   statistics, and selections over externally supplied entries.
+- `structure::ThermodynamicState` is a temperature and, in the
+  isothermal-isobaric ensemble, a pressure (`canonical`, `isothermal_isobaric`,
+  `with_temperature`, `thermal_energy`); `StructureSetError::InvalidPressure`
+  refuses a pressure that is not finite and positive.
+- `units::BAR` and `CANONICAL_PRESSURE_UNIT`.
+- `statistics::Estimator` estimates a group's population `ln Σ exp(b_i)` from
+  reduced log weights (`log_sum`): the exponential sum, or the cumulant
+  expansion to a `CumulantOrder`, second by default.
 
 ### Changed
 

@@ -1,4 +1,4 @@
-//! Measurement, superposition, clustering, weighted statistics,
+//! Measurement, superposition, clustering, weighted statistics, reweighting,
 //! secondary structure, and solvation.
 
 mod alignment;
@@ -7,6 +7,7 @@ mod clustering;
 mod clustering_runs;
 mod distributions;
 mod dssp;
+mod estimators;
 mod interactions;
 mod measurements;
 mod solvation;
@@ -18,5 +19,6 @@ mod structure_set_readers;
 mod structure_sets;
 #[path = "../support/mod.rs"]
 mod support;
+mod thermodynamic_states;
 #[path = "../traj/support/mod.rs"]
 mod traj_support;

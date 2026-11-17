@@ -229,3 +229,22 @@ fn approximate_comparison_handles_finite_extremes_without_overflow() {
         Ok(true)
     );
 }
+
+#[test]
+fn bar_is_the_canonical_pressure_and_pressure_volume_work_is_molar_energy() {
+    use kekule::units::constants::AVOGADRO;
+    use kekule::units::{BAR, CANONICAL_PRESSURE_UNIT, CUBIC_NANOMETER, KILOJOULE_PER_MOLE};
+
+    assert_eq!(CANONICAL_PRESSURE_UNIT, BAR);
+    assert_eq!(BAR.symbol(), Some("bar"));
+    let pascal = unit(BAR.dimension(), 1.0);
+    assert_eq!(Quantity::new(1.0e5, pascal).value_in(BAR), Ok(1.0));
+    // 1 bar nm^3 per molecule is 1e-22 J, or 0.060 221 407 6 kJ/mol.
+    let work = Quantity::new(1.0, BAR)
+        .try_mul(Quantity::new(1.0, CUBIC_NANOMETER))
+        .and_then(|work| work.try_mul(AVOGADRO))
+        .unwrap()
+        .value_in(KILOJOULE_PER_MOLE)
+        .unwrap();
+    assert!((work - 0.060_221_407_6).abs() < 1e-15, "{work}");
+}

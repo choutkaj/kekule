@@ -796,6 +796,12 @@ pub const KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER: Unit = Unit::named(
     1.0e21,
     "kJ/mol/nm^2",
 );
+/// The bar, `1e5 Pa`; Kekule's canonical pressure unit.
+pub const BAR: Unit = Unit::named(
+    Dimension::from_exponents([-1, 1, -2, 0, 0, 0, 0]),
+    1.0e5,
+    "bar",
+);
 /// Velocity in nm/ps.
 pub const NANOMETER_PER_PICOSECOND: Unit = Unit::named(
     Dimension::from_exponents([1, 0, -1, 0, 0, 0, 0]),
@@ -816,6 +822,8 @@ pub const CANONICAL_AREA_UNIT: Unit = SQUARE_NANOMETER;
 pub const CANONICAL_TIME_UNIT: Unit = PICOSECOND;
 /// Canonical energy: molar energy in kJ/mol.
 pub const CANONICAL_ENERGY_UNIT: Unit = KILOJOULE_PER_MOLE;
+/// Canonical pressure: bar.
+pub const CANONICAL_PRESSURE_UNIT: Unit = BAR;
 /// Canonical charge: the elementary charge `e`.
 pub const CANONICAL_CHARGE_UNIT: Unit = ELEMENTARY_CHARGE;
 /// Canonical temperature: K.
@@ -833,7 +841,7 @@ pub const CANONICAL_FORCE_CONSTANT_UNIT: Unit = KILOJOULE_PER_MOLE_PER_SQUARE_NA
 
 // Every named unit constant, for restoring a unit or a symbol that was
 // stored as text.
-const NAMED_UNITS: [Unit; 32] = [
+const NAMED_UNITS: [Unit; 33] = [
     DIMENSIONLESS,
     METER,
     NANOMETER,
@@ -865,6 +873,7 @@ const NAMED_UNITS: [Unit; 32] = [
     KILOJOULE_PER_MOLE_PER_NANOMETER,
     KILOJOULE_PER_MOLE_PER_SQUARE_ANGSTROM,
     KILOJOULE_PER_MOLE_PER_SQUARE_NANOMETER,
+    BAR,
     NANOMETER_PER_PICOSECOND,
 ];
 

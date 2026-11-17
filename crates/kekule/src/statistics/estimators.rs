@@ -1,0 +1,115 @@
+//! Estimators of a group's population from the reduced values of its
+//! samples.
+
+use crate::structure::log_sum_exp;
+
+/// The highest cumulant that [`Estimator::Cumulant`] keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum CumulantOrder {
+    /// The mean alone.
+    First = 1,
+    /// The mean and the variance; exact for Gaussian reduced values.
+    Second = 2,
+    /// The mean, the variance, and the third central moment.
+    Third = 3,
+}
+
+/// How the population `Σ exp(b_i)` of a group is estimated from the reduced
+/// values `b_i` of its samples.
+///
+/// A reduced value is a dimensionless log importance weight, such as a bias
+/// potential over the thermal energy, `βΔV`. The exponential sum is exact but
+/// dominated by the few largest values. The cumulant expansion trades bias for
+/// lower variance (Miao et al., J. Chem. Theory Comput. 10, 2677, 2014); to the
+/// second order, the default, it is exact when the reduced values are
+/// Gaussian.
+///
+/// For a group of `n` samples:
+///
+/// | Estimator | `ln Σ exp(b_i)` |
+/// | --- | --- |
+/// | `Exponential` | `ln Σ exp(b_i)` |
+/// | `Cumulant(First)` | `ln n + κ1` |
+/// | `Cumulant(Second)` | `ln n + κ1 + κ2 / 2` |
+/// | `Cumulant(Third)` | `ln n + κ1 + κ2 / 2 + κ3 / 6` |
+///
+/// `κ1` is the mean, `κ2` the variance, and `κ3` the third central moment of
+/// the reduced values, each over `n`. Adding a constant to every reduced
+/// value of a group adds it to the group's estimate, with either estimator.
+///
+/// An estimator gives the totals of groups only. How a group's population is
+/// shared among its samples is not an estimate: each sample's share is
+/// `exp(b_i) / Σ exp(b_j)`.
+///
+/// ```
+/// use kekule::statistics::{CumulantOrder, Estimator};
+///
+/// let reduced = [0.5, 1.5];
+/// let exact = Estimator::Exponential.log_sum(&reduced).unwrap();
+/// assert!((exact - (0.5_f64.exp() + 1.5_f64.exp()).ln()).abs() < 1e-15);
+/// // ln 2 + 1 + 0.25 / 2: the mean and half the variance.
+/// assert_eq!(Estimator::default(), Estimator::Cumulant(CumulantOrder::Second));
+/// let cumulant = Estimator::default().log_sum(&reduced).unwrap();
+/// assert!((cumulant - (2.0_f64.ln() + 1.125)).abs() < 1e-15);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Estimator {
+    /// The exponential sum itself.
+    Exponential,
+    /// The cumulant expansion of `ln⟨exp(b)⟩` to the given order.
+    Cumulant(CumulantOrder),
+}
+
+impl Default for Estimator {
+    /// The second-order cumulant expansion.
+    fn default() -> Self {
+        Self::Cumulant(CumulantOrder::Second)
+    }
+}
+
+impl Estimator {
+    /// The estimated `ln Σ exp(b_i)` over the reduced values of a group.
+    ///
+    /// `None` when the group is empty, a reduced value is not finite, or the
+    /// estimate is not finite.
+    pub fn log_sum(self, reduced: &[f64]) -> Option<f64> {
+        if reduced.is_empty() || reduced.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        let estimate = match self {
+            Self::Exponential => log_sum_exp(reduced.iter().copied()),
+            Self::Cumulant(order) => (reduced.len() as f64).ln() + cumulant_sum(reduced, order),
+        };
+        estimate.is_finite().then_some(estimate)
+    }
+}
+
+/// `κ1 + κ2 / 2 + κ3 / 6` up to `order`, with population moments about a
+/// mean refined by a second pass, so that the central moments keep their
+/// digits under a large common offset of the values.
+fn cumulant_sum(values: &[f64], order: CumulantOrder) -> f64 {
+    let count = values.len() as f64;
+    // Each value is divided before summing, so the sum does not overflow
+    // for values near the largest finite one.
+    let estimate = values.iter().map(|value| value / count).sum::<f64>();
+    let mean = estimate
+        + values
+            .iter()
+            .map(|value| (value - estimate) / count)
+            .sum::<f64>();
+    if order == CumulantOrder::First {
+        return mean;
+    }
+    let (second, third) = values.iter().fold((0.0, 0.0), |(second, third), value| {
+        let deviation = value - mean;
+        let square = deviation * deviation;
+        (second + square, third + square * deviation)
+    });
+    let mut sum = mean + second / count / 2.0;
+    if order == CumulantOrder::Third {
+        sum += third / count / 6.0;
+    }
+    sum
+}
