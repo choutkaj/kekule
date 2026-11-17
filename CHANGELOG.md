@@ -64,12 +64,17 @@ the main branch migrates by the table under "From the SampleSet API".
 - A `StructureSet` has columns: per-geometry scalars in one
   `PropertyTable<GeometryIndex>`, a row per geometry. `select`, `remove`,
   `subset`, `from_reader`, `Processed`, and `refresh` keep each geometry's
-  row, and added geometries have missing cells. `columns_mut` edits them
-  (`SetColumnsMut`); `column_values(&ColumnRef)` reads a real or integer
+  row, and added geometries have missing cells. `StructureSet::columns_mut`
+  and `Ensemble::columns_mut` edit them (`SetColumnsMut`), failing with
+  `StructureSetError::Column`; `column_values(&ColumnRef)` reads a real or integer
   column or the order's times, steps, or coordinates as numbers, and
   `steps()` gives the order's steps. `StructureSetRead::columns`,
   `StructureSetDescription::{columns, with_columns}`, and native format
   version 9 carry them; sets read from versions 7 and 8 have no columns.
+  `from_reader` fails with `StructureSetReadError::ColumnRows` for a reader
+  whose columns do not have a row per geometry. Other writers refuse a set
+  with columns by default, or omit them under the `properties` policy
+  (`GeometryField::SetColumns`); trajectory writers always refuse them.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
@@ -79,7 +84,8 @@ the main branch migrates by the table under "From the SampleSet API".
 - Native readers read every format version from `NATIVE_FORMAT_OLDEST`, 7,
   to `NATIVE_FORMAT_VERSION`, 9; the writer writes the newest. A version
   outside the range fails with `FormatErrorDetail::NativeVersion { found,
-  oldest, newest }`. Frozen files of every readable version are tested.
+  oldest, newest }`. Files of every readable version are tested; the newest
+  version may change in place until a release.
 - Native decoding validates untrusted input within `NativeReadOptions` and
   fails with a `FormatError` of `Format::Native`, never a panic.
 - Native files keep interpretation reports (`NativeSource::interpreted_structure`,

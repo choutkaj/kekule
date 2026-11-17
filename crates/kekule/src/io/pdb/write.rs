@@ -121,8 +121,8 @@ impl PdbWriteOptions {
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a structure set or of a geometry's set, which PDB cannot
-    /// carry: by default a structure or set with any fails to write, and
+    /// properties and columns of a structure set or of a geometry's set,
+    /// which PDB cannot carry: by default a structure or set with any fails to write, and
     /// under [`UnrepresentablePolicy::Omit`] the report names each
     /// ([`WriteOmission::GeometryState`]).
     pub const fn properties(&self) -> UnrepresentablePolicy {

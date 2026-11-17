@@ -2,12 +2,12 @@
 
 use std::fmt;
 
-use crate::properties::OwnerProperties;
+use crate::properties::{OwnerProperties, PropertyTable};
 
-use super::{GeometryView, Place, StructureSetRead};
+use super::{GeometryIndex, GeometryView, Place, StructureSetRead};
 
 /// What a borrowed geometry's set records about it: its place in the set's
-/// order, and the set's properties.
+/// order, and the set's properties and columns.
 ///
 /// [`StructureKind::InSet`](crate::structure::StructureKind::InSet) holds
 /// it. Writers and reductions read it so that this state is written,
@@ -19,22 +19,37 @@ use super::{GeometryView, Place, StructureSetRead};
 pub struct SetContext<'a> {
     place: Option<Place>,
     properties: Option<&'a OwnerProperties>,
+    columns: Option<&'a PropertyTable<GeometryIndex>>,
 }
 
 impl<'a> SetContext<'a> {
-    /// The context of a geometry at `place` in a set with `properties`.
-    pub(crate) const fn new(place: Option<Place>, properties: Option<&'a OwnerProperties>) -> Self {
-        Self { place, properties }
+    /// The context of a geometry at `place` in a set without properties or
+    /// columns.
+    pub(crate) const fn new(place: Option<Place>) -> Self {
+        Self {
+            place,
+            properties: None,
+            columns: None,
+        }
     }
 
     /// The context of a geometry of a set or another reader.
     pub(crate) fn of_view(view: GeometryView<'a, dyn StructureSetRead>) -> Self {
-        Self::new(view.place(), view.reader.properties())
+        Self {
+            place: view.place(),
+            properties: view.reader.properties(),
+            columns: view.reader.columns(),
+        }
     }
 
     /// The properties of the geometry's set, when its reader has them.
     pub(crate) const fn set_properties(self) -> Option<&'a OwnerProperties> {
         self.properties
+    }
+
+    /// The columns of the geometry's set, when its reader has them.
+    pub(crate) const fn set_columns(self) -> Option<&'a PropertyTable<GeometryIndex>> {
+        self.columns
     }
 
     /// The geometry's place in its set's order: a time and step, a step, or a
@@ -45,7 +60,7 @@ impl<'a> SetContext<'a> {
 }
 
 /// Two contexts are equal when they report the same place, whatever set
-/// properties they borrow.
+/// properties and columns they borrow.
 impl PartialEq for SetContext<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.place == other.place

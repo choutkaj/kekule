@@ -168,7 +168,7 @@ impl<'a> FrameView<'a> {
     pub fn as_structure_view(self) -> StructureView<'a> {
         self.geometry.structure_view(
             self.topology,
-            StructureKind::InSet(SetContext::new(Some(self.place()), None)),
+            StructureKind::InSet(SetContext::new(Some(self.place()))),
         )
     }
 

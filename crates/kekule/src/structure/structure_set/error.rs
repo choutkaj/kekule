@@ -3,7 +3,7 @@
 use crate::diagnostics::{IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::fmt;
 
-use crate::properties::PropertyKey;
+use crate::properties::{PropertyError, PropertyKey};
 use crate::structure::GeometryError;
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
@@ -195,6 +195,11 @@ pub enum StructureSetError {
         /// The column's key.
         key: PropertyKey,
     },
+    /// A column edit through
+    /// [`SetColumnsMut`](super::SetColumnsMut) is invalid for the table, such
+    /// as a column of another length or a value of another type; see the
+    /// source.
+    Column(Box<PropertyError>),
     /// A geometry's structural state is invalid; see the source.
     Geometry(GeometryError),
     /// Projecting the topology onto a selection failed; see the source.
@@ -298,6 +303,9 @@ impl fmt::Display for StructureSetError {
             Self::NonNumericColumn { key } => {
                 write!(formatter, "The column \"{key}\" holds no numbers.")
             }
+            Self::Column(_) => {
+                formatter.write_str("Cannot change the columns of the structure set.")
+            }
             Self::Geometry(_) => formatter.write_str("A geometry is invalid."),
             Self::Subset(_) => formatter.write_str("Cannot subset the structure set."),
             Self::Unit(error) => error.fmt(formatter),
@@ -308,6 +316,7 @@ impl fmt::Display for StructureSetError {
 impl std::error::Error for StructureSetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Column(error) => Some(error.as_ref()),
             Self::Geometry(error) => Some(error),
             Self::Subset(error) => Some(error),
             Self::Unit(error) => error.source(),

@@ -1,21 +1,26 @@
 //! The per-geometry columns of a set: [`GeometryIndex`], [`SetColumnsMut`],
 //! and [`ColumnRef`].
 
-use std::borrow::Cow;
-
 use crate::properties::{
     LiveRows, PropertyColumn, PropertyError, PropertyKey, PropertyTable, PropertyTableMut,
     PropertyValue,
 };
+
 use crate::units::{Quantity, CANONICAL_TIME_UNIT, DIMENSIONLESS};
 
 use super::{GeometryStorage, Order, Requirement, StructureSet, StructureSetError};
 
+impl From<PropertyError> for StructureSetError {
+    fn from(error: PropertyError) -> Self {
+        Self::Column(Box::new(error))
+    }
+}
+
 /// The position of one geometry in its set: the row of the set's columns
 /// ([`StructureSet::columns`]).
 ///
-/// It is the geometry's stable index, so it changes only when the set's
-/// geometries do, as [`StructureSet::remove`] shifts later ones down.
+/// It is the geometry's index in the set. It shifts when an earlier geometry
+/// is removed ([`StructureSet::remove`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GeometryIndex(usize);
 
@@ -50,7 +55,8 @@ pub enum ColumnRef {
 ///
 /// Reads go through `Deref` to the [`PropertyTable`]. Every mutation is
 /// transactional, as [`PropertyTableMut`]'s: on error the columns are
-/// unchanged.
+/// unchanged. A failure of the table's own checks is
+/// [`StructureSetError::Column`].
 #[derive(Debug)]
 pub struct SetColumnsMut<'a> {
     table: PropertyTableMut<'a, GeometryIndex>,
@@ -70,23 +76,36 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
-    /// As [`PropertyTableMut::insert`].
+    /// [`StructureSetError::Column`] with the errors of
+    /// [`PropertyTableMut::insert`].
     pub fn insert(
         &mut self,
         key: PropertyKey,
         column: PropertyColumn,
-    ) -> Result<Option<PropertyColumn>, PropertyError> {
-        self.table.insert(key, column)
+    ) -> Result<Option<PropertyColumn>, StructureSetError> {
+        Ok(self.table.insert(key, column)?)
     }
 
     /// Removes and returns the column under `key`, if present.
-    pub fn remove(&mut self, key: &PropertyKey) -> Option<PropertyColumn> {
-        self.table.remove(key)
+    ///
+    /// # Errors
+    ///
+    /// None for now: every column can be removed.
+    pub fn remove(
+        &mut self,
+        key: &PropertyKey,
+    ) -> Result<Option<PropertyColumn>, StructureSetError> {
+        Ok(self.table.remove(key))
     }
 
     /// Removes every column.
-    pub fn clear(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// None for now: every column can be removed.
+    pub fn clear(&mut self) -> Result<(), StructureSetError> {
         self.table.clear();
+        Ok(())
     }
 
     /// Sets or clears the cell of one geometry, as
@@ -94,14 +113,30 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
-    /// As [`PropertyTableMut::set_value`].
+    /// [`StructureSetError::Column`] with the errors of
+    /// [`PropertyTableMut::set_value`].
     pub fn set_value(
         &mut self,
         key: PropertyKey,
         geometry: GeometryIndex,
         value: Option<PropertyValue>,
-    ) -> Result<(), PropertyError> {
-        self.table.set_value(key, geometry, value)
+    ) -> Result<(), StructureSetError> {
+        Ok(self.table.set_value(key, geometry, value)?)
+    }
+
+    /// Clears the cell of one geometry, as [`PropertyTableMut::clear_value`]
+    /// does.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::Column`] with the errors of
+    /// [`PropertyTableMut::clear_value`].
+    pub fn clear_value(
+        &mut self,
+        key: PropertyKey,
+        geometry: GeometryIndex,
+    ) -> Result<(), StructureSetError> {
+        Ok(self.table.clear_value(key, geometry)?)
     }
 
     /// Applies several cell updates to one column transactionally, as
@@ -109,13 +144,14 @@ impl SetColumnsMut<'_> {
     ///
     /// # Errors
     ///
-    /// As [`PropertyTableMut::set_values`].
+    /// [`StructureSetError::Column`] with the errors of
+    /// [`PropertyTableMut::set_values`].
     pub fn set_values(
         &mut self,
         key: PropertyKey,
         values: impl IntoIterator<Item = (GeometryIndex, Option<PropertyValue>)>,
-    ) -> Result<(), PropertyError> {
-        self.table.set_values(key, values)
+    ) -> Result<(), StructureSetError> {
+        Ok(self.table.set_values(key, values)?)
     }
 }
 
@@ -219,10 +255,10 @@ impl<S: GeometryStorage> StructureSet<S> {
 
     /// The MD step or step number of every geometry: the steps of a time
     /// order with steps, or of a step order. `None` without them.
-    pub fn steps(&self) -> Option<Cow<'_, [u64]>> {
+    pub fn steps(&self) -> Option<&[u64]> {
         match self.order()? {
-            Order::Time(axis) => axis.steps().map(Cow::Borrowed),
-            Order::Step(steps) => Some(Cow::Borrowed(steps)),
+            Order::Time(axis) => axis.steps(),
+            Order::Step(steps) => Some(steps),
             Order::Coordinate { .. } => None,
         }
     }

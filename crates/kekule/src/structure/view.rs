@@ -49,7 +49,7 @@ impl<'a> From<&'a Structure> for StructureView<'a> {
 /// set or trajectory frame source with what its source records about it.
 ///
 /// Kernels that only need coordinates ignore it. Writers and reductions read
-/// it so that a geometry's place and its set's properties are written,
+/// it so that a geometry's place and its set's properties and columns are written,
 /// rejected, or deliberately omitted, never silently dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]

@@ -189,6 +189,14 @@ pub enum StructureSetReadError {
         /// clone.
         source: Arc<dyn std::error::Error + Send + Sync>,
     },
+    /// The reader's columns ([`StructureSetRead::columns`]) do not have one
+    /// row per geometry.
+    ColumnRows {
+        /// The rows of the reader's columns.
+        rows: usize,
+        /// The reader's geometries.
+        geometries: usize,
+    },
 }
 
 impl StructureSetReadError {
@@ -232,6 +240,13 @@ impl PartialEq for StructureSetReadError {
                     source: other_source,
                 },
             ) => geometry == other_geometry && Arc::ptr_eq(source, other_source),
+            (
+                Self::ColumnRows { rows, geometries },
+                Self::ColumnRows {
+                    rows: other_rows,
+                    geometries: other_geometries,
+                },
+            ) => rows == other_rows && geometries == other_geometries,
             _ => false,
         }
     }
@@ -247,6 +262,10 @@ impl fmt::Display for StructureSetReadError {
             Self::Reader { geometry, .. } => {
                 write!(formatter, "Cannot read geometry {geometry}.")
             }
+            Self::ColumnRows { rows, geometries } => write!(
+                formatter,
+                "The columns of the reader have {rows} rows for {geometries} geometries."
+            ),
         }
     }
 }
@@ -254,7 +273,7 @@ impl fmt::Display for StructureSetReadError {
 impl std::error::Error for StructureSetReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::IndexOutOfRange { .. } => None,
+            Self::IndexOutOfRange { .. } | Self::ColumnRows { .. } => None,
             Self::Geometry { source, .. } => Some(source),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }

@@ -2998,6 +2998,99 @@ fn sdf_and_molfile_refuse_or_report_set_properties() {
 }
 
 #[test]
+fn writers_refuse_or_report_set_columns() {
+    use kekule::properties::{PropertyColumn, PropertyKey};
+    use kekule::traj::io::{write_structure_set_to, TrajectoryWriteOptions};
+    use kekule::traj::{TrajectoryFormat, TrajectoryIoError};
+    use kekule::xyz::{self, XyzWriteOptions};
+    let omit = UnrepresentablePolicy::Omit;
+    let columns = [WriteOmission::GeometryState {
+        field: GeometryField::SetColumns,
+        geometries: 2,
+    }];
+
+    let mut set = methane_set(2);
+    let bare_sdf = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
+    let bare_pdb = pdb::write(&set, PdbWriteOptions::default()).unwrap().0;
+    let (bare_xyz, bare_report) = xyz::write(&set, XyzWriteOptions::default()).unwrap();
+    set.columns_mut()
+        .insert(
+            PropertyKey::new("bias").unwrap(),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(1.5), None],
+            },
+        )
+        .unwrap();
+    let detail = Some(FormatErrorDetail::UnrepresentableState(
+        GeometryField::SetColumns,
+    ));
+
+    // SDF writes each geometry as a record, which loses the set's columns.
+    let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the SDF output in record 1. The structure set columns have no SDF \
+         representation."
+    );
+    assert_eq!(error.detail(), detail.as_ref());
+    let (text, report) = sdf::write(
+        &set,
+        SdfWriteOptions::from(MolfileWriteOptions::default().with_properties(omit)),
+    )
+    .unwrap();
+    assert_eq!(text, bare_sdf);
+    assert_eq!(report.omissions(), columns);
+    // So does one geometry of the set, written on its own.
+    assert_eq!(
+        molfile::write(
+            molfile::MolfileSource::structure(&set.get(0).unwrap()),
+            MolfileWriteOptions::default()
+        )
+        .unwrap_err()
+        .to_string(),
+        "Cannot write the Molfile output. The structure set columns have no Molfile \
+         representation."
+    );
+
+    // A multi-model format checks the set once.
+    let error = pdb::write(&set, PdbWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The structure set columns have no PDB representation."
+    );
+    let (text, report) =
+        pdb::write(&set, PdbWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare_pdb);
+    assert_eq!(report.omissions(), columns);
+
+    // XYZ fails once for the set, or omits the columns from every geometry.
+    let error = xyz::write(&set, XyzWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the XYZ output. The structure set columns have no XYZ representation."
+    );
+    assert_eq!(error.detail(), detail.as_ref());
+    let (text, report) =
+        xyz::write(&set, XyzWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare_xyz);
+    assert_eq!(
+        report.omissions(),
+        [bare_report.omissions(), &columns[..]].concat()
+    );
+
+    // No trajectory format stores them, so they must be cleared first.
+    let mut sink = std::io::Cursor::new(Vec::new());
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz);
+    assert_eq!(
+        write_structure_set_to(&mut sink, &set, options.clone()).unwrap_err(),
+        TrajectoryIoError::unsupported_field(GeometryField::SetColumns)
+    );
+    set.columns_mut().clear().unwrap();
+    write_structure_set_to(&mut sink, &set, options).unwrap();
+}
+
+#[test]
 fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::topology::TopologyAtomIndex;

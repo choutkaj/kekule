@@ -68,8 +68,10 @@ layout differs. Any other version is rejected with
 wrote the input or its version is no longer read. Unknown header flags are
 rejected the same way, so a newer optional section is never silently ignored.
 
-Every layout change increments the version, and the reader keeps reading the
-versions before it. `NATIVE_FORMAT_OLDEST` rises only at a major release
+A version freezes when a Kekule release ships it. Until then, the newest
+version may change in place. After that, every layout change increments the
+version, and the reader keeps reading the versions before it. Versions before
+the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 (before 1.0, a minor release), and the changelog names the new value.
 
 | Version | Layout |
@@ -78,9 +80,17 @@ versions before it. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | 8 | As version 9, without `columns` in the set head; a set read from it has no columns. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
-Every readable version has frozen files of every kind it has, written by that
-version's writer and never regenerated, in
-`crates/kekule/tests/fixtures/native/v<N>/`. Tests decode each file and
+Every readable version has files of every kind it has, in
+`crates/kekule/tests/fixtures/native/v<N>/`. A frozen version's files were
+written by its own writer and are never regenerated. Until a release, the
+newest version's files and their fuzz seeds are regenerated whenever its
+layout or a fixture changes:
+
+```sh
+cargo test -p kekule --test formats native_versions::record -- --ignored
+```
+
+They freeze with the version at the release. Tests decode each file and
 encode it with the current writer, which must give the bytes of the same file
 of the current version. Tests fail when a readable version lacks a file, or
 when files exist for a version outside the readable range. The same files

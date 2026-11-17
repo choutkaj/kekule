@@ -370,11 +370,11 @@ coordinate algorithms and writers share kernels across structures,
 geometries, frames, and buffers, and read the geometry's velocities and forces
 from the view. A view's `kind()` is `StructureKind::Standalone` or
 `StructureKind::InSet` with a `SetContext` reporting the geometry's place and
-its set's properties, so writers and reductions never lose that state
+its set's properties and columns, so writers and reductions never lose that state
 silently. Structure and trajectory writers hold a geometry's or frame's
 place, time, step, velocities, forces, occupancies, and B factors to one
-policy, `geometry_metadata`, per-atom, per-bond, own, and set properties to a
-second, `properties`, and a periodic cell to a third, `cell`; each fails by
+policy, `geometry_metadata`, per-atom, per-bond, own, and set properties and
+set columns to a second, `properties`, and a periodic cell to a third, `cell`; each fails by
 default. Owned projections
 (`to_structure`) materialize a structure with the whole geometry while sharing
 the topology. A set built from structures (`from_structures`) consumes them
@@ -438,9 +438,10 @@ per geometry and missing cells allowed. They belong to the set as the order
 does. Selecting, loading through a reader, an atom subset, and a `Processed`
 reader keep each geometry's row; a removed geometry takes its row; a geometry
 added later, pushed or appended to a growing file, has missing cells.
-`columns_mut` edits them without changing the row count, and `column_values`
-reads a real or integer column, or the order's times, steps, or coordinates
-(`ColumnRef`), as one number per geometry.
+`columns_mut`, on the set or its `Ensemble`, edits them without changing the
+row count, and `column_values` reads a real or integer column, or the order's
+times, steps, or coordinates (`ColumnRef`), as one number per geometry. Only
+the native format stores them; other writers treat them as set properties.
 
 A distribution is inferred, so it belongs to `Ensemble` and never to the set.
 Reweighting a biased run, MBAR, clustering into states, and Boltzmann
@@ -799,9 +800,12 @@ discarded. A decoded topology keeps every semantic ID but is a new publication
 with a fresh layout identity. Decoding is bounded before allocation and never
 trusts the input. Semantic IDs have a stable encoding so applications can
 persist references next to native files. The writer writes only the newest
-format version, and every layout change increments it. The reader reads every
-version from `NATIVE_FORMAT_OLDEST` to the newest, and frozen files of each
-readable version are tested. `NATIVE_FORMAT_OLDEST` rises only at a major
+format version. A version freezes when a Kekule release ships it: until then,
+the newest version may change in place and its test files are regenerated;
+after that, every layout change increments it. Versions before the newest are
+frozen. The reader reads every version from `NATIVE_FORMAT_OLDEST` to the
+newest, and files of each readable version are tested.
+`NATIVE_FORMAT_OLDEST` rises only at a major
 release (before 1.0, a minor release), and the changelog names it. See the
 [format specification](docs/native-format.md) and
 [topology reconstruction](crates/kekule/src/topology/reconstruct.rs).

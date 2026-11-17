@@ -297,6 +297,8 @@ impl StructureSet {
     ///
     /// [`StructureSetReadError::IndexOutOfRange`] for the first index not below
     /// `reader.len()`, before anything is read;
+    /// [`StructureSetReadError::ColumnRows`] for a reader whose columns do not
+    /// have one row per geometry, also before anything is read;
     /// [`StructureSetReadError::Geometry`] for a geometry the reader does not bind
     /// to its topology; and otherwise the first failure to read a geometry.
     pub fn from_reader<R: StructureSetRead + ?Sized>(
@@ -309,6 +311,12 @@ impl StructureSet {
             return Err(StructureSetReadError::IndexOutOfRange(
                 IndexOutOfRange::new(Countable::Geometry, index, len),
             ));
+        }
+        if let Some(columns) = reader.columns().filter(|columns| columns.len() != len) {
+            return Err(StructureSetReadError::ColumnRows {
+                rows: columns.len(),
+                geometries: len,
+            });
         }
         let read = |index: usize| {
             let geometry = reader.read(index)?;
@@ -353,7 +361,7 @@ impl StructureSet {
         if let Some(columns) = reader.columns() {
             set.columns = columns
                 .select_rows(&indices)
-                .expect("the reader has a row per geometry");
+                .expect("the columns have a row per geometry");
         }
         Ok(set)
     }

@@ -5,10 +5,11 @@ use std::sync::Arc;
 
 use kekule::math::Point3;
 use kekule::native::StructureSetDescription;
-use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::structure::{
-    ColumnRef, Ensemble, Geometry, GeometryIndex, Order, Place, Positions, Requirement, Structure,
-    StructureSet, StructureSetError, StructureSetRead, TimeAxis,
+    ColumnRef, Ensemble, Geometry, GeometryIndex, GeometryView, Order, Place, Positions,
+    Requirement, Structure, StructureSet, StructureSetError, StructureSetRead,
+    StructureSetReadError, TimeAxis,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex};
 use kekule::traj::{Processed, ProcessingSteps};
@@ -159,6 +160,75 @@ fn ensemble_operations_keep_the_rows_of_their_geometries() {
     assert_eq!(energies(grown.set()), [Some(0.0), Some(1.0), None]);
     grown.remove(1).unwrap();
     assert_eq!(energies(grown.set()), [Some(0.0), None]);
+    grown
+        .columns_mut()
+        .set_value(
+            energy(),
+            GeometryIndex::new(1),
+            Some(PropertyValue::Real {
+                value: 4.0,
+                unit: KILOJOULE_PER_MOLE,
+            }),
+        )
+        .unwrap();
+    assert_eq!(energies(grown.set()), [Some(0.0), Some(4.0)]);
+    assert!(grown
+        .columns_mut()
+        .insert(key("short"), PropertyColumn::Int(vec![Some(1)]))
+        .is_err());
+}
+
+/// A reader of its own whose columns have one row too many.
+#[derive(Debug)]
+struct Overlong {
+    set: StructureSet,
+    columns: PropertyTable<GeometryIndex>,
+}
+
+impl StructureSetRead for Overlong {
+    fn topology(&self) -> &Arc<Topology> {
+        StructureSetRead::topology(&self.set)
+    }
+
+    fn len(&self) -> usize {
+        self.set.len()
+    }
+
+    fn order(&self) -> Option<&Order> {
+        self.set.order()
+    }
+
+    fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
+        Some(&self.columns)
+    }
+
+    fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
+        self.set.peek(index)
+    }
+
+    fn read(&self, index: usize) -> Result<Geometry, StructureSetReadError> {
+        self.set.read(index)
+    }
+}
+
+#[test]
+fn a_reader_whose_columns_miss_rows_fails_to_load() {
+    let reader = Overlong {
+        set: numbered(2),
+        columns: numbered(3).columns().clone(),
+    };
+    let error = StructureSet::from_reader(&reader, [0]).unwrap_err();
+    assert_eq!(
+        error,
+        StructureSetReadError::ColumnRows {
+            rows: 3,
+            geometries: 2
+        }
+    );
+    assert_eq!(
+        error.to_string(),
+        "The columns of the reader have 3 rows for 2 geometries."
+    );
 }
 
 #[test]
@@ -217,7 +287,7 @@ fn column_values_read_the_order_and_numeric_columns() {
     assert_eq!(time.value(), &[Some(0.0), Some(2.0), Some(4.0)]);
     let steps = set.column_values(&ColumnRef::Step).unwrap();
     assert_eq!(steps.value(), &[Some(0.0), Some(1000.0), Some(2000.0)]);
-    assert_eq!(set.steps().as_deref(), Some(&[0, 1000, 2000][..]));
+    assert_eq!(set.steps(), Some(&[0, 1000, 2000][..]));
     assert_eq!(
         set.column_values(&ColumnRef::Coordinate),
         Err(Requirement::CoordinateOrder.into())
@@ -234,7 +304,7 @@ fn column_values_read_the_order_and_numeric_columns() {
 
     // A step order and a coordinate order.
     set.set_order(Some(Order::Step(vec![5, 6, 7]))).unwrap();
-    assert_eq!(set.steps().as_deref(), Some(&[5, 6, 7][..]));
+    assert_eq!(set.steps(), Some(&[5, 6, 7][..]));
     set.set_order(Some(Order::Coordinate {
         unit: DEGREE,
         values: vec![-60.0, 0.0, 60.0],
@@ -257,15 +327,24 @@ fn columns_mut_preserves_the_row_count() {
         .insert(key("short"), PropertyColumn::Int(vec![Some(1)]))
         .unwrap_err();
     assert!(matches!(
-        error,
-        kekule::properties::PropertyError::LengthMismatch(_)
+        &error,
+        StructureSetError::Column(source)
+            if matches!(**source, kekule::properties::PropertyError::LengthMismatch(_))
     ));
+    assert_eq!(
+        error.to_string(),
+        "Cannot change the columns of the structure set."
+    );
     assert!(set
         .columns_mut()
         .set_value(key("x"), GeometryIndex::new(2), Some(PropertyValue::Int(1)))
         .is_err());
     assert_eq!(set.columns().len(), 2);
-    assert!(set.columns_mut().remove(&energy()).is_some());
+    set.columns_mut()
+        .clear_value(energy(), GeometryIndex::new(0))
+        .unwrap();
+    assert_eq!(energies(&set), [None, Some(1.0)]);
+    assert!(set.columns_mut().remove(&energy()).unwrap().is_some());
     assert!(!set.columns().has_data());
 }
 
