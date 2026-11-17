@@ -23,8 +23,10 @@
 //! - [`StructureSet`]: many geometries of one shared topology, with an
 //!   optional [`Order`] that places every geometry ([`TimeAxis`], steps, or
 //!   coordinate values; [`Place`]). A trajectory, a scan, and the conformers of
-//!   a search are structure sets. [`GeometryView`] and [`GeometryMut`] read
-//!   and edit them; the set's
+//!   a search are structure sets. Its columns ([`StructureSet::columns`],
+//!   [`SetColumnsMut`]) hold one value per geometry ([`GeometryIndex`]), such
+//!   as a bias energy, and [`ColumnRef`] names one to read as numbers.
+//!   [`GeometryView`] and [`GeometryMut`] read and edit the geometries; the set's
 //!   operations fail with a [`StructureSetError`]. Its storage ([`GeometryStorage`]) is a type
 //!   parameter: [`InMemory`] by default, or a file's
 //!   ([`crate::traj::io::IndexedFile`]), whose geometries are read on demand.
@@ -161,8 +163,9 @@ pub use structure_editor::{
 };
 pub(crate) use structure_set::{check_bound, sealed as geometry_storage, visit_geometry};
 pub use structure_set::{
-    GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place, Requirement, SetContext,
-    StructureSet, StructureSetError, StructureSetRead, StructureSetReadError, TimeAxis,
+    ColumnRef, GeometryIndex, GeometryIter, GeometryStorage, GeometryView, InMemory, Order, Place,
+    Requirement, SetColumnsMut, SetContext, StructureSet, StructureSetError, StructureSetRead,
+    StructureSetReadError, TimeAxis,
 };
 pub use thermodynamics::ThermodynamicState;
 pub(crate) use view::sealed::Sealed as StructureViewSealed;

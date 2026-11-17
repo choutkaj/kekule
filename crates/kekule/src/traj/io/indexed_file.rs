@@ -5,10 +5,10 @@ use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::properties::OwnerProperties;
+use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
-    geometry_storage, Ensemble, Geometry, GeometryStorage, GeometryView, Order, StructureSet,
-    StructureSetRead, StructureSetReadError, TimeAxis,
+    geometry_storage, Ensemble, Geometry, GeometryIndex, GeometryStorage, GeometryView, Order,
+    StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use crate::topology::Topology;
 use crate::traj::{SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader};
@@ -253,8 +253,9 @@ impl StructureSet<IndexedFile> {
     /// last refreshed, as [`IndexedFileTrajectoryReader::refresh`] does, and
     /// takes them as new geometries; returns how many there are.
     ///
-    /// The new geometries extend the time order with their times and steps;
-    /// [`Ensemble::refresh`] also re-expresses a distribution over them.
+    /// The new geometries extend the time order with their times and steps,
+    /// and the columns with missing cells; [`Ensemble::refresh`] also
+    /// re-expresses a distribution over them.
     /// The pool's readers are kept and read by the new index, which they
     /// share. A set whose clone shares its reader first opens a reader of
     /// its own, as the pool does. Failure changes nothing.
@@ -376,6 +377,10 @@ impl StructureSetRead for StructureSet<IndexedFile> {
 
     fn properties(&self) -> Option<&OwnerProperties> {
         Some(StructureSet::properties(self))
+    }
+
+    fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
+        Some(StructureSet::columns(self))
     }
 
     fn peek(&self, _index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {

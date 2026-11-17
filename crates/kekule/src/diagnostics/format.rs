@@ -307,6 +307,8 @@ pub enum GeometryField {
     Properties,
     /// A structure set's own properties.
     SetProperties,
+    /// A structure set's columns: one value per geometry.
+    SetColumns,
     /// A structure's crystallographic occupancies.
     Occupancies,
     /// A structure's crystallographic B factors.
@@ -330,6 +332,7 @@ impl fmt::Display for GeometryField {
             Self::BondProperties => "per-bond geometry properties",
             Self::Properties => "geometry properties",
             Self::SetProperties => "structure set properties",
+            Self::SetColumns => "structure set columns",
             Self::Occupancies => "occupancies",
             Self::BFactors => "B factors",
             Self::OrderStep => "order step",

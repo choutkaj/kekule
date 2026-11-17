@@ -7,8 +7,8 @@ use crate::diagnostics::{
     UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::io::write_policy::{
-    check_geometry_state, record_multi_model_structure_set, unrepresentable_state, Carries,
-    Omissions, StatePolicies,
+    check_geometry_state, record_multi_model_structure_set, set_fields, unrepresentable_state,
+    Carries, Omissions, StatePolicies,
 };
 use crate::math::Point3;
 use crate::structure::{
@@ -240,8 +240,8 @@ impl XyzWriteOptions {
 
     /// The atom, bond, and own properties of a structure, geometry, or frame,
     /// which XYZ cannot carry; by default one with any of them fails to
-    /// write. So do a structure set's own properties, which an omission
-    /// counts once per geometry.
+    /// write. So do a structure set's own properties and columns, which an
+    /// omission counts once per geometry.
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties
     }
@@ -358,7 +358,7 @@ fn unrepresentable(field: GeometryField, geometry: usize) -> FormatError {
     )
     .with_detail(FormatErrorDetail::UnrepresentableState(field));
     match field {
-        GeometryField::Order | GeometryField::SetProperties => error,
+        GeometryField::Order | GeometryField::SetProperties | GeometryField::SetColumns => error,
         _ => error.in_record(geometry),
     }
 }
@@ -408,10 +408,12 @@ pub(crate) fn write_xyz_to<'a>(
                     "The structure set has no geometries.",
                 ));
             }
-            // The set's properties fail once for the whole set. Omitted, the
-            // check of each geometry below records them.
-            if !set.properties().is_empty() && options.properties == UnrepresentablePolicy::Fail {
-                return Err(unrepresentable(GeometryField::SetProperties, 1));
+            // The set's properties and columns fail once for the whole set.
+            // Omitted, the check of each geometry below records them.
+            if let Some(&field) = set_fields(set).first() {
+                if options.properties == UnrepresentablePolicy::Fail {
+                    return Err(unrepresentable(field, 1));
+                }
             }
             let mut omitted = Vec::new();
             let views = set

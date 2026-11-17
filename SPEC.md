@@ -20,7 +20,7 @@ cross-module rule.
 | `Hierarchy` | Chains, residues, and atom sites over live instance atoms, with source labels and author identifiers | Atoms, bonds, or molecule boundaries |
 | `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight |
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
-| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, and an optional `Order` with one value per geometry | An order value on a geometry; a weight, a state, or a distribution; a codec's frame state or a reader's failure types |
+| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, and per-geometry columns (`PropertyTable<GeometryIndex>`) | An order value on a geometry; a weight, a state, or a distribution; a codec's frame state or a reader's failure types |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
 | `Distribution` | `Samples` (every geometry of the set or a sorted subset), one log weight per sample, one `Partition` of the samples into states, one `StateData` per state, and a temperature | Geometries; per-geometry energies |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
@@ -313,7 +313,7 @@ every repeated entity.
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
 | Geometry | `GeometryProperties` | Dense atoms and bonds |
-| Structure set | `OwnerProperties` | Owner values only |
+| Structure set | `OwnerProperties`, `PropertyTable<GeometryIndex>` | Geometries of the set |
 | State of a distribution | `OwnerProperties` | Owner values only |
 
 Unsupported domains are unrepresentable rather than rejected at runtime. Reads
@@ -338,7 +338,9 @@ not infer annotation validity. Arbitrary source fields stay in format sidecars
 unless canonical semantics, scope, and domain justify promotion. Occupancy and
 B factors are typed site fields, independent of any generic property with the
 same name. Positions, cells, weights, energies, time, steps, velocities, and
-forces keep their dedicated APIs.
+forces keep their dedicated APIs. Per-geometry scalars of a set, such as each
+frame's potential energy, bias, or collective variable, are the set's
+columns.
 
 Kekule uses one runtime unit system. Every public value with a physical
 dimension, accepted or returned, is a `Quantity` in a compatible unit; internal
@@ -368,11 +370,11 @@ coordinate algorithms and writers share kernels across structures,
 geometries, frames, and buffers, and read the geometry's velocities and forces
 from the view. A view's `kind()` is `StructureKind::Standalone` or
 `StructureKind::InSet` with a `SetContext` reporting the geometry's place and
-its set's properties, so writers and reductions never lose that state
+its set's properties and columns, so writers and reductions never lose that state
 silently. Structure and trajectory writers hold a geometry's or frame's
 place, time, step, velocities, forces, occupancies, and B factors to one
-policy, `geometry_metadata`, per-atom, per-bond, own, and set properties to a
-second, `properties`, and a periodic cell to a third, `cell`; each fails by
+policy, `geometry_metadata`, per-atom, per-bond, own, and set properties and
+set columns to a second, `properties`, and a periodic cell to a third, `cell`; each fails by
 default. Owned projections
 (`to_structure`) materialize a structure with the whole geometry while sharing
 the topology. A set built from structures (`from_structures`) consumes them
@@ -430,6 +432,17 @@ covers every geometry or none. Order values belong to the order, not to the
 geometries: selecting keeps each selected geometry's value, and a removed
 geometry takes its value with it.
 
+Columns are recorded too: per-geometry scalars, such as each frame's energy,
+bias, or collective variable, in one `PropertyTable<GeometryIndex>` with a row
+per geometry and missing cells allowed. They belong to the set as the order
+does. Selecting, loading through a reader, an atom subset, and a `Processed`
+reader keep each geometry's row; a removed geometry takes its row; a geometry
+added later, pushed or appended to a growing file, has missing cells.
+`columns_mut`, on the set or its `Ensemble`, edits them without changing the
+row count, and `column_values` reads a real or integer column, or the order's
+times, steps, or coordinates (`ColumnRef`), as one number per geometry. Only
+the native format stores them; other writers treat them as set properties.
+
 A distribution is inferred, so it belongs to `Ensemble` and never to the set.
 Reweighting a biased run, MBAR, clustering into states, and Boltzmann
 populations from energies are interpretations, and one set often carries
@@ -455,8 +468,8 @@ keeps the energy and properties of the states it keeps whole.
 A weight means something only against a target, so it is never a field of a
 geometry or of a set. What the engine recorded per geometry — a bias
 potential, collective-variable values, an instantaneous energy, a repeat count
-— is a geometry property, and the weights an analysis uses are derived from
-those. `Ensemble::uniform` and `Ensemble::weighted` build the one-state
+— is a set column or a geometry property, and the weights an analysis uses are
+derived from those. `Ensemble::uniform` and `Ensemble::weighted` build the one-state
 readings, so weighting a trajectory needs no partition.
 
 A `ThermodynamicState` is the state a weight refers to: a finite, positive
@@ -474,13 +487,13 @@ Kekule records no runs or segments: replica exchange, metadynamics walkers,
 umbrella windows, and repeated runs are the concern of the code that produced
 them, and a pooled weighting across them is still one ensemble. `Order`
 holds one coordinate, so a multi-dimensional scan uses `Order::Step` with the
-coordinate values as geometry properties.
+coordinate values as set columns.
 
 Where the geometries live is a type parameter. `StructureSet`
 (`StructureSet<InMemory>`) holds them and lends them by reference, so its
 accessors cannot fail. `StructureSet<IndexedFile>` holds none: it reads geometry
 `i` from an indexed trajectory file as an owned `Geometry`, and a read can
-fail. Both share the topology, properties, order, and the operations on them;
+fail. Both share the topology, properties, order, columns, and the operations on them;
 only a set in memory edits geometries or its order. A set of either storage
 reads through the object-safe `StructureSetRead` trait, which is open to hosts.
 Everything in Kekule that reads many geometries takes a `&dyn StructureSetRead`.
@@ -492,7 +505,7 @@ read-ahead, and parallel observation belong to the host.
 
 A reader describes geometries and their order and never a distribution.
 `StructureSet::from_reader` loads chosen geometries of any reader, in any
-order, as a faithful copy with the reader's order values and set properties; a repeated index is
+order, as a faithful copy with the reader's order values, column rows, and set properties; a repeated index is
 read once and shared. The host changes what geometries mean with `set_order`
 and by building an `Ensemble`; `Ensemble::select` restricts a distribution to
 the geometries it keeps. See
@@ -801,9 +814,12 @@ discarded. A decoded topology keeps every semantic ID but is a new publication
 with a fresh layout identity. Decoding is bounded before allocation and never
 trusts the input. Semantic IDs have a stable encoding so applications can
 persist references next to native files. The writer writes only the newest
-format version, and every layout change increments it. The reader reads every
-version from `NATIVE_FORMAT_OLDEST` to the newest, and frozen files of each
-readable version are tested. `NATIVE_FORMAT_OLDEST` rises only at a major
+format version. A version freezes when a Kekule release ships it: until then,
+the newest version may change in place and its test files are regenerated;
+after that, every layout change increments it. Versions before the newest are
+frozen. The reader reads every version from `NATIVE_FORMAT_OLDEST` to the
+newest, and files of each readable version are tested.
+`NATIVE_FORMAT_OLDEST` rises only at a major
 release (before 1.0, a minor release), and the changelog names it. See the
 [format specification](docs/native-format.md) and
 [topology reconstruction](crates/kekule/src/topology/reconstruct.rs).

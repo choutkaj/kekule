@@ -1,4 +1,4 @@
-//! The frozen files of every readable format version cover every kind that
+//! The files of every readable format version cover every kind that
 //! version has.
 
 use std::path::PathBuf;

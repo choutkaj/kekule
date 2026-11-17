@@ -14,6 +14,7 @@ mod placement;
 mod properties;
 mod scientific_selection;
 mod selection;
+mod set_columns;
 mod structure_append;
 #[path = "../support/mod.rs"]
 mod support;

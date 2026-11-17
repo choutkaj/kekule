@@ -14,9 +14,10 @@ use std::thread;
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::native::{EnsembleDescription, StructureSetDescription};
+use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::structure::{
-    Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, StructureSet,
-    StructureSetRead, StructureSetReadError,
+    ColumnRef, Distribution, Ensemble, Geometry, GeometryIndex, Order, Partition, Positions,
+    Samples, StructureSet, StructureSetRead, StructureSetReadError,
 };
 use kekule::topology::{AtomSelection, Topology};
 use kekule::traj::io::dcd::{DcdEndian, DcdWriteOptions};
@@ -30,7 +31,7 @@ use kekule::traj::{
     FrameView, Processed, ProcessingSteps, SeekableTrajectoryReader, TrajectoryFormat,
     TrajectoryIoError, TrajectoryIoErrorKind, TrajectoryReader, TrajectoryWriter,
 };
-use kekule::units::{Quantity, NANOMETER, PICOSECOND};
+use kekule::units::{Quantity, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 use kekule::xyz::XyzWriteOptions;
 
 use crate::support::{
@@ -354,6 +355,62 @@ fn refresh_takes_appended_frames_and_keeps_what_the_distribution_covered() {
             .unwrap()
             .order(),
         set.order()
+    );
+}
+
+/// A set over a growing file keeps its columns: a refresh gives the new
+/// geometries missing cells, its description keeps them, and loading keeps
+/// the rows of the loaded geometries.
+#[test]
+fn refresh_grows_the_columns_with_missing_cells() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 5);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let head = time_ordered(Arc::clone(&topology), frames_of(&all).into_iter().take(2));
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    write_structure_set(&path, &head, options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    assert_eq!(set.columns().len(), 2);
+    let bias = PropertyKey::new("bias").unwrap();
+    set.columns_mut()
+        .insert(
+            bias.clone(),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(1.0), Some(2.0)],
+            },
+        )
+        .unwrap();
+
+    let (mut writer, _) =
+        append_trajectory(&path, Arc::clone(&topology), KeepFrames::First(2), options).unwrap();
+    for frame in all.iter().skip(2) {
+        writer
+            .write_frame(FrameView::from_geometry(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(set.refresh().unwrap(), 3);
+    let values = |columns: &kekule::properties::PropertyTable<GeometryIndex>| {
+        let Some(PropertyColumn::Real { values, .. }) = columns.get(&bias) else {
+            panic!("the bias column is real");
+        };
+        values.clone()
+    };
+    assert_eq!(
+        values(set.columns()),
+        [Some(1.0), Some(2.0), None, None, None]
+    );
+    assert_eq!(StructureSetDescription::of(&set).columns(), set.columns());
+    let loaded = StructureSet::from_reader(&set, [4, 1]).unwrap();
+    assert_eq!(values(loaded.columns()), [None, Some(2.0)]);
+    assert_eq!(
+        set.column_values(&ColumnRef::Key(bias.clone()))
+            .unwrap()
+            .into_value(),
+        values(set.columns())
     );
 }
 

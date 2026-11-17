@@ -85,7 +85,8 @@ impl MolfileWriteOptions {
     }
 
     /// A structure's per-atom, per-bond, and own properties and the
-    /// properties of a geometry's set, which a Molfile cannot carry; by
+    /// properties and columns of a geometry's set, which a Molfile cannot
+    /// carry; by
     /// default a structure with any fails to write.
     pub const fn properties(&self) -> UnrepresentablePolicy {
         self.properties

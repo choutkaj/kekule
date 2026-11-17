@@ -3,22 +3,24 @@
 
 use std::sync::Arc;
 
-use crate::properties::OwnerProperties;
+use crate::diagnostics::{Countable, LengthMismatch};
+use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
-    Distribution, Ensemble, GeometryStorage, Order, StructureSet, StructureSetError,
+    Distribution, Ensemble, GeometryIndex, GeometryStorage, Order, StructureSet, StructureSetError,
 };
 use crate::topology::Topology;
 
-/// A structure set without its geometries: the topology, set properties, and
-/// order of a set whose geometries are stored elsewhere, such as in a
-/// trajectory file, and the number of them.
+/// A structure set without its geometries: the topology, set properties,
+/// order, and columns of a set whose geometries are stored elsewhere, such as
+/// in a trajectory file, and the number of them.
 ///
 /// A native structure set record whose geometries are external stores this.
 /// Writing one ([`NativeSource`](super::NativeSource) converts from it)
 /// gives such a record, and reading it gives
 /// [`NativeObject::StructureSetDescription`](super::NativeObject::StructureSetDescription).
-/// The order describes the external geometries by index, so it is checked
-/// against the geometry count as a set checks it against its geometries.
+/// The order and the columns describe the external geometries by index, so
+/// they are checked against the geometry count as a set checks them against
+/// its geometries.
 /// [`EnsembleDescription`] adds a distribution over them.
 ///
 /// ```
@@ -43,28 +45,31 @@ pub struct StructureSetDescription {
     properties: OwnerProperties,
     geometry_count: usize,
     order: Option<Order>,
+    columns: PropertyTable<GeometryIndex>,
 }
 
 impl StructureSetDescription {
     /// A description of `geometry_count` geometries of `topology`, unordered,
-    /// without set properties.
+    /// without set properties or columns.
     pub fn new(topology: impl Into<Arc<Topology>>, geometry_count: usize) -> Self {
         Self {
             topology: topology.into(),
             properties: OwnerProperties::new(),
             geometry_count,
             order: None,
+            columns: PropertyTable::new(geometry_count),
         }
     }
 
     /// The description of `set`, in memory or read from a file: its
-    /// topology, set properties, order, and number of geometries.
+    /// topology, set properties, order, columns, and number of geometries.
     pub fn of<S: GeometryStorage>(set: &StructureSet<S>) -> Self {
         Self {
             topology: set.shared_topology(),
             properties: set.properties().clone(),
             geometry_count: set.len(),
             order: set.order().cloned(),
+            columns: set.columns().clone(),
         }
     }
 
@@ -88,12 +93,31 @@ impl StructureSetDescription {
         Ok(self)
     }
 
+    /// Returns this description with columns, one row per geometry.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::GeometryCountMismatch`] when the columns have
+    /// another number of rows than the description has geometries.
+    pub fn with_columns(
+        mut self,
+        columns: PropertyTable<GeometryIndex>,
+    ) -> Result<Self, StructureSetError> {
+        if columns.len() != self.geometry_count {
+            return Err(StructureSetError::GeometryCountMismatch(
+                LengthMismatch::new(Countable::Geometry, self.geometry_count, columns.len()),
+            ));
+        }
+        self.columns = columns;
+        Ok(self)
+    }
+
     /// This description for `geometry_count` geometries whose first
     /// [`Self::geometry_count`] are the geometries it describes, such as a
     /// trajectory file that grew after the description was saved, keeping
-    /// the set properties. A saved order describes the geometries it was
-    /// made for, so `order` replaces it: the longer set's order, or `None`
-    /// for an unordered set.
+    /// the set properties and the columns, whose new cells are missing. A
+    /// saved order describes the geometries it was made for, so `order`
+    /// replaces it: the longer set's order, or `None` for an unordered set.
     ///
     /// # Errors
     ///
@@ -116,6 +140,7 @@ impl StructureSetDescription {
         }
         self.order = order;
         self.geometry_count = geometry_count;
+        self.columns.resize_missing(geometry_count);
         Ok(self)
     }
 
@@ -142,6 +167,11 @@ impl StructureSetDescription {
     /// The order of the geometries, or `None` when they are unordered.
     pub fn order(&self) -> Option<&Order> {
         self.order.as_ref()
+    }
+
+    /// The columns of the geometries, one row per geometry.
+    pub fn columns(&self) -> &PropertyTable<GeometryIndex> {
+        &self.columns
     }
 }
 

@@ -1,16 +1,21 @@
-//! Frozen native files of every readable format version.
+//! Native files of every readable format version.
 //!
 //! `tests/fixtures/native/v<N>/` holds the files the version `N` writer
-//! wrote, never regenerated. The current writer encodes each decoded file to
-//! the bytes of the same file of the current version, so an older version's
-//! files read as the current ones do. A builder here gives the object of
-//! each file. Stable builders, built by hand, must keep giving the current
-//! files; builders that run perception or interpretation serve only to record
-//! new files. New content in an existing kind is a new fixture entry with
-//! `since: N`, never an edit of an existing builder. A new format version
-//! records its files and fuzz seeds with
-//! `cargo test -p kekule --test formats native_versions::record -- --ignored`,
-//! which writes only files that are missing.
+//! wrote. Files of versions before the current one are frozen, never
+//! regenerated. The current writer encodes each decoded file to the bytes of
+//! the same file of the current version, so an older version's files read
+//! as the current ones do. A builder here gives the object of each file.
+//! Stable builders, built by hand, must keep giving the current files;
+//! builders that run perception or interpretation serve only to record
+//! files. New content in a kind an older version has is a new fixture entry
+//! with `since: N`, never an edit of its builder, whose older files are
+//! frozen.
+//!
+//! The current version freezes when a release ships it. Until then, a
+//! layout change or a new or edited fixture of the current version rewrites
+//! every file of the current version and its fuzz seeds:
+//! `cargo test -p kekule --test formats native_versions::record -- --ignored`.
+//! A new version records its files the same way.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,11 +32,11 @@ use kekule::perception::aromaticity::AromaticityModel;
 use kekule::perception::rings::RingMembership;
 use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::perception::Perception;
-use kekule::properties::{PropertyKey, PropertyValue};
+use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::smiles;
 use kekule::structure::{
-    Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
-    Structure, StructureSet, TimeAxis, Velocities,
+    Distribution, Ensemble, Forces, Geometry, GeometryIndex, Order, Partition, Positions, Samples,
+    StateData, Structure, StructureSet, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuilder};
 use kekule::units::{
@@ -42,7 +47,7 @@ use kekule::units::{
 
 use super::support::fixture;
 
-/// One frozen file: its name, the first version that has its content, the
+/// One fixture file: its name, the first version that has its content, the
 /// kind, whether it stores perception, and how its object is built.
 struct Fixture {
     name: &'static str,
@@ -137,6 +142,13 @@ const FIXTURES: &[Fixture] = &[
         build: Build::Stable(|| write(&structure_set_steps(), true)),
     },
     Fixture {
+        name: "structure_set_columns",
+        since: 9,
+        kind: NativeKind::StructureSet,
+        perception: true,
+        build: Build::Stable(|| write(&structure_set_columns(), true)),
+    },
+    Fixture {
         name: "interpreted_structure_set",
         since: 7,
         kind: NativeKind::StructureSetInterpretation,
@@ -154,6 +166,13 @@ const FIXTURES: &[Fixture] = &[
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_description(), true)),
+    },
+    Fixture {
+        name: "structure_set_description_columns",
+        since: 9,
+        kind: NativeKind::StructureSet,
+        perception: true,
+        build: Build::Stable(|| write(&structure_set_description_columns(), true)),
     },
     Fixture {
         name: "ensemble",
@@ -271,7 +290,7 @@ fn files_of_every_readable_version_read_as_the_current_files() {
     for version in NATIVE_FORMAT_OLDEST..=NATIVE_FORMAT_VERSION {
         for fixture in fixtures(version) {
             let encoded = encode(&decode(version, fixture), fixture.perception);
-            // At the current version, a layout change without a new version
+            // At the current version, a layout change without recorded files
             // fails here.
             assert!(
                 encoded == read(NATIVE_FORMAT_VERSION, fixture.name),
@@ -288,18 +307,45 @@ fn stable_builders_build_the_current_files() {
         if let Build::Stable(build) = fixture.build {
             assert!(
                 build() == read(NATIVE_FORMAT_VERSION, fixture.name),
-                "the {} builder no longer builds its file",
+                "the {} builder no longer builds its file (run native_versions::record)",
                 fixture.name
             );
         }
     }
 }
 
-/// Writes the current version's missing files, and the same files as seeds
+#[test]
+fn sets_of_versions_before_9_have_no_columns() {
+    for version in NATIVE_FORMAT_OLDEST..9 {
+        let set = decode(version, named("structure_set"))
+            .into_structure_set()
+            .unwrap();
+        assert_eq!(set.columns().len(), set.len(), "v{version}");
+        assert!(!set.columns().has_data(), "v{version}");
+        let description = decode(version, named("structure_set_description"))
+            .into_structure_set_description()
+            .unwrap();
+        assert_eq!(description.columns().len(), 4, "v{version}");
+        assert!(!description.columns().has_data(), "v{version}");
+    }
+    let columns = decode(9, named("structure_set_columns"))
+        .into_structure_set()
+        .unwrap();
+    assert_eq!(columns.columns(), structure_set_columns().columns());
+}
+
+fn named(name: &str) -> &'static Fixture {
+    FIXTURES
+        .iter()
+        .find(|fixture| fixture.name == name)
+        .unwrap()
+}
+
+/// Writes every file of the current version, and the same files as seeds
 /// of the `native` fuzz target. A file whose content the previous version
 /// has is that version's file encoded by the current writer.
 #[test]
-#[ignore = "records the files of a new format version"]
+#[ignore = "records the files of the current format version"]
 fn record() {
     let version = NATIVE_FORMAT_VERSION;
     let previous = version - 1;
@@ -317,9 +363,7 @@ fn record() {
             path(version, fixture.name),
             seeds.join(format!("v{version}_{}.bin", fixture.name)),
         ] {
-            if !path.exists() {
-                std::fs::write(&path, &bytes).unwrap();
-            }
+            std::fs::write(&path, &bytes).unwrap();
         }
     }
 }
@@ -598,6 +642,59 @@ fn structure_set_description() -> StructureSetDescription {
             unit: DEGREE,
             values: vec![-0.0, 30.0, 60.0, 90.0],
         }))
+        .unwrap()
+}
+
+/// A column of every type, each with a missing cell, for three geometries.
+fn columns_table() -> PropertyTable<GeometryIndex> {
+    let mut set = StructureSet::from_geometries(
+        water_topology(),
+        [0.0, 1.0, 2.0].map(|seed| Geometry::new(positions(seed))),
+    )
+    .unwrap();
+    let mut columns = set.columns_mut();
+    for (name, column) in [
+        (
+            "bias",
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(-0.0), None, Some(1e-300)],
+            },
+        ),
+        (
+            "replica",
+            PropertyColumn::Int(vec![None, Some(i64::MIN), Some(3)]),
+        ),
+        (
+            "accepted",
+            PropertyColumn::Bool(vec![Some(true), None, Some(false)]),
+        ),
+        (
+            "stage",
+            PropertyColumn::String(vec![Some("nvt".into()), Some("npt".into()), None]),
+        ),
+    ] {
+        columns.insert(key(name), column).unwrap();
+    }
+    set.columns().clone()
+}
+
+/// Three water geometries in a step order, with columns.
+fn structure_set_columns() -> StructureSet {
+    let mut set = structure_set_steps();
+    let mut columns = set.columns_mut();
+    for (key, column) in columns_table().iter() {
+        columns.insert(key.clone(), column.clone()).unwrap();
+    }
+    set
+}
+
+/// Three geometries kept elsewhere, in a step order, with columns.
+fn structure_set_description_columns() -> StructureSetDescription {
+    StructureSetDescription::new(water_topology(), 3)
+        .with_order(Some(Order::Step(vec![10, 20, 30])))
+        .unwrap()
+        .with_columns(columns_table())
         .unwrap()
 }
 

@@ -10,6 +10,7 @@ use std::sync::{
 };
 
 use crate::diagnostics::{GeometryField, UnrepresentablePolicy, WriteReport};
+use crate::io::write_policy::set_fields;
 use crate::topology::Topology;
 use crate::units::Quantity;
 
@@ -650,7 +651,8 @@ impl Drop for FileTrajectoryWriter {
 /// and the extension names none, and
 /// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
 /// format stores, which must be cleared first: set properties
-/// ([`GeometryField::SetProperties`]) and a step or coordinate order
+/// ([`GeometryField::SetProperties`]), set columns
+/// ([`GeometryField::SetColumns`]), and a step or coordinate order
 /// ([`GeometryField::OrderStep`], [`GeometryField::OrderCoordinate`]).
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
@@ -730,18 +732,14 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
     Ok(report)
 }
 
-/// Fails for structure set state no trajectory format stores: set properties
-/// and a step or coordinate order.
+/// Fails for structure set state no trajectory format stores: set properties,
+/// set columns, and a step or coordinate order.
 fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
-    let field = if !set.properties().is_empty() {
-        Some(GeometryField::SetProperties)
-    } else {
-        match set.order() {
-            Some(Order::Step(_)) => Some(GeometryField::OrderStep),
-            Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
-            _ => None,
-        }
-    };
+    let field = set_fields(set).first().copied().or(match set.order() {
+        Some(Order::Step(_)) => Some(GeometryField::OrderStep),
+        Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
+        _ => None,
+    });
     field.map_or(Ok(()), |field| {
         Err(TrajectoryIoError::unsupported_field(field))
     })

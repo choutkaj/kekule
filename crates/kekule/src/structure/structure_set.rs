@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::math::RigidTransform;
 use crate::parallel::Run;
-use crate::properties::{OwnerProperties, TopologyPropertiesMut};
+use crate::properties::{OwnerProperties, PropertyTable, TopologyPropertiesMut};
 use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::subset_rows;
@@ -11,6 +11,7 @@ use super::{
     DenseArrayError, Geometry, GeometryData, GeometryError, GeometryMut, Positions, Structure,
 };
 
+mod columns;
 mod context;
 mod error;
 mod order;
@@ -18,6 +19,7 @@ mod read;
 mod storage;
 mod views;
 
+pub use columns::{ColumnRef, GeometryIndex, SetColumnsMut};
 pub use context::SetContext;
 pub use error::{Requirement, StructureSetError};
 pub use order::{Order, Place, TimeAxis};
@@ -36,7 +38,10 @@ pub use views::{GeometryIter, GeometryView};
 /// an optimization's history or a path's images), or the values of a scanned
 /// coordinate ([`Order::Coordinate`]). Its values belong to it, one per
 /// geometry; a geometry taken out of the set claims no place. Without an
-/// order, geometry order carries no meaning. An order is recorded by the
+/// order, geometry order carries no meaning. Per-geometry scalars, such as
+/// an energy or a collective variable per frame, are the set's
+/// [`columns`](Self::columns), one row per geometry, kept with the
+/// geometries as the order is. An order is recorded by the
 /// source, so it belongs to the set; a distribution over the geometries is
 /// inferred by an analysis, so it belongs to an
 /// [`Ensemble`](crate::structure::Ensemble) that reads the set. Operations
@@ -49,7 +54,7 @@ pub use views::{GeometryIter, GeometryView};
 /// `StructureSet<`[`IndexedFile`](crate::traj::io::IndexedFile)`>`, holds no
 /// geometry in memory: it is read through [`StructureSetRead`], which returns owned
 /// geometries and can fail. Both share the topology, the set properties, the
-/// order, and the operations on them.
+/// order, the columns, and the operations on them.
 ///
 /// Each geometry's state is shared storage (see [`Geometry`]), so cloning a
 /// set copies its order but no coordinates; editing one geometry then copies
@@ -94,17 +99,20 @@ pub struct StructureSet<S = InMemory> {
     properties: OwnerProperties,
     storage: S,
     order: Option<Order>,
+    columns: PropertyTable<GeometryIndex>,
 }
 
 impl<S: GeometryStorage> StructureSet<S> {
     /// A set of `storage`'s geometries, whose order, already checked against
     /// them, is given.
     pub(crate) fn from_storage(topology: Arc<Topology>, storage: S, order: Option<Order>) -> Self {
+        let columns = PropertyTable::new(storage.geometry_count());
         Self {
             topology,
             properties: OwnerProperties::new(),
             storage,
             order,
+            columns,
         }
     }
 
@@ -215,12 +223,20 @@ impl<S: GeometryStorage> StructureSet<S> {
         &self.topology
     }
 
-    /// Takes `order`, checked against the geometries, after the storage grew.
+    /// Takes `columns`, one row per geometry.
+    pub(crate) fn set_columns(&mut self, columns: PropertyTable<GeometryIndex>) {
+        debug_assert_eq!(columns.len(), self.len());
+        self.columns = columns;
+    }
+
+    /// Takes `order`, checked against the geometries, after the storage
+    /// grew; the new geometries' cells are missing.
     pub(crate) fn grown(&mut self, order: Option<Order>) {
         debug_assert!(order
             .as_ref()
             .is_none_or(|order| order.validate(self.len()).is_ok()));
         self.order = order;
+        self.columns.resize_missing(self.len());
     }
 }
 
@@ -233,8 +249,8 @@ impl StructureSet {
     /// Reads the geometries `indices` of `reader` into a set in memory, in the
     /// requested order: a faithful copy. Each picked geometry is kept whole,
     /// with its velocities, forces, occupancies, and B-factors; the set
-    /// keeps the reader's order values for the picked geometries and the
-    /// reader's set properties, when it has them.
+    /// keeps the reader's order values and column rows for the picked
+    /// geometries and the reader's set properties, when it has them.
     ///
     /// Ranges and strides can be written as `(start..end).step_by(stride)`,
     /// and every geometry as `0..reader.len()`. Indices may repeat and come in
@@ -281,6 +297,8 @@ impl StructureSet {
     ///
     /// [`StructureSetReadError::IndexOutOfRange`] for the first index not below
     /// `reader.len()`, before anything is read;
+    /// [`StructureSetReadError::ColumnRows`] for a reader whose columns do not
+    /// have one row per geometry, also before anything is read;
     /// [`StructureSetReadError::Geometry`] for a geometry the reader does not bind
     /// to its topology; and otherwise the first failure to read a geometry.
     pub fn from_reader<R: StructureSetRead + ?Sized>(
@@ -293,6 +311,12 @@ impl StructureSet {
             return Err(StructureSetReadError::IndexOutOfRange(
                 IndexOutOfRange::new(Countable::Geometry, index, len),
             ));
+        }
+        if let Some(columns) = reader.columns().filter(|columns| columns.len() != len) {
+            return Err(StructureSetReadError::ColumnRows {
+                rows: columns.len(),
+                geometries: len,
+            });
         }
         let read = |index: usize| {
             let geometry = reader.read(index)?;
@@ -334,12 +358,17 @@ impl StructureSet {
         if let Some(properties) = reader.properties() {
             set.properties_mut().clone_from(properties);
         }
+        if let Some(columns) = reader.columns() {
+            set.columns = columns
+                .select_rows(&indices)
+                .expect("the columns have a row per geometry");
+        }
         Ok(set)
     }
 
     /// Validates and collects each geometry in order, binding its bond
-    /// property rows, into an unordered set; give it an order with
-    /// [`Self::set_order`]. Fails on the first invalid geometry.
+    /// property rows, into an unordered set without columns; give it an
+    /// order with [`Self::set_order`]. Fails on the first invalid geometry.
     pub fn from_geometries(
         topology: impl Into<Arc<Topology>>,
         geometries: impl IntoIterator<Item = Geometry>,
@@ -349,11 +378,12 @@ impl StructureSet {
             set.bind(&mut geometry)?;
             set.storage.geometries.push(geometry);
         }
+        set.columns.resize_missing(set.len());
         Ok(set)
     }
 
     /// Collects structures of one topology layout as the geometries of an
-    /// unordered set, on the first structure's topology
+    /// unordered set without columns, on the first structure's topology
     /// snapshot. Each structure's positions, cell, occupancies, B-factors, and
     /// geometry properties become its geometry, moving without copying.
     ///
@@ -383,6 +413,7 @@ impl StructureSet {
                 .geometries
                 .push(Geometry::from_structure(structure));
         }
+        set.columns.resize_missing(set.len());
         Ok(set)
     }
 
@@ -441,7 +472,7 @@ impl StructureSet {
     }
 
     /// Validates and appends one geometry at `place` in the order, returning
-    /// its index.
+    /// its index. Its cells in the set's columns are missing.
     ///
     /// The place must fit the order: none in an unordered set or on a time
     /// axis without columns, [`Place::Time`] with a time and step exactly
@@ -461,7 +492,7 @@ impl StructureSet {
     }
 
     /// Validates and replaces one geometry, returning the previous one. The
-    /// geometry keeps its place. The index is checked first;
+    /// geometry keeps its place and its column row. The index is checked first;
     /// failure leaves the set unchanged.
     pub fn replace(
         &mut self,
@@ -476,14 +507,15 @@ impl StructureSet {
         ))
     }
 
-    /// Removes and returns one geometry with its place, shifting later
-    /// geometries down.
+    /// Removes and returns one geometry with its place and column row,
+    /// shifting later geometries down.
     pub fn remove(&mut self, index: usize) -> Result<Geometry, StructureSetError> {
         self.check_index(index)?;
         let geometry = self.storage.geometries.remove(index);
         if let Some(order) = &mut self.order {
             order.remove(index);
         }
+        self.columns.remove_row(index);
         Ok(geometry)
     }
 
@@ -528,7 +560,8 @@ impl StructureSet {
     /// `(start..end).step_by(stride)`; duplicates and reordering are
     /// allowed. Set properties are kept.
     ///
-    /// Each geometry keeps its order value, which then need not increase.
+    /// Each geometry keeps its order value, which then need not increase,
+    /// and its column row.
     pub fn select(
         &self,
         indices: impl IntoIterator<Item = usize>,
@@ -544,8 +577,8 @@ impl StructureSet {
     }
 
     /// Publishes one induced topology subset and projects every geometry onto
-    /// it. Set and per-geometry owner properties are dropped; the order still
-    /// describes the geometries and is kept.
+    /// it. Set and per-geometry owner properties are dropped; the order and
+    /// the columns still describe the geometries and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureSetError> {
         let subset = Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
@@ -564,6 +597,7 @@ impl StructureSet {
             properties: OwnerProperties::new(),
             storage: InMemory::new(geometries),
             order: self.order.clone(),
+            columns: self.columns.clone(),
         })
     }
 
@@ -577,7 +611,7 @@ impl StructureSet {
     }
 
     /// Consumes the set, returning its geometries in order and dropping the
-    /// topology, the order, and the set properties.
+    /// topology, the order, the columns, and the set properties.
     pub fn into_geometries(self) -> Vec<Geometry> {
         self.storage.geometries
     }
@@ -617,6 +651,10 @@ impl StructureSet {
                     .collect(),
             ),
             order,
+            columns: self
+                .columns
+                .select_rows(indices)
+                .expect("the indices are checked"),
         }
     }
 
@@ -639,6 +677,7 @@ impl StructureSet {
         if let (Some(order), Some(place)) = (&mut self.order, place) {
             order.push(place);
         }
+        self.columns.resize_missing(self.storage.geometries.len());
     }
 
     fn check_index(&self, index: usize) -> Result<(), StructureSetError> {
@@ -681,6 +720,10 @@ impl StructureSetRead for StructureSet {
 
     fn properties(&self) -> Option<&OwnerProperties> {
         Some(&self.properties)
+    }
+
+    fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
+        Some(&self.columns)
     }
 
     fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {

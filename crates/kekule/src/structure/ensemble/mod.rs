@@ -3,7 +3,8 @@
 use crate::topology::AtomSelection;
 
 use super::{
-    Geometry, GeometryMut, GeometryStorage, InMemory, Place, StructureSet, StructureSetError,
+    Geometry, GeometryMut, GeometryStorage, InMemory, Place, SetColumnsMut, StructureSet,
+    StructureSetError,
 };
 
 mod distribution;
@@ -124,6 +125,13 @@ impl<S: GeometryStorage> Ensemble<S> {
     /// through a guard that keeps its samples ([`DistributionMut`]).
     pub fn distribution_mut(&mut self) -> DistributionMut<'_> {
         DistributionMut::new(&mut self.distribution)
+    }
+
+    /// The set's columns for editing, as [`StructureSet::columns_mut`] gives
+    /// them: one row per geometry, which no edit adds or removes. The
+    /// distribution does not read them.
+    pub fn columns_mut(&mut self) -> SetColumnsMut<'_> {
+        self.set.columns_mut()
     }
 
     /// The set and the distribution, without copying.
@@ -293,8 +301,8 @@ impl Ensemble {
     /// with all of its samples in geometry order (sharing their geometries),
     /// its representative, energy, and properties. Duplicates and reordering
     /// are allowed. Log weights, the temperature, the geometries' order
-    /// values, and set properties are kept; geometries that are not samples
-    /// are left out. [`Distribution::covering_population`],
+    /// values and column rows, and set properties are kept; geometries that
+    /// are not samples are left out. [`Distribution::covering_population`],
     /// [`Distribution::within_energy_window`], and
     /// [`Distribution::ranked_by_population`] give states to extract.
     ///
@@ -324,8 +332,8 @@ impl Ensemble {
     ///
     /// It coarse-grains, losing the spread within each state, and drops the
     /// order. Each state keeps its energy and properties; the topology, the
-    /// set properties, and the temperature are kept, and the source is
-    /// unchanged.
+    /// set properties, the representatives' column rows, and the temperature
+    /// are kept, and the source is unchanged.
     pub fn collapse(&self) -> Self {
         let (geometries, distribution) = self.distribution.collapse();
         let mut set = self
@@ -339,8 +347,8 @@ impl Ensemble {
 
     /// Projects every geometry onto one induced topology subset, as
     /// [`StructureSet::subset`] does. Set, state, and geometry properties
-    /// are dropped; the samples, log weights, states, energies, and
-    /// temperature still describe the geometries and are kept.
+    /// are dropped; the set's columns, the samples, log weights, states,
+    /// energies, and temperature still describe the geometries and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureSetError> {
         Ok(Self {
             set: self.set.subset(selection)?,

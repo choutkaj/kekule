@@ -23,7 +23,7 @@ use crate::properties::{
     GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
 };
 use crate::structure::{
-    Distribution, Geometry, GeometryView, Order, Samples, Structure, StructureSet,
+    Distribution, Geometry, GeometryIndex, GeometryView, Order, Samples, Structure, StructureSet,
 };
 
 use super::StructureSetDescription;
@@ -120,6 +120,7 @@ struct SetHead<'a> {
     properties: &'a OwnerProperties,
     geometry_count: usize,
     order: Option<&'a Order>,
+    columns: &'a PropertyTable<GeometryIndex>,
 }
 
 impl<'a> SetHead<'a> {
@@ -129,6 +130,7 @@ impl<'a> SetHead<'a> {
             properties: set.properties(),
             geometry_count: set.len(),
             order: set.order(),
+            columns: set.columns(),
         }
     }
 
@@ -138,6 +140,7 @@ impl<'a> SetHead<'a> {
             properties: description.properties(),
             geometry_count: description.geometry_count(),
             order: description.order(),
+            columns: description.columns(),
         }
     }
 }
@@ -804,7 +807,7 @@ impl<W: Write> Encoder<'_, W> {
                 self.f64s(values)?;
             }
         }
-        Ok(())
+        self.table(head.columns)
     }
 
     /// An ensemble's distribution: its samples, log weights, partition,

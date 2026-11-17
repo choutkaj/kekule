@@ -4,8 +4,8 @@ use crate::diagnostics::IndexOutOfRange;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::properties::OwnerProperties;
-use crate::structure::GeometryError;
+use crate::properties::{OwnerProperties, PropertyTable};
+use crate::structure::{GeometryError, GeometryIndex};
 use crate::topology::Topology;
 
 use super::{Geometry, GeometryView, Order};
@@ -27,9 +27,9 @@ use crate::structure::StructureView;
 /// bound to the topology, and fails with [`StructureSetReadError::Geometry`]
 /// when one is not; it relies on the rest:
 ///
-/// - [`Self::len`] and [`Self::order`] change only through `&mut` access to
-///   the reader. The order describes [`Self::len`] geometries, as a set's
-///   does.
+/// - [`Self::len`], [`Self::order`], and [`Self::columns`] change only
+///   through `&mut` access to the reader. The order and the columns describe
+///   [`Self::len`] geometries, as a set's do.
 /// - [`Self::read`] of an index below [`Self::len`] returns the same geometry
 ///   every time, bound to [`Self::topology`]: it has one position per atom
 ///   and one property row per atom and bond. An index past the last fails
@@ -73,6 +73,13 @@ pub trait StructureSetRead: Send + Sync + fmt::Debug {
         None
     }
 
+    /// The set's columns, one row per geometry, for a reader that has them;
+    /// `None` by default. [`StructureSet::from_reader`](super::StructureSet::from_reader)
+    /// keeps the rows of the geometries it reads.
+    fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
+        None
+    }
+
     /// Geometry `index` lent by reference, when the reader holds it: always
     /// for a set in memory, never for one in a file. `None` past the last
     /// geometry.
@@ -109,6 +116,10 @@ macro_rules! forward_structure_set_read {
 
             fn properties(&self) -> Option<&OwnerProperties> {
                 (**self).properties()
+            }
+
+            fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
+                (**self).columns()
             }
 
             fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {
@@ -178,6 +189,14 @@ pub enum StructureSetReadError {
         /// clone.
         source: Arc<dyn std::error::Error + Send + Sync>,
     },
+    /// The reader's columns ([`StructureSetRead::columns`]) do not have one
+    /// row per geometry.
+    ColumnRows {
+        /// The rows of the reader's columns.
+        rows: usize,
+        /// The reader's geometries.
+        geometries: usize,
+    },
 }
 
 impl StructureSetReadError {
@@ -221,6 +240,13 @@ impl PartialEq for StructureSetReadError {
                     source: other_source,
                 },
             ) => geometry == other_geometry && Arc::ptr_eq(source, other_source),
+            (
+                Self::ColumnRows { rows, geometries },
+                Self::ColumnRows {
+                    rows: other_rows,
+                    geometries: other_geometries,
+                },
+            ) => rows == other_rows && geometries == other_geometries,
             _ => false,
         }
     }
@@ -236,6 +262,10 @@ impl fmt::Display for StructureSetReadError {
             Self::Reader { geometry, .. } => {
                 write!(formatter, "Cannot read geometry {geometry}.")
             }
+            Self::ColumnRows { rows, geometries } => write!(
+                formatter,
+                "The columns of the reader have {rows} rows for {geometries} geometries."
+            ),
         }
     }
 }
@@ -243,7 +273,7 @@ impl fmt::Display for StructureSetReadError {
 impl std::error::Error for StructureSetReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::IndexOutOfRange { .. } => None,
+            Self::IndexOutOfRange { .. } | Self::ColumnRows { .. } => None,
             Self::Geometry { source, .. } => Some(source),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }

@@ -34,9 +34,10 @@ pub const NATIVE_MAGIC: [u8; 8] = [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0
 
 /// The native format version this crate writes, and the newest it reads.
 ///
-/// Every layout change increments it. The reader reads every version from
+/// It freezes when a Kekule release ships it. Until then it may change in
+/// place; after that, every layout change increments it. The reader reads every version from
 /// [`NATIVE_FORMAT_OLDEST`] to this one.
-pub const NATIVE_FORMAT_VERSION: u32 = 8;
+pub const NATIVE_FORMAT_VERSION: u32 = 9;
 
 /// The oldest native format version this crate reads.
 ///
@@ -46,6 +47,9 @@ pub const NATIVE_FORMAT_OLDEST: u32 = 7;
 
 /// The first format version with the distribution record.
 const DISTRIBUTION_SINCE: u32 = 8;
+
+/// The first format version whose set head stores the set's columns.
+const COLUMNS_SINCE: u32 = 9;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;

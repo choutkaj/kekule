@@ -421,6 +421,23 @@ impl PropertyColumn {
         }
     }
 
+    fn remove(&mut self, index: usize) {
+        match self {
+            Self::Bool(values) => {
+                values.remove(index);
+            }
+            Self::Int(values) => {
+                values.remove(index);
+            }
+            Self::Real { values, .. } => {
+                values.remove(index);
+            }
+            Self::String(values) => {
+                values.remove(index);
+            }
+        }
+    }
+
     fn clear(&mut self, index: usize) {
         match self {
             Self::Bool(values) => values[index] = None,
@@ -558,6 +575,7 @@ property_rows!(
     crate::topology::ChainId,
     crate::topology::ResidueId,
     crate::topology::AtomSiteId,
+    crate::structure::GeometryIndex,
 );
 
 /// Columnar properties for one homogeneous entity domain, addressed by `R`.
@@ -607,6 +625,22 @@ impl<R> PropertyTable<R> {
 
     pub(crate) const fn raw(&self) -> &RawPropertyTable {
         &self.raw
+    }
+
+    /// Grows or shrinks the table to `len` rows; new rows are missing.
+    pub(crate) fn resize_missing(&mut self, len: usize) {
+        self.raw.resize_missing(len);
+    }
+
+    /// Removes row `index`, shifting later rows down. A column left without
+    /// values is dropped.
+    pub(crate) fn remove_row(&mut self, index: usize) {
+        self.raw.remove_row(index);
+    }
+
+    /// The rows `indices`, each checked, in the given order; rows may repeat.
+    pub(crate) fn select_rows(&self, indices: &[usize]) -> Result<Self, PropertyError> {
+        self.raw.select_indices(indices).map(Self::from_raw)
     }
 
     /// Number of rows fixed by the owner.
@@ -1188,6 +1222,30 @@ impl RawPropertyTable {
     pub(crate) fn clear_columns(&mut self) {
         self.columns.clear();
         self.populated.clear();
+    }
+
+    /// Removes row `index` (checked by the caller), shifting later rows down
+    /// and dropping a column left without values.
+    pub(crate) fn remove_row(&mut self, index: usize) {
+        debug_assert!(index < self.len);
+        self.len -= 1;
+        let populated = &mut self.populated;
+        self.columns.retain(|key, column| {
+            let was_populated = column.is_populated_at(index);
+            column.remove(index);
+            let count = populated
+                .get_mut(key)
+                .expect("published property column must have a populated count");
+            if was_populated {
+                *count -= 1;
+            }
+            if *count == 0 {
+                populated.remove(key);
+                false
+            } else {
+                true
+            }
+        });
     }
 
     pub(crate) fn resize_missing(&mut self, len: usize) {

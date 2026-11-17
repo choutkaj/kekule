@@ -2,6 +2,7 @@
 use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField, LimitExceeded,
 };
+use crate::properties::PropertyTable;
 use crate::structure::{Order, Place, SetContext, StructureKind, StructureSet, StructureView};
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
@@ -211,8 +212,8 @@ pub enum WriteOmission {
 }
 
 /// The geometry state a format carries beyond positions; every writer has
-/// one constant for its format. Per-atom, per-bond, and set properties are
-/// never carried.
+/// one constant for its format. Per-atom, per-bond, and set properties and
+/// set columns are never carried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Carries {
     pub(crate) cell: bool,
@@ -251,7 +252,7 @@ pub(crate) struct StatePolicies {
     /// Places, times, MD steps, velocities, forces, occupancies, and B
     /// factors.
     pub(crate) geometry_metadata: UnrepresentablePolicy,
-    /// Per-atom, per-bond, own, and set properties.
+    /// Per-atom, per-bond, own, and set properties, and set columns.
     pub(crate) properties: UnrepresentablePolicy,
     pub(crate) cell: UnrepresentablePolicy,
 }
@@ -264,7 +265,8 @@ impl StatePolicies {
             GeometryField::AtomProperties
             | GeometryField::BondProperties
             | GeometryField::Properties
-            | GeometryField::SetProperties => self.properties,
+            | GeometryField::SetProperties
+            | GeometryField::SetColumns => self.properties,
             _ => self.geometry_metadata,
         }
     }
@@ -273,7 +275,8 @@ impl StatePolicies {
     /// cannot carry, whatever the policies decide about it, in checking
     /// order: its cell; its step or coordinate place; its time and MD step;
     /// its velocities and forces; its occupancies and B factors; and its
-    /// per-atom, per-bond, and own properties and those of its set.
+    /// per-atom, per-bond, and own properties, then its set's properties
+    /// and columns.
     fn lost(self, view: StructureView<'_>) -> Vec<GeometryField> {
         let carries = self.carries;
         let context = set_context(view);
@@ -314,6 +317,12 @@ impl StatePolicies {
         {
             fields.push(GeometryField::SetProperties);
         }
+        if context
+            .and_then(SetContext::set_columns)
+            .is_some_and(PropertyTable::has_data)
+        {
+            fields.push(GeometryField::SetColumns);
+        }
         fields
     }
 
@@ -349,8 +358,8 @@ pub(crate) fn unrepresentable_state(
 ) -> String {
     match (field, geometry) {
         (GeometryField::Order, _) => format!("The geometry order has no {format} representation."),
-        (GeometryField::SetProperties, _) => {
-            format!("The structure set properties have no {format} representation.")
+        (GeometryField::SetProperties | GeometryField::SetColumns, _) => {
+            format!("The {field} have no {format} representation.")
         }
         (field, Some(geometry)) => {
             let verb = verb(field);
@@ -373,6 +382,7 @@ const fn verb(field: GeometryField) -> &'static str {
         | GeometryField::BondProperties
         | GeometryField::Properties
         | GeometryField::SetProperties
+        | GeometryField::SetColumns
         | GeometryField::Occupancies
         | GeometryField::BFactors => "have",
         _ => "has",
@@ -562,9 +572,24 @@ fn frame_fields(view: StructureView<'_>) -> impl Iterator<Item = GeometryField> 
     .filter_map(|(present, field)| present.then_some(field))
 }
 
+/// The set-wide state of `set` that only the native format carries, in
+/// checking order: its properties, then its columns. An empty set has none.
+pub(crate) fn set_fields(set: &StructureSet) -> Vec<GeometryField> {
+    if set.is_empty() {
+        return Vec::new();
+    }
+    [
+        (!set.properties().is_empty(), GeometryField::SetProperties),
+        (set.columns().has_data(), GeometryField::SetColumns),
+    ]
+    .into_iter()
+    .filter_map(|(present, field)| present.then_some(field))
+    .collect()
+}
+
 /// Records or rejects the properties of `set` and of its geometries that a
-/// multi-model format cannot carry: the set's own properties, then each
-/// geometry's per-atom, per-bond, and own properties. With
+/// multi-model format cannot carry: the set's own properties and columns,
+/// then each geometry's per-atom, per-bond, and own properties. With
 /// [`UnrepresentablePolicy::Fail`], returns the 1-based number of the first
 /// geometry with such properties and the field, geometry 1 for the set's.
 /// With [`UnrepresentablePolicy::Omit`], records the omissions, the set's
@@ -574,10 +599,10 @@ pub(crate) fn record_structure_set_properties(
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
 ) -> Result<(), (usize, GeometryField)> {
-    let set_properties = !set.properties().is_empty() && !set.is_empty();
+    let set_fields = set_fields(set);
     if policy == UnrepresentablePolicy::Fail {
-        if set_properties {
-            return Err((1, GeometryField::SetProperties));
+        if let Some(&field) = set_fields.first() {
+            return Err((1, field));
         }
         for (index, geometry) in set.iter().enumerate() {
             if let Some(field) = property_fields(geometry.as_structure_view()).next() {
@@ -586,9 +611,9 @@ pub(crate) fn record_structure_set_properties(
         }
         return Ok(());
     }
-    if set_properties {
+    for field in set_fields {
         omissions.record(WriteOmission::GeometryState {
-            field: GeometryField::SetProperties,
+            field,
             geometries: set.len(),
         });
     }

@@ -74,13 +74,14 @@ struct Layout {
 
 impl Layout {
     fn of(bytes: &[u8]) -> Self {
-        // The steps follow the order kind; the distribution follows them:
+        // The steps follow the order kind, and an empty column table (its
+        // row and column counts) follows them; then the distribution:
         // the samples tag, the sample count and two samples, the log weights
         // tag and two log weights, two assignments, the state count, and the
         // first state's representative.
         let steps = find(bytes, &STEPS[0].to_le_bytes());
         assert_eq!(bytes[steps - 1], 2, "a step order");
-        let start = steps + 24;
+        let start = steps + 24 + 8;
         assert_eq!(bytes[start], 1, "a subset distribution");
         let layout = Self {
             listed: start + 1,
@@ -274,17 +275,20 @@ fn interpreted_structure_sets_store_their_geometries_and_one_report_each() {
         NativeWriteOptions::default(),
     )
     .unwrap();
-    assert_eq!(bytes[8..12], 8u32.to_le_bytes(), "format version 8");
+    assert_eq!(bytes[8..12], 9u32.to_le_bytes(), "format version 9");
     assert_eq!(bytes[12], 10);
     let plain = native::write(&set, NativeWriteOptions::default()).unwrap();
     assert_eq!(plain[12], 9);
     assert_eq!(bytes[13..plain.len() - 8], plain[13..plain.len() - 8]);
 
-    // The geometries tag follows the two steps, and the first geometry's
-    // positions follow it: a structure set record holds no distribution.
+    // An empty column table follows the two steps, the geometries tag
+    // follows it, and the first geometry's positions follow that: a
+    // structure set record holds no distribution.
     let steps = find(&bytes, &STEPS[0].to_le_bytes());
     assert_eq!(bytes[steps + 8..steps + 16], STEPS[1].to_le_bytes());
-    let geometries = steps + 16;
+    assert_eq!(bytes[steps + 16..steps + 20], 2u32.to_le_bytes(), "rows");
+    assert_eq!(bytes[steps + 20..steps + 24], 0u32.to_le_bytes(), "columns");
+    let geometries = steps + 24;
     assert_eq!(bytes[geometries], 0);
     let first = set.get(0).unwrap().positions().values().value()[0];
     let stored = [first.x, first.y, first.z]

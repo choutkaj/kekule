@@ -524,8 +524,8 @@ fn reports_are_stored_only_when_given() {
         .unwrap();
     let plain = native::write(interpretation.structure(), NativeWriteOptions::default()).unwrap();
     let interpreted = native::write(&interpretation, NativeWriteOptions::default()).unwrap();
-    // Both are format version 8: a structure with its report is kind 7.
-    assert_eq!(NATIVE_FORMAT_VERSION, 8);
+    // Both are format version 9: a structure with its report is kind 7.
+    assert_eq!(NATIVE_FORMAT_VERSION, 9);
     for bytes in [&plain, &interpreted] {
         assert_eq!(bytes[8..12], NATIVE_FORMAT_VERSION.to_le_bytes());
     }
@@ -586,6 +586,7 @@ fn assert_same_structure_set(decoded: &StructureSet, source: &StructureSet) {
         );
     }
     assert_eq!(decoded.order(), source.order());
+    assert_eq!(decoded.columns(), source.columns());
 }
 
 /// Asserts that `decoded` holds the set of `source` and its distribution bit
@@ -627,11 +628,11 @@ fn assert_same_ensemble(decoded: &Ensemble, source: &Ensemble) {
     assert_same_distribution(decoded.distribution(), source.distribution());
 }
 
-/// Asserts that the native header of `bytes` is version 8 of `kind`, with
+/// Asserts that the native header of `bytes` is version 9 of `kind`, with
 /// no flag but the perception flag and a zero reserved field.
 fn assert_header(bytes: &[u8], kind: u8) {
     assert_eq!(bytes[..8], [0x89, b'K', b'E', b'K', 0x0D, 0x0A, 0x1A, 0x0A]);
-    assert_eq!(bytes[8..12], 8u32.to_le_bytes());
+    assert_eq!(bytes[8..12], 9u32.to_le_bytes());
     assert_eq!(bytes[12], kind);
     assert_eq!(bytes[13] & !1, 0);
     assert_eq!(bytes[14..16], [0, 0]);
@@ -680,6 +681,22 @@ fn rich_set() -> StructureSet {
     let mut set = StructureSet::from_geometries(water_topology(), rich_geometries()).unwrap();
     set.properties_mut()
         .insert(key("method"), PropertyValue::String("REMD".into()))
+        .unwrap();
+    let mut columns = set.columns_mut();
+    columns
+        .insert(
+            key("bias"),
+            PropertyColumn::Real {
+                unit: KILOJOULE_PER_MOLE,
+                values: vec![Some(1.5), None, Some(-0.0)],
+            },
+        )
+        .unwrap();
+    columns
+        .insert(
+            key("stage"),
+            PropertyColumn::String(vec![None, Some("npt".into()), None]),
+        )
         .unwrap();
     set
 }
@@ -920,6 +937,7 @@ fn structure_set_descriptions_store_the_number_of_geometries() {
     assert_eq!(decoded.properties(), set.properties());
     assert_eq!(decoded.geometry_count(), 3);
     assert_eq!(decoded.order(), set.order());
+    assert_eq!(decoded.columns(), set.columns());
 
     // A full record describes itself too.
     let full = native::read(
@@ -933,6 +951,7 @@ fn structure_set_descriptions_store_the_number_of_geometries() {
     .unwrap();
     assert_eq!(full.geometry_count(), 3);
     assert_eq!(full.order(), set.order());
+    assert_eq!(full.columns(), set.columns());
 
     // The count is bounded like stored geometries, and the order is checked
     // against it.
@@ -1716,23 +1735,23 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
     assert_eq!(error.kind(), DiagnosticKind::Syntax);
     assert_eq!(error.detail(), Some(&FormatErrorDetail::NativeMagic));
 
-    assert_eq!((NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION), (7, 8));
+    assert_eq!((NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION), (7, 9));
     let mut newer = bytes.clone();
-    newer[8..12].copy_from_slice(&9u32.to_le_bytes());
+    newer[8..12].copy_from_slice(&10u32.to_le_bytes());
     let error = native::read(newer.as_slice(), NativeReadOptions::default()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(
         error.detail(),
         Some(&FormatErrorDetail::NativeVersion {
-            found: 9,
+            found: 10,
             oldest: 7,
-            newest: 8,
+            newest: 9,
         })
     );
     assert_eq!(error.byte_offset(), Some(12));
     assert_eq!(
         error.to_string(),
-        "Cannot parse the native input at byte 12. The input is in native format version 9, written by a newer Kekule. This reader reads versions 7 to 8."
+        "Cannot parse the native input at byte 12. The input is in native format version 10, written by a newer Kekule. This reader reads versions 7 to 9."
     );
 
     // Versions before the oldest are no longer read.
@@ -1746,12 +1765,12 @@ fn readers_reject_foreign_magic_other_versions_and_unknown_flags() {
             Some(&FormatErrorDetail::NativeVersion {
                 found: version,
                 oldest: 7,
-                newest: 8,
+                newest: 9,
             })
         );
         assert!(
             error.to_string().ends_with(&format!(
-                "The input is in native format version {version}, which is no longer read. This reader reads versions 7 to 8."
+                "The input is in native format version {version}, which is no longer read. This reader reads versions 7 to 9."
             )),
             "{error}"
         );
