@@ -16,7 +16,7 @@ use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::smiles::{self, SmilesWriteMode, SmilesWriteOptions};
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, StateData,
-    Structure, StructureSet, StructureView, TimeAxis, Velocities,
+    Structure, StructureSet, StructureView, ThermodynamicState, TimeAxis, Velocities,
 };
 use kekule::topology::{Topology, TopologyBuilder};
 use kekule::traj::FrameView;
@@ -582,7 +582,9 @@ fn sdf_never_writes_a_distribution() {
     let mut ensemble = weighted_ensemble();
     ensemble
         .distribution_mut()
-        .set_temperature(Some(Quantity::new(300.0, KELVIN)))
+        .set_target(Some(
+            ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap(),
+        ))
         .unwrap();
     let (text, report) = sdf::write(ensemble.set(), SdfWriteOptions::default()).unwrap();
     assert!(report.is_empty());
@@ -2501,7 +2503,7 @@ fn a_geometry_of_an_ensemble_with_a_place_writes_only_its_place_in_sdf() {
         .unwrap()
         .with_states(vec![state])
         .unwrap()
-        .with_temperature(Quantity::new(300.0, KELVIN))
+        .with_target(ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap())
         .unwrap();
     let ensemble = Ensemble::new(set, distribution).unwrap();
     let view = ensemble.set().get(0).unwrap();

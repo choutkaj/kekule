@@ -114,9 +114,7 @@ impl<'a> Clustered<'a> {
                 energies: Err(StructureSetError::Missing(Requirement::StateEnergies).into()),
             };
         };
-        let log_weights = distribution
-            .log_weights()
-            .map_or_else(|| vec![0.0; distribution.sample_count()], <[f64]>::to_vec);
+        let log_weights = distribution.sample_log_weights();
         let energies = distribution
             .state_energies()
             .map(|energies| sample_energies(&energies, distribution.partition()))

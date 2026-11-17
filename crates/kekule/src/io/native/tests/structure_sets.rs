@@ -11,7 +11,7 @@ use crate::native::{
 };
 use crate::structure::{
     Distribution, Ensemble, Geometry, Order, Partition, Positions, Samples, StateData,
-    StructureSet, TimeAxis,
+    StructureSet, ThermodynamicState, TimeAxis, WeightModel,
 };
 use crate::units::{Quantity, DEGREE, KELVIN, KILOJOULE_PER_MOLE, NANOMETER, PICOSECOND};
 
@@ -57,7 +57,7 @@ fn ensemble() -> Ensemble {
         StateData::new(),
     ])
     .unwrap()
-    .with_temperature(Quantity::new(TEMPERATURE, KELVIN))
+    .with_target(ThermodynamicState::canonical(Quantity::new(TEMPERATURE, KELVIN)).unwrap())
     .unwrap();
     Ensemble::new(set, distribution).unwrap()
 }
@@ -76,9 +76,11 @@ impl Layout {
     fn of(bytes: &[u8]) -> Self {
         // The steps follow the order kind, and an empty column table (its
         // row and column counts) follows them; then the distribution:
-        // the samples tag, the sample count and two samples, the log weights
-        // tag and two log weights, two assignments, the state count, and the
-        // first state's representative.
+        // the samples tag, the sample count and two samples, the weights tag
+        // and two log weights, two assignments, the state count, and the
+        // first state's representative. The target's temperature and its
+        // absent pressure end the distribution.
+        let target = find(bytes, &TEMPERATURE.to_le_bytes());
         let steps = find(bytes, &STEPS[0].to_le_bytes());
         assert_eq!(bytes[steps - 1], 2, "a step order");
         let start = steps + 24 + 8;
@@ -89,10 +91,12 @@ impl Layout {
             weights: start + 14,
             assignments: start + 30,
             representative: start + 42,
-            geometries: find(bytes, &TEMPERATURE.to_le_bytes()) + 8,
+            geometries: target + 9,
         };
         assert_eq!(bytes[layout.listed..layout.samples], 2u32.to_le_bytes());
         assert_eq!(bytes[layout.weights - 1], 1, "log weights");
+        assert_eq!(bytes[target - 1], 1, "a target");
+        assert_eq!(bytes[target + 8], 0, "no pressure");
         assert_eq!(find(bytes, &LOG_WEIGHTS[0].to_le_bytes()), layout.weights);
         assert_eq!(
             bytes[layout.representative - 4..layout.representative],
@@ -150,10 +154,11 @@ fn stored_distributions_are_checked_against_their_set() {
     assert_eq!(decoded.set().order(), ensemble.set().order());
     assert_eq!(decoded.distribution(), ensemble.distribution());
     assert_eq!(
-        decoded.distribution().log_weights(),
-        Some(LOG_WEIGHTS.as_slice())
+        decoded.distribution().weight_model(),
+        WeightModel::LogWeights(&LOG_WEIGHTS)
     );
     let at = Layout::of(&bytes);
+    let target = at.geometries - 9;
     let stored = "The stored structure is not valid.";
     let cases = [
         // Samples unsorted, duplicated, and out of range.
@@ -196,6 +201,20 @@ fn stored_distributions_are_checked_against_their_set() {
             stored,
             "negative infinity",
         ),
+        // An unknown weights tag.
+        (
+            at.weights - 1,
+            vec![3],
+            "The weights tag 3 is unknown.",
+            "a weights tag",
+        ),
+        // A target that is not a thermodynamic state.
+        (
+            target,
+            (-1.0f64).to_le_bytes().to_vec(),
+            stored,
+            "a negative temperature",
+        ),
         // An unknown geometries tag.
         (
             at.geometries,
@@ -214,10 +233,26 @@ fn stored_distributions_are_checked_against_their_set() {
             .into_ensemble()
             .unwrap();
         assert_eq!(
-            decoded.distribution().log_weights(),
-            Some([log_weight, LOG_WEIGHTS[1]].as_slice())
+            decoded.distribution().weight_model(),
+            WeightModel::LogWeights(&[log_weight, LOG_WEIGHTS[1]])
         );
     }
+    // Tag 2 marks the same log weights as Boltzmann populations.
+    let decoded = read(&patched(&bytes, at.weights - 1, &[2]))
+        .unwrap()
+        .into_ensemble()
+        .unwrap();
+    assert_eq!(
+        decoded.distribution().weight_model(),
+        WeightModel::Boltzmann(&LOG_WEIGHTS)
+    );
+    // Boltzmann populations without a target are refused.
+    let boltzmann = patched(&bytes, at.weights - 1, &[2]);
+    assert_invalid(
+        &patched(&boltzmann, target - 1, &[0]),
+        "Boltzmann weights need a target.",
+        "Boltzmann weights without a target",
+    );
 
     // Log weights and assignments cut short.
     for (offset, case) in [

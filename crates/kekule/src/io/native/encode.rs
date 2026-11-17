@@ -24,6 +24,7 @@ use crate::properties::{
 };
 use crate::structure::{
     Distribution, Geometry, GeometryIndex, GeometryView, Order, Samples, Structure, StructureSet,
+    ThermodynamicState, WeightModel,
 };
 
 use super::StructureSetDescription;
@@ -810,8 +811,8 @@ impl<W: Write> Encoder<'_, W> {
         self.table(head.columns)
     }
 
-    /// An ensemble's distribution: its samples, log weights, partition,
-    /// states, and temperature.
+    /// An ensemble's distribution: its samples, weights, partition, states,
+    /// and target.
     fn distribution(&mut self, distribution: &Distribution) -> Result {
         match distribution.samples() {
             Samples::All => self.u8(0)?,
@@ -823,10 +824,14 @@ impl<W: Write> Encoder<'_, W> {
                 }
             }
         }
-        match distribution.log_weights() {
-            None => self.u8(0)?,
-            Some(log_weights) => {
+        match distribution.weight_model() {
+            WeightModel::Equal => self.u8(0)?,
+            WeightModel::LogWeights(log_weights) => {
                 self.u8(1)?;
+                self.f64s(log_weights)?;
+            }
+            WeightModel::Boltzmann(log_weights) => {
+                self.u8(2)?;
                 self.f64s(log_weights)?;
             }
         }
@@ -841,11 +846,19 @@ impl<W: Write> Encoder<'_, W> {
             self.opt_f64(state.energy().map(|energy| *energy.value()))?;
             self.owner(state.properties())?;
         }
-        self.opt_f64(
-            distribution
-                .temperature()
-                .map(|temperature| *temperature.value()),
-        )
+        match distribution.target() {
+            None => self.u8(0),
+            Some(target) => {
+                self.u8(1)?;
+                self.thermodynamic_state(&target)
+            }
+        }
+    }
+
+    /// A thermodynamic state: its temperature and its pressure, if any.
+    fn thermodynamic_state(&mut self, state: &ThermodynamicState) -> Result {
+        self.f64(*state.temperature().value())?;
+        self.opt_f64(state.pressure().map(|pressure| *pressure.value()))
     }
 
     /// The inline geometries section: each geometry in set order.

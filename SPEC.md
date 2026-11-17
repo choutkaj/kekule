@@ -22,7 +22,7 @@ cross-module rule.
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
 | `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, and per-geometry columns (`PropertyTable<GeometryIndex>`) | An order value on a geometry; a weight, a state, or a distribution; a codec's frame state or a reader's failure types |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
-| `Distribution` | `Samples` (every geometry of the set or a sorted subset), one log weight per sample, one `Partition` of the samples into states, one `StateData` per state, and a temperature | Geometries; per-geometry energies |
+| `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, or Boltzmann populations), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
 
 ### Vocabulary
@@ -453,13 +453,20 @@ exist goes through the ensemble, which remaps the samples. Several readings of
 one set are several ensembles sharing every coordinate.
 
 A distribution covers every geometry of its set or a sorted subset, its
-samples. Weights are stored as natural logarithms, one finite value per sample:
-weights from reweighting span hundreds of orders of magnitude, and a linear
-weight would underflow. Normalized weights and probabilities are derived on
-request; without weights the samples weigh equally. Log weights and the
-partition are indexed by sample position. Every sample is in exactly one state
-and every state has a representative sample; a state's population is the total
-weight of its samples, derived and never stored. Only states have energies, on
+samples. Its weight model, read as a `WeightModel`, says how they are weighed:
+equally, by log weights the caller gives, or by log weights assigned as
+Boltzmann populations of the state energies at the target. Weights are stored
+as natural logarithms, one finite value per sample: weights from reweighting
+span hundreds of orders of magnitude, and a linear weight would underflow.
+Normalized weights and probabilities are derived on request. Log weights and
+the partition are indexed by sample position. The Boltzmann tag records
+provenance: later edits to samples, states, or energies keep it, and setting
+weights or a target at another temperature replaces it with plain log weights
+of the same values. The target is the `ThermodynamicState` the populations
+describe; changing weights never clears it, and Boltzmann weights always have
+one. Every sample is in exactly one state and every state has a representative
+sample; a state's population is the total weight of its samples, derived and
+never stored. Only states have energies, on
 one scale per distribution — a conformer's minimized energy or a computed free
 energy, never a snapshot's instantaneous energy, which stays a property of its
 geometry. Selecting and removing geometries remap the samples; a selection
@@ -624,10 +631,10 @@ geometry of a structure set, unweighted. It returns a `Partition`, the
 grouping type a distribution owns, and never changes the set.
 `DistributionMut::regroup` installs a partition without changing any weight or
 sample order. A new state that is one old state keeps its energy; one merged
-from several whole old states has their free energy at the distribution's
+from several whole old states has their free energy at the target's
 temperature, `-RT ln Σ exp(-E_i / RT)`, so that with Boltzmann populations
-energy differences match `-RT ln(p_a / p_b)`, and none without a temperature
-or when a merged state has no energy. A new state keeps its representative's
+energy differences match `-RT ln(p_a / p_b)`, and none without a target or
+when a merged state has no energy. A new state keeps its representative's
 old state's properties when that state stays whole, and a state split apart
 loses its energy and properties. Collapsing
 makes a new collection of each state's representative carrying the state's

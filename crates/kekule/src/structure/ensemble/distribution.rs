@@ -1,12 +1,11 @@
 //! The distribution of an [`Ensemble`](super::Ensemble): which geometries
-//! are samples, their log weights, and their grouping into states.
+//! are samples, their weights, and their grouping into states.
 
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
 use crate::statistics::log_sum_exp;
-use crate::structure::thermodynamics::{checked_temperature, thermal_energy};
-use crate::structure::{Partition, Requirement, StructureSetError};
-use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
+use crate::structure::{Partition, Requirement, StructureSetError, ThermodynamicState};
+use crate::units::{Quantity, CANONICAL_ENERGY_UNIT};
 
 /// Which geometries of a set a [`Distribution`] covers: its samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +79,84 @@ impl StateData {
     }
 }
 
+/// How a [`Distribution`] weighs its samples
+/// ([`Distribution::weight_model`]).
+///
+/// Log weights are natural logarithms, one finite value per sample, in
+/// sample order. Only their differences are meaningful.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum WeightModel<'a> {
+    /// Every sample weighs the same.
+    Equal,
+    /// Log weights the caller gave.
+    LogWeights(&'a [f64]),
+    /// Log weights assigned as Boltzmann populations of the state energies
+    /// at the target ([`DistributionMut::assign_boltzmann_populations`]).
+    /// Later edits to samples, states, or energies keep the tag; setting
+    /// weights, or a target at another temperature, replaces it.
+    Boltzmann(&'a [f64]),
+}
+
+/// The stored weights of a [`Distribution`]; [`WeightModel`] reads them.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Weights {
+    Equal,
+    Logarithmic(Vec<f64>),
+    /// Logarithmic weights assigned as Boltzmann populations; the
+    /// distribution has a target.
+    Boltzmann(Vec<f64>),
+}
+
+impl Weights {
+    /// The log weights in sample order, or `None` when every sample weighs
+    /// the same.
+    fn log_weights(&self) -> Option<&[f64]> {
+        match self {
+            Self::Equal => None,
+            Self::Logarithmic(log_weights) | Self::Boltzmann(log_weights) => Some(log_weights),
+        }
+    }
+
+    /// The log weights in sample order for removing or reordering samples,
+    /// or `None` when every sample weighs the same.
+    fn log_weights_mut(&mut self) -> Option<&mut Vec<f64>> {
+        match self {
+            Self::Equal => None,
+            Self::Logarithmic(log_weights) | Self::Boltzmann(log_weights) => Some(log_weights),
+        }
+    }
+
+    /// The log weights of `count` samples, with equal weights made `0.0`
+    /// each; the tag is kept.
+    fn materialized(&mut self, count: usize) -> &mut Vec<f64> {
+        if matches!(self, Self::Equal) {
+            *self = Self::Logarithmic(vec![0.0; count]);
+        }
+        match self {
+            Self::Equal => unreachable!("equal weights were just replaced"),
+            Self::Logarithmic(log_weights) | Self::Boltzmann(log_weights) => log_weights,
+        }
+    }
+
+    /// Drops the Boltzmann tag, keeping the log weights.
+    fn untagged(&mut self) {
+        if let Self::Boltzmann(log_weights) = self {
+            *self = Self::Logarithmic(std::mem::take(log_weights));
+        }
+    }
+
+    /// The same model over the samples at `positions`, in that order.
+    fn selected(&self, positions: impl Iterator<Item = usize>) -> Self {
+        let pick = |log_weights: &[f64]| positions.map(|position| log_weights[position]).collect();
+        match self {
+            Self::Equal => Self::Equal,
+            Self::Logarithmic(log_weights) => Self::Logarithmic(pick(log_weights)),
+            Self::Boltzmann(log_weights) => Self::Boltzmann(pick(log_weights)),
+        }
+    }
+}
+
 /// Geometries `samples` of a set of `len`, as [`Samples::All`] when they
 /// are every geometry.
 fn normalized(samples: Vec<usize>, len: usize) -> Samples {
@@ -100,7 +177,8 @@ fn normalized(samples: Vec<usize>, len: usize) -> Samples {
 ///   are meaningful, so they are stored as natural logarithms, which any
 ///   finite value is: weights from bias reweighting or importance sampling
 ///   span hundreds of orders of magnitude, beyond what a linear weight can
-///   hold. Without weights, every sample weighs the same.
+///   hold. The weights are equal, given, or Boltzmann populations of the
+///   states' energies ([`WeightModel`]).
 /// - A *state* is a distinct conformation: a group of samples, one of them
 ///   its representative. Its *population* is the total weight of its
 ///   samples, derived and never stored. Its data ([`StateData`]) may carry
@@ -111,10 +189,10 @@ fn normalized(samples: Vec<usize>, len: usize) -> Samples {
 ///
 /// Every sample is in exactly one state, and every state has at least one
 /// sample, its representative ([`Partition`]). The distribution may record
-/// the *temperature* its populations describe.
+/// its *target*, the [`ThermodynamicState`] its populations describe.
 ///
 /// Two index spaces meet here. Methods that take or return a `geometry` use
-/// geometry indices of the set. [`Self::log_weights`], [`Self::partition`],
+/// geometry indices of the set. [`Self::weight_model`], [`Self::partition`],
 /// and [`Self::probabilities`] are in sample order, by sample position: the
 /// `i`th sample is the `i`th geometry [`Samples`] lists.
 /// [`Self::sample_probabilities`] joins the two.
@@ -139,15 +217,15 @@ fn normalized(samples: Vec<usize>, len: usize) -> Samples {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Distribution {
     samples: Samples,
-    log_weights: Option<Vec<f64>>,
+    weights: Weights,
     partition: Partition,
     states: Vec<StateData>,
-    temperature: Option<Quantity<f64>>,
+    target: Option<ThermodynamicState>,
 }
 
 impl Distribution {
-    /// A distribution of `samples` grouped by `partition`, without weights,
-    /// state energies, state properties, or a temperature.
+    /// A distribution of `samples` grouped by `partition`, with equal
+    /// weights, without state energies, state properties, or a target.
     ///
     /// # Errors
     ///
@@ -171,17 +249,24 @@ impl Distribution {
         }
         Ok(Self {
             samples,
-            log_weights: None,
+            weights: Weights::Equal,
             states: vec![StateData::new(); partition.state_count()],
             partition,
-            temperature: None,
+            target: None,
         })
     }
 
     /// Returns this distribution with one finite natural-logarithm weight
     /// per sample, in sample order; see [`DistributionMut::set_log_weights`].
     pub fn with_log_weights(mut self, log_weights: Vec<f64>) -> Result<Self, StructureSetError> {
-        self.set_log_weights(Some(log_weights))?;
+        self.set_weights(Weights::Logarithmic(log_weights))?;
+        Ok(self)
+    }
+
+    /// Returns this distribution with stored weights, checked as
+    /// [`Self::with_log_weights`] checks them.
+    pub(crate) fn with_weights(mut self, weights: Weights) -> Result<Self, StructureSetError> {
+        self.set_weights(weights)?;
         Ok(self)
     }
 
@@ -203,13 +288,15 @@ impl Distribution {
         Ok(self)
     }
 
-    /// Returns this distribution with a temperature; see
-    /// [`DistributionMut::set_temperature`].
-    pub fn with_temperature(
-        mut self,
-        temperature: Quantity<f64>,
-    ) -> Result<Self, StructureSetError> {
-        self.set_temperature(Some(temperature))?;
+    /// Returns this distribution with a target; see
+    /// [`DistributionMut::set_target`].
+    ///
+    /// # Errors
+    ///
+    /// None yet; the result leaves room for weights that a target cannot
+    /// change.
+    pub fn with_target(mut self, target: ThermodynamicState) -> Result<Self, StructureSetError> {
+        self.set_target(Some(target))?;
         Ok(self)
     }
 
@@ -240,10 +327,13 @@ impl Distribution {
         }
     }
 
-    /// The log weights in sample order, or `None` when every sample weighs
-    /// the same.
-    pub fn log_weights(&self) -> Option<&[f64]> {
-        self.log_weights.as_deref()
+    /// How the samples are weighed, with the log weights in sample order.
+    pub fn weight_model(&self) -> WeightModel<'_> {
+        match &self.weights {
+            Weights::Equal => WeightModel::Equal,
+            Weights::Logarithmic(log_weights) => WeightModel::LogWeights(log_weights),
+            Weights::Boltzmann(log_weights) => WeightModel::Boltzmann(log_weights),
+        }
     }
 
     /// The natural-logarithm weight of geometry `geometry`: its own, `0.0`
@@ -275,11 +365,18 @@ impl Distribution {
             .map(|position| self.partition.assignments()[position])
     }
 
-    /// The temperature the populations describe, in
-    /// [`CANONICAL_TEMPERATURE_UNIT`], if recorded. Changing weights does
-    /// not clear it; the caller states what its populations describe.
-    pub const fn temperature(&self) -> Option<Quantity<f64>> {
-        self.temperature
+    /// The thermodynamic state the populations describe, if recorded.
+    /// Changing weights does not clear it; the caller states what its
+    /// populations describe.
+    pub const fn target(&self) -> Option<ThermodynamicState> {
+        self.target
+    }
+
+    /// The target's temperature, in
+    /// [`CANONICAL_TEMPERATURE_UNIT`](crate::units::CANONICAL_TEMPERATURE_UNIT),
+    /// if a target is recorded.
+    pub fn temperature(&self) -> Option<Quantity<f64>> {
+        self.target.map(|target| target.temperature())
     }
 
     /// This distribution in a set of `len` geometries whose first ones are
@@ -288,8 +385,8 @@ impl Distribution {
     /// geometries it covered, [`Samples::Subset`] of `0..n` for `n` samples,
     /// so the geometries after them are not samples; a subset keeps its
     /// samples. A subset listing all `len` geometries becomes
-    /// [`Samples::All`]. The log weights, the partition, the states, and the
-    /// temperature are kept bit for bit. A subset does not record how many
+    /// [`Samples::All`]. The weights, the partition, the states, and the
+    /// target are kept bit for bit. A subset does not record how many
     /// geometries it was made for, so a `len` shorter than that is not
     /// detected.
     ///
@@ -300,7 +397,7 @@ impl Distribution {
     ///     .with_log_weights(vec![0.0, 1.0, 2.0])?;
     /// let grown = saved.clone().extended_to(5)?;
     /// assert_eq!(grown.samples(), &Samples::Subset(vec![0, 1, 2]));
-    /// assert_eq!(grown.log_weights(), saved.log_weights());
+    /// assert_eq!(grown.weight_model(), saved.weight_model());
     /// assert_eq!(grown.log_weight(4), None);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -392,7 +489,7 @@ impl Distribution {
         if self.sample_count() == 0 {
             return Err(StructureSetError::EmptyDistribution);
         }
-        let Some(log_weights) = &self.log_weights else {
+        let Some(log_weights) = self.weights.log_weights() else {
             return Ok(self.sample_count() as f64);
         };
         // Shifted by the largest log weight, the ratio is unchanged and the
@@ -511,21 +608,24 @@ impl Distribution {
             .collect())
     }
 
-    fn set_temperature(
-        &mut self,
-        temperature: Option<Quantity<f64>>,
-    ) -> Result<(), StructureSetError> {
-        self.temperature = temperature
-            .map(|temperature| {
-                let kelvin = checked_temperature(temperature)?;
-                Ok::<_, StructureSetError>(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT))
-            })
-            .transpose()?;
+    /// Records or clears the target. Boltzmann populations lose their tag
+    /// unless the temperature stays the same.
+    fn set_target(&mut self, target: Option<ThermodynamicState>) -> Result<(), StructureSetError> {
+        let same_temperature = match (self.target, target) {
+            (Some(old), Some(new)) => old.temperature().value() == new.temperature().value(),
+            _ => false,
+        };
+        if !same_temperature {
+            self.weights.untagged();
+        }
+        self.target = target;
         Ok(())
     }
 
-    fn set_log_weights(&mut self, log_weights: Option<Vec<f64>>) -> Result<(), StructureSetError> {
-        if let Some(log_weights) = &log_weights {
+    /// Replaces the weights after checking that their log weights, if any,
+    /// are one finite value per sample.
+    fn set_weights(&mut self, weights: Weights) -> Result<(), StructureSetError> {
+        if let Some(log_weights) = weights.log_weights() {
             if log_weights.len() != self.sample_count() {
                 return Err(StructureSetError::LogWeightCountMismatch(
                     LengthMismatch::new(
@@ -544,7 +644,7 @@ impl Distribution {
                 });
             }
         }
-        self.log_weights = log_weights;
+        self.weights = weights;
         Ok(())
     }
 
@@ -563,9 +663,17 @@ impl Distribution {
 
     /// The log weight of the sample at `position`.
     fn sample_log_weight(&self, position: usize) -> f64 {
-        self.log_weights
-            .as_ref()
+        self.weights
+            .log_weights()
             .map_or(0.0, |log_weights| log_weights[position])
+    }
+
+    /// Every sample's log weight in sample order, `0.0` each when every
+    /// sample weighs the same.
+    pub(crate) fn sample_log_weights(&self) -> Vec<f64> {
+        self.weights
+            .log_weights()
+            .map_or_else(|| vec![0.0; self.sample_count()], <[f64]>::to_vec)
     }
 
     /// The natural logarithm of each state's population, in state order, on
@@ -632,7 +740,7 @@ impl Distribution {
         log_weight: Option<f64>,
         geometry: usize,
     ) -> Result<(), StructureSetError> {
-        match (log_weight, &self.log_weights) {
+        match (log_weight, self.weights.log_weights()) {
             (None, Some(_)) => Err(StructureSetError::LogWeightRequired),
             (Some(log_weight), _) if !log_weight.is_finite() => {
                 Err(StructureSetError::NonFiniteLogWeight { geometry })
@@ -685,16 +793,18 @@ impl Distribution {
         index
     }
 
+    /// Adds a new last sample's log weight, after
+    /// [`Self::check_new_log_weight`].
     fn push_log_weight(&mut self, log_weight: Option<f64>) {
-        match (log_weight, &mut self.log_weights) {
-            (Some(log_weight), Some(log_weights)) => log_weights.push(log_weight),
-            (Some(log_weight), None) => {
-                let mut log_weights = vec![0.0; self.partition.sample_count()];
-                log_weights.push(log_weight);
-                self.log_weights = Some(log_weights);
-            }
-            (None, None) => {}
-            (None, Some(_)) => unreachable!("new log weights are checked first"),
+        match log_weight {
+            Some(log_weight) => self
+                .weights
+                .materialized(self.partition.sample_count())
+                .push(log_weight),
+            None => debug_assert!(
+                self.weights == Weights::Equal,
+                "new log weights are checked first"
+            ),
         }
     }
 
@@ -743,7 +853,7 @@ impl Distribution {
                 }
             }
             self.partition = Partition::from_parts_unchecked(assignments, representatives);
-            if let Some(log_weights) = &mut self.log_weights {
+            if let Some(log_weights) = self.weights.log_weights_mut() {
                 log_weights.remove(position);
             }
         }
@@ -758,7 +868,7 @@ impl Distribution {
     }
 
     /// The distribution of a set of the geometries `indices` (checked), in
-    /// order: the selected samples, with their log weights. Every state with
+    /// order: the selected samples, with their weights. Every state with
     /// a selected sample becomes a state of the copy, in state order,
     /// represented by the first copy of its representative or, when that is
     /// not selected, by its first selected sample. A state whose samples are
@@ -820,15 +930,12 @@ impl Distribution {
                 picked.iter().map(|(copy, _)| *copy).collect(),
                 indices.len(),
             ),
-            log_weights: self.log_weights.as_ref().map(|log_weights| {
-                picked
-                    .iter()
-                    .map(|(_, position)| log_weights[*position])
-                    .collect()
-            }),
+            weights: self
+                .weights
+                .selected(picked.iter().map(|(_, position)| *position)),
             partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
-            temperature: self.temperature,
+            target: self.target,
         }
     }
 
@@ -837,7 +944,7 @@ impl Distribution {
     /// indices, with the distribution of a set of just those geometries.
     pub(crate) fn select_states(&self, indices: &[usize]) -> (Vec<usize>, Self) {
         let mut geometries = Vec::new();
-        let mut log_weights = self.log_weights.as_ref().map(|_| Vec::new());
+        let mut positions = Vec::new();
         let mut assignments = Vec::new();
         let mut representatives = Vec::with_capacity(indices.len());
         let mut states = Vec::with_capacity(indices.len());
@@ -849,19 +956,17 @@ impl Distribution {
                     representatives.push(geometries.len());
                 }
                 geometries.push(self.sample(position));
-                if let Some(log_weights) = &mut log_weights {
-                    log_weights.push(self.sample_log_weight(position));
-                }
+                positions.push(position);
                 assignments.push(state);
             }
             states.push(self.states[*old].clone());
         }
         let distribution = Self {
             samples: Samples::All,
-            log_weights,
+            weights: self.weights.selected(positions.into_iter()),
             partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
-            temperature: self.temperature,
+            target: self.target,
         };
         (geometries, distribution)
     }
@@ -878,10 +983,13 @@ impl Distribution {
             .collect::<Vec<_>>();
         let distribution = Self {
             samples: Samples::All,
-            log_weights: Some(self.state_log_populations()),
+            weights: match self.weights {
+                Weights::Boltzmann(_) => Weights::Boltzmann(self.state_log_populations()),
+                _ => Weights::Logarithmic(self.state_log_populations()),
+            },
             partition: Partition::state_per_sample(representatives.len()),
             states: self.states.clone(),
-            temperature: self.temperature,
+            target: self.target,
         };
         (representatives, distribution)
     }
@@ -907,9 +1015,9 @@ impl Distribution {
 /// ([`Ensemble::distribution_mut`](super::Ensemble::distribution_mut)).
 ///
 /// Reads use `Deref`. There is deliberately no `DerefMut`: the guard changes
-/// log weights, the grouping into states, the states' energies and
-/// properties, and the temperature, but never which geometries are samples,
-/// so the distribution always fits its set.
+/// the weights, the grouping into states, the states' energies and
+/// properties, and the target, but never which geometries are samples, so
+/// the distribution always fits its set.
 ///
 /// ```compile_fail,E0594
 /// use kekule::structure::{Distribution, Ensemble, Partition, Samples};
@@ -938,23 +1046,26 @@ impl std::ops::Deref for DistributionMut<'_> {
 }
 
 impl DistributionMut<'_> {
-    /// Replaces every log weight, in sample order, or makes every sample
-    /// weigh the same. Failure changes nothing.
+    /// Makes every sample weigh the same.
+    pub fn set_equal_weights(&mut self) {
+        self.distribution.weights = Weights::Equal;
+    }
+
+    /// Replaces every log weight, in sample order. Failure changes nothing.
     ///
     /// # Errors
     ///
     /// [`StructureSetError::LogWeightCountMismatch`] for another number of
     /// log weights than samples, and [`StructureSetError::NonFiniteLogWeight`]
     /// for the first one that is not finite.
-    pub fn set_log_weights(
-        &mut self,
-        log_weights: Option<Vec<f64>>,
-    ) -> Result<(), StructureSetError> {
-        self.distribution.set_log_weights(log_weights)
+    pub fn set_log_weights(&mut self, log_weights: Vec<f64>) -> Result<(), StructureSetError> {
+        self.distribution
+            .set_weights(Weights::Logarithmic(log_weights))
     }
 
-    /// Sets the log weight of one sample, a finite value. In a distribution
-    /// without weights, the other samples keep log weight `0.0`.
+    /// Sets the log weight of one sample, a finite value. With equal
+    /// weights, the other samples keep log weight `0.0`; Boltzmann
+    /// populations lose their tag.
     ///
     /// # Errors
     ///
@@ -974,15 +1085,15 @@ impl DistributionMut<'_> {
             return Err(StructureSetError::NonFiniteLogWeight { geometry });
         }
         let count = distribution.sample_count();
-        distribution
-            .log_weights
-            .get_or_insert_with(|| vec![0.0; count])[position] = log_weight;
+        distribution.weights.untagged();
+        distribution.weights.materialized(count)[position] = log_weight;
         Ok(())
     }
 
     /// Shifts every log weight so the weights sum to one, so each log weight
     /// is the natural logarithm of its sample's probability. Ratios, and so
-    /// every probability and population share, are kept.
+    /// every probability and population share, are kept, and so are
+    /// Boltzmann populations; equal weights become log weights.
     ///
     /// # Errors
     ///
@@ -993,41 +1104,38 @@ impl DistributionMut<'_> {
         if distribution.sample_count() == 0 {
             return Err(StructureSetError::EmptyDistribution);
         }
-        let log_weights = (0..distribution.sample_count())
-            .map(|position| distribution.sample_log_weight(position))
-            .collect::<Vec<_>>();
+        let count = distribution.sample_count();
+        let log_weights = distribution.weights.materialized(count);
         let total = log_sum_exp(log_weights.iter().copied());
-        distribution.log_weights = Some(
-            log_weights
-                .into_iter()
-                .map(|log_weight| log_weight - total)
-                .collect(),
-        );
+        for log_weight in log_weights {
+            *log_weight -= total;
+        }
         Ok(())
     }
 
-    /// Records or clears the temperature the populations describe, which
-    /// must be finite and positive. No weight changes.
+    /// Records or clears the thermodynamic state the populations describe.
+    /// No weight changes. Boltzmann populations lose their tag unless the
+    /// temperature stays the same; a pressure alone does not change them.
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::InvalidTemperature`] and
-    /// [`StructureSetError::Unit`]; failure changes nothing.
-    pub fn set_temperature(
+    /// None yet; the result leaves room for weights that a target cannot
+    /// change.
+    pub fn set_target(
         &mut self,
-        temperature: Option<Quantity<f64>>,
+        target: Option<ThermodynamicState>,
     ) -> Result<(), StructureSetError> {
-        self.distribution.set_temperature(temperature)
+        self.distribution.set_target(target)
     }
 
     /// Sets each state's population in proportion to the Boltzmann factor
-    /// of its energy relative to the lowest one, `exp(-(E - E_min) / RT)`,
-    /// and records `temperature`.
+    /// of its energy relative to the lowest one, `exp(-(E - E_min) / RT)` at
+    /// the temperature of `target`, and records `target`.
     ///
     /// The log weights of each state's samples shift together, so their
     /// ratios within the state are kept, and the total weight is kept. A
-    /// distribution of one state is therefore unchanged, apart from gaining
-    /// log weights (`0.0` each) when it had none. In log space no
+    /// distribution of one state therefore keeps its probabilities, with
+    /// log weights `0.0` each when it had equal weights. In log space no
     /// population underflows, however far a state lies above the lowest.
     /// Samples drawn from a simulation already follow their distribution;
     /// group them into a state without an energy, which this refuses,
@@ -1035,18 +1143,15 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::InvalidTemperature`] and
-    /// [`StructureSetError::Unit`] for a temperature that is not finite and
-    /// positive, `Missing(StateEnergies)` when a state has no energy, and
+    /// `Missing(StateEnergies)` when a state has no energy, and
     /// [`StructureSetError::UnrepresentablePopulation`] when a state lies so
     /// far above the lowest at this temperature that its log weights are not
     /// finite. Failure changes nothing.
     pub fn assign_boltzmann_populations(
         &mut self,
-        temperature: Quantity<f64>,
+        target: ThermodynamicState,
     ) -> Result<(), StructureSetError> {
-        let kelvin = checked_temperature(temperature)?;
-        let thermal_energy = thermal_energy(kelvin).ok_or(StructureSetError::InvalidTemperature)?;
+        let thermal_energy = *target.thermal_energy().value();
         let distribution = &mut *self.distribution;
         let energies = distribution.state_energies()?;
         let minimum = energies.iter().copied().fold(f64::INFINITY, f64::min);
@@ -1076,8 +1181,8 @@ impl DistributionMut<'_> {
                 state: distribution.partition.assignments()[position],
             });
         }
-        distribution.log_weights = Some(log_weights);
-        distribution.temperature = Some(Quantity::new(kelvin, CANONICAL_TEMPERATURE_UNIT));
+        distribution.weights = Weights::Boltzmann(log_weights);
+        distribution.target = Some(target);
         Ok(())
     }
 
@@ -1092,7 +1197,7 @@ impl DistributionMut<'_> {
     ///
     /// The distribution stays the same; only its description changes, and
     /// populations follow the samples. A new state made of whole old states
-    /// has their free energy at the distribution's temperature `T`,
+    /// has their free energy at the target's temperature `T`,
     /// `F = -RT ln Σ exp(-E_i / RT)` over the old states' energies `E_i`.
     /// With Boltzmann populations at `T`
     /// ([`Self::assign_boltzmann_populations`]) the populations of two such
@@ -1102,17 +1207,17 @@ impl DistributionMut<'_> {
     /// grouping keeps everything. A new state has no energy when any of its
     /// old states has none, when it takes only part of an old state that is
     /// split apart, or when it merges several old states and the
-    /// distribution has no temperature.
+    /// distribution has no target.
     ///
     /// The free energy belongs to the temperature it was merged at:
-    /// [`Self::set_temperature`] and [`Self::assign_boltzmann_populations`]
-    /// at another temperature keep it, and assign populations from it as
-    /// from any state energy. For free energies at another temperature,
-    /// reweight before merging.
+    /// [`Self::set_target`] and [`Self::assign_boltzmann_populations`] at
+    /// another temperature keep it, and assign populations from it as from
+    /// any state energy. For free energies at another temperature, reweight
+    /// before merging.
     ///
     /// A new state keeps the properties of its representative's old state
-    /// when that state stays whole, and has none otherwise. The temperature
-    /// is kept.
+    /// when that state stays whole, and has none otherwise. The weights and
+    /// the target are kept.
     ///
     /// # Errors
     ///
@@ -1155,8 +1260,8 @@ impl DistributionMut<'_> {
         }
         let thermal_energy = self
             .distribution
-            .temperature
-            .and_then(|temperature| thermal_energy(*temperature.value()));
+            .target
+            .map(|target| *target.thermal_energy().value());
         let energies = members
             .iter()
             .zip(&partial)

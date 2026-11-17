@@ -35,8 +35,9 @@
 //!   [`StructureSet::from_reader`] loads chosen geometries of any reader into
 //!   memory. File codecs and streaming live in [`crate::traj`].
 //! - [`Ensemble`]: one structure set read as draws from a [`Distribution`]
-//!   over all its geometries or some of them ([`Samples`]), with log weights,
-//!   grouped into states by a [`Partition`], each with its [`StateData`].
+//!   over all its geometries or some of them ([`Samples`]), weighted
+//!   ([`WeightModel`]) and grouped into states by a [`Partition`], each with
+//!   its [`StateData`].
 //!   [`StateView`] reads a state and [`DistributionMut`] edits the
 //!   distribution; its operations fail with a [`StructureSetError`] too.
 //! - [`ThermodynamicState`]: a temperature and, in the isothermal-isobaric
@@ -148,9 +149,10 @@ mod view;
 pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopologyMut};
 pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
+pub(crate) use ensemble::Weights;
 pub use ensemble::{
     Distribution, DistributionMut, Ensemble, Partition, PartitionError, Samples, StateData,
-    StateIter, StateView,
+    StateIter, StateView, WeightModel,
 };
 pub(crate) use geometry::{subset_rows, GeometryData};
 pub use geometry::{Geometry, GeometryError, GeometryMut};

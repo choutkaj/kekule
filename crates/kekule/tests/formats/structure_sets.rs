@@ -10,7 +10,7 @@ use kekule::pdb::{self, PdbWriteOptions};
 use kekule::sdf::{self, SdfDataField, SdfRecordInterpretation, SdfWriteOptions};
 use kekule::structure::{
     Distribution, Ensemble, Geometry, Order, Partition, Place, Positions, Samples, StateData,
-    Structure, StructureSet, TimeAxis, Velocities,
+    Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, WeightModel,
 };
 use kekule::topology::{AtomSelection, TopologyAtomIndex};
 use kekule::units::{
@@ -188,7 +188,9 @@ fn weighted_methanes() -> Ensemble {
                 .unwrap(),
         ])
         .unwrap()
-        .with_temperature(Quantity::new(300.0, kekule::units::KELVIN))
+        .with_target(
+            ThermodynamicState::canonical(Quantity::new(300.0, kekule::units::KELVIN)).unwrap(),
+        )
         .unwrap();
     Ensemble::new(set, distribution).unwrap()
 }
@@ -609,7 +611,7 @@ fn xyz_structure_sets_have_no_order() {
     let distribution = ensemble.distribution();
     assert_eq!(distribution.samples(), &Samples::All);
     assert_eq!(distribution.state_count(), 1);
-    assert_eq!(distribution.log_weights(), None);
+    assert_eq!(distribution.weight_model(), WeightModel::Equal);
     assert_eq!(distribution.probabilities().unwrap(), [0.5, 0.5]);
 }
 

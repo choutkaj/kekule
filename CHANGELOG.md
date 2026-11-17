@@ -267,10 +267,16 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `Ensemble` now owns one `StructureSet` and one `Distribution`
   (`Ensemble::new`, `uniform`, `weighted`, `into_parts`); geometry edits,
   `select_states`, `collapse`, and `state`/`states` go through it.
-- **Breaking:** A `Distribution` holds samples (`Samples`), optional natural-log
-  weights (`with_log_weights`), a `Partition` into states with one `StateData`
-  each (energy, properties), and a temperature; `DistributionMut` edits it,
-  and `StateView` reads a state with its samples and population.
+- **Breaking:** A `Distribution` holds samples (`Samples`), a weight model read
+  as a `WeightModel` (`Equal`, `LogWeights`, or `Boltzmann` natural-log weights;
+  `weight_model`, `with_log_weights`), a `Partition` into states with one
+  `StateData` each (energy, properties), and an optional target
+  `ThermodynamicState` (`target`, fallible `with_target`; `temperature` is
+  the target's); `DistributionMut` edits it (`set_equal_weights`,
+  `set_log_weights`, fallible `set_target`, `assign_boltzmann_populations` at
+  a target), and `StateView` reads a state with its samples and population.
+  Boltzmann weights keep their tag through edits to samples, states, and
+  energies; setting weights or a target at another temperature drops it.
 - **Breaking:** Log weights span hundreds of orders of magnitude without
   underflow; `probabilities`, rankings, and `effective_sample_size` move from
   the old `Ensemble` to `Distribution`.
@@ -282,10 +288,10 @@ the main branch migrates by the table under "From the SampleSet API".
   `normalize_log_weights`; `regroup` and `ranked_by_population` are new.
 - **Breaking:** `DistributionMut::regroup` gives a state merged from several
   whole states their free energy, `-RT ln Σ exp(-E_i / RT)` at the
-  distribution's temperature, instead of its representative's energy, so that
+  target's temperature, instead of its representative's energy, so that
   energy differences match Boltzmann populations. A merged state has no
   energy when any merged state has none or the distribution has no
-  temperature; a state taking part of a split state has none.
+  target; a state taking part of a split state has none.
 - **Breaking:** `StructureEnsembleInterpretOptions` is
   `StructureSetInterpretOptions`, and `interpret_conformations` and multi-model
   PDB and mmCIF give a plain `StructureSet`.
@@ -548,9 +554,9 @@ weights. The `Model` items became `Structure` items as listed under Changed.
 | `SampleSet::weighted_samples`, `Distribution::weighted_members` | `Distribution::sample_probabilities`, which gives probabilities |
 | `Members`, `Membership` | `Samples`; a geometry has no membership |
 | `State` | `StateData` |
-| `Distribution::with_weights`, `weights`, `weight` | `with_log_weights`, `log_weights`, `log_weight` |
+| `Distribution::with_weights`, `weights`, `weight` | `with_log_weights`, `weight_model`, `log_weight` |
 | `Distribution::members`, `member_count`, `member_position` | `samples`, `sample_count`, `sample_position` |
-| `DistributionMut::set_weights`, `set_weight`, `normalize_weights` | `set_log_weights`, `set_log_weight`, `normalize_log_weights` |
+| `DistributionMut::set_weights`, `set_weight`, `normalize_weights` | `set_log_weights` or `set_equal_weights`, `set_log_weight`, `normalize_log_weights` |
 | `SampleView::weight`, `state`, `is_representative` | `Distribution::log_weight`, `state_of`, `Partition::representatives` |
 | `StateView::samples`, `population` | `StateView::geometries`, `log_population` |
 | `SampleObservations::all`, `of` over a distribution | `SampleObservations::weighted`, `weighted_of`; `all` and `of` weigh every geometry 1 |
