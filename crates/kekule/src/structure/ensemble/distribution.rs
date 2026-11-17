@@ -3,6 +3,8 @@
 
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
+use crate::statistics::log_sum_exp;
+use crate::structure::thermodynamics::{checked_temperature, thermal_energy};
 use crate::structure::{Partition, Requirement, StructureSetError};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT, CANONICAL_TEMPERATURE_UNIT};
 
@@ -1214,29 +1216,6 @@ fn free_energy(energies: &[f64], thermal_energy: f64) -> Option<f64> {
     free_energy.is_finite().then_some(free_energy)
 }
 
-/// The molar gas constant `N_A k_B` in kJ/(mol K), exact since the 2019 SI.
-const MOLAR_GAS_CONSTANT: f64 = 8.314_462_618_153_24e-3;
-
-/// `R T` for a temperature in kelvin, when it is finite and positive.
-fn thermal_energy(kelvin: f64) -> Option<f64> {
-    let thermal_energy = MOLAR_GAS_CONSTANT * kelvin;
-    (thermal_energy.is_finite() && thermal_energy > 0.0).then_some(thermal_energy)
-}
-
-/// `ln Σ exp(x)` over finite values, shifted by their largest so that no
-/// term overflows; negative infinity for none.
-pub(crate) fn log_sum_exp(values: impl Iterator<Item = f64> + Clone) -> f64 {
-    let maximum = values.clone().fold(f64::NEG_INFINITY, f64::max);
-    if maximum == f64::NEG_INFINITY {
-        return maximum;
-    }
-    maximum
-        + values
-            .map(|value| (value - maximum).exp())
-            .sum::<f64>()
-            .ln()
-}
-
 /// `exp(x) / Σ exp(x)` for each of some finite values, shifted by their
 /// largest so that the largest term is exactly one and none overflows.
 fn normalized_exponentials(values: impl Iterator<Item = f64> + Clone) -> Vec<f64> {
@@ -1246,14 +1225,4 @@ fn normalized_exponentials(values: impl Iterator<Item = f64> + Clone) -> Vec<f64
         .collect::<Vec<_>>();
     let total = terms.iter().sum::<f64>();
     terms.into_iter().map(|term| term / total).collect()
-}
-
-/// A finite, positive temperature in [`CANONICAL_TEMPERATURE_UNIT`].
-fn checked_temperature(temperature: Quantity<f64>) -> Result<f64, StructureSetError> {
-    let temperature = temperature.value_in(CANONICAL_TEMPERATURE_UNIT)?;
-    if temperature.is_finite() && temperature > 0.0 {
-        Ok(temperature)
-    } else {
-        Err(StructureSetError::InvalidTemperature)
-    }
 }

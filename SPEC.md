@@ -459,6 +459,11 @@ potential, collective-variable values, an instantaneous energy, a repeat count
 those. `Ensemble::uniform` and `Ensemble::weighted` build the one-state
 readings, so weighting a trajectory needs no partition.
 
+A `ThermodynamicState` is the state a weight refers to: a finite, positive
+temperature and, in the isothermal-isobaric ensemble, a finite, positive
+pressure, in bar. A state with a pressure is NpT and one without is NVT;
+nothing else records the ensemble.
+
 A geometry is shared through `Arc` and copied on write, so regrouping,
 reweighting, selecting, and collapsing copy no coordinates, and editing one
 geometry copies that geometry alone. Set and ensemble operations fail with one
@@ -591,6 +596,15 @@ same selection merge, so a host observes ranges on any threads and merges them
 in range order with the same result on every executor. Results keep their atom
 and pair associations; observation indices are diagnostic labels. See
 [weighted statistics](crates/kekule/src/statistics.rs).
+
+A reweighting `Estimator` gives the population of a group of samples, such as
+a state or a histogram bin, as `ln Σ exp(b_i)` from dimensionless reduced
+values `b_i`, the samples' log importance weights: the exact exponential sum,
+or the cumulant expansion to first, second (the default), or third order. It
+estimates group totals only; a sample's share within its group is always
+`exp(b_i) / Σ exp(b_j)`. An empty group, or reduced values whose estimate is
+not finite, has no population. See
+[estimators](crates/kekule/src/statistics/estimators.rs).
 
 Clustering groups the samples of an ensemble's distribution, weighted, or every
 geometry of a structure set, unweighted. It returns a `Partition`, the

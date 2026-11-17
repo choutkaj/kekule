@@ -12,7 +12,6 @@ mod states;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use distribution::log_sum_exp;
 pub use distribution::{Distribution, DistributionMut, Samples, StateData};
 pub use partition::{Partition, PartitionError};
 pub use states::{StateIter, StateView};
