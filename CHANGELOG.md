@@ -271,10 +271,12 @@ the main branch migrates by the table under "From the SampleSet API".
   as a `WeightModel` (`Equal`, `LogWeights`, or `Boltzmann` natural-log weights;
   `weight_model`, `with_log_weights`), a `Partition` into states with one
   `StateData` each (energy, properties), and an optional target
-  `ThermodynamicState` (`target`, `with_target`; `temperature` is the
-  target's); `DistributionMut` edits it (`set_equal_weights`,
-  `set_log_weights`, `set_target`, `assign_boltzmann_populations` at a
-  target), and `StateView` reads a state with its samples and population.
+  `ThermodynamicState` (`target`, fallible `with_target`; `temperature` is
+  the target's); `DistributionMut` edits it (`set_equal_weights`,
+  `set_log_weights`, fallible `set_target`, `assign_boltzmann_populations` at
+  a target), and `StateView` reads a state with its samples and population.
+  Boltzmann weights keep their tag through edits to samples, states, and
+  energies; setting weights or a target at another temperature drops it.
 - **Breaking:** Log weights span hundreds of orders of magnitude without
   underflow; `probabilities`, rankings, and `effective_sample_size` move from
   the old `Ensemble` to `Distribution`.

@@ -293,7 +293,7 @@ order          := 0                                (none)
                | 2 [u64; geometry_count]           (steps)
                | 3 unit [f64; geometry_count]      (a coordinate in that unit)
 distribution   := samples weights
-                  state:u32[sample_count]
+                  assignment:u32[sample_count]
                   state_count:count state_data[state_count]
                   target:opt state
 samples        := 0                                (every geometry)
@@ -336,12 +336,12 @@ are every geometry, or the geometries that a strictly ascending list of indices
 names; `sample_count` is the geometry count for every geometry. The weights
 are equal, or one finite log weight per sample, the natural logarithm of its
 weight, tagged as given or as Boltzmann populations of the state energies at
-the target. Each sample stores the index of its state, and each state the
-sample position of its representative. The reader validates the partition:
-every state index names a stored state, and every representative is a sample
-of its own state, so no state is empty. The target is a thermodynamic state:
-a finite, positive temperature and, at constant pressure, a finite, positive
-pressure.
+the target; Boltzmann weights need a target. Each sample's assignment is the
+index of its state, and each state's data holds the sample position of its
+representative. The reader validates the partition: every assignment names a
+stored state, and every representative is a sample of its own state, so no
+state is empty. The target is a thermodynamic state: a finite, positive
+temperature and, at constant pressure, a finite, positive pressure.
 
 A distribution record is a distribution over `geometry_count` geometries
 kept elsewhere, a `DistributionDescription`. The count bounds the

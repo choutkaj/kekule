@@ -454,18 +454,19 @@ one set are several ensembles sharing every coordinate.
 
 A distribution covers every geometry of its set or a sorted subset, its
 samples. Its weight model, read as a `WeightModel`, says how they are weighed:
-equally, by log weights the caller gives, or by log weights that give each
-state its Boltzmann population at the target. Weights are stored as natural
-logarithms, one finite value per sample: weights from reweighting span
-hundreds of orders of magnitude, and a linear weight would underflow.
+equally, by log weights the caller gives, or by log weights assigned as
+Boltzmann populations of the state energies at the target. Weights are stored
+as natural logarithms, one finite value per sample: weights from reweighting
+span hundreds of orders of magnitude, and a linear weight would underflow.
 Normalized weights and probabilities are derived on request. Log weights and
-the partition are indexed by sample position. Editing a weight, adding a
-weighted sample, collapsing, or changing the target turns Boltzmann
-populations into plain log weights of the same values; selecting, removing,
-regrouping, and normalizing keep them. The target is the `ThermodynamicState`
-the populations describe; changing weights never clears it. Every sample is in exactly one state
-and every state has a representative sample; a state's population is the total
-weight of its samples, derived and never stored. Only states have energies, on
+the partition are indexed by sample position. The Boltzmann tag records
+provenance: later edits to samples, states, or energies keep it, and setting
+weights or a target at another temperature replaces it with plain log weights
+of the same values. The target is the `ThermodynamicState` the populations
+describe; changing weights never clears it, and Boltzmann weights always have
+one. Every sample is in exactly one state and every state has a representative
+sample; a state's population is the total weight of its samples, derived and
+never stored. Only states have energies, on
 one scale per distribution — a conformer's minimized energy or a computed free
 energy, never a snapshot's instantaneous energy, which stays a property of its
 geometry. Selecting and removing geometries remap the samples; a selection

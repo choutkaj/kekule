@@ -7,6 +7,7 @@ mod clustering;
 mod clustering_runs;
 mod distributions;
 mod dssp;
+mod ensemble_weights;
 mod estimators;
 mod interactions;
 mod measurements;
