@@ -206,8 +206,8 @@ fn stored_distributions_are_checked_against_their_set() {
         // An unknown weights tag.
         (
             at.weights - 1,
-            vec![3],
-            "The weights tag 3 is unknown.",
+            vec![4],
+            "The weights tag 4 is unknown.",
             "a weights tag",
         ),
         // A target that is not a thermodynamic state.

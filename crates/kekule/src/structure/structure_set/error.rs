@@ -181,6 +181,37 @@ pub enum StructureSetError {
         /// The index of the state.
         state: usize,
     },
+    /// A reduced bias is not finite or exceeds `1e100` in magnitude
+    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)):
+    /// the geometry's energy or bias values are not physical.
+    InvalidReducedBias {
+        /// The geometry's index.
+        geometry: usize,
+    },
+    /// The target of reweighted samples cannot be set apart from their
+    /// weights ([`DistributionMut::set_target`](crate::structure::DistributionMut::set_target));
+    /// reweight them with [`Ensemble::reweight`](crate::structure::Ensemble::reweight)
+    /// instead.
+    ReweightedTarget,
+    /// A new sample cannot join reweighted samples, whose weights come from
+    /// the set's sampling record ([`Ensemble::push_sample`](crate::structure::Ensemble::push_sample),
+    /// [`Ensemble::push_state`](crate::structure::Ensemble::push_state)). Push
+    /// the geometry outside the distribution with
+    /// [`Ensemble::push`](crate::structure::Ensemble::push).
+    ReweightedSample {
+        /// The new geometry's index.
+        geometry: usize,
+    },
+    /// An estimator was given to a distribution whose samples are not
+    /// reweighted ([`DistributionMut::set_estimator`](crate::structure::DistributionMut::set_estimator)).
+    NotReweighted,
+    /// A grouping of samples covers another number of samples than the
+    /// distribution has
+    /// ([`Distribution::group_log_populations`](crate::structure::Distribution::group_log_populations)).
+    GroupingMismatch(LengthMismatch),
+    /// A sample's group is not below the number of groups
+    /// ([`Distribution::group_log_populations`](crate::structure::Distribution::group_log_populations)).
+    GroupOutOfRange(IndexOutOfRange),
     /// An energy window is not finite and nonnegative.
     InvalidEnergyWindow,
     /// A population fraction is not in `(0, 1]`.
@@ -321,6 +352,19 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "The Boltzmann population of state {state} is too small to represent at this temperature. Raise the temperature."
             ),
+            Self::InvalidReducedBias { geometry } => {
+                write!(formatter, "The bias of geometry {geometry} is out of range.")
+            }
+            Self::ReweightedTarget => formatter.write_str(
+                "The distribution is reweighted to its target. Reweight it to change the target.",
+            ),
+            Self::ReweightedSample { geometry } => write!(
+                formatter,
+                "Geometry {geometry} cannot join the reweighted samples. Add it outside the distribution."
+            ),
+            Self::NotReweighted => formatter.write_str("The distribution is not reweighted."),
+            Self::GroupingMismatch(error) => error.fmt(formatter),
+            Self::GroupOutOfRange(error) => error.fmt(formatter),
             Self::InvalidEnergyWindow => {
                 formatter.write_str("The energy window is not finite and nonnegative.")
             }

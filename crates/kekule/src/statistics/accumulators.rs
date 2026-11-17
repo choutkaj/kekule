@@ -267,9 +267,12 @@ impl SampleObservations {
     /// out.
     pub fn weighted<S: GeometryStorage>(ensemble: &Ensemble<S>) -> Self {
         let distribution = ensemble.distribution();
+        let log_weights = distribution.sample_log_weights();
         Self::of_log_weights(
-            (0..ensemble.set().len())
-                .filter_map(|geometry| Some((geometry, distribution.log_weight(geometry)?))),
+            log_weights
+                .into_iter()
+                .enumerate()
+                .map(|(position, log_weight)| (distribution.sample(position), log_weight)),
         )
     }
 
@@ -289,10 +292,14 @@ impl SampleObservations {
         samples: impl IntoIterator<Item = usize>,
     ) -> Result<Self, StatisticsError> {
         let samples = checked(ensemble.set().len(), samples)?;
-        let distribution = ensemble.distribution();
-        Ok(Self::of_log_weights(samples.into_iter().filter_map(
-            |geometry| Some((geometry, distribution.log_weight(geometry)?)),
-        )))
+        let selected = ensemble.distribution().select(&samples);
+        let log_weights = selected.sample_log_weights();
+        Ok(Self::of_log_weights(
+            log_weights
+                .into_iter()
+                .enumerate()
+                .map(|(position, log_weight)| (samples[selected.sample(position)], log_weight)),
+        ))
     }
 
     /// Geometries with their natural-logarithm weights, observed with their

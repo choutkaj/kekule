@@ -71,8 +71,10 @@ impl<'a, S> StateView<'a, S> {
             .map(move |position| distribution.sample(position))
     }
 
-    /// The natural logarithm of the state's population, the total weight of
-    /// its samples, on the scale of the log weights. Only its differences
+    /// The natural logarithm of the state's population, the estimator over
+    /// its samples' exact log weights
+    /// ([`Distribution::estimator`](crate::structure::Distribution::estimator)),
+    /// on the scale of those log weights. Only its differences
     /// to other states' carry meaning;
     /// [`Distribution::state_probabilities`](crate::structure::Distribution::state_probabilities)
     /// gives every state's share of the total.

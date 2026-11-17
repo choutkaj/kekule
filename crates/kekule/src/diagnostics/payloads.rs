@@ -40,6 +40,8 @@ pub enum Countable {
     State,
     /// Samples of a distribution.
     Sample,
+    /// Groups of samples, such as the bins of a histogram.
+    Group,
     /// Weights, one per atom or sample.
     Weight,
     /// Log weights, one per sample of a distribution.
@@ -84,6 +86,7 @@ impl Countable {
             Self::Structure => "structure",
             Self::State => "state",
             Self::Sample => "sample",
+            Self::Group => "group",
             Self::Weight => "weight",
             Self::LogWeight => "log weight",
             Self::OrderValue => "order value",
@@ -116,6 +119,7 @@ impl Countable {
             Self::Structure => "structures",
             Self::State => "states",
             Self::Sample => "samples",
+            Self::Group => "groups",
             Self::Weight => "weights",
             Self::LogWeight => "log weights",
             Self::OrderValue => "order values",
