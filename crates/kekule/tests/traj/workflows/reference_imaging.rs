@@ -119,7 +119,10 @@ fn a_molecule_crossing_the_boundary_is_imaged_onto_references_before_and_after_i
         assert_eq!(Some(buffer.frame_view().place()), original.place());
         assert_eq!(buffer.velocities(), original.velocities());
         assert_eq!(buffer.forces(), original.forces());
-        assert_eq!(buffer.properties(), original.properties());
+        assert_eq!(
+            buffer.properties(),
+            support::detached(original).properties()
+        );
     }
 
     // The in-memory form matches the streaming form frame by frame.

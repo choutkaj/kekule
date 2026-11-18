@@ -78,6 +78,7 @@ impl TrajectoryFieldAvailability {
             velocities: carried(self.velocities),
             forces: carried(self.forces),
             properties: carried(self.properties),
+            columns: carried(self.properties),
             ..Carries::POSITIONS
         }
     }

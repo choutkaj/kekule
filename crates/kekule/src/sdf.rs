@@ -6,6 +6,11 @@
 //! explicitly with [`sdf::SdfRecord::interpret`](crate::sdf::SdfRecord::interpret); sibling records are not
 //! merged into one structure or reinterpreted as a structure set.
 //!
+//! [`sdf::structure_set`](crate::sdf::structure_set) reads the records'
+//! data fields as the set's columns, and [`sdf::write`](crate::sdf::write)
+//! writes a set geometry's cells as data fields. SDF carries no types: text
+//! that reads as a number or a boolean comes back as one.
+//!
 //! ```
 //! use kekule::math::Point3;
 //! use kekule::structure::{Structure, Positions};

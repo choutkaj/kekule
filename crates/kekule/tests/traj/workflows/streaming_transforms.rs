@@ -142,11 +142,20 @@ fn streaming_and_loaded_whole_image_and_unwrap_preserve_identical_complete_frame
         buffer.copy_from(frame_of(&set, index)).unwrap();
         let mut image = buffer.clone();
         imager.image(index, &mut image, &anchors).unwrap();
-        assert_eq!(*image, *expected_image.get(index).unwrap().payload());
+        assert_eq!(
+            *image,
+            support::detached(expected_image.get(index).unwrap())
+        );
         imager.make_whole(index, &mut buffer).unwrap();
-        assert_eq!(*buffer, *expected_whole.get(index).unwrap().payload());
+        assert_eq!(
+            *buffer,
+            support::detached(expected_whole.get(index).unwrap())
+        );
         unwrapper.unwrap(index, &mut buffer).unwrap();
-        assert_eq!(*buffer, *expected_unwrap.get(index).unwrap().payload());
+        assert_eq!(
+            *buffer,
+            support::detached(expected_unwrap.get(index).unwrap())
+        );
         // The same unwrapper survives processing-chunk boundaries.
         assert_eq!(unwrapper.last_frame_index(), Some(index));
         buffer.copy_from(frame_of(&set, index)).unwrap();
@@ -281,7 +290,7 @@ fn ambiguous_crossings_and_changed_axes_do_not_advance_streaming_state() {
         let (x, x1) = (atom_0_xs[index], atom_1_xs[index]);
         [[x, 0.2, 0.2], [x1, 0.2, 0.2], [x, 0.4, 0.2]]
     });
-    assert_eq!(*buffer, *unwrapped.get(1).unwrap().payload());
+    assert_eq!(*buffer, support::detached(unwrapped.get(1).unwrap()));
 }
 
 #[test]
@@ -314,7 +323,7 @@ fn superposition_streams_the_same_transforms_and_metadata_and_reports_source_ind
             .unwrap();
         let report = superposer.superpose(index, &mut buffer).unwrap();
         assert_eq!(&report, reports.alignment(index).unwrap());
-        assert_eq!(*buffer, *expected.get(index).unwrap().payload());
+        assert_eq!(*buffer, support::detached(expected.get(index).unwrap()));
     }
     buffer
         .geometry_mut()
@@ -378,7 +387,7 @@ fn correspondence_streaming_matches_loaded_superposition_and_keeps_failed_buffer
         let source = (*buffer).clone();
         let (time, step) = (buffer.time(), buffer.step());
         superposer.superpose(index, &mut buffer).unwrap();
-        assert_eq!(*buffer, *loaded.get(index).unwrap().payload());
+        assert_eq!(*buffer, support::detached(loaded.get(index).unwrap()));
         assert_eq!(buffer.properties(), source.properties());
         assert_eq!((buffer.time(), buffer.step()), (time, step));
         assert!(time.is_some() && step.is_some());

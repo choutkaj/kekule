@@ -125,8 +125,7 @@ fn making_whole_preserves_complete_metadata_source_and_topology_and_supports_in_
     source
         .get_mut(0)
         .unwrap()
-        .properties_mut()
-        .bonds_mut()
+        .bond_properties_mut()
         .insert(
             PropertyKey::new("bond").unwrap(),
             PropertyColumn::Int(vec![Some(3)]),

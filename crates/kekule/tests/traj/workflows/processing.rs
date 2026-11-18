@@ -14,8 +14,8 @@ use kekule::math::{Lattice, Matrix3, PeriodicCell, Point3, RigidTransform, Vecto
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    Forces, Geometry, GeometryView, Order, Positions, Structure, StructureSet, StructureSetRead,
-    StructureSetReadError, Velocities,
+    Forces, Geometry, GeometryIndex, GeometryView, Order, Positions, Structure, StructureSet,
+    StructureSetRead, StructureSetReadError, Velocities,
 };
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::traj::io::trr::{TrrLambdaPolicy, TrrWriteOptions};
@@ -94,6 +94,24 @@ fn atoms(set: &StructureSet, indices: &[u32]) -> AtomSelection {
         indices.iter().map(|&index| TopologyAtomIndex::new(index)),
     )
     .unwrap()
+}
+
+/// Geometry `index` of `reader` with its row's cells as owner values, as a
+/// frame streamed from the set carries them.
+fn read_with_row(reader: &dyn StructureSetRead, index: usize) -> Geometry {
+    let mut geometry = reader.read(index).unwrap();
+    if let Some(columns) = reader.columns() {
+        for key in columns.keys() {
+            if let Some(value) = columns.value(key, GeometryIndex::new(index)).unwrap() {
+                geometry
+                    .properties_mut()
+                    .owner_mut()
+                    .insert(key.clone(), value)
+                    .unwrap();
+            }
+        }
+    }
+    geometry
 }
 
 /// Checks that `geometry` holds everything `frame` does.
@@ -273,7 +291,7 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
             .copy_from(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         imager.make_whole(index, &mut buffer).unwrap();
-        assert_geometry(&processed.read(index).unwrap(), &buffer, "streamed whole");
+        assert_geometry(&read_with_row(&processed, index), &buffer, "streamed whole");
     }
 
     // Wrapping around the first chain.
@@ -312,7 +330,7 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
             .copy_from(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         imager.image(index, &mut buffer, &first).unwrap();
-        assert_geometry(&processed.read(index).unwrap(), &buffer, "streamed wrap");
+        assert_geometry(&read_with_row(&processed, index), &buffer, "streamed wrap");
     }
     // Wrapping makes whole too.
     let both = ProcessingSteps::default()
@@ -373,7 +391,7 @@ fn each_step_alone_equals_the_in_memory_functions_and_the_streaming_adapters() {
             .copy_from(FrameView::from_geometry(frame).unwrap())
             .unwrap();
         superposer.superpose(index, &mut buffer).unwrap();
-        assert_geometry(&processed.read(index).unwrap(), &buffer, "streamed fit");
+        assert_geometry(&read_with_row(&processed, index), &buffer, "streamed fit");
     }
     let positions = set.get(3).unwrap().positions().clone();
     let processed = Processed::new(
@@ -736,9 +754,11 @@ fn a_set_read_from_a_file_processes_like_the_set_in_memory() {
     let from_file = Processed::new(Arc::new(file), steps.clone()).unwrap();
     let from_memory = Processed::new(memory, steps).unwrap();
     for index in 0..from_file.len() {
+        // The file's frames keep their lambda; the set in memory holds it in
+        // its columns.
         assert_eq!(
             from_file.read(index).unwrap(),
-            from_memory.read(index).unwrap()
+            read_with_row(&from_memory, index)
         );
     }
     assert_eq!(from_file.order(), from_memory.order());

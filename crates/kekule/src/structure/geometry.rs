@@ -10,8 +10,10 @@ pub use error::GeometryError;
 use std::sync::Arc;
 
 use crate::math::{PeriodicCell, Point3, RigidTransform, Vector3};
-use crate::properties::{GeometryProperties, GeometryPropertiesMut};
-use crate::topology::{Topology, TopologyAtomIndex};
+use crate::properties::{
+    GeometryProperties, GeometryPropertiesMut, LiveRows, OwnerProperties, PropertyTableMut,
+};
+use crate::topology::{Topology, TopologyAtomIndex, TopologyBondIndex};
 use crate::units::Quantity;
 
 use super::geometry_validation::check_property_rows;
@@ -384,6 +386,40 @@ impl Geometry {
         Ok(())
     }
 
+    /// Takes the owner values out of the geometry, as a set does with a
+    /// geometry it takes. A geometry without them stays shared.
+    pub(crate) fn take_owner_values(&mut self) -> OwnerProperties {
+        if self.data.properties.owner().is_empty() {
+            return OwnerProperties::new();
+        }
+        std::mem::take(Arc::make_mut(&mut self.data).properties.owner_mut())
+    }
+
+    /// The geometry with `row`'s cells among its owner values, replacing
+    /// values of the same key, as a geometry taken out of its set carries
+    /// them. A geometry without a row or cells stays shared.
+    pub(crate) fn with_row(self, row: Option<super::structure_set::RowView<'_>>) -> Self {
+        match row.filter(|row| !row.is_empty()) {
+            Some(row) => self.with_owner_values(row.to_properties()),
+            None => self,
+        }
+    }
+
+    /// The geometry with `values` among its owner values, replacing values
+    /// of the same key. Without values it stays shared.
+    pub(crate) fn with_owner_values(mut self, values: OwnerProperties) -> Self {
+        if values.is_empty() {
+            return self;
+        }
+        let owner = Arc::make_mut(&mut self.data).properties.owner_mut();
+        for (key, value) in values.iter() {
+            owner
+                .insert(key.clone(), value.clone())
+                .expect("owner values are valid");
+        }
+        self
+    }
+
     /// Runs an edit that changes nothing when it fails. A shared state is
     /// edited as a copy that replaces it only on success, so a failed edit
     /// keeps the state shared.
@@ -403,15 +439,18 @@ impl Geometry {
 
 /// Dimension-preserving mutable access to a geometry its owner keeps bound
 /// to a topology: the geometry of a [`Structure`]
-/// ([`Structure::geometry_mut`]), of a [`super::StructureSet`]
-/// ([`super::StructureSet::get_mut`]), or of a
-/// [`FrameBuffer`](crate::traj::FrameBuffer).
+/// ([`Structure::geometry_mut`]) or of a
+/// [`FrameBuffer`](crate::traj::FrameBuffer). A
+/// [`StructureSet`](super::StructureSet) lends a
+/// [`SetGeometryMut`](super::SetGeometryMut), which wraps this guard without
+/// its owner values.
 ///
 /// Reads use `Deref`. There is deliberately no `DerefMut`, so no edit changes
 /// the atom count or the bond rows; replace a whole geometry through its
 /// owner, such as [`super::StructureSet::replace`] or
 /// [`Structure::from_parts`]. A set geometry's place belongs to the set
-/// ([`super::StructureSet::set_place`]) and its weight to an ensemble
+/// ([`super::StructureSet::set_place`]), its scalars to the set's columns,
+/// and its weight to an ensemble
 /// ([`DistributionMut::set_log_weight`](crate::structure::DistributionMut::set_log_weight)).
 #[derive(Debug)]
 pub struct GeometryMut<'a> {
@@ -421,6 +460,18 @@ pub struct GeometryMut<'a> {
 impl<'a> GeometryMut<'a> {
     pub(crate) fn new(geometry: &'a mut Geometry) -> Self {
         Self { geometry }
+    }
+
+    /// Mutable topology-atom columns, copying a shared geometry first.
+    pub(crate) fn atom_properties_mut(&mut self) -> PropertyTableMut<'_, TopologyAtomIndex> {
+        let properties = &mut Arc::make_mut(&mut self.geometry.data).properties;
+        PropertyTableMut::new(properties.atom_table_mut(), LiveRows::All, None)
+    }
+
+    /// Mutable topology-bond columns, copying a shared geometry first.
+    pub(crate) fn bond_properties_mut(&mut self) -> PropertyTableMut<'_, TopologyBondIndex> {
+        let properties = &mut Arc::make_mut(&mut self.geometry.data).properties;
+        PropertyTableMut::new(properties.bond_table_mut(), LiveRows::All, None)
     }
 }
 

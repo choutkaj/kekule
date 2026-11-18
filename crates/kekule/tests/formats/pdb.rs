@@ -2161,7 +2161,19 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
         assert_eq!(geometry.cell(), structure.cell());
         assert_eq!(geometry.occupancies(), structure.occupancies());
         assert_eq!(geometry.b_factors(), structure.b_factors());
-        assert_eq!(geometry.properties(), structure.properties());
+        assert_eq!(
+            geometry.properties().atoms(),
+            structure.properties().atoms()
+        );
+        assert_eq!(
+            geometry.properties().bonds(),
+            structure.properties().bonds()
+        );
+        assert!(geometry.properties().owner().is_empty());
+        assert_eq!(
+            &geometry.row().unwrap().to_properties(),
+            structure.properties().owner()
+        );
     }
     let second = set.get(1).unwrap();
     assert_eq!(second.cell(), Some(&cell));

@@ -18,9 +18,9 @@ cross-module rule.
 | `Molecule` | One nonempty connected `Graph`, derived `Perception`, `MoleculeProperties` | Coordinates, hierarchy, system classification |
 | `Topology` | Reusable definitions and their complete molecule instances, qualified identities, dense atom and bond order, one `Hierarchy`, classification, `TopologyProperties`, layout identity | Geometry or bonds between separate instances |
 | `Hierarchy` | Chains, residues, and atom sites over live instance atoms, with source labels and author identifiers | Atoms, bonds, or molecule boundaries |
-| `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight |
+| `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight; owner values while a set in memory holds it |
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
-| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), and an optional `Sampling` record | An order value on a geometry; a weight, a target state, or a distribution; a codec's frame state or a reader's failure types |
+| `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), the only home of its geometries' scalars, and an optional `Sampling` record | An order value on a geometry; a scalar on a geometry; a weight, a target state, or a distribution; a codec's frame state or a reader's failure types |
 | `Sampling` | The sampled `ThermodynamicState`, the first sampled step, and the keys of the set's potential-energy and bias columns | Column values; a weight or a target state; a method's parameters |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
 | `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, Boltzmann populations, or reduced biases with an `Estimator`), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
@@ -314,7 +314,7 @@ every repeated entity.
 | --- | --- | --- |
 | Molecule definition | `MoleculeProperties` | `AtomId`, `BondId` |
 | Topology | `TopologyProperties` | Instances, dense atoms and bonds, chains, residues, atom sites |
-| Geometry | `GeometryProperties` | Dense atoms and bonds |
+| Geometry | `GeometryProperties` (owner values only outside a set) | Dense atoms and bonds |
 | Structure set | `OwnerProperties`, `PropertyTable<GeometryIndex>` | Geometries of the set |
 | State of a distribution | `OwnerProperties` | Owner values only |
 
@@ -342,7 +342,8 @@ B factors are typed site fields, independent of any generic property with the
 same name. Positions, cells, weights, energies, time, steps, velocities, and
 forces keep their dedicated APIs. Per-geometry scalars of a set, such as each
 frame's potential energy, bias, or collective variable, are the set's
-columns.
+columns, and nothing else: a geometry a set in memory holds has no owner
+values.
 
 Kekule uses one runtime unit system. Every public value with a physical
 dimension, accepted or returned, is a `Quantity` in a compatible unit; internal
@@ -372,14 +373,16 @@ coordinate algorithms and writers share kernels across structures,
 geometries, frames, and buffers, and read the geometry's velocities and forces
 from the view. A view's `kind()` is `StructureKind::Standalone` or
 `StructureKind::InSet` with a `SetContext` reporting the geometry's place and
-its set's properties, columns, and sampling record, so writers and reductions
-never lose that state silently. Structure and trajectory writers hold a geometry's or frame's
+its set's properties, its row of the set's columns (`SetContext::row`, a
+`RowView`), and its set's sampling record, so writers and reductions never
+lose that state silently. Structure and trajectory writers hold a geometry's or frame's
 place, time, step, velocities, forces, occupancies, and B factors to one
-policy, `geometry_metadata`, per-atom, per-bond, own, and set properties, set columns, and a
-set's sampling record to a second, `properties`, and a periodic cell to a third, `cell`; each fails by
+policy, `geometry_metadata`, per-atom, per-bond, own, and set properties, a
+geometry's row of set columns, and a set's sampling record to a second, `properties`, and a periodic cell to a third, `cell`; each fails by
 default. Owned projections
 (`to_structure`) materialize a structure with the whole geometry while sharing
-the topology. A set built from structures (`from_structures`) consumes them
+the topology; a set geometry's row cells become the structure's owner values,
+which copies that geometry once. A set built from structures (`from_structures`) consumes them
 and requires equal layouts (`same_layout`), keeping the first structure's
 topology.
 
@@ -388,7 +391,9 @@ reads its geometry through `Deref`, and `Structure::atom` joins an `AtomView`
 with that atom's geometry state. Mutation goes through explicit,
 dimension-preserving setters on detached geometries, the `GeometryMut` guard
 an owner lends for a geometry it keeps bound (`Structure::geometry_mut`,
-`StructureSet::get_mut`, `FrameBuffer::geometry_mut`), and `properties_mut()`
+`FrameBuffer::geometry_mut`), the `SetGeometryMut` guard of a set in memory
+(`StructureSet::get_mut`, `Ensemble::get_mut`), which edits everything but
+owner values and offers the atom and bond tables, and `properties_mut()`
 (`topology_properties_mut()` on structures and sets, which replaces a shared
 topology with a snapshot of it). The owner checks lengths, property domains,
 and table dimensions on insertion, replacement, or publication. Empty property
@@ -437,13 +442,27 @@ geometry takes its value with it.
 Columns are recorded too: per-geometry scalars, such as each frame's energy,
 bias, or collective variable, in one `PropertyTable<GeometryIndex>` with a row
 per geometry and missing cells allowed. They belong to the set as the order
-does. Selecting, loading through a reader, an atom subset, and a `Processed`
-reader keep each geometry's row; a removed geometry takes its row; a geometry
-added later, pushed or appended to a growing file, has missing cells.
-`columns_mut`, on the set or its `Ensemble`, edits them without changing the
-row count, and `column_values` reads a real or integer column, or the order's
-times, steps, or coordinates (`ColumnRef`), as one number per geometry. Only
-the native format stores them; other writers treat them as set properties.
+does, and they are the only home of a geometry's scalars. A geometry entering
+a set in memory (`push`, `replace`, `from_geometries`, `from_structures`,
+`from_reader`) moves its owner values into its row: a new key adds a column
+whose earlier cells are missing, a real converts to its column's unit, and a
+value of another type or unit fails with `ColumnTypeMismatch`. A geometry
+leaving (`remove`, `replace`'s returned geometry, `into_geometries`,
+`to_structure`, a frame copied or collected from the set) carries its row's
+cells as owner values again. Selecting, loading through a reader, an atom
+subset, and a `Processed` reader keep each geometry's row; a removed geometry
+takes its row; a geometry added later, pushed or appended to a growing file,
+has missing cells unless it brings values. A geometry read from a file
+(`StructureSet<IndexedFile>`) keeps its codec's per-frame values, such as a
+TRR frame's lambda, as its own; they are no columns until `from_reader` moves
+them. `columns_mut`, on the set or its `Ensemble`, edits them without changing the
+row count, `row` reads one geometry's cells, and `column_values` reads a real or integer column, or the order's
+times, steps, or coordinates (`ColumnRef`), as one number per geometry. The
+native format stores them; SDF writes a geometry's cells as data fields of its
+record and its set reader reads them back, though SDF carries no types, so
+text that reads as a number or a boolean comes back as one; TRR writes a
+frame's lambda cell;
+other writers refuse them, or omit them under the `properties` policy.
 
 How a set was sampled is recorded too, in one optional `Sampling` record: the
 sampled `ThermodynamicState`, the first step whose geometry samples it
@@ -817,7 +836,13 @@ this pipeline, and `kekule::traj` streams its coordinates against a topology.
 | PDB entry | One structure, or compatible coordinate models as a structure set |
 | XYZ file | One frame as a structure, or frames of the same atoms and inferred bonds as a structure set |
 
-Sibling SDF records and mmCIF blocks never merge implicitly. Singular
+Sibling SDF records and mmCIF blocks never merge implicitly. Records a caller
+assembles into a structure set (`sdf::structure_set`) give it columns: each
+data field named by a property key, other than the place fields, is a column
+of integers, reals, or booleans when every value reads as one, and of text
+otherwise, so a field whose type differs between records never fails the
+read; a `<name>.unit` field naming a unit constant gives a real column its
+unit. Writing a set's geometry writes its cells back as those fields. Singular
 projections check cardinality; plural molecule projections keep every connected
 component in source order. In a conformation the coordinates are the
 configuration: annotations that contradict them yield to them with a warning.

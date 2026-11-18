@@ -315,6 +315,16 @@ impl PropertyColumn {
         })
     }
 
+    /// Checks that `value` can be stored in this column under `key`, as
+    /// [`PropertyTableMut::set_value`] would store it.
+    pub(crate) fn check_value(
+        &self,
+        key: &PropertyKey,
+        value: &PropertyValue,
+    ) -> Result<(), PropertyError> {
+        validate_value_for_column(self, key, 0, Some(value.clone())).map(drop)
+    }
+
     fn validate(&self) -> Result<(), PropertyError> {
         if let Self::Real { values, .. } = self {
             if let Some(index) = values

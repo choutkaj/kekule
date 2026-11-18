@@ -8,8 +8,7 @@ use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::subset_rows;
 use super::{
-    DenseArrayError, Geometry, GeometryData, GeometryError, GeometryMut, Positions, Sampling,
-    Structure,
+    DenseArrayError, Geometry, GeometryData, GeometryError, Positions, Sampling, Structure,
 };
 
 mod columns;
@@ -20,7 +19,8 @@ mod read;
 mod storage;
 mod views;
 
-pub use columns::{ColumnRef, GeometryIndex, SetColumnsMut};
+pub(crate) use columns::move_owner_values;
+pub use columns::{ColumnRef, GeometryIndex, RowView, SetColumnsMut};
 pub use context::SetContext;
 pub use error::{Requirement, StructureSetError};
 pub use order::{Order, Place, TimeAxis};
@@ -29,7 +29,7 @@ pub use read::{StructureSetRead, StructureSetReadError};
 pub(crate) use storage::sealed;
 pub use storage::{GeometryStorage, InMemory};
 pub(crate) use views::check_bound;
-pub use views::{GeometryIter, GeometryView};
+pub use views::{GeometryIter, GeometryView, SetGeometryMut};
 
 /// Geometries of one shared topology: many coordinate sets of one system,
 /// with an optional [`Order`].
@@ -42,7 +42,11 @@ pub use views::{GeometryIter, GeometryView};
 /// order, geometry order carries no meaning. Per-geometry scalars, such as
 /// an energy or a collective variable per frame, are the set's
 /// [`columns`](Self::columns), one row per geometry, kept with the
-/// geometries as the order is. An order is recorded by the
+/// geometries as the order is. They have no other home: a geometry entering
+/// a set in memory moves its owner values into its row, and a geometry taken
+/// out ([`GeometryView::to_structure`], [`Self::remove`],
+/// [`Self::into_geometries`]) carries its row's cells as owner values again.
+/// An order is recorded by the
 /// source, so it belongs to the set; a distribution over the geometries is
 /// inferred by an analysis, so it belongs to an
 /// [`Ensemble`](crate::structure::Ensemble) that reads the set. Operations
@@ -55,7 +59,10 @@ pub use views::{GeometryIter, GeometryView};
 /// `StructureSet<`[`IndexedFile`](crate::traj::io::IndexedFile)`>`, holds no
 /// geometry in memory: it is read through [`StructureSetRead`], which returns owned
 /// geometries and can fail. Both share the topology, the set properties, the
-/// order, the columns, and the operations on them.
+/// order, the columns, and the operations on them. A geometry read from a
+/// file keeps its codec's per-frame values, such as a TRR frame's lambda, as
+/// its own owner values; they are not columns until
+/// [`Self::from_reader`] moves them there.
 ///
 /// Each geometry's state is shared storage (see [`Geometry`]), so cloning a
 /// set copies its order but no coordinates; editing one geometry then copies
@@ -308,7 +315,9 @@ impl StructureSet {
     /// with its velocities, forces, occupancies, and B-factors; the set
     /// keeps the reader's order values and column rows for the picked
     /// geometries, and the reader's set properties and sampling record, when
-    /// it has them.
+    /// it has them. A geometry's own owner values, such as a trajectory
+    /// codec's per-frame values, move into its row as [`Self::push`] moves
+    /// them.
     ///
     /// Ranges and strides can be written as `(start..end).step_by(stride)`,
     /// and every geometry as `0..reader.len()`. Indices may repeat and come in
@@ -358,7 +367,9 @@ impl StructureSet {
     /// [`StructureSetReadError::ColumnRows`] for a reader whose columns do not
     /// have one row per geometry, also before anything is read;
     /// [`StructureSetReadError::Geometry`] for a geometry the reader does not bind
-    /// to its topology; and otherwise the first failure to read a geometry.
+    /// to its topology; [`StructureSetReadError::ColumnTypeMismatch`] for an
+    /// owner value that does not fit its column; and otherwise the first
+    /// failure to read a geometry.
     pub fn from_reader<R: StructureSetRead + ?Sized>(
         reader: &R,
         indices: impl IntoIterator<Item = usize>,
@@ -376,17 +387,19 @@ impl StructureSet {
                 geometries: len,
             });
         }
+        // Each geometry with its owner values taken out, for its row.
         let read = |index: usize| {
-            let geometry = reader.read(index)?;
+            let mut geometry = reader.read(index)?;
             check_bound(reader.topology(), &geometry).map_err(|source| {
                 StructureSetReadError::Geometry {
                     geometry: index,
                     source,
                 }
             })?;
-            Ok(geometry)
+            let owner = geometry.take_owner_values();
+            Ok((geometry, owner))
         };
-        let geometries = if indices.windows(2).all(|pair| pair[0] < pair[1]) {
+        let picked = if indices.windows(2).all(|pair| pair[0] < pair[1]) {
             indices
                 .iter()
                 .map(|&index| read(index))
@@ -408,6 +421,29 @@ impl StructureSet {
                 })
                 .collect()
         };
+        let mut columns = match reader.columns() {
+            Some(columns) => columns
+                .select_rows(&indices)
+                .expect("the columns have a row per geometry"),
+            None => PropertyTable::new(indices.len()),
+        };
+        let mut geometries = Vec::with_capacity(picked.len());
+        for (row, ((geometry, owner), &index)) in picked.into_iter().zip(&indices).enumerate() {
+            move_owner_values(&mut columns, row, &owner).map_err(|error| match error {
+                StructureSetError::ColumnTypeMismatch { key, .. } => {
+                    StructureSetReadError::ColumnTypeMismatch {
+                        key,
+                        geometry: index,
+                    }
+                }
+                StructureSetError::Column(error) => StructureSetReadError::Geometry {
+                    geometry: index,
+                    source: GeometryError::Property(error),
+                },
+                _ => unreachable!("moving owner values fails on a column alone"),
+            })?;
+            geometries.push(geometry);
+        }
         let mut set = Self::from_storage(
             Arc::clone(reader.topology()),
             InMemory::new(geometries),
@@ -416,35 +452,33 @@ impl StructureSet {
         if let Some(properties) = reader.properties() {
             set.properties_mut().clone_from(properties);
         }
-        if let Some(columns) = reader.columns() {
-            set.columns = columns
-                .select_rows(&indices)
-                .expect("the columns have a row per geometry");
-        }
+        set.columns = columns;
         set.sampling = reader.sampling().cloned();
         Ok(set)
     }
 
     /// Validates and collects each geometry in order, binding its bond
-    /// property rows, into an unordered set without columns; give it an
-    /// order with [`Self::set_order`]. Fails on the first invalid geometry.
+    /// property rows, into an unordered set; give it an order with
+    /// [`Self::set_order`]. Each geometry's owner values move into its row
+    /// of the columns, as [`Self::push`] moves them. Fails on the first
+    /// invalid geometry.
     pub fn from_geometries(
         topology: impl Into<Arc<Topology>>,
         geometries: impl IntoIterator<Item = Geometry>,
     ) -> Result<Self, StructureSetError> {
         let mut set = Self::new(topology);
-        for mut geometry in geometries {
-            set.bind(&mut geometry)?;
-            set.storage.geometries.push(geometry);
+        for geometry in geometries {
+            set.push(geometry, None)?;
         }
-        set.columns.resize_missing(set.len());
         Ok(set)
     }
 
     /// Collects structures of one topology layout as the geometries of an
-    /// unordered set without columns, on the first structure's topology
-    /// snapshot. Each structure's positions, cell, occupancies, B-factors, and
-    /// geometry properties become its geometry, moving without copying.
+    /// unordered set, on the first structure's topology snapshot. Each
+    /// structure's positions, cell, occupancies, B-factors, and atom and
+    /// bond properties become its geometry, moving without copying; its
+    /// owner values move into its row of the columns, as [`Self::push`]
+    /// moves them.
     ///
     /// Every structure's topology must have the first one's layout
     /// ([`Topology::same_layout`]), so structures read from separate files are
@@ -453,26 +487,25 @@ impl StructureSet {
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::EmptySource`] without structures and
-    /// [`StructureSetError::TopologyMismatch`] for a structure of another layout.
+    /// [`StructureSetError::EmptySource`] without structures,
+    /// [`StructureSetError::TopologyMismatch`] for a structure of another
+    /// layout, and [`StructureSetError::ColumnTypeMismatch`] for an owner
+    /// value that does not fit the column an earlier structure made.
     pub fn from_structures(
         structures: impl IntoIterator<Item = Structure>,
     ) -> Result<Self, StructureSetError> {
         let mut structures = structures.into_iter();
         let first = structures.next().ok_or(StructureSetError::EmptySource)?;
         let mut set = Self::new(first.shared_topology());
-        set.storage.geometries.push(Geometry::from_structure(first));
+        set.take(Geometry::from_structure(first))?;
         for structure in structures {
             if !structure.topology().same_layout(&set.topology) {
                 return Err(StructureSetError::TopologyMismatch(
                     TopologyMismatch::Structure,
                 ));
             }
-            set.storage
-                .geometries
-                .push(Geometry::from_structure(structure));
+            set.take(Geometry::from_structure(structure))?;
         }
-        set.columns.resize_missing(set.len());
         Ok(set)
     }
 
@@ -484,10 +517,15 @@ impl StructureSet {
             .map(|geometry| GeometryView::of_set(self, index, geometry))
     }
 
-    /// A dimension-preserving editor for one geometry. Whole-geometry
-    /// replacement goes through [`Self::replace`].
-    pub fn get_mut(&mut self, index: usize) -> Option<GeometryMut<'_>> {
-        self.storage.geometries.get_mut(index).map(GeometryMut::new)
+    /// A dimension-preserving editor for one geometry. It edits everything
+    /// but owner values, which are the geometry's row of the
+    /// [`columns`](Self::columns_mut). Whole-geometry replacement goes
+    /// through [`Self::replace`].
+    pub fn get_mut(&mut self, index: usize) -> Option<SetGeometryMut<'_>> {
+        self.storage
+            .geometries
+            .get_mut(index)
+            .map(SetGeometryMut::new)
     }
 
     /// Topology-bound geometries in set order.
@@ -531,28 +569,54 @@ impl StructureSet {
     }
 
     /// Validates and appends one geometry at `place` in the order, returning
-    /// its index. Its cells in the set's columns are missing.
+    /// its index.
+    ///
+    /// The geometry's owner values move into its row of the set's columns:
+    /// a new key adds a column whose earlier cells are missing, a real value
+    /// converts to its column's unit, and the row's other cells are missing.
+    /// The geometry in the set has no owner values.
     ///
     /// The place must fit the order: none in an unordered set or on a time
     /// axis without columns, [`Place::Time`] with a time and step exactly
     /// when the axis has those columns, [`Place::Step`] on a step order, and
     /// [`Place::Coordinate`] on a coordinate order, converted to its unit.
     /// Failure changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::ColumnTypeMismatch`] for an owner value of
+    /// another type or unit than its column, besides the errors of a place
+    /// or geometry that does not fit.
     pub fn push(
+        &mut self,
+        geometry: Geometry,
+        place: Option<Place>,
+    ) -> Result<usize, StructureSetError> {
+        self.push_with_row(geometry, place, None)
+    }
+
+    /// Appends `geometry` at `place` as [`Self::push`] does, `row`'s cells
+    /// joining its owner values in its new row and replacing values of the
+    /// same key. The geometry stays shared, as a frame's payload is.
+    pub(crate) fn push_with_row(
         &mut self,
         mut geometry: Geometry,
         place: Option<Place>,
+        row: Option<RowView<'_>>,
     ) -> Result<usize, StructureSetError> {
         let index = self.storage.geometries.len();
         let stored = self.check_place(place, index)?;
         self.bind(&mut geometry)?;
-        self.append(geometry, stored);
+        self.append_with_row(geometry, stored, row)?;
         Ok(index)
     }
 
     /// Validates and replaces one geometry, returning the previous one. The
-    /// geometry keeps its place and its column row. The index is checked first;
-    /// failure leaves the set unchanged.
+    /// geometry keeps its place and its column row; its owner values move
+    /// into the row as [`Self::push`] moves them, replacing the cells of
+    /// their keys; a cell whose key the geometry lacks stays. The previous
+    /// geometry carries the row's cells from before as owner values. The index is checked first; failure leaves the set
+    /// unchanged.
     pub fn replace(
         &mut self,
         index: usize,
@@ -560,22 +624,25 @@ impl StructureSet {
     ) -> Result<Geometry, StructureSetError> {
         self.check_index(index)?;
         self.bind(&mut geometry)?;
-        Ok(std::mem::replace(
-            &mut self.storage.geometries[index],
-            geometry,
-        ))
+        let row = self.row_properties(index);
+        let owner = geometry.take_owner_values();
+        move_owner_values(&mut self.columns, index, &owner)?;
+        let previous = std::mem::replace(&mut self.storage.geometries[index], geometry);
+        Ok(previous.with_owner_values(row))
     }
 
     /// Removes and returns one geometry with its place and column row,
-    /// shifting later geometries down.
+    /// shifting later geometries down. The geometry carries its row's cells
+    /// as owner values.
     pub fn remove(&mut self, index: usize) -> Result<Geometry, StructureSetError> {
         self.check_index(index)?;
+        let row = self.row_properties(index);
         let geometry = self.storage.geometries.remove(index);
         if let Some(order) = &mut self.order {
             order.remove(index);
         }
         self.columns.remove_row(index);
-        Ok(geometry)
+        Ok(geometry.with_owner_values(row))
     }
 
     /// Replaces the positions of every geometry transactionally, in order.
@@ -636,9 +703,8 @@ impl StructureSet {
     }
 
     /// Publishes one induced topology subset and projects every geometry onto
-    /// it. Set and per-geometry owner properties are dropped; the order, the
-    /// columns, and the sampling record still describe the geometries and are
-    /// kept.
+    /// it. Set properties are dropped; the order, the columns, and the
+    /// sampling record still describe the geometries and are kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureSetError> {
         let subset = Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
@@ -672,10 +738,16 @@ impl StructureSet {
     }
 
     /// Consumes the set, returning its geometries in order and dropping the
-    /// topology, the order, the columns, the sampling record, and the set
-    /// properties.
+    /// topology, the order, the sampling record, and the set properties.
+    /// Each geometry carries its row's cells as owner values.
     pub fn into_geometries(self) -> Vec<Geometry> {
-        self.storage.geometries
+        let columns = self.columns;
+        self.storage
+            .geometries
+            .into_iter()
+            .enumerate()
+            .map(|(index, geometry)| geometry.with_row(RowView::new(&columns, index)))
+            .collect()
     }
 
     /// Applies one rigid transform per geometry transactionally: positions
@@ -734,13 +806,50 @@ impl StructureSet {
         }
     }
 
-    /// Appends a bound geometry at a checked place.
-    fn append(&mut self, geometry: Geometry, place: Option<order::Stored>) {
+    /// Appends a bound geometry at a checked place, moving its owner values
+    /// into its new row. Failure changes nothing.
+    fn append(
+        &mut self,
+        geometry: Geometry,
+        place: Option<order::Stored>,
+    ) -> Result<(), StructureSetError> {
+        self.append_with_row(geometry, place, None)
+    }
+
+    fn append_with_row(
+        &mut self,
+        mut geometry: Geometry,
+        place: Option<order::Stored>,
+        row: Option<RowView<'_>>,
+    ) -> Result<(), StructureSetError> {
+        let index = self.storage.geometries.len();
+        let mut owner = geometry.take_owner_values();
+        for (key, value) in row.into_iter().flat_map(RowView::iter) {
+            owner
+                .insert(key.clone(), value.to_value())
+                .expect("stored cells are finite");
+        }
+        self.columns.resize_missing(index + 1);
+        if let Err(error) = move_owner_values(&mut self.columns, index, &owner) {
+            self.columns.remove_row(index);
+            return Err(error);
+        }
         self.storage.geometries.push(geometry);
         if let (Some(order), Some(place)) = (&mut self.order, place) {
             order.push(place);
         }
-        self.columns.resize_missing(self.storage.geometries.len());
+        Ok(())
+    }
+
+    /// Appends a bound geometry to an unordered set.
+    fn take(&mut self, geometry: Geometry) -> Result<(), StructureSetError> {
+        debug_assert!(self.order.is_none());
+        self.append(geometry, None)
+    }
+
+    /// The cells of geometry `index`'s row, as owner values.
+    fn row_properties(&self, index: usize) -> OwnerProperties {
+        RowView::new(&self.columns, index).map_or_else(OwnerProperties::new, RowView::to_properties)
     }
 
     fn check_index(&self, index: usize) -> Result<(), StructureSetError> {

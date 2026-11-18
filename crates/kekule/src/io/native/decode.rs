@@ -1361,10 +1361,12 @@ impl<R: Read> Decoder<'_, R> {
         let owner = self.owner()?;
         let count = self.count(self.options.max_items(), Resource::Records)?;
         let order = self.order(count)?;
+        // Before version 9 a set's per-geometry values were its geometries'
+        // owner values, which move into columns as the set takes them.
         let columns = if self.version >= COLUMNS_SINCE {
-            PropertyTable::from_raw(self.table(count)?)
+            Some(PropertyTable::from_raw(self.table(count)?))
         } else {
-            PropertyTable::new(count)
+            None
         };
         let sampling = if self.version >= SAMPLING_SINCE && self.tag("sampling")? {
             Some(self.sampling()?)
@@ -1382,7 +1384,9 @@ impl<R: Read> Decoder<'_, R> {
                 let description = StructureSetDescription::new(topology, count)
                     .with_properties(owner)
                     .with_order(order)
-                    .and_then(|description| description.with_columns(columns))
+                    .and_then(|description| {
+                        description.with_columns(columns.unwrap_or_else(|| PropertyTable::new(count)))
+                    })
                     .and_then(|description| description.with_sampling(sampling))
                     .map_err(|error| self.structure_error(error))?;
                 return Ok((Decoded::External(Box::new(description)), distribution));
@@ -1398,14 +1402,22 @@ impl<R: Read> Decoder<'_, R> {
         }
         let mut geometries = Vec::with_capacity(count.min(CHUNK_BYTES));
         for _ in 0..count {
-            geometries.push(self.geometry(&topology)?);
+            let geometry = self.geometry(&topology)?;
+            if columns.is_some() && !geometry.properties().owner().is_empty() {
+                return Err(self.invalid(
+                    "A geometry of the structure set has values of its own. The set's columns hold them.",
+                ));
+            }
+            geometries.push(geometry);
         }
         let mut set = StructureSet::from_geometries(topology, geometries)
             .map_err(|error| self.structure_error(error))?;
         *set.properties_mut() = owner;
         set.set_order(order)
             .map_err(|error| self.structure_error(error))?;
-        set.set_columns(columns);
+        if let Some(columns) = columns {
+            set.set_columns(columns);
+        }
         set.set_sampling(sampling)
             .map_err(|error| self.structure_error(error))?;
         Ok((Decoded::Inline(Box::new(set)), distribution))

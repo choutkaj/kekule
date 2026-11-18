@@ -9,7 +9,7 @@ use kekule::diagnostics::{
 };
 use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Geometry, Order, Place, StructureSet};
+use kekule::structure::{Geometry, GeometryIndex, Order, Place, StructureSet};
 use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::TrajectoryWriter;
@@ -196,14 +196,17 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
     let mut history = history();
     for index in 1..3 {
         history
-            .get_mut(index)
-            .unwrap()
-            .properties_mut()
-            .owner_mut()
-            .insert(key(), energy(-1.0 - index as f64))
+            .columns_mut()
+            .set_value(
+                key(),
+                GeometryIndex::new(index),
+                Some(energy(-1.0 - index as f64)),
+            )
             .unwrap();
     }
-    assert_rejects(&history, omit_places(), GeometryField::Properties, Some(2));
+    // The set's columns fail once, at the first geometry with cells, or
+    // are omitted from the geometries with cells.
+    assert_rejects(&history, omit_places(), GeometryField::SetColumns, Some(2));
     let options = omit_places().with_properties(UnrepresentablePolicy::Omit);
     let (text, report) = write(&history, options.clone()).unwrap();
     assert_eq!(text, TEXT);
@@ -212,7 +215,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
         [
             BONDS,
             state_omission(GeometryField::OrderStep, 3),
-            state_omission(GeometryField::Properties, 2),
+            state_omission(GeometryField::SetColumns, 2),
         ]
     );
 
@@ -234,7 +237,7 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             BONDS,
             state_omission(GeometryField::OrderStep, 3),
             state_omission(GeometryField::SetProperties, 3),
-            state_omission(GeometryField::Properties, 2),
+            state_omission(GeometryField::SetColumns, 2),
         ]
     );
 }
@@ -285,8 +288,8 @@ fn cells_are_rejected_or_omitted_and_geometries_follow_written_frames() {
 type Outcome =
     Result<(String, Vec<WriteOmission>), (DiagnosticKind, Option<GeometryField>, Option<usize>)>;
 
-fn refused(field: GeometryField, record: usize) -> Outcome {
-    Err((DiagnosticKind::Unsupported, Some(field), Some(record)))
+fn refused(field: GeometryField, record: Option<usize>) -> Outcome {
+    Err((DiagnosticKind::Unsupported, Some(field), record))
 }
 
 fn written(omissions: &[WriteOmission]) -> Outcome {
@@ -314,13 +317,11 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
     );
     let mut valued = history.clone();
     valued
-        .get_mut(1)
-        .unwrap()
-        .properties_mut()
-        .owner_mut()
-        .insert(
+        .columns_mut()
+        .set_value(
             PropertyKey::new("energy").unwrap(),
-            PropertyValue::real(-1.0, KILOJOULE_PER_MOLE).unwrap(),
+            GeometryIndex::new(1),
+            Some(PropertyValue::real(-1.0, KILOJOULE_PER_MOLE).unwrap()),
         )
         .unwrap();
     let boxed = boxed();
@@ -330,21 +331,21 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
     let fail = UnrepresentablePolicy::Fail;
     let omit = UnrepresentablePolicy::Omit;
     let steps = state_omission(GeometryField::OrderStep, 3);
-    // Places, then geometry properties and cells. A set checks every geometry's
-    // properties before any place, so geometry properties are checked only
-    // with places omitted. A cell is checked before any place.
+    // Places, then the set's columns and cells. A set checks its columns
+    // before any place, so they are checked only with places omitted. A
+    // cell is checked before any place.
     let cases = [
         (
             history,
             vec![
-                (fail, fail, refused(GeometryField::OrderStep, 1)),
+                (fail, fail, refused(GeometryField::OrderStep, Some(1))),
                 (omit, fail, written(&[BONDS, steps])),
             ],
         ),
         (
             scan,
             vec![
-                (fail, fail, refused(GeometryField::OrderCoordinate, 1)),
+                (fail, fail, refused(GeometryField::OrderCoordinate, Some(1))),
                 (
                     omit,
                     fail,
@@ -355,19 +356,19 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             valued,
             vec![
-                (omit, fail, refused(GeometryField::Properties, 2)),
+                (omit, fail, refused(GeometryField::SetColumns, Some(2))),
                 (
                     omit,
                     omit,
-                    written(&[BONDS, steps, state_omission(GeometryField::Properties, 1)]),
+                    written(&[BONDS, steps, state_omission(GeometryField::SetColumns, 1)]),
                 ),
             ],
         ),
         (
             boxed,
             vec![
-                (fail, fail, refused(GeometryField::Cell, 1)),
-                (omit, fail, refused(GeometryField::Cell, 1)),
+                (fail, fail, refused(GeometryField::Cell, Some(1))),
+                (omit, fail, refused(GeometryField::Cell, Some(1))),
                 (
                     omit,
                     omit,

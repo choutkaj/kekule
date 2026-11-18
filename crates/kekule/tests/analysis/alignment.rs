@@ -13,7 +13,7 @@ use kekule::alignment::{
 use kekule::diagnostics::TopologyMismatch;
 use kekule::math::{Matrix3, PeriodicCell, Point3, RigidTransform, Vector3};
 use kekule::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use kekule::properties::{PropertyKey, PropertyValue};
+use kekule::properties::{PropertyKey, PropertyValue, PropertyValueRef};
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Place, Positions, Samples,
     Structure, StructureSet, TimeAxis, Velocities,
@@ -311,8 +311,8 @@ fn superposition_rotates_complete_geometric_state_and_preserves_metadata() {
     );
     assert_eq!(aligned.properties(), &expected_properties);
     assert_eq!(
-        aligned.properties().owner().get(&label),
-        Some(&PropertyValue::String("moving".into()))
+        aligned.row().unwrap().get(&label),
+        Some(PropertyValueRef::String("moving"))
     );
 }
 

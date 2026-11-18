@@ -11,8 +11,19 @@ use crate::io::{
 /// `i`. Sibling records never form a set implicitly, and the set states
 /// only what the records state.
 ///
-/// A record's data fields stay with its interpretation; none says how
-/// much a geometry weighs or which state it belongs to, which an
+/// A record's data fields stay with its interpretation, and they become the
+/// set's columns: each field named by a
+/// [`PropertyKey`](crate::properties::PropertyKey), other than the place
+/// fields below, that no record repeats. A column holds integers, reals, or
+/// booleans (`true`, `false`) when every value reads as one, and the trimmed
+/// text otherwise, so a field whose type differs between records reads as
+/// text. A record without the field, or with an empty value, has a missing
+/// cell. A real field `<name>` whose records, and only those, carry
+/// `<name>.unit` with one symbol of a unit constant holds reals in that unit,
+/// as [`write()`] writes them. SDF carries no types: a text cell that reads
+/// as a number or a boolean comes back as one. No field says how much a
+/// geometry weighs or
+/// which state it belongs to, which an
 /// [`Ensemble`](crate::structure::Ensemble) of the set states.
 ///
 /// When the records carry [`STEP_FIELD`](crate::sdf::STEP_FIELD), or

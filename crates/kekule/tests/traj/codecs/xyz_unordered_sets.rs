@@ -8,7 +8,7 @@ use kekule::diagnostics::{
 };
 use kekule::math::{PeriodicCell, Vector3};
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::structure::{Order, StructureSet, TimeAxis, Velocities};
+use kekule::structure::{GeometryIndex, Order, StructureSet, TimeAxis, Velocities};
 use kekule::traj::io::xyz::XyzWriter;
 use kekule::traj::io::TrajectoryWriteOptions;
 use kekule::traj::TrajectoryWriter;
@@ -233,18 +233,17 @@ fn properties_are_rejected_or_omitted_at_every_level() {
     );
 
     let mut set = waters();
-    set.get_mut(1)
-        .unwrap()
-        .properties_mut()
-        .owner_mut()
-        .insert(key(), value())
+    set.columns_mut()
+        .set_value(key(), GeometryIndex::new(1), Some(value()))
         .unwrap();
-    assert_rejects(&set, options(), GeometryField::Properties, Some(2));
+    // A geometry's values are the set's columns, refused at the first
+    // geometry with cells.
+    assert_rejects(&set, options(), GeometryField::SetColumns, Some(2));
     let (text, report) = write(&set, omit_properties()).unwrap();
     assert_eq!(text, plain());
     assert_eq!(
         report.omissions(),
-        [BONDS, state_omission(GeometryField::Properties, 1)]
+        [BONDS, state_omission(GeometryField::SetColumns, 1)]
     );
 }
 
@@ -331,13 +330,11 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
         .unwrap();
     let mut labelled = waters();
     labelled
-        .get_mut(1)
-        .unwrap()
-        .properties_mut()
-        .owner_mut()
-        .insert(
+        .columns_mut()
+        .set_value(
             PropertyKey::new("label").unwrap(),
-            PropertyValue::Bool(true),
+            GeometryIndex::new(1),
+            Some(PropertyValue::Bool(true)),
         )
         .unwrap();
     let plain = plain();
@@ -357,11 +354,11 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
             [BONDS, WriteOmission::Occupancies { structures: 1 }]
         );
 
-        // Geometry properties are refused under either policy, at their
-        // geometry.
+        // The set's columns are refused under either policy, at the first
+        // geometry with cells.
         assert_eq!(
             failure(write(&labelled, options()).unwrap_err()),
-            refused(GeometryField::Properties, Some(2))
+            refused(GeometryField::SetColumns, Some(2))
         );
 
         // A cell is refused or dropped by the cell policy.

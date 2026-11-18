@@ -182,12 +182,12 @@ fn structures_reject_mismatched_property_rows_transactionally() {
 
     let mut set = StructureSet::from_geometries(Arc::clone(&ethane), [member]).unwrap();
     assert_eq!(set.get(0).unwrap().properties().bonds().len(), 1);
-    set.get_mut(0)
-        .unwrap()
-        .set_properties(bound.clone())
-        .unwrap();
+    let mut replacement = set.get(0).unwrap().payload().clone();
+    replacement.set_properties(bound.clone()).unwrap();
+    set.replace(0, replacement).unwrap();
     assert_eq!(set.get(0).unwrap().properties(), &bound);
-    assert!(set.get_mut(0).unwrap().set_properties(original).is_err());
+    let mut wrong = set.get(0).unwrap().payload().clone();
+    assert!(wrong.set_properties(original).is_err());
     assert_eq!(set.get(0).unwrap().properties(), &bound);
 }
 

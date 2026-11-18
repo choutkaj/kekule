@@ -394,3 +394,77 @@ fn every_truncation_and_corruption_of_a_structure_set_fails_cleanly() {
         .unwrap(),
     );
 }
+
+/// [`geometries`] in a step order of [`STEPS`], whose geometries 0 and 1
+/// hold the owner value `replica` as `first` and `second`, past the set's
+/// checks: a set moves such values into its columns.
+fn with_owner_values(
+    first: crate::properties::PropertyValue,
+    second: crate::properties::PropertyValue,
+) -> StructureSet {
+    let mut set = geometries(Order::Step(STEPS.to_vec()));
+    let key = crate::properties::PropertyKey::new("replica").unwrap();
+    let stored = set.storage_mut().geometries_unchecked();
+    for (geometry, value) in stored.iter_mut().zip([first, second]) {
+        geometry
+            .properties_mut()
+            .owner_mut()
+            .insert(key.clone(), value)
+            .unwrap();
+    }
+    set
+}
+
+/// `bytes` of a version 9 set without a distribution, written as version
+/// 8: without the column table and the sampling tag after the steps.
+fn as_version_8(bytes: &[u8]) -> Vec<u8> {
+    let table = find(bytes, &STEPS[0].to_le_bytes()) + 24;
+    assert_eq!(bytes[table + 8], 0, "no sampling record");
+    let mut old = bytes[..table].to_vec();
+    old.extend_from_slice(&bytes[table + 9..]);
+    old[8..12].copy_from_slice(&8u32.to_le_bytes());
+    resealed(old)
+}
+
+#[test]
+fn a_set_geometry_with_values_of_its_own_fails_to_read() {
+    use crate::properties::PropertyValue;
+    let set = with_owner_values(PropertyValue::Int(4), PropertyValue::Int(5));
+    let bytes = native::write(&set, NativeWriteOptions::default()).unwrap();
+    assert_invalid(
+        &bytes,
+        "A geometry of the structure set has values of its own. The set's columns hold them.",
+        "version 9",
+    );
+
+    // Before version 9 the values move into the set's columns.
+    let old = read(&as_version_8(&bytes))
+        .unwrap()
+        .into_structure_set()
+        .unwrap();
+    let key = crate::properties::PropertyKey::new("replica").unwrap();
+    assert_eq!(
+        old.columns().get(&key),
+        Some(&crate::properties::PropertyColumn::Int(vec![
+            Some(4),
+            Some(5),
+            None
+        ]))
+    );
+    assert_eq!(old.order(), set.order());
+}
+
+#[test]
+fn version_8_values_of_differing_types_fail_to_read() {
+    use crate::properties::PropertyValue;
+    let set = with_owner_values(PropertyValue::Int(4), PropertyValue::String("b".into()));
+    let bytes = native::write(&set, NativeWriteOptions::default()).unwrap();
+    let old = as_version_8(&bytes);
+    assert_invalid(&old, "The stored structure is not valid.", "version 8");
+    let error = read(&old).unwrap_err();
+    let source = std::error::Error::source(&error).unwrap();
+    assert_eq!(
+        source.to_string(),
+        "The value \"replica\" of geometry 1 has another type or unit than the column \"replica\"."
+    );
+}

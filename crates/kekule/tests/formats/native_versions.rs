@@ -337,13 +337,21 @@ fn stable_builders_build_the_current_files() {
 }
 
 #[test]
-fn sets_of_versions_before_9_have_no_columns() {
+fn sets_of_versions_before_9_move_geometry_values_into_columns() {
     for version in NATIVE_FORMAT_OLDEST..9 {
         let set = decode(version, named("structure_set"))
             .into_structure_set()
             .unwrap();
+        // The first geometry's own value is its row's cell.
         assert_eq!(set.columns().len(), set.len(), "v{version}");
-        assert!(!set.columns().has_data(), "v{version}");
+        assert_eq!(
+            set.columns().get(&key("replica")),
+            Some(&PropertyColumn::Int(vec![Some(4), None, None])),
+            "v{version}"
+        );
+        assert!(set
+            .iter()
+            .all(|geometry| geometry.properties().owner().is_empty()));
         assert!(set.sampling().is_none(), "v{version}");
         let description = decode(version, named("structure_set_description"))
             .into_structure_set_description()

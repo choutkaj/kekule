@@ -221,8 +221,10 @@ impl MemoryTrajectoryWriter {
             );
             self.set.set_order(Some(Order::Time(axis)))?;
         }
+        // The frame's row joins the set's row, as its own values do, and
+        // the payload stays shared.
         self.set
-            .push(frame.payload().clone(), Some(frame.place()))?;
+            .push_with_row(frame.payload().clone(), Some(frame.place()), frame.row())?;
         Ok(())
     }
 }

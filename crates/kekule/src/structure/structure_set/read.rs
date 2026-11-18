@@ -4,7 +4,7 @@ use crate::diagnostics::IndexOutOfRange;
 use std::fmt;
 use std::sync::Arc;
 
-use crate::properties::{OwnerProperties, PropertyTable};
+use crate::properties::{OwnerProperties, PropertyKey, PropertyTable};
 use crate::structure::{GeometryError, GeometryIndex, Sampling};
 use crate::topology::Topology;
 
@@ -95,7 +95,9 @@ pub trait StructureSetRead: Send + Sync + fmt::Debug {
     fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>>;
 
     /// Geometry `index`, owned. A set in memory returns a clone, which shares
-    /// the geometry's storage; other readers decode or compute it.
+    /// the geometry's storage and leaves its row in [`Self::columns`]; other
+    /// readers decode or compute it, a trajectory file with its codec's
+    /// per-frame values as owner values.
     ///
     /// # Errors
     ///
@@ -210,6 +212,15 @@ pub enum StructureSetReadError {
         /// The reader's geometries.
         geometries: usize,
     },
+    /// An owner value of a geometry, such as a trajectory codec's per-frame
+    /// value, has another type or unit than the column of its key, so it
+    /// cannot move into the geometry's row.
+    ColumnTypeMismatch {
+        /// The value's key.
+        key: PropertyKey,
+        /// The geometry index in the reader.
+        geometry: usize,
+    },
 }
 
 impl StructureSetReadError {
@@ -260,6 +271,13 @@ impl PartialEq for StructureSetReadError {
                     geometries: other_geometries,
                 },
             ) => rows == other_rows && geometries == other_geometries,
+            (
+                Self::ColumnTypeMismatch { key, geometry },
+                Self::ColumnTypeMismatch {
+                    key: other_key,
+                    geometry: other_geometry,
+                },
+            ) => key == other_key && geometry == other_geometry,
             _ => false,
         }
     }
@@ -279,6 +297,10 @@ impl fmt::Display for StructureSetReadError {
                 formatter,
                 "The columns of the reader have {rows} rows for {geometries} geometries."
             ),
+            Self::ColumnTypeMismatch { key, geometry } => write!(
+                formatter,
+                "The value \"{key}\" of geometry {geometry} has another type or unit than the column \"{key}\"."
+            ),
         }
     }
 }
@@ -286,7 +308,9 @@ impl fmt::Display for StructureSetReadError {
 impl std::error::Error for StructureSetReadError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::IndexOutOfRange { .. } | Self::ColumnRows { .. } => None,
+            Self::IndexOutOfRange { .. }
+            | Self::ColumnRows { .. }
+            | Self::ColumnTypeMismatch { .. } => None,
             Self::Geometry { source, .. } => Some(source),
             Self::Reader { source, .. } => Some(source.as_ref()),
         }

@@ -4,10 +4,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use kekule::properties::{PropertyKey, PropertyValue};
-use kekule::traj::io::trr::{TrrLambdaPolicy, TrrReadOptions, TRR_LAMBDA_PROPERTY};
+use kekule::structure::{StructureSet, StructureSetRead};
+use kekule::traj::io::trr::{
+    TrrLambdaPolicy, TrrReadOptions, TrrWriteOptions, TRR_LAMBDA_PROPERTY,
+};
 use kekule::traj::io::xyz::XyzReadOptions;
 use kekule::traj::io::{
-    read_structure_set, TrajectoryFormatHint, TrajectoryIoLimits, TrajectoryOpenOptions,
+    open_indexed_structure_set, read_structure_set, write_structure_set_to, TrajectoryFormatHint,
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{TrajectoryFormat, TrajectoryIoErrorKind};
 use kekule::units::{DIMENSIONLESS, NANOMETER, PICOSECOND};
@@ -104,6 +108,68 @@ fn loading_retains_trr_cell_vectors_time_step_and_properties() {
             })
         );
     }
+}
+
+#[test]
+fn geometries_read_from_a_trr_file_keep_their_lambda_until_a_set_takes_them() {
+    let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
+    let lambda_key = PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap();
+    let lambda = |index: usize| PropertyValue::Real {
+        value: 0.125 + index as f64 * 0.125,
+        unit: DIMENSIONLESS,
+    };
+    let file = open_indexed_structure_set(
+        fixture("mdanalysis-2.9.0-three-atoms.trr"),
+        topology,
+        Default::default(),
+    )
+    .unwrap();
+    // The file's geometries hold the codec's lambda as their own value.
+    assert!(!file.columns().has_data());
+    for index in 0..file.len() {
+        let geometry = file.read(index).unwrap();
+        assert_eq!(
+            geometry.properties().owner().get(&lambda_key),
+            Some(&lambda(index))
+        );
+    }
+    // A set in memory holds it as a column.
+    let loaded = StructureSet::from_reader(&file, 0..file.len()).unwrap();
+    for (index, geometry) in loaded.iter().enumerate() {
+        assert!(geometry.properties().owner().is_empty());
+        assert_eq!(
+            geometry
+                .row()
+                .unwrap()
+                .get(&lambda_key)
+                .map(|value| value.to_value()),
+            Some(lambda(index))
+        );
+    }
+}
+
+#[test]
+fn a_lambda_column_written_to_trr_reads_back_as_the_column() {
+    let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
+    let lambda_key = PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap();
+    let loaded = read_structure_set(
+        fixture("mdanalysis-2.9.0-three-atoms.trr"),
+        Arc::clone(&topology),
+        Default::default(),
+    )
+    .unwrap();
+    let lambdas = loaded.columns().get(&lambda_key).unwrap();
+    let mut stream = std::io::Cursor::new(Vec::new());
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
+        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::FrameProperty),
+    );
+    write_structure_set_to(&mut stream, &loaded, options).unwrap();
+    let written = TemporaryInput::new(&stream.into_inner());
+    let trr = TrajectoryOpenOptions::default()
+        .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Trr));
+    let reread = read_structure_set(&written.0, topology, trr).unwrap();
+    assert_eq!(reread.len(), loaded.len());
+    assert_eq!(reread.columns().get(&lambda_key), Some(lambdas));
 }
 
 #[test]

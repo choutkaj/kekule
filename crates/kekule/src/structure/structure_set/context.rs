@@ -2,12 +2,13 @@
 
 use std::fmt;
 
-use crate::properties::{OwnerProperties, PropertyTable};
+use crate::properties::OwnerProperties;
 
-use super::{GeometryIndex, GeometryView, Place, Sampling, StructureSetRead};
+use super::{GeometryView, Place, RowView, Sampling, StructureSetRead};
 
 /// What a borrowed geometry's set records about it: its place in the set's
-/// order, and the set's properties, columns, and sampling record.
+/// order, its row of the set's columns, and the set's properties and
+/// sampling record.
 ///
 /// [`StructureKind::InSet`](crate::structure::StructureKind::InSet) holds
 /// it. Writers and reductions read it so that this state is written,
@@ -19,18 +20,18 @@ use super::{GeometryIndex, GeometryView, Place, Sampling, StructureSetRead};
 pub struct SetContext<'a> {
     place: Option<Place>,
     properties: Option<&'a OwnerProperties>,
-    columns: Option<&'a PropertyTable<GeometryIndex>>,
+    row: Option<RowView<'a>>,
     sampling: Option<&'a Sampling>,
 }
 
 impl<'a> SetContext<'a> {
-    /// The context of a geometry at `place` in a set without properties,
-    /// columns, or a sampling record.
-    pub(crate) const fn new(place: Option<Place>) -> Self {
+    /// The context of a geometry at `place` with `row`, in a set without
+    /// properties or a sampling record.
+    pub(crate) const fn new(place: Option<Place>, row: Option<RowView<'a>>) -> Self {
         Self {
             place,
             properties: None,
-            columns: None,
+            row,
             sampling: None,
         }
     }
@@ -40,7 +41,7 @@ impl<'a> SetContext<'a> {
         Self {
             place: view.place(),
             properties: view.reader.properties(),
-            columns: view.reader.columns(),
+            row: view.row(),
             sampling: view.reader.sampling(),
         }
     }
@@ -48,11 +49,6 @@ impl<'a> SetContext<'a> {
     /// The properties of the geometry's set, when its reader has them.
     pub(crate) const fn set_properties(self) -> Option<&'a OwnerProperties> {
         self.properties
-    }
-
-    /// The columns of the geometry's set, when its reader has them.
-    pub(crate) const fn set_columns(self) -> Option<&'a PropertyTable<GeometryIndex>> {
-        self.columns
     }
 
     /// The sampling record of the geometry's set, when its reader has one.
@@ -65,10 +61,16 @@ impl<'a> SetContext<'a> {
     pub const fn place(self) -> Option<Place> {
         self.place
     }
+
+    /// The geometry's row of its set's columns: its own scalars, such as an
+    /// energy per frame. `None` when the reader has no columns.
+    pub const fn row(self) -> Option<RowView<'a>> {
+        self.row
+    }
 }
 
 /// Two contexts are equal when they report the same place, whatever set
-/// properties, columns, and sampling record they borrow.
+/// properties, row, and sampling record they borrow.
 impl PartialEq for SetContext<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.place == other.place

@@ -1538,8 +1538,7 @@ fn time_orders_keep_time_step_velocities_and_forces() {
     .unwrap();
     set.get_mut(2)
         .unwrap()
-        .properties_mut()
-        .atoms_mut()
+        .atom_properties_mut()
         .set_value(
             key("flag"),
             kekule::topology::TopologyAtomIndex::new(1),
@@ -1594,8 +1593,7 @@ fn step_and_coordinate_orders_keep_places_cells_and_values() {
     history
         .get_mut(2)
         .unwrap()
-        .properties_mut()
-        .atoms_mut()
+        .atom_properties_mut()
         .set_value(
             key("flag"),
             kekule::topology::TopologyAtomIndex::new(1),
