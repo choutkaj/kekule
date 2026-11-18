@@ -114,7 +114,9 @@ impl<'a> Clustered<'a> {
                 energies: Err(StructureSetError::Missing(Requirement::StateEnergies).into()),
             };
         };
-        let log_weights = distribution.sample_log_weights();
+        // Exact weights: the current partition's estimates must not steer
+        // the new grouping.
+        let log_weights = distribution.exact_log_weights();
         let energies = distribution
             .state_energies()
             .map(|energies| sample_energies(&energies, distribution.partition()))

@@ -34,6 +34,7 @@ use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::perception::Perception;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyValue};
 use kekule::smiles;
+use kekule::statistics::{CumulantOrder, Estimator};
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, GeometryIndex, Order, Partition, Positions, Samples,
     Sampling, StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities,
@@ -208,6 +209,13 @@ const FIXTURES: &[Fixture] = &[
         kind: NativeKind::Distribution,
         perception: false,
         build: Build::Stable(|| write(&boltzmann_distribution(), false)),
+    },
+    Fixture {
+        name: "distribution_reweighted",
+        since: 9,
+        kind: NativeKind::Distribution,
+        perception: false,
+        build: Build::Stable(|| write(&reweighted_distribution(), false)),
     },
 ];
 
@@ -807,6 +815,43 @@ fn boltzmann_distribution() -> DistributionDescription {
         .assign_boltzmann_populations(target)
         .unwrap();
     DistributionDescription::new(4, ensemble.into_parts().1).unwrap()
+}
+
+/// Three of four geometries of a biased run at 300 K, reweighted to 310 K
+/// with the second-order cumulant, as two states.
+fn reweighted_distribution() -> DistributionDescription {
+    let geometries = [0.5, 1.0, 1.5, 2.0].map(|seed| Geometry::new(positions(seed)));
+    let mut set = StructureSet::from_geometries(water_topology(), Vec::from(geometries)).unwrap();
+    set.set_order(Some(Order::Step(vec![0, 500, 1_000, 1_500])))
+        .unwrap();
+    let energies = |values: [f64; 4]| PropertyColumn::Real {
+        unit: KILOJOULE_PER_MOLE,
+        values: values.map(Some).to_vec(),
+    };
+    let mut columns = set.columns_mut();
+    columns
+        .insert(key("potential"), energies([-41.0, -40.25, -42.5, -39.75]))
+        .unwrap();
+    columns
+        .insert(key("boost"), energies([3.0, 1.25, 0.5, 2.75]))
+        .unwrap();
+    let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap();
+    let sampling = Sampling::new(state)
+        .with_from_step(500)
+        .with_potential_energy(key("potential"))
+        .unwrap()
+        .with_bias([key("boost")])
+        .unwrap();
+    set.set_sampling(Some(sampling)).unwrap();
+    let distribution = Distribution::reweighted(
+        &set,
+        Samples::Subset(vec![1, 2, 3]),
+        Partition::new(vec![0, 1, 0], vec![0, 1]).unwrap(),
+        Some(Quantity::new(310.0, KELVIN)),
+        Estimator::Cumulant(CumulantOrder::Second),
+    )
+    .unwrap();
+    DistributionDescription::new(4, distribution).unwrap()
 }
 
 /// A peptide of two glycines and a water, in one model or in two.

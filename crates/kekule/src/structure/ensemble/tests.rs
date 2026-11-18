@@ -4,8 +4,10 @@
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use std::sync::Arc;
 
+use super::distribution::Weights;
 use super::{Distribution, Ensemble, Samples};
 use crate::math::Point3;
+use crate::statistics::{CumulantOrder, Estimator};
 use crate::structure::{Geometry, Partition, Positions, StructureSet, StructureSetError};
 use crate::topology::Topology;
 use crate::units::Quantity;
@@ -186,5 +188,95 @@ fn invalid_log_weights_are_refused() -> Result<(), StructureSetError> {
         Ensemble::new(set_of(3), outside),
         Err(StructureSetError::IndexOutOfRange(payload)) if payload == IndexOutOfRange::new(Countable::Geometry, 5, 3)
     ));
+    Ok(())
+}
+
+#[test]
+fn a_large_common_offset_keeps_group_normalizations() -> Result<(), StructureSetError> {
+    // One sample per state: each of the two has probability one half.
+    let distribution = Distribution::new(Samples::All, Partition::state_per_sample(2))?
+        .with_log_weights(vec![1.0e16; 2])?;
+    let half = 0.5_f64.ln();
+    for bin in distribution.group_log_populations(&[Some(0), Some(1)], 2)? {
+        assert_close(bin.unwrap(), half);
+    }
+    assert_close(distribution.log_population(&[0]).unwrap(), half);
+    assert_eq!(distribution.state_probabilities()?, vec![0.5, 0.5]);
+    Ok(())
+}
+
+#[test]
+fn large_reduced_biases_keep_exact_shares() -> Result<(), StructureSetError> {
+    let cumulant = Weights::Reweighted {
+        estimator: Estimator::Cumulant(CumulantOrder::Second),
+        reduced: vec![0.0, 1.0e10, 1.0e10 + 1.0],
+    };
+    let distribution =
+        Distribution::new(Samples::All, Partition::one_state(3))?.with_weights(cumulant)?;
+    let probabilities = distribution.probabilities()?;
+    let share = 1.0 / (1.0 + (-1.0_f64).exp());
+    assert_eq!(probabilities[0], 0.0);
+    assert_close(probabilities[1], 1.0 - share);
+    assert_close(probabilities[2], share);
+    // Log weights are log probabilities.
+    assert_close(distribution.log_weight(2).unwrap(), share.ln());
+
+    // Two states at a common offset of 1e16: relative values 0, 2 and 4, 2.
+    let offset = 1.0e16;
+    let reduced = [0.0, 2.0, 4.0, 2.0].map(|value| offset + value).to_vec();
+    let partition = Partition::new(vec![0, 0, 1, 1], vec![0, 2]).unwrap();
+    let distribution =
+        Distribution::new(Samples::All, partition)?.with_weights(Weights::Reweighted {
+            estimator: Estimator::Cumulant(CumulantOrder::Second),
+            reduced,
+        })?;
+    // ln 2 + mean + variance / 2 relative to the offset: 1.5 and 3.5.
+    let low = 1.0 / (1.0 + 2.0_f64.exp());
+    let states = distribution.state_probabilities()?;
+    assert_close(states[0], low);
+    assert_close(states[1], 1.0 - low);
+    assert_close(distribution.log_population(&[0, 1]).unwrap(), low.ln());
+    let bins = distribution.group_log_populations(&[Some(0), Some(0), Some(1), Some(1)], 2)?;
+    assert_close(bins[0].unwrap(), low.ln());
+    assert_close(bins[1].unwrap(), (1.0 - low).ln());
+    // Exact shares within each state.
+    let probabilities = distribution.probabilities()?;
+    let share = 1.0 / (1.0 + 2.0_f64.exp());
+    assert_close(probabilities[0], low * share);
+    assert_close(probabilities[1], low * (1.0 - share));
+    assert_close(probabilities[2], (1.0 - low) * (1.0 - share));
+    assert_close(probabilities[3], (1.0 - low) * share);
+    Ok(())
+}
+
+#[test]
+fn edits_clear_the_cached_populations() -> Result<(), StructureSetError> {
+    let partition = Partition::new(vec![0, 0, 1], vec![0, 2]).unwrap();
+    let mut ensemble = Ensemble::new(
+        set_of(3),
+        Distribution::new(Samples::All, partition)?.with_log_weights(vec![0.0; 3])?,
+    )?;
+    assert_all_close(
+        &ensemble.distribution().state_probabilities()?,
+        &[2.0 / 3.0, 1.0 / 3.0],
+    );
+    ensemble
+        .distribution_mut()
+        .set_log_weight(2, 2.0_f64.ln())?;
+    assert_all_close(&ensemble.distribution().state_probabilities()?, &[0.5, 0.5]);
+    ensemble
+        .distribution_mut()
+        .regroup(Partition::one_state(3))
+        .unwrap();
+    assert_all_close(&ensemble.distribution().state_probabilities()?, &[1.0]);
+    ensemble.remove(2)?;
+    assert_all_close(&ensemble.distribution().probabilities()?, &[0.5, 0.5]);
+    ensemble
+        .distribution_mut()
+        .set_log_weights(vec![0.0, 3.0_f64.ln()])?;
+    assert_all_close(&ensemble.distribution().probabilities()?, &[0.25, 0.75]);
+    // A copy compares equal whether or not its populations are cached.
+    let copy = ensemble.distribution().clone();
+    assert_eq!(&copy, ensemble.distribution());
     Ok(())
 }

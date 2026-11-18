@@ -238,6 +238,24 @@ the main branch migrates by the table under "From the SampleSet API".
 - `statistics::Estimator` estimates a group's population `ln Σ exp(b_i)` from
   reduced log weights (`log_sum`): the exponential sum, or the cumulant
   expansion to a `CumulantOrder`, second by default.
+- Distributions reweight a biased run from its set's sampling record:
+  `Distribution::reweighted`, `Ensemble::reweighted` (every geometry that can
+  be a sample, as one state), and `Ensemble::reweight` (again, at another
+  temperature or with another estimator). Each sample's reduced bias,
+  `β_s (U + ΣΔV) − β_t U`, is its exact log weight, read as
+  `WeightModel::Reweighted { estimator, reduced }`, with the target the sampled
+  state at the target temperature. A geometry before the record's first step
+  or with a missing cell cannot be a sample (`StructureSetError::BeforeSampling`,
+  `MissingColumnValue`); `Requirement::Sampling` and `PotentialEnergy` name what
+  a set lacks, and `InvalidReducedBias` refuses an unphysical bias.
+  `DistributionMut::set_estimator` changes the estimator (`NotReweighted`
+  otherwise); `set_target` refuses reweighted weights (`ReweightedTarget`), and
+  `push_sample` and `push_state` refuse new samples (`ReweightedSample`).
+  Native format version 9 stores them as weights tag 3.
+- `Distribution::estimator`, `log_population`, `group_log_populations`
+  (`StructureSetError::GroupingMismatch`, `GroupOutOfRange`,
+  `diagnostics::Countable::Group`), and `group_effective_sample_size` read any
+  group of samples, such as histogram bins.
 
 ### Changed
 
@@ -295,6 +313,11 @@ the main branch migrates by the table under "From the SampleSet API".
   a target), and `StateView` reads a state with its samples and population.
   Boltzmann weights keep their tag through edits to samples, states, and
   energies; setting weights or a target at another temperature drops it.
+  A group's population, a state's included, is the distribution's estimator
+  over its samples' exact log weights, and a sample's share within it is
+  exact, so a sample's probability is its state's times its share within the
+  state; `effective_sample_size` is Kish's over the exact weights.
+  Clustering weighs samples by their exact log weights.
 - **Breaking:** Log weights span hundreds of orders of magnitude without
   underflow; `probabilities`, rankings, and `effective_sample_size` move from
   the old `Ensemble` to `Distribution`.

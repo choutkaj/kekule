@@ -46,6 +46,7 @@ use crate::properties::{
     GeometryProperties, MoleculeProperties, OwnerProperties, PropertyColumn, PropertyKey,
     PropertyTable, PropertyValue, RawPropertyTable, TopologyProperties,
 };
+use crate::statistics::{CumulantOrder, Estimator};
 use crate::structure::{
     Distribution, Ensemble, Forces, Geometry, Order, Partition, Positions, Samples, Sampling,
     StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities, Weights,
@@ -1508,6 +1509,30 @@ impl<R: Read> Decoder<'_, R> {
                 0 => Weights::Equal,
                 1 => Weights::Logarithmic(self.f64_array(sample_count)?),
                 2 => Weights::Boltzmann(self.f64_array(sample_count)?),
+                3 => {
+                    let estimator = match self.u8()? {
+                        0 => Estimator::Exponential,
+                        1 => Estimator::Cumulant(match self.u8()? {
+                            1 => CumulantOrder::First,
+                            2 => CumulantOrder::Second,
+                            3 => CumulantOrder::Third,
+                            other => {
+                                return Err(
+                                    self.invalid(format!("The cumulant order {other} is unknown."))
+                                )
+                            }
+                        }),
+                        other => {
+                            return Err(
+                                self.invalid(format!("The estimator tag {other} is unknown."))
+                            )
+                        }
+                    };
+                    Weights::Reweighted {
+                        estimator,
+                        reduced: self.f64_array(sample_count)?,
+                    }
+                }
                 other => return Err(self.invalid(format!("The weights tag {other} is unknown."))),
             }
         } else if self.tag("log weights")? {
@@ -1550,13 +1575,21 @@ impl<R: Read> Decoder<'_, R> {
                 })
                 .transpose()?
         };
-        if matches!(weights, Weights::Boltzmann(_)) && target.is_none() {
-            return Err(self.invalid("Boltzmann weights need a target."));
+        if target.is_none() {
+            match weights {
+                Weights::Boltzmann(_) => {
+                    return Err(self.invalid("Boltzmann weights need a target."))
+                }
+                Weights::Reweighted { .. } => {
+                    return Err(self.invalid("Reweighted weights need a target."))
+                }
+                Weights::Equal | Weights::Logarithmic(_) => {}
+            }
         }
         let partition = Partition::new(assignments, representatives)
             .map_err(|error| self.structure_error(error))?;
         // The target goes first: setting it later would drop the Boltzmann
-        // tag.
+        // tag, and reweighted weights refuse a new target.
         let mut distribution = Distribution::new(samples, partition)
             .and_then(|distribution| distribution.with_states(states))
             .map_err(|error| self.structure_error(error))?;

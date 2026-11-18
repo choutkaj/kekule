@@ -3,9 +3,14 @@
 
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
-use crate::statistics::log_sum_exp;
-use crate::structure::{Partition, Requirement, StructureSetError, ThermodynamicState};
+use crate::statistics::{log_sum_exp, Estimator};
+use crate::structure::{
+    Partition, Requirement, StructureSetError, StructureSetRead, ThermodynamicState,
+};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT};
+use std::sync::OnceLock;
+
+use super::reweighting::ReducedBias;
 
 /// Which geometries of a set a [`Distribution`] covers: its samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,8 +87,8 @@ impl StateData {
 /// How a [`Distribution`] weighs its samples
 /// ([`Distribution::weight_model`]).
 ///
-/// Log weights are natural logarithms, one finite value per sample, in
-/// sample order. Only their differences are meaningful.
+/// Log weights and reduced biases are natural logarithms, one finite value
+/// per sample, in sample order. Only their differences are meaningful.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum WeightModel<'a> {
@@ -96,7 +101,22 @@ pub enum WeightModel<'a> {
     /// Later edits to samples, states, or energies keep the tag; setting
     /// weights, or a target at another temperature, replaces it.
     Boltzmann(&'a [f64]),
+    /// Weights derived from a structure set's sampling record against the
+    /// target ([`Distribution::reweighted`]): each sample's reduced bias
+    /// `b_i`, its exact log importance weight, with the estimator that sums
+    /// groups of them into populations.
+    Reweighted {
+        /// The estimator of group populations.
+        estimator: Estimator,
+        /// The reduced bias of each sample.
+        reduced: &'a [f64],
+    },
 }
+
+/// The largest magnitude of a reduced bias. Within it, every group
+/// population is finite under every [`Estimator`]: the third cumulant of
+/// such values stays below `f64::MAX`.
+pub(crate) const REDUCED_BIAS_LIMIT: f64 = 1e100;
 
 /// The stored weights of a [`Distribution`]; [`WeightModel`] reads them.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,54 +126,115 @@ pub(crate) enum Weights {
     /// Logarithmic weights assigned as Boltzmann populations; the
     /// distribution has a target.
     Boltzmann(Vec<f64>),
+    /// The reduced bias of each sample, each at most
+    /// [`REDUCED_BIAS_LIMIT`] in magnitude, summed into group populations by
+    /// `estimator`; the distribution has a target.
+    Reweighted {
+        estimator: Estimator,
+        reduced: Vec<f64>,
+    },
 }
 
 impl Weights {
-    /// The log weights in sample order, or `None` when every sample weighs
-    /// the same.
-    fn log_weights(&self) -> Option<&[f64]> {
+    /// The exact log weights in sample order: given, Boltzmann, or reduced
+    /// biases; `None` when every sample weighs the same.
+    fn exact(&self) -> Option<&[f64]> {
         match self {
             Self::Equal => None,
-            Self::Logarithmic(log_weights) | Self::Boltzmann(log_weights) => Some(log_weights),
+            Self::Logarithmic(values)
+            | Self::Boltzmann(values)
+            | Self::Reweighted {
+                reduced: values, ..
+            } => Some(values),
         }
     }
 
-    /// The log weights in sample order for removing or reordering samples,
-    /// or `None` when every sample weighs the same.
-    fn log_weights_mut(&mut self) -> Option<&mut Vec<f64>> {
+    /// The exact log weights in sample order for removing or reordering
+    /// samples, or `None` when every sample weighs the same.
+    fn exact_mut(&mut self) -> Option<&mut Vec<f64>> {
         match self {
             Self::Equal => None,
-            Self::Logarithmic(log_weights) | Self::Boltzmann(log_weights) => Some(log_weights),
+            Self::Logarithmic(values)
+            | Self::Boltzmann(values)
+            | Self::Reweighted {
+                reduced: values, ..
+            } => Some(values),
+        }
+    }
+
+    /// The estimator of group populations: exponential unless reweighted.
+    fn estimator(&self) -> Estimator {
+        match self {
+            Self::Reweighted { estimator, .. } => *estimator,
+            _ => Estimator::Exponential,
         }
     }
 
     /// The log weights of `count` samples, with equal weights made `0.0`
-    /// each; the tag is kept.
+    /// each; the tag is kept. Reweighted weights give their reduced biases,
+    /// which only a common shift keeps meaningful.
     fn materialized(&mut self, count: usize) -> &mut Vec<f64> {
         if matches!(self, Self::Equal) {
             *self = Self::Logarithmic(vec![0.0; count]);
         }
         match self {
             Self::Equal => unreachable!("equal weights were just replaced"),
-            Self::Logarithmic(log_weights) | Self::Boltzmann(log_weights) => log_weights,
-        }
-    }
-
-    /// Drops the Boltzmann tag, keeping the log weights.
-    fn untagged(&mut self) {
-        if let Self::Boltzmann(log_weights) = self {
-            *self = Self::Logarithmic(std::mem::take(log_weights));
+            Self::Logarithmic(values)
+            | Self::Boltzmann(values)
+            | Self::Reweighted {
+                reduced: values, ..
+            } => values,
         }
     }
 
     /// The same model over the samples at `positions`, in that order.
     fn selected(&self, positions: impl Iterator<Item = usize>) -> Self {
-        let pick = |log_weights: &[f64]| positions.map(|position| log_weights[position]).collect();
+        let pick = |values: &[f64]| positions.map(|position| values[position]).collect();
         match self {
             Self::Equal => Self::Equal,
-            Self::Logarithmic(log_weights) => Self::Logarithmic(pick(log_weights)),
-            Self::Boltzmann(log_weights) => Self::Boltzmann(pick(log_weights)),
+            Self::Logarithmic(values) => Self::Logarithmic(pick(values)),
+            Self::Boltzmann(values) => Self::Boltzmann(pick(values)),
+            Self::Reweighted { estimator, reduced } => Self::Reweighted {
+                estimator: *estimator,
+                reduced: pick(reduced),
+            },
         }
+    }
+}
+
+/// The state populations of a distribution, from its weights and partition.
+///
+/// Estimators are shift-equivariant: the estimate over `ℓ_i − c` is the
+/// estimate over `ℓ_i` less `c`. Every value is taken relative to the
+/// largest exact log weight, so normalizations keep their digits under a
+/// large common offset.
+#[derive(Debug, Clone)]
+struct Populations {
+    /// The largest exact log weight, `0.0` for equal weights or no samples.
+    shift: f64,
+    /// Each state's estimate over its shifted exact log weights.
+    estimates: Vec<f64>,
+    /// Each state's exact `ln Σ exp` over its shifted exact log weights.
+    sums: Vec<f64>,
+    /// `ln Σ exp` over the estimates.
+    total: f64,
+}
+
+/// [`Populations`] computed on first use. Every change to the weights or
+/// the partition clears it. It carries no information of its own, so it
+/// never makes two distributions differ.
+#[derive(Clone, Default)]
+struct PopulationCache(OnceLock<Populations>);
+
+impl PartialEq for PopulationCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for PopulationCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("PopulationCache")
     }
 }
 
@@ -177,11 +258,11 @@ fn normalized(samples: Vec<usize>, len: usize) -> Samples {
 ///   are meaningful, so they are stored as natural logarithms, which any
 ///   finite value is: weights from bias reweighting or importance sampling
 ///   span hundreds of orders of magnitude, beyond what a linear weight can
-///   hold. The weights are equal, given, or Boltzmann populations of the
-///   states' energies ([`WeightModel`]).
+///   hold. The weights are equal, given, Boltzmann populations of the
+///   states' energies, or reweighted from a biased run ([`WeightModel`]).
 /// - A *state* is a distinct conformation: a group of samples, one of them
-///   its representative. Its *population* is the total weight of its
-///   samples, derived and never stored. Its data ([`StateData`]) may carry
+///   its representative. Its *population* is derived and never stored. Its
+///   data ([`StateData`]) may carry
 ///   an *energy* on one scale for the whole distribution, such as a
 ///   conformer's minimized energy or a computed free energy, never a
 ///   snapshot's instantaneous energy, which stays a property of its
@@ -190,6 +271,19 @@ fn normalized(samples: Vec<usize>, len: usize) -> Samples {
 /// Every sample is in exactly one state, and every state has at least one
 /// sample, its representative ([`Partition`]). The distribution may record
 /// its *target*, the [`ThermodynamicState`] its populations describe.
+///
+/// The population of any group of samples, a state, a histogram bin, or a
+/// map cell, is the [`Estimator`] over the exact log weights of its samples
+/// ([`Self::estimator`]): the exponential sum `ln Σ exp(ℓ_i)`, unless the
+/// weights are reweighted with another. A sample's share within its group
+/// is always exact, `exp(ℓ_i) / Σ exp(ℓ_j)` over the group. A sample's
+/// probability is its state's probability times its share within the
+/// state, so the probabilities of a state's samples sum to the state's.
+/// State probabilities are the state populations normalized to sum to one
+/// ([`Self::log_population`] gives any group's on that scale), and
+/// [`Self::group_log_populations`] normalizes bins among themselves. Under
+/// a cumulant estimator the populations of a group's parts need not add up
+/// to the group's, which is inherent to the method.
 ///
 /// Two index spaces meet here. Methods that take or return a `geometry` use
 /// geometry indices of the set. [`Self::weight_model`], [`Self::partition`],
@@ -221,6 +315,7 @@ pub struct Distribution {
     partition: Partition,
     states: Vec<StateData>,
     target: Option<ThermodynamicState>,
+    populations: PopulationCache,
 }
 
 impl Distribution {
@@ -253,7 +348,124 @@ impl Distribution {
             states: vec![StateData::new(); partition.state_count()],
             partition,
             target: None,
+            populations: PopulationCache::default(),
         })
+    }
+
+    /// A distribution of `samples` of `set` grouped by `partition`, each
+    /// weighted by its reduced bias from the set's sampling record, with the
+    /// estimator `estimator` of group populations. Its target is the sampled
+    /// state at `temperature`, or the sampled state itself for `None`.
+    ///
+    /// A sample's reduced bias is `b = β_s (U + ΣΔV) − β_t U`, its exact log
+    /// importance weight, with `β = 1/RT` at the sampled temperature `s` and
+    /// the target temperature `t`, its potential energy `U`, and the sum
+    /// `ΣΔV` of its bias columns. At the sampled temperature
+    /// `b = β_s ΣΔV`, and the potential energy is not read. Reweighting
+    /// changes the temperature only: the target keeps the sampled pressure,
+    /// and the `pV` term is neglected, which is negligible near ambient
+    /// pressure. Without bias columns, samples at the sampled temperature
+    /// weigh the same.
+    ///
+    /// ```
+    /// use kekule::properties::{PropertyColumn, PropertyKey};
+    /// use kekule::statistics::Estimator;
+    /// use kekule::structure::{
+    ///     Distribution, Geometry, Partition, Positions, Samples, Sampling, StructureSet,
+    ///     ThermodynamicState,
+    /// };
+    /// use kekule::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
+    ///
+    /// let topology = kekule::smiles::to_topology("O")?;
+    /// let atoms = topology.atom_count();
+    /// let geometries = (0..2).map(|_| Geometry::new(Positions::zeros(atoms)));
+    /// let mut set = StructureSet::from_geometries(topology, geometries)?;
+    /// let boost = PropertyKey::new("boost")?;
+    /// set.columns_mut().insert(
+    ///     boost.clone(),
+    ///     PropertyColumn::Real {
+    ///         unit: KILOJOULE_PER_MOLE,
+    ///         values: vec![Some(0.0), Some(2.5)],
+    ///     },
+    /// )?;
+    /// let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN))?;
+    /// set.set_sampling(Some(Sampling::new(state).with_bias([boost])?))?;
+    /// let distribution = Distribution::reweighted(
+    ///     &set,
+    ///     Samples::All,
+    ///     Partition::one_state(2),
+    ///     None,
+    ///     Estimator::Exponential,
+    /// )?;
+    /// // The boosted frame weighs exp(2.5 kJ/mol / RT) times the other.
+    /// let ratio = distribution.log_weight(1).unwrap() - distribution.log_weight(0).unwrap();
+    /// assert!((ratio - 2.5 / *state.thermal_energy().value()).abs() < 1e-12);
+    /// assert_eq!(distribution.target(), Some(state));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::new`] and of
+    /// [`Ensemble::new`](super::Ensemble::new) against `set`;
+    /// `Missing(Sampling)` for a set without a sampling record;
+    /// `Missing(PotentialEnergy)` at another temperature when the record
+    /// names no potential-energy column; `Missing(Steps)` when the record's
+    /// first step is not 0 and the set has no steps; the errors of
+    /// [`ThermodynamicState::with_temperature`] for `temperature`;
+    /// [`StructureSetError::SamplingColumn`] for a named column that holds no
+    /// real energies; and, for the first sample that cannot be one,
+    /// [`StructureSetError::BeforeSampling`] when its step lies before the
+    /// record's first step, [`StructureSetError::MissingColumnValue`] when a
+    /// cell it reads is missing, and [`StructureSetError::InvalidReducedBias`]
+    /// when its reduced bias is not finite or exceeds `1e100` in magnitude.
+    pub fn reweighted(
+        set: &(impl StructureSetRead + ?Sized),
+        samples: Samples,
+        partition: Partition,
+        temperature: Option<Quantity<f64>>,
+        estimator: Estimator,
+    ) -> Result<Self, StructureSetError> {
+        let bias = ReducedBias::new(set.sampling(), set.columns(), set.order(), temperature)?;
+        Self::reweighted_by(&bias, set.len(), samples, partition, estimator)
+    }
+
+    /// A distribution of `samples` of a set of `len` geometries grouped by
+    /// `partition`, weighted by the reduced biases `bias` gives, as
+    /// [`Self::reweighted`] makes it.
+    pub(crate) fn reweighted_by(
+        bias: &ReducedBias<'_>,
+        len: usize,
+        samples: Samples,
+        partition: Partition,
+        estimator: Estimator,
+    ) -> Result<Self, StructureSetError> {
+        let mut distribution = Self::new(samples, partition)?;
+        distribution.bind(len)?;
+        let reduced = (0..distribution.sample_count())
+            .map(|position| bias.reduced(distribution.sample(position)))
+            .collect::<Result<Vec<_>, _>>()?;
+        distribution.set_weights(Weights::Reweighted { estimator, reduced })?;
+        distribution.target = Some(bias.target());
+        Ok(distribution)
+    }
+
+    /// A distribution of `samples` of a set of `len` geometries as one state,
+    /// weighted by their reduced biases `reduced` (from `bias`, checked)
+    /// toward its target.
+    pub(crate) fn reweighted_one_state(
+        bias: &ReducedBias<'_>,
+        len: usize,
+        samples: Vec<usize>,
+        reduced: Vec<f64>,
+        estimator: Estimator,
+    ) -> Result<Self, StructureSetError> {
+        let partition = Partition::one_state(samples.len());
+        let mut distribution = Self::new(Samples::Subset(samples), partition)?;
+        distribution.bind(len)?;
+        distribution.set_weights(Weights::Reweighted { estimator, reduced })?;
+        distribution.target = Some(bias.target());
+        Ok(distribution)
     }
 
     /// Returns this distribution with one finite natural-logarithm weight
@@ -293,8 +505,7 @@ impl Distribution {
     ///
     /// # Errors
     ///
-    /// None yet; the result leaves room for weights that a target cannot
-    /// change.
+    /// [`StructureSetError::ReweightedTarget`] for reweighted samples.
     pub fn with_target(mut self, target: ThermodynamicState) -> Result<Self, StructureSetError> {
         self.set_target(Some(target))?;
         Ok(self)
@@ -333,11 +544,26 @@ impl Distribution {
             Weights::Equal => WeightModel::Equal,
             Weights::Logarithmic(log_weights) => WeightModel::LogWeights(log_weights),
             Weights::Boltzmann(log_weights) => WeightModel::Boltzmann(log_weights),
+            Weights::Reweighted { estimator, reduced } => WeightModel::Reweighted {
+                estimator: *estimator,
+                reduced,
+            },
         }
     }
 
-    /// The natural-logarithm weight of geometry `geometry`: its own, `0.0`
-    /// when every sample weighs the same, or `None` when it is not a sample.
+    /// The estimator of group populations: the reweighted weights' own, and
+    /// [`Estimator::Exponential`], the exact sum, for every other model.
+    pub fn estimator(&self) -> Estimator {
+        self.weights.estimator()
+    }
+
+    /// The natural-logarithm weight of geometry `geometry`, which its
+    /// probability follows: its probability times a factor shared by every
+    /// sample. It is its own log weight, `0.0` when every sample weighs the
+    /// same, or `None` when it is not a sample. Under reweighting with an
+    /// estimator other than the exponential sum, it is the natural logarithm
+    /// of its probability: its state's log probability plus its exact log
+    /// share within the state.
     pub fn log_weight(&self, geometry: usize) -> Option<f64> {
         self.sample_position(geometry)
             .map(|position| self.sample_log_weight(position))
@@ -429,9 +655,11 @@ impl Distribution {
         self.bind(len)
     }
 
-    /// The probability of each sample, in sample order: its weight divided
-    /// by the total weight. A probability below the smallest positive
-    /// `f64` is `0.0`.
+    /// The probability of each sample, in sample order: its state's
+    /// probability times its exact share within the state, which for every
+    /// model but reweighting with a cumulant estimator is its weight divided
+    /// by the total weight. A probability below the smallest positive `f64`
+    /// is `0.0`.
     ///
     /// # Errors
     ///
@@ -441,7 +669,7 @@ impl Distribution {
             return Err(StructureSetError::EmptyDistribution);
         }
         Ok(normalized_exponentials(
-            (0..self.sample_count()).map(|position| self.sample_log_weight(position)),
+            self.sample_log_weights().into_iter(),
         ))
     }
 
@@ -461,8 +689,8 @@ impl Distribution {
             .collect())
     }
 
-    /// The population share of each state, in state order: the total weight
-    /// of its samples divided by the total weight.
+    /// The probability of each state, in state order: its population
+    /// divided by the sum of the state populations.
     ///
     /// # Errors
     ///
@@ -472,12 +700,82 @@ impl Distribution {
             return Err(StructureSetError::EmptyDistribution);
         }
         Ok(normalized_exponentials(
-            self.state_log_populations().into_iter(),
+            self.populations().estimates.iter().copied(),
         ))
     }
 
-    /// Kish's effective sample size, `(Σw)² / Σw²`: the number of equally
-    /// weighted samples that would give the same statistical precision.
+    /// The natural logarithm of the probability of the samples at
+    /// `positions`, sample positions as [`Self::partition`] indexes them:
+    /// the estimator over their exact log weights, relative to the sum of
+    /// the state populations. For a state's samples it is the logarithm of
+    /// the state's probability. A position listed twice counts twice.
+    ///
+    /// `None` for no positions or a position that is not a sample's.
+    pub fn log_population(&self, positions: &[usize]) -> Option<f64> {
+        let populations = self.populations();
+        let estimate = self.group_estimate(positions, populations.shift)?;
+        Some(estimate - populations.total)
+    }
+
+    /// The natural logarithm of each group's probability, in group order,
+    /// for groups of samples such as the bins of a histogram: the estimator
+    /// over each group's exact log weights, normalized so that the
+    /// probabilities of the groups sum to one. `group_of` gives each
+    /// sample's group, by sample position, or `None` for a sample in no
+    /// group; a group without samples has no population.
+    ///
+    /// Groups that are the states give the state probabilities.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::GroupingMismatch`] when `group_of` covers another
+    /// number of samples than there are, and
+    /// [`StructureSetError::GroupOutOfRange`] for the first group of
+    /// `group_of` that is not below `groups`.
+    pub fn group_log_populations(
+        &self,
+        group_of: &[Option<u32>],
+        groups: usize,
+    ) -> Result<Vec<Option<f64>>, StructureSetError> {
+        if group_of.len() != self.sample_count() {
+            return Err(StructureSetError::GroupingMismatch(LengthMismatch::new(
+                Countable::Sample,
+                self.sample_count(),
+                group_of.len(),
+            )));
+        }
+        let mut members = vec![Vec::new(); groups];
+        for (position, group) in group_of.iter().enumerate() {
+            let Some(group) = group else { continue };
+            let group = *group as usize;
+            members
+                .get_mut(group)
+                .ok_or_else(|| {
+                    StructureSetError::GroupOutOfRange(IndexOutOfRange::new(
+                        Countable::Group,
+                        group,
+                        groups,
+                    ))
+                })?
+                .push(position);
+        }
+        let shift = self.populations().shift;
+        let estimates = members
+            .iter()
+            .map(|positions| self.group_estimate(positions, shift))
+            .collect::<Vec<_>>();
+        let total = log_sum_exp(estimates.iter().flatten().copied());
+        Ok(estimates
+            .into_iter()
+            .map(|estimate| estimate.map(|estimate| estimate - total))
+            .collect())
+    }
+
+    /// Kish's effective sample size, `(Σw)² / Σw²`, over the exact weights
+    /// `w = exp(ℓ)`: the number of equally weighted samples that would give
+    /// the same statistical precision. For reweighted samples the exact
+    /// weights are the exponentials of their reduced biases, whatever the
+    /// estimator, so it measures how far the reweighting degenerates.
     ///
     /// It is the sample count for equal weights and approaches one when a
     /// single sample dominates.
@@ -489,29 +787,34 @@ impl Distribution {
         if self.sample_count() == 0 {
             return Err(StructureSetError::EmptyDistribution);
         }
-        let Some(log_weights) = self.weights.log_weights() else {
-            return Ok(self.sample_count() as f64);
-        };
-        // Shifted by the largest log weight, the ratio is unchanged and the
-        // largest term is one, so neither sum overflows or cancels.
-        let maximum = log_weights
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let shifted = log_weights.iter().map(|log_weight| log_weight - maximum);
-        let total = log_sum_exp(shifted.clone());
-        let squares = log_sum_exp(shifted.map(|log_weight| 2.0 * log_weight));
-        Ok((2.0 * total - squares).exp())
+        Ok(match self.weights.exact() {
+            None => self.sample_count() as f64,
+            Some(log_weights) => kish(log_weights.iter().copied()),
+        })
     }
 
-    /// Sample geometry indices, not sample positions, by descending weight;
-    /// equal weights keep geometry order.
+    /// Kish's effective sample size over the exact weights of the samples at
+    /// `positions`, as [`Self::effective_sample_size`] gives it for all of
+    /// them: the effective count of a group such as a histogram bin. A
+    /// position listed twice counts twice.
+    ///
+    /// `None` for no positions or a position that is not a sample's.
+    pub fn group_effective_sample_size(&self, positions: &[usize]) -> Option<f64> {
+        if positions.is_empty() || positions.iter().any(|&p| p >= self.sample_count()) {
+            return None;
+        }
+        Some(match self.weights.exact() {
+            None => positions.len() as f64,
+            Some(log_weights) => kish(positions.iter().map(|&position| log_weights[position])),
+        })
+    }
+
+    /// Sample geometry indices, not sample positions, by descending
+    /// probability; equal probabilities keep geometry order.
     pub fn ranked_by_weight(&self) -> Vec<usize> {
+        let log_weights = self.sample_log_weights();
         let mut positions = (0..self.sample_count()).collect::<Vec<_>>();
-        positions.sort_by(|&a, &b| {
-            self.sample_log_weight(b)
-                .total_cmp(&self.sample_log_weight(a))
-        });
+        positions.sort_by(|&a, &b| log_weights[b].total_cmp(&log_weights[a]));
         positions
             .into_iter()
             .map(|position| self.sample(position))
@@ -521,7 +824,7 @@ impl Distribution {
     /// State indices by descending population; equal populations keep
     /// state order.
     pub fn ranked_by_population(&self) -> Vec<usize> {
-        let populations = self.state_log_populations();
+        let populations = &self.populations().estimates;
         let mut indices = (0..populations.len()).collect::<Vec<_>>();
         indices.sort_by(|&a, &b| populations[b].total_cmp(&populations[a]));
         indices
@@ -609,42 +912,62 @@ impl Distribution {
     }
 
     /// Records or clears the target. Boltzmann populations lose their tag
-    /// unless the temperature stays the same.
+    /// unless the temperature stays the same; reweighted weights refuse.
     fn set_target(&mut self, target: Option<ThermodynamicState>) -> Result<(), StructureSetError> {
+        if matches!(self.weights, Weights::Reweighted { .. }) {
+            return Err(StructureSetError::ReweightedTarget);
+        }
         let same_temperature = match (self.target, target) {
             (Some(old), Some(new)) => old.temperature().value() == new.temperature().value(),
             _ => false,
         };
         if !same_temperature {
-            self.weights.untagged();
+            self.untag();
         }
         self.target = target;
         Ok(())
     }
 
-    /// Replaces the weights after checking that their log weights, if any,
-    /// are one finite value per sample.
-    fn set_weights(&mut self, weights: Weights) -> Result<(), StructureSetError> {
-        if let Some(log_weights) = weights.log_weights() {
-            if log_weights.len() != self.sample_count() {
+    /// Makes Boltzmann populations plain log weights, and reweighted
+    /// weights the log weights [`Self::log_weight`] gives, so every
+    /// probability is kept.
+    fn untag(&mut self) {
+        self.populations = PopulationCache::default();
+        match &mut self.weights {
+            Weights::Boltzmann(log_weights) => {
+                self.weights = Weights::Logarithmic(std::mem::take(log_weights));
+            }
+            Weights::Reweighted { .. } => {
+                self.weights = Weights::Logarithmic(self.sample_log_weights());
+            }
+            Weights::Equal | Weights::Logarithmic(_) => {}
+        }
+    }
+
+    /// Replaces the weights after checking that their values, if any, are
+    /// one finite value per sample, and reduced biases within
+    /// [`REDUCED_BIAS_LIMIT`].
+    pub(crate) fn set_weights(&mut self, weights: Weights) -> Result<(), StructureSetError> {
+        if let Some(values) = weights.exact() {
+            if values.len() != self.sample_count() {
                 return Err(StructureSetError::LogWeightCountMismatch(
-                    LengthMismatch::new(
-                        Countable::LogWeight,
-                        self.sample_count(),
-                        log_weights.len(),
-                    ),
+                    LengthMismatch::new(Countable::LogWeight, self.sample_count(), values.len()),
                 ));
             }
-            if let Some(position) = log_weights
-                .iter()
-                .position(|log_weight| !log_weight.is_finite())
-            {
-                return Err(StructureSetError::NonFiniteLogWeight {
-                    geometry: self.sample(position),
+            let reweighted = matches!(weights, Weights::Reweighted { .. });
+            if let Some(position) = values.iter().position(|value| {
+                !value.is_finite() || (reweighted && value.abs() > REDUCED_BIAS_LIMIT)
+            }) {
+                let geometry = self.sample(position);
+                return Err(if reweighted {
+                    StructureSetError::InvalidReducedBias { geometry }
+                } else {
+                    StructureSetError::NonFiniteLogWeight { geometry }
                 });
             }
         }
         self.weights = weights;
+        self.populations = PopulationCache::default();
         Ok(())
     }
 
@@ -661,41 +984,133 @@ impl Distribution {
             .collect()
     }
 
-    /// The log weight of the sample at `position`.
-    fn sample_log_weight(&self, position: usize) -> f64 {
-        self.weights
-            .log_weights()
-            .map_or(0.0, |log_weights| log_weights[position])
+    /// The exact log weight of the sample at `position`: its own, its
+    /// reduced bias, or `0.0` when every sample weighs the same.
+    fn exact_log_weight(&self, position: usize) -> f64 {
+        self.weights.exact().map_or(0.0, |values| values[position])
     }
 
-    /// Every sample's log weight in sample order, `0.0` each when every
-    /// sample weighs the same.
-    pub(crate) fn sample_log_weights(&self) -> Vec<f64> {
+    /// Every sample's exact log weight in sample order: given, Boltzmann,
+    /// or reduced biases, and `0.0` each when every sample weighs the same.
+    /// Unlike [`Self::sample_log_weights`], it does not depend on the
+    /// partition.
+    pub(crate) fn exact_log_weights(&self) -> Vec<f64> {
         self.weights
-            .log_weights()
+            .exact()
             .map_or_else(|| vec![0.0; self.sample_count()], <[f64]>::to_vec)
     }
 
-    /// The natural logarithm of each state's population, in state order, on
-    /// the scale of the log weights.
-    fn state_log_populations(&self) -> Vec<f64> {
-        let mut by_state = vec![Vec::new(); self.states.len()];
-        for (position, state) in self.partition.assignments().iter().enumerate() {
-            by_state[*state].push(self.sample_log_weight(position));
+    /// The estimator's `ln Σ exp(ℓ_i − shift)` over the exact log weights of
+    /// the samples at `positions`, or `None` for none or a position past the
+    /// last sample.
+    fn group_estimate(&self, positions: &[usize], shift: f64) -> Option<f64> {
+        if positions
+            .iter()
+            .any(|&position| position >= self.sample_count())
+        {
+            return None;
         }
-        by_state
-            .into_iter()
-            .map(|log_weights| log_sum_exp(log_weights.into_iter()))
+        let values = positions
+            .iter()
+            .map(|&position| self.exact_log_weight(position) - shift)
+            .collect::<Vec<_>>();
+        self.weights.estimator().log_sum(&values)
+    }
+
+    /// The state populations, computed once per change of the weights or
+    /// the partition.
+    fn populations(&self) -> &Populations {
+        self.populations.0.get_or_init(|| {
+            let shift = match self.weights.exact() {
+                Some(values) if !values.is_empty() => {
+                    values.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                }
+                _ => 0.0,
+            };
+            let estimator = self.weights.estimator();
+            let (estimates, sums) = self
+                .partition
+                .samples_by_state()
+                .iter()
+                .map(|positions| {
+                    let values = positions
+                        .iter()
+                        .map(|&position| self.exact_log_weight(position) - shift)
+                        .collect::<Vec<_>>();
+                    let sum = log_sum_exp(values.iter().copied());
+                    let estimate = match estimator {
+                        Estimator::Exponential => sum,
+                        estimator => estimator.log_sum(&values).expect(
+                            "a state has samples, and bounded reduced biases give finite estimates",
+                        ),
+                    };
+                    (estimate, sum)
+                })
+                .unzip::<_, _, Vec<_>, Vec<_>>();
+            let total = log_sum_exp(estimates.iter().copied());
+            Populations {
+                shift,
+                estimates,
+                sums,
+                total,
+            }
+        })
+    }
+
+    /// The log weight of the sample at `position`, as [`Self::log_weight`]
+    /// gives it.
+    fn sample_log_weight(&self, position: usize) -> f64 {
+        let exact = self.exact_log_weight(position);
+        if !self.reweighted_by_moments() {
+            return exact;
+        }
+        let state = self.partition.assignments()[position];
+        let populations = self.populations();
+        (exact - populations.shift - populations.sums[state])
+            + (populations.estimates[state] - populations.total)
+    }
+
+    /// Every sample's log weight in sample order, as [`Self::log_weight`]
+    /// gives them: `0.0` each when every sample weighs the same.
+    pub(crate) fn sample_log_weights(&self) -> Vec<f64> {
+        let mut log_weights = self.exact_log_weights();
+        if self.reweighted_by_moments() {
+            let populations = self.populations();
+            for (log_weight, &state) in log_weights.iter_mut().zip(self.partition.assignments()) {
+                *log_weight = (*log_weight - populations.shift - populations.sums[state])
+                    + (populations.estimates[state] - populations.total);
+            }
+        }
+        log_weights
+    }
+
+    /// Whether the weights are reweighted with an estimator other than the
+    /// exact sum, so that log weights differ from reduced biases.
+    fn reweighted_by_moments(&self) -> bool {
+        matches!(
+            self.weights,
+            Weights::Reweighted { estimator, .. } if estimator != Estimator::Exponential
+        )
+    }
+
+    /// The natural logarithm of each state's population, in state order, on
+    /// the scale of the exact log weights.
+    fn state_log_populations(&self) -> Vec<f64> {
+        self.partition
+            .samples_by_state()
+            .iter()
+            .map(|positions| {
+                self.group_estimate(positions, 0.0)
+                    .expect("a state has samples, and bounded reduced biases give finite estimates")
+            })
             .collect()
     }
 
-    /// The natural logarithm of one state's population, which must exist.
+    /// The natural logarithm of one state's population, which must exist,
+    /// on the scale of the exact log weights.
     pub(crate) fn state_log_population(&self, state: usize) -> f64 {
-        log_sum_exp(
-            self.partition
-                .samples(state)
-                .map(|position| self.sample_log_weight(position)),
-        )
+        self.group_estimate(&self.partition.samples(state).collect::<Vec<_>>(), 0.0)
+            .expect("a state has samples, and bounded reduced biases give finite estimates")
     }
 
     /// The data of one state, which must exist.
@@ -740,8 +1155,13 @@ impl Distribution {
         log_weight: Option<f64>,
         geometry: usize,
     ) -> Result<(), StructureSetError> {
-        match (log_weight, self.weights.log_weights()) {
-            (None, Some(_)) => Err(StructureSetError::LogWeightRequired),
+        match (log_weight, &self.weights) {
+            (_, Weights::Reweighted { .. }) => {
+                Err(StructureSetError::ReweightedSample { geometry })
+            }
+            (None, Weights::Logarithmic(_) | Weights::Boltzmann(_)) => {
+                Err(StructureSetError::LogWeightRequired)
+            }
             (Some(log_weight), _) if !log_weight.is_finite() => {
                 Err(StructureSetError::NonFiniteLogWeight { geometry })
             }
@@ -796,6 +1216,7 @@ impl Distribution {
     /// Adds a new last sample's log weight, after
     /// [`Self::check_new_log_weight`].
     fn push_log_weight(&mut self, log_weight: Option<f64>) {
+        self.populations = PopulationCache::default();
         match log_weight {
             Some(log_weight) => self
                 .weights
@@ -834,6 +1255,7 @@ impl Distribution {
     /// alone in its state removes the state.
     pub(crate) fn remove(&mut self, geometry: usize, len: usize) {
         if let Some(position) = self.sample_position(geometry) {
+            self.populations = PopulationCache::default();
             let state = self.partition.assignments()[position];
             let alone = self.partition.samples(state).nth(1).is_none();
             let (mut assignments, mut representatives) = self.take_partition();
@@ -853,7 +1275,7 @@ impl Distribution {
                 }
             }
             self.partition = Partition::from_parts_unchecked(assignments, representatives);
-            if let Some(log_weights) = self.weights.log_weights_mut() {
+            if let Some(log_weights) = self.weights.exact_mut() {
                 log_weights.remove(position);
             }
         }
@@ -936,6 +1358,7 @@ impl Distribution {
             partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
             target: self.target,
+            populations: PopulationCache::default(),
         }
     }
 
@@ -967,6 +1390,7 @@ impl Distribution {
             partition: Partition::from_parts_unchecked(assignments, representatives),
             states,
             target: self.target,
+            populations: PopulationCache::default(),
         };
         (geometries, distribution)
     }
@@ -990,6 +1414,7 @@ impl Distribution {
             partition: Partition::state_per_sample(representatives.len()),
             states: self.states.clone(),
             target: self.target,
+            populations: PopulationCache::default(),
         };
         (representatives, distribution)
     }
@@ -1049,6 +1474,7 @@ impl DistributionMut<'_> {
     /// Makes every sample weigh the same.
     pub fn set_equal_weights(&mut self) {
         self.distribution.weights = Weights::Equal;
+        self.distribution.populations = PopulationCache::default();
     }
 
     /// Replaces every log weight, in sample order. Failure changes nothing.
@@ -1065,7 +1491,8 @@ impl DistributionMut<'_> {
 
     /// Sets the log weight of one sample, a finite value. With equal
     /// weights, the other samples keep log weight `0.0`; Boltzmann
-    /// populations lose their tag.
+    /// populations lose their tag, and reweighted samples take the log
+    /// weights [`Distribution::log_weight`] gives them first.
     ///
     /// # Errors
     ///
@@ -1085,31 +1512,46 @@ impl DistributionMut<'_> {
             return Err(StructureSetError::NonFiniteLogWeight { geometry });
         }
         let count = distribution.sample_count();
-        distribution.weights.untagged();
+        distribution.untag();
         distribution.weights.materialized(count)[position] = log_weight;
+        distribution.populations = PopulationCache::default();
         Ok(())
     }
 
     /// Shifts every log weight so the weights sum to one, so each log weight
     /// is the natural logarithm of its sample's probability. Ratios, and so
     /// every probability and population share, are kept, and so are
-    /// Boltzmann populations; equal weights become log weights.
+    /// Boltzmann populations; equal weights become log weights. Reweighted
+    /// samples shift their reduced biases together and keep their
+    /// estimator, which no common shift changes.
     ///
     /// # Errors
     ///
-    /// [`StructureSetError::EmptyDistribution`] without samples; failure
-    /// changes nothing.
+    /// [`StructureSetError::EmptyDistribution`] without samples, and
+    /// [`StructureSetError::InvalidReducedBias`] for the first reduced bias
+    /// the shift takes beyond `1e100` in magnitude; failure changes nothing.
     pub fn normalize_log_weights(&mut self) -> Result<(), StructureSetError> {
         let distribution = &mut *self.distribution;
         if distribution.sample_count() == 0 {
             return Err(StructureSetError::EmptyDistribution);
         }
         let count = distribution.sample_count();
-        let log_weights = distribution.weights.materialized(count);
-        let total = log_sum_exp(log_weights.iter().copied());
-        for log_weight in log_weights {
+        let total = log_sum_exp(distribution.weights.materialized(count).iter().copied());
+        if matches!(distribution.weights, Weights::Reweighted { .. }) {
+            if let Some(position) = distribution
+                .exact_log_weights()
+                .iter()
+                .position(|reduced| (reduced - total).abs() > REDUCED_BIAS_LIMIT)
+            {
+                return Err(StructureSetError::InvalidReducedBias {
+                    geometry: distribution.sample(position),
+                });
+            }
+        }
+        for log_weight in distribution.weights.materialized(count) {
             *log_weight -= total;
         }
+        distribution.populations = PopulationCache::default();
         Ok(())
     }
 
@@ -1119,13 +1561,35 @@ impl DistributionMut<'_> {
     ///
     /// # Errors
     ///
-    /// None yet; the result leaves room for weights that a target cannot
-    /// change.
+    /// [`StructureSetError::ReweightedTarget`] for reweighted samples, whose
+    /// weights belong to their target: reweight them to another temperature
+    /// with [`Ensemble::reweight`](super::Ensemble::reweight). Failure
+    /// changes nothing.
     pub fn set_target(
         &mut self,
         target: Option<ThermodynamicState>,
     ) -> Result<(), StructureSetError> {
         self.distribution.set_target(target)
+    }
+
+    /// Replaces the estimator of reweighted samples' group populations,
+    /// keeping their reduced biases and the target.
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::NotReweighted`] for any other weight model,
+    /// whose populations are exact sums. Failure changes nothing.
+    pub fn set_estimator(&mut self, estimator: Estimator) -> Result<(), StructureSetError> {
+        match &mut self.distribution.weights {
+            Weights::Reweighted {
+                estimator: current, ..
+            } => {
+                *current = estimator;
+                self.distribution.populations = PopulationCache::default();
+                Ok(())
+            }
+            _ => Err(StructureSetError::NotReweighted),
+        }
     }
 
     /// Sets each state's population in proportion to the Boltzmann factor
@@ -1160,15 +1624,15 @@ impl DistributionMut<'_> {
             .map(|energy| -(energy - minimum) / thermal_energy)
             .collect::<Vec<_>>();
         let target_total = log_sum_exp(targets.iter().copied());
-        let populations = distribution.state_log_populations();
-        let total = log_sum_exp(populations.iter().copied());
+        let populations = distribution.populations();
+        // Exact shares within each state, and the exact total weight.
+        let total = populations.shift + log_sum_exp(populations.sums.iter().copied());
         let log_weights = distribution
-            .partition
-            .assignments()
-            .iter()
-            .enumerate()
-            .map(|(position, state)| {
-                (distribution.sample_log_weight(position) - populations[*state])
+            .exact_log_weights()
+            .into_iter()
+            .zip(distribution.partition.assignments())
+            .map(|(exact, state)| {
+                (exact - populations.shift - populations.sums[*state])
                     + (targets[*state] - target_total)
                     + total
             })
@@ -1182,6 +1646,7 @@ impl DistributionMut<'_> {
             });
         }
         distribution.weights = Weights::Boltzmann(log_weights);
+        distribution.populations = PopulationCache::default();
         distribution.target = Some(target);
         Ok(())
     }
@@ -1195,8 +1660,10 @@ impl DistributionMut<'_> {
     /// Groups the samples into the states of `partition`, by sample
     /// position, changing no weight and no sample.
     ///
-    /// The distribution stays the same; only its description changes, and
-    /// populations follow the samples. A new state made of whole old states
+    /// The samples and their weights stay the same; only the grouping
+    /// changes, and each new state's population is the estimator over its
+    /// samples ([`Distribution::estimator`]), so under a cumulant estimator
+    /// a merged state's population need not be the sum of its parts'. A new state made of whole old states
     /// has their free energy at the target's temperature `T`,
     /// `F = -RT ln Σ exp(-E_i / RT)` over the old states' energies `E_i`.
     /// With Boltzmann populations at `T`
@@ -1302,6 +1769,7 @@ impl DistributionMut<'_> {
             })
             .collect();
         self.distribution.partition = partition;
+        self.distribution.populations = PopulationCache::default();
         Ok(())
     }
 }
@@ -1319,6 +1787,18 @@ fn free_energy(energies: &[f64], thermal_energy: f64) -> Option<f64> {
                     .map(|energy| -(energy - minimum) / thermal_energy),
             );
     free_energy.is_finite().then_some(free_energy)
+}
+
+/// Kish's effective sample size `(Σw)² / Σw²` of the weights `w = exp(ℓ)`
+/// for some finite log weights, at least one.
+fn kish(log_weights: impl Iterator<Item = f64> + Clone) -> f64 {
+    // Shifted by the largest log weight, the ratio is unchanged and the
+    // largest term is one, so neither sum overflows or cancels.
+    let maximum = log_weights.clone().fold(f64::NEG_INFINITY, f64::max);
+    let shifted = log_weights.map(move |log_weight| log_weight - maximum);
+    let total = log_sum_exp(shifted.clone());
+    let squares = log_sum_exp(shifted.map(|log_weight| 2.0 * log_weight));
+    (2.0 * total - squares).exp()
 }
 
 /// `exp(x) / Σ exp(x)` for each of some finite values, shifted by their

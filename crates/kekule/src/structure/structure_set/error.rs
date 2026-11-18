@@ -33,6 +33,10 @@ pub enum Requirement {
     Cell,
     /// Every geometry held in memory.
     InMemory,
+    /// A sampling record ([`Sampling`](crate::structure::Sampling)).
+    Sampling,
+    /// A sampling record that names a potential-energy column.
+    PotentialEnergy,
 }
 
 impl fmt::Display for Requirement {
@@ -47,6 +51,8 @@ impl fmt::Display for Requirement {
             Self::Temperature => "needs a temperature",
             Self::Cell => "needs a periodic cell on every geometry",
             Self::InMemory => "needs its geometries in memory",
+            Self::Sampling => "needs a sampling record",
+            Self::PotentialEnergy => "needs a potential-energy column",
         })
     }
 }
@@ -181,6 +187,54 @@ pub enum StructureSetError {
         /// The index of the state.
         state: usize,
     },
+    /// A geometry's step lies before the first step its set's sampling
+    /// record samples, so it is no sample of the sampled state
+    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)).
+    BeforeSampling {
+        /// The geometry's index.
+        geometry: usize,
+    },
+    /// A geometry has no value in a column reweighting reads: a bias column
+    /// of the set's sampling record, or its potential-energy column at
+    /// another temperature
+    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)).
+    MissingColumnValue {
+        /// The column's key.
+        key: PropertyKey,
+        /// The geometry's index.
+        geometry: usize,
+    },
+    /// A reduced bias is not finite or exceeds `1e100` in magnitude
+    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)):
+    /// the geometry's energy or bias values are not physical.
+    InvalidReducedBias {
+        /// The geometry's index.
+        geometry: usize,
+    },
+    /// The target of reweighted samples cannot be set apart from their
+    /// weights ([`DistributionMut::set_target`](crate::structure::DistributionMut::set_target));
+    /// reweight them with [`Ensemble::reweight`](crate::structure::Ensemble::reweight)
+    /// instead.
+    ReweightedTarget,
+    /// A new sample cannot join reweighted samples, whose weights come from
+    /// the set's sampling record ([`Ensemble::push_sample`](crate::structure::Ensemble::push_sample),
+    /// [`Ensemble::push_state`](crate::structure::Ensemble::push_state)). Push
+    /// the geometry outside the distribution with
+    /// [`Ensemble::push`](crate::structure::Ensemble::push).
+    ReweightedSample {
+        /// The new geometry's index.
+        geometry: usize,
+    },
+    /// An estimator was given to a distribution whose samples are not
+    /// reweighted ([`DistributionMut::set_estimator`](crate::structure::DistributionMut::set_estimator)).
+    NotReweighted,
+    /// A grouping of samples covers another number of samples than the
+    /// distribution has
+    /// ([`Distribution::group_log_populations`](crate::structure::Distribution::group_log_populations)).
+    GroupingMismatch(LengthMismatch),
+    /// A sample's group is not below the number of groups
+    /// ([`Distribution::group_log_populations`](crate::structure::Distribution::group_log_populations)).
+    GroupOutOfRange(IndexOutOfRange),
     /// An energy window is not finite and nonnegative.
     InvalidEnergyWindow,
     /// A population fraction is not in `(0, 1]`.
@@ -321,6 +375,27 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "The Boltzmann population of state {state} is too small to represent at this temperature. Raise the temperature."
             ),
+            Self::BeforeSampling { geometry } => write!(
+                formatter,
+                "Geometry {geometry} lies before the first sampled step."
+            ),
+            Self::MissingColumnValue { key, geometry } => write!(
+                formatter,
+                "Geometry {geometry} has no value in the column \"{key}\"."
+            ),
+            Self::InvalidReducedBias { geometry } => {
+                write!(formatter, "The bias of geometry {geometry} is out of range.")
+            }
+            Self::ReweightedTarget => formatter.write_str(
+                "The distribution is reweighted to its target. Reweight it to change the target.",
+            ),
+            Self::ReweightedSample { geometry } => write!(
+                formatter,
+                "Geometry {geometry} cannot join the reweighted samples. Add it outside the distribution."
+            ),
+            Self::NotReweighted => formatter.write_str("The distribution is not reweighted."),
+            Self::GroupingMismatch(error) => error.fmt(formatter),
+            Self::GroupOutOfRange(error) => error.fmt(formatter),
             Self::InvalidEnergyWindow => {
                 formatter.write_str("The energy window is not finite and nonnegative.")
             }

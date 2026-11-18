@@ -23,7 +23,7 @@ cross-module rule.
 | `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), and an optional `Sampling` record | An order value on a geometry; a weight, a target state, or a distribution; a codec's frame state or a reader's failure types |
 | `Sampling` | The sampled `ThermodynamicState`, the first sampled step, and the keys of the set's potential-energy and bias columns | Column values; a weight or a target state; a method's parameters |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
-| `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, or Boltzmann populations), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
+| `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, Boltzmann populations, or reduced biases with an `Estimator`), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
 | `FrameTable` | A run's per-step records keyed by MD step: typed columns, a time column, and a `Sampling` record | Geometries; weights |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
 
@@ -466,23 +466,47 @@ one set are several ensembles sharing every coordinate.
 
 A distribution covers every geometry of its set or a sorted subset, its
 samples. Its weight model, read as a `WeightModel`, says how they are weighed:
-equally, by log weights the caller gives, or by log weights assigned as
-Boltzmann populations of the state energies at the target. Weights are stored
-as natural logarithms, one finite value per sample: weights from reweighting
-span hundreds of orders of magnitude, and a linear weight would underflow.
-Normalized weights and probabilities are derived on request. Log weights and
-the partition are indexed by sample position. The Boltzmann tag records
-provenance: later edits to samples, states, or energies keep it, and setting
-weights or a target at another temperature replaces it with plain log weights
-of the same values. The target is the `ThermodynamicState` the populations
-describe; changing weights never clears it, and Boltzmann weights always have
-one. Every sample is in exactly one state and every state has a representative
-sample; a state's population is the total weight of its samples, derived and
-never stored. Only states have energies, on
+equally, by log weights the caller gives, by log weights assigned as
+Boltzmann populations of the state energies at the target, or reweighted:
+each sample's reduced bias, derived from the set's sampling record against the
+target, with the `Estimator` that sums them into populations. Weights are
+stored as natural logarithms, one finite value per sample: weights from
+reweighting span hundreds of orders of magnitude, and a linear weight would
+underflow. Normalized weights and probabilities are derived on request. Log
+weights and the partition are indexed by sample position. The Boltzmann tag
+records provenance: later edits to samples, states, or energies keep it, and
+setting weights or a target at another temperature replaces it with plain log
+weights of the same values. The target is the `ThermodynamicState` the
+populations describe; changing weights never clears it, and Boltzmann and
+reweighted weights always have one. Every sample is in exactly one state and
+every state has a representative sample. Only states have energies, on
 one scale per distribution — a conformer's minimized energy or a computed free
 energy, never a snapshot's instantaneous energy, which stays a property of its
 geometry. Selecting and removing geometries remap the samples; a selection
 keeps the energy and properties of the states it keeps whole.
+
+Any group of samples, such as a state, a histogram bin, or a map cell, has a
+population: the distribution's estimator over the exact log weights of its
+samples. It is the exponential sum `ln Σ exp(ℓ_i)` for every model but
+reweighted weights, which name their own estimator. A sample's share within
+any group is exact, `exp(ℓ_i) / Σ exp(ℓ_j)` over the group. A sample's
+probability is its state's probability times its share within the state, so
+the probabilities of a state's samples sum to the state's, and weighted means
+within a state are exponential averages. State probabilities are the state
+populations normalized to sum to one. `Distribution::log_population` gives any
+group's probability on that scale, and `group_log_populations` normalizes the
+groups of a grouping, such as histogram bins, among themselves. A group that
+holds exactly one state's samples has that state's population, so in
+`log_population` it has the state's probability; in `group_log_populations`
+it does only when the groups cover all samples as the states do. Under a
+cumulant estimator the populations of a group's parts need not sum to the
+group's; that is inherent to the method. Cumulant populations also need
+well-populated groups: a group of two samples whose reduced biases differ by
+`d` is inflated by about `exp(d²/8)`, which is why PyReweighting masks bins
+under 10 frames. The effective sample size, of the
+distribution or of a group, is Kish's over the exact weights whatever the
+estimator, so it shows how far a reweighting degenerates. Populations are
+derived and never stored.
 
 A weight means something only against a target, so it is never a field of a
 geometry or of a set. What the engine recorded per geometry — a bias
@@ -490,6 +514,30 @@ potential, collective-variable values, an instantaneous energy, a repeat count
 — is a set column or a geometry property, and the weights an analysis uses are
 derived from those. `Ensemble::uniform` and `Ensemble::weighted` build the one-state
 readings, so weighting a trajectory needs no partition.
+
+Reweighting derives weights from the sampling record and its columns:
+`Distribution::reweighted` for given samples and states, `Ensemble::reweighted`
+for every geometry that can be a sample, as one state, and
+`Ensemble::reweight` again at another temperature or with another estimator,
+keeping the samples and states; without a temperature it keeps the target's. A sample's reduced bias is
+`b = β_s (U + ΣΔV) − β_t U`, with `β = 1/RT` at the sampled temperature `s`
+and the target temperature `t`, the potential energy `U`, and the sum `ΣΔV`
+of the bias columns. At the sampled temperature `b = β_s ΣΔV`, so only the
+bias columns are read; another temperature also needs the potential-energy
+column. Reweighting changes the temperature only. The target is the sampled
+state at the target temperature, and the `pV` term is neglected, which is
+negligible near ambient pressure. A geometry whose
+step lies before the record's first step, or whose bias or potential-energy
+cell is missing, cannot be a sample. Reweighting the potential energy of a run
+in explicit solvent to another temperature collapses: with 10⁴ waters the
+reduced bias spreads by `σ_b ≈ 8` for 300 → 310 K, and a few frames carry
+nearly all the weight. Reweighted weights belong to their target, so setting
+another target fails; reweight instead. Selecting keeps each kept sample's
+reduced bias, regrouping changes none, normalizing shifts them all together,
+collapsing gives each representative
+its state's population as a log weight and keeps the target, and a new
+sample cannot join. A growing file's new frames therefore stay outside the
+distribution; a new reweighted ensemble of the set takes them.
 
 A `ThermodynamicState` is the state a weight refers to: a finite, positive
 temperature and, in the isothermal-isobaric ensemble, a finite, positive
@@ -653,11 +701,14 @@ values `b_i`, the samples' log importance weights: the exact exponential sum,
 or the cumulant expansion to first, second (the default), or third order. It
 estimates group totals only; a sample's share within its group is always
 `exp(b_i) / Σ exp(b_j)`. An empty group, or reduced values whose estimate is
-not finite, has no population. See
+not finite, has no population. A distribution sums its states, and the bins
+or cells a host groups its samples into, with its estimator, and measures its
+effective sample size over the exact weights. See
 [estimators](crates/kekule/src/statistics/estimators.rs).
 
-Clustering groups the samples of an ensemble's distribution, weighted, or every
-geometry of a structure set, unweighted. It returns a `Partition`, the
+Clustering groups the samples of an ensemble's distribution, weighted by their
+exact log weights so that the current states' estimates do not steer the new
+grouping, or every geometry of a structure set, unweighted. It returns a `Partition`, the
 grouping type a distribution owns, and never changes the set.
 `DistributionMut::regroup` installs a partition without changing any weight or
 sample order. A new state that is one old state keeps its energy; one merged

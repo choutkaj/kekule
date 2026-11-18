@@ -1,6 +1,8 @@
 //! A structure set read as draws from a distribution: [`Ensemble`].
 
+use crate::statistics::Estimator;
 use crate::topology::AtomSelection;
+use crate::units::Quantity;
 
 use super::{
     Geometry, GeometryMut, GeometryStorage, InMemory, Place, SetColumnsMut, StructureSet,
@@ -9,6 +11,7 @@ use super::{
 
 mod distribution;
 mod partition;
+mod reweighting;
 mod states;
 #[cfg(test)]
 mod tests;
@@ -108,6 +111,89 @@ impl<S: GeometryStorage> Ensemble<S> {
         let mut ensemble = Self::uniform(set);
         ensemble.distribution_mut().set_log_weights(log_weights)?;
         Ok(ensemble)
+    }
+
+    /// Every geometry of `set` that can be a sample of its sampling record's
+    /// state as a sample of one state, represented by the first, reweighted
+    /// to `temperature` (the sampled temperature for `None`) with
+    /// `estimator`; see [`Distribution::reweighted`]. A geometry whose step
+    /// lies before the record's first step, or that lacks a value the
+    /// reweighting reads, is not a sample.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Distribution::reweighted`]; when the set has
+    /// geometries but none of them can be a sample, the reason its last one
+    /// cannot.
+    pub fn reweighted(
+        set: StructureSet<S>,
+        temperature: Option<Quantity<f64>>,
+        estimator: Estimator,
+    ) -> Result<Self, StructureSetError> {
+        let bias = reweighting::ReducedBias::new(
+            set.sampling(),
+            Some(set.columns()),
+            set.order(),
+            temperature,
+        )?;
+        let mut samples = Vec::new();
+        let mut reduced = Vec::new();
+        let mut last = None;
+        for geometry in 0..set.len() {
+            match bias.reduced(geometry) {
+                Ok(value) => {
+                    samples.push(geometry);
+                    reduced.push(value);
+                }
+                Err(
+                    error @ (StructureSetError::BeforeSampling { .. }
+                    | StructureSetError::MissingColumnValue { .. }),
+                ) => last = Some(error),
+                Err(error) => return Err(error),
+            }
+        }
+        if let (true, Some(error)) = (samples.is_empty(), last) {
+            return Err(error);
+        }
+        let distribution =
+            Distribution::reweighted_one_state(&bias, set.len(), samples, reduced, estimator)?;
+        Ok(Self { set, distribution })
+    }
+
+    /// Reweights the samples again from the set's sampling record, to
+    /// `temperature` with `estimator`, whatever their weights were, keeping
+    /// the samples, the states, and their energies and properties; see
+    /// [`Distribution::reweighted`]. `None` keeps the target's temperature,
+    /// or takes the sampled temperature without a target. Failure changes
+    /// nothing.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Distribution::reweighted`]. A sample that lies
+    /// before the record's first step fails with
+    /// [`StructureSetError::BeforeSampling`]; [`Self::reweighted`] rebuilds
+    /// the ensemble from the samples that can be reweighted.
+    pub fn reweight(
+        &mut self,
+        temperature: Option<Quantity<f64>>,
+        estimator: Estimator,
+    ) -> Result<(), StructureSetError> {
+        let bias = reweighting::ReducedBias::new(
+            self.set.sampling(),
+            Some(self.set.columns()),
+            self.set.order(),
+            temperature.or_else(|| self.distribution.temperature()),
+        )?;
+        let distribution = Distribution::reweighted_by(
+            &bias,
+            self.set.len(),
+            self.distribution.samples().clone(),
+            self.distribution.partition().clone(),
+            estimator,
+        )?
+        .with_states(self.distribution.states().to_vec())?;
+        self.distribution = distribution;
+        Ok(())
     }
 
     /// The structure set whose geometries the distribution reads.

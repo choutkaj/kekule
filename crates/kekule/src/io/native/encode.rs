@@ -29,6 +29,7 @@ use crate::structure::{
 };
 
 use super::StructureSetDescription;
+use crate::statistics::Estimator;
 use crate::topology::{MoleculeClass, ResidueClass, Topology};
 use crate::units::{BaseDimension, Unit};
 
@@ -858,6 +859,17 @@ impl<W: Write> Encoder<'_, W> {
             WeightModel::Boltzmann(log_weights) => {
                 self.u8(2)?;
                 self.f64s(log_weights)?;
+            }
+            WeightModel::Reweighted { estimator, reduced } => {
+                self.u8(3)?;
+                match estimator {
+                    Estimator::Exponential => self.u8(0)?,
+                    Estimator::Cumulant(order) => {
+                        self.u8(1)?;
+                        self.u8(order as u8)?;
+                    }
+                }
+                self.f64s(reduced)?;
             }
         }
         let partition = distribution.partition();

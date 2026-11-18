@@ -267,18 +267,23 @@ impl SampleObservations {
     /// out.
     pub fn weighted<S: GeometryStorage>(ensemble: &Ensemble<S>) -> Self {
         let distribution = ensemble.distribution();
+        let log_weights = distribution.sample_log_weights();
         Self::of_log_weights(
-            (0..ensemble.set().len())
-                .filter_map(|geometry| Some((geometry, distribution.log_weight(geometry)?))),
+            log_weights
+                .into_iter()
+                .enumerate()
+                .map(|(position, log_weight)| (distribution.sample(position), log_weight)),
         )
     }
 
     /// The listed geometries of `ensemble`, in the listed order, with its
     /// distribution restricted to them, as [`Ensemble::select`] restricts
     /// it: the listed samples, each with its probability among the listed
-    /// samples, and the other listed geometries left out. A probability
-    /// below the smallest positive `f64` contributes nothing and is left
-    /// out.
+    /// samples, and the other listed geometries left out. Each state's
+    /// population is estimated again from its listed samples, so the
+    /// probabilities equal those [`Self::weighted`] gives for
+    /// `ensemble.select(..)`. A probability below the smallest positive
+    /// `f64` contributes nothing and is left out.
     ///
     /// # Errors
     ///
@@ -289,10 +294,14 @@ impl SampleObservations {
         samples: impl IntoIterator<Item = usize>,
     ) -> Result<Self, StatisticsError> {
         let samples = checked(ensemble.set().len(), samples)?;
-        let distribution = ensemble.distribution();
-        Ok(Self::of_log_weights(samples.into_iter().filter_map(
-            |geometry| Some((geometry, distribution.log_weight(geometry)?)),
-        )))
+        let selected = ensemble.distribution().select(&samples);
+        let log_weights = selected.sample_log_weights();
+        Ok(Self::of_log_weights(
+            log_weights
+                .into_iter()
+                .enumerate()
+                .map(|(position, log_weight)| (samples[selected.sample(position)], log_weight)),
+        ))
     }
 
     /// Geometries with their natural-logarithm weights, observed with their

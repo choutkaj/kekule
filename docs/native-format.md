@@ -305,6 +305,9 @@ samples        := 0                                (every geometry)
 weights        := 0                                (equal)
                | 1 [f64; sample_count]             (log weights)
                | 2 [f64; sample_count]             (Boltzmann populations)
+               | 3 estimator [f64; sample_count]   (reduced biases)
+estimator      := 0                                (exponential sum)
+               | 1 order:u8                        (cumulant expansion, order 1 to 3)
 state_data     := representative:u32 energy:opt f64 owner
 state          := temperature:f64 pressure:opt f64
 geometries     := 0 geometry[geometry_count]       (inline)
@@ -346,7 +349,9 @@ are every geometry, or the geometries that a strictly ascending list of indices
 names; `sample_count` is the geometry count for every geometry. The weights
 are equal, or one finite log weight per sample, the natural logarithm of its
 weight, tagged as given or as Boltzmann populations of the state energies at
-the target; Boltzmann weights need a target. Each sample's assignment is the
+the target, or one reduced bias per sample with the estimator of group
+populations, each finite and at most 1e100 in magnitude; Boltzmann and
+reweighted weights need a target. Each sample's assignment is the
 index of its state, and each state's data holds the sample position of its
 representative. The reader validates the partition: every assignment names a
 stored state, and every representative is a sample of its own state, so no

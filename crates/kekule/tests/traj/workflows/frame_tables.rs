@@ -1,6 +1,7 @@
 //! Frame tables: exact round trips, crash and NUL tails, corrupt rows,
 //! continuing at a checkpoint, following a growing file, and joining a
-//! table into sets in memory and in files by step.
+//! table into sets in memory and in files by step, and reweighting a set
+//! over a growing file.
 
 use std::fs;
 use std::io::Write;
@@ -10,9 +11,10 @@ use std::sync::Arc;
 
 use kekule::math::Point3;
 use kekule::properties::{PropertyColumn, PropertyKey, PropertyValue};
+use kekule::statistics::{CumulantOrder, Estimator};
 use kekule::structure::{
-    ColumnRef, Geometry, Order, Positions, Sampling, StructureSet, StructureSetError,
-    ThermodynamicState,
+    ColumnRef, Ensemble, Geometry, Order, Positions, Samples, Sampling, StructureSet,
+    StructureSetError, ThermodynamicState,
 };
 use kekule::traj::frames::{
     append_frame_table, create_frame_table, read_frame_table, read_frame_table_from, ColumnSpec,
@@ -763,4 +765,43 @@ fn a_set_read_from_a_file_joins_the_table_and_keeps_it_on_refresh() {
     );
     assert_eq!(set.refresh().unwrap(), 0);
     assert_eq!(set.sampling(), sampling.as_ref());
+}
+
+#[test]
+fn a_reweighted_ensemble_over_a_growing_file_leaves_new_frames_out() {
+    let directory = Directory::new();
+    let path = directory.path("run.trr");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
+        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::RequireZero),
+    );
+    // Step 1500 is before sampling, 3500 has no dihedral bias.
+    write_structure_set(
+        &path,
+        &frames(&[1_500, 2_500, 3_000, 3_500]),
+        options.clone(),
+    )
+    .unwrap();
+    let topology = linear_carbon_topology(12);
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    set.join_frames(&bias_table(12)).unwrap();
+    let mut ensemble =
+        Ensemble::reweighted(set, None, Estimator::Cumulant(CumulantOrder::Second)).unwrap();
+    assert_eq!(
+        ensemble.distribution().samples(),
+        &Samples::Subset(vec![1, 2])
+    );
+    let distribution = ensemble.distribution().clone();
+    // The run goes on: the file grows by two frames.
+    let longer = directory.path("longer.trr");
+    write_structure_set(
+        &longer,
+        &frames(&[1_500, 2_500, 3_000, 3_500, 4_000, 4_500]),
+        options,
+    )
+    .unwrap();
+    fs::copy(&longer, &path).unwrap();
+    assert_eq!(ensemble.refresh().unwrap(), 2);
+    assert_eq!(ensemble.set().len(), 6);
+    assert_eq!(ensemble.distribution(), &distribution);
 }
