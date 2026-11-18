@@ -537,20 +537,33 @@ derived from those. `Ensemble::uniform` and `Ensemble::weighted` build the one-s
 readings, so weighting a trajectory needs no partition.
 
 Reweighting derives weights from the sampling record and its columns:
-`Distribution::reweighted` for given samples and states, `Ensemble::reweighted`
-for every geometry that can be a sample, as one state, and
-`Ensemble::reweight` again at another temperature or with another estimator,
-keeping the samples and states; without a temperature it keeps the target's. A sample's reduced bias is
-`b = β_s (U + ΣΔV) − β_t U`, with `β = 1/RT` at the sampled temperature `s`
+`Distribution::reweighted` for given samples and states, `Ensemble::reweight`
+for an ensemble's samples and states, at another temperature or with another
+estimator, and `Ensemble::reweighted` for every geometry of a set, as one
+state. Without a temperature, `Ensemble::reweight` keeps the target's. A
+sample's reduced bias is `b = β_s (U + ΣΔV) − β_t U`, with `β = 1/RT` at the sampled temperature `s`
 and the target temperature `t`, the potential energy `U`, and the sum `ΣΔV`
 of the bias columns. At the sampled temperature `b = β_s ΣΔV`, so only the
 bias columns are read; another temperature also needs the potential-energy
 column. Reweighting changes the temperature only. The target is the sampled
 state at the target temperature, and the `pV` term is neglected, which is
-negligible near ambient pressure. A geometry whose
-step lies before the record's first step, or whose bias or potential-energy
-cell is missing, cannot be a sample. Reweighting the potential energy of a run
-in explicit solvent to another temperature collapses: with 10⁴ waters the
+negligible near ambient pressure.
+
+One rule decides which geometries can be weighed. A geometry cannot be when
+its step lies before the record's first step, when a bias cell is missing, or,
+at another temperature, when its potential-energy cell is missing; the first
+reason that applies is its `Unweighable`. `Distribution::weighable` reports,
+for proposed samples, the weighable ones and each left-out one with its
+reason, and hosts word them. `Distribution::reweighted` refuses the first
+left-out sample. `Ensemble::reweight` leaves them out: a state keeps its data
+while it keeps a sample, its representative or else its first kept sample
+represents it, a state left empty goes, and the kept states keep their order.
+Its `Reweighting` report lists the left-out samples and each old state's new
+index. When samples are proposed and none can be weighed, the query and the
+ensemble fail with `NoWeighableSample`, whose reason is that of the first
+sample that got furthest through the checks.
+
+Reweighting the potential energy of a run in explicit solvent to another temperature collapses: with 10⁴ waters the
 reduced bias spreads by `σ_b ≈ 8` for 300 → 310 K, and a few frames carry
 nearly all the weight. Reweighted weights belong to their target, so setting
 another target fails; reweight instead. Selecting keeps each kept sample's

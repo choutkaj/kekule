@@ -27,3 +27,4 @@ mod support;
 mod thermodynamic_states;
 #[path = "../traj/support/mod.rs"]
 mod traj_support;
+mod weighable;

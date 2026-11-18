@@ -117,6 +117,47 @@ impl Partition {
         (self.assignments, self.representatives)
     }
 
+    /// This partition restricted to the samples at `kept`, strictly
+    /// increasing positions: the `i`th kept sample becomes sample `i`. A
+    /// state without a kept sample goes, and the others keep their order,
+    /// each represented by its representative when kept, else by its first
+    /// kept sample. Returns the new index of each old state.
+    pub(crate) fn restricted(&self, kept: &[usize]) -> (Self, Vec<Option<usize>>) {
+        debug_assert!(kept.windows(2).all(|pair| pair[0] < pair[1]));
+        let mut states = vec![None; self.state_count()];
+        for &position in kept {
+            states[self.assignments[position]] = Some(0);
+        }
+        let mut count = 0;
+        for state in states.iter_mut().flatten() {
+            *state = count;
+            count += 1;
+        }
+        let assignments = kept
+            .iter()
+            .map(|&position| {
+                states[self.assignments[position]].expect("a kept sample's state stays")
+            })
+            .collect::<Vec<_>>();
+        let mut representatives = vec![None; count];
+        for (sample, &position) in kept.iter().enumerate() {
+            if self.representatives[self.assignments[position]] == position {
+                representatives[assignments[sample]] = Some(sample);
+            }
+        }
+        for (sample, &state) in assignments.iter().enumerate() {
+            representatives[state].get_or_insert(sample);
+        }
+        let representatives = representatives
+            .into_iter()
+            .map(|sample| sample.expect("every kept state has a kept sample"))
+            .collect();
+        (
+            Self::from_parts_unchecked(assignments, representatives),
+            states,
+        )
+    }
+
     /// The number of partitioned samples.
     pub fn sample_count(&self) -> usize {
         self.assignments.len()

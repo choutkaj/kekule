@@ -4,7 +4,7 @@ use crate::diagnostics::{IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use std::fmt;
 
 use crate::properties::{PropertyError, PropertyKey};
-use crate::structure::GeometryError;
+use crate::structure::{GeometryError, Unweighable};
 use crate::topology::TopologySubsetError;
 use crate::units::UnitError;
 
@@ -204,6 +204,13 @@ pub enum StructureSetError {
         /// The geometry's index.
         geometry: usize,
     },
+    /// None of the proposed samples can be weighed
+    /// ([`Distribution::weighable`](crate::structure::Distribution::weighable),
+    /// [`Ensemble::reweight`](crate::structure::Ensemble::reweight)). The
+    /// reason is that of the first sample that got furthest through the
+    /// checks: before the first sampled step, then a missing bias value, then
+    /// a missing potential energy.
+    NoWeighableSample(Unweighable),
     /// A reduced bias is not finite or exceeds `1e100` in magnitude
     /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)):
     /// the geometry's energy or bias values are not physical.
@@ -394,6 +401,16 @@ impl fmt::Display for StructureSetError {
                 formatter,
                 "Geometry {geometry} has no value in the column \"{key}\"."
             ),
+            Self::NoWeighableSample(reason) => match reason {
+                Unweighable::BeforeSampling => formatter
+                    .write_str("No sample can be reweighted. Every sample lies before the first sampled step."),
+                Unweighable::MissingBias { key } => write!(
+                    formatter,
+                    "No sample can be reweighted. Samples lack values in the bias column \"{key}\"."
+                ),
+                Unweighable::MissingPotentialEnergy => formatter
+                    .write_str("No sample can be reweighted. Samples lack a potential energy."),
+            },
             Self::InvalidReducedBias { geometry } => {
                 write!(formatter, "The bias of geometry {geometry} is out of range.")
             }

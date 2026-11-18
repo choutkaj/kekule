@@ -9,7 +9,7 @@ use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::statistics::{CumulantOrder, Estimator, SampleObservations};
 use kekule::structure::{
     Distribution, Ensemble, Geometry, Order, Partition, Positions, Requirement, Samples, Sampling,
-    StateData, StructureSet, StructureSetError, ThermodynamicState, WeightModel,
+    StateData, StructureSet, StructureSetError, ThermodynamicState, Unweighable, WeightModel,
 };
 use kekule::topology::AtomSelection;
 use kekule::units::{Quantity, KELVIN, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE, NANOMETER};
@@ -384,13 +384,15 @@ fn geometries_that_cannot_be_samples_are_refused() {
     // An ensemble takes the geometries that can be samples.
     let ensemble = Ensemble::reweighted(set.clone(), None, CUMULANT).unwrap();
     assert_eq!(ensemble.distribution().samples(), &Samples::Subset(vec![1]));
-    // None can be at 310 K: the reason the last one cannot.
+    // None can be at 310 K: the reason of the one that got furthest.
+    let error = Ensemble::reweighted(set.clone(), Some(kelvin(310.0)), CUMULANT).unwrap_err();
     assert_eq!(
-        Ensemble::reweighted(set.clone(), Some(kelvin(310.0)), CUMULANT).unwrap_err(),
-        StructureSetError::MissingColumnValue {
-            key: key("dihedral"),
-            geometry: 2
-        }
+        error,
+        StructureSetError::NoWeighableSample(Unweighable::MissingPotentialEnergy)
+    );
+    assert_eq!(
+        error.to_string(),
+        "No sample can be reweighted. Samples lack a potential energy."
     );
     // A set without a record, or without the record's columns or steps.
     let mut unrecorded = set.clone();
@@ -493,13 +495,18 @@ fn the_estimator_changes_and_the_target_takes_a_reweighting() -> Result<(), Stru
     assert_eq!(ensemble.distribution().target(), Some(at(310.0)));
     assert_eq!(reduced(ensemble.distribution()), warm);
     assert_eq!(ensemble.distribution().estimator(), Estimator::Exponential);
-    // Equal weights reweight too.
+    // Equal weights reweight too, leaving out the geometry before the
+    // first sampled step.
     let (set, _) = ensemble.into_parts();
     let mut uniform = Ensemble::uniform(set);
-    assert!(matches!(
-        uniform.reweight(None, CUMULANT).unwrap_err(),
-        StructureSetError::BeforeSampling { geometry: 0 }
-    ));
+    let reweighting = uniform.reweight(None, CUMULANT)?;
+    assert_eq!(reweighting.left_out().len(), 1);
+    assert_eq!(reweighting.left_out()[0].geometry(), 0);
+    assert_eq!(
+        reweighting.left_out()[0].reason(),
+        &Unweighable::BeforeSampling
+    );
+    assert_eq!(reweighting.states(), [Some(0)]);
     Ok(())
 }
 
