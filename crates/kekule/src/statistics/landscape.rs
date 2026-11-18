@@ -383,7 +383,7 @@ impl Cell {
 /// `F = -RT ln(P_cell / P_max)` in kJ/mol, with `P_max` the population of
 /// the most populated cell that is not masked, so the lowest value is 0. A
 /// mean is the average of a value over the cell's samples, each with its
-/// exact share. [`Self::lowest`] names the cell with the lowest value.
+/// exact share. [`Self::lowest_cell`] names the cell with the lowest value.
 ///
 /// **Representative.** A cell's representative is the sample nearest its
 /// centre, measured in bin widths on each axis, across the period on a
@@ -414,7 +414,7 @@ impl Cell {
 /// assert_eq!(surface.shape(), [4]);
 /// assert_eq!(surface.cell_at(&[0.0]), Some(0));
 /// assert_eq!(surface.cell_at(&[90.0]), Some(1));
-/// assert_eq!(surface.lowest(), Some(0));
+/// assert_eq!(surface.lowest_cell(), Some(0));
 /// let [well, shoulder, ..] = surface.cells() else { unreachable!() };
 /// assert_eq!(well.value(), Some(0.0));
 /// // RT ln 3 above the well.
@@ -437,7 +437,7 @@ pub struct Landscape {
     temperature: Option<Quantity<f64>>,
     fewest: usize,
     cells: Vec<Cell>,
-    lowest: Option<usize>,
+    lowest_cell: Option<usize>,
     excluded: usize,
     outside: usize,
 }
@@ -612,7 +612,7 @@ impl Landscape {
                 }
             })
             .collect::<Vec<_>>();
-        let lowest = lowest_cell(&cells);
+        let lowest_cell = find_lowest_cell(&cells);
         Ok(Self {
             quantity,
             binnings: axes.iter().map(|axis| axis.binning).collect(),
@@ -622,7 +622,7 @@ impl Landscape {
             temperature,
             fewest,
             cells,
-            lowest,
+            lowest_cell,
             excluded,
             outside,
         })
@@ -641,8 +641,8 @@ impl Landscape {
     /// The index of the cell with the lowest value, or `None` when no cell
     /// has a value. Of equal values, the first in cell order. On a free
     /// energy, it is the most populated cell with a value, the one at 0.
-    pub const fn lowest(&self) -> Option<usize> {
-        self.lowest
+    pub const fn lowest_cell(&self) -> Option<usize> {
+        self.lowest_cell
     }
 
     /// The number of bins on each axis.
@@ -779,7 +779,7 @@ fn sample_cell(
 }
 
 /// The index of the cell with the lowest value, the first of equal ones.
-fn lowest_cell(cells: &[Cell]) -> Option<usize> {
+fn find_lowest_cell(cells: &[Cell]) -> Option<usize> {
     let mut lowest: Option<(usize, f64)> = None;
     for (index, cell) in cells.iter().enumerate() {
         if let Some(value) = cell.value {

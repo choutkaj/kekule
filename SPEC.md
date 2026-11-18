@@ -743,8 +743,8 @@ that is a state has the state's population. The free energy is
 `-RT ln(P_cell / P_max)` at the distribution's target temperature, or a given
 one when it has no target; a given temperature that differs from the target
 is refused. `P_max` is the population of the most populated cell that has a
-value, so the lowest free energy is 0. The landscape names its cell with the
-lowest value, the first of equal ones. A cell with fewer samples than a
+value, so the lowest free energy is 0. The landscape's lowest cell is the one with
+the lowest value, the first of equal ones. A cell with fewer samples than a
 threshold has no value but keeps its count, effective count, population,
 and representative, and its probability stays in the weighted histogram.
 The representative is the sample nearest the cell's centre, across the

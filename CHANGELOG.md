@@ -284,7 +284,7 @@ the main branch migrates by the table under "From the SampleSet API".
   `fewest` (unless set, 10 for a free energy and 1 for a mean) and takes a
   temperature for a distribution without a target, refusing a different one
   (`ConflictingTemperature`); `probabilities` is the weighted histogram,
-  `lowest` is the cell with the lowest value, and `cell_at` and `center`
+  `lowest_cell` is the cell with the lowest value, and `cell_at` and `center`
   convert between cells and axis values. Failures are a `LandscapeError`;
   `diagnostics::Resource::Cells` bounds the grid.
 

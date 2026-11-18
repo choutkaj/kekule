@@ -714,11 +714,11 @@ fn the_lowest_cell_has_the_lowest_value() -> Result<(), LandscapeError> {
     let values = [0.5, 1.2, 1.7, 2.0, 2.1, 2.5, 2.9].map(Some);
     let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(4));
     let surface = Landscape::free_energy(&every_sample(7), &[axis], &at_300())?;
-    assert_eq!(surface.lowest(), Some(2));
+    assert_eq!(surface.lowest_cell(), Some(2));
     assert_eq!(surface.cells()[2].value(), Some(0.0));
     // A masked cell is never the lowest.
     let masked = Landscape::free_energy(&every_sample(7), &[axis], &at_300().with_fewest(5))?;
-    assert_eq!(masked.lowest(), None);
+    assert_eq!(masked.lowest_cell(), None);
     // The lowest mean, the first of equal ones.
     let of = [3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0].map(Some);
     let mean = Landscape::mean(
@@ -728,6 +728,6 @@ fn the_lowest_cell_has_the_lowest_value() -> Result<(), LandscapeError> {
         &options(),
     )?;
     assert_eq!(mean.value_unit(), DIMENSIONLESS);
-    assert_eq!(mean.lowest(), Some(1));
+    assert_eq!(mean.lowest_cell(), Some(1));
     Ok(())
 }
