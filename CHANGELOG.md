@@ -152,6 +152,11 @@ the main branch migrates by the table under "From the SampleSet API".
   (`PdbWriteErrorKind`) unless `PdbWriteOptions` omits it.
 - `MmcifWriteOptions::with_implicit_hydrogens`, like PDB's, omits fixed
   implicit-hydrogen counts, so XYZ interpretations export.
+- `MmcifWriteOptions::with_chemistry`, like PDB's, omits represented stereo,
+  radicals, atom maps, isotopes mmCIF cannot name, and zero-order bonds. The
+  default still fails. Under `Omit`, the `WriteReport` counts each kind, so a
+  3D ligand with stereocenters writes, and its coordinates still define its
+  stereo.
 - `PdbWriteOptions::with_chain_ids(PdbChainIdPolicy::SegmentId)` writes chain
   identifiers of up to four characters as segment identifiers.
 - The PDB writer states reports' metal coordination as `LINK` records

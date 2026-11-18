@@ -320,7 +320,7 @@ fn bond_order_code(order: BondOrder) -> &'static str {
         BondOrder::Quadruple => "quad",
         // Metal coordination carries no conventional bond order.
         BondOrder::Dative => "?",
-        BondOrder::Zero => unreachable!("unsupported bond order was rejected"),
+        BondOrder::Zero => unreachable!("zero-order bonds are rejected or left out"),
     }
 }
 

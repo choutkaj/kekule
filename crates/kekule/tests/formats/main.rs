@@ -11,6 +11,7 @@ mod components;
 mod documents;
 mod export;
 mod mmcif;
+mod mmcif_write;
 mod native;
 mod native_versions;
 mod pdb;
