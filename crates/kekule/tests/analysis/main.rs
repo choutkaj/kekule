@@ -10,6 +10,7 @@ mod dssp;
 mod ensemble_sets;
 mod ensemble_weights;
 mod estimators;
+mod group_populations;
 mod interactions;
 mod measurements;
 mod solvation;
