@@ -11,7 +11,7 @@ use crate::units::{Quantity, CANONICAL_ENERGY_UNIT};
 use std::sync::OnceLock;
 
 use super::grouping::Grouping;
-use super::reweighting::ReducedBias;
+use super::reweighting::{ReducedBias, WeighableSamples};
 
 /// Which geometries of a set a [`Distribution`] covers: its samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,18 +414,13 @@ impl Distribution {
     /// # Errors
     ///
     /// The errors of [`Self::new`] and of
-    /// [`Ensemble::new`](super::Ensemble::new) against `set`;
-    /// `Missing(Sampling)` for a set without a sampling record;
-    /// `Missing(PotentialEnergy)` at another temperature when the record
-    /// names no potential-energy column; `Missing(Steps)` when the record's
-    /// first step is not 0 and the set has no steps; the errors of
-    /// [`ThermodynamicState::with_temperature`] for `temperature`;
-    /// [`StructureSetError::SamplingColumn`] for a named column that holds no
-    /// real energies; and, for the first sample that cannot be one,
-    /// [`StructureSetError::BeforeSampling`] when its step lies before the
-    /// record's first step, [`StructureSetError::MissingColumnValue`] when a
-    /// cell it reads is missing, and [`StructureSetError::InvalidReducedBias`]
-    /// when its reduced bias is not finite or exceeds `1e100` in magnitude.
+    /// [`Ensemble::new`](super::Ensemble::new) against `set`; the errors of
+    /// [`Self::weighable`] but `NoWeighableSample`; and, for the first sample
+    /// that cannot be weighed, [`StructureSetError::BeforeSampling`] when its
+    /// step lies before the record's first step and
+    /// [`StructureSetError::MissingColumnValue`] when a cell it reads is
+    /// missing. [`Ensemble::reweight`](super::Ensemble::reweight) leaves such
+    /// samples out instead.
     pub fn reweighted(
         set: &(impl StructureSetRead + ?Sized),
         samples: Samples,
@@ -433,41 +428,116 @@ impl Distribution {
         temperature: Option<Quantity<f64>>,
         estimator: Estimator,
     ) -> Result<Self, StructureSetError> {
-        let bias = ReducedBias::new(set.sampling(), set.columns(), set.order(), temperature)?;
-        Self::reweighted_by(&bias, set.len(), samples, partition, estimator)
-    }
-
-    /// A distribution of `samples` of a set of `len` geometries grouped by
-    /// `partition`, weighted by the reduced biases `bias` gives, as
-    /// [`Self::reweighted`] makes it.
-    pub(crate) fn reweighted_by(
-        bias: &ReducedBias<'_>,
-        len: usize,
-        samples: Samples,
-        partition: Partition,
-        estimator: Estimator,
-    ) -> Result<Self, StructureSetError> {
+        let bias = ReducedBias::new(
+            set.len(),
+            set.sampling(),
+            set.columns(),
+            set.order(),
+            temperature,
+        )?;
         let mut distribution = Self::new(samples, partition)?;
-        distribution.bind(len)?;
-        let reduced = (0..distribution.sample_count())
-            .map(|position| bias.reduced(distribution.sample(position)))
-            .collect::<Result<Vec<_>, _>>()?;
-        distribution.set_weights(Weights::Reweighted { estimator, reduced })?;
+        distribution.bind(set.len())?;
+        let weighed =
+            bias.weigh((0..distribution.sample_count()).map(|p| distribution.sample(p)))?;
+        if let Some(left_out) = weighed.left_out.first() {
+            return Err(bias.error(left_out));
+        }
+        distribution.set_weights(Weights::Reweighted {
+            estimator,
+            reduced: weighed.reduced,
+        })?;
         distribution.target = Some(bias.target());
         Ok(distribution)
     }
 
-    /// A distribution of `samples` of a set of `len` geometries as one state,
-    /// weighted by their reduced biases `reduced` (from `bias`, checked)
-    /// toward its target.
-    pub(crate) fn reweighted_one_state(
+    /// Which of `samples` of `set` a reweighting to `temperature` (the
+    /// sampled temperature for `None`) can weigh, and why each of the others
+    /// cannot. It is the rule [`Self::reweighted`] and
+    /// [`Ensemble::reweight`](super::Ensemble::reweight) apply: a geometry
+    /// is left out when its step lies before the sampling record's first
+    /// step, when it lacks a bias value, or, at another temperature, when it
+    /// lacks the potential energy ([`Unweighable`](super::Unweighable)).
+    ///
+    /// ```
+    /// use kekule::properties::{PropertyColumn, PropertyKey};
+    /// use kekule::structure::{
+    ///     Distribution, Geometry, Order, Positions, Samples, Sampling, StructureSet,
+    ///     ThermodynamicState, Unweighable,
+    /// };
+    /// use kekule::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
+    ///
+    /// let topology = kekule::smiles::to_topology("O")?;
+    /// let atoms = topology.atom_count();
+    /// let geometries = (0..3).map(|_| Geometry::new(Positions::zeros(atoms)));
+    /// let mut set = StructureSet::from_geometries(topology, geometries)?;
+    /// set.set_order(Some(Order::Step(vec![0, 500, 1_000])))?;
+    /// let boost = PropertyKey::new("boost")?;
+    /// set.columns_mut().insert(
+    ///     boost.clone(),
+    ///     PropertyColumn::Real {
+    ///         unit: KILOJOULE_PER_MOLE,
+    ///         values: vec![Some(1.0), Some(2.0), None],
+    ///     },
+    /// )?;
+    /// let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN))?;
+    /// let sampling = Sampling::new(state).with_from_step(500).with_bias([boost.clone()])?;
+    /// set.set_sampling(Some(sampling))?;
+    ///
+    /// let weighable = Distribution::weighable(&set, &Samples::All, None)?;
+    /// assert_eq!(weighable.samples(), [1]);
+    /// let left_out = weighable.left_out();
+    /// assert_eq!(left_out[0].geometry(), 0);
+    /// assert_eq!(left_out[0].reason(), &Unweighable::BeforeSampling);
+    /// assert_eq!(left_out[1].reason(), &Unweighable::MissingBias { key: boost });
+    /// // At 310 K the record names no potential energy to read.
+    /// let warmer = Some(Quantity::new(310.0, KELVIN));
+    /// assert!(Distribution::weighable(&set, &Samples::All, warmer).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::UnsortedSamples`] and
+    /// [`StructureSetError::IndexOutOfRange`] for a subset that does not
+    /// increase or lists a geometry outside the set; `Missing(Sampling)` for
+    /// a set without a sampling record; `Missing(PotentialEnergy)` at another
+    /// temperature when the record names no potential-energy column;
+    /// `Missing(Steps)` when the record's first step is not 0 and the set has
+    /// no steps; the errors of [`ThermodynamicState::with_temperature`] for
+    /// `temperature`; [`StructureSetError::SamplingColumn`] for a named
+    /// column that holds no real energies;
+    /// [`StructureSetError::InvalidReducedBias`] for the first sample whose
+    /// reduced bias is not finite or exceeds `1e100` in magnitude; and
+    /// [`StructureSetError::NoWeighableSample`] when `samples` lists
+    /// geometries and none can be weighed.
+    pub fn weighable(
+        set: &(impl StructureSetRead + ?Sized),
+        samples: &Samples,
+        temperature: Option<Quantity<f64>>,
+    ) -> Result<WeighableSamples, StructureSetError> {
+        let bias = ReducedBias::new(
+            set.len(),
+            set.sampling(),
+            set.columns(),
+            set.order(),
+            temperature,
+        )?;
+        let weighed = bias.weigh_samples(samples)?;
+        weighed.require_sample()?;
+        Ok(weighed.into_weighable())
+    }
+
+    /// A distribution of `samples` of a set of `len` geometries grouped by
+    /// `partition`, weighted by their reduced biases `reduced` (from `bias`,
+    /// checked) toward its target.
+    pub(crate) fn reweighted_from(
         bias: &ReducedBias<'_>,
         len: usize,
         samples: Vec<usize>,
+        partition: Partition,
         reduced: Vec<f64>,
         estimator: Estimator,
     ) -> Result<Self, StructureSetError> {
-        let partition = Partition::one_state(samples.len());
         let mut distribution = Self::new(Samples::Subset(samples), partition)?;
         distribution.bind(len)?;
         distribution.set_weights(Weights::Reweighted { estimator, reduced })?;

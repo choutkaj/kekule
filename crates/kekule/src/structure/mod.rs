@@ -154,8 +154,8 @@ pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopolog
 pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
 pub use ensemble::{
-    Distribution, DistributionMut, Ensemble, Partition, PartitionError, Samples, StateData,
-    StateIter, StateView, WeightModel,
+    Distribution, DistributionMut, Ensemble, LeftOut, Partition, PartitionError, Reweighting,
+    Samples, StateData, StateIter, StateView, Unweighable, WeighableSamples, WeightModel,
 };
 pub(crate) use ensemble::{Grouping, Weights};
 pub(crate) use geometry::{subset_rows, GeometryData};

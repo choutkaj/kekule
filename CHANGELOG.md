@@ -255,15 +255,24 @@ the main branch migrates by the table under "From the SampleSet API".
   reduced log weights (`log_sum`): the exponential sum, or the cumulant
   expansion to a `CumulantOrder`, second by default.
 - Distributions reweight a biased run from its set's sampling record:
-  `Distribution::reweighted`, `Ensemble::reweighted` (every geometry that can
-  be a sample, as one state), and `Ensemble::reweight` (again, at another
-  temperature or with another estimator). Each sample's reduced bias,
-  `β_s (U + ΣΔV) − β_t U`, is its exact log weight, read as
-  `WeightModel::Reweighted { estimator, reduced }`, with the target the sampled
-  state at the target temperature. A geometry before the record's first step
-  or with a missing cell cannot be a sample (`StructureSetError::BeforeSampling`,
-  `MissingColumnValue`); `Requirement::Sampling` and `PotentialEnergy` name what
-  a set lacks, and `InvalidReducedBias` refuses an unphysical bias.
+  `Distribution::reweighted` (given samples and states), `Ensemble::reweight`
+  (an ensemble's samples and states, at another temperature or with another
+  estimator), and `Ensemble::reweighted` (every geometry, as one state). Each
+  sample's reduced bias, `β_s (U + ΣΔV) − β_t U`, is its exact log weight,
+  read as `WeightModel::Reweighted { estimator, reduced }`, with the target the
+  sampled state at the target temperature. `Requirement::Sampling` and
+  `PotentialEnergy` name what a set lacks, and `InvalidReducedBias` refuses an
+  unphysical bias.
+- `Distribution::weighable` tells which proposed samples a reweighting can
+  weigh (`WeighableSamples`), and why each other is left out (`LeftOut`, with
+  an `Unweighable` reason: `BeforeSampling`, `MissingBias { key }`, or
+  `MissingPotentialEnergy` at another temperature). It is the rule every
+  reweighting applies. `Distribution::reweighted` refuses the first left-out
+  sample (`StructureSetError::BeforeSampling`, `MissingColumnValue`).
+  `Ensemble::reweight` leaves them out, drops the states left empty, renumbers
+  the others in order, and returns a `Reweighting` report of the left-out
+  samples and each old state's new index. With no weighable sample, both fail
+  with `StructureSetError::NoWeighableSample`, which names the reason.
   `DistributionMut::set_estimator` changes the estimator (`NotReweighted`
   otherwise); `set_target` refuses reweighted weights (`ReweightedTarget`), and
   `push_sample` and `push_state` refuse new samples (`ReweightedSample`).
