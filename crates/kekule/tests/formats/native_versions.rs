@@ -36,7 +36,7 @@ use kekule::properties::{PropertyColumn, PropertyKey, PropertyTable, PropertyVal
 use kekule::smiles;
 use kekule::structure::{
     Distribution, Ensemble, Forces, Geometry, GeometryIndex, Order, Partition, Positions, Samples,
-    StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities,
+    Sampling, StateData, Structure, StructureSet, ThermodynamicState, TimeAxis, Velocities,
 };
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuilder};
 use kekule::units::{
@@ -147,6 +147,13 @@ const FIXTURES: &[Fixture] = &[
         kind: NativeKind::StructureSet,
         perception: true,
         build: Build::Stable(|| write(&structure_set_columns(), true)),
+    },
+    Fixture {
+        name: "structure_set_sampling",
+        since: 9,
+        kind: NativeKind::StructureSet,
+        perception: true,
+        build: Build::Stable(|| write(&structure_set_sampling(), true)),
     },
     Fixture {
         name: "interpreted_structure_set",
@@ -329,6 +336,7 @@ fn sets_of_versions_before_9_have_no_columns() {
             .unwrap();
         assert_eq!(set.columns().len(), set.len(), "v{version}");
         assert!(!set.columns().has_data(), "v{version}");
+        assert!(set.sampling().is_none(), "v{version}");
         let description = decode(version, named("structure_set_description"))
             .into_structure_set_description()
             .unwrap();
@@ -339,6 +347,10 @@ fn sets_of_versions_before_9_have_no_columns() {
         .into_structure_set()
         .unwrap();
     assert_eq!(columns.columns(), structure_set_columns().columns());
+    let sampled = decode(9, named("structure_set_sampling"))
+        .into_structure_set()
+        .unwrap();
+    assert_eq!(sampled.sampling(), structure_set_sampling().sampling());
 }
 
 fn named(name: &str) -> &'static Fixture {
@@ -693,6 +705,26 @@ fn structure_set_columns() -> StructureSet {
     for (key, column) in columns_table().iter() {
         columns.insert(key.clone(), column.clone()).unwrap();
     }
+    set
+}
+
+/// The set with columns and a sampling record in the isothermal-isobaric
+/// ensemble, which names columns without values.
+fn structure_set_sampling() -> StructureSet {
+    let mut set = structure_set_columns();
+    let state = ThermodynamicState::isothermal_isobaric(
+        Quantity::new(298.15, KELVIN),
+        Quantity::new(1.01325, BAR),
+    )
+    .unwrap();
+    let sampling = Sampling::new(state)
+        .with_from_step(7)
+        .with_method("GaMD dual boost")
+        .with_potential_energy(key("potential_energy"))
+        .unwrap()
+        .with_bias([key("bias"), key("bias.dihedral")])
+        .unwrap();
+    set.set_sampling(Some(sampling)).unwrap();
     set
 }
 

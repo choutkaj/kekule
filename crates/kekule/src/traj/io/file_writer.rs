@@ -652,7 +652,8 @@ impl Drop for FileTrajectoryWriter {
 /// [`TrajectoryIoErrorKind::UnsupportedField`] for state no trajectory
 /// format stores, which must be cleared first: set properties
 /// ([`GeometryField::SetProperties`]), set columns
-/// ([`GeometryField::SetColumns`]), and a step or coordinate order
+/// ([`GeometryField::SetColumns`]), a sampling record
+/// ([`GeometryField::SetSampling`]), and a step or coordinate order
 /// ([`GeometryField::OrderStep`], [`GeometryField::OrderCoordinate`]).
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
@@ -733,7 +734,7 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
 }
 
 /// Fails for structure set state no trajectory format stores: set properties,
-/// set columns, and a step or coordinate order.
+/// set columns, a sampling record, and a step or coordinate order.
 fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
     let field = set_fields(set).first().copied().or(match set.order() {
         Some(Order::Step(_)) => Some(GeometryField::OrderStep),

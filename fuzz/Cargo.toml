@@ -140,3 +140,10 @@ path = "fuzz_targets/select.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "frame_table"
+path = "fuzz_targets/frame_table.rs"
+test = false
+doc = false
+bench = false

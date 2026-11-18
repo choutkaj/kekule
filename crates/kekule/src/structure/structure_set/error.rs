@@ -203,6 +203,32 @@ pub enum StructureSetError {
     /// as a column of another length or a value of another type; see the
     /// source.
     Column(Box<PropertyError>),
+    /// A column the set's [`Sampling`](crate::structure::Sampling) record
+    /// names holds something other than real energies, or would after the
+    /// edit ([`StructureSet::set_sampling`](super::StructureSet::set_sampling),
+    /// [`SetColumnsMut`](super::SetColumnsMut)).
+    SamplingColumn {
+        /// The column's key.
+        key: PropertyKey,
+    },
+    /// A sampling record names a column twice
+    /// ([`Sampling::with_bias`](crate::structure::Sampling::with_bias)).
+    RepeatedSamplingColumn {
+        /// The column's key.
+        key: PropertyKey,
+    },
+    /// A column the set's sampling record names cannot be removed
+    /// ([`SetColumnsMut::remove`](super::SetColumnsMut::remove),
+    /// [`SetColumnsMut::clear`](super::SetColumnsMut::clear)). Clear the
+    /// record with [`StructureSet::set_sampling`](super::StructureSet::set_sampling)
+    /// first.
+    ColumnInUse {
+        /// The column's key.
+        key: PropertyKey,
+    },
+    /// The set already has another sampling record
+    /// ([`StructureSet::join_frames`](super::StructureSet::join_frames)).
+    SamplingMismatch,
     /// A geometry's structural state is invalid; see the source.
     Geometry(GeometryError),
     /// Projecting the topology onto a selection failed; see the source.
@@ -309,6 +335,20 @@ impl fmt::Display for StructureSetError {
             }
             Self::Column(_) => {
                 formatter.write_str("Cannot change the columns of the structure set.")
+            }
+            Self::SamplingColumn { key } => {
+                write!(formatter, "The column \"{key}\" holds no energies.")
+            }
+            Self::RepeatedSamplingColumn { key } => write!(
+                formatter,
+                "The sampling record names the column \"{key}\" twice."
+            ),
+            Self::ColumnInUse { key } => write!(
+                formatter,
+                "The sampling record names the column \"{key}\". Remove the record first."
+            ),
+            Self::SamplingMismatch => {
+                formatter.write_str("The structure set has another sampling record.")
             }
             Self::Geometry(_) => formatter.write_str("A geometry is invalid."),
             Self::Subset(_) => formatter.write_str("Cannot subset the structure set."),

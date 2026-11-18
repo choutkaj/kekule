@@ -358,7 +358,10 @@ fn unrepresentable(field: GeometryField, geometry: usize) -> FormatError {
     )
     .with_detail(FormatErrorDetail::UnrepresentableState(field));
     match field {
-        GeometryField::Order | GeometryField::SetProperties | GeometryField::SetColumns => error,
+        GeometryField::Order
+        | GeometryField::SetProperties
+        | GeometryField::SetColumns
+        | GeometryField::SetSampling => error,
         _ => error.in_record(geometry),
     }
 }

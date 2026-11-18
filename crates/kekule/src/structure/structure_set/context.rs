@@ -4,10 +4,10 @@ use std::fmt;
 
 use crate::properties::{OwnerProperties, PropertyTable};
 
-use super::{GeometryIndex, GeometryView, Place, StructureSetRead};
+use super::{GeometryIndex, GeometryView, Place, Sampling, StructureSetRead};
 
 /// What a borrowed geometry's set records about it: its place in the set's
-/// order, and the set's properties and columns.
+/// order, and the set's properties, columns, and sampling record.
 ///
 /// [`StructureKind::InSet`](crate::structure::StructureKind::InSet) holds
 /// it. Writers and reductions read it so that this state is written,
@@ -20,16 +20,18 @@ pub struct SetContext<'a> {
     place: Option<Place>,
     properties: Option<&'a OwnerProperties>,
     columns: Option<&'a PropertyTable<GeometryIndex>>,
+    sampling: Option<&'a Sampling>,
 }
 
 impl<'a> SetContext<'a> {
-    /// The context of a geometry at `place` in a set without properties or
-    /// columns.
+    /// The context of a geometry at `place` in a set without properties,
+    /// columns, or a sampling record.
     pub(crate) const fn new(place: Option<Place>) -> Self {
         Self {
             place,
             properties: None,
             columns: None,
+            sampling: None,
         }
     }
 
@@ -39,6 +41,7 @@ impl<'a> SetContext<'a> {
             place: view.place(),
             properties: view.reader.properties(),
             columns: view.reader.columns(),
+            sampling: view.reader.sampling(),
         }
     }
 
@@ -52,6 +55,11 @@ impl<'a> SetContext<'a> {
         self.columns
     }
 
+    /// The sampling record of the geometry's set, when its reader has one.
+    pub(crate) const fn set_sampling(self) -> Option<&'a Sampling> {
+        self.sampling
+    }
+
     /// The geometry's place in its set's order: a time and step, a step, or a
     /// coordinate in the order's unit. `None` in an unordered set.
     pub const fn place(self) -> Option<Place> {
@@ -60,7 +68,7 @@ impl<'a> SetContext<'a> {
 }
 
 /// Two contexts are equal when they report the same place, whatever set
-/// properties and columns they borrow.
+/// properties, columns, and sampling record they borrow.
 impl PartialEq for SetContext<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.place == other.place

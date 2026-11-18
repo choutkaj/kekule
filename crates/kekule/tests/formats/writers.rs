@@ -3093,6 +3093,78 @@ fn writers_refuse_or_report_set_columns() {
 }
 
 #[test]
+fn writers_refuse_or_report_a_sampling_record() {
+    use kekule::properties::PropertyKey;
+    use kekule::structure::{Sampling, ThermodynamicState};
+    use kekule::traj::io::{write_structure_set_to, TrajectoryWriteOptions};
+    use kekule::traj::{TrajectoryFormat, TrajectoryIoError};
+    use kekule::units::{Quantity, KELVIN};
+    use kekule::xyz::{self, XyzWriteOptions};
+    let omit = UnrepresentablePolicy::Omit;
+    let sampling = [WriteOmission::GeometryState {
+        field: GeometryField::SetSampling,
+        geometries: 2,
+    }];
+
+    let mut set = methane_set(2);
+    let bare_sdf = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
+    let bare_pdb = pdb::write(&set, PdbWriteOptions::default()).unwrap().0;
+    let (bare_xyz, bare_report) = xyz::write(&set, XyzWriteOptions::default()).unwrap();
+    // The record's bias column holds no values yet, so the set has no columns.
+    let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN)).unwrap();
+    let record = Sampling::new(state)
+        .with_bias([PropertyKey::new("bias").unwrap()])
+        .unwrap();
+    set.set_sampling(Some(record)).unwrap();
+    let detail = Some(FormatErrorDetail::UnrepresentableState(
+        GeometryField::SetSampling,
+    ));
+
+    let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the SDF output in record 1. The structure set sampling record has no SDF representation."
+    );
+    assert_eq!(error.detail(), detail.as_ref());
+    let (text, report) = sdf::write(
+        &set,
+        SdfWriteOptions::from(MolfileWriteOptions::default().with_properties(omit)),
+    )
+    .unwrap();
+    assert_eq!(text, bare_sdf);
+    assert_eq!(report.omissions(), sampling);
+
+    let error = pdb::write(&set, PdbWriteOptions::default()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Cannot write the PDB output. The structure set sampling record has no PDB representation."
+    );
+    let (text, report) =
+        pdb::write(&set, PdbWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare_pdb);
+    assert_eq!(report.omissions(), sampling);
+
+    let error = xyz::write(&set, XyzWriteOptions::default()).unwrap_err();
+    assert_eq!(error.detail(), detail.as_ref());
+    let (text, report) =
+        xyz::write(&set, XyzWriteOptions::default().with_properties(omit)).unwrap();
+    assert_eq!(text, bare_xyz);
+    assert_eq!(
+        report.omissions(),
+        [bare_report.omissions(), &sampling[..]].concat()
+    );
+
+    let mut sink = std::io::Cursor::new(Vec::new());
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz);
+    assert_eq!(
+        write_structure_set_to(&mut sink, &set, options.clone()).unwrap_err(),
+        TrajectoryIoError::unsupported_field(GeometryField::SetSampling)
+    );
+    set.set_sampling(None).unwrap();
+    write_structure_set_to(&mut sink, &set, options).unwrap();
+}
+
+#[test]
 fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     use kekule::properties::{PropertyKey, PropertyValue};
     use kekule::topology::TopologyAtomIndex;

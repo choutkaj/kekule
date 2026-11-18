@@ -1,0 +1,22 @@
+#kekule-frames	1
+#column	step	int
+#column	time	real	ps
+#column	stage	text
+#column	potential_energy	real	kJ/mol
+#column	bias.potential	real	kJ/mol
+#column	bias.dihedral	real	kJ/mol
+#column	boosted	bool
+#column	replica	int
+#time	time
+#state	temperature	300	K
+#state	pressure	1	bar
+#sampling	from_step	1000
+#sampling	potential_energy	potential_energy
+#sampling	method	GaMD dual boost
+#bias	bias.potential
+#bias	bias.dihedral
+## a comment
+step	time	stage	potential_energy	bias.potential	bias.dihedral	boosted	replica
+0	0	nvt	-30521.4410981			false	0
+500	1	\N	-0	5e-324	1e300		-9223372036854775808
+1000	2	md\tx\\N	-30530.12	1.25	0.5	true	

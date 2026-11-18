@@ -8,7 +8,8 @@ use crate::topology::{AtomSelection, Topology, TopologyPerceptionError};
 
 use super::subset_rows;
 use super::{
-    DenseArrayError, Geometry, GeometryData, GeometryError, GeometryMut, Positions, Structure,
+    DenseArrayError, Geometry, GeometryData, GeometryError, GeometryMut, Positions, Sampling,
+    Structure,
 };
 
 mod columns;
@@ -100,6 +101,7 @@ pub struct StructureSet<S = InMemory> {
     storage: S,
     order: Option<Order>,
     columns: PropertyTable<GeometryIndex>,
+    sampling: Option<Sampling>,
 }
 
 impl<S: GeometryStorage> StructureSet<S> {
@@ -113,6 +115,7 @@ impl<S: GeometryStorage> StructureSet<S> {
             storage,
             order,
             columns,
+            sampling: None,
         }
     }
 
@@ -223,10 +226,64 @@ impl<S: GeometryStorage> StructureSet<S> {
         &self.topology
     }
 
-    /// Takes `columns`, one row per geometry.
+    /// Takes `columns`, one row per geometry, which keep the sampling record's
+    /// columns real energies.
     pub(crate) fn set_columns(&mut self, columns: PropertyTable<GeometryIndex>) {
         debug_assert_eq!(columns.len(), self.len());
+        debug_assert!(self
+            .sampling
+            .as_ref()
+            .is_none_or(|sampling| sampling.check_columns(&columns).is_ok()));
         self.columns = columns;
+    }
+
+    /// The sampling record: the state the geometries sample, from which step,
+    /// and which columns hold their potential energy and bias. `None` when
+    /// nothing records it.
+    ///
+    /// The record belongs to the set, as the columns do: selecting, loading
+    /// through a reader, an atom subset, a [`Processed`](crate::traj::Processed)
+    /// reader, and refreshing a growing file keep it.
+    pub fn sampling(&self) -> Option<&Sampling> {
+        self.sampling.as_ref()
+    }
+
+    /// Replaces or clears the sampling record. Failure changes nothing.
+    ///
+    /// A column the record names must be a real column of energies, or
+    /// absent: a column without values, which reads as missing energies.
+    ///
+    /// ```
+    /// use kekule::properties::{PropertyColumn, PropertyKey};
+    /// use kekule::structure::{Geometry, Positions, Sampling, StructureSet, ThermodynamicState};
+    /// use kekule::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
+    ///
+    /// let topology = kekule::smiles::to_topology("O")?;
+    /// let geometry = || Geometry::new(Positions::zeros(topology.atom_count()));
+    /// let mut set = StructureSet::from_geometries(topology.clone(), [geometry(), geometry()])?;
+    /// let bias = PropertyKey::new("bias")?;
+    /// set.columns_mut().insert(
+    ///     bias.clone(),
+    ///     PropertyColumn::Real { unit: KILOJOULE_PER_MOLE, values: vec![Some(1.5), Some(0.25)] },
+    /// )?;
+    /// let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN))?;
+    /// set.set_sampling(Some(Sampling::new(state).with_bias([bias.clone()])?))?;
+    /// assert_eq!(set.sampling().unwrap().bias(), [bias.clone()]);
+    /// // The record's columns stay.
+    /// assert!(set.columns_mut().remove(&bias).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`StructureSetError::SamplingColumn`] for a named column that holds
+    /// other values than real energies.
+    pub fn set_sampling(&mut self, sampling: Option<Sampling>) -> Result<(), StructureSetError> {
+        if let Some(sampling) = &sampling {
+            sampling.check_columns(&self.columns)?;
+        }
+        self.sampling = sampling;
+        Ok(())
     }
 
     /// Takes `order`, checked against the geometries, after the storage
@@ -250,7 +307,8 @@ impl StructureSet {
     /// requested order: a faithful copy. Each picked geometry is kept whole,
     /// with its velocities, forces, occupancies, and B-factors; the set
     /// keeps the reader's order values and column rows for the picked
-    /// geometries and the reader's set properties, when it has them.
+    /// geometries, and the reader's set properties and sampling record, when
+    /// it has them.
     ///
     /// Ranges and strides can be written as `(start..end).step_by(stride)`,
     /// and every geometry as `0..reader.len()`. Indices may repeat and come in
@@ -363,6 +421,7 @@ impl StructureSet {
                 .select_rows(&indices)
                 .expect("the columns have a row per geometry");
         }
+        set.sampling = reader.sampling().cloned();
         Ok(set)
     }
 
@@ -558,7 +617,7 @@ impl StructureSet {
     /// Copies geometries in the requested order, sharing the topology and each
     /// geometry's state. Ranges and strides can be written as
     /// `(start..end).step_by(stride)`; duplicates and reordering are
-    /// allowed. Set properties are kept.
+    /// allowed. Set properties and the sampling record are kept.
     ///
     /// Each geometry keeps its order value, which then need not increase,
     /// and its column row.
@@ -577,8 +636,9 @@ impl StructureSet {
     }
 
     /// Publishes one induced topology subset and projects every geometry onto
-    /// it. Set and per-geometry owner properties are dropped; the order and
-    /// the columns still describe the geometries and are kept.
+    /// it. Set and per-geometry owner properties are dropped; the order, the
+    /// columns, and the sampling record still describe the geometries and are
+    /// kept.
     pub fn subset(&self, selection: &AtomSelection) -> Result<Self, StructureSetError> {
         let subset = Topology::subset(self.topology.clone(), selection)?;
         let (atoms, bonds) = subset_rows(&subset);
@@ -598,6 +658,7 @@ impl StructureSet {
             storage: InMemory::new(geometries),
             order: self.order.clone(),
             columns: self.columns.clone(),
+            sampling: self.sampling.clone(),
         })
     }
 
@@ -611,7 +672,8 @@ impl StructureSet {
     }
 
     /// Consumes the set, returning its geometries in order and dropping the
-    /// topology, the order, the columns, and the set properties.
+    /// topology, the order, the columns, the sampling record, and the set
+    /// properties.
     pub fn into_geometries(self) -> Vec<Geometry> {
         self.storage.geometries
     }
@@ -655,6 +717,7 @@ impl StructureSet {
                 .columns
                 .select_rows(indices)
                 .expect("the indices are checked"),
+            sampling: self.sampling.clone(),
         }
     }
 
@@ -724,6 +787,10 @@ impl StructureSetRead for StructureSet {
 
     fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
         Some(&self.columns)
+    }
+
+    fn sampling(&self) -> Option<&Sampling> {
+        self.sampling.as_ref()
     }
 
     fn peek(&self, index: usize) -> Option<GeometryView<'_, dyn StructureSetRead>> {

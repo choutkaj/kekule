@@ -4,6 +4,7 @@ mod append;
 mod dense_vectors;
 mod frame_buffers;
 mod frame_index;
+mod frame_tables;
 mod geometry_storage;
 mod growing;
 mod loading;

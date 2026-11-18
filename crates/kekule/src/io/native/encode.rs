@@ -20,11 +20,12 @@ use crate::perception::{
     rings::RingBasisModel, valence::ValenceModel, valence::ValenceValidation, Perception,
 };
 use crate::properties::{
-    GeometryProperties, OwnerProperties, PropertyColumn, PropertyRow, PropertyTable, PropertyValue,
+    GeometryProperties, OwnerProperties, PropertyColumn, PropertyKey, PropertyRow, PropertyTable,
+    PropertyValue,
 };
 use crate::structure::{
-    Distribution, Geometry, GeometryIndex, GeometryView, Order, Samples, Structure, StructureSet,
-    ThermodynamicState, WeightModel,
+    Distribution, Geometry, GeometryIndex, GeometryView, Order, Samples, Sampling, Structure,
+    StructureSet, ThermodynamicState, WeightModel,
 };
 
 use super::StructureSetDescription;
@@ -122,6 +123,7 @@ struct SetHead<'a> {
     geometry_count: usize,
     order: Option<&'a Order>,
     columns: &'a PropertyTable<GeometryIndex>,
+    sampling: Option<&'a Sampling>,
 }
 
 impl<'a> SetHead<'a> {
@@ -132,6 +134,7 @@ impl<'a> SetHead<'a> {
             geometry_count: set.len(),
             order: set.order(),
             columns: set.columns(),
+            sampling: set.sampling(),
         }
     }
 
@@ -142,6 +145,7 @@ impl<'a> SetHead<'a> {
             geometry_count: description.geometry_count(),
             order: description.order(),
             columns: description.columns(),
+            sampling: description.sampling(),
         }
     }
 }
@@ -808,7 +812,28 @@ impl<W: Write> Encoder<'_, W> {
                 self.f64s(values)?;
             }
         }
-        self.table(head.columns)
+        self.table(head.columns)?;
+        match head.sampling {
+            None => self.u8(0),
+            Some(sampling) => {
+                self.u8(1)?;
+                self.sampling(sampling)
+            }
+        }
+    }
+
+    /// A set's sampling record: the state, the first step, and the named
+    /// columns.
+    fn sampling(&mut self, sampling: &Sampling) -> Result {
+        self.thermodynamic_state(sampling.state())?;
+        self.u64(sampling.from_step())?;
+        self.opt_str(sampling.potential_energy().map(PropertyKey::as_str))?;
+        self.opt_str(sampling.method())?;
+        self.count(sampling.bias().len())?;
+        for column in sampling.bias() {
+            self.str(column.as_str())?;
+        }
+        Ok(())
     }
 
     /// An ensemble's distribution: its samples, weights, partition, states,

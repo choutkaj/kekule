@@ -309,6 +309,9 @@ pub enum GeometryField {
     SetProperties,
     /// A structure set's columns: one value per geometry.
     SetColumns,
+    /// A structure set's sampling record
+    /// ([`Sampling`](crate::structure::Sampling)).
+    SetSampling,
     /// A structure's crystallographic occupancies.
     Occupancies,
     /// A structure's crystallographic B factors.
@@ -333,6 +336,7 @@ impl fmt::Display for GeometryField {
             Self::Properties => "geometry properties",
             Self::SetProperties => "structure set properties",
             Self::SetColumns => "structure set columns",
+            Self::SetSampling => "structure set sampling record",
             Self::Occupancies => "occupancies",
             Self::BFactors => "B factors",
             Self::OrderStep => "order step",

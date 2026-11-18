@@ -75,6 +75,24 @@ the main branch migrates by the table under "From the SampleSet API".
   whose columns do not have a row per geometry. Other writers refuse a set
   with columns by default, or omit them under the `properties` policy
   (`GeometryField::SetColumns`); trajectory writers always refuse them.
+- `structure::Sampling` records how a set was sampled: a
+  `ThermodynamicState`, the first sampled step, the potential-energy and bias
+  columns, and a method label. `StructureSet::{sampling, set_sampling}`,
+  `StructureSetRead::sampling`, `StructureSetDescription::{sampling,
+  with_sampling}`, and native format version 9 carry it; `select`, `subset`,
+  `from_reader`, `Processed`, and `refresh` keep it. Its columns must be real
+  energies (`StructureSetError::SamplingColumn`), and `SetColumnsMut` refuses
+  to remove them (`ColumnInUse`). Other writers refuse a set with a sampling
+  record, or omit it under the `properties` policy
+  (`GeometryField::SetSampling`); trajectory writers always refuse it.
+- `traj::frames` reads and writes frame tables, a run's per-step records as
+  tab-separated text keyed by MD step (`docs/frame-table.md`):
+  `create_frame_table`, `FrameTableWriter`, `read_frame_table(_from)`, the
+  growing `FrameTableReader`, `append_frame_table` with `KeepRows` to
+  continue at a checkpoint, and `FrameTableError` with
+  `FrameTableErrorKind`. `StructureSet::join_frames` joins a table's columns
+  by step and installs its sampling record (`JoinReport`). The `frame_table`
+  fuzz target reads them.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).

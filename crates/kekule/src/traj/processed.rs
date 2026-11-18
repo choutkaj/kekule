@@ -10,7 +10,7 @@ use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::properties::{OwnerProperties, PropertyTable};
 use crate::structure::{
     subset_rows, DenseArrayError, Geometry, GeometryError, GeometryIndex, GeometryView, Order,
-    Positions, Structure, StructureError, StructureSetRead, StructureSetReadError,
+    Positions, Sampling, Structure, StructureError, StructureSetRead, StructureSetReadError,
 };
 use crate::topology::{AtomSelection, Topology, TopologySubsetError};
 
@@ -731,6 +731,10 @@ impl<R: StructureSetRead> StructureSetRead for Processed<R> {
 
     fn columns(&self) -> Option<&PropertyTable<GeometryIndex>> {
         self.inner.columns()
+    }
+
+    fn sampling(&self) -> Option<&Sampling> {
+        self.inner.sampling()
     }
 
     /// Geometry 0, which the reader keeps; `None` for every other geometry.

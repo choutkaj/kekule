@@ -12,6 +12,7 @@ mod ownership;
 mod perception;
 mod placement;
 mod properties;
+mod sampling;
 mod scientific_selection;
 mod selection;
 mod set_columns;

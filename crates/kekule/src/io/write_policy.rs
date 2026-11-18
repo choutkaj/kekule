@@ -266,7 +266,8 @@ impl StatePolicies {
             | GeometryField::BondProperties
             | GeometryField::Properties
             | GeometryField::SetProperties
-            | GeometryField::SetColumns => self.properties,
+            | GeometryField::SetColumns
+            | GeometryField::SetSampling => self.properties,
             _ => self.geometry_metadata,
         }
     }
@@ -323,6 +324,9 @@ impl StatePolicies {
         {
             fields.push(GeometryField::SetColumns);
         }
+        if context.and_then(SetContext::set_sampling).is_some() {
+            fields.push(GeometryField::SetSampling);
+        }
         fields
     }
 
@@ -358,8 +362,12 @@ pub(crate) fn unrepresentable_state(
 ) -> String {
     match (field, geometry) {
         (GeometryField::Order, _) => format!("The geometry order has no {format} representation."),
-        (GeometryField::SetProperties | GeometryField::SetColumns, _) => {
-            format!("The {field} have no {format} representation.")
+        (
+            GeometryField::SetProperties | GeometryField::SetColumns | GeometryField::SetSampling,
+            _,
+        ) => {
+            let verb = verb(field);
+            format!("The {field} {verb} no {format} representation.")
         }
         (field, Some(geometry)) => {
             let verb = verb(field);
@@ -581,6 +589,7 @@ pub(crate) fn set_fields(set: &StructureSet) -> Vec<GeometryField> {
     [
         (!set.properties().is_empty(), GeometryField::SetProperties),
         (set.columns().has_data(), GeometryField::SetColumns),
+        (set.sampling().is_some(), GeometryField::SetSampling),
     ]
     .into_iter()
     .filter_map(|(present, field)| present.then_some(field))
