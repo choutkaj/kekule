@@ -706,6 +706,21 @@ or cells a host groups its samples into, with its estimator, and measures its
 effective sample size over the exact weights. See
 [estimators](crates/kekule/src/statistics/estimators.rs).
 
+A `Landscape` bins a distribution's samples on one or two axes, each a value
+per geometry with its `Binning` (periodic axes wrap), and gives a free energy
+or a mean value per cell. Cell totals follow the estimator contract: a cell's
+population is the distribution's estimator over its samples, the cells are
+normalized among themselves into the weighted histogram, and within a cell
+each sample's share is exact, so a mean weighs its samples exactly and a cell
+that is a state has the state's population. The free energy is
+`-RT ln(P_cell / P_max)` at the distribution's target temperature, or a given
+one when it has no target; a given temperature that differs from the target
+is refused. A cell with fewer samples than a threshold has no value but keeps
+its count, effective count, population, and representative, the sample
+nearest its centre. Samples without an axis value, or outside the bins, are
+in no cell and counted. See
+[landscapes](crates/kekule/src/statistics/landscape.rs).
+
 Clustering groups the samples of an ensemble's distribution, weighted by their
 exact log weights so that the current states' estimates do not steer the new
 grouping, or every geometry of a structure set, unweighted. It returns a `Partition`, the

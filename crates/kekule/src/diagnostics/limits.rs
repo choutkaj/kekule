@@ -88,6 +88,8 @@ pub enum Resource {
     CandidatePairs,
     /// Beta ladders of a secondary-structure assignment.
     Ladders,
+    /// Cells of a grid, such as a free-energy landscape.
+    Cells,
 }
 
 impl fmt::Display for Resource {
@@ -132,6 +134,7 @@ impl fmt::Display for Resource {
             Self::Combinations => "combinations",
             Self::CandidatePairs => "candidate pairs",
             Self::Ladders => "ladders",
+            Self::Cells => "grid cells",
         })
     }
 }
@@ -180,6 +183,7 @@ impl Resource {
             Self::Combinations => "combination",
             Self::CandidatePairs => "candidate pair",
             Self::Ladders => "ladder",
+            Self::Cells => "grid cell",
         }
     }
 
@@ -220,6 +224,7 @@ impl Resource {
             Self::Combinations => "combinations",
             Self::CandidatePairs => "pairs",
             Self::Ladders => "ladders",
+            Self::Cells => "cells",
         }
     }
 }
