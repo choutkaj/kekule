@@ -77,13 +77,12 @@ the main branch migrates by the table under "From the SampleSet API".
   for a reader whose columns do not have a row per geometry. SDF writes a
   geometry's cells as data fields, and `sdf::structure_set` reads the
   records' data fields as columns, a field whose type differs between
-  records as text and text that reads as a number or a boolean as one; in a
-  field of numbers, an empty value, `NaN`, `N/A`, or `NA` is a missing cell,
-  a field of only these gives no column, and a missing cell writes no field;
-  TRR
-  writes a frame's lambda cell. Other writers refuse a geometry with cells by
-  default, naming the first such geometry, or omit them under the
-  `properties` policy (`GeometryField::SetColumns`); XYZ, DCD, and XTC
+  records as text and text that reads as a number or a boolean as one. An
+  empty value is a missing cell, and so are `NaN`, `N/A`, and `NA` in a
+  field of numbers; a field of only these gives no column, and a missing
+  cell writes no field. TRR writes a frame's lambda cell. Other writers
+  refuse a geometry with cells by default, naming the first such geometry,
+  or omit them under the `properties` policy (`GeometryField::SetColumns`); XYZ, DCD, and XTC
   trajectory writers refuse before writing a frame.
 - `structure::Sampling` records how a set was sampled: a
   `ThermodynamicState`, the first sampled step, the potential-energy and bias
@@ -91,18 +90,20 @@ the main branch migrates by the table under "From the SampleSet API".
   `StructureSetRead::sampling`, `StructureSetDescription::{sampling,
   with_sampling}`, and native format version 9 carry it; `select`, `subset`,
   `from_reader`, `Processed`, and `refresh` keep it. Its columns must be real
-  energies (`StructureSetError::SamplingColumn`), and `SetColumnsMut` refuses
-  to remove them (`ColumnInUse`). Other writers refuse a set with a sampling
-  record, or omit it under the `properties` policy
+  energies (`StructureSetError::SamplingColumn`), each named once
+  (`RepeatedSamplingColumn`), and `SetColumnsMut` refuses to remove them
+  (`ColumnInUse`). Other writers refuse a set with a sampling record, or
+  omit it under the `properties` policy
   (`GeometryField::SetSampling`); trajectory writers always refuse it.
 - `traj::frames` reads and writes frame tables, a run's per-step records as
   tab-separated text keyed by MD step (`docs/frame-table.md`):
   `create_frame_table`, `FrameTableWriter`, `read_frame_table(_from)`, the
   growing `FrameTableReader`, `append_frame_table` with `KeepRows` to
   continue at a checkpoint, and `FrameTableError` with
-  `FrameTableErrorKind`. `StructureSet::join_frames` joins a table's columns
-  by step and installs its sampling record (`JoinReport`). The `frame_table`
-  fuzz target reads them.
+  `FrameTableErrorKind`. `StructureSet::join_frames` joins a table's real and
+  integer columns by step and installs its sampling record (`JoinReport`),
+  refusing a set with a different one (`StructureSetError::SamplingMismatch`).
+  The `frame_table` fuzz target reads them.
 - `FrameTableWriter::get_mut` lends the writer's output beside `get_ref`, and
   `FrameTableWriter<File>::sync` flushes and syncs a table file before a
   checkpoint. `create_frame_table` and `append_frame_table` return a
@@ -275,12 +276,15 @@ the main branch migrates by the table under "From the SampleSet API".
   `GridAxis`es (values by geometry, a `Binning` that is `new`, `between` two
   edges, `periodic`, or `covering` the values) into `Cell`s with a count, an
   effective count, a population by the distribution's estimator, and a
-  representative: `free_energy` (`-RT ln(P / P_max)` in kJ/mol at the target
-  temperature) and `mean` of a value by exact shares (`SurfaceQuantity`).
-  `LandscapeOptions` masks cells with fewer samples than `fewest` (unless set,
-  10 for a free energy and 1 for a mean) and takes a temperature for a
-  distribution without a target; `probabilities` is the weighted histogram,
-  and `cell_at` and `center` convert between cells and axis values. Failures
+  representative, the sample nearest the cell's centre: `free_energy`
+  (`-RT ln(P / P_max)` in kJ/mol at the target temperature, `P_max` of the
+  most populated cell with a value) and `mean` of a value by exact shares
+  (`SurfaceQuantity`). `LandscapeOptions` masks the values of cells with
+  fewer samples than `fewest` (unless set, 10 for a free energy and 1 for a
+  mean) and takes a temperature for a distribution without a target,
+  refusing a different one (`ConflictingTemperature`); `probabilities` is
+  the weighted histogram, and `cell_at` and `center` convert between cells
+  and axis values. Failures
   are a `LandscapeError`; `diagnostics::Resource::Cells` bounds the grid.
 
 ### Changed

@@ -21,10 +21,10 @@ cross-module rule.
 | `Geometry` | The one owned coordinate payload, shared and copied on write: one arrangement of a topology's atoms in dense atom order, with positions, optional cell, occupancies, B factors, velocities, forces, and `GeometryProperties` | A topology; a place in an order; a weight; owner values while a set in memory holds it |
 | `Structure` | One shared `Topology` and one `Geometry` bound to it | A second chemical or hierarchy model; a place in an order |
 | `StructureSet` | One shared topology, set properties, `Geometry` values in a stable order, an optional `Order` with one value per geometry, per-geometry columns (`PropertyTable<GeometryIndex>`), the only home of its geometries' scalars, and an optional `Sampling` record | An order value on a geometry; a scalar on a geometry; a weight, a target state, or a distribution; a codec's frame state or a reader's failure types |
-| `Sampling` | The sampled `ThermodynamicState`, the first sampled step, and the keys of the set's potential-energy and bias columns | Column values; a weight or a target state; a method's parameters |
+| `Sampling` | The sampled `ThermodynamicState`, the first sampled step, the keys of the set's bias columns and optional potential-energy column, and an optional method label | Column values; a weight or a target state; a method's parameters |
 | `Ensemble` | One `StructureSet` and one `Distribution` over its geometries | Geometries of its own; an energy on a geometry; a stored population |
 | `Distribution` | `Samples` (every geometry of the set or a sorted subset), a weight model (equal, log weights, Boltzmann populations, or reduced biases with an `Estimator`), one `Partition` of the samples into states, one `StateData` per state, and an optional target `ThermodynamicState` | Geometries; per-geometry energies |
-| `FrameTable` | A run's per-step records keyed by MD step: typed columns, a time column, and a `Sampling` record | Geometries; weights |
+| `FrameTable` | A run's per-step records keyed by MD step: typed columns, an optional time column, and an optional `Sampling` record | Geometries; weights |
 | `FrameBuffer` | One `Geometry` bound to its topology plus the frame's time and step, reused across the frames of a stream | A second in-memory trajectory type |
 
 ### Vocabulary
@@ -460,19 +460,18 @@ row count, `row` reads one geometry's cells, and `column_values` reads a real or
 times, steps, or coordinates (`ColumnRef`), as one number per geometry. The
 native format stores them; SDF writes a geometry's cells as data fields of its
 record and its set reader reads them back, though SDF carries no types, so
-text that reads as a number or a boolean comes back as one; a missing cell
-writes no field, and in a field of numbers an empty value, `NaN`, `N/A`, or
-`NA` (any case) reads as a missing cell, while a field of only these gives
-no column; TRR writes a
-frame's lambda cell;
-other writers refuse them, or omit them under the `properties` policy.
+text that reads as a number or a boolean comes back as one. A missing cell
+writes no field. An empty value reads as a missing cell, and so do `NaN`,
+`N/A`, and `NA` (any case) in a field of numbers; a field of only these
+gives no column. TRR writes a frame's lambda cell. Other writers refuse
+them, or omit them under the `properties` policy.
 
 How a set was sampled is recorded too, in one optional `Sampling` record: the
 sampled `ThermodynamicState`, the first step whose geometry samples it
-(earlier steps equilibrate or prepare the bias), the column of the unbiased
-potential energy, an optional label of the method, and the bias columns,
-whose sum is each geometry's bias. Kekule knows no method: its parameters are
-set properties. The named columns are real energy columns; a named column
+(earlier steps equilibrate or prepare the bias), an optional column of the
+unbiased potential energy, an optional label of the method, and the bias
+columns, whose sum is each geometry's bias. Kekule knows no method: its
+parameters are set properties. The named columns are real energy columns; a named column
 without values reads as missing energies, since selecting may leave one
 empty. Removing a named column fails until the record is removed. The
 operations that keep columns keep the record.
@@ -622,8 +621,11 @@ energies and bias, as tab-separated text beside its trajectory, with the
 run's `Sampling` record in its header. Its rows are keyed by MD step, so the
 trajectory's frames, usually fewer than the rows, join it by step:
 `StructureSet::join_frames` puts the real and integer columns into the set's
-columns and installs the sampling record, refusing another. Joining again
-after the table grew fills the new cells. A writer writes and flushes whole
+columns and takes the table's sampling record, refusing a different one;
+a set keeps its own record when the table has none. The step, time, text,
+and boolean columns are not joined. A joined column replaces the set's
+column of the same key, so joining again after the table grew fills the
+new cells. A writer writes and flushes whole
 rows, so a crash or power loss leaves at most a pending tail that readers
 leave out. `append_frame_table` continues a checkpointed run's table: it
 requires the same header, keeps the rows through the checkpoint's step up to
@@ -737,9 +739,14 @@ each sample's share is exact, so a mean weighs its samples exactly and a cell
 that is a state has the state's population. The free energy is
 `-RT ln(P_cell / P_max)` at the distribution's target temperature, or a given
 one when it has no target; a given temperature that differs from the target
-is refused. A cell with fewer samples than a threshold has no value but keeps
-its count, effective count, population, and representative, the sample
-nearest its centre. Unless the caller sets it, the threshold is ten samples
+is refused. `P_max` is the population of the most populated cell that has a
+value, so the lowest free energy is 0. A cell with fewer samples than a
+threshold has no value but keeps its count, effective count, population,
+and representative, and its probability stays in the weighted histogram.
+The representative is the sample nearest the cell's centre, across the
+period on a periodic axis; of equally near ones, the one with the larger
+exact weight, then the lowest geometry index. It does not depend on the
+estimator. Unless the caller sets it, the threshold is ten samples
 for a free energy and one for a mean, which is exact over a single
 structure. Samples without an axis value, or outside the bins, are
 in no cell and counted. See

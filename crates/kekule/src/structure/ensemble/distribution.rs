@@ -368,6 +368,12 @@ impl Distribution {
     /// pressure. Without bias columns, samples at the sampled temperature
     /// weigh the same.
     ///
+    /// Reweighting a run in explicit solvent to another temperature
+    /// collapses: the spread of the potential energy grows with the solvent,
+    /// so with about 10⁴ waters the reduced biases spread by `σ_b ≈ 8` for
+    /// 300 → 310 K, and a few samples carry nearly all the weight. The
+    /// effective sample size shows it.
+    ///
     /// ```
     /// use kekule::properties::{PropertyColumn, PropertyKey};
     /// use kekule::statistics::Estimator;

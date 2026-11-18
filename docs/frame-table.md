@@ -128,7 +128,8 @@ its integer column `step`. The step and time columns and boolean and text
 columns are not joined. A joined column replaces the set's column of the
 same key, so joining a grown table again fills the new cells; a joined
 column whose cells are all missing is absent from the set. The set takes the
-table's sampling record and refuses a different one.
+table's sampling record and refuses a different one; it keeps its own when
+the table has none.
 
 More columns arrive as another table: `step` first, then its columns,
 usually without a sampling record. A file beside a trajectory is named
