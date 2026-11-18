@@ -10,25 +10,34 @@ use crate::units::{Quantity, Unit, UnitError, CANONICAL_ENERGY_UNIT};
 /// Equal bins along one axis: `bins` bins from `start` to `end`, in the
 /// unit of the values they bin.
 ///
+/// Every binning spans two edges and divides them into equal bins; the
+/// width follows ([`Self::width`]). [`Self::between`] bins values between
+/// the edges, [`Self::periodic`] wraps every finite value into the period
+/// the edges span, and [`Self::covering`] takes the edges from the values.
+///
 /// Bin `i` holds the values from `start + i·width` up to the next edge; the
-/// last bin also holds `end`. A periodic binning wraps every finite value
-/// into its period first, so on `periodic(-180.0, 360.0, 36)` the value 180
-/// lands in bin 0 with -180.
+/// last bin also holds `end`. On `periodic(-180.0, 180.0, 36)` the value 180
+/// wraps to -180 and lands in bin 0.
 ///
 /// ```
 /// use kekule::statistics::Binning;
 ///
-/// let dihedral = Binning::periodic(-180.0, 360.0, 36)?;
+/// let dihedral = Binning::periodic(-180.0, 180.0, 36)?;
+/// assert_eq!(dihedral.width(), 10.0);
 /// assert_eq!(dihedral.bin(-180.0), Some(0));
 /// assert_eq!(dihedral.bin(180.0), Some(0));
 /// assert_eq!(dihedral.bin(-175.0), Some(0));
 /// assert_eq!(dihedral.bin(179.0), Some(35));
 /// assert_eq!(dihedral.center(0), Some(-175.0));
 ///
-/// let distance = Binning::covering(&[Some(0.1), None, Some(0.4)], 3)?;
-/// assert_eq!(distance.bin(0.1), Some(0));
-/// assert_eq!(distance.bin(0.4), Some(2));
-/// assert_eq!(distance.bin(0.5), None);
+/// let distance = Binning::between(0.0, 2.0, 20)?;
+/// assert_eq!(distance.bin(2.0), Some(19));
+/// assert_eq!(distance.bin(2.5), None);
+///
+/// let covering = Binning::covering(&[Some(0.1), None, Some(0.4)], 3)?;
+/// assert_eq!(covering.bin(0.1), Some(0));
+/// assert_eq!(covering.bin(0.4), Some(2));
+/// assert_eq!(covering.bin(0.5), None);
 /// # Ok::<(), kekule::statistics::LandscapeError>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,27 +46,13 @@ pub struct Binning {
     end: f64,
     width: f64,
     bins: usize,
-    /// The period of a periodic binning, `end - start` as given.
-    period: Option<f64>,
+    periodic: bool,
 }
 
 impl Binning {
-    /// `bins` bins of `width` from `start`.
-    ///
-    /// # Errors
-    ///
-    /// [`LandscapeError::NoBins`] for no bins, and
-    /// [`LandscapeError::InvalidBinning`] when `start` or `width` is not
-    /// finite, `width` is not positive, or the last edge is not finite.
-    pub fn new(start: f64, width: f64, bins: usize) -> Result<Self, LandscapeError> {
-        if bins == 0 {
-            return Err(LandscapeError::NoBins);
-        }
-        Self::checked(start, start + width * bins as f64, width, bins, None)
-    }
-
     /// `bins` bins from `start` to `end`. A value equal to `end` lands in
-    /// the last bin, however the width rounds.
+    /// the last bin, however the width rounds; a value outside the edges
+    /// lands in none.
     ///
     /// # Errors
     ///
@@ -65,30 +60,18 @@ impl Binning {
     /// [`LandscapeError::InvalidBinning`] when `start` or `end` is not
     /// finite, or `end` is not above `start` by a positive width.
     pub fn between(start: f64, end: f64, bins: usize) -> Result<Self, LandscapeError> {
-        if bins == 0 {
-            return Err(LandscapeError::NoBins);
-        }
-        Self::checked(start, end, (end - start) / bins as f64, bins, None)
+        Self::spanning(start, end, bins, false)
     }
 
-    /// `bins` bins dividing the period `period` from `start`, such as an
-    /// angle from -180° over 360°. Values outside the period are wrapped
-    /// into it, so `start + period` lands in bin 0.
+    /// `bins` bins dividing the period from `start` to `end`, such as an
+    /// angle from -180° to 180°. Values outside the period are wrapped into
+    /// it, so `end` lands in bin 0.
     ///
     /// # Errors
     ///
-    /// The errors of [`Self::between`] for the end `start + period`.
-    pub fn periodic(start: f64, period: f64, bins: usize) -> Result<Self, LandscapeError> {
-        if bins == 0 {
-            return Err(LandscapeError::NoBins);
-        }
-        Self::checked(
-            start,
-            start + period,
-            period / bins as f64,
-            bins,
-            Some(period),
-        )
+    /// The errors of [`Self::between`].
+    pub fn periodic(start: f64, end: f64, bins: usize) -> Result<Self, LandscapeError> {
+        Self::spanning(start, end, bins, true)
     }
 
     /// `bins` bins from the smallest to the largest finite value, so that
@@ -118,9 +101,17 @@ impl Binning {
             return Err(LandscapeError::NoValues);
         }
         if lowest == highest {
-            return Self::new(lowest - ((bins / 2) as f64 + 0.5), 1.0, bins);
+            let start = lowest - ((bins / 2) as f64 + 0.5);
+            return Self::checked(start, start + bins as f64, 1.0, bins, false);
         }
         Self::between(lowest, highest, bins)
+    }
+
+    fn spanning(start: f64, end: f64, bins: usize, periodic: bool) -> Result<Self, LandscapeError> {
+        if bins == 0 {
+            return Err(LandscapeError::NoBins);
+        }
+        Self::checked(start, end, (end - start) / bins as f64, bins, periodic)
     }
 
     fn checked(
@@ -128,7 +119,7 @@ impl Binning {
         end: f64,
         width: f64,
         bins: usize,
-        period: Option<f64>,
+        periodic: bool,
     ) -> Result<Self, LandscapeError> {
         let finite = start.is_finite() && end.is_finite() && width.is_finite();
         if !(finite && width > 0.0 && end > start) {
@@ -139,7 +130,7 @@ impl Binning {
             end,
             width,
             bins,
-            period,
+            periodic,
         })
     }
 
@@ -165,12 +156,12 @@ impl Binning {
 
     /// Whether values wrap into the period.
     pub const fn is_periodic(&self) -> bool {
-        self.period.is_some()
+        self.periodic
     }
 
-    /// The period of a periodic binning.
-    pub const fn period(&self) -> Option<f64> {
-        self.period
+    /// The period of a periodic binning, `end - start`.
+    pub fn period(&self) -> Option<f64> {
+        self.periodic.then_some(self.end - self.start)
     }
 
     /// The bin of `value`, or `None` for a value that is not finite or, on
@@ -192,20 +183,20 @@ impl Binning {
         if !value.is_finite() {
             return None;
         }
-        let bins = self.bins as f64;
-        match self.period {
-            Some(period) => {
-                let wrapped = (value - self.start).rem_euclid(period);
-                wrapped.is_finite().then_some(wrapped / period * bins)
-            }
-            None => (value >= self.start && value <= self.end)
-                .then_some((value - self.start) / self.width),
+        if self.periodic {
+            let period = self.end - self.start;
+            let wrapped = (value - self.start).rem_euclid(period);
+            wrapped
+                .is_finite()
+                .then_some(wrapped / period * self.bins as f64)
+        } else {
+            (value >= self.start && value <= self.end).then_some((value - self.start) / self.width)
         }
     }
 }
 
-/// One axis of a landscape: a value per geometry and the bins they fall
-/// into, in `unit`.
+/// One axis of a landscape: a value per geometry with its unit, and the
+/// bins they fall into.
 ///
 /// The values are indexed by geometry of the distribution's set, so a host
 /// bins set columns, the order, or its own measurements alike. Only the
@@ -214,33 +205,28 @@ impl Binning {
 #[derive(Debug, Clone, Copy)]
 pub struct GridAxis<'a> {
     values: &'a [Option<f64>],
-    binning: Binning,
     unit: Unit,
+    binning: Binning,
 }
 
 impl<'a> GridAxis<'a> {
-    /// An axis of `values` by geometry, binned by `binning`, in `unit`.
-    pub const fn new(values: &'a [Option<f64>], binning: Binning, unit: Unit) -> Self {
+    /// An axis of `values` by geometry, binned by `binning` in their unit.
+    pub const fn new(values: Quantity<&'a [Option<f64>]>, binning: Binning) -> Self {
         Self {
-            values,
+            values: *values.value(),
+            unit: values.unit(),
             binning,
-            unit,
         }
     }
 
-    /// The value of each geometry.
-    pub const fn values(&self) -> &'a [Option<f64>] {
-        self.values
+    /// The value of each geometry, with its unit.
+    pub const fn values(&self) -> Quantity<&'a [Option<f64>]> {
+        Quantity::new(self.values, self.unit)
     }
 
-    /// The bins.
+    /// The bins, in the unit of the values.
     pub const fn binning(&self) -> Binning {
         self.binning
-    }
-
-    /// The unit of the values and the bins.
-    pub const fn unit(&self) -> Unit {
-        self.unit
     }
 }
 
@@ -397,7 +383,7 @@ impl Cell {
 /// `F = -RT ln(P_cell / P_max)` in kJ/mol, with `P_max` the population of
 /// the most populated cell that is not masked, so the lowest value is 0. A
 /// mean is the average of a value over the cell's samples, each with its
-/// exact share.
+/// exact share. [`Self::lowest`] names the cell with the lowest value.
 ///
 /// **Representative.** A cell's representative is the sample nearest its
 /// centre, measured in bin widths on each axis, across the period on a
@@ -419,7 +405,8 @@ impl Cell {
 /// // centred at 0°, 90°, 180°, and -90°.
 /// let distribution = Distribution::new(Samples::All, Partition::one_state(4))?;
 /// let angles = [Some(-10.0), Some(5.0), Some(10.0), Some(95.0)];
-/// let axis = GridAxis::new(&angles, Binning::periodic(-45.0, 360.0, 4)?, DEGREE);
+/// let quarters = Binning::periodic(-45.0, 315.0, 4)?;
+/// let axis = GridAxis::new(Quantity::new(&angles, DEGREE), quarters);
 /// let options = LandscapeOptions::new()
 ///     .with_fewest(1)
 ///     .with_temperature(Some(Quantity::new(300.0, KELVIN)))?;
@@ -427,6 +414,7 @@ impl Cell {
 /// assert_eq!(surface.shape(), [4]);
 /// assert_eq!(surface.cell_at(&[0.0]), Some(0));
 /// assert_eq!(surface.cell_at(&[90.0]), Some(1));
+/// assert_eq!(surface.lowest(), Some(0));
 /// let [well, shoulder, ..] = surface.cells() else { unreachable!() };
 /// assert_eq!(well.value(), Some(0.0));
 /// // RT ln 3 above the well.
@@ -449,6 +437,7 @@ pub struct Landscape {
     temperature: Option<Quantity<f64>>,
     fewest: usize,
     cells: Vec<Cell>,
+    lowest: Option<usize>,
     excluded: usize,
     outside: usize,
 }
@@ -487,11 +476,11 @@ impl Landscape {
     }
 
     /// The map of the probability-weighted mean of `of`, a value per
-    /// geometry in `unit`, over the samples of each cell of `distribution`
-    /// on `axes`. A sample whose value of `of` is missing or not finite is
-    /// excluded, as one missing an axis value is. A cell is masked only
-    /// below the fewest samples [`LandscapeOptions::with_fewest`] sets: the
-    /// mean of a single structure, such as a point of a scan, is exact.
+    /// geometry, over the samples of each cell of `distribution` on `axes`,
+    /// in the unit of `of`. A sample whose value of `of` is missing or not
+    /// finite is excluded, as one missing an axis value is. A cell is masked
+    /// only below the fewest samples [`LandscapeOptions::with_fewest`] sets:
+    /// the mean of a single structure, such as a point of a scan, is exact.
     ///
     /// # Errors
     ///
@@ -501,15 +490,14 @@ impl Landscape {
     pub fn mean(
         distribution: &Distribution,
         axes: &[GridAxis<'_>],
-        of: &[Option<f64>],
-        unit: Unit,
+        of: Quantity<&[Option<f64>]>,
         options: &LandscapeOptions,
     ) -> Result<Self, LandscapeError> {
         Self::build(
             distribution,
             axes,
-            Some(of),
-            unit,
+            Some(*of.value()),
+            of.unit(),
             SurfaceQuantity::Mean,
             options,
         )
@@ -623,7 +611,8 @@ impl Landscape {
                     ),
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let lowest = lowest_cell(&cells);
         Ok(Self {
             quantity,
             binnings: axes.iter().map(|axis| axis.binning).collect(),
@@ -633,6 +622,7 @@ impl Landscape {
             temperature,
             fewest,
             cells,
+            lowest,
             excluded,
             outside,
         })
@@ -646,6 +636,13 @@ impl Landscape {
     /// The cells, the first axis fastest: cell `(i, j)` is at `j·nx + i`.
     pub fn cells(&self) -> &[Cell] {
         &self.cells
+    }
+
+    /// The index of the cell with the lowest value, or `None` when no cell
+    /// has a value. Of equal values, the first in cell order. On a free
+    /// energy, it is the most populated cell with a value, the one at 0.
+    pub const fn lowest(&self) -> Option<usize> {
+        self.lowest
     }
 
     /// The number of bins on each axis.
@@ -781,6 +778,19 @@ fn sample_cell(
     })
 }
 
+/// The index of the cell with the lowest value, the first of equal ones.
+fn lowest_cell(cells: &[Cell]) -> Option<usize> {
+    let mut lowest: Option<(usize, f64)> = None;
+    for (index, cell) in cells.iter().enumerate() {
+        if let Some(value) = cell.value {
+            if lowest.is_none_or(|(_, least)| value < least) {
+                lowest = Some((index, value));
+            }
+        }
+    }
+    lowest.map(|(index, _)| index)
+}
+
 /// The temperature of a landscape over `distribution`: its target's, or
 /// the options' when it has none.
 fn resolve_temperature(
@@ -864,8 +874,8 @@ fn representative(
 pub enum LandscapeError {
     /// A binning has no bins.
     NoBins,
-    /// A binning's start or width is not finite, its width is not positive,
-    /// or its last edge is not finite.
+    /// A binning's start or end is not finite, or the end is not above the
+    /// start by a positive bin width.
     InvalidBinning,
     /// [`Binning::covering`] found no finite value.
     NoValues,

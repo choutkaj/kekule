@@ -273,19 +273,20 @@ the main branch migrates by the table under "From the SampleSet API".
   `diagnostics::Countable::Group`), and `group_effective_sample_size` read any
   group of samples, such as histogram bins.
 - `statistics::Landscape` bins a distribution's samples on one or two
-  `GridAxis`es (values by geometry, a `Binning` that is `new`, `between` two
-  edges, `periodic`, or `covering` the values) into `Cell`s with a count, an
-  effective count, a population by the distribution's estimator, and a
-  representative, the sample nearest the cell's centre: `free_energy`
-  (`-RT ln(P / P_max)` in kJ/mol at the target temperature, `P_max` of the
-  most populated cell with a value) and `mean` of a value by exact shares
-  (`SurfaceQuantity`). `LandscapeOptions` masks the values of cells with
-  fewer samples than `fewest` (unless set, 10 for a free energy and 1 for a
-  mean) and takes a temperature for a distribution without a target,
-  refusing a different one (`ConflictingTemperature`); `probabilities` is
-  the weighted histogram, and `cell_at` and `center` convert between cells
-  and axis values. Failures
-  are a `LandscapeError`; `diagnostics::Resource::Cells` bounds the grid.
+  `GridAxis`es (a `Quantity` of values by geometry and a `Binning` from one
+  edge to the other, `between` them or `periodic`, or `covering` the values)
+  into `Cell`s with a count, an effective count, a population by the
+  distribution's estimator, and a representative, the sample nearest the
+  cell's centre: `free_energy` (`-RT ln(P / P_max)` in kJ/mol at the target
+  temperature, `P_max` of the most populated cell with a value) and `mean`
+  of a `Quantity` of values by exact shares (`SurfaceQuantity`).
+  `LandscapeOptions` masks the values of cells with fewer samples than
+  `fewest` (unless set, 10 for a free energy and 1 for a mean) and takes a
+  temperature for a distribution without a target, refusing a different one
+  (`ConflictingTemperature`); `probabilities` is the weighted histogram,
+  `lowest` is the cell with the lowest value, and `cell_at` and `center`
+  convert between cells and axis values. Failures are a `LandscapeError`;
+  `diagnostics::Resource::Cells` bounds the grid.
 
 ### Changed
 
