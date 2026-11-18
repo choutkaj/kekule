@@ -10,6 +10,7 @@ use super::{
 };
 
 mod distribution;
+mod grouping;
 mod partition;
 mod reweighting;
 mod states;
@@ -18,6 +19,7 @@ mod tests;
 
 pub(crate) use distribution::Weights;
 pub use distribution::{Distribution, DistributionMut, Samples, StateData, WeightModel};
+pub(crate) use grouping::Grouping;
 pub use partition::{Partition, PartitionError};
 pub use states::{StateIter, StateView};
 

@@ -1,5 +1,5 @@
 //! Measurement, superposition, clustering, weighted statistics, reweighting,
-//! secondary structure, and solvation.
+//! energy surfaces, secondary structure, and solvation.
 
 mod alignment;
 mod bond_dihedrals;
@@ -12,6 +12,7 @@ mod ensemble_weights;
 mod estimators;
 mod group_populations;
 mod interactions;
+mod landscapes;
 mod measurements;
 mod reweighting;
 mod solvation;

@@ -78,9 +78,17 @@
 //! logarithm, so populations spanning hundreds of orders of magnitude stay
 //! finite. An estimator gives the totals of groups; within a group, each
 //! sample's share is exactly `exp(b_i) / Σ exp(b_j)`.
+//!
+//! # Energy surfaces
+//!
+//! A [`Landscape`] bins the samples of a distribution on one or two
+//! [`GridAxis`]es and gives each cell a free energy or a mean value. Its cell
+//! populations are the distribution's group populations, so they follow the
+//! estimator, and its means weigh each sample by its exact share in the cell.
 
 mod accumulators;
 mod estimators;
+mod landscape;
 
 pub(crate) use accumulators::{merged_total, next_total, observe_samples_of};
 pub use accumulators::{
@@ -90,6 +98,9 @@ pub use accumulators::{
 };
 pub(crate) use estimators::log_sum_exp;
 pub use estimators::{CumulantOrder, Estimator};
+pub use landscape::{
+    Binning, Cell, GridAxis, Landscape, LandscapeError, LandscapeOptions, SurfaceQuantity,
+};
 
 #[cfg(doc)]
 use crate::structure::{AsStructureView, Ensemble, StructureSet, StructureSetRead};
