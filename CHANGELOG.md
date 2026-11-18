@@ -100,6 +100,11 @@ the main branch migrates by the table under "From the SampleSet API".
   `FrameTableErrorKind`. `StructureSet::join_frames` joins a table's columns
   by step and installs its sampling record (`JoinReport`). The `frame_table`
   fuzz target reads them.
+- `FrameTableWriter::get_mut` lends the writer's output beside `get_ref`, and
+  `FrameTableWriter<File>::sync` flushes and syncs a table file before a
+  checkpoint. `create_frame_table` and `append_frame_table` return a
+  `FrameTableWriter<File>`, without a `BufWriter`, since every row is
+  flushed whole.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).

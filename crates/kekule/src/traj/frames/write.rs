@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -19,9 +19,8 @@ use super::row::FrameRow;
 /// process that dies leaves at most one unfinished line, which readers
 /// ignore and [`append_frame_table`](super::append_frame_table) removes.
 /// For the rows to survive the failure of a node, sync the file
-/// (`writer.get_ref().get_ref().sync_data()` for a file writer) before a
-/// checkpoint counts them. After an I/O error the file may end in an
-/// unfinished line; continue it with
+/// ([`sync`](Self::sync)) before a checkpoint counts them. After an I/O
+/// error the file may end in an unfinished line; continue it with
 /// [`append_frame_table`](super::append_frame_table), not with this writer.
 ///
 /// ```
@@ -136,9 +135,14 @@ impl<W: Write> FrameTableWriter<W> {
         self.out.flush().map_err(FrameTableError::write)
     }
 
-    /// The output, for syncing a file.
+    /// The output. Every written row has reached it.
     pub const fn get_ref(&self) -> &W {
         &self.out
+    }
+
+    /// The output, mutably. Writing to it directly corrupts the table.
+    pub const fn get_mut(&mut self) -> &mut W {
+        &mut self.out
     }
 
     /// Flushes and returns the output.
@@ -163,6 +167,20 @@ impl<W: Write> FrameTableWriter<W> {
     }
 }
 
+impl FrameTableWriter<File> {
+    /// Flushes the output and syncs the file's data to the disk, so the rows
+    /// survive the failure of a node.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameTableErrorKind::Io`](super::FrameTableErrorKind::Io) when
+    /// flushing or syncing fails.
+    pub fn sync(&mut self) -> Result<(), FrameTableError> {
+        self.flush()?;
+        self.out.sync_data().map_err(FrameTableError::write)
+    }
+}
+
 /// Creates the frame table at `path`, replacing an existing file, writes its
 /// header, and returns a writer of its rows. Continue a table with
 /// [`append_frame_table`](super::append_frame_table) instead.
@@ -174,7 +192,7 @@ impl<W: Write> FrameTableWriter<W> {
 pub fn create_frame_table(
     path: impl AsRef<Path>,
     header: FrameTableHeader,
-) -> Result<FrameTableWriter<BufWriter<File>>, FrameTableError> {
+) -> Result<FrameTableWriter<File>, FrameTableError> {
     let file = File::create(path).map_err(FrameTableError::write)?;
-    FrameTableWriter::new(BufWriter::new(file), header)
+    FrameTableWriter::new(file, header)
 }
