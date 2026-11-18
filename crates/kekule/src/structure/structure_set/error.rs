@@ -33,6 +33,10 @@ pub enum Requirement {
     Cell,
     /// Every geometry held in memory.
     InMemory,
+    /// A sampling record ([`Sampling`](crate::structure::Sampling)).
+    Sampling,
+    /// A sampling record that names a potential-energy column.
+    PotentialEnergy,
 }
 
 impl fmt::Display for Requirement {
@@ -47,6 +51,8 @@ impl fmt::Display for Requirement {
             Self::Temperature => "needs a temperature",
             Self::Cell => "needs a periodic cell on every geometry",
             Self::InMemory => "needs its geometries in memory",
+            Self::Sampling => "needs a sampling record",
+            Self::PotentialEnergy => "needs a potential-energy column",
         })
     }
 }
@@ -180,6 +186,23 @@ pub enum StructureSetError {
     UnrepresentablePopulation {
         /// The index of the state.
         state: usize,
+    },
+    /// A geometry's step lies before the first step its set's sampling
+    /// record samples, so it is no sample of the sampled state
+    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)).
+    BeforeSampling {
+        /// The geometry's index.
+        geometry: usize,
+    },
+    /// A geometry has no value in a column reweighting reads: a bias column
+    /// of the set's sampling record, or its potential-energy column at
+    /// another temperature
+    /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)).
+    MissingColumnValue {
+        /// The column's key.
+        key: PropertyKey,
+        /// The geometry's index.
+        geometry: usize,
     },
     /// A reduced bias is not finite or exceeds `1e100` in magnitude
     /// ([`Distribution::reweighted`](crate::structure::Distribution::reweighted)):
@@ -351,6 +374,14 @@ impl fmt::Display for StructureSetError {
             Self::UnrepresentablePopulation { state } => write!(
                 formatter,
                 "The Boltzmann population of state {state} is too small to represent at this temperature. Raise the temperature."
+            ),
+            Self::BeforeSampling { geometry } => write!(
+                formatter,
+                "Geometry {geometry} lies before the first sampled step."
+            ),
+            Self::MissingColumnValue { key, geometry } => write!(
+                formatter,
+                "Geometry {geometry} has no value in the column \"{key}\"."
             ),
             Self::InvalidReducedBias { geometry } => {
                 write!(formatter, "The bias of geometry {geometry} is out of range.")

@@ -4,8 +4,12 @@
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch};
 use crate::properties::OwnerProperties;
 use crate::statistics::{log_sum_exp, Estimator};
-use crate::structure::{Partition, Requirement, StructureSetError, ThermodynamicState};
+use crate::structure::{
+    Partition, Requirement, StructureSetError, StructureSetRead, ThermodynamicState,
+};
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT};
+
+use super::reweighting::ReducedBias;
 
 /// Which geometries of a set a [`Distribution`] covers: its samples.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -309,6 +313,103 @@ impl Distribution {
         })
     }
 
+    /// A distribution of `samples` of `set` grouped by `partition`, each
+    /// weighted by its reduced bias from the set's sampling record, with the
+    /// estimator `estimator` of group populations. Its target is the sampled
+    /// state at `temperature`, or the sampled state itself for `None`.
+    ///
+    /// A sample's reduced bias is `b = β_s (U + ΣΔV) − β_t U`, its exact log
+    /// importance weight, with `β = 1/RT` at the sampled temperature `s` and
+    /// the target temperature `t`, its potential energy `U`, and the sum
+    /// `ΣΔV` of its bias columns. At the sampled temperature
+    /// `b = β_s ΣΔV`, and the potential energy is not read. Reweighting
+    /// changes the temperature only: the target keeps the sampled pressure,
+    /// and no `pV` term enters. Without bias columns, samples at the sampled
+    /// temperature weigh the same.
+    ///
+    /// ```
+    /// use kekule::properties::{PropertyColumn, PropertyKey};
+    /// use kekule::statistics::Estimator;
+    /// use kekule::structure::{
+    ///     Distribution, Geometry, Partition, Positions, Samples, Sampling, StructureSet,
+    ///     ThermodynamicState,
+    /// };
+    /// use kekule::units::{Quantity, KELVIN, KILOJOULE_PER_MOLE};
+    ///
+    /// let topology = kekule::smiles::to_topology("O")?;
+    /// let atoms = topology.atom_count();
+    /// let geometries = (0..2).map(|_| Geometry::new(Positions::zeros(atoms)));
+    /// let mut set = StructureSet::from_geometries(topology, geometries)?;
+    /// let boost = PropertyKey::new("boost")?;
+    /// set.columns_mut().insert(
+    ///     boost.clone(),
+    ///     PropertyColumn::Real {
+    ///         unit: KILOJOULE_PER_MOLE,
+    ///         values: vec![Some(0.0), Some(2.5)],
+    ///     },
+    /// )?;
+    /// let state = ThermodynamicState::canonical(Quantity::new(300.0, KELVIN))?;
+    /// set.set_sampling(Some(Sampling::new(state).with_bias([boost])?))?;
+    /// let distribution = Distribution::reweighted(
+    ///     &set,
+    ///     Samples::All,
+    ///     Partition::one_state(2),
+    ///     None,
+    ///     Estimator::Exponential,
+    /// )?;
+    /// // The boosted frame weighs exp(2.5 kJ/mol / RT) times the other.
+    /// let ratio = distribution.log_weight(1).unwrap() - distribution.log_weight(0).unwrap();
+    /// assert!((ratio - 2.5 / *state.thermal_energy().value()).abs() < 1e-12);
+    /// assert_eq!(distribution.target(), Some(state));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Self::new`] and of
+    /// [`Ensemble::new`](super::Ensemble::new) against `set`;
+    /// `Missing(Sampling)` for a set without a sampling record;
+    /// `Missing(PotentialEnergy)` at another temperature when the record
+    /// names no potential-energy column; `Missing(Steps)` when the record's
+    /// first step is not 0 and the set has no steps; the errors of
+    /// [`ThermodynamicState::with_temperature`] for `temperature`;
+    /// [`StructureSetError::SamplingColumn`] for a named column that holds no
+    /// real energies; and, for the first sample that cannot be one,
+    /// [`StructureSetError::BeforeSampling`] when its step lies before the
+    /// record's first step, [`StructureSetError::MissingColumnValue`] when a
+    /// cell it reads is missing, and [`StructureSetError::InvalidReducedBias`]
+    /// when its reduced bias is not finite or exceeds `1e100` in magnitude.
+    pub fn reweighted(
+        set: &(impl StructureSetRead + ?Sized),
+        samples: Samples,
+        partition: Partition,
+        temperature: Option<Quantity<f64>>,
+        estimator: Estimator,
+    ) -> Result<Self, StructureSetError> {
+        let bias = ReducedBias::new(set.sampling(), set.columns(), set.order(), temperature)?;
+        Self::reweighted_by(&bias, set.len(), samples, partition, estimator)
+    }
+
+    /// A distribution of `samples` of a set of `len` geometries grouped by
+    /// `partition`, weighted by the reduced biases `bias` gives, as
+    /// [`Self::reweighted`] makes it.
+    pub(crate) fn reweighted_by(
+        bias: &ReducedBias<'_>,
+        len: usize,
+        samples: Samples,
+        partition: Partition,
+        estimator: Estimator,
+    ) -> Result<Self, StructureSetError> {
+        let mut distribution = Self::new(samples, partition)?;
+        distribution.bind(len)?;
+        let reduced = (0..distribution.sample_count())
+            .map(|position| bias.reduced(distribution.sample(position)))
+            .collect::<Result<Vec<_>, _>>()?;
+        distribution.set_weights(Weights::Reweighted { estimator, reduced })?;
+        distribution.target = Some(bias.target());
+        Ok(distribution)
+    }
+
     /// Returns this distribution with one finite natural-logarithm weight
     /// per sample, in sample order; see [`DistributionMut::set_log_weights`].
     pub fn with_log_weights(mut self, log_weights: Vec<f64>) -> Result<Self, StructureSetError> {
@@ -346,8 +447,7 @@ impl Distribution {
     ///
     /// # Errors
     ///
-    /// None yet; the result leaves room for weights that a target cannot
-    /// change.
+    /// [`StructureSetError::ReweightedTarget`] for reweighted samples.
     pub fn with_target(mut self, target: ThermodynamicState) -> Result<Self, StructureSetError> {
         self.set_target(Some(target))?;
         Ok(self)

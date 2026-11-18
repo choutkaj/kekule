@@ -13,6 +13,7 @@ mod estimators;
 mod group_populations;
 mod interactions;
 mod measurements;
+mod reweighting;
 mod solvation;
 mod statistics;
 mod statistics_merge;

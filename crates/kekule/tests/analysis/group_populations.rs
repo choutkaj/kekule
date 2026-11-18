@@ -28,7 +28,10 @@ fn populations_of_unweighted_models_are_exact_sums() -> Result<(), StructureSetE
     assert_eq!(distribution.estimator(), Estimator::Exponential);
     // States of total weight 4 and 4 of 8.
     assert_close(distribution.log_population(&[0, 1]).unwrap(), 0.5_f64.ln());
-    assert_close(distribution.log_population(&[1]).unwrap(), (3.0 / 8.0_f64).ln());
+    assert_close(
+        distribution.log_population(&[1]).unwrap(),
+        (3.0 / 8.0_f64).ln(),
+    );
     assert_close(distribution.log_population(&[0, 1, 2, 3]).unwrap(), 0.0);
     let states = distribution.state_probabilities()?;
     for (state, probability) in states.iter().enumerate() {
@@ -87,8 +90,14 @@ fn groupings_must_fit_the_samples() {
 fn group_effective_sample_sizes_are_kish() -> Result<(), StructureSetError> {
     let distribution = weighted();
     // Weights 1 and 3: 16 / 10.
-    assert_close(distribution.group_effective_sample_size(&[0, 1]).unwrap(), 1.6);
-    assert_close(distribution.group_effective_sample_size(&[2, 3]).unwrap(), 2.0);
+    assert_close(
+        distribution.group_effective_sample_size(&[0, 1]).unwrap(),
+        1.6,
+    );
+    assert_close(
+        distribution.group_effective_sample_size(&[2, 3]).unwrap(),
+        2.0,
+    );
     // Weights 1, 3, 2, 2: 64 / 18.
     assert_close(distribution.effective_sample_size()?, 64.0 / 18.0);
     let equal = Distribution::new(Samples::All, Partition::one_state(5))?;
