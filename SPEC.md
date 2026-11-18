@@ -460,7 +460,10 @@ row count, `row` reads one geometry's cells, and `column_values` reads a real or
 times, steps, or coordinates (`ColumnRef`), as one number per geometry. The
 native format stores them; SDF writes a geometry's cells as data fields of its
 record and its set reader reads them back, though SDF carries no types, so
-text that reads as a number or a boolean comes back as one; TRR writes a
+text that reads as a number or a boolean comes back as one; a missing cell
+writes no field, and in a field of numbers an empty value, `NaN`, `N/A`, or
+`NA` (any case) reads as a missing cell, while a field of only these gives
+no column; TRR writes a
 frame's lambda cell;
 other writers refuse them, or omit them under the `properties` policy.
 

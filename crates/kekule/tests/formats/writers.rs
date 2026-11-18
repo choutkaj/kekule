@@ -795,6 +795,82 @@ fn sdf_carries_no_types_so_text_that_reads_as_a_number_comes_back_as_one() {
 }
 
 #[test]
+fn sdf_missing_tokens_in_a_field_of_numbers_are_missing_cells() {
+    use kekule::properties::PropertyColumn;
+    use kekule::units::DIMENSIONLESS;
+    let set = conformer_set();
+    let rows = [
+        [
+            ("score", "-7.5"),
+            ("rank", "1"),
+            ("pose", "NaN"),
+            ("mixed", "1"),
+            ("label", "N/A"),
+        ],
+        [
+            ("score", "N/A"),
+            ("rank", ""),
+            ("pose", "na"),
+            ("mixed", "nan"),
+            ("label", "a"),
+        ],
+        [
+            ("score", "-6.25"),
+            ("rank", "3"),
+            ("pose", "n/a"),
+            ("mixed", "2.5"),
+            ("label", "b"),
+        ],
+    ];
+    let fields = rows.map(|row| row.map(|(name, value)| SdfDataField::new(name, value)));
+    let records = fields.iter().enumerate().map(|(index, fields)| {
+        sdf::SdfRecordSource::from(set.get(index % 2).unwrap()).with_data_fields(fields)
+    });
+    let text = sdf::write(records, SdfWriteOptions::default()).unwrap().0;
+    let read = sdf::structure_set(&interpret_records(&text)).unwrap();
+    let reals = |values: Vec<Option<f64>>| PropertyColumn::Real {
+        unit: DIMENSIONLESS,
+        values,
+    };
+    // One N/A among reals.
+    assert_eq!(
+        column_of(&read, "score"),
+        Some(reals(vec![Some(-7.5), None, Some(-6.25)]))
+    );
+    // An empty value among integers.
+    assert_eq!(
+        column_of(&read, "rank"),
+        Some(PropertyColumn::Int(vec![Some(1), None, Some(3)]))
+    );
+    // Integers and reals read as reals.
+    assert_eq!(
+        column_of(&read, "mixed"),
+        Some(reals(vec![Some(1.0), None, Some(2.5)]))
+    );
+    // A field of only missing values gives no column.
+    assert_eq!(column_of(&read, "pose"), None);
+    // Text keeps the token.
+    assert_eq!(
+        column_of(&read, "label"),
+        Some(PropertyColumn::String(
+            ["N/A", "a", "b"]
+                .map(|value| Some(value.to_owned()))
+                .to_vec()
+        ))
+    );
+
+    // A missing cell writes no field, and the column stays numeric.
+    let written = sdf::write(&read, SdfWriteOptions::default()).unwrap().0;
+    let records = interpret_records(&written);
+    assert!(records[1]
+        .data_fields()
+        .iter()
+        .all(|field| field.name() != "score"));
+    let reread = sdf::structure_set(&records).unwrap();
+    assert_eq!(reread.columns(), read.columns());
+}
+
+#[test]
 fn sdf_refuses_a_cell_named_like_the_unit_field_of_a_real_cell() {
     use kekule::properties::{PropertyColumn, PropertyKey};
     use kekule::units::DIMENSIONLESS;

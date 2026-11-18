@@ -18,13 +18,16 @@ use crate::io::{
 /// booleans (`true`, `false`) when every value reads as one, and the trimmed
 /// text otherwise, so a field whose type differs between records reads as
 /// text. A record without the field, or with an empty value, has a missing
-/// cell. A real field `<name>` whose records, and only those, carry
-/// `<name>.unit` with one symbol of a unit constant holds reals in that unit,
-/// as [`write()`] writes them. SDF carries no types: a text cell that reads
-/// as a number or a boolean comes back as one. No field says how much a
-/// geometry weighs or
-/// which state it belongs to, which an
-/// [`Ensemble`](crate::structure::Ensemble) of the set states.
+/// cell. In a field of numbers, `NaN`, `N/A`, and `NA`, in any case, are
+/// missing cells too, so one `N/A` keeps a score column numeric; a field
+/// of only such values gives no column. A real field `<name>` whose
+/// records, and only those, carry `<name>.unit` with one symbol of a unit
+/// constant holds reals in that unit, as [`write()`] writes them. SDF
+/// carries no types: a text cell that reads as a number or a boolean comes
+/// back as one, and [`write()`] leaves a missing cell's field out of its
+/// record. No field says how much a geometry weighs or which state it
+/// belongs to, which an [`Ensemble`](crate::structure::Ensemble) of the set
+/// states.
 ///
 /// When the records carry [`STEP_FIELD`](crate::sdf::STEP_FIELD), or
 /// [`COORDINATE_FIELD`](crate::sdf::COORDINATE_FIELD) with

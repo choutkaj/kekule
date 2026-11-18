@@ -95,8 +95,10 @@ const PLACE_FIELDS: [&str; 3] = [
 /// leaves no room for `.unit` in a property key), fail unless
 /// [`MolfileWriteOptions::properties`] omits them. A cell named like a
 /// place field, another field of the record, or the `<key>.unit` field of a
-/// real cell fails with `Inconsistent`. SDF carries no types: a text cell
-/// that reads as a number or a boolean reads back as one. A geometry of a
+/// real cell fails with `Inconsistent`. A missing cell writes no field.
+/// SDF carries no types: a text cell that reads as a number or a boolean
+/// reads back as one, and a text cell `NaN`, `N/A`, or `NA` among numbers
+/// reads back as a missing cell. A geometry of a
 /// TRR file (`StructureSet<IndexedFile>`) holds its lambda as a codec
 /// value, not a column, so it counts as an own property, which the
 /// `properties` policy refuses or omits. Add other values a record should

@@ -153,9 +153,17 @@ fn record_columns(records: &[&SdfRecordInterpretation]) -> Vec<(PropertyKey, Pro
         .into_iter()
         .filter_map(|(name, values)| Some((name, values?)))
         .map(|(name, values)| {
+            // A missing token is a missing cell in a numeric field, so a
+            // field of only missing tokens gives no column. Text keeps it.
+            let numeric = values
+                .iter()
+                .flatten()
+                .all(|value| missing(value) || real(value).is_some());
             let values = values
                 .into_iter()
-                .map(|value| value.filter(|value| !value.is_empty()))
+                .map(|value| {
+                    value.filter(|value| !value.is_empty() && !(numeric && missing(value)))
+                })
                 .collect::<Vec<_>>();
             (name, values)
         })
@@ -216,6 +224,15 @@ fn record_unit(
         return None;
     }
     named_unit(symbol)
+}
+
+/// Whether a value marks a missing number: empty, `NaN`, `N/A`, or `NA`, in
+/// any case.
+fn missing(value: &str) -> bool {
+    value.is_empty()
+        || ["nan", "n/a", "na"]
+            .iter()
+            .any(|token| value.eq_ignore_ascii_case(token))
 }
 
 /// A finite number.
