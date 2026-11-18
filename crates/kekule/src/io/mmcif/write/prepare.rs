@@ -2,17 +2,15 @@
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
 use super::implied::{mark_implied, residue_key};
 use super::one_based_serial;
-use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind};
+use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
 use crate::diagnostics::AtomField;
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::element_symbol::structure_element_symbol;
-use crate::io::UnrepresentablePolicy;
+use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::StructureView;
-use crate::topology::{
-    Hierarchy, InstanceAtomId, InstanceBondId, MoleculeDefinition, MoleculeInstance, ResidueId,
-};
+use crate::topology::{Hierarchy, InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId};
 use crate::units::ANGSTROM;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -67,21 +65,31 @@ pub(super) struct PreparedModel {
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: Vec<AtomRow>,
     pub(super) connections: Vec<ConnectionRow>,
-    /// Atoms whose fixed implicit-hydrogen counts the rows leave out.
-    pub(super) omitted_hydrogens: usize,
-    /// Interpretation-report coordination records left out because they no
-    /// longer match the structure.
-    pub(super) omitted_coordination: usize,
-    /// Dative bonds between residues, stated as `metalc` rows that readers
-    /// record as coordination rather than bonds.
-    pub(super) coordination_bonds: usize,
+    /// What the rows leave out, in report order: fixed implicit-hydrogen
+    /// counts; the chemistry [`MmcifWriteOptions::chemistry`] omits;
+    /// interpretation-report coordination records that no longer match the
+    /// structure; and dative bonds between residues, stated as `metalc` rows
+    /// that readers record as coordination rather than bonds. Kinds with a
+    /// zero count are listed too, and recording drops them.
+    pub(super) omissions: Vec<WriteOmission>,
+}
+
+/// Counts of the chemistry the rows leave out, by kind.
+#[derive(Debug, Default)]
+struct OmittedChemistry {
+    hydrogens: usize,
+    isotopes: usize,
+    radicals: usize,
+    atom_maps: usize,
+    /// Molecule instances.
+    stereo: usize,
+    bonds: usize,
 }
 
 pub(super) fn prepare_model(
     structure: StructureView<'_>,
     plan: EntityPlan,
-    implicit_hydrogens: UnrepresentablePolicy,
-    coordinate_precision: usize,
+    options: &MmcifWriteOptions,
 ) -> Result<PreparedModel, FormatError> {
     let EntityPlan {
         entities,
@@ -92,7 +100,7 @@ pub(super) fn prepare_model(
     } = plan;
 
     let mut atoms = Vec::new();
-    let mut omitted_hydrogens = 0;
+    let mut omitted = OmittedChemistry::default();
     let hierarchy = structure.topology().hierarchy();
     for (id, molecule) in structure.topology().instance_records() {
         let definition = structure
@@ -100,7 +108,7 @@ pub(super) fn prepare_model(
             .instance(id)
             .expect("listed instances are topology molecules")
             .definition();
-        omitted_hydrogens += validate_graph_chemistry(molecule, definition, implicit_hydrogens)?;
+        validate_graph_chemistry(molecule, definition, options, &mut omitted)?;
         if definition.molecule().atom_ids().any(|atom| {
             structure
                 .topology()
@@ -131,12 +139,21 @@ pub(super) fn prepare_model(
     validate_atom_identities(&atoms)?;
     let mut connections = Vec::new();
     for bond in structure.topology().bonds() {
-        let order = supported_bond_order(bond.id(), bond.order)?;
+        if bond.order == BondOrder::Zero {
+            if options.chemistry == UnrepresentablePolicy::Fail {
+                return Err(fail(MmcifWriteErrorKind::UnsupportedBondOrder {
+                    bond: bond.id(),
+                    order: bond.order,
+                }));
+            }
+            omitted.bonds += 1;
+            continue;
+        }
         let [left, right] = bond.atoms().map(|atom| atom.id());
         connections.push(ConnectionRow {
             left,
             right,
-            order,
+            order: bond.order,
             implied: None,
         });
     }
@@ -155,7 +172,7 @@ pub(super) fn prepare_model(
         &elements,
         &mut connections,
         &atom_indexes,
-        coordinate_precision,
+        options.coordinate_precision,
     );
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
@@ -190,56 +207,88 @@ pub(super) fn prepare_model(
         asyms,
         atoms,
         connections,
-        omitted_hydrogens,
-        omitted_coordination,
-        coordination_bonds,
+        omissions: vec![
+            WriteOmission::ImplicitHydrogens {
+                atoms: omitted.hydrogens,
+            },
+            WriteOmission::Isotopes {
+                atoms: omitted.isotopes,
+            },
+            WriteOmission::Radicals {
+                atoms: omitted.radicals,
+            },
+            WriteOmission::AtomMaps {
+                atoms: omitted.atom_maps,
+            },
+            WriteOmission::Stereo {
+                molecules: omitted.stereo,
+            },
+            WriteOmission::Bonds {
+                bonds: omitted.bonds,
+            },
+            WriteOmission::Coordination {
+                records: omitted_coordination,
+            },
+            WriteOmission::CoordinationBonds {
+                bonds: coordination_bonds,
+            },
+        ],
     })
 }
 
-/// Fails on chemistry mmCIF cannot carry; returns how many atoms have a
-/// fixed implicit-hydrogen count that `implicit_hydrogens` omits.
+/// Fails on chemistry mmCIF cannot carry unless `options` omits it, and
+/// counts what it omits into `omitted`.
 fn validate_graph_chemistry(
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
-    implicit_hydrogens: UnrepresentablePolicy,
-) -> Result<usize, FormatError> {
-    let mut omitted_hydrogens = 0;
+    options: &MmcifWriteOptions,
+    omitted: &mut OmittedChemistry,
+) -> Result<(), FormatError> {
+    let strict = options.chemistry == UnrepresentablePolicy::Fail;
     let molecule_definition = definition.molecule();
     if molecule_definition.stereo_elements().next().is_some()
         || molecule_definition.stereo_groups().next().is_some()
     {
-        return Err(fail(MmcifWriteErrorKind::UnsupportedStereo(molecule.id())));
+        if strict {
+            return Err(fail(MmcifWriteErrorKind::UnsupportedStereo(molecule.id())));
+        }
+        omitted.stereo += 1;
     }
     for (atom_id, atom) in molecule_definition.atoms() {
         let atom_id = molecule.qualify_atom(atom_id);
-        if structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
-            .is_none()
-        {
-            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
-                atom: atom_id,
-                field: AtomField::Isotope,
-            }));
-        }
-        if atom.radical.is_some() {
-            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
-                atom: atom_id,
-                field: AtomField::Radical,
-            }));
+        let isotope = atom.isotope.map(std::num::NonZero::get);
+        let fields = [
+            (
+                structure_element_symbol(atom.element, isotope).is_none(),
+                AtomField::Isotope,
+            ),
+            (atom.radical.is_some(), AtomField::Radical),
+            (atom.atom_map.is_some(), AtomField::AtomMap),
+        ];
+        for (present, field) in fields {
+            if !present {
+                continue;
+            }
+            if strict {
+                return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
+                    atom: atom_id,
+                    field,
+                }));
+            }
+            match field {
+                AtomField::Isotope => omitted.isotopes += 1,
+                AtomField::Radical => omitted.radicals += 1,
+                _ => omitted.atom_maps += 1,
+            }
         }
         if atom.hydrogens != ImplicitHydrogens::default() {
-            if implicit_hydrogens == UnrepresentablePolicy::Fail {
+            if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
                 return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
                     atom: atom_id,
                     field: AtomField::Hydrogens,
                 }));
             }
-            omitted_hydrogens += 1;
-        }
-        if atom.atom_map.is_some() {
-            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
-                atom: atom_id,
-                field: AtomField::AtomMap,
-            }));
+            omitted.hydrogens += 1;
         }
         if !(-8..=8).contains(&atom.formal_charge) {
             return Err(fail(MmcifWriteErrorKind::FormalChargeOutOfRange {
@@ -248,7 +297,7 @@ fn validate_graph_chemistry(
             }));
         }
     }
-    Ok(omitted_hydrogens)
+    Ok(())
 }
 
 fn collect_macro_rows(
@@ -415,29 +464,15 @@ fn water_atom_name(molecule: &crate::molecule::Molecule, atom: AtomId) -> String
     }
 }
 
-/// The atom's `type_symbol`; validation has already rejected isotopes the
-/// format cannot name.
+/// The atom's `type_symbol`: its element alone for an isotope the format
+/// cannot name, which validation rejects unless the caller omits it.
 fn type_symbol(atom: &Atom) -> &'static str {
     structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
-        .expect("validated atoms have a structure element symbol")
+        .unwrap_or_else(|| atom.element.symbol())
 }
 
 fn generated_atom_name(symbol: &str, atom: AtomId) -> String {
     format!("{symbol}{}", one_based_serial(atom.raw()))
-}
-
-fn supported_bond_order(bond: InstanceBondId, order: BondOrder) -> Result<BondOrder, FormatError> {
-    match order {
-        BondOrder::Single
-        | BondOrder::Double
-        | BondOrder::Triple
-        | BondOrder::Quadruple
-        | BondOrder::Dative => Ok(order),
-        BondOrder::Zero => Err(fail(MmcifWriteErrorKind::UnsupportedBondOrder {
-            bond,
-            order,
-        })),
-    }
 }
 
 /// Rows by label asym and atom name, among which a `_struct_conn` partner

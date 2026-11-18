@@ -44,8 +44,8 @@ const MMCIF_CARRIES: Carries = Carries {
 /// Options of the mmCIF writer.
 ///
 /// The default writes a block named `model` with coordinates to 3 decimal
-/// places and fails on geometry state, properties, a periodic cell, or fixed
-/// implicit-hydrogen counts mmCIF cannot carry.
+/// places and fails on geometry state, properties, a periodic cell, fixed
+/// implicit-hydrogen counts, or other chemistry mmCIF cannot carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MmcifWriteOptions {
     block_name: String,
@@ -54,6 +54,7 @@ pub struct MmcifWriteOptions {
     properties: UnrepresentablePolicy,
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
+    chemistry: UnrepresentablePolicy,
 }
 
 impl MmcifWriteOptions {
@@ -181,6 +182,29 @@ impl MmcifWriteOptions {
         self.implicit_hydrogens = implicit_hydrogens;
         self
     }
+
+    /// Other represented chemistry mmCIF cannot carry: isotopes other than
+    /// deuterium and tritium, radicals, atom maps, represented stereo, and
+    /// zero-order bonds, which `_struct_conn` cannot state. By default it
+    /// fails to write; [`UnrepresentablePolicy::Omit`] writes the rows
+    /// without it and reports each kind left out
+    /// ([`WriteOmission::Isotopes`], [`WriteOmission::Radicals`],
+    /// [`WriteOmission::AtomMaps`], [`WriteOmission::Stereo`], and
+    /// [`WriteOmission::Bonds`]). An omitted isotope is written as its
+    /// element. mmCIF readers read no stereo, but the coordinates still
+    /// define it, and [`crate::stereo::coordinates`] infers it from them.
+    /// Fixed implicit-hydrogen counts have their own policy,
+    /// [`Self::implicit_hydrogens`].
+    pub const fn chemistry(&self) -> UnrepresentablePolicy {
+        self.chemistry
+    }
+
+    /// Sets [`Self::chemistry`].
+    #[must_use]
+    pub fn with_chemistry(mut self, chemistry: UnrepresentablePolicy) -> Self {
+        self.chemistry = chemistry;
+        self
+    }
 }
 
 impl Default for MmcifWriteOptions {
@@ -192,6 +216,7 @@ impl Default for MmcifWriteOptions {
             properties: UnrepresentablePolicy::Fail,
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
+            chemistry: UnrepresentablePolicy::Fail,
         }
     }
 }
@@ -284,7 +309,10 @@ pub enum MmcifWriteErrorKind {
     /// Interpretation reports carry provenance for an atom the structure does
     /// not have.
     UnknownAtomProvenance(InstanceAtomId),
-    /// An atom has state the writer does not represent.
+    /// An atom has state mmCIF cannot carry, with
+    /// [`MmcifWriteOptions::implicit_hydrogens`] (for
+    /// [`AtomField::Hydrogens`]) or [`MmcifWriteOptions::chemistry`] set to
+    /// fail.
     UnsupportedAtomField {
         /// The atom.
         atom: InstanceAtomId,
@@ -298,10 +326,11 @@ pub enum MmcifWriteErrorKind {
         /// Its formal charge.
         charge: i8,
     },
-    /// A molecule instance carries stereochemistry the writer does not
-    /// represent.
+    /// A molecule instance carries represented stereo, with
+    /// [`MmcifWriteOptions::chemistry`] set to fail.
     UnsupportedStereo(MoleculeInstanceId),
-    /// A bond has an order mmCIF connectivity cannot represent.
+    /// A zero-order bond, which `_struct_conn` cannot state, with
+    /// [`MmcifWriteOptions::chemistry`] set to fail.
     UnsupportedBondOrder {
         /// The bond.
         bond: InstanceBondId,
@@ -981,27 +1010,16 @@ fn write_model_block_to(
         }
     };
     let cell = block_cell([view.cell()], options.cell)?;
-    let prepared = prepare_model(
-        view,
-        plan,
-        options.implicit_hydrogens,
-        options.coordinate_precision,
-    )?;
+    let prepared = prepare_model(view, plan, options)?;
     render_model_to(writer, &prepared, cell, options)?;
     // Nothing is reported for a block that did not reach the sink.
     omissions.extend(omitted);
     if cell.is_none() && view.cell().is_some() {
         omissions.record(WriteOmission::Cell { structures: 1 });
     }
-    omissions.record(WriteOmission::ImplicitHydrogens {
-        atoms: prepared.omitted_hydrogens,
-    });
-    omissions.record(WriteOmission::Coordination {
-        records: prepared.omitted_coordination,
-    });
-    omissions.record(WriteOmission::CoordinationBonds {
-        bonds: prepared.coordination_bonds,
-    });
+    for omission in &prepared.omissions {
+        omissions.record(*omission);
+    }
     Ok(())
 }
 
@@ -1071,12 +1089,7 @@ fn write_multi_model_block_to(
     let (_, first_view) = geometries.next().ok_or_else(|| fail(empty))?;
     let first_plan =
         multi_model_entity_plan(first_view, classifications, reports.map(|all| &all[0]))?;
-    let mut first = prepare_model(
-        first_view,
-        first_plan,
-        options.implicit_hydrogens,
-        options.coordinate_precision,
-    )?;
+    let mut first = prepare_model(first_view, first_plan, options)?;
 
     write_block_start(writer, &first, cell, options)?;
     let mut atom_serial = 1u64;
@@ -1084,12 +1097,7 @@ fn write_multi_model_block_to(
 
     for (index, view) in geometries {
         let plan = multi_model_entity_plan(view, classifications, reports.map(|all| &all[index]))?;
-        let candidate = prepare_model(
-            view,
-            plan,
-            options.implicit_hydrogens,
-            options.coordinate_precision,
-        )?;
+        let candidate = prepare_model(view, plan, options)?;
         validate_geometry(&first, &candidate, index + 1)?;
         // A bond the reader derives in one model but not another is stated.
         for (connection, geometry) in first.connections.iter_mut().zip(&candidate.connections) {
@@ -1114,16 +1122,10 @@ fn write_multi_model_block_to(
             structures: views.iter().filter(|view| view.cell().is_some()).count(),
         });
     }
-    // Geometries share one topology, so the block omits each atom's count once.
-    omissions.record(WriteOmission::ImplicitHydrogens {
-        atoms: first.omitted_hydrogens,
-    });
-    omissions.record(WriteOmission::Coordination {
-        records: first.omitted_coordination,
-    });
-    omissions.record(WriteOmission::CoordinationBonds {
-        bonds: first.coordination_bonds,
-    });
+    // Geometries share one topology, so the block reports its chemistry once.
+    for omission in &first.omissions {
+        omissions.record(*omission);
+    }
     Ok(())
 }
 
