@@ -717,7 +717,9 @@ that is a state has the state's population. The free energy is
 one when it has no target; a given temperature that differs from the target
 is refused. A cell with fewer samples than a threshold has no value but keeps
 its count, effective count, population, and representative, the sample
-nearest its centre. Samples without an axis value, or outside the bins, are
+nearest its centre. Unless the caller sets it, the threshold is ten samples
+for a free energy and one for a mean, which is exact over a single
+structure. Samples without an axis value, or outside the bins, are
 in no cell and counted. See
 [landscapes](crates/kekule/src/statistics/landscape.rs).
 

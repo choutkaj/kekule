@@ -10,6 +10,7 @@ use crate::structure::{
 use crate::units::{Quantity, CANONICAL_ENERGY_UNIT};
 use std::sync::OnceLock;
 
+use super::grouping::Grouping;
 use super::reweighting::ReducedBias;
 
 /// Which geometries of a set a [`Distribution`] covers: its samples.
@@ -744,31 +745,29 @@ impl Distribution {
                 group_of.len(),
             )));
         }
-        let mut members = vec![Vec::new(); groups];
-        for (position, group) in group_of.iter().enumerate() {
-            let Some(group) = group else { continue };
-            let group = *group as usize;
-            members
-                .get_mut(group)
-                .ok_or_else(|| {
-                    StructureSetError::GroupOutOfRange(IndexOutOfRange::new(
-                        Countable::Group,
-                        group,
-                        groups,
-                    ))
-                })?
-                .push(position);
-        }
+        let grouping = Grouping::new(group_of, groups).map_err(|group| {
+            StructureSetError::GroupOutOfRange(IndexOutOfRange::new(
+                Countable::Group,
+                group,
+                groups,
+            ))
+        })?;
+        Ok(self.grouped_log_populations(&grouping))
+    }
+
+    /// The natural logarithm of each group's probability, as
+    /// [`Self::group_log_populations`] gives it, for a grouping of this
+    /// distribution's samples.
+    pub(crate) fn grouped_log_populations(&self, grouping: &Grouping) -> Vec<Option<f64>> {
         let shift = self.populations().shift;
-        let estimates = members
-            .iter()
-            .map(|positions| self.group_estimate(positions, shift))
+        let estimates = (0..grouping.len())
+            .map(|group| self.group_estimate(grouping.members(group), shift))
             .collect::<Vec<_>>();
         let total = log_sum_exp(estimates.iter().flatten().copied());
-        Ok(estimates
+        estimates
             .into_iter()
             .map(|estimate| estimate.map(|estimate| estimate - total))
-            .collect())
+            .collect()
     }
 
     /// Kish's effective sample size, `(Σw)² / Σw²`, over the exact weights

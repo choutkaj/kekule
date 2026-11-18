@@ -152,11 +152,11 @@ mod view;
 pub use builder::{StructureBuildError, StructureBuilder, StructureBuilderTopologyMut};
 pub use coordinate_error::CoordinateError;
 pub use dynamics::{Forces, Velocities};
-pub(crate) use ensemble::Weights;
 pub use ensemble::{
     Distribution, DistributionMut, Ensemble, Partition, PartitionError, Samples, StateData,
     StateIter, StateView, WeightModel,
 };
+pub(crate) use ensemble::{Grouping, Weights};
 pub(crate) use geometry::{subset_rows, GeometryData};
 pub use geometry::{Geometry, GeometryError, GeometryMut};
 pub use geometry_edit::{AngleEdit, DihedralEdit, DistanceEdit};

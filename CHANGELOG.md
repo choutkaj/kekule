@@ -257,15 +257,16 @@ the main branch migrates by the table under "From the SampleSet API".
   `diagnostics::Countable::Group`), and `group_effective_sample_size` read any
   group of samples, such as histogram bins.
 - `statistics::Landscape` bins a distribution's samples on one or two
-  `GridAxis`es (values by geometry, a `Binning` that is plain, `periodic`, or
-  `covering` the values) into `Cell`s with a count, an effective count, a
-  population by the distribution's estimator, and a representative:
-  `free_energy` (`-RT ln(P / P_max)` in kJ/mol at the target temperature) and
-  `mean` of a value by exact shares (`SurfaceQuantity`). `LandscapeOptions`
-  masks cells with fewer samples than `fewest` (10) and takes a temperature
-  for a distribution without a target; `probabilities` is the weighted
-  histogram. Failures are a `LandscapeError`; `diagnostics::Resource::Cells`
-  bounds the grid.
+  `GridAxis`es (values by geometry, a `Binning` that is `new`, `between` two
+  edges, `periodic`, or `covering` the values) into `Cell`s with a count, an
+  effective count, a population by the distribution's estimator, and a
+  representative: `free_energy` (`-RT ln(P / P_max)` in kJ/mol at the target
+  temperature) and `mean` of a value by exact shares (`SurfaceQuantity`).
+  `LandscapeOptions` masks cells with fewer samples than `fewest` (unless set,
+  10 for a free energy and 1 for a mean) and takes a temperature for a
+  distribution without a target; `probabilities` is the weighted histogram,
+  and `cell_at` and `center` convert between cells and axis values. Failures
+  are a `LandscapeError`; `diagnostics::Resource::Cells` bounds the grid.
 
 ### Changed
 

@@ -4,16 +4,16 @@
 use std::fmt;
 
 use crate::diagnostics::{LimitExceeded, Resource};
-use crate::structure::{Distribution, StructureSetError, ThermodynamicState};
+use crate::structure::{Distribution, Grouping, StructureSetError, ThermodynamicState};
 use crate::units::{Quantity, Unit, UnitError, CANONICAL_ENERGY_UNIT};
 
-/// Equal bins along one axis: `bins` bins of `width` from `start`, in the
+/// Equal bins along one axis: `bins` bins from `start` to `end`, in the
 /// unit of the values they bin.
 ///
 /// Bin `i` holds the values from `start + i·width` up to the next edge; the
-/// last bin also holds its upper edge. A periodic binning wraps every finite
-/// value into its period first, so on `periodic(-180.0, 360.0, 36)` the
-/// value 180 lands in bin 0 with -180.
+/// last bin also holds `end`. A periodic binning wraps every finite value
+/// into its period first, so on `periodic(-180.0, 360.0, 36)` the value 180
+/// lands in bin 0 with -180.
 ///
 /// ```
 /// use kekule::statistics::Binning;
@@ -34,9 +34,11 @@ use crate::units::{Quantity, Unit, UnitError, CANONICAL_ENERGY_UNIT};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Binning {
     start: f64,
+    end: f64,
     width: f64,
     bins: usize,
-    periodic: bool,
+    /// The period of a periodic binning, `end - start` as given.
+    period: Option<f64>,
 }
 
 impl Binning {
@@ -48,27 +50,51 @@ impl Binning {
     /// [`LandscapeError::InvalidBinning`] when `start` or `width` is not
     /// finite, `width` is not positive, or the last edge is not finite.
     pub fn new(start: f64, width: f64, bins: usize) -> Result<Self, LandscapeError> {
-        Self::checked(start, width, bins, false)
+        if bins == 0 {
+            return Err(LandscapeError::NoBins);
+        }
+        Self::checked(start, start + width * bins as f64, width, bins, None)
+    }
+
+    /// `bins` bins from `start` to `end`. A value equal to `end` lands in
+    /// the last bin, however the width rounds.
+    ///
+    /// # Errors
+    ///
+    /// [`LandscapeError::NoBins`] for no bins, and
+    /// [`LandscapeError::InvalidBinning`] when `start` or `end` is not
+    /// finite, or `end` is not above `start` by a positive width.
+    pub fn between(start: f64, end: f64, bins: usize) -> Result<Self, LandscapeError> {
+        if bins == 0 {
+            return Err(LandscapeError::NoBins);
+        }
+        Self::checked(start, end, (end - start) / bins as f64, bins, None)
     }
 
     /// `bins` bins dividing the period `period` from `start`, such as an
     /// angle from -180° over 360°. Values outside the period are wrapped
-    /// into it.
+    /// into it, so `start + period` lands in bin 0.
     ///
     /// # Errors
     ///
-    /// The errors of [`Self::new`] for the width `period / bins`.
+    /// The errors of [`Self::between`] for the end `start + period`.
     pub fn periodic(start: f64, period: f64, bins: usize) -> Result<Self, LandscapeError> {
         if bins == 0 {
             return Err(LandscapeError::NoBins);
         }
-        Self::checked(start, period / bins as f64, bins, true)
+        Self::checked(
+            start,
+            start + period,
+            period / bins as f64,
+            bins,
+            Some(period),
+        )
     }
 
     /// `bins` bins from the smallest to the largest finite value, so that
-    /// every finite value lands in a bin, the largest in the last one even
-    /// when the width is not exact in binary. When every value is the same,
-    /// the bins are one unit wide around it.
+    /// every finite value lands in a bin, the largest in the last one. When
+    /// every value is the same, the bins are one unit wide, and the value
+    /// lies at the centre of bin `bins / 2`.
     ///
     /// # Errors
     ///
@@ -91,47 +117,40 @@ impl Binning {
         if lowest > highest {
             return Err(LandscapeError::NoValues);
         }
-        let count = bins as f64;
         if lowest == highest {
-            return Self::new(lowest - count / 2.0, 1.0, bins);
+            return Self::new(lowest - ((bins / 2) as f64 + 0.5), 1.0, bins);
         }
-        let span = highest - lowest;
-        let mut width = span / count;
-        if !(span.is_finite() && width > 0.0) {
-            return Err(LandscapeError::InvalidBinning);
-        }
-        // `bin` divides by the width as here, so the largest value's
-        // position must not pass the last edge.
-        while span / width > count {
-            width = width.next_up();
-        }
-        Self::new(lowest, width, bins)
+        Self::between(lowest, highest, bins)
     }
 
     fn checked(
         start: f64,
+        end: f64,
         width: f64,
         bins: usize,
-        periodic: bool,
+        period: Option<f64>,
     ) -> Result<Self, LandscapeError> {
-        if bins == 0 {
-            return Err(LandscapeError::NoBins);
-        }
-        let end = start + width * bins as f64;
-        if !(start.is_finite() && width.is_finite() && width > 0.0 && end.is_finite()) {
+        let finite = start.is_finite() && end.is_finite() && width.is_finite();
+        if !(finite && width > 0.0 && end > start) {
             return Err(LandscapeError::InvalidBinning);
         }
         Ok(Self {
             start,
+            end,
             width,
             bins,
-            periodic,
+            period,
         })
     }
 
     /// The lower edge of the first bin.
     pub const fn start(&self) -> f64 {
         self.start
+    }
+
+    /// The upper edge of the last bin.
+    pub const fn end(&self) -> f64 {
+        self.end
     }
 
     /// The width of every bin.
@@ -146,12 +165,12 @@ impl Binning {
 
     /// Whether values wrap into the period.
     pub const fn is_periodic(&self) -> bool {
-        self.periodic
+        self.period.is_some()
     }
 
-    /// The upper edge of the last bin, `start + bins·width`.
-    pub fn end(&self) -> f64 {
-        self.start + self.width * self.bins as f64
+    /// The period of a periodic binning.
+    pub const fn period(&self) -> Option<f64> {
+        self.period
     }
 
     /// The bin of `value`, or `None` for a value that is not finite or, on
@@ -166,19 +185,21 @@ impl Binning {
         (index < self.bins).then_some(self.start + (index as f64 + 0.5) * self.width)
     }
 
-    /// Where `value` lies, in bin widths from the start, wrapped into
-    /// `0..=bins` on a periodic binning; `None` as [`Self::bin`] gives it.
+    /// Where `value` lies, in bin widths from the start, wrapped into the
+    /// period in value space on a periodic binning; `None` as [`Self::bin`]
+    /// gives it.
     fn position(&self, value: f64) -> Option<f64> {
         if !value.is_finite() {
             return None;
         }
-        let position = (value - self.start) / self.width;
         let bins = self.bins as f64;
-        if self.periodic {
-            let wrapped = position.rem_euclid(bins);
-            wrapped.is_finite().then_some(wrapped)
-        } else {
-            (value >= self.start && position <= bins).then_some(position)
+        match self.period {
+            Some(period) => {
+                let wrapped = (value - self.start).rem_euclid(period);
+                wrapped.is_finite().then_some(wrapped / period * bins)
+            }
+            None => (value >= self.start && value <= self.end)
+                .then_some((value - self.start) / self.width),
         }
     }
 }
@@ -224,26 +245,19 @@ impl<'a> GridAxis<'a> {
 }
 
 /// Options of a [`Landscape`].
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Unless [`Self::with_fewest`] sets it, a free-energy cell needs
+/// [`Self::DEFAULT_FEWEST`] samples for a value, and a mean needs one: a
+/// mean over a single structure, such as a point of a scan, is exact.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct LandscapeOptions {
-    fewest: usize,
+    fewest: Option<usize>,
     temperature: Option<Quantity<f64>>,
 }
 
-impl Default for LandscapeOptions {
-    /// At least [`Self::DEFAULT_FEWEST`] samples per cell, at the
-    /// distribution's target temperature.
-    fn default() -> Self {
-        Self {
-            fewest: Self::DEFAULT_FEWEST,
-            temperature: None,
-        }
-    }
-}
-
 impl LandscapeOptions {
-    /// The default fewest samples a cell needs for a value, PyReweighting's
-    /// cutoff.
+    /// The fewest samples a free-energy cell needs for a value unless set,
+    /// PyReweighting's cutoff.
     pub const DEFAULT_FEWEST: usize = 10;
 
     /// The default options.
@@ -252,11 +266,12 @@ impl LandscapeOptions {
     }
 
     /// Returns these options with the fewest samples a cell needs for a
-    /// value. A cell with fewer is masked: it keeps its count, population,
-    /// and representative, but has no value.
+    /// value, for a free energy and a mean alike. A cell with fewer is
+    /// masked: it keeps its count, population, and representative, but has
+    /// no value.
     #[must_use]
     pub const fn with_fewest(mut self, fewest: usize) -> Self {
-        self.fewest = fewest;
+        self.fewest = Some(fewest);
         self
     }
 
@@ -283,8 +298,8 @@ impl LandscapeOptions {
         Ok(self)
     }
 
-    /// The fewest samples a cell needs for a value.
-    pub const fn fewest(&self) -> usize {
+    /// The fewest samples a cell needs for a value, if set.
+    pub const fn fewest(&self) -> Option<usize> {
         self.fewest
     }
 
@@ -300,7 +315,7 @@ impl LandscapeOptions {
 #[non_exhaustive]
 pub enum SurfaceQuantity {
     /// The free energy of the cell's population relative to the most
-    /// populated cell ([`Landscape::free_energy`]).
+    /// populated cell that is not masked ([`Landscape::free_energy`]).
     FreeEnergy,
     /// The probability-weighted mean of a value over the cell's samples
     /// ([`Landscape::mean`]).
@@ -338,8 +353,8 @@ impl Cell {
     }
 
     /// The cell's value in [`Landscape::value_unit`], or `None` for an
-    /// empty cell, one with fewer samples than
-    /// [`LandscapeOptions::fewest`], or one without a finite value.
+    /// empty cell, one with fewer samples than [`Landscape::fewest`], or one
+    /// without a finite value.
     pub const fn value(&self) -> Option<f64> {
         self.value
     }
@@ -374,10 +389,11 @@ impl Cell {
 /// sample's share is exact, `exp(ℓ_i) / Σ exp(ℓ_j)`; the effective count is
 /// Kish's over the same weights.
 ///
-/// **Values.** A cell with fewer samples than
-/// [`LandscapeOptions::fewest`] is masked: it has no value, but keeps its
-/// count, population, and representative, and its probability stays in
-/// [`Self::probabilities`]. The free energy of a cell is
+/// **Values.** A cell with fewer samples than [`Self::fewest`] is masked:
+/// it has no value, but keeps its count, population, and representative,
+/// and its probability stays in [`Self::probabilities`]. Unless the options
+/// set it, a free energy needs [`LandscapeOptions::DEFAULT_FEWEST`] samples
+/// per cell and a mean one. The free energy of a cell is
 /// `F = -RT ln(P_cell / P_max)` in kJ/mol, with `P_max` the population of
 /// the most populated cell that is not masked, so the lowest value is 0. A
 /// mean is the average of a value over the cell's samples, each with its
@@ -442,7 +458,9 @@ impl Landscape {
     pub const MAX_CELLS: usize = 1 << 22;
 
     /// The free-energy surface of `distribution` on `axes`, in
-    /// [`CANONICAL_ENERGY_UNIT`].
+    /// [`CANONICAL_ENERGY_UNIT`]. A cell with fewer samples than
+    /// [`LandscapeOptions::with_fewest`] sets, or
+    /// [`LandscapeOptions::DEFAULT_FEWEST`] unless set, is masked.
     ///
     /// # Errors
     ///
@@ -471,7 +489,9 @@ impl Landscape {
     /// The map of the probability-weighted mean of `of`, a value per
     /// geometry in `unit`, over the samples of each cell of `distribution`
     /// on `axes`. A sample whose value of `of` is missing or not finite is
-    /// excluded, as one missing an axis value is.
+    /// excluded, as one missing an axis value is. A cell is masked only
+    /// below the fewest samples [`LandscapeOptions::with_fewest`] sets: the
+    /// mean of a single structure, such as a point of a scan, is exact.
     ///
     /// # Errors
     ///
@@ -552,38 +572,24 @@ impl Landscape {
                 }
             }
         }
-        let log_populations = distribution
-            .group_log_populations(&group_of, cell_count)
-            .expect("every sample has a group below the cell count");
-
-        // The samples of each cell, by sample position, cell after cell.
-        let mut starts = vec![0_usize; cell_count + 1];
-        for cell in group_of.iter().flatten() {
-            starts[*cell as usize + 1] += 1;
-        }
-        for cell in 0..cell_count {
-            starts[cell + 1] += starts[cell];
-        }
-        let mut members = vec![0_usize; starts[cell_count]];
-        let mut next = starts.clone();
-        for (position, cell) in group_of.iter().enumerate() {
-            if let Some(cell) = cell {
-                members[next[*cell as usize]] = position;
-                next[*cell as usize] += 1;
-            }
-        }
+        let grouping =
+            Grouping::new(&group_of, cell_count).expect("every cell is below the cell count");
+        let log_populations = distribution.grouped_log_populations(&grouping);
 
         let log_weights = distribution.exact_log_weights();
-        let fewest = options.fewest;
+        let fewest = options.fewest.unwrap_or(match quantity {
+            SurfaceQuantity::FreeEnergy => LandscapeOptions::DEFAULT_FEWEST,
+            SurfaceQuantity::Mean => 1,
+        });
         let reference = (0..cell_count)
-            .filter(|&cell| starts[cell + 1] - starts[cell] >= fewest)
+            .filter(|&cell| grouping.members(cell).len() >= fewest)
             .filter_map(|cell| log_populations[cell])
             .fold(None, |highest: Option<f64>, value| {
                 Some(highest.map_or(value, |highest| highest.max(value)))
             });
         let cells = (0..cell_count)
             .map(|cell| {
-                let positions = &members[starts[cell]..starts[cell + 1]];
+                let positions = grouping.members(cell);
                 let count = positions.len();
                 let log_population = log_populations[cell];
                 let value = if count == 0 || count < fewest {
@@ -663,14 +669,16 @@ impl Landscape {
         self.value_unit
     }
 
-    /// The temperature of the free energy, or of the distribution's target,
-    /// in [`CANONICAL_TEMPERATURE_UNIT`](crate::units::CANONICAL_TEMPERATURE_UNIT); `None` for a mean over a
-    /// distribution without a target.
+    /// The distribution's target temperature, or the one the options give
+    /// for a distribution without a target, in
+    /// [`CANONICAL_TEMPERATURE_UNIT`](crate::units::CANONICAL_TEMPERATURE_UNIT).
+    /// `None` when neither gives one, which only a mean allows.
     pub const fn temperature(&self) -> Option<Quantity<f64>> {
         self.temperature
     }
 
-    /// The fewest samples a cell needed for a value.
+    /// The fewest samples a cell needed for a value: the options' own, or
+    /// the default for the quantity.
     pub const fn fewest(&self) -> usize {
         self.fewest
     }
@@ -709,6 +717,23 @@ impl Landscape {
             stride *= binning.bins;
         }
         Some(index)
+    }
+
+    /// The centre of cell `index`, one value per axis in its unit, or
+    /// `None` past the last cell: the inverse of [`Self::cell_at`].
+    pub fn center(&self, index: usize) -> Option<Vec<f64>> {
+        if index >= self.cells.len() {
+            return None;
+        }
+        let mut remainder = index;
+        self.binnings
+            .iter()
+            .map(|binning| {
+                let bin = remainder % binning.bins;
+                remainder /= binning.bins;
+                binning.center(bin)
+            })
+            .collect()
     }
 }
 
@@ -791,6 +816,9 @@ fn weighted_mean(
     for &position in positions {
         let value = of[distribution.sample(position)]?;
         let weight = (log_weights[position] - highest).exp();
+        if weight == 0.0 {
+            continue;
+        }
         total += weight;
         mean += weight / total * (value - mean);
     }

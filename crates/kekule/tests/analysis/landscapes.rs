@@ -215,14 +215,37 @@ fn masking_hides_values_only() -> Result<(), LandscapeError> {
     }
     assert!(unmasked.cells()[0].value() == Some(0.0));
     assert!(unmasked.cells()[2].value().unwrap() > 0.0);
-    // The default needs ten samples.
-    assert_eq!(LandscapeOptions::default().fewest(), 10);
-    let none = Landscape::free_energy(
-        &distribution,
+    Ok(())
+}
+
+#[test]
+fn a_free_energy_needs_ten_samples_and_a_mean_one_unless_set() -> Result<(), LandscapeError> {
+    let values = [0.5, 1.2, 1.7, 2.0, 2.1, 2.5, 2.9].map(Some);
+    let axis = GridAxis::new(&values, unit_bins(3), NANOMETER);
+    let defaults = LandscapeOptions::default().with_temperature(Some(kelvin(300.0)))?;
+    assert_eq!(defaults.fewest(), None);
+    let surface = Landscape::free_energy(&every_sample(7), &[axis], &defaults)?;
+    assert_eq!(surface.fewest(), LandscapeOptions::DEFAULT_FEWEST);
+    assert!(surface.cells().iter().all(|cell| cell.value().is_none()));
+    // A mean over one sample is exact.
+    let mean = Landscape::mean(&every_sample(7), &[axis], &values, NANOMETER, &defaults)?;
+    assert_eq!(mean.fewest(), 1);
+    assert_eq!(mean.cells()[0].value(), Some(0.5));
+    assert_close(mean.cells()[1].value().unwrap(), 1.45);
+    // A mean is masked when the options set a threshold.
+    let masked = Landscape::mean(
+        &every_sample(7),
         &[axis],
-        &LandscapeOptions::default().with_temperature(Some(kelvin(300.0)))?,
+        &values,
+        NANOMETER,
+        &defaults.with_fewest(3),
     )?;
-    assert!(none.cells().iter().all(|cell| cell.value().is_none()));
+    assert_eq!(masked.fewest(), 3);
+    assert_eq!(masked.cells()[0].value(), None);
+    assert_eq!(masked.cells()[1].value(), None);
+    assert_close(masked.cells()[2].value().unwrap(), 2.375);
+    assert_eq!(masked.probabilities(), mean.probabilities());
+    assert_eq!(masked.cells()[0].representative(), Some(0));
     Ok(())
 }
 
@@ -320,9 +343,12 @@ fn covering_bins_hold_every_value() {
         Err(LandscapeError::InvalidBinning)
     );
     // One value: unit bins around it.
-    let single = Binning::covering(&[Some(2.0), Some(2.0)], 4).unwrap();
-    assert_eq!((single.start(), single.width()), (0.0, 1.0));
-    assert_eq!(single.bin(2.0), Some(2));
+    for bins in [1, 2, 3, 4, 7, 10] {
+        let single = Binning::covering(&[Some(2.0), Some(2.0)], bins).unwrap();
+        assert_eq!(single.width(), 1.0);
+        assert_eq!(single.bin(2.0), Some(bins / 2));
+        assert_eq!(single.center(bins / 2), Some(2.0));
+    }
     // Non-finite values are ignored.
     let covering = Binning::covering(&[Some(f64::NAN), Some(0.0), None, Some(1.0)], 3).unwrap();
     assert_eq!(covering.bin(0.0), Some(0));
@@ -504,4 +530,144 @@ fn inputs_must_cover_the_samples() {
         error.to_string(),
         "The landscape exceeds its grid cell limit: 25,000,000 cells of 4,194,304."
     );
+}
+
+#[test]
+fn a_light_sample_first_keeps_the_mean() -> Result<(), LandscapeError> {
+    let values = [Some(0.5), Some(0.5)];
+    let axis = GridAxis::new(&values, unit_bins(1), NANOMETER);
+    for (log_weights, of) in [
+        (vec![0.0, 800.0], [Some(1.0), Some(2.0)]),
+        (vec![800.0, 0.0], [Some(2.0), Some(1.0)]),
+    ] {
+        let distribution = every_sample(2).with_log_weights(log_weights).unwrap();
+        let mean = Landscape::mean(&distribution, &[axis], &of, NANOMETER, &options())?;
+        assert_eq!(mean.cells()[0].value(), Some(2.0));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_end_of_a_period_wraps_to_the_first_bin() -> Result<(), LandscapeError> {
+    use std::f64::consts::PI;
+    for bins in 1..=200 {
+        let radians = Binning::periodic(-PI, 2.0 * PI, bins)?;
+        assert_eq!(radians.bin(PI), Some(0), "pi in {bins} bins");
+        assert_eq!(radians.bin(-PI), Some(0));
+        assert_eq!(radians.bin(PI - 1e-9), Some(bins - 1));
+        assert_eq!(radians.period(), Some(2.0 * PI));
+        let degrees = Binning::periodic(-180.0, 360.0, bins)?;
+        assert_eq!(degrees.bin(180.0), Some(0), "180 in {bins} bins");
+        assert_eq!(degrees.bin(-180.0), Some(0));
+        assert_eq!(degrees.bin(179.999_999), Some(bins - 1));
+        // A value many periods away still lands in a bin.
+        assert!(degrees.bin(1e20).is_some());
+        assert!(degrees.bin(-1e20).is_some());
+    }
+    Ok(())
+}
+
+#[test]
+fn the_end_lands_in_the_last_bin() -> Result<(), LandscapeError> {
+    let tenths = Binning::new(0.0, 0.1, 3)?;
+    assert_eq!(tenths.bin(tenths.end()), Some(2));
+    assert_eq!(tenths.period(), None);
+    for bins in 1..60 {
+        for (start, end) in [(0.0, 0.3), (0.1, 0.7), (-3.3, 1e-3), (1e10, 1e10 + 7.77)] {
+            let between = Binning::between(start, end, bins)?;
+            assert_eq!((between.start(), between.end()), (start, end));
+            assert_eq!(between.bin(start), Some(0));
+            assert_eq!(between.bin(end), Some(bins - 1), "{end} in {bins} bins");
+            assert_eq!(between.bin(end.next_up()), None);
+            assert_eq!(between.bin(start.next_down()), None);
+        }
+    }
+    assert_eq!(Binning::between(0.0, 1.0, 0), Err(LandscapeError::NoBins));
+    for (start, end) in [
+        (1.0, 1.0),
+        (1.0, 0.0),
+        (f64::NAN, 1.0),
+        (0.0, f64::INFINITY),
+    ] {
+        assert_eq!(
+            Binning::between(start, end, 2),
+            Err(LandscapeError::InvalidBinning)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn representatives_on_two_axes_are_nearest_in_bin_widths() -> Result<(), LandscapeError> {
+    // One cell 1 nm by 10 degrees, centred at (0.5 nm, 5 degrees): the first
+    // sample is 0.3 bins off on x, the second 0.4 bins off on y.
+    let x = [0.8, 0.5].map(Some);
+    let y = [5.0, 9.0].map(Some);
+    let axes = [
+        GridAxis::new(&x, unit_bins(1), NANOMETER),
+        GridAxis::new(&y, Binning::new(0.0, 10.0, 1)?, DEGREE),
+    ];
+    let surface = Landscape::free_energy(&every_sample(2), &axes, &at_300())?;
+    assert_eq!(surface.cells()[0].representative(), Some(0));
+    Ok(())
+}
+
+#[test]
+fn a_large_common_reduced_bias_cancels() -> Result<(), LandscapeError> {
+    let offset = 1e5;
+    let reduced = [0.0, 0.0, 1.5, 0.0, 1.5].map(|b| b + offset);
+    let values = [0.5, 0.25, 1.5, 0.75, 1.25].map(Some);
+    let of = [1.0, 1.0, 3.0, 1.0, 5.0].map(Some);
+    let rt = R * 300.0;
+    let expected = rt * (2.0_f64.ln() + 1.5 - 3.0_f64.ln());
+    for estimator in ESTIMATORS {
+        let ensemble = reweighted(&reduced, estimator);
+        let axis = GridAxis::new(&values, unit_bins(2), NANOMETER);
+        let surface = Landscape::free_energy(ensemble.distribution(), &[axis], &options())?;
+        let cells = surface.cells();
+        assert!((cells[0].value().unwrap() - expected).abs() < 1e-8);
+        assert_eq!(cells[1].value(), Some(0.0));
+        let total: f64 = surface.probabilities().iter().sum();
+        assert!((total - 1.0).abs() < 1e-12);
+        let mean = Landscape::mean(
+            ensemble.distribution(),
+            &[axis],
+            &of,
+            DIMENSIONLESS,
+            &options(),
+        )?;
+        assert!((mean.cells()[1].value().unwrap() - 4.0).abs() < 1e-8);
+    }
+    Ok(())
+}
+
+#[test]
+fn cell_centres_invert_cell_lookup() -> Result<(), LandscapeError> {
+    let x = [Some(0.5)];
+    let axes = [
+        GridAxis::new(&x, unit_bins(3), NANOMETER),
+        GridAxis::new(&x, Binning::periodic(-180.0, 360.0, 4)?, DEGREE),
+    ];
+    let surface = Landscape::free_energy(&every_sample(1), &axes, &at_300())?;
+    assert_eq!(surface.center(4), Some(vec![1.5, -45.0]));
+    assert_eq!(surface.center(12), None);
+    for index in 0..12 {
+        let center = surface.center(index).unwrap();
+        assert_eq!(surface.cell_at(&center), Some(index));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_bins_product_may_overflow() -> Result<(), LandscapeError> {
+    let values = [Some(0.0)];
+    let huge = Binning::new(0.0, 1e-300, usize::MAX)?;
+    let axis = GridAxis::new(&values, huge, NANOMETER);
+    let error = Landscape::free_energy(&every_sample(1), &[axis, axis], &at_300()).unwrap_err();
+    let LandscapeError::TooManyCells(limit) = error else {
+        panic!("{error:?} is not a cell limit")
+    };
+    assert_eq!(limit.observed(), usize::MAX);
+    assert_eq!(limit.limit(), Landscape::MAX_CELLS);
+    Ok(())
 }
