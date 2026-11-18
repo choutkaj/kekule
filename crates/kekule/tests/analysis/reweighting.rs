@@ -552,7 +552,7 @@ fn a_new_sample_cannot_join_reweighted_samples() -> Result<(), StructureSetError
     let geometry = ensemble.set().get(1).unwrap().payload().clone();
     let place = Some(kekule::structure::Place::Step(4_000));
     let error = ensemble
-        .push_sample(geometry.clone(), place.clone(), 0, Some(0.0))
+        .push_sample(geometry.clone(), place, 0, Some(0.0))
         .unwrap_err();
     assert_eq!(error, StructureSetError::ReweightedSample { geometry: 7 });
     assert_eq!(
@@ -560,7 +560,7 @@ fn a_new_sample_cannot_join_reweighted_samples() -> Result<(), StructureSetError
         "Geometry 7 cannot join the reweighted samples. Add it outside the distribution."
     );
     assert!(ensemble
-        .push_state(geometry.clone(), place.clone(), StateData::new(), None)
+        .push_state(geometry.clone(), place, StateData::new(), None)
         .is_err());
     assert_eq!(ensemble.set().len(), 7);
     assert_eq!(ensemble.push(geometry, place)?, 7);
