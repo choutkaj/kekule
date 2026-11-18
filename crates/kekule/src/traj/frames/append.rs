@@ -1,7 +1,7 @@
 //! Continuing a frame table after a restart: [`append_frame_table`].
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use super::error::{FrameTableError, FrameTableErrorKind, Reason};
@@ -94,7 +94,7 @@ pub fn append_frame_table(
     path: impl AsRef<Path>,
     header: &FrameTableHeader,
     keep: KeepRows,
-) -> Result<(FrameTableWriter<BufWriter<File>>, FrameTableAppendReport), FrameTableError> {
+) -> Result<(FrameTableWriter<File>, FrameTableAppendReport), FrameTableError> {
     let mut file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -116,7 +116,7 @@ pub fn append_frame_table(
                 dropped_lines: 0,
                 dropped_bytes: bytes.len() as u64,
             };
-            let writer = FrameTableWriter::resumed(BufWriter::new(file), header.clone(), None);
+            let writer = FrameTableWriter::resumed(file, header.clone(), None);
             return Ok((writer, report));
         }
         Err(error) => return Err(error),
@@ -151,7 +151,7 @@ pub fn append_frame_table(
         dropped_lines: lines,
         dropped_bytes: (bytes.len() - end) as u64,
     };
-    let writer = FrameTableWriter::resumed(BufWriter::new(file), header.clone(), last_step);
+    let writer = FrameTableWriter::resumed(file, header.clone(), last_step);
     Ok((writer, report))
 }
 

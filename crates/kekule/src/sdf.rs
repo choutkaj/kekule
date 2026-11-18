@@ -9,7 +9,9 @@
 //! [`sdf::structure_set`](crate::sdf::structure_set) reads the records'
 //! data fields as the set's columns, and [`sdf::write`](crate::sdf::write)
 //! writes a set geometry's cells as data fields. SDF carries no types: text
-//! that reads as a number or a boolean comes back as one.
+//! that reads as a number or a boolean comes back as one. In a field of
+//! numbers, an empty value, `NaN`, `N/A`, or `NA` is a missing cell, and the
+//! writer leaves a missing cell's field out of its record.
 //!
 //! ```
 //! use kekule::math::Point3;

@@ -253,6 +253,36 @@ fn the_header_records_the_sampling_record_and_names_the_columns() {
 }
 
 #[test]
+fn the_output_holds_every_row_after_a_flush() {
+    let mut writer = FrameTableWriter::new(Vec::new(), header()).unwrap();
+    write_rows(&mut writer, 0..3);
+    writer.flush().unwrap();
+    let table = read_frame_table_from(writer.get_ref().as_slice()).unwrap();
+    assert_eq!(table.steps(), [0, 500, 1000]);
+    let seen = writer.get_ref().clone();
+    assert_eq!(writer.into_inner().unwrap(), seen);
+}
+
+#[test]
+fn a_file_table_syncs_its_rows() {
+    let directory = Directory::new();
+    let path = directory.path("frames.tsv");
+    let mut writer = create_frame_table(&path, header()).unwrap();
+    write_rows(&mut writer, 0..3);
+    writer.sync().unwrap();
+    assert_eq!(read_frame_table(&path).unwrap().steps(), [0, 500, 1000]);
+    drop(writer);
+
+    let (mut writer, _) = append_frame_table(&path, &header(), KeepRows::All).unwrap();
+    write_rows(&mut writer, 3..4);
+    writer.sync().unwrap();
+    assert_eq!(
+        read_frame_table(&path).unwrap().steps(),
+        [0, 500, 1000, 1500]
+    );
+}
+
+#[test]
 fn readers_leave_out_an_unfinished_line_and_nul_blocks() {
     let mut writer = FrameTableWriter::new(Vec::new(), header()).unwrap();
     write_rows(&mut writer, 0..3);
@@ -594,7 +624,7 @@ fn a_growing_table_is_read_row_by_row_until_it_is_cut() {
     assert_eq!(reader.refresh().unwrap(), 2);
     assert_eq!(reader.refresh().unwrap(), 0);
     write_rows(&mut writer, 2..5);
-    writer.get_ref().get_ref().write_all(b"2500\t5").unwrap();
+    writer.get_mut().write_all(b"2500\t5").unwrap();
     assert_eq!(reader.refresh().unwrap(), 3);
     assert_eq!(reader.table().pending_bytes(), 6);
     assert_eq!(reader.table(), &read_frame_table(&path).unwrap());

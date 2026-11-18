@@ -77,7 +77,10 @@ the main branch migrates by the table under "From the SampleSet API".
   for a reader whose columns do not have a row per geometry. SDF writes a
   geometry's cells as data fields, and `sdf::structure_set` reads the
   records' data fields as columns, a field whose type differs between
-  records as text and text that reads as a number or a boolean as one; TRR
+  records as text and text that reads as a number or a boolean as one; in a
+  field of numbers, an empty value, `NaN`, `N/A`, or `NA` is a missing cell,
+  a field of only these gives no column, and a missing cell writes no field;
+  TRR
   writes a frame's lambda cell. Other writers refuse a geometry with cells by
   default, naming the first such geometry, or omit them under the
   `properties` policy (`GeometryField::SetColumns`); XYZ, DCD, and XTC
@@ -100,6 +103,11 @@ the main branch migrates by the table under "From the SampleSet API".
   `FrameTableErrorKind`. `StructureSet::join_frames` joins a table's columns
   by step and installs its sampling record (`JoinReport`). The `frame_table`
   fuzz target reads them.
+- `FrameTableWriter::get_mut` lends the writer's output beside `get_ref`, and
+  `FrameTableWriter<File>::sync` flushes and syncs a table file before a
+  checkpoint. `create_frame_table` and `append_frame_table` return a
+  `FrameTableWriter<File>`, without a `BufWriter`, since every row is
+  flushed whole.
 - SDF stores a geometry's step or coordinate (`sdf::STEP_FIELD`,
   `COORDINATE_FIELD`, `COORDINATE_UNIT_FIELD`); PDB and XYZ refuse them unless
   `geometry_metadata` omits them (`GeometryField::OrderStep`, `OrderCoordinate`).
