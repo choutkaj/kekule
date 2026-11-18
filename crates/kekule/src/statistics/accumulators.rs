@@ -279,9 +279,11 @@ impl SampleObservations {
     /// The listed geometries of `ensemble`, in the listed order, with its
     /// distribution restricted to them, as [`Ensemble::select`] restricts
     /// it: the listed samples, each with its probability among the listed
-    /// samples, and the other listed geometries left out. A probability
-    /// below the smallest positive `f64` contributes nothing and is left
-    /// out.
+    /// samples, and the other listed geometries left out. Each state's
+    /// population is estimated again from its listed samples, so the
+    /// probabilities equal those [`Self::weighted`] gives for
+    /// `ensemble.select(..)`. A probability below the smallest positive
+    /// `f64` contributes nothing and is left out.
     ///
     /// # Errors
     ///

@@ -137,10 +137,14 @@ impl<S: GeometryStorage> Ensemble<S> {
             temperature,
         )?;
         let mut samples = Vec::new();
+        let mut reduced = Vec::new();
         let mut last = None;
         for geometry in 0..set.len() {
             match bias.reduced(geometry) {
-                Ok(_) => samples.push(geometry),
+                Ok(value) => {
+                    samples.push(geometry);
+                    reduced.push(value);
+                }
                 Err(
                     error @ (StructureSetError::BeforeSampling { .. }
                     | StructureSetError::MissingColumnValue { .. }),
@@ -151,26 +155,24 @@ impl<S: GeometryStorage> Ensemble<S> {
         if let (true, Some(error)) = (samples.is_empty(), last) {
             return Err(error);
         }
-        let partition = Partition::one_state(samples.len());
-        let distribution = Distribution::reweighted_by(
-            &bias,
-            set.len(),
-            Samples::Subset(samples),
-            partition,
-            estimator,
-        )?;
+        let distribution =
+            Distribution::reweighted_one_state(&bias, set.len(), samples, reduced, estimator)?;
         Ok(Self { set, distribution })
     }
 
     /// Reweights the samples again from the set's sampling record, to
-    /// `temperature` (the sampled temperature for `None`) with `estimator`,
-    /// whatever their weights were, keeping the samples, the states, and
-    /// their energies and properties; see [`Distribution::reweighted`].
-    /// Failure changes nothing.
+    /// `temperature` with `estimator`, whatever their weights were, keeping
+    /// the samples, the states, and their energies and properties; see
+    /// [`Distribution::reweighted`]. `None` keeps the target's temperature,
+    /// or takes the sampled temperature without a target. Failure changes
+    /// nothing.
     ///
     /// # Errors
     ///
-    /// The errors of [`Distribution::reweighted`].
+    /// The errors of [`Distribution::reweighted`]. A sample that lies
+    /// before the record's first step fails with
+    /// [`StructureSetError::BeforeSampling`]; [`Self::reweighted`] rebuilds
+    /// the ensemble from the samples that can be reweighted.
     pub fn reweight(
         &mut self,
         temperature: Option<Quantity<f64>>,
@@ -180,7 +182,7 @@ impl<S: GeometryStorage> Ensemble<S> {
             self.set.sampling(),
             Some(self.set.columns()),
             self.set.order(),
-            temperature,
+            temperature.or_else(|| self.distribution.temperature()),
         )?;
         let distribution = Distribution::reweighted_by(
             &bias,

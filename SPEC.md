@@ -496,9 +496,14 @@ within a state are exponential averages. State probabilities are the state
 populations normalized to sum to one. `Distribution::log_population` gives any
 group's probability on that scale, and `group_log_populations` normalizes the
 groups of a grouping, such as histogram bins, among themselves. A group that
-holds exactly one state's samples has that state's population. Under a
+holds exactly one state's samples has that state's population, so in
+`log_population` it has the state's probability; in `group_log_populations`
+it does only when the groups cover all samples as the states do. Under a
 cumulant estimator the populations of a group's parts need not sum to the
-group's; that is inherent to the method. The effective sample size, of the
+group's; that is inherent to the method. Cumulant populations also need
+well-populated groups: a group of two samples whose reduced biases differ by
+`d` is inflated by about `exp(d²/8)`, which is why PyReweighting masks bins
+under 10 frames. The effective sample size, of the
 distribution or of a group, is Kish's over the exact weights whatever the
 estimator, so it shows how far a reweighting degenerates. Populations are
 derived and never stored.
@@ -514,20 +519,22 @@ Reweighting derives weights from the sampling record and its columns:
 `Distribution::reweighted` for given samples and states, `Ensemble::reweighted`
 for every geometry that can be a sample, as one state, and
 `Ensemble::reweight` again at another temperature or with another estimator,
-keeping the samples and states. A sample's reduced bias is
+keeping the samples and states; without a temperature it keeps the target's. A sample's reduced bias is
 `b = β_s (U + ΣΔV) − β_t U`, with `β = 1/RT` at the sampled temperature `s`
 and the target temperature `t`, the potential energy `U`, and the sum `ΣΔV`
 of the bias columns. At the sampled temperature `b = β_s ΣΔV`, so only the
 bias columns are read; another temperature also needs the potential-energy
 column. Reweighting changes the temperature only. The target is the sampled
-state at the target temperature, and no `pV` term enters. A geometry whose
+state at the target temperature, and the `pV` term is neglected, which is
+negligible near ambient pressure. A geometry whose
 step lies before the record's first step, or whose bias or potential-energy
 cell is missing, cannot be a sample. Reweighting the potential energy of a run
 in explicit solvent to another temperature collapses: with 10⁴ waters the
 reduced bias spreads by `σ_b ≈ 8` for 300 → 310 K, and a few frames carry
 nearly all the weight. Reweighted weights belong to their target, so setting
 another target fails; reweight instead. Selecting keeps each kept sample's
-reduced bias, regrouping changes none, collapsing gives each representative
+reduced bias, regrouping changes none, normalizing shifts them all together,
+collapsing gives each representative
 its state's population as a log weight and keeps the target, and a new
 sample cannot join. A growing file's new frames therefore stay outside the
 distribution; a new reweighted ensemble of the set takes them.
@@ -699,8 +706,9 @@ or cells a host groups its samples into, with its estimator, and measures its
 effective sample size over the exact weights. See
 [estimators](crates/kekule/src/statistics/estimators.rs).
 
-Clustering groups the samples of an ensemble's distribution, weighted, or every
-geometry of a structure set, unweighted. It returns a `Partition`, the
+Clustering groups the samples of an ensemble's distribution, weighted by their
+exact log weights so that the current states' estimates do not steer the new
+grouping, or every geometry of a structure set, unweighted. It returns a `Partition`, the
 grouping type a distribution owns, and never changes the set.
 `DistributionMut::regroup` installs a partition without changing any weight or
 sample order. A new state that is one old state keeps its energy; one merged

@@ -317,6 +317,7 @@ the main branch migrates by the table under "From the SampleSet API".
   over its samples' exact log weights, and a sample's share within it is
   exact, so a sample's probability is its state's times its share within the
   state; `effective_sample_size` is Kish's over the exact weights.
+  Clustering weighs samples by their exact log weights.
 - **Breaking:** Log weights span hundreds of orders of magnitude without
   underflow; `probabilities`, rankings, and `effective_sample_size` move from
   the old `Ensemble` to `Distribution`.

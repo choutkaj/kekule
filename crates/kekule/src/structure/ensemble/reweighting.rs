@@ -36,7 +36,8 @@ impl EnergyColumn<'_> {
 /// state's `β_s`, the target's `β_t`, the unbiased potential energy `U`, and
 /// the sum of the bias columns `ΣΔV`. At the sampled temperature `b = β_s ΣΔV`,
 /// and the potential energy is not read. Pressure is not reweighted: the
-/// target keeps the sampled pressure, and no `pV` term enters.
+/// target keeps the sampled pressure, and the `pV` term is neglected, which
+/// is negligible near ambient pressure.
 pub(crate) struct ReducedBias<'a> {
     target: ThermodynamicState,
     from_step: u64,
@@ -84,7 +85,9 @@ impl<'a> ReducedBias<'a> {
                 Some(PropertyColumn::Real { unit, values }) => Ok(EnergyColumn {
                     key,
                     values: Some(values),
-                    factor: unit.conversion_factor_to(CANONICAL_ENERGY_UNIT)?,
+                    factor: unit
+                        .conversion_factor_to(CANONICAL_ENERGY_UNIT)
+                        .map_err(|_| StructureSetError::SamplingColumn { key: key.clone() })?,
                 }),
                 Some(_) => Err(StructureSetError::SamplingColumn { key: key.clone() }),
             }
