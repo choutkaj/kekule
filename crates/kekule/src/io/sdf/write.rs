@@ -2,7 +2,7 @@
 use std::collections::BTreeSet;
 use std::io::Write;
 
-use crate::properties::PropertyValueRef;
+use crate::properties::{PropertyValueRef, MAX_PROPERTY_KEY_LEN};
 use crate::structure::{
     AsStructureView, GeometryView, Place, RowView, Structure, StructureKind, StructureView,
 };
@@ -91,10 +91,16 @@ const PLACE_FIELDS: [&str; 3] = [
 /// [`MolfileWriteOptions::geometry_metadata`] omits them; structure and set
 /// properties, and a cell SDF cannot carry (a real of a unit that is no
 /// unit constant of [`crate::units`], or an empty string, a string padded
-/// with spaces, or one SDF cannot frame), fail unless
+/// with spaces, or one SDF cannot frame, or a real with a unit whose key
+/// leaves no room for `.unit` in a property key), fail unless
 /// [`MolfileWriteOptions::properties`] omits them. A cell named like a
-/// place field or another field of the record fails with `Inconsistent`.
-/// Add other values a record should carry as data fields.
+/// place field, another field of the record, or the `<key>.unit` field of a
+/// real cell fails with `Inconsistent`. SDF carries no types: a text cell
+/// that reads as a number or a boolean reads back as one. A geometry of a
+/// TRR file (`StructureSet<IndexedFile>`) holds its lambda as a codec
+/// value, not a column, so it counts as an own property, which the
+/// `properties` policy refuses or omits. Add other values a record should
+/// carry as data fields.
 #[derive(Debug, Clone, Copy)]
 pub struct SdfRecordSource<'a> {
     structure: StructureView<'a>,
@@ -300,14 +306,38 @@ fn write_record(
     writer.write_all(b"$$$$\n").map_err(sink)
 }
 
+/// The suffix of the data field naming a real cell's unit.
+const UNIT_SUFFIX: &str = ".unit";
+
 /// The cells of a geometry's row as data fields, in key order. A cell SDF
 /// cannot carry fails under [`UnrepresentablePolicy::Fail`] and is
-/// otherwise left out, the record counting once.
+/// otherwise left out, the record counting once. A cell named like the unit
+/// field of a real cell fails with `Inconsistent`, as the reader would take
+/// it for that unit.
 fn row_fields(
     row: RowView<'_>,
     policy: UnrepresentablePolicy,
     omissions: &mut Omissions,
 ) -> Result<Vec<SdfDataField>, FormatError> {
+    let reals = row
+        .iter()
+        .filter(|(_, value)| matches!(value, PropertyValueRef::Real { .. }))
+        .map(|(key, _)| key.as_str())
+        .collect::<BTreeSet<_>>();
+    if let Some((key, _)) = row.iter().find(|(key, _)| {
+        key.as_str()
+            .strip_suffix(UNIT_SUFFIX)
+            .is_some_and(|base| reals.contains(base))
+    }) {
+        return Err(FormatError::write(
+            Format::Sdf,
+            DiagnosticKind::Inconsistent,
+            format!("The value {key:?} of the geometry's columns has the name of a unit field."),
+        )
+        .with_detail(FormatErrorDetail::DataField {
+            name: key.as_str().to_owned(),
+        }));
+    }
     let mut fields = Vec::new();
     let mut omitted = false;
     for (key, value) in row.iter() {
@@ -322,9 +352,17 @@ fn row_fields(
                 if unit == DIMENSIONLESS {
                     Some(vec![number])
                 } else {
+                    // The reader takes the unit field back only under a
+                    // name that is a property key.
                     let symbol = unit.to_string();
-                    (named_unit(&symbol) == Some(unit))
-                        .then(|| vec![number, SdfDataField::new(format!("{name}.unit"), symbol)])
+                    let named = named_unit(&symbol) == Some(unit);
+                    let fits = name.len() + UNIT_SUFFIX.len() <= MAX_PROPERTY_KEY_LEN;
+                    (named && fits).then(|| {
+                        vec![
+                            number,
+                            SdfDataField::new(format!("{name}{UNIT_SUFFIX}"), symbol),
+                        ]
+                    })
                 }
             }
             PropertyValueRef::String(value) => {

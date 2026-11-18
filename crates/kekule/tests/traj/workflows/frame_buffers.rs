@@ -10,8 +10,10 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use kekule::math::Point3;
+use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{
-    DenseArrayError, Geometry, GeometryError, Place, Positions, StructureKind, StructureSetError,
+    DenseArrayError, Geometry, GeometryError, GeometryIndex, Place, Positions, StructureKind,
+    StructureSetError,
 };
 use kekule::traj::io::xyz::{XyzReadOptions, XyzReader};
 use kekule::traj::{
@@ -93,14 +95,22 @@ fn written_frames_reach_a_memory_writer_without_copying() {
         writer.write_frame(buffer.frame_view()).unwrap();
         decoded.push(Geometry::clone(&buffer));
     }
-    let set = writer.into_structure_set();
+    let mut set = writer.into_structure_set();
     assert_eq!(set.len(), 2);
     for (geometry, decoded) in set.iter().zip(&decoded) {
         assert!(geometry.payload().shares_storage_with(decoded));
     }
 
     // A frame of a set shows the set's own geometry, and writing the set
-    // again shares every geometry with it.
+    // again shares every geometry with it, its row's cells joining the new
+    // set's row.
+    set.columns_mut()
+        .set_value(
+            PropertyKey::new("energy").unwrap(),
+            GeometryIndex::new(1),
+            Some(PropertyValue::Int(3)),
+        )
+        .unwrap();
     let mut writer = MemoryTrajectoryWriter::new(Arc::clone(&topology));
     for geometry in &set {
         let frame = FrameView::from_geometry(geometry).unwrap();
@@ -111,6 +121,7 @@ fn written_frames_reach_a_memory_writer_without_copying() {
     for (copied, geometry) in copy.iter().zip(&set) {
         assert!(copied.payload().shares_storage_with(geometry.payload()));
     }
+    assert_eq!(copy.columns(), set.columns());
 }
 
 /// A frame without a time or step that the first frame has, or with one it

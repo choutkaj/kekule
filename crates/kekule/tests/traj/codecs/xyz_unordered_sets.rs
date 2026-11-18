@@ -236,8 +236,9 @@ fn properties_are_rejected_or_omitted_at_every_level() {
     set.columns_mut()
         .set_value(key(), GeometryIndex::new(1), Some(value()))
         .unwrap();
-    // A geometry's values are the set's columns, refused for the whole set.
-    assert_rejects(&set, options(), GeometryField::SetColumns, None);
+    // A geometry's values are the set's columns, refused at the first
+    // geometry with cells.
+    assert_rejects(&set, options(), GeometryField::SetColumns, Some(2));
     let (text, report) = write(&set, omit_properties()).unwrap();
     assert_eq!(text, plain());
     assert_eq!(
@@ -353,11 +354,11 @@ fn a_policy_changes_only_whether_what_xyz_cannot_store_is_dropped() {
             [BONDS, WriteOmission::Occupancies { structures: 1 }]
         );
 
-        // The set's columns are refused under either policy, for the whole
-        // set.
+        // The set's columns are refused under either policy, at the first
+        // geometry with cells.
         assert_eq!(
             failure(write(&labelled, options()).unwrap_err()),
-            refused(GeometryField::SetColumns, None)
+            refused(GeometryField::SetColumns, Some(2))
         );
 
         // A cell is refused or dropped by the cell policy.

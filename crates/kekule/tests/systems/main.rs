@@ -16,6 +16,7 @@ mod sampling;
 mod scientific_selection;
 mod selection;
 mod set_columns;
+mod set_geometries;
 mod structure_append;
 #[path = "../support/mod.rs"]
 mod support;

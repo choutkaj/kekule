@@ -204,9 +204,9 @@ fn geometry_energies_and_set_values_are_rejected_or_omitted_with_a_report() {
             )
             .unwrap();
     }
-    // The set's columns fail once for the set, or are omitted from the
-    // geometries with cells.
-    assert_rejects(&history, omit_places(), GeometryField::SetColumns, None);
+    // The set's columns fail once, at the first geometry with cells, or
+    // are omitted from the geometries with cells.
+    assert_rejects(&history, omit_places(), GeometryField::SetColumns, Some(2));
     let options = omit_places().with_properties(UnrepresentablePolicy::Omit);
     let (text, report) = write(&history, options.clone()).unwrap();
     assert_eq!(text, TEXT);
@@ -356,7 +356,7 @@ fn ordered_sets_write_what_xyz_can_store_under_each_policy() {
         (
             valued,
             vec![
-                (omit, fail, refused(GeometryField::SetColumns, None)),
+                (omit, fail, refused(GeometryField::SetColumns, Some(2))),
                 (
                     omit,
                     omit,

@@ -2,7 +2,7 @@ use super::*;
 use crate::diagnostics::{Countable, IndexOutOfRange, LengthMismatch, TopologyMismatch};
 use crate::math::{PeriodicCell, Point3, Vector3};
 use crate::molecule::{Atom, BondOrder, Element, MoleculeEditor};
-use crate::properties::{PropertyColumn, PropertyError, PropertyKey, PropertyValue};
+use crate::properties::{PropertyKey, PropertyValue};
 use crate::topology::{Topology, TopologyAtomIndex, TopologyBondIndex, TopologyBuilder};
 use crate::units::{
     Quantity, UnitError, ANGSTROM, KELVIN, KILOCALORIE_PER_MOLE, KILOJOULE_PER_MOLE, NANOMETER,
@@ -273,54 +273,6 @@ fn sets_from_structures_accept_equal_layouts_and_refuse_others() {
 }
 
 #[test]
-fn detached_geometries_get_bond_rows_only_when_bound() {
-    let (structure, _, _) = structure_fixture();
-    let label = key("label");
-    let mut member = Geometry::new(structure.positions().clone());
-    assert_eq!(member.properties().atoms().len(), 2);
-    assert!(member.properties().bonds().is_empty());
-    // Detached payloads cannot carry bond annotations yet.
-    assert!(matches!(
-        member.properties_mut().bonds_mut().set_value(
-            label.clone(),
-            BOND0,
-            Some(PropertyValue::Int(1))
-        ),
-        Err(PropertyError::InvalidIndex(payload)) if payload == IndexOutOfRange::new(Countable::Row, 0, 0)
-    ));
-    member
-        .properties_mut()
-        .owner_mut()
-        .insert(label.clone(), PropertyValue::Int(7))
-        .unwrap();
-    let mut set = StructureSet::from_geometries(structure.shared_topology(), [member]).unwrap();
-    let stored = set.get(0).unwrap();
-    assert_eq!(stored.properties().atoms().len(), 2);
-    assert_eq!(stored.properties().bonds().len(), 1);
-    assert!(stored.properties().owner().is_empty());
-    assert_eq!(
-        stored.row().unwrap().get(&label),
-        Some(crate::properties::PropertyValueRef::Int(7))
-    );
-
-    let mut editor = set.get_mut(0).unwrap();
-    let before = editor.properties().clone();
-    assert!(editor
-        .bond_properties_mut()
-        .insert(label.clone(), PropertyColumn::Int(vec![Some(8); 2]))
-        .is_err());
-    assert_eq!(editor.properties(), &before);
-    editor
-        .bond_properties_mut()
-        .insert(label.clone(), PropertyColumn::Int(vec![Some(8)]))
-        .unwrap();
-    assert_eq!(
-        editor.properties().bonds().value(&label, BOND0).unwrap(),
-        Some(PropertyValue::Int(8))
-    );
-}
-
-#[test]
 fn geometry_replacement_rejects_incompatible_geometries_without_changing_state() {
     let (structure, _, _) = structure_fixture();
     let topology = structure.shared_topology();
@@ -462,47 +414,6 @@ fn geometry_replacement_preserves_order_and_membership_and_publishes_the_whole_g
     // Binding allocated the bond rows the detached replacement lacked.
     assert_eq!(member.properties().bonds().len(), 1);
     assert_eq!(member.to_structure().positions(), replacement.positions());
-}
-
-#[test]
-fn geometry_editor_preserves_dimensions_and_validated_values() {
-    let (structure, _, _) = structure_fixture();
-    let mut set = bundle([structure]).unwrap();
-    let mut distribution = set.distribution_mut();
-    let log_weight = 0.5_f64.ln();
-    distribution.set_log_weight(0, log_weight).unwrap();
-    // Log weights are finite; any sign is a positive weight.
-    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-        assert_eq!(
-            distribution.set_log_weight(0, invalid),
-            Err(StructureSetError::NonFiniteLogWeight { geometry: 0 })
-        );
-        assert_eq!(distribution.log_weight(0), Some(log_weight));
-    }
-    {
-        let mut member = set.get_mut(0).unwrap();
-        let properties = member.properties().clone();
-        assert!(member
-            .atom_properties_mut()
-            .insert(key("short"), PropertyColumn::Int(vec![Some(1)]))
-            .is_err());
-        assert!(member
-            .bond_properties_mut()
-            .insert(key("long"), PropertyColumn::Int(vec![Some(1); 2]))
-            .is_err());
-        assert_eq!(member.properties(), &properties);
-        assert_eq!(
-            member.set_positions(Quantity::new(vec![Point3::origin(); 3], NANOMETER)),
-            Err(GeometryError::Array(Box::new(
-                DenseArrayError::CountMismatch(LengthMismatch::new(Countable::Row, 2, 3))
-            )))
-        );
-        assert_eq!(member.positions().len(), 2);
-    }
-    let member = set.set().get(0).unwrap();
-    assert_eq!(set.distribution().log_weight(0), Some(log_weight));
-    assert_eq!(member.as_structure_view().positions().len(), 2);
-    assert_eq!(member.to_structure().properties().bonds().len(), 1);
 }
 
 #[test]
@@ -660,63 +571,6 @@ fn structure_subset_projects_entity_state_and_drops_owner_properties() {
             .unwrap(),
         Some(PropertyValue::String("yes".into()))
     );
-}
-
-#[test]
-fn set_and_geometry_properties_are_separate() {
-    let (mut structure, atom, _) = structure_fixture();
-    let mut geometry = structure.geometry_mut();
-    let mut properties = geometry.properties_mut();
-    properties
-        .atoms_mut()
-        .set_value(key("member_atom"), ATOM0, Some(PropertyValue::Int(1)))
-        .unwrap();
-    properties
-        .bonds_mut()
-        .set_value(key("member_bond"), BOND0, Some(PropertyValue::Int(2)))
-        .unwrap();
-    let mut set = StructureSet::from_structures([structure]).unwrap();
-    set.properties_mut()
-        .insert(key("collection"), PropertyValue::Bool(true))
-        .unwrap();
-    set.columns_mut()
-        .set_value(
-            key("member"),
-            GeometryIndex::new(0),
-            Some(PropertyValue::Int(1)),
-        )
-        .unwrap();
-    assert!(!set.properties().is_empty());
-    let member = set.get(0).unwrap();
-    assert!(member.properties().owner().is_empty());
-    assert_eq!(
-        member.row().unwrap().get(&key("member")),
-        Some(crate::properties::PropertyValueRef::Int(1))
-    );
-    assert_eq!(
-        member
-            .properties()
-            .atoms()
-            .value(&key("member_atom"), ATOM0)
-            .unwrap(),
-        Some(PropertyValue::Int(1))
-    );
-    assert_eq!(
-        member
-            .properties()
-            .bonds()
-            .value(&key("member_bond"), BOND0)
-            .unwrap(),
-        Some(PropertyValue::Int(2))
-    );
-
-    let cloned = set.clone();
-    assert_eq!(cloned.properties(), set.properties());
-    let selection =
-        crate::topology::AtomSelection::from_atoms(set.shared_topology(), [atom]).unwrap();
-    let subset = set.subset(&selection).unwrap();
-    assert!(subset.properties().is_empty());
-    assert_eq!(subset.columns(), set.columns());
 }
 
 #[test]

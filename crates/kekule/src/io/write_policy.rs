@@ -366,10 +366,10 @@ pub(crate) fn unrepresentable_state(
 ) -> String {
     match (field, geometry) {
         (GeometryField::Order, _) => format!("The geometry order has no {format} representation."),
-        (
-            GeometryField::SetProperties | GeometryField::SetColumns | GeometryField::SetSampling,
-            _,
-        ) => {
+        // Set columns are a geometry's cells: they name the geometry when
+        // a set's writer knows it.
+        (GeometryField::SetProperties | GeometryField::SetSampling, _)
+        | (GeometryField::SetColumns, None) => {
             let verb = verb(field);
             format!("The {field} {verb} no {format} representation.")
         }
@@ -600,11 +600,17 @@ pub(crate) fn set_fields(set: &StructureSet) -> Vec<GeometryField> {
     .collect()
 }
 
+/// The indices of the geometries of `set` whose rows have cells.
+pub(crate) fn geometries_with_cells(set: &StructureSet) -> impl Iterator<Item = usize> + '_ {
+    (0..set.len()).filter(|&index| set.row(index).is_some_and(|row| !row.is_empty()))
+}
+
 /// Records or rejects the properties of `set` and of its geometries that a
 /// multi-model format cannot carry: the set's own properties and columns,
 /// then each geometry's per-atom, per-bond, and own properties. With
 /// [`UnrepresentablePolicy::Fail`], returns the 1-based number of the first
-/// geometry with such properties and the field, geometry 1 for the set's.
+/// geometry with such properties and the field: the first geometry with
+/// cells for the columns, and geometry 1 for the set's other state.
 /// With [`UnrepresentablePolicy::Omit`], records the omissions, the set's
 /// properties counting every geometry and its columns every geometry with
 /// cells.
@@ -616,7 +622,11 @@ pub(crate) fn record_structure_set_properties(
     let set_fields = set_fields(set);
     if policy == UnrepresentablePolicy::Fail {
         if let Some(&field) = set_fields.first() {
-            return Err((1, field));
+            let geometry = match field {
+                GeometryField::SetColumns => geometries_with_cells(set).next().unwrap_or(0),
+                _ => 0,
+            };
+            return Err((geometry + 1, field));
         }
         for (index, geometry) in set.iter().enumerate() {
             if let Some(field) = property_fields(geometry.as_structure_view()).next() {
@@ -629,9 +639,7 @@ pub(crate) fn record_structure_set_properties(
         // Columns count the geometries with cells, as each geometry's check
         // counts them.
         let geometries = match field {
-            GeometryField::SetColumns => (0..set.len())
-                .filter(|&index| set.row(index).is_some_and(|row| !row.is_empty()))
-                .count(),
+            GeometryField::SetColumns => geometries_with_cells(set).count(),
             _ => set.len(),
         };
         omissions.record(WriteOmission::GeometryState { field, geometries });

@@ -77,9 +77,11 @@ the main branch migrates by the table under "From the SampleSet API".
   for a reader whose columns do not have a row per geometry. SDF writes a
   geometry's cells as data fields, and `sdf::structure_set` reads the
   records' data fields as columns, a field whose type differs between
-  records as text; TRR writes a frame's lambda cell. Other writers refuse a
-  geometry with cells by default, or omit them under the `properties` policy
-  (`GeometryField::SetColumns`).
+  records as text and text that reads as a number or a boolean as one; TRR
+  writes a frame's lambda cell. Other writers refuse a geometry with cells by
+  default, naming the first such geometry, or omit them under the
+  `properties` policy (`GeometryField::SetColumns`); XYZ, DCD, and XTC
+  trajectory writers refuse before writing a frame.
 - `structure::Sampling` records how a set was sampled: a
   `ThermodynamicState`, the first sampled step, the potential-energy and bias
   columns, and a method label. `StructureSet::{sampling, set_sampling}`,

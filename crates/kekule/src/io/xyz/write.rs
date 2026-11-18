@@ -7,8 +7,8 @@ use crate::diagnostics::{
     UnrepresentablePolicy, WriteOmission, WriteReport,
 };
 use crate::io::write_policy::{
-    check_geometry_state, record_multi_model_structure_set, set_fields, unrepresentable_state,
-    Carries, Omissions, StatePolicies,
+    check_geometry_state, geometries_with_cells, record_multi_model_structure_set, set_fields,
+    unrepresentable_state, Carries, Omissions, StatePolicies,
 };
 use crate::math::Point3;
 use crate::structure::{
@@ -358,10 +358,7 @@ fn unrepresentable(field: GeometryField, geometry: usize) -> FormatError {
     )
     .with_detail(FormatErrorDetail::UnrepresentableState(field));
     match field {
-        GeometryField::Order
-        | GeometryField::SetProperties
-        | GeometryField::SetColumns
-        | GeometryField::SetSampling => error,
+        GeometryField::Order | GeometryField::SetProperties | GeometryField::SetSampling => error,
         _ => error.in_record(geometry),
     }
 }
@@ -415,7 +412,9 @@ pub(crate) fn write_xyz_to<'a>(
             // Omitted, the check of each geometry below records them.
             if let Some(&field) = set_fields(set).first() {
                 if options.properties == UnrepresentablePolicy::Fail {
-                    return Err(unrepresentable(field, 1));
+                    // The columns fail at the first geometry with cells.
+                    let geometry = geometries_with_cells(set).next().unwrap_or(0);
+                    return Err(unrepresentable(field, geometry + 1));
                 }
             }
             let mut omitted = Vec::new();

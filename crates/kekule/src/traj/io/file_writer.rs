@@ -10,7 +10,7 @@ use std::sync::{
 };
 
 use crate::diagnostics::{GeometryField, UnrepresentablePolicy, WriteReport};
-use crate::io::write_policy::set_fields;
+use crate::io::write_policy::{geometries_with_cells, set_fields};
 use crate::topology::Topology;
 use crate::units::Quantity;
 
@@ -656,7 +656,8 @@ impl Drop for FileTrajectoryWriter {
 /// ([`GeometryField::OrderStep`], [`GeometryField::OrderCoordinate`]).
 /// Each geometry's row of the set's columns is written where the format
 /// carries it, as a TRR frame's lambda, and is otherwise left out or
-/// refused under the properties policy ([`GeometryField::SetColumns`]).
+/// refused under the properties policy ([`GeometryField::SetColumns`]);
+/// XYZ, DCD, and XTC refuse a set with cells before writing a frame.
 /// Otherwise the errors of [`create_trajectory_writer`], the codec's
 /// [`TrajectoryWriter::write_frame`] and [`FileTrajectoryWriter::finish`].
 /// No file is published on error.
@@ -666,8 +667,8 @@ pub fn write_structure_set(
     options: TrajectoryWriteOptions,
 ) -> Result<WriteReport, TrajectoryIoError> {
     let path = path.as_ref();
-    resolve_format(path, &options)?;
-    check_structure_set(set)?;
+    let format = resolve_format(path, &options)?;
+    check_structure_set(set, format, &options)?;
     let mut writer = create_trajectory_writer(path, set.shared_topology(), options)?;
     for geometry in set {
         writer.write_frame(FrameView::from_geometry(geometry)?)?;
@@ -725,7 +726,9 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
     set: &StructureSet,
     options: TrajectoryWriteOptions,
 ) -> Result<WriteReport, TrajectoryIoError> {
-    check_structure_set(set)?;
+    if let Some(format) = options.format {
+        check_structure_set(set, format, &options)?;
+    }
     let mut writer = create_trajectory_stream_writer(writer, set.shared_topology(), options)?;
     for geometry in set {
         writer.write_frame(FrameView::from_geometry(geometry)?)?;
@@ -736,9 +739,23 @@ pub fn write_structure_set_to<W: Write + Seek + ?Sized>(
 }
 
 /// Fails for structure set state no trajectory format stores: set
-/// properties, a sampling record, and a step or coordinate order. Each
-/// frame's writer decides about its row of the set's columns.
-fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
+/// properties, a sampling record, and a step or coordinate order. A
+/// `format` that stores no cells fails for a row with cells when its
+/// properties policy fails, so that no frame is written first; TRR's
+/// frames decide about their rows.
+fn check_structure_set(
+    set: &StructureSet,
+    format: TrajectoryFormat,
+    options: &TrajectoryWriteOptions,
+) -> Result<(), TrajectoryIoError> {
+    let properties = match format {
+        TrajectoryFormat::Xyz => Some(options.xyz_options().properties()),
+        TrajectoryFormat::Dcd => Some(options.dcd_options().properties()),
+        TrajectoryFormat::Xtc => Some(options.xtc_options().properties()),
+        TrajectoryFormat::Trr => None,
+    };
+    let columns = properties == Some(UnrepresentablePolicy::Fail)
+        && geometries_with_cells(set).next().is_some();
     let field = set_fields(set)
         .into_iter()
         .find(|&field| field != GeometryField::SetColumns)
@@ -746,7 +763,8 @@ fn check_structure_set(set: &StructureSet) -> Result<(), TrajectoryIoError> {
             Some(Order::Step(_)) => Some(GeometryField::OrderStep),
             Some(Order::Coordinate { .. }) => Some(GeometryField::OrderCoordinate),
             _ => None,
-        });
+        })
+        .or(columns.then_some(GeometryField::SetColumns));
     field.map_or(Ok(()), |field| {
         Err(TrajectoryIoError::unsupported_field(field))
     })

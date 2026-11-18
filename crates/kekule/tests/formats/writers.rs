@@ -692,6 +692,174 @@ fn sdf_reads_the_old_distribution_fields_as_ordinary_data() {
     assert_eq!(reread.columns(), read.columns());
 }
 
+/// [`conformer_set`] with the column `name` of `column`'s two cells.
+fn with_column(name: &str, column: kekule::properties::PropertyColumn) -> StructureSet {
+    let mut set = conformer_set();
+    set.columns_mut()
+        .insert(kekule::properties::PropertyKey::new(name).unwrap(), column)
+        .unwrap();
+    set
+}
+
+/// The column `name` of `set`.
+fn column_of(set: &StructureSet, name: &str) -> Option<kekule::properties::PropertyColumn> {
+    set.columns()
+        .get(&kekule::properties::PropertyKey::new(name).unwrap())
+        .cloned()
+}
+
+#[test]
+fn sdf_unit_fields_need_room_in_a_property_key() {
+    use kekule::properties::{PropertyColumn, MAX_PROPERTY_KEY_LEN};
+    let energies = || PropertyColumn::Real {
+        unit: KILOJOULE_PER_MOLE,
+        values: vec![Some(1.5), Some(-2.0)],
+    };
+    // A key leaving just room for `.unit` round-trips with its unit.
+    let fits = "e".repeat(MAX_PROPERTY_KEY_LEN - ".unit".len());
+    let set = with_column(&fits, energies());
+    let (text, report) = sdf::write(&set, SdfWriteOptions::default()).unwrap();
+    assert!(report.is_empty());
+    let read = sdf::structure_set(&interpret_records(&text)).unwrap();
+    assert_eq!(column_of(&read, &fits), Some(energies()));
+
+    // A longer one has no unit field the reader would take back.
+    let long = format!("{fits}e");
+    let set = with_column(&long, energies());
+    let error = sdf::write(&set, SdfWriteOptions::default()).unwrap_err();
+    assert_eq!(error.kind(), DiagnosticKind::Unsupported);
+    assert_eq!(
+        error.detail(),
+        Some(&FormatErrorDetail::UnrepresentableState(
+            GeometryField::SetColumns
+        ))
+    );
+    let omit = MolfileWriteOptions::default().with_properties(UnrepresentablePolicy::Omit);
+    let (text, report) = sdf::write(&set, SdfWriteOptions::from(omit)).unwrap();
+    assert!(!text.contains(&long), "{text}");
+    assert_eq!(
+        report.omissions(),
+        [WriteOmission::GeometryState {
+            field: GeometryField::SetColumns,
+            geometries: 2
+        }]
+    );
+
+    // Another writer's unit field under a name too long for a key still
+    // names the unit.
+    let fields = [
+        SdfDataField::new(&long, "1.5"),
+        SdfDataField::new(format!("{long}.unit"), KILOJOULE_PER_MOLE.to_string()),
+    ];
+    let bare = conformer_set();
+    let records = [sdf::SdfRecordSource::from(bare.get(0).unwrap()).with_data_fields(&fields)];
+    let text = sdf::write(records, SdfWriteOptions::default()).unwrap().0;
+    let read = sdf::structure_set(&interpret_records(&text)).unwrap();
+    assert_eq!(read.columns().iter().count(), 1);
+    assert_eq!(
+        column_of(&read, &long),
+        Some(PropertyColumn::Real {
+            unit: KILOJOULE_PER_MOLE,
+            values: vec![Some(1.5)]
+        })
+    );
+}
+
+#[test]
+fn sdf_carries_no_types_so_text_that_reads_as_a_number_comes_back_as_one() {
+    use kekule::properties::PropertyColumn;
+    let text = |values: [&str; 2]| {
+        PropertyColumn::String(values.map(|value| Some(value.to_owned())).to_vec())
+    };
+    let mut set = with_column("count", text(["1", "2"]));
+    for (name, column) in [
+        ("flag", text(["true", "false"])),
+        ("label", text(["1", "a"])),
+    ] {
+        set.columns_mut()
+            .insert(kekule::properties::PropertyKey::new(name).unwrap(), column)
+            .unwrap();
+    }
+    let written = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
+    let read = sdf::structure_set(&interpret_records(&written)).unwrap();
+    assert_eq!(
+        column_of(&read, "count"),
+        Some(PropertyColumn::Int(vec![Some(1), Some(2)]))
+    );
+    assert_eq!(
+        column_of(&read, "flag"),
+        Some(PropertyColumn::Bool(vec![Some(true), Some(false)]))
+    );
+    // Text that does not read as one type in every record stays text.
+    assert_eq!(column_of(&read, "label"), Some(text(["1", "a"])));
+}
+
+#[test]
+fn sdf_refuses_a_cell_named_like_the_unit_field_of_a_real_cell() {
+    use kekule::properties::{PropertyColumn, PropertyKey};
+    use kekule::units::DIMENSIONLESS;
+    let mut set = with_column(
+        "x",
+        PropertyColumn::Real {
+            unit: DIMENSIONLESS,
+            values: vec![Some(1.0), Some(2.0)],
+        },
+    );
+    set.columns_mut()
+        .insert(
+            PropertyKey::new("x.unit").unwrap(),
+            PropertyColumn::String(vec![Some("A".to_owned()), None]),
+        )
+        .unwrap();
+    let omit = MolfileWriteOptions::default().with_properties(UnrepresentablePolicy::Omit);
+    for options in [SdfWriteOptions::default(), SdfWriteOptions::from(omit)] {
+        let error = sdf::write(&set, options).unwrap_err();
+        assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+        assert_eq!(
+            error.detail(),
+            Some(&FormatErrorDetail::DataField {
+                name: "x.unit".to_owned()
+            })
+        );
+    }
+    // Without the real cell, the name is an ordinary one.
+    set.columns_mut()
+        .remove(&PropertyKey::new("x").unwrap())
+        .unwrap();
+    let written = sdf::write(&set, SdfWriteOptions::default()).unwrap().0;
+    let read = sdf::structure_set(&interpret_records(&written)).unwrap();
+    assert_eq!(read.columns(), set.columns());
+}
+
+#[test]
+fn sdf_a_field_repeated_in_a_record_is_no_column() {
+    use kekule::properties::PropertyColumn;
+    let set = conformer_set();
+    let first = [
+        SdfDataField::new("score", "1"),
+        SdfDataField::new("score", "2"),
+        SdfDataField::new("rank", "3"),
+    ];
+    let second = [
+        SdfDataField::new("score", "4"),
+        SdfDataField::new("rank", "5"),
+    ];
+    let records = [
+        sdf::SdfRecordSource::from(set.get(0).unwrap()).with_data_fields(&first),
+        sdf::SdfRecordSource::from(set.get(1).unwrap()).with_data_fields(&second),
+    ];
+    let text = sdf::write(records, SdfWriteOptions::default()).unwrap().0;
+    let records = interpret_records(&text);
+    let read = sdf::structure_set(&records).unwrap();
+    assert_eq!(column_of(&read, "score"), None);
+    assert_eq!(
+        column_of(&read, "rank"),
+        Some(PropertyColumn::Int(vec![Some(3), Some(5)]))
+    );
+    // The records keep every field.
+    assert_eq!(records[0].data_fields().len(), 3);
+}
+
 /// One-atom methane frames with exactly one piece of frame state each:
 /// none, time, MD step, velocities, forces.
 struct StatefulFrames {
@@ -3122,22 +3290,26 @@ fn writers_refuse_or_report_set_columns() {
          representation."
     );
 
-    // A multi-model format checks the set once.
+    // A multi-model format checks the set once, naming the first geometry
+    // with cells.
     let error = pdb::write(&set, PdbWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the PDB output. The structure set columns have no PDB representation."
+        "Cannot write the PDB output. The structure set columns of geometry 1 have no PDB \
+         representation."
     );
     let (text, report) =
         pdb::write(&set, PdbWriteOptions::default().with_properties(omit)).unwrap();
     assert_eq!(text, bare_pdb);
     assert_eq!(report.omissions(), columns);
 
-    // XYZ fails once for the set, or omits the columns from every geometry.
+    // XYZ fails once at the first geometry with cells, or omits the columns
+    // from every geometry.
     let error = xyz::write(&set, XyzWriteOptions::default()).unwrap_err();
     assert_eq!(
         error.to_string(),
-        "Cannot write the XYZ output. The structure set columns have no XYZ representation."
+        "Cannot write the XYZ output in record 1. The structure set columns have no XYZ \
+         representation."
     );
     assert_eq!(error.detail(), detail.as_ref());
     let (text, report) =
@@ -3148,13 +3320,29 @@ fn writers_refuse_or_report_set_columns() {
         [bare_report.omissions(), &columns[..]].concat()
     );
 
-    // A trajectory XYZ writer refuses the first frame with row cells.
+    // A trajectory XYZ writer refuses cells of any geometry before it
+    // writes a frame, or omits them from each frame.
+    let mut last = methane_set(2);
+    last.columns_mut()
+        .insert(
+            PropertyKey::new("bias").unwrap(),
+            PropertyColumn::Int(vec![None, Some(2)]),
+        )
+        .unwrap();
+    let error = pdb::write(&last, PdbWriteOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("of geometry 2"), "{error}");
+    let error = xyz::write(&last, XyzWriteOptions::default()).unwrap_err();
+    assert!(error.to_string().contains("in record 2"), "{error}");
     let mut sink = std::io::Cursor::new(Vec::new());
     let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xyz);
-    let error = write_structure_set_to(&mut sink, &set, options.clone()).unwrap_err();
+    let error = write_structure_set_to(&mut sink, &last, options.clone()).unwrap_err();
     assert_eq!(error.kind(), TrajectoryIoErrorKind::UnsupportedField);
     assert_eq!(error.field(), Some(GeometryField::SetColumns));
-    assert_eq!(error.frame(), Some(0));
+    assert_eq!(error.frame(), None);
+    assert!(sink.get_ref().is_empty());
+    let report =
+        write_structure_set_to(&mut sink, &last, options.clone().with_properties(omit)).unwrap();
+    assert!(report.omissions().contains(&columns[0]), "{report:?}");
     let mut sink = std::io::Cursor::new(Vec::new());
     set.columns_mut().clear().unwrap();
     write_structure_set_to(&mut sink, &set, options).unwrap();

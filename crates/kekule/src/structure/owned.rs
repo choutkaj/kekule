@@ -27,11 +27,12 @@ use super::{subset_rows, DenseArrayError, Geometry, GeometryError, GeometryMut, 
 ///
 /// Geometry state reads through `Deref` (`structure.positions()`,
 /// `structure.cell()`, ...) and changes through the guard
-/// [`Self::geometry_mut`] (`structure.geometry_mut().set_cell(..)`), the same
-/// [`GeometryMut`] a structure set lends, which keeps the geometry bound to
-/// the topology. [`Self::into_parts`] and [`Self::from_parts`] move the
-/// topology and the geometry out and back in. Static annotations live on
-/// [`Self::topology`].
+/// [`Self::geometry_mut`] (`structure.geometry_mut().set_cell(..)`), a
+/// [`GeometryMut`] that keeps the geometry bound to the topology. A
+/// structure set lends a
+/// [`SetGeometryMut`](crate::structure::SetGeometryMut) instead.
+/// [`Self::into_parts`] and [`Self::from_parts`] move the topology and the
+/// geometry out and back in. Static annotations live on [`Self::topology`].
 ///
 /// Use [`Self::from_molecule`] for a single connected molecule,
 /// [`Self::builder`] to assemble several molecules and their positions, or

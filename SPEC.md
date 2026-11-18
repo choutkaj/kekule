@@ -459,7 +459,9 @@ them. `columns_mut`, on the set or its `Ensemble`, edits them without changing t
 row count, `row` reads one geometry's cells, and `column_values` reads a real or integer column, or the order's
 times, steps, or coordinates (`ColumnRef`), as one number per geometry. The
 native format stores them; SDF writes a geometry's cells as data fields of its
-record and its set reader reads them back; TRR writes a frame's lambda cell;
+record and its set reader reads them back, though SDF carries no types, so
+text that reads as a number or a boolean comes back as one; TRR writes a
+frame's lambda cell;
 other writers refuse them, or omit them under the `properties` policy.
 
 How a set was sampled is recorded too, in one optional `Sampling` record: the

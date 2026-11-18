@@ -589,21 +589,33 @@ impl StructureSet {
     /// or geometry that does not fit.
     pub fn push(
         &mut self,
+        geometry: Geometry,
+        place: Option<Place>,
+    ) -> Result<usize, StructureSetError> {
+        self.push_with_row(geometry, place, None)
+    }
+
+    /// Appends `geometry` at `place` as [`Self::push`] does, `row`'s cells
+    /// joining its owner values in its new row and replacing values of the
+    /// same key. The geometry stays shared, as a frame's payload is.
+    pub(crate) fn push_with_row(
+        &mut self,
         mut geometry: Geometry,
         place: Option<Place>,
+        row: Option<RowView<'_>>,
     ) -> Result<usize, StructureSetError> {
         let index = self.storage.geometries.len();
         let stored = self.check_place(place, index)?;
         self.bind(&mut geometry)?;
-        self.append(geometry, stored)?;
+        self.append_with_row(geometry, stored, row)?;
         Ok(index)
     }
 
     /// Validates and replaces one geometry, returning the previous one. The
     /// geometry keeps its place and its column row; its owner values move
     /// into the row as [`Self::push`] moves them, replacing the cells of
-    /// their keys. The previous geometry carries the row's cells from before
-    /// as owner values. The index is checked first; failure leaves the set
+    /// their keys; a cell whose key the geometry lacks stays. The previous
+    /// geometry carries the row's cells from before as owner values. The index is checked first; failure leaves the set
     /// unchanged.
     pub fn replace(
         &mut self,
@@ -798,11 +810,25 @@ impl StructureSet {
     /// into its new row. Failure changes nothing.
     fn append(
         &mut self,
-        mut geometry: Geometry,
+        geometry: Geometry,
         place: Option<order::Stored>,
     ) -> Result<(), StructureSetError> {
+        self.append_with_row(geometry, place, None)
+    }
+
+    fn append_with_row(
+        &mut self,
+        mut geometry: Geometry,
+        place: Option<order::Stored>,
+        row: Option<RowView<'_>>,
+    ) -> Result<(), StructureSetError> {
         let index = self.storage.geometries.len();
-        let owner = geometry.take_owner_values();
+        let mut owner = geometry.take_owner_values();
+        for (key, value) in row.into_iter().flat_map(RowView::iter) {
+            owner
+                .insert(key.clone(), value.to_value())
+                .expect("stored cells are finite");
+        }
         self.columns.resize_missing(index + 1);
         if let Err(error) = move_owner_values(&mut self.columns, index, &owner) {
             self.columns.remove_row(index);

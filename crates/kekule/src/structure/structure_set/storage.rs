@@ -34,6 +34,13 @@ impl InMemory {
     pub(super) const fn new(geometries: Vec<Geometry>) -> Self {
         Self { geometries }
     }
+
+    /// The geometries for editing past the set's checks, so that tests can
+    /// encode a set no public edit makes.
+    #[cfg(test)]
+    pub(crate) fn geometries_unchecked(&mut self) -> &mut [Geometry] {
+        &mut self.geometries
+    }
 }
 
 impl sealed::Storage for InMemory {

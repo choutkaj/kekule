@@ -20,7 +20,9 @@ use crate::io::{
 /// text. A record without the field, or with an empty value, has a missing
 /// cell. A real field `<name>` whose records, and only those, carry
 /// `<name>.unit` with one symbol of a unit constant holds reals in that unit,
-/// as [`write()`] writes them. No field says how much a geometry weighs or
+/// as [`write()`] writes them. SDF carries no types: a text cell that reads
+/// as a number or a boolean comes back as one. No field says how much a
+/// geometry weighs or
 /// which state it belongs to, which an
 /// [`Ensemble`](crate::structure::Ensemble) of the set states.
 ///

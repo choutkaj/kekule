@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::structure::{StructureSet, StructureSetRead};
-use kekule::traj::io::trr::{TrrLambdaPolicy, TrrReadOptions, TRR_LAMBDA_PROPERTY};
+use kekule::traj::io::trr::{
+    TrrLambdaPolicy, TrrReadOptions, TrrWriteOptions, TRR_LAMBDA_PROPERTY,
+};
 use kekule::traj::io::xyz::XyzReadOptions;
 use kekule::traj::io::{
-    open_indexed_structure_set, read_structure_set, TrajectoryFormatHint, TrajectoryIoLimits,
-    TrajectoryOpenOptions,
+    open_indexed_structure_set, read_structure_set, write_structure_set_to, TrajectoryFormatHint,
+    TrajectoryIoLimits, TrajectoryOpenOptions, TrajectoryWriteOptions,
 };
 use kekule::traj::{TrajectoryFormat, TrajectoryIoErrorKind};
 use kekule::units::{DIMENSIONLESS, NANOMETER, PICOSECOND};
@@ -144,6 +146,30 @@ fn geometries_read_from_a_trr_file_keep_their_lambda_until_a_set_takes_them() {
             Some(lambda(index))
         );
     }
+}
+
+#[test]
+fn a_lambda_column_written_to_trr_reads_back_as_the_column() {
+    let topology = topology(&["C", "H", "O"], &[(0, 1), (0, 2)]);
+    let lambda_key = PropertyKey::new(TRR_LAMBDA_PROPERTY).unwrap();
+    let loaded = read_structure_set(
+        fixture("mdanalysis-2.9.0-three-atoms.trr"),
+        Arc::clone(&topology),
+        Default::default(),
+    )
+    .unwrap();
+    let lambdas = loaded.columns().get(&lambda_key).unwrap();
+    let mut stream = std::io::Cursor::new(Vec::new());
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Trr).with_trr_options(
+        TrrWriteOptions::default().with_lambda_policy(TrrLambdaPolicy::FrameProperty),
+    );
+    write_structure_set_to(&mut stream, &loaded, options).unwrap();
+    let written = TemporaryInput::new(&stream.into_inner());
+    let trr = TrajectoryOpenOptions::default()
+        .with_format_hint(TrajectoryFormatHint::Explicit(TrajectoryFormat::Trr));
+    let reread = read_structure_set(&written.0, topology, trr).unwrap();
+    assert_eq!(reread.len(), loaded.len());
+    assert_eq!(reread.columns().get(&lambda_key), Some(lambdas));
 }
 
 #[test]

@@ -120,13 +120,21 @@ fn record_columns(records: &[&SdfRecordInterpretation]) -> Vec<(PropertyKey, Pro
         SDF_COORDINATE_FIELD,
         SDF_COORDINATE_UNIT_FIELD,
     ];
+    // A unit field names its real field's unit even when the unit field's
+    // own name is too long to be a key.
+    let candidate = |name: &str| {
+        PropertyKey::new(name).is_ok()
+            || name
+                .strip_suffix(".unit")
+                .is_some_and(|base| PropertyKey::new(base).is_ok())
+    };
     // Each candidate name's trimmed value per record; `None` marks a name
     // that some record repeats.
     let mut fields = BTreeMap::<&str, Option<Vec<Option<&str>>>>::new();
     for (index, record) in records.iter().enumerate() {
         for field in record.data_fields() {
             let name = field.name();
-            if place.contains(&name) || PropertyKey::new(name).is_err() {
+            if place.contains(&name) || !candidate(name) {
                 continue;
             }
             let entry = fields
@@ -166,8 +174,9 @@ fn record_columns(records: &[&SdfRecordInterpretation]) -> Vec<(PropertyKey, Pro
                 .strip_suffix(".unit")
                 .is_some_and(|base| units.contains_key(base))
         })
-        .map(|(name, values)| {
-            let key = PropertyKey::new(*name).expect("the name was checked");
+        .filter_map(|(name, values)| {
+            // A unit field of no real field is a column only under a key.
+            let key = PropertyKey::new(*name).ok()?;
             let column = units.get(name).map_or_else(
                 || text_column(values),
                 |&unit| PropertyColumn::Real {
@@ -178,7 +187,7 @@ fn record_columns(records: &[&SdfRecordInterpretation]) -> Vec<(PropertyKey, Pro
                         .collect(),
                 },
             );
-            (key, column)
+            Some((key, column))
         })
         .collect()
 }
