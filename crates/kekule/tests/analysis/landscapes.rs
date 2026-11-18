@@ -51,7 +51,7 @@ fn at_300() -> LandscapeOptions {
 
 /// Unit bins from 0, `bins` of them.
 fn unit_bins(bins: usize) -> Binning {
-    Binning::new(0.0, 1.0, bins).unwrap()
+    Binning::between(0.0, bins as f64, bins).unwrap()
 }
 
 /// A run sampled at 300 K whose reduced bias is `reduced`, one value per
@@ -86,7 +86,7 @@ fn reweighted(reduced: &[f64], estimator: Estimator) -> Ensemble {
 fn equal_weights_count_the_samples() -> Result<(), LandscapeError> {
     // Counts 1, 2, 4, and 0 in four unit bins.
     let values = [0.5, 1.2, 1.7, 2.0, 2.1, 2.5, 2.9].map(Some);
-    let axis = GridAxis::new(&values, unit_bins(4), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(4));
     let surface = Landscape::free_energy(&every_sample(7), &[axis], &at_300())?;
     assert_eq!(surface.quantity(), SurfaceQuantity::FreeEnergy);
     assert_eq!(surface.shape(), [4]);
@@ -126,7 +126,7 @@ fn a_constant_reduced_bias_per_region_gives_the_exact_free_energy() -> Result<()
     let high = 2.0_f64.ln() + 1.5;
     for estimator in ESTIMATORS {
         let ensemble = reweighted(&reduced, estimator);
-        let axis = GridAxis::new(&values, unit_bins(2), NANOMETER);
+        let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
         // The target, 300 K, is the free energy's temperature.
         let surface = Landscape::free_energy(ensemble.distribution(), &[axis], &options())?;
         assert_eq!(surface.temperature(), Some(kelvin(300.0)));
@@ -152,7 +152,7 @@ fn a_bin_that_is_a_state_has_the_state_population() -> Result<(), Box<dyn std::e
             .distribution_mut()
             .regroup(Partition::new(vec![0, 0, 1, 0, 1, 1], vec![0, 2])?)?;
         let distribution = ensemble.distribution();
-        let axis = GridAxis::new(&values, unit_bins(2), NANOMETER);
+        let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
         let surface = Landscape::free_energy(distribution, &[axis], &options())?;
         let states = distribution.state_probabilities()?;
         for (bin, state) in surface.probabilities().iter().zip(states) {
@@ -164,8 +164,17 @@ fn a_bin_that_is_a_state_has_the_state_population() -> Result<(), Box<dyn std::e
 
 #[test]
 fn periodic_axes_wrap_at_the_period() -> Result<(), LandscapeError> {
-    let dihedral = Binning::periodic(-180.0, 360.0, 36)?;
+    let dihedral = Binning::periodic(-180.0, 180.0, 36)?;
     assert!(dihedral.is_periodic());
+    assert_eq!(dihedral.period(), Some(360.0));
+    // The same edges as a binning that does not wrap.
+    let open = Binning::between(-180.0, 180.0, 36)?;
+    assert_eq!(
+        (dihedral.start(), dihedral.end(), dihedral.width()),
+        (open.start(), open.end(), open.width())
+    );
+    assert_eq!(open.period(), None);
+    assert_eq!(open.bin(180.0), Some(35));
     assert_eq!(dihedral.bin(180.0), Some(0));
     assert_eq!(dihedral.bin(-180.0), Some(0));
     assert_eq!(dihedral.bin(540.0), Some(0));
@@ -179,9 +188,9 @@ fn periodic_axes_wrap_at_the_period() -> Result<(), LandscapeError> {
 
     // Bins centred at -135°, -45°, 45°, and 135°. The sample at 200° wraps to
     // -160°, 25° from the first centre, nearer than the one at -100°.
-    let quarters = Binning::periodic(-180.0, 360.0, 4)?;
+    let quarters = Binning::periodic(-180.0, 180.0, 4)?;
     let values = [Some(-100.0), Some(200.0), Some(-170.0)];
-    let axis = GridAxis::new(&values, quarters, DEGREE);
+    let axis = GridAxis::new(Quantity::new(&values, DEGREE), quarters);
     let surface = Landscape::free_energy(&every_sample(3), &[axis], &at_300())?;
     assert_eq!(surface.cells()[0].count(), 3);
     assert_eq!(surface.cells()[0].representative(), Some(1));
@@ -197,7 +206,7 @@ fn masking_hides_values_only() -> Result<(), LandscapeError> {
     let distribution = every_sample(7)
         .with_log_weights(vec![5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         .unwrap();
-    let axis = GridAxis::new(&values, unit_bins(3), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(3));
     let masked = Landscape::free_energy(&distribution, &[axis], &at_300().with_fewest(3))?;
     let unmasked = Landscape::free_energy(&distribution, &[axis], &at_300())?;
     assert_eq!(masked.fewest(), 3);
@@ -221,14 +230,19 @@ fn masking_hides_values_only() -> Result<(), LandscapeError> {
 #[test]
 fn a_free_energy_needs_ten_samples_and_a_mean_one_unless_set() -> Result<(), LandscapeError> {
     let values = [0.5, 1.2, 1.7, 2.0, 2.1, 2.5, 2.9].map(Some);
-    let axis = GridAxis::new(&values, unit_bins(3), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(3));
     let defaults = LandscapeOptions::default().with_temperature(Some(kelvin(300.0)))?;
     assert_eq!(defaults.fewest(), None);
     let surface = Landscape::free_energy(&every_sample(7), &[axis], &defaults)?;
     assert_eq!(surface.fewest(), LandscapeOptions::DEFAULT_FEWEST);
     assert!(surface.cells().iter().all(|cell| cell.value().is_none()));
     // A mean over one sample is exact.
-    let mean = Landscape::mean(&every_sample(7), &[axis], &values, NANOMETER, &defaults)?;
+    let mean = Landscape::mean(
+        &every_sample(7),
+        &[axis],
+        Quantity::new(&values, NANOMETER),
+        &defaults,
+    )?;
     assert_eq!(mean.fewest(), 1);
     assert_eq!(mean.cells()[0].value(), Some(0.5));
     assert_close(mean.cells()[1].value().unwrap(), 1.45);
@@ -236,8 +250,7 @@ fn a_free_energy_needs_ten_samples_and_a_mean_one_unless_set() -> Result<(), Lan
     let masked = Landscape::mean(
         &every_sample(7),
         &[axis],
-        &values,
-        NANOMETER,
+        Quantity::new(&values, NANOMETER),
         &defaults.with_fewest(3),
     )?;
     assert_eq!(masked.fewest(), 3);
@@ -253,14 +266,14 @@ fn a_free_energy_needs_ten_samples_and_a_mean_one_unless_set() -> Result<(), Lan
 fn representatives_are_nearest_the_centre() -> Result<(), LandscapeError> {
     // 0.25 and 0.75 lie a quarter bin from the centre, 0.4 nearer.
     let values = [0.25, 0.75, 0.4].map(Some);
-    let axis = GridAxis::new(&values, unit_bins(1), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(1));
     let nearest = Landscape::free_energy(&every_sample(3), &[axis], &at_300())?;
     assert_eq!(nearest.cells()[0].representative(), Some(2));
 
     // Equally near: the lower geometry index with equal weights.
     let values = [0.25, 0.75];
     let values = values.map(Some);
-    let axis = GridAxis::new(&values, unit_bins(1), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(1));
     let tie = Landscape::free_energy(&every_sample(2), &[axis], &at_300())?;
     assert_eq!(tie.cells()[0].representative(), Some(0));
     // The heavier sample otherwise, under every estimator.
@@ -275,7 +288,7 @@ fn representatives_are_nearest_the_centre() -> Result<(), LandscapeError> {
 #[test]
 fn the_temperature_is_the_target_s() {
     let values = [Some(0.5)];
-    let axis = GridAxis::new(&values, unit_bins(1), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(1));
     // Neither a target nor a temperature.
     let error = Landscape::free_energy(&every_sample(1), &[axis], &options()).unwrap_err();
     assert_eq!(error, LandscapeError::MissingTemperature);
@@ -284,7 +297,13 @@ fn the_temperature_is_the_target_s() {
         "The free energy has no temperature. Give one."
     );
     // A mean needs none.
-    let mean = Landscape::mean(&every_sample(1), &[axis], &values, NANOMETER, &options()).unwrap();
+    let mean = Landscape::mean(
+        &every_sample(1),
+        &[axis],
+        Quantity::new(&values, NANOMETER),
+        &options(),
+    )
+    .unwrap();
     assert_eq!(mean.temperature(), None);
     // The given temperature without a target.
     let explicit = options().with_temperature(Some(kelvin(310.0))).unwrap();
@@ -310,7 +329,13 @@ fn the_temperature_is_the_target_s() {
         error.to_string(),
         "The temperature 310 K differs from the target temperature 300 K."
     );
-    assert!(Landscape::mean(&targeted, &[axis], &values, NANOMETER, &explicit).is_err());
+    assert!(Landscape::mean(
+        &targeted,
+        &[axis],
+        Quantity::new(&values, NANOMETER),
+        &explicit
+    )
+    .is_err());
     // Temperatures that are none.
     assert_eq!(
         options().with_temperature(Some(kelvin(-1.0))).unwrap_err(),
@@ -375,30 +400,25 @@ fn covering_bins_hold_every_value() {
 
 #[test]
 fn binnings_are_finite() {
-    assert_eq!(Binning::new(0.0, 1.0, 0), Err(LandscapeError::NoBins));
     assert_eq!(Binning::periodic(0.0, 1.0, 0), Err(LandscapeError::NoBins));
-    for (start, width) in [
+    for (start, end) in [
         (0.0, 0.0),
         (0.0, -1.0),
         (f64::NAN, 1.0),
         (0.0, f64::INFINITY),
-        (1e308, 1e308),
+        (-1e308, 1e308),
     ] {
         assert_eq!(
-            Binning::new(start, width, 2),
+            Binning::periodic(start, end, 2),
             Err(LandscapeError::InvalidBinning)
         );
     }
     assert_eq!(
-        Binning::periodic(0.0, 0.0, 4),
-        Err(LandscapeError::InvalidBinning)
-    );
-    assert_eq!(
         LandscapeError::InvalidBinning.to_string(),
         "The axis bins are not finite or have no width."
     );
-    let binning = Binning::new(-1.0, 0.5, 4).unwrap();
-    assert_eq!(binning.end(), 1.0);
+    let binning = Binning::between(-1.0, 1.0, 4).unwrap();
+    assert_eq!(binning.width(), 0.5);
     assert_eq!(binning.bin(1.0), Some(3));
     assert_eq!(binning.bin(-1.0), Some(0));
     assert_eq!(binning.bin(-0.5), Some(1));
@@ -412,8 +432,8 @@ fn two_axes_run_the_first_axis_fastest() -> Result<(), LandscapeError> {
     let x = [2.5, 0.5, 1.5, 1.2].map(Some);
     let y = [0.5, 1.5, 1.5, 1.9].map(Some);
     let axes = [
-        GridAxis::new(&x, unit_bins(3), NANOMETER),
-        GridAxis::new(&y, unit_bins(2), DEGREE),
+        GridAxis::new(Quantity::new(&x, NANOMETER), unit_bins(3)),
+        GridAxis::new(Quantity::new(&y, DEGREE), unit_bins(2)),
     ];
     let surface = Landscape::free_energy(&every_sample(4), &axes, &at_300())?;
     assert_eq!(surface.shape(), [3, 2]);
@@ -439,14 +459,13 @@ fn means_weigh_samples_by_their_exact_shares() -> Result<(), LandscapeError> {
     // One cell of weights 1 and 3, mapped values 10 and 20.
     let values = [Some(0.5), Some(0.6), Some(0.7), Some(1.5)];
     let of = [Some(10.0), Some(20.0), None, Some(f64::NAN)];
-    let axis = GridAxis::new(&values, unit_bins(2), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
     for estimator in ESTIMATORS {
         let ensemble = reweighted(&[0.0, 3.0_f64.ln(), 0.0, 0.0], estimator);
         let surface = Landscape::mean(
             ensemble.distribution(),
             &[axis],
-            &of,
-            DIMENSIONLESS,
+            Quantity::new(&of, DIMENSIONLESS),
             &options(),
         )?;
         assert_eq!(surface.quantity(), SurfaceQuantity::Mean);
@@ -468,7 +487,7 @@ fn samples_without_a_cell_are_counted() -> Result<(), LandscapeError> {
     let values = [Some(0.5), None, Some(f64::NAN), Some(7.0), Some(9.0)];
     let distribution =
         Distribution::new(Samples::Subset(vec![0, 1, 2, 3]), Partition::one_state(4)).unwrap();
-    let axis = GridAxis::new(&values, unit_bins(2), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
     let surface = Landscape::free_energy(&distribution, &[axis], &at_300())?;
     assert_eq!(surface.excluded(), 2);
     assert_eq!(surface.outside(), 1);
@@ -477,7 +496,10 @@ fn samples_without_a_cell_are_counted() -> Result<(), LandscapeError> {
     // A missing value on either axis excludes a sample, and a value outside
     // the bins on either axis puts it outside.
     let other = [None, Some(0.5), Some(0.5), Some(0.5)];
-    let axes = [axis, GridAxis::new(&other, unit_bins(1), NANOMETER)];
+    let axes = [
+        axis,
+        GridAxis::new(Quantity::new(&other, NANOMETER), unit_bins(1)),
+    ];
     let surface = Landscape::free_energy(&distribution, &axes, &at_300())?;
     assert_eq!(surface.excluded(), 3);
     assert_eq!(surface.outside(), 1);
@@ -494,8 +516,8 @@ fn inputs_must_cover_the_samples() {
     let error = Landscape::free_energy(
         &distribution,
         &[
-            GridAxis::new(&full, unit_bins(1), NANOMETER),
-            GridAxis::new(&short, unit_bins(1), NANOMETER),
+            GridAxis::new(Quantity::new(&full, NANOMETER), unit_bins(1)),
+            GridAxis::new(Quantity::new(&short, NANOMETER), unit_bins(1)),
         ],
         &options,
     )
@@ -508,8 +530,14 @@ fn inputs_must_cover_the_samples() {
         }
     );
     assert_eq!(error.to_string(), "Axis 1 has no value for geometry 2.");
-    let axis = GridAxis::new(&full, unit_bins(1), NANOMETER);
-    let error = Landscape::mean(&distribution, &[axis], &short, NANOMETER, &options).unwrap_err();
+    let axis = GridAxis::new(Quantity::new(&full, NANOMETER), unit_bins(1));
+    let error = Landscape::mean(
+        &distribution,
+        &[axis],
+        Quantity::new(&short, NANOMETER),
+        &options,
+    )
+    .unwrap_err();
     assert_eq!(error, LandscapeError::ShortValues { geometry: 2 });
     assert_eq!(
         error.to_string(),
@@ -523,7 +551,7 @@ fn inputs_must_cover_the_samples() {
         LandscapeError::AxisCount(3).to_string(),
         "A landscape has one or two axes. There are 3 axes."
     );
-    let wide = GridAxis::new(&full, unit_bins(5_000), NANOMETER);
+    let wide = GridAxis::new(Quantity::new(&full, NANOMETER), unit_bins(5_000));
     let error = Landscape::free_energy(&distribution, &[wide, wide], &options).unwrap_err();
     assert!(matches!(error, LandscapeError::TooManyCells(_)));
     assert_eq!(
@@ -535,13 +563,18 @@ fn inputs_must_cover_the_samples() {
 #[test]
 fn a_light_sample_first_keeps_the_mean() -> Result<(), LandscapeError> {
     let values = [Some(0.5), Some(0.5)];
-    let axis = GridAxis::new(&values, unit_bins(1), NANOMETER);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(1));
     for (log_weights, of) in [
         (vec![0.0, 800.0], [Some(1.0), Some(2.0)]),
         (vec![800.0, 0.0], [Some(2.0), Some(1.0)]),
     ] {
         let distribution = every_sample(2).with_log_weights(log_weights).unwrap();
-        let mean = Landscape::mean(&distribution, &[axis], &of, NANOMETER, &options())?;
+        let mean = Landscape::mean(
+            &distribution,
+            &[axis],
+            Quantity::new(&of, NANOMETER),
+            &options(),
+        )?;
         assert_eq!(mean.cells()[0].value(), Some(2.0));
     }
     Ok(())
@@ -551,12 +584,12 @@ fn a_light_sample_first_keeps_the_mean() -> Result<(), LandscapeError> {
 fn the_end_of_a_period_wraps_to_the_first_bin() -> Result<(), LandscapeError> {
     use std::f64::consts::PI;
     for bins in 1..=200 {
-        let radians = Binning::periodic(-PI, 2.0 * PI, bins)?;
+        let radians = Binning::periodic(-PI, PI, bins)?;
         assert_eq!(radians.bin(PI), Some(0), "pi in {bins} bins");
         assert_eq!(radians.bin(-PI), Some(0));
         assert_eq!(radians.bin(PI - 1e-9), Some(bins - 1));
         assert_eq!(radians.period(), Some(2.0 * PI));
-        let degrees = Binning::periodic(-180.0, 360.0, bins)?;
+        let degrees = Binning::periodic(-180.0, 180.0, bins)?;
         assert_eq!(degrees.bin(180.0), Some(0), "180 in {bins} bins");
         assert_eq!(degrees.bin(-180.0), Some(0));
         assert_eq!(degrees.bin(179.999_999), Some(bins - 1));
@@ -569,7 +602,7 @@ fn the_end_of_a_period_wraps_to_the_first_bin() -> Result<(), LandscapeError> {
 
 #[test]
 fn the_end_lands_in_the_last_bin() -> Result<(), LandscapeError> {
-    let tenths = Binning::new(0.0, 0.1, 3)?;
+    let tenths = Binning::between(0.0, 0.3, 3)?;
     assert_eq!(tenths.bin(tenths.end()), Some(2));
     assert_eq!(tenths.period(), None);
     for bins in 1..60 {
@@ -588,6 +621,7 @@ fn the_end_lands_in_the_last_bin() -> Result<(), LandscapeError> {
         (1.0, 0.0),
         (f64::NAN, 1.0),
         (0.0, f64::INFINITY),
+        (-1e308, 1e308),
     ] {
         assert_eq!(
             Binning::between(start, end, 2),
@@ -604,8 +638,8 @@ fn representatives_on_two_axes_are_nearest_in_bin_widths() -> Result<(), Landsca
     let x = [0.8, 0.5].map(Some);
     let y = [5.0, 9.0].map(Some);
     let axes = [
-        GridAxis::new(&x, unit_bins(1), NANOMETER),
-        GridAxis::new(&y, Binning::new(0.0, 10.0, 1)?, DEGREE),
+        GridAxis::new(Quantity::new(&x, NANOMETER), unit_bins(1)),
+        GridAxis::new(Quantity::new(&y, DEGREE), Binning::between(0.0, 10.0, 1)?),
     ];
     let surface = Landscape::free_energy(&every_sample(2), &axes, &at_300())?;
     assert_eq!(surface.cells()[0].representative(), Some(0));
@@ -622,7 +656,7 @@ fn a_large_common_reduced_bias_cancels() -> Result<(), LandscapeError> {
     let expected = rt * (2.0_f64.ln() + 1.5 - 3.0_f64.ln());
     for estimator in ESTIMATORS {
         let ensemble = reweighted(&reduced, estimator);
-        let axis = GridAxis::new(&values, unit_bins(2), NANOMETER);
+        let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(2));
         let surface = Landscape::free_energy(ensemble.distribution(), &[axis], &options())?;
         let cells = surface.cells();
         assert!((cells[0].value().unwrap() - expected).abs() < 1e-8);
@@ -632,8 +666,7 @@ fn a_large_common_reduced_bias_cancels() -> Result<(), LandscapeError> {
         let mean = Landscape::mean(
             ensemble.distribution(),
             &[axis],
-            &of,
-            DIMENSIONLESS,
+            Quantity::new(&of, DIMENSIONLESS),
             &options(),
         )?;
         assert!((mean.cells()[1].value().unwrap() - 4.0).abs() < 1e-8);
@@ -645,8 +678,11 @@ fn a_large_common_reduced_bias_cancels() -> Result<(), LandscapeError> {
 fn cell_centres_invert_cell_lookup() -> Result<(), LandscapeError> {
     let x = [Some(0.5)];
     let axes = [
-        GridAxis::new(&x, unit_bins(3), NANOMETER),
-        GridAxis::new(&x, Binning::periodic(-180.0, 360.0, 4)?, DEGREE),
+        GridAxis::new(Quantity::new(&x, NANOMETER), unit_bins(3)),
+        GridAxis::new(
+            Quantity::new(&x, DEGREE),
+            Binning::periodic(-180.0, 180.0, 4)?,
+        ),
     ];
     let surface = Landscape::free_energy(&every_sample(1), &axes, &at_300())?;
     assert_eq!(surface.center(4), Some(vec![1.5, -45.0]));
@@ -661,13 +697,37 @@ fn cell_centres_invert_cell_lookup() -> Result<(), LandscapeError> {
 #[test]
 fn the_bins_product_may_overflow() -> Result<(), LandscapeError> {
     let values = [Some(0.0)];
-    let huge = Binning::new(0.0, 1e-300, usize::MAX)?;
-    let axis = GridAxis::new(&values, huge, NANOMETER);
+    let huge = Binning::between(0.0, 1.0, usize::MAX)?;
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), huge);
     let error = Landscape::free_energy(&every_sample(1), &[axis, axis], &at_300()).unwrap_err();
     let LandscapeError::TooManyCells(limit) = error else {
         panic!("{error:?} is not a cell limit")
     };
     assert_eq!(limit.observed(), usize::MAX);
     assert_eq!(limit.limit(), Landscape::MAX_CELLS);
+    Ok(())
+}
+
+#[test]
+fn the_lowest_cell_has_the_lowest_value() -> Result<(), LandscapeError> {
+    // Counts 1, 2, 4, and 0: the third cell is the most populated.
+    let values = [0.5, 1.2, 1.7, 2.0, 2.1, 2.5, 2.9].map(Some);
+    let axis = GridAxis::new(Quantity::new(&values, NANOMETER), unit_bins(4));
+    let surface = Landscape::free_energy(&every_sample(7), &[axis], &at_300())?;
+    assert_eq!(surface.lowest_cell(), Some(2));
+    assert_eq!(surface.cells()[2].value(), Some(0.0));
+    // A masked cell is never the lowest.
+    let masked = Landscape::free_energy(&every_sample(7), &[axis], &at_300().with_fewest(5))?;
+    assert_eq!(masked.lowest_cell(), None);
+    // The lowest mean, the first of equal ones.
+    let of = [3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0].map(Some);
+    let mean = Landscape::mean(
+        &every_sample(7),
+        &[axis],
+        Quantity::new(&of, DIMENSIONLESS),
+        &options(),
+    )?;
+    assert_eq!(mean.value_unit(), DIMENSIONLESS);
+    assert_eq!(mean.lowest_cell(), Some(1));
     Ok(())
 }

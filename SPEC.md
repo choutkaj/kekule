@@ -731,8 +731,11 @@ effective sample size over the exact weights. See
 [estimators](crates/kekule/src/statistics/estimators.rs).
 
 A `Landscape` bins a distribution's samples on one or two axes, each a value
-per geometry with its `Binning` (periodic axes wrap), and gives a free energy
-or a mean value per cell. Cell totals follow the estimator contract: a cell's
+per geometry with its unit and its `Binning`, and gives a free energy or a
+mean value per cell. A binning divides the span between two edges into equal
+bins; a periodic one wraps values into that span, and one may cover given
+values instead. The values a mean maps carry their unit, which its cells
+keep. Cell totals follow the estimator contract: a cell's
 population is the distribution's estimator over its samples, the cells are
 normalized among themselves into the weighted histogram, and within a cell
 each sample's share is exact, so a mean weighs its samples exactly and a cell
@@ -740,7 +743,8 @@ that is a state has the state's population. The free energy is
 `-RT ln(P_cell / P_max)` at the distribution's target temperature, or a given
 one when it has no target; a given temperature that differs from the target
 is refused. `P_max` is the population of the most populated cell that has a
-value, so the lowest free energy is 0. A cell with fewer samples than a
+value, so the lowest free energy is 0. The landscape's lowest cell is the one with
+the lowest value, the first of equal ones. A cell with fewer samples than a
 threshold has no value but keeps its count, effective count, population,
 and representative, and its probability stays in the weighted histogram.
 The representative is the sample nearest the cell's centre, across the
