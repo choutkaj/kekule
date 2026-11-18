@@ -45,11 +45,10 @@ Higher, modeling-oriented objects are built around `Topology` and contain actual
 
 ```text
 Structure    = Topology + positions, cell, occupancies, B-factors, properties
-StructureSet = Topology + Geometries (positions, cell, occupancies, B-factors, velocities, forces, atom and bond properties)
+StructureSet = Topology + Geometries (positions, cell, occupancies, B-factors, velocities, forces, properties)
                + optional Order (times and steps, steps, or coordinate values)
-               + columns (a row per geometry) + optional Sampling record
 StructureSet<IndexedFile> = the same, with each geometry read from a trajectory file
-Ensemble     = StructureSet + Distribution (samples, weights, states with energies, optional target state)
+Ensemble     = StructureSet + Distribution (samples, log weights, states with energies, temperature)
 ```
 
 ## Formats
