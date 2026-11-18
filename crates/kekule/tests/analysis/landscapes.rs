@@ -502,6 +502,6 @@ fn inputs_must_cover_the_samples() {
     assert!(matches!(error, LandscapeError::TooManyCells(_)));
     assert_eq!(
         error.to_string(),
-        "The landscape exceeds its grid cell limit: 25,000,000 cells of 16,777,216."
+        "The landscape exceeds its grid cell limit: 25,000,000 cells of 4,194,304."
     );
 }

@@ -438,8 +438,8 @@ pub struct Landscape {
 }
 
 impl Landscape {
-    /// The most cells a landscape holds.
-    pub const MAX_CELLS: usize = 1 << 24;
+    /// The most cells a landscape holds, a grid of 2048 × 2048.
+    pub const MAX_CELLS: usize = 1 << 22;
 
     /// The free-energy surface of `distribution` on `axes`, in
     /// [`CANONICAL_ENERGY_UNIT`].
