@@ -1,6 +1,7 @@
 //! Weighted structural statistics: per-atom RMS fluctuation and contact
-//! occupancy of atom pairs or atom groups over weighted structures, and the
-//! estimators of group populations for reweighting.
+//! occupancy of atom pairs or atom groups over weighted structures, the
+//! estimators of group populations for reweighting, and free-energy and
+//! mean landscapes.
 //!
 //! An observation is one structure with an explicit, finite, positive weight.
 //! Weights are relative: scaling every weight by one factor changes no
@@ -22,8 +23,9 @@
 //! ensemble's distribution, each with its probability, and leave the other
 //! geometries out. The same methods of a [`StructureSet`] observe every
 //! geometry with weight one, taking a trajectory's frames as equally
-//! weighted equilibrium samples; to reweight frames, for example after
-//! biased sampling, read the set as an [`Ensemble::weighted`] or observe the
+//! weighted equilibrium samples. To reweight the frames of a biased run,
+//! read the set as an [`Ensemble::reweighted`] from its sampling record, as
+//! an [`Ensemble::weighted`] with log weights of its own, or observe the
 //! frames through an accumulator with explicit weights.
 //!
 //! An accumulator also observes the geometries of any
