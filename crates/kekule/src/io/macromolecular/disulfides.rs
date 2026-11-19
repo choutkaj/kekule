@@ -35,9 +35,16 @@ pub(super) fn infer_disulfides(
     let residue = |row: &AtomRow| (row.asym_id.clone(), row.residue_key.clone());
     // An SG that a record links or coordinates outside its residue already
     // has its partner.
+    let residue_of = rows
+        .iter()
+        .map(|&row| (row.row_index, residue(row)))
+        .collect::<HashMap<_, _>>();
     let linked = bonds
         .iter()
-        .filter(|bond| !bond.supplements_template)
+        .filter(|bond| {
+            let [left, right] = bond.rows.map(|row| residue_of.get(&row));
+            left.is_none() || left != right
+        })
         .flat_map(|bond| bond.rows)
         .collect::<BTreeSet<_>>();
     let coordinated = coordination

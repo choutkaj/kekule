@@ -62,8 +62,8 @@ fn cystine_pdb(residue: &str, hydrogens: bool, shift: f64, records: &[String]) -
     lines.join("\n") + "\n"
 }
 
-/// The cystine as an mmCIF block whose `_struct_conn` states the disulfide.
-fn cystine_mmcif() -> String {
+/// The cystine as an mmCIF block with the `_struct_conn` rows `connections`.
+fn cystine_mmcif(connections: &str) -> String {
     let mut text = String::from(
         "data_cystine\nloop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n\
          _atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n\
@@ -81,10 +81,13 @@ fn cystine_mmcif() -> String {
         "loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n_struct_conn.ptnr1_label_asym_id\n\
          _struct_conn.ptnr1_label_comp_id\n_struct_conn.ptnr1_label_atom_id\n\
          _struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_comp_id\n\
-         _struct_conn.ptnr2_label_atom_id\ndisulf1 disulf A CYS SG B CYS SG\n",
+         _struct_conn.ptnr2_label_atom_id\n_struct_conn.pdbx_value_order\n",
     );
+    text.push_str(connections);
     text
 }
+
+const DISULF: &str = "disulf1 disulf A CYS SG B CYS SG .\n";
 
 fn ssbond(residue: &str) -> String {
     format!("SSBOND   1 {residue} A    1    {residue} B    1                          1555   1555  2.04  ")
@@ -193,13 +196,25 @@ fn ssbond_conect_and_bonding_distance_give_neutral_cystine() {
 
 #[test]
 fn mmcif_struct_conn_disulfide_gives_neutral_cystine() {
-    let result = read_mmcif(&cystine_mmcif());
+    let result = read_mmcif(&cystine_mmcif(DISULF));
     assert_eq!(
         disulfides(&result),
         vec![connection(Some("disulf1"), "disulf")]
     );
     assert_eq!(inferred(&result), 0);
     assert_neutral_with_explicit_hydrogens(&result);
+}
+
+#[test]
+fn bonds_within_a_cysteine_leave_its_sg_free_to_pair() {
+    // Each SG is stated bonded, with an order, only within its residue. A
+    // stated bond within a residue makes the source's list its bonds, so only
+    // the disulfide is checked.
+    let result = read_mmcif(&cystine_mmcif(
+        "covale1 covale A CYS CB A CYS SG sing\ncovale2 covale B CYS CB B CYS SG sing\n",
+    ));
+    assert_eq!(disulfides(&result), vec![BondEvidence::Disulfide]);
+    assert_eq!(inferred(&result), 1);
 }
 
 #[test]
