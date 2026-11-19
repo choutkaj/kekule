@@ -623,15 +623,15 @@ the main branch migrates by the table under "From the SampleSet API".
 
 - PDB and mmCIF interpretation reads disulfide-bonded cysteines with explicit
   hydrogens as neutral: a covalent link to another residue takes the place of
-  a hydrogen, as a disulfide replaces `HG`, instead of making the `SG` a
-  thiolate. `SSBOND`, `CONECT`, and `_struct_conn` disulfides all read so.
+  as many hydrogens as its order, as a disulfide replaces `HG`, instead of
+  making the `SG` a thiolate. `SSBOND`, `CONECT`, and `_struct_conn` disulfides all read so.
 - Cysteine `SG` atoms within bonding distance that carry no hydrogen and no
   stated link form a disulfide, with `BondEvidence::Disulfide` and
   `StructureInterpretIssue::DisulfideInferred`; turning distance inference
   off turns it off.
 - A residue whose name neither the caller's nor the bundled templates define
   takes the AMBER, else the CHARMM, template of that name when the template
-  names all its atoms, so AMBER `CYX` reads without
+  names all its heavy atoms, so AMBER `CYX` reads without
   `ComponentLibrary::amber` (`StructureInterpretIssue::ForceFieldTemplate`).
   The PDB and mmCIF writers leave out the bonds such a template gives.
 - Solvation moves each placed water by a fixed shift of at most 0.0005 nm

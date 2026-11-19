@@ -1457,7 +1457,7 @@ struct ConectPlan {
 
 /// The template a reader applies to each residue without templates from the
 /// caller: the bundled one of its name, else the force-field template of its
-/// name that names all its atoms.
+/// name that names all its heavy atoms.
 fn residue_templates<'r>(
     topology: &Topology,
     records: &'r [AtomRecord],

@@ -8,7 +8,7 @@
 use super::prepare::{AtomRow, ConnectionRow, Implied};
 use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
-    hydrogen_differences, template_bond_order, within_bonding_distance, PolymerLink,
+    hydrogen_differences, link_valence, template_bond_order, within_bonding_distance, PolymerLink,
 };
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
@@ -210,11 +210,9 @@ fn rebuilt_by_template(
                 .count();
             let links = neighbours[row]
                 .iter()
-                .filter(|&&(other, connection)| {
-                    !in_residue.contains(&other)
-                        && connections[connection].order != BondOrder::Dative
-                })
-                .count();
+                .filter(|&&(other, _)| !in_residue.contains(&other))
+                .map(|&(_, connection)| link_valence(connections[connection].order))
+                .sum();
             Ok::<_, std::convert::Infallible>((present, links))
         })
         .unwrap_or_else(|never| match never {});

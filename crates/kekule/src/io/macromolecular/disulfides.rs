@@ -7,7 +7,9 @@ use crate::molecule::{BondOrder, Element};
 
 use super::atom_site::AtomRow;
 use super::connections::{DeclaredConnection, DeclaredCoordination, InstanceUnion};
-use super::connectivity::within_bonding_distance;
+use super::connectivity::{
+    covalent_bonding_radius, within_bonding_distance, COVALENT_BOND_TOLERANCE_ANGSTROM,
+};
 use super::{
     poll, poll_every, BondEvidence, SourceResidueId, StructureInterpretIssue,
     StructureInterpretationReport,
@@ -42,6 +44,7 @@ pub(super) fn infer_disulfides(
         .iter()
         .flat_map(|record| record.atoms.iter().cloned())
         .collect::<BTreeSet<_>>();
+    let sulfur = Element::from_symbol("S").expect("sulfur");
     let mut sulfurs = Vec::new();
     let mut hydrogens = HashMap::<_, Vec<_>>::new();
     for (step, &row) in rows.iter().enumerate() {
@@ -49,13 +52,16 @@ pub(super) fn infer_disulfides(
         let Some(point) = row.point else {
             continue;
         };
-        if !CYSTEINES.contains(&row.comp_id.to_ascii_uppercase().as_str()) {
+        if !CYSTEINES
+            .iter()
+            .any(|name| row.comp_id.eq_ignore_ascii_case(name))
+        {
             continue;
         }
         if row.element.atomic_number() == 1 {
             hydrogens.entry(residue(row)).or_default().push(point);
         } else if row.atom_name == "SG"
-            && row.element == Element::from_symbol("S").expect("sulfur")
+            && row.element == sulfur
             && !linked.contains(&row.row_index)
             && !coordinated.contains(&row.atom_key())
         {
@@ -70,18 +76,34 @@ pub(super) fn infer_disulfides(
                 .any(|&other| within_bonding_distance((row.element, point), (hydrogen, other)))
         })
     });
+    // Sorted along x, each SG meets only those within bonding reach on x.
+    let reach = 2.0 * covalent_bonding_radius(sulfur).0 + COVALENT_BOND_TOLERANCE_ANGSTROM;
+    sulfurs.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
     let mut pairs = Vec::new();
     for (index, &(left, left_point)) in sulfurs.iter().enumerate() {
         poll(cancellation)?;
         for &(right, right_point) in &sulfurs[index + 1..] {
+            if right_point.x - left_point.x > reach {
+                break;
+            }
             if residue(left) != residue(right)
                 && within_bonding_distance((left.element, left_point), (right.element, right_point))
             {
-                pairs.push(((left_point - right_point).norm(), left, right));
+                let (first, second) = if left.row_index < right.row_index {
+                    (left, right)
+                } else {
+                    (right, left)
+                };
+                pairs.push(((left_point - right_point).norm(), first, second));
             }
         }
     }
-    pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Ties fall to source order, so the result does not depend on the sweep.
+    pairs.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then_with(|| a.1.row_index.cmp(&b.1.row_index))
+            .then_with(|| a.2.row_index.cmp(&b.2.row_index))
+    });
     let mut bonded = BTreeSet::new();
     for (_, left, right) in pairs {
         if bonded.contains(&left.row_index) || bonded.contains(&right.row_index) {

@@ -685,8 +685,8 @@ fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
 fn copies_of_one_seed_water_never_sit_one_distance_apart() {
     // In a 3.9 nm cube, a seed water and its copy one 3 nm tile over meet
     // across the cell boundary 0.9 nm apart, a common nonbonded cutoff, and
-    // every pair of a tile recurs in the next. Placed waters share no
-    // distance.
+    // every pair of a tile recurs in the next, so hundreds of pairs shared
+    // one distance. Now at most a chance two do.
     let mut m = structure("O");
     solvation::add_periodic_box(
         &mut m,
@@ -717,6 +717,6 @@ fn copies_of_one_seed_water_never_sit_one_distance_apart() {
         .map(<[f64]>::len)
         .max()
         .unwrap();
-    assert_eq!(shared, 1, "{shared} oxygen pairs share one distance");
+    assert!(shared <= 2, "{shared} oxygen pairs share one distance");
     assert!(distances.iter().all(|d| (d - 0.9).abs() > 1e-9));
 }

@@ -24,7 +24,7 @@ const CYSTINE: &[(char, &str, &str, [f64; 3])] = &[
     ('A', "HB3", "H", [-1.604, -0.554, -0.575]),
     ('A', "HXT", "H", [-1.326, 0.158, 3.186]),
     ('B', "N", "N", [-0.434, -3.286, -6.013]),
-    ('B', "CA", "C", [-1.206, -2.066, -6.280]),
+    ('B', "CA", "C", [-1.206, -2.066, -6.281]),
     ('B', "C", "C", [-0.968, -1.623, -7.700]),
     ('B', "O", "O", [0.087, -1.858, -8.237]),
     ('B', "CB", "C", [-0.764, -0.961, -5.320]),
@@ -232,6 +232,24 @@ fn cyx_residues_read_with_the_amber_template() {
             .count();
         assert_eq!(doubles, 2);
     }
+}
+
+#[test]
+fn force_field_templates_take_hydrogens_they_do_not_name() {
+    // N-terminal residues of AMBER files name their amine hydrogens H1 to
+    // H3, which the plain CYX template does not.
+    let text = cystine_pdb("CYX", true, 0.0, &[]).replace(" H   CYX", " H1  CYX");
+    assert_eq!(text.matches(" H1  CYX").count(), 2);
+    let result = read_pdb(&text, Default::default());
+    let templates = result
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| matches!(issue, StructureInterpretIssue::ForceFieldTemplate { .. }))
+        .count();
+    assert_eq!(templates, 2);
+    assert_eq!(disulfides(&result).len(), 1);
+    assert_neutral_with_explicit_hydrogens(&result);
 }
 
 #[test]

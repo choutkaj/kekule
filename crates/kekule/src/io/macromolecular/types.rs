@@ -39,7 +39,7 @@ pub enum ModelSelection {
 /// caller's [`components`](Self::components) first, then
 /// [`ComponentLibrary::bundled`], then the [`ComponentLibrary::amber`] or
 /// [`ComponentLibrary::charmm`] template of its name that names all its
-/// atoms, such as AMBER `CYX`. A residue that none covers has its bonds
+/// heavy atoms, such as AMBER `CYX`. A residue that none covers has its bonds
 /// inferred from covalent radii when
 /// [`infer_bonds_from_distance`](Self::infer_bonds_from_distance) is set, and
 /// fails otherwise.
@@ -398,8 +398,8 @@ pub enum StructureInterpretIssue {
         candidate_count: usize,
     },
     /// A residue whose name no dictionary template defines was read with the
-    /// force-field template of that name, which names all its atoms, as AMBER
-    /// `CYX` names a cysteine in a disulfide.
+    /// force-field template of that name, which names all its heavy atoms, as
+    /// AMBER `CYX` names a cysteine in a disulfide.
     ForceFieldTemplate {
         /// The residue.
         residue: SourceResidueId,
@@ -667,7 +667,8 @@ impl fmt::Display for StructureInterpretIssue {
                 force_field,
             } => write!(
                 formatter,
-                "{} (component {component_id:?}) has no dictionary template. It is read with                  the {force_field} template of that name.",
+                "{} (component {component_id:?}) has no dictionary template. It is read with \
+                 the {force_field} template of that name.",
                 Capitalized(residue)
             ),
             Self::ResidueBondsInferred {
@@ -694,7 +695,8 @@ impl fmt::Display for StructureInterpretIssue {
                 residues: [left, right],
             } => write!(
                 formatter,
-                "{} and {right} have no stated disulfide. Their SG atoms are within bonding                  distance, so they are bonded.",
+                "{} and {right} have no stated disulfide. Their SG atoms are within bonding \
+                 distance, so they are bonded.",
                 Capitalized(left)
             ),
             Self::ChainBreak { residue, next } => write!(

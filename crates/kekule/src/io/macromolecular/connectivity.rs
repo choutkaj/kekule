@@ -582,21 +582,18 @@ impl<'r> Resolver<'r, '_> {
             raw::poll(self.cancellation)?;
             let listed = listed_in.remove(&residue.key).unwrap_or_default();
             let component_id = normalized(&residue.key.component_id);
+            let mut force_field = None;
             let template = self.catalog.template(&component_id).or_else(|| {
                 let atoms = residue
                     .sites
                     .iter()
                     .map(|site| (site.name.as_str(), site.element));
-                let (component, force_field) =
+                let (component, name) =
                     ComponentLibrary::force_field_template(&component_id, atoms)?;
-                self.issues
-                    .push(raw::StructureInterpretIssue::ForceFieldTemplate {
-                        residue: residue.key.id(self.model_id),
-                        component_id: residue.key.component_id.clone(),
-                        force_field: force_field.to_owned(),
-                    });
+                force_field = Some(name);
                 Some((component, Vec::new()))
             });
+            let templated_before = templated.len();
             if let Some(bonds) = self.catalog.component_bonds.get(&component_id) {
                 for bond in bonds {
                     let (Some(&left), Some(&right)) = (
@@ -667,6 +664,15 @@ impl<'r> Resolver<'r, '_> {
                 );
             } else if residue.sites.len() > 1 {
                 self.infer_residue_bonds(residue)?;
+            }
+            // Reported only when the template is applied.
+            if let Some(force_field) = force_field.filter(|_| templated.len() > templated_before) {
+                self.issues
+                    .push(raw::StructureInterpretIssue::ForceFieldTemplate {
+                        residue: residue.key.id(self.model_id),
+                        component_id: residue.key.component_id.clone(),
+                        force_field: force_field.to_owned(),
+                    });
             }
         }
         raw::poll(self.cancellation)?;
@@ -1229,17 +1235,16 @@ impl<'r> Resolver<'r, '_> {
             .map(Some)
     }
 
-    /// How many covalent bonds join a residue atom to atoms of other
-    /// residues; dative bonds are not counted.
+    /// The valence that bonds to atoms of other residues give a residue
+    /// atom (see [`link_valence`]).
     fn links_outside(&self, atom: AtomId, residue: &ResidueAtoms) -> Result<usize, FormatError> {
         Ok(self
             .graph
             .require_incident_bonds(atom)
             .map_err(interpret_error)?
-            .filter(|(_, bond)| {
-                bond.order() != BondOrder::Dative && residue.site(bond.other_atom(atom)).is_none()
-            })
-            .count())
+            .filter(|(_, bond)| residue.site(bond.other_atom(atom)).is_none())
+            .map(|(_, bond)| link_valence(bond.order()))
+            .sum())
     }
 
     /// Replaces template bond orders with a variant's.
@@ -1375,8 +1380,8 @@ pub(crate) type HydrogenDifference<A> = (A, usize, isize);
 /// template atom names with residue atoms. Differences are counted only on
 /// heteroatoms of a residue with model hydrogens, and only where they can be
 /// charges: on an atom with only single template bonds, or by one on a ring
-/// nitrogen. `hydrogens` gives an atom's bonded hydrogens and its covalent
-/// bonds to other residues, which take the place of hydrogens.
+/// nitrogen. `hydrogens` gives an atom's bonded hydrogens and the valence
+/// its bonds to other residues give it, which takes the place of hydrogens.
 pub(crate) fn hydrogen_differences<A: Copy, E>(
     candidate: &Component,
     named: &[(&str, A)],
@@ -1463,11 +1468,25 @@ fn in_ring(component: &Component, index: usize) -> bool {
     })
 }
 
-/// The hydrogens a template atom carries when `links` covalent bonds join it
-/// to other residues. Each link takes the place of one hydrogen, and an atom
-/// that links loses all its leaving hydrogens: a peptide bond replaces the
-/// amine's leaving `H2`, and a disulfide replaces cysteine's `HG`, which the
-/// dictionary does not mark leaving.
+/// The valence a bond to another residue gives an atom, which is the number
+/// of hydrogens it replaces: one for a single bond, two for a double bond.
+/// Zero-order and dative bonds replace none.
+pub(crate) const fn link_valence(order: BondOrder) -> usize {
+    match order {
+        BondOrder::Zero | BondOrder::Dative => 0,
+        BondOrder::Single => 1,
+        BondOrder::Double => 2,
+        BondOrder::Triple => 3,
+        BondOrder::Quadruple => 4,
+    }
+}
+
+/// The hydrogens a template atom carries when bonds to other residues give
+/// it `links` valence. Each unit takes the place of one hydrogen, and an
+/// atom that links loses all its leaving hydrogens: a peptide bond replaces
+/// the amine's leaving `H2`, a disulfide replaces cysteine's `HG`, which the
+/// dictionary does not mark leaving, and a Schiff base's double bond
+/// replaces two of lysine's `NZ` hydrogens.
 fn expected_hydrogens(component: &Component, index: usize, links: usize) -> usize {
     let (mut hydrogens, mut leaving) = (0, 0);
     for bond in component.bonds() {

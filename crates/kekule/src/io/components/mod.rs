@@ -229,17 +229,18 @@ impl Component {
         &self.bonds
     }
 
-    /// Whether every one of `atoms`, by name and element, is a distinct atom
-    /// of the component.
-    pub(crate) fn names_all<'a>(
-        &self,
-        atoms: impl IntoIterator<Item = (&'a str, Element)>,
-    ) -> bool {
+    /// Whether `atoms`, by name and element, are distinct atoms of the
+    /// component, except for hydrogens it does not name, such as the `H1`
+    /// and `H3` of an N-terminal residue. Readers bond those to the nearest
+    /// heavy atom.
+    pub(crate) fn fits<'a>(&self, atoms: impl IntoIterator<Item = (&'a str, Element)>) -> bool {
         let mut matched = BTreeSet::new();
-        atoms.into_iter().all(|(name, element)| {
-            self.atom(name)
-                .is_some_and(|(index, atom)| atom.element() == element && matched.insert(index))
-        })
+        atoms
+            .into_iter()
+            .all(|(name, element)| match self.atom(name) {
+                Some((index, atom)) => atom.element() == element && matched.insert(index),
+                None => element.atomic_number() == 1,
+            })
     }
 
     /// Finds an atom by its name or alternate name.
@@ -366,7 +367,7 @@ impl ComponentLibrary {
     /// The force-field template a reader applies to a residue named `id`
     /// whose atoms, by name and element, are `atoms`, when no library it
     /// consults defines `id`: the AMBER template of that name, else the
-    /// CHARMM one, the first that names every atom with its element, and the
+    /// CHARMM one, the first that [fits](Component::fits) the atoms, and the
     /// force field's name. `None` when the bundled library defines `id`.
     pub(crate) fn force_field_template<'a>(
         id: &str,
@@ -385,7 +386,7 @@ impl ComponentLibrary {
         .find_map(|(library, force_field)| {
             let component = library.get(id)?;
             component
-                .names_all(atoms.clone())
+                .fits(atoms.clone())
                 .then_some((component, force_field))
         })
     }

@@ -187,6 +187,20 @@ fn issues_read_as_sentences() {
             r#"The atoms of residue 7 of chain "A" in model "1" lie in 2 molecules."#,
         ),
         (
+            Issue::ForceFieldTemplate {
+                residue: residue(22),
+                component_id: "CYX".into(),
+                force_field: "AMBER".into(),
+            },
+            r#"Residue 22 of chain "A" in model "1" (component "CYX") has no dictionary template. It is read with the AMBER template of that name."#,
+        ),
+        (
+            Issue::DisulfideInferred {
+                residues: [residue(22), residue(157)],
+            },
+            r#"Residue 22 of chain "A" in model "1" and residue 157 of chain "A" in model "1" have no stated disulfide. Their SG atoms are within bonding distance, so they are bonded."#,
+        ),
+        (
             Issue::CellOmitted {
                 reason: CellOmissionReason::SpaceGroup {
                     name: "P 21 21 21".into(),
