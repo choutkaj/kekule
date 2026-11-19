@@ -536,6 +536,23 @@ impl<W: Write> Encoder<'_, W> {
                 self.residue(residue)?;
                 self.residue(next)
             }
+            Issue::DisulfideInferred {
+                residues: [left, right],
+            } => {
+                self.u8(20)?;
+                self.residue(left)?;
+                self.residue(right)
+            }
+            Issue::ForceFieldTemplate {
+                residue,
+                component_id,
+                force_field,
+            } => {
+                self.u8(21)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(force_field)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,
@@ -772,6 +789,7 @@ fn evidence_code(evidence: &BondEvidence) -> u8 {
         BondEvidence::Connection { .. } => 4,
         BondEvidence::Distance => 5,
         BondEvidence::HydrogenDistance => 6,
+        BondEvidence::Disulfide => 7,
     }
 }
 

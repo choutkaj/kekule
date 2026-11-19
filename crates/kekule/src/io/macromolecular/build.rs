@@ -548,10 +548,7 @@ pub(super) fn build_molecule(
             continue;
         };
         let (left, right) = (atoms[left], atoms[right]);
-        let source = BondEvidence::Connection {
-            connection_id: connection.connection_id.clone(),
-            connection_type: connection.connection_type.clone(),
-        };
+        let source = connection.evidence.clone();
         if connection.supplements_template {
             listed.push(ListedBond {
                 atoms: [left, right],

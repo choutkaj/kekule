@@ -13,6 +13,9 @@ use crate::{
 // TIP3P oxygen LJ sigma * 2^(1/6)/2, matching OpenMM's exclusion convention.
 const WATER_RADIUS: f64 = 0.315_075_240_657_512_4 * 0.5612310241546865;
 const SEED_WIDTH: f64 = 3.0;
+/// The largest shift, in nm along each axis, that moves each placed water off
+/// the seed lattice.
+const DISPLACEMENT: f64 = 0.000_5;
 const DATA: &[u8; 895 * 36] = include_bytes!("data/tip3p.bin");
 
 fn template(index: usize) -> [Point3; 3] {
@@ -345,7 +348,7 @@ fn pack(
                     z as f64 * SEED_WIDTH,
                 );
                 for index in 0..895 {
-                    let oxygen = template(index)[0] + shift;
+                    let oxygen = template(index)[0] + shift + displacement([x, y, z], index);
                     let fractional = geometry.fractional_canonical(oxygen - Point3::origin())?;
                     if fractional.iter().any(|v| *v < -0.5 || *v >= 0.5) {
                         continue;
@@ -444,17 +447,43 @@ fn append(
     Ok(())
 }
 
+/// A rigid shift of the seed water `index` in tile `tile`, each axis in
+/// [-DISPLACEMENT, DISPLACEMENT), the same in every run.
+///
+/// Copies of one seed water lie a lattice vector apart, so without it every
+/// copy pair across a cell boundary is at one distance: the cell width less
+/// the seed width, such as exactly 0.9 nm in a 3.9 nm cube, where hundreds of
+/// pairs would sit on a common cutoff. The shift spreads those distances.
+fn displacement(tile: [i64; 3], index: usize) -> Vector3 {
+    let mut state = (index as u64).wrapping_mul(0x9e3779b97f4a7c15);
+    for coordinate in tile {
+        state = splitmix64(state ^ coordinate as u64);
+    }
+    let [x, y, z] = std::array::from_fn(|_| {
+        state = splitmix64(state);
+        // The top 53 bits as a uniform value in [-1, 1).
+        (state >> 11) as f64 / (1_u64 << 52) as f64 - 1.0
+    });
+    Vector3::new(x, y, z) * DISPLACEMENT
+}
+
+/// The SplitMix64 output for `state`, whose next state adds the golden
+/// gamma.
+fn splitmix64(state: u64) -> u64 {
+    let mut z = state.wrapping_add(0x9e3779b97f4a7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
+    z ^ (z >> 31)
+}
+
 // SplitMix64 and unbiased bounded draws; independent of external RNG versions.
 fn shuffle<T>(values: &mut [T], mut state: u64) {
     for i in (1..values.len()).rev() {
         let bound = i as u64 + 1;
         let threshold = bound.wrapping_neg() % bound;
         let draw = loop {
+            let z = splitmix64(state);
             state = state.wrapping_add(0x9e3779b97f4a7c15);
-            let mut z = state;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
-            z ^= z >> 31;
             if z >= threshold {
                 break (z % bound) as usize;
             }

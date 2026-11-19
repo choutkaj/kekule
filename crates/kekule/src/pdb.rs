@@ -14,7 +14,9 @@
 //! records are covalent connections. `CONECT` records list connectivity
 //! without bond types: within a residue they supplement its template and
 //! stand in for distance inference, and a partner listed two or three times
-//! has a double or triple bond. A `LINK` or `CONECT` between a metal and a
+//! has a double or triple bond. Under distance inference, two cysteine `SG`
+//! atoms within bonding distance that no record links and no hydrogen bonds
+//! to form a disulfide. A `LINK` or `CONECT` between a metal and a
 //! non-metal is coordination: within a residue a dative bond, between
 //! residues no bond but a record of the report
 //! ([`StructureInterpretationReport::coordination`](crate::macromolecular::StructureInterpretationReport::coordination)). Atoms

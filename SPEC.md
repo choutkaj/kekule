@@ -901,16 +901,25 @@ representatives, not structure probabilities.
 Macromolecular formats do not carry complete bonds, and molecule boundaries
 follow bonds, so one resolver shared by mmCIF and PDB derives connectivity
 from ranked evidence: explicit source bonds, component templates supplied as
-context, polymer linkage within bonding distance, and distance inference for
-residues nothing else covers, which is on by default and reported. Explicit
-bonds outrank the levels below them, and close contacts no evidence bonds are
-counted, never bonded. Metal coordination between residues is not a bond: the
+context, polymer linkage within bonding distance, and distance inference,
+which is on by default and reported: bonds within residues nothing else
+covers, and disulfides between cysteine `SG` atoms within bonding distance
+that carry no hydrogen and no stated link. Explicit bonds outrank the levels
+below them, and close contacts no evidence bonds are counted, never bonded. A
+covalent link to another residue takes the place of as many of an atom's
+hydrogens as its order, as a disulfide replaces cysteine's `HG`, so it
+charges no atom.
+Metal coordination between residues is not a bond: the
 report keeps it as connection metadata, while coordination within one residue
 is a dative bond, so a metal complex that is one component stays one molecule.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral
-histidine tautomers; callers supply more as context. See
+histidine tautomers; callers supply more as context. A residue whose name
+neither defines takes the AMBER, else the CHARMM, template of that name when
+the template names all its heavy atoms, as AMBER `CYX` names a cysteine in a
+disulfide, and the report says so. Writers state the bonds a reader cannot
+derive by these same rules. See
 [macromolecular connectivity](crates/kekule/src/io/macromolecular/connectivity.rs)
 and [structure interpretation](crates/kekule/src/io/macromolecular/mod.rs).
 

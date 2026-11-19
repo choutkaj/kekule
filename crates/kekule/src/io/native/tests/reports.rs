@@ -130,6 +130,7 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
                 },
                 BondEvidence::Distance,
                 BondEvidence::HydrogenDistance,
+                BondEvidence::Disulfide,
             ]
             .into_iter()
             .map(|evidence| BondProvenance {
@@ -242,6 +243,14 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
         Issue::ChainBreak {
             residue: label(12),
             next: label(13),
+        },
+        Issue::DisulfideInferred {
+            residues: [label(22), label(157)],
+        },
+        Issue::ForceFieldTemplate {
+            residue: label(42),
+            component_id: "CYX".into(),
+            force_field: "AMBER".into(),
         },
         Issue::ChargesFromBonds {
             residue: label(5),
