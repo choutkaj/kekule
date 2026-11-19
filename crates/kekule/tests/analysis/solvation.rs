@@ -680,3 +680,43 @@ fn salt_rounds_half_up_and_molarity_accepts_composed_units() {
     assert_eq!(a_report, b_report);
     assert_eq!(a.positions(), b.positions());
 }
+
+#[test]
+fn copies_of_one_seed_water_never_sit_one_distance_apart() {
+    // In a 3.9 nm cube, a seed water and its copy one 3 nm tile over meet
+    // across the cell boundary 0.9 nm apart, a common nonbonded cutoff, and
+    // every pair of a tile recurs in the next. Placed waters share no
+    // distance.
+    let mut m = structure("O");
+    solvation::add_periodic_box(
+        &mut m,
+        &PeriodicBoxOptions::Dimensions(Quantity::new(Vector3::new(3.9, 3.9, 3.9), NANOMETER)),
+    )
+    .unwrap();
+    solvation::solvate(&mut m, &options()).unwrap();
+    let oxygens = m
+        .topology()
+        .atoms()
+        .filter(|atom| atom.element().symbol() == "O")
+        .map(|atom| m.position(atom.id()).unwrap().into_value())
+        .collect::<Vec<_>>();
+    let mut distances = Vec::new();
+    for (index, a) in oxygens.iter().enumerate() {
+        for b in &oxygens[index + 1..] {
+            let d = *b - *a;
+            let wrap = |value: f64| value - 3.9 * (value / 3.9).round();
+            let distance = Vector3::new(wrap(d.x), wrap(d.y), wrap(d.z)).norm();
+            if distance < 1.3 {
+                distances.push(distance);
+            }
+        }
+    }
+    distances.sort_by(f64::total_cmp);
+    let shared = distances
+        .chunk_by(|a, b| b - a < 1e-12)
+        .map(<[f64]>::len)
+        .max()
+        .unwrap();
+    assert_eq!(shared, 1, "{shared} oxygen pairs share one distance");
+    assert!(distances.iter().all(|d| (d - 0.9).abs() > 1e-9));
+}

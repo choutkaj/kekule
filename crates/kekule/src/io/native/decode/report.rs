@@ -2,6 +2,7 @@
 
 use std::io::Read;
 
+use super::super::DISULFIDE_SINCE;
 use super::{Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
 use crate::io::{
@@ -425,7 +426,12 @@ impl<R: Read> Decoder<'_, R> {
         }
 
         let refs = self.atom_refs(&molecules, &bond_lengths, 2)?;
-        let codes = self.packed_codes(bond_total, 6, "bond evidence")?;
+        let last_code = if self.version >= DISULFIDE_SINCE {
+            7
+        } else {
+            6
+        };
+        let codes = self.packed_codes(bond_total, last_code, "bond evidence")?;
         let templates = codes.iter().filter(|&&code| code == 1).count();
         let mut template_components = self.required_dictionary(templates)?.into_iter();
         let mut template_variants = self.dictionary(templates, false)?.into_iter();
@@ -452,7 +458,8 @@ impl<R: Read> Decoder<'_, R> {
                         connection_type: connection_types.next().unwrap_or_default(),
                     },
                     5 => BondEvidence::Distance,
-                    _ => BondEvidence::HydrogenDistance,
+                    6 => BondEvidence::HydrogenDistance,
+                    _ => BondEvidence::Disulfide,
                 },
             })
             .collect::<Vec<_>>();
@@ -718,6 +725,14 @@ impl<R: Read> Decoder<'_, R> {
                     line: self.opt_usize()?,
                 }
             }
+            20 if self.version >= DISULFIDE_SINCE => Issue::DisulfideInferred {
+                residues: [self.residue()?, self.residue()?],
+            },
+            21 if self.version >= DISULFIDE_SINCE => Issue::ForceFieldTemplate {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                force_field: self.str()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))

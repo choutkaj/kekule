@@ -1,6 +1,7 @@
 //! Bonds an mmCIF reader derives without `_struct_conn` records: the bonds
-//! of residues their bundled component template rebuilds exactly, and the
-//! peptide and phosphodiester links between residues adjacent in sequence.
+//! of residues their default template, bundled or force-field, rebuilds
+//! exactly, and the peptide and phosphodiester links between residues
+//! adjacent in sequence.
 //!
 //! Each test mirrors the reader's connectivity resolution, so a bond is
 //! left unstated only when reading the block gives it back with its order.
@@ -67,7 +68,13 @@ pub(super) fn mark_implied(
 
     let library = ComponentLibrary::bundled();
     for members in &residues {
-        let Some(component) = library.get(&rows[members[0]].label_comp_id) else {
+        let id = &rows[members[0]].label_comp_id;
+        let Some(component) = library.get(id).or_else(|| {
+            let atoms = members
+                .iter()
+                .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
+            ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
+        }) else {
             continue;
         };
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
@@ -201,10 +208,14 @@ fn rebuilt_by_template(
                 .iter()
                 .filter(|&&(other, _)| hydrogen(other))
                 .count();
-            let linked = neighbours[row]
+            let links = neighbours[row]
                 .iter()
-                .any(|&(other, _)| !in_residue.contains(&other));
-            Ok::<_, std::convert::Infallible>((present, linked))
+                .filter(|&&(other, connection)| {
+                    !in_residue.contains(&other)
+                        && connections[connection].order != BondOrder::Dative
+                })
+                .count();
+            Ok::<_, std::convert::Infallible>((present, links))
         })
         .unwrap_or_else(|never| match never {});
         if let Some(differences) = differences {

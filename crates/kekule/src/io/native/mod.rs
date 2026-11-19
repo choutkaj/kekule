@@ -56,6 +56,9 @@ const COLUMNS_SINCE: u32 = 9;
 const WEIGHT_MODEL_SINCE: u32 = 9;
 /// The first format version whose set head stores the set's sampling record.
 const SAMPLING_SINCE: u32 = 9;
+/// The first format version with disulfide bond evidence and the
+/// `DisulfideInferred` and `ForceFieldTemplate` interpretation issues.
+const DISULFIDE_SINCE: u32 = 9;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;

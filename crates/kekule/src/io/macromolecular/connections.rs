@@ -9,7 +9,8 @@ use crate::molecule::{BondOrder, Element};
 
 use super::atom_site::AtomRow;
 use super::types::{
-    poll, ConnectionResolutionReason, StructureInterpretIssue, StructureInterpretationReport,
+    poll, BondEvidence, ConnectionResolutionReason, StructureInterpretIssue,
+    StructureInterpretationReport,
 };
 
 /// One connection record of a source, before a coordinate model is chosen.
@@ -58,8 +59,9 @@ pub(super) struct DeclaredConnection {
     /// The instance of the left atom; both atoms end up in one instance.
     pub(super) instance_key: String,
     pub(super) order: BondOrder,
-    pub(super) connection_id: Option<String>,
-    pub(super) connection_type: String,
+    /// What states the bond: a connection record, or a disulfide no record
+    /// states.
+    pub(super) evidence: BondEvidence,
     /// A connectivity-only bond within one residue; see
     /// [`DeclaredBond::connectivity_only`].
     pub(super) supplements_template: bool,
@@ -183,8 +185,10 @@ pub(super) fn resolve_connections(
             rows: [left.row_index, right.row_index],
             instance_key: left.instance_key.clone(),
             order,
-            connection_id: bond.connection_id.clone(),
-            connection_type: bond.connection_type.clone(),
+            evidence: BondEvidence::Connection {
+                connection_id: bond.connection_id.clone(),
+                connection_type: bond.connection_type.clone(),
+            },
             supplements_template,
         });
     }
@@ -677,7 +681,7 @@ impl InstanceUnion {
         &self.keys[root]
     }
 
-    fn union(&mut self, left: &str, right: &str) {
+    pub(super) fn union(&mut self, left: &str, right: &str) {
         let left_root = self.root(left);
         let right_root = self.root(right);
         if left_root != right_root {

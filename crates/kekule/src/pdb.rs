@@ -11,7 +11,8 @@
 //! residues its `TER` record ends, or, without one, the residues from its first
 //! to its last `ATOM` record; water and single residues are never polymer.
 //! Residues in such a run are adjacent in sequence. `LINK` and `SSBOND`
-//! records are covalent connections. `CONECT` records list connectivity
+//! records are covalent connections; without them, cysteines whose `SG`
+//! atoms lie within bonding distance form a disulfide. `CONECT` records list connectivity
 //! without bond types: within a residue they supplement its template and
 //! stand in for distance inference, and a partner listed two or three times
 //! has a double or triple bond. A `LINK` or `CONECT` between a metal and a

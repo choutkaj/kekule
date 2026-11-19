@@ -7,6 +7,7 @@ mod atom_site;
 mod build;
 mod connections;
 pub(super) mod connectivity;
+mod disulfides;
 pub(crate) use connections::is_metal;
 mod mmcif;
 mod pdb;
@@ -363,7 +364,7 @@ fn publish_structure(
         .collect::<Vec<_>>();
     let mut union = InstanceUnion::new(selected_rows.iter().map(|row| row.instance_key.as_str()));
     let ResolvedConnections {
-        bonds: connections,
+        bonds: mut connections,
         coordination,
     } = resolve_connections(
         connections,
@@ -374,6 +375,16 @@ fn publish_structure(
         &mut report,
         cancellation,
     )?;
+    if catalog.infers_bonds_from_distance() {
+        disulfides::infer_disulfides(
+            &selected_rows,
+            &mut connections,
+            &coordination,
+            &mut union,
+            &mut report,
+            cancellation,
+        )?;
+    }
     drop(selected_rows);
     // Selected rows move out of the model's rows, which are not needed again.
     let mut rows = rows.into_iter().map(Some).collect::<Vec<_>>();

@@ -35,7 +35,8 @@ use crate::io::write_policy::{
     unrepresentable_state, Carries, Omissions, StatePolicies,
 };
 use crate::io::{
-    ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport,
+    Component, ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission,
+    WriteReport,
 };
 use crate::math::{PeriodicCell, PeriodicCellError, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
@@ -1053,12 +1054,14 @@ impl Plan {
             }
         }
 
-        let conflicting = check_dictionary_bonds(topology, &records, &residues, strict)?;
+        let templates = residue_templates(topology, &records, &residues);
+        let conflicting =
+            check_dictionary_bonds(topology, &records, &residues, &templates, strict)?;
         let ConectPlan {
             listings: conect,
             unstated,
             coordination_bonds,
-        } = Self::conect(topology, &records, &residues, strict)?;
+        } = Self::conect(topology, &records, &residues, &templates, strict)?;
         omissions.record(WriteOmission::ChainIds {
             chains: segments.len(),
         });
@@ -1158,13 +1161,14 @@ impl Plan {
     }
 
     /// `CONECT` lists every bond a reader cannot derive: all but bonds
-    /// within one standard residue that the bundled component dictionary
-    /// covers, linkage between standard residues adjacent in one polymer
-    /// chain, and bonds within water.
+    /// within one standard residue that a default template covers, linkage
+    /// between standard residues adjacent in one polymer chain, and bonds
+    /// within water.
     fn conect(
         topology: &Topology,
         records: &[AtomRecord],
         residues: &[AtomResidue],
+        templates: &BTreeMap<&ResidueKey, &Component>,
         strict: bool,
     ) -> Result<ConectPlan, FormatError> {
         let chain_positions = residue_chain_positions(topology);
@@ -1175,12 +1179,9 @@ impl Plan {
             let [left, right] = bond.atoms().map(|atom| atom.index().index());
             let standard = !records[left].hetatm && !records[right].hetatm;
             let same_residue = residues[left].key == residues[right].key;
-            // A residue the bundled dictionary covers takes its template's
-            // bonds and orders; its listings only supplement them.
-            let templated = same_residue
-                && ComponentLibrary::bundled()
-                    .get(&records[left].residue_name)
-                    .is_some();
+            // A residue a default template covers takes its template's bonds
+            // and orders; its listings only supplement them.
+            let templated = same_residue && templates.contains_key(&residues[left].key);
             let derived = if same_residue {
                 residues[left].class == ResidueClass::Water || (standard && templated)
             } else {
@@ -1454,10 +1455,45 @@ struct ConectPlan {
     coordination_bonds: usize,
 }
 
+/// The template a reader applies to each residue without templates from the
+/// caller: the bundled one of its name, else the force-field template of its
+/// name that names all its atoms.
+fn residue_templates<'r>(
+    topology: &Topology,
+    records: &'r [AtomRecord],
+    residues: &'r [AtomResidue],
+) -> BTreeMap<&'r ResidueKey, &'static Component> {
+    let mut members = BTreeMap::<&ResidueKey, Vec<usize>>::new();
+    for (index, residue) in residues.iter().enumerate() {
+        members.entry(&residue.key).or_default().push(index);
+    }
+    let element = |index: usize| {
+        topology
+            .atom_at(TopologyAtomIndex::from_index(index))
+            .expect("records follow dense atoms")
+            .atom()
+            .element
+    };
+    members
+        .into_iter()
+        .filter_map(|(key, atoms)| {
+            let id = &records[atoms[0]].residue_name;
+            let template = ComponentLibrary::bundled().get(id).or_else(|| {
+                let atoms = atoms
+                    .iter()
+                    .map(|&index| (records[index].name.trim(), element(index)));
+                ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
+            })?;
+            Some((key, template))
+        })
+        .collect()
+}
+
 fn check_dictionary_bonds(
     topology: &Topology,
     records: &[AtomRecord],
     residues: &[AtomResidue],
+    templates: &BTreeMap<&ResidueKey, &Component>,
     strict: bool,
 ) -> Result<usize, FormatError> {
     let mut conflicting = 0;
@@ -1469,7 +1505,7 @@ fn check_dictionary_bonds(
             .insert(record.name.trim(), index);
     }
     let library = ComponentLibrary::bundled();
-    for atoms in named.values() {
+    for (key, atoms) in &named {
         let Some(&first) = atoms.values().next() else {
             continue;
         };
@@ -1477,7 +1513,7 @@ fn check_dictionary_bonds(
         if residues[first].class == ResidueClass::Water {
             continue;
         }
-        let Some(template) = library.get(residue_name) else {
+        let Some(&template) = templates.get(key) else {
             continue;
         };
         let Some((left, right, order)) = template_conflict(topology, template, atoms) else {
@@ -1504,7 +1540,7 @@ fn check_dictionary_bonds(
 /// named by dense index, does not have with the order a reader would give it.
 fn template_conflict(
     topology: &Topology,
-    template: &crate::io::Component,
+    template: &Component,
     atoms: &BTreeMap<&str, usize>,
 ) -> Option<(usize, usize, Option<BondOrder>)> {
     for bond in template.bonds() {

@@ -13,7 +13,7 @@ mod force_field;
 pub(crate) use ccd::parent_ids;
 pub(crate) use codes::dictionary_code;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, OnceLock};
 
 use crate::diagnostics::{DiagnosticKind, Format, FormatError, SourceLocation};
@@ -229,6 +229,19 @@ impl Component {
         &self.bonds
     }
 
+    /// Whether every one of `atoms`, by name and element, is a distinct atom
+    /// of the component.
+    pub(crate) fn names_all<'a>(
+        &self,
+        atoms: impl IntoIterator<Item = (&'a str, Element)>,
+    ) -> bool {
+        let mut matched = BTreeSet::new();
+        atoms.into_iter().all(|(name, element)| {
+            self.atom(name)
+                .is_some_and(|(index, atom)| atom.element() == element && matched.insert(index))
+        })
+    }
+
     /// Finds an atom by its name or alternate name.
     pub fn atom(&self, name: &str) -> Option<(usize, &ComponentAtom)> {
         self.atoms
@@ -316,8 +329,12 @@ impl ComponentLibrary {
     /// The N-methyl and amide caps `NME` and `NHE` have only single bonds,
     /// which distance inference finds.
     ///
-    /// The library is opt-in because force-field names collide with
-    /// dictionary identifiers.
+    /// Readers apply a template of this library by default to a residue
+    /// whose name neither the caller's templates nor the bundled ones
+    /// define, when its atoms fit the template (see
+    /// [`ConnectivityOptions`](crate::macromolecular::ConnectivityOptions)).
+    /// Supplying the library as context also applies the names that collide
+    /// with dictionary identifiers, such as `ASP` and `GLU`.
     pub fn amber() -> Self {
         force_field::amber()
     }
@@ -338,11 +355,39 @@ impl ComponentLibrary {
     /// `NT`, have no template and fail interpretation; supply templates for
     /// them. Nucleic acids keep dictionary names.
     ///
-    /// The library is opt-in because force-field names collide with
-    /// dictionary identifiers: CHARMM `CLA` is chloride, the dictionary's
-    /// chlorophyll a.
+    /// Readers apply its templates by default as they do [`Self::amber`]'s,
+    /// after AMBER's. Supplying the library as context also applies the
+    /// names that collide with dictionary identifiers: CHARMM `CLA` is
+    /// chloride, the dictionary's chlorophyll a.
     pub fn charmm() -> Self {
         force_field::charmm()
+    }
+
+    /// The force-field template a reader applies to a residue named `id`
+    /// whose atoms, by name and element, are `atoms`, when no library it
+    /// consults defines `id`: the AMBER template of that name, else the
+    /// CHARMM one, the first that names every atom with its element, and the
+    /// force field's name. `None` when the bundled library defines `id`.
+    pub(crate) fn force_field_template<'a>(
+        id: &str,
+        atoms: impl IntoIterator<Item = (&'a str, Element)> + Clone,
+    ) -> Option<(&'static Component, &'static str)> {
+        static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
+        static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
+        if Self::bundled().get(id).is_some() {
+            return None;
+        }
+        [
+            (AMBER.get_or_init(force_field::amber), "AMBER"),
+            (CHARMM.get_or_init(force_field::charmm), "CHARMM"),
+        ]
+        .into_iter()
+        .find_map(|(library, force_field)| {
+            let component = library.get(id)?;
+            component
+                .names_all(atoms.clone())
+                .then_some((component, force_field))
+        })
     }
 
     /// Reads every data block that defines component atoms, such as a CCD

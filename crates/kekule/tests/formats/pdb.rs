@@ -1782,10 +1782,30 @@ fn force_field_libraries_interpret_their_residue_names() {
         [("OD2".to_owned(), -1), ("Na+".to_owned(), 1)]
     );
     assert_eq!(templated.report().issues(), &[]);
-    // The dictionary names neither HIE nor WAT, and its aspartic acid is neutral.
+    // The dictionary names neither HIE nor WAT, so without the library they
+    // take the AMBER templates of their names; the dictionary's aspartic
+    // acid and sodium are neutral, and Na+ is not a dictionary name.
     let untemplated = document.interpret(Default::default()).unwrap();
-    assert_eq!(inferred_components(&untemplated), ["HIE", "WAT"]);
-    assert_eq!(charges(&untemplated), []);
+    assert_eq!(inferred_components(&untemplated), Vec::<String>::new());
+    let force_field = untemplated
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ForceFieldTemplate {
+                component_id,
+                force_field,
+                ..
+            } => Some((component_id.as_str(), force_field.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        force_field,
+        [("HIE", "AMBER"), ("WAT", "AMBER"), ("Na+", "AMBER")]
+    );
+    assert_eq!(untemplated.topology().bond_count(), 30);
+    assert_eq!(charges(&untemplated), [("Na+".to_owned(), 1)]);
 
     // CHARMM: the isoleucine, water, and sodium and chloride ions. Terminal
     // hydrogens HT1-HT3 attach by distance.

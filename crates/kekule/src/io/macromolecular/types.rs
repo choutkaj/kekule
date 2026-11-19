@@ -37,7 +37,9 @@ pub enum ModelSelection {
 /// Each residue takes its bonds from the block's `_chem_comp_bond` rows for
 /// its component when present, otherwise from a component template: the
 /// caller's [`components`](Self::components) first, then
-/// [`ComponentLibrary::bundled`]. A residue that neither covers has its bonds
+/// [`ComponentLibrary::bundled`], then the [`ComponentLibrary::amber`] or
+/// [`ComponentLibrary::charmm`] template of its name that names all its
+/// atoms, such as AMBER `CYX`. A residue that none covers has its bonds
 /// inferred from covalent radii when
 /// [`infer_bonds_from_distance`](Self::infer_bonds_from_distance) is set, and
 /// fails otherwise.
@@ -83,7 +85,9 @@ impl ConnectivityOptions {
     }
 
     /// Infer the bonds of residues without a template or bond table from
-    /// covalent radii. Inferred bonds are single and reported. On by default.
+    /// covalent radii, and disulfides between cysteine `SG` atoms within
+    /// bonding distance that carry no hydrogen and no stated link. Inferred
+    /// bonds are single and reported. On by default.
     pub const fn infer_bonds_from_distance(&self) -> bool {
         self.infer_bonds_from_distance
     }
@@ -393,6 +397,18 @@ pub enum StructureInterpretIssue {
         /// The number of unbonded close pairs found.
         candidate_count: usize,
     },
+    /// A residue whose name no dictionary template defines was read with the
+    /// force-field template of that name, which names all its atoms, as AMBER
+    /// `CYX` names a cysteine in a disulfide.
+    ForceFieldTemplate {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The force field whose template it was read with: `AMBER` or
+        /// `CHARMM`.
+        force_field: String,
+    },
     /// A residue without template or bond table had its bonds inferred from
     /// covalent radii; inferred bonds are single.
     ResidueBondsInferred {
@@ -413,6 +429,12 @@ pub enum StructureInterpretIssue {
         atom_name: String,
         /// The atom name of the heavy atom it was bonded to.
         heavy_atom_name: String,
+    },
+    /// Two cysteines whose `SG` atoms lie within bonding distance, without
+    /// hydrogens or a record linking them, were bonded as a disulfide.
+    DisulfideInferred {
+        /// The two cysteines.
+        residues: [SourceResidueId; 2],
     },
     /// Residues adjacent in sequence, or joined by a branched entity's link,
     /// whose linking atoms lie beyond bonding distance are not bonded.
@@ -639,6 +661,15 @@ impl fmt::Display for StructureInterpretIssue {
                     "unbonded atom pairs"
                 )
             ),
+            Self::ForceFieldTemplate {
+                residue,
+                component_id,
+                force_field,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) has no dictionary template. It is read with                  the {force_field} template of that name.",
+                Capitalized(residue)
+            ),
             Self::ResidueBondsInferred {
                 residue,
                 component_id,
@@ -658,6 +689,13 @@ impl fmt::Display for StructureInterpretIssue {
                 formatter,
                 "Hydrogen {atom_name:?} of {residue} has no stated bond. It is bonded to \
                  {heavy_atom_name:?}, the nearest heavy atom."
+            ),
+            Self::DisulfideInferred {
+                residues: [left, right],
+            } => write!(
+                formatter,
+                "{} and {right} have no stated disulfide. Their SG atoms are within bonding                  distance, so they are bonded.",
+                Capitalized(left)
             ),
             Self::ChainBreak { residue, next } => write!(
                 formatter,
@@ -930,6 +968,9 @@ pub enum BondEvidence {
         /// The connection type or record name.
         connection_type: String,
     },
+    /// A disulfide between the `SG` atoms of two cysteines within bonding
+    /// distance, which no record states.
+    Disulfide,
     /// Covalent radii, for a residue without template or bond table.
     Distance,
     /// A hydrogen that no template, component bond table, or listed bond

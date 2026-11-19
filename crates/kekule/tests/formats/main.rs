@@ -8,6 +8,7 @@ mod assemblies;
 mod cancellation;
 mod canonical_smiles;
 mod components;
+mod disulfides;
 mod documents;
 mod export;
 mod mmcif;

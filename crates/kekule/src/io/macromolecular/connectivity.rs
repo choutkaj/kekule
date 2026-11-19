@@ -345,6 +345,11 @@ impl ConnectivityCatalog {
         Some((component, library.variants(component_id).collect()))
     }
 
+    /// Whether bonds no evidence states are inferred from distances.
+    pub(crate) const fn infers_bonds_from_distance(&self) -> bool {
+        self.infer_bonds_from_distance
+    }
+
     fn linking(&self, component_id: &str) -> ComponentLinking {
         self.template(component_id)
             .map_or(ComponentLinking::None, |(component, _)| component.linking())
@@ -577,7 +582,21 @@ impl<'r> Resolver<'r, '_> {
             raw::poll(self.cancellation)?;
             let listed = listed_in.remove(&residue.key).unwrap_or_default();
             let component_id = normalized(&residue.key.component_id);
-            let template = self.catalog.template(&component_id);
+            let template = self.catalog.template(&component_id).or_else(|| {
+                let atoms = residue
+                    .sites
+                    .iter()
+                    .map(|site| (site.name.as_str(), site.element));
+                let (component, force_field) =
+                    ComponentLibrary::force_field_template(&component_id, atoms)?;
+                self.issues
+                    .push(raw::StructureInterpretIssue::ForceFieldTemplate {
+                        residue: residue.key.id(self.model_id),
+                        component_id: residue.key.component_id.clone(),
+                        force_field: force_field.to_owned(),
+                    });
+                Some((component, Vec::new()))
+            });
             if let Some(bonds) = self.catalog.component_bonds.get(&component_id) {
                 for bond in bonds {
                     let (Some(&left), Some(&right)) = (
@@ -1210,13 +1229,17 @@ impl<'r> Resolver<'r, '_> {
             .map(Some)
     }
 
-    /// Whether a residue atom is bonded to an atom of another residue.
-    fn links_outside(&self, atom: AtomId, residue: &ResidueAtoms) -> Result<bool, FormatError> {
+    /// How many covalent bonds join a residue atom to atoms of other
+    /// residues; dative bonds are not counted.
+    fn links_outside(&self, atom: AtomId, residue: &ResidueAtoms) -> Result<usize, FormatError> {
         Ok(self
             .graph
-            .require_neighbors(atom)
+            .require_incident_bonds(atom)
             .map_err(interpret_error)?
-            .any(|neighbor| residue.site(neighbor).is_none()))
+            .filter(|(_, bond)| {
+                bond.order() != BondOrder::Dative && residue.site(bond.other_atom(atom)).is_none()
+            })
+            .count())
     }
 
     /// Replaces template bond orders with a variant's.
@@ -1352,14 +1375,14 @@ pub(crate) type HydrogenDifference<A> = (A, usize, isize);
 /// template atom names with residue atoms. Differences are counted only on
 /// heteroatoms of a residue with model hydrogens, and only where they can be
 /// charges: on an atom with only single template bonds, or by one on a ring
-/// nitrogen. `hydrogens` gives an atom's bonded hydrogens and whether it
-/// links to another residue, which removes its leaving hydrogens.
+/// nitrogen. `hydrogens` gives an atom's bonded hydrogens and its covalent
+/// bonds to other residues, which take the place of hydrogens.
 pub(crate) fn hydrogen_differences<A: Copy, E>(
     candidate: &Component,
     named: &[(&str, A)],
     has_hydrogens: bool,
     is_hydrogen_atom: impl Fn(A) -> bool,
-    mut hydrogens: impl FnMut(A) -> Result<(usize, bool), E>,
+    mut hydrogens: impl FnMut(A) -> Result<(usize, usize), E>,
 ) -> Result<Option<Vec<HydrogenDifference<A>>>, E> {
     let mut differences = Vec::new();
     for &(name, atom) in named {
@@ -1374,8 +1397,8 @@ pub(crate) fn hydrogen_differences<A: Copy, E>(
         let element = template_atom.element();
         let mut difference = 0;
         if has_hydrogens && !is_hydrogen(element) && !is_carbon(element) {
-            let (present, linked) = hydrogens(atom)?;
-            let expected = expected_hydrogens(candidate, index, linked);
+            let (present, links) = hydrogens(atom)?;
+            let expected = expected_hydrogens(candidate, index, links);
             if present != expected {
                 let only_single = candidate
                     .bonds()
@@ -1440,25 +1463,31 @@ fn in_ring(component: &Component, index: usize) -> bool {
     })
 }
 
-/// The hydrogens a template atom carries, less leaving hydrogens when the
-/// atom links to another residue.
-fn expected_hydrogens(component: &Component, index: usize, linked: bool) -> usize {
-    component
-        .bonds()
-        .iter()
-        .filter_map(|bond| {
-            let [a, b] = bond.atoms();
-            match (a == index, b == index) {
-                (true, _) => Some(b),
-                (_, true) => Some(a),
-                _ => None,
-            }
-        })
-        .filter(|&other| {
-            let atom = &component.atoms()[other];
-            is_hydrogen(atom.element()) && !(linked && atom.leaving())
-        })
-        .count()
+/// The hydrogens a template atom carries when `links` covalent bonds join it
+/// to other residues. Each link takes the place of one hydrogen, and an atom
+/// that links loses all its leaving hydrogens: a peptide bond replaces the
+/// amine's leaving `H2`, and a disulfide replaces cysteine's `HG`, which the
+/// dictionary does not mark leaving.
+fn expected_hydrogens(component: &Component, index: usize, links: usize) -> usize {
+    let (mut hydrogens, mut leaving) = (0, 0);
+    for bond in component.bonds() {
+        let [a, b] = bond.atoms();
+        let other = match (a == index, b == index) {
+            (true, _) => b,
+            (_, true) => a,
+            _ => continue,
+        };
+        let atom = &component.atoms()[other];
+        if is_hydrogen(atom.element()) {
+            hydrogens += 1;
+            leaving += usize::from(atom.leaving());
+        }
+    }
+    if links == 0 {
+        hydrogens
+    } else {
+        hydrogens.saturating_sub(leaving.max(links))
+    }
 }
 
 /// The residue of one asym that a branch scheme row numbers, if modelled.

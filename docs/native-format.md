@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide bond evidence (`7`) and no issue kinds 20 and 21. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -454,7 +454,7 @@ molecule instance of its provenance; mode `1` holds full IDs.
 Entity kinds: `0` polymer, `1` branched, `2` non-polymer, `3` water, `4`
 another value, stored in `other`. Bond evidence: `0` component table, `1`
 template, `2` polymer link, `3` branch link, `4` connection, `5` distance,
-`6` hydrogen distance.
+`6` hydrogen distance, `7` disulfide.
 
 ```text
 coordination := a:u64 b:u64 connection_id:opt str connection_type:str
@@ -507,6 +507,8 @@ An issue is its kind, then its fields in declaration order, with lists as
 | 7 | `AlternateLocationIncomplete` | 17 | `ResidueFragmented` |
 | 8 | `AlternateLocationOccupancyMissing` | 18 | `CellOmitted` |
 | 9 | `AlternateLocationCombinationRejected` | 19 | `AssemblyOmitted` |
+| | | 20 | `DisulfideInferred` |
+| | | 21 | `ForceFieldTemplate` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location
