@@ -270,3 +270,37 @@ fn canonical_smiles_keeps_aromaticity_when_explicit_hydrogens_precede_ring_atoms
         );
     }
 }
+
+#[test]
+fn directional_marks_without_a_partner_are_dropped_and_reported() {
+    // Each source pairs with the bonds, in source order, whose marks stay
+    // unpaired: no double bond, no mark on the other side, a ring too small
+    // for E/Z.
+    for (source, unpaired) in [
+        ("C/C", vec![0]),
+        ("C/C=CC", vec![0]),
+        ("F/C=C", vec![0]),
+        (r"C1/C=C\CCC1", vec![0, 2]),
+    ] {
+        let document = smiles::parse_str(source, Default::default()).unwrap();
+        let interpretation = document
+            .interpret(Default::default())
+            .unwrap_or_else(|error| panic!("{source}: {error}"));
+        let component = &interpretation.components()[0];
+        assert_eq!(
+            component.molecule().stereo_elements().count(),
+            0,
+            "{source}"
+        );
+        let mappings = component.report().bond_mappings();
+        let expected = unpaired
+            .iter()
+            .map(|&index| mappings[index].bond())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            component.report().unpaired_directional_bonds(),
+            expected,
+            "{source}"
+        );
+    }
+}

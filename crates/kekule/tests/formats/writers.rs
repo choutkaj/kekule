@@ -3597,3 +3597,68 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     let (occupied, _, _) = structures_with_unwritable_state().remove(0);
     assert!(pdb::write(&occupied, PdbWriteOptions::default()).is_ok());
 }
+
+#[test]
+fn smiles_writers_round_trip_aromatic_heteroatom_hydrogens() {
+    // A reader infers no hydrogen on an aromatic p, n, o, or s, so every
+    // writer brackets one that carries hydrogen. The Kekule sources leave
+    // their hydrogens to inference.
+    let profile = |molecule: &kekule::molecule::Molecule| {
+        let mut atoms = molecule
+            .atoms()
+            .map(|(id, atom)| {
+                (
+                    atom.element().symbol(),
+                    atom.formal_charge(),
+                    molecule.total_hydrogens(id),
+                )
+            })
+            .collect::<Vec<_>>();
+        atoms.sort_unstable();
+        atoms
+    };
+    for source in [
+        "P1C=CC=C1",
+        "N1C=CC=C1",
+        "C1=CC=C2PC=CC2=C1",
+        "N1C=NC=C1",
+        "O=C1C=CC=CN1",
+        "O=C1C=CC=CP1",
+        "[pH]1cccc1",
+        "[nH]1cccc1",
+        "[asH]1cccc1",
+        "c1ccc2[pH]ccc2c1",
+        "c1ccc2[nH]ccc2c1",
+        "p1ccccc1",
+        "n1ccccc1",
+        "[as]1ccccc1",
+        "o1cccc1",
+        "s1cccc1",
+        "[se]1cccc1",
+        "[te]1cccc1",
+        "c1cc[nH]n1",
+        "c1c[nH]cn1",
+        "[nH+]1ccccc1",
+        "[o+]1ccccc1",
+    ] {
+        let mut original = molecule(source);
+        original.perceive().unwrap();
+        for options in [
+            SmilesWriteOptions::ordinary(),
+            SmilesWriteOptions::isomeric(),
+            SmilesWriteOptions::canonical(),
+        ] {
+            let written = smiles::write(&original, options).unwrap();
+            let mut restored = smiles::to_molecules(&written)
+                .unwrap_or_else(|error| panic!("{source} -> {written}: {error}"))
+                .pop()
+                .unwrap();
+            restored.perceive().unwrap();
+            assert_eq!(
+                profile(&restored),
+                profile(&original),
+                "{source} -> {written}"
+            );
+        }
+    }
+}

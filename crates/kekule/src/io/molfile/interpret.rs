@@ -413,6 +413,27 @@ pub enum MolfileInterpretIssue {
         /// The source line of the stereocenter.
         location: SourceLocation,
     },
+    /// A wedge, hash, or wavy bond marks no stereocenter or atropisomeric
+    /// axis, as one drawn from a methyl, a methylene, a trigonal atom, or an
+    /// amine nitrogen does. The mark is dropped, as RDKit drops it; the
+    /// source document keeps it.
+    StrayWedge {
+        /// The marked bond.
+        bond: BondId,
+        /// The source line of the bond.
+        location: SourceLocation,
+    },
+    /// The chiral flag on the counts line is unset, which by the CTfile
+    /// convention makes the drawn configurations relative: the record stands
+    /// for a racemate of the drawing and its mirror image. Writers often
+    /// leave the flag unset by mistake, so interpretation keeps these
+    /// configurations absolute. Put them in a racemic (AND) stereo group to
+    /// read the record by the convention.
+    AbsoluteStereoWithoutChiralFlag {
+        /// The specified stereocenters and axes in no stereo group, in
+        /// stereo element order.
+        elements: Vec<StereoElementId>,
+    },
 }
 
 /// One final canonical structure and source reports in molecule-instance order.
@@ -728,6 +749,21 @@ pub(crate) fn interpret_molfile_document(
                         mark_count,
                     }
                 }
+                NormalizationWarning::StrayWedge { bond } => {
+                    let bond = ids.bond(bond).expect("warned bonds survive publication");
+                    let old = raw
+                        .bond_map
+                        .iter()
+                        .find_map(|(old, new)| (*new == bond).then_some(*old))
+                        .expect("published bonds map to source bonds");
+                    MolfileInterpretIssue::StrayWedge {
+                        bond,
+                        location: bond_lines[old.index()],
+                    }
+                }
+                NormalizationWarning::UnpairedDirectionalBondMark { .. } => {
+                    unreachable!("Molfile records have no directional bond marks")
+                }
             })
             .collect::<Vec<_>>();
         warnings.extend(coordinate_warnings);
@@ -737,6 +773,20 @@ pub(crate) fn interpret_molfile_document(
                 location,
             }
         }));
+        if !document.chiral_flag() {
+            let elements = molecule
+                .stereo_elements()
+                .filter(|(_, element)| {
+                    element.is_specified()
+                        && element.group.is_none()
+                        && !matches!(element.kind, StereoElementKind::DoubleBond(_))
+                })
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>();
+            if !elements.is_empty() {
+                warnings.push(MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag { elements });
+            }
+        }
         let atom_mappings = raw
             .atom_map
             .iter()

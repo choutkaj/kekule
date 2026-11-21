@@ -321,8 +321,10 @@ fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
     }
     let source = read_smiles(r"C1/N=C\CCCCC1").expect("eight-membered imine source geometry");
     assert_eq!(source.stereo_elements().count(), 1);
-    assert!(
-        read_smiles(r"C1/N=C\CCCC1").is_err(),
+    let seven = read_smiles(r"C1/N=C\CCCC1").expect("seven-membered ring marks are dropped");
+    assert_eq!(
+        seven.stereo_elements().count(),
+        0,
         "seven-membered ring remains excluded"
     );
 }

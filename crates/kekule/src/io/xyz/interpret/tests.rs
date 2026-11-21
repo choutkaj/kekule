@@ -24,14 +24,16 @@ fn brute(
 ) -> Result<Contacts, (LimitExceeded, usize)> {
     let radius = |atom: usize| covalent_bonding_radius(elements[atom]).0;
     let mut contacts = vec![0; points.len()];
-    let (mut bonds, mut close) = (Vec::new(), Vec::new());
+    let (mut bonds, mut long, mut close) = (Vec::new(), Vec::new(), Vec::new());
     for left in 0..points.len() {
         for right in left + 1..points.len() {
             let (point, other) = (points[left], points[right]);
             let distance_squared = (point.x - other.x).powi(2)
                 + (point.y - other.y).powi(2)
                 + (point.z - other.z).powi(2);
-            let cutoff = radius(left) + radius(right) + COVALENT_BOND_TOLERANCE_ANGSTROM;
+            let (tolerance, valence_bound) = pair_tolerance(elements[left], elements[right]);
+            let radii = radius(left) + radius(right);
+            let cutoff = radii + tolerance;
             if distance_squared > cutoff * cutoff {
                 continue;
             }
@@ -47,26 +49,29 @@ fn brute(
             let atoms = [dense_index(left), dense_index(right)];
             let distance = distance_squared.sqrt();
             if distance_squared <= MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2) {
-                close.push(XyzInterpretIssue::CloseContact {
-                    atoms,
-                    distance: Quantity::new(distance, ANGSTROM),
-                });
+                close.push((atoms, distance));
+                continue;
+            }
+            let order = if is_metal(elements[left]) != is_metal(elements[right]) {
+                BondOrder::Dative
             } else {
-                let order = if is_metal(elements[left]) != is_metal(elements[right]) {
-                    BondOrder::Dative
-                } else {
-                    BondOrder::Single
-                };
-                bonds.push(XyzInferredBond {
-                    atoms,
-                    order,
-                    distance,
-                    cutoff,
-                });
+                BondOrder::Single
+            };
+            let bond = XyzInferredBond {
+                atoms,
+                order,
+                distance,
+                cutoff,
+            };
+            let firm = radii + FIRM_BOND_TOLERANCE_ANGSTROM;
+            if valence_bound && distance_squared > firm * firm {
+                long.push(bond);
+            } else {
+                bonds.push(bond);
             }
         }
     }
-    Ok((bonds, close))
+    Ok(resolve_contacts(elements, bonds, long, close))
 }
 
 /// The grid finds the contacts every pair gives, and with a low limit
@@ -90,7 +95,7 @@ fn contacts_match_every_pair() {
                 let previous = points[index - 1];
                 let cutoff = covalent_bonding_radius(elements[index - 1]).0
                     + covalent_bonding_radius(elements[index]).0
-                    + COVALENT_BOND_TOLERANCE_ANGSTROM;
+                    + pair_tolerance(elements[index - 1], elements[index]).0;
                 Point3::new(previous.x, previous.y + cutoff, previous.z)
             } else if index % 7 == 5 {
                 // On half-ångström steps, often on cell boundaries.
@@ -102,16 +107,11 @@ fn contacts_match_every_pair() {
             };
             points.push(point);
         }
-        let (mut bonds, mut close) = brute(&elements, &points, usize::MAX).unwrap();
-        assert!(!bonds.is_empty(), "seed {seed}");
-        bonds.sort_by_key(|bond| bond.atoms);
-        close.sort_by_key(|issue| match issue {
-            XyzInterpretIssue::CloseContact { atoms, .. } => *atoms,
-            _ => unreachable!("only close contacts"),
-        });
+        let expected = brute(&elements, &points, usize::MAX).unwrap();
+        assert!(!expected.0.is_empty(), "seed {seed}");
         assert_eq!(
             infer_contacts(&elements, &points, usize::MAX).unwrap(),
-            (bonds, close),
+            expected,
             "seed {seed}"
         );
         for limit in 0..6 {

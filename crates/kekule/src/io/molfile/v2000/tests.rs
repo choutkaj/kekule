@@ -623,20 +623,35 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
 
 #[test]
 fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
-    for (order_code, stereo_code) in [(1, 1), (1, 4), (1, 6), (2, 3)] {
-        let input = format!(
-                "stereo\nkekule\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
-            );
-        let document = molfile::parse_str(&input, Default::default())
-            .expect("bond stereo syntax should parse");
-        let error = document
+    // A wedge at a methyl is dropped with a report; a crossed double bond
+    // without carriers fails.
+    let input = |order_code: u8, stereo_code: u8| {
+        format!(
+            "stereo\nkekule\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
+        )
+    };
+    for stereo_code in [1, 4, 6] {
+        let interpretation = molfile::parse_str(&input(1, stereo_code), Default::default())
+            .expect("bond stereo syntax should parse")
             .interpret(Default::default())
-            .expect_err("under-specified stereo must not publish a molecule");
-        assert_eq!(error.kind(), DiagnosticKind::Chemistry);
-        assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
-        let text = chain_text(&error);
-        assert!(text.contains("on bond 0"), "{text}");
+            .expect("a stray mark is dropped");
+        assert!(
+            matches!(
+                interpretation.reports()[0].issues(),
+                [molfile::MolfileInterpretIssue::StrayWedge { location, .. }]
+                    if *location == SourceLocation::at_line(7)
+            ),
+            "stereo code {stereo_code}"
+        );
     }
+    let error = molfile::parse_str(&input(2, 3), Default::default())
+        .expect("bond stereo syntax should parse")
+        .interpret(Default::default())
+        .expect_err("under-specified stereo must not publish a molecule");
+    assert_eq!(error.kind(), DiagnosticKind::Chemistry);
+    assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
+    let text = chain_text(&error);
+    assert!(text.contains("on bond 0"), "{text}");
 }
 
 #[test]
@@ -667,9 +682,9 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
                 )
             }));
         } else {
-            let error = read_molfile(&input)
-                .expect_err("wedge without a declared fourth carrier must fail");
-            assert!(chain_text(&*error).contains("marks no stereo center"));
+            // An amine nitrogen inverts, so its wedge marks no stereo center.
+            let molecule = read_molfile(&input).expect("a stray wedge is dropped");
+            assert_eq!(molecule.stereo_elements().count(), 0);
         }
     }
 }

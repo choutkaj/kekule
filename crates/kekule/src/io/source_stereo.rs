@@ -95,7 +95,7 @@ pub(crate) fn normalize_source_stereo(
         &mut issues,
         &mut used_marks,
     ));
-    report_unassembled_source_marks(source_marks, &used_marks, &mut issues);
+    report_unassembled_source_marks(source_marks, &used_marks, &mut issues, &mut warnings);
     if !issues.is_empty() {
         return Err(SourceStereoNormalizationError { issues });
     }
@@ -1365,32 +1365,29 @@ fn redundant_endpoint_directional_marks<L: SlotLiveness>(
     marked_carriers.as_slice() == atom_carriers.as_slice()
 }
 
+/// Drops, with a warning, a directional mark without a partner across a
+/// double bond and a wedge that marks no stereo center or axis, as RDKit
+/// ignores them; other unassembled marks are errors.
 fn report_unassembled_source_marks(
     source_marks: &[SourceStereoBondMark],
     used_marks: &[BondId],
     issues: &mut Vec<SourceStereoNormalizationIssue>,
+    warnings: &mut Vec<NormalizationWarning>,
 ) {
     for mark in source_marks_in_bond_order(source_marks) {
         match mark.kind {
             SourceStereoBondMarkKind::DirectionalUp | SourceStereoBondMarkKind::DirectionalDown => {
                 if !used_marks.contains(&mark.bond) {
-                    issues.push(
-                        SourceStereoNormalizationIssue::UnpairedDirectionalBondMark {
-                            bond: mark.bond,
-                        },
-                    );
+                    warnings.push(NormalizationWarning::UnpairedDirectionalBondMark {
+                        bond: mark.bond,
+                    });
                 }
             }
             SourceStereoBondMarkKind::WedgeUp
             | SourceStereoBondMarkKind::WedgeDown
             | SourceStereoBondMarkKind::WedgeEither => {
                 if !used_marks.contains(&mark.bond) {
-                    issues.push(
-                        SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
-                            bond: mark.bond,
-                            kind: mark.kind,
-                        },
-                    );
+                    warnings.push(NormalizationWarning::StrayWedge { bond: mark.bond });
                 }
             }
             SourceStereoBondMarkKind::DoubleBondEither

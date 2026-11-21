@@ -4,6 +4,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod aromatic_sources;
 mod assemblies;
 mod cancellation;
 mod canonical_smiles;
@@ -13,6 +14,7 @@ mod documents;
 mod export;
 mod mmcif;
 mod mmcif_write;
+mod molfile_stereo;
 mod native;
 mod native_versions;
 mod pdb;

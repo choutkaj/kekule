@@ -15,6 +15,8 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | SMARTS stereo | Tetrahedral and directional double-bond predicates, Boolean stereo expressions, and enhanced tetrahedral group matching; see the [current dialect](../crates/kekule/src/query/dialect.md) |
 | V2000/V3000 Structure output | Coordinate-consistent tetrahedral, double-bond, and atropisomer stereo; validation uses coordinates rounded to the emitted precision |
 | SMILES and Molfile E/Z input | Directional marks and coordinates, flat or 3D, specify E/Z only at a double bond eligible before symmetry analysis; an aromatic bond, or one whose endpoint bears two identical terminal ligands (`C/C(C)=C/C`), has none, and the SMILES interpretation report names a marked one |
+| Stray source marks | A wedge that marks no stereocenter or axis, and a directional mark without a partner across a double bond that can have E/Z, are dropped and named in the interpretation report, as RDKit ignores them; conflicting marks fail |
+| Molfile chiral flag | An unset flag leaves drawn configurations absolute, and the interpretation report names the ungrouped specified elements the flag would make relative |
 | Specified E/Z Structure output | Supplied coordinates must encode the assertion; conflicting or degenerate drawings fail explicitly |
 | Molfile output of an unasserted alkene | Crossed/either syntax at a bond that can have E/Z prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
 | Geometry-free Molfile output | Specified E/Z requires a Structure; the writer does not synthesize a layout |

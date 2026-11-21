@@ -53,7 +53,10 @@ fn benzene_infers_single_bonds_and_fixes_hydrogens_at_zero() {
         .inferred_bonds()
         .iter()
         .all(|bond| bond.order() == BondOrder::Single));
-    assert!(report.issues().is_empty());
+    assert_eq!(
+        report.issues(),
+        [XyzInterpretIssue::BondOrdersAndChargesUnknown]
+    );
     // Dense atom order is the atom-line order.
     for row in 0..12 {
         let element = topology.atom_at(index(row)).unwrap().element();
@@ -70,7 +73,11 @@ fn benzene_infers_single_bonds_and_fixes_hydrogens_at_zero() {
     assert_eq!(bond.atoms(), [index(0), index(1)]);
     assert!((bond.distance().value_in(ANGSTROM).unwrap() - 1.39).abs() < 1e-3);
     assert!((bond.cutoff().value_in(ANGSTROM).unwrap() - (0.76 + 0.76 + 0.45)).abs() < 1e-12);
-    assert_eq!(report.bond_tolerance().value_in(ANGSTROM).unwrap(), 0.45);
+    assert_eq!(report.bond_tolerance().value_in(ANGSTROM).unwrap(), 0.3);
+    assert_eq!(
+        report.long_bond_tolerance().value_in(ANGSTROM).unwrap(),
+        0.45
+    );
 }
 
 #[test]
@@ -101,7 +108,9 @@ fn metal_ligand_contacts_are_dative_and_close_contacts_unbonded() {
     assert_eq!(report.inferred_bonds().len(), 1);
     assert_eq!(report.inferred_bonds()[0].order(), BondOrder::Dative);
     assert_eq!(interpretation.topology().instance_count(), 3);
-    let [XyzInterpretIssue::CloseContact { atoms, distance }] = report.issues() else {
+    let [XyzInterpretIssue::BondOrdersAndChargesUnknown, XyzInterpretIssue::CloseContact { atoms, distance }] =
+        report.issues()
+    else {
         panic!("one close contact: {:?}", report.issues())
     };
     assert_eq!(*atoms, [index(2), index(3)]);
@@ -157,7 +166,7 @@ fn extra_columns_fail_unless_reported_as_omitted() {
     assert_eq!(error.location().unwrap().line(), 3);
     let options = XyzInterpretOptions::default().with_extra_columns(UnsupportedContent::Report);
     let interpretation = interpret(text, options);
-    let [XyzInterpretIssue::ExtraColumnsOmitted { atom, location }] =
+    let [XyzInterpretIssue::BondOrdersAndChargesUnknown, XyzInterpretIssue::ExtraColumnsOmitted { atom, location }] =
         interpretation.report().issues()
     else {
         panic!("one omission")
@@ -679,5 +688,127 @@ fn assert_points(positions: &kekule::structure::Positions, expected: [[f64; 3]; 
         for (actual, expected) in [point.x, point.y, point.z].into_iter().zip(expected) {
             assert!((actual - expected).abs() <= 1e-12, "{actual} != {expected}");
         }
+    }
+}
+
+/// Bicyclo[1.1.1]pentane: bridgehead carbons 1.86 Å apart, each bonded to
+/// three methylene carbons 1.545 Å away and one hydrogen.
+fn bicyclopentane() -> String {
+    let mut atoms = vec![
+        ("C", [0.0, 0.0, 0.93]),
+        ("C", [0.0, 0.0, -0.93]),
+        ("H", [0.0, 0.0, 2.02]),
+        ("H", [0.0, 0.0, -2.02]),
+    ];
+    let (radius, bond, tilt) = (1.234_f64, 1.09_f64, 55.0_f64.to_radians());
+    for k in 0..3 {
+        let angle = f64::from(k) * std::f64::consts::TAU / 3.0;
+        let (x, y) = (angle.cos(), angle.sin());
+        atoms.push(("C", [radius * x, radius * y, 0.0]));
+        for side in [1.0, -1.0] {
+            let out = radius + bond * tilt.cos();
+            atoms.push(("H", [out * x, out * y, side * bond * tilt.sin()]));
+        }
+    }
+    let mut text = format!("{}\nbicyclo[1.1.1]pentane\n", atoms.len());
+    for (element, [x, y, z]) in atoms {
+        text.push_str(&format!("{element} {x:.4} {y:.4} {z:.4}\n"));
+    }
+    text
+}
+
+#[test]
+fn every_frame_reports_unknown_bond_orders_and_charges() {
+    let interpretation = interpret(WATER, Default::default());
+    assert_eq!(
+        interpretation.report().issues(),
+        [XyzInterpretIssue::BondOrdersAndChargesUnknown]
+    );
+}
+
+#[test]
+fn bicyclopentane_bridgeheads_stay_unbonded() {
+    let interpretation = interpret(&bicyclopentane(), Default::default());
+    let topology = interpretation.topology();
+    assert_eq!(topology.bond_count(), 14);
+    let report = interpretation.report();
+    assert!(!report
+        .inferred_bonds()
+        .iter()
+        .any(|bond| bond.atoms() == [index(0), index(1)]));
+    let unbonded = report
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            XyzInterpretIssue::LongContactNotBonded { atoms, distance } => {
+                Some((*atoms, distance.value_in(ANGSTROM).unwrap()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(unbonded.len(), 1);
+    assert_eq!(unbonded[0].0, [index(0), index(1)]);
+    assert!((unbonded[0].1 - 1.86).abs() < 1e-9);
+    assert!(!report
+        .issues()
+        .iter()
+        .any(|issue| matches!(issue, XyzInterpretIssue::ValenceExceeded { .. })));
+}
+
+#[test]
+fn a_long_bond_within_valence_is_kept() {
+    // Dinitrogen tetroxide: the N-N bond is 1.78 A, 0.36 A beyond the
+    // radii sum.
+    let text = "6\nN2O4\nN 0 0 0.89\nN 0 0 -0.89\nO 1.10 0 1.43\nO -1.10 0 1.43\nO 1.10 0 -1.43\nO -1.10 0 -1.43\n";
+    let interpretation = interpret(text, Default::default());
+    assert_eq!(interpretation.topology().bond_count(), 5);
+    assert_eq!(
+        interpretation.report().issues(),
+        [XyzInterpretIssue::BondOrdersAndChargesUnknown]
+    );
+}
+
+#[test]
+fn atoms_beyond_their_largest_valence_are_reported() {
+    // Five hydrogens 1.09 A around one carbon, a trigonal bipyramid.
+    let s = 1.09 * 3.0_f64.sqrt() / 2.0;
+    let text = format!(
+        "6\nCH5\nC 0 0 0\nH 0 0 1.09\nH 0 0 -1.09\nH 1.09 0 0\nH -0.545 {s:.4} 0\nH -0.545 -{s:.4} 0\n"
+    );
+    let interpretation = interpret(&text, Default::default());
+    assert_eq!(interpretation.topology().bond_count(), 5);
+    assert!(interpretation
+        .report()
+        .issues()
+        .contains(&XyzInterpretIssue::ValenceExceeded {
+            atom: index(0),
+            element: Element::C,
+            bonds: 5,
+            maximum: 4,
+        }));
+}
+
+#[test]
+fn alkali_metals_do_not_bond_the_carbon_of_a_chelating_carboxylate() {
+    // Acetate in the xy plane with the metal on the O-C-O bisector, 2.40 A
+    // (Na) or 2.80 A (K) from both oxygens.
+    for (metal, oxygen_distance) in [("Na", 2.40_f64), ("K", 2.80)] {
+        let y = 0.61 + (oxygen_distance.powi(2) - 1.09_f64.powi(2)).sqrt();
+        let text = format!(
+            "8\nacetate\nC 0 0 0\nO 1.09 0.61 0\nO -1.09 0.61 0\nC 0 -1.52 0\nH 1.03 -1.88 0\nH -0.51 -1.88 0.89\nH -0.51 -1.88 -0.89\n{metal} 0 {y:.4} 0\n"
+        );
+        let interpretation = interpret(&text, Default::default());
+        let metal_bonds = interpretation
+            .report()
+            .inferred_bonds()
+            .iter()
+            .filter(|bond| bond.atoms()[1] == index(7))
+            .map(|bond| (bond.atoms()[0], bond.order()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            metal_bonds,
+            [(index(1), BondOrder::Dative), (index(2), BondOrder::Dative)],
+            "{metal}"
+        );
     }
 }

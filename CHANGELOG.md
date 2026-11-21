@@ -621,6 +621,32 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
+- A double or triple bond the source states between aromatic atoms is their
+  pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
+  and 4 read as benzene, not as a ring of six double bonds or a cumulene.
+- An aromatic O, S, Se, or Te with a +1 charge and no hydrogen count takes
+  no hydrogen, as pyridine nitrogen does, so V2000 pyrylium,
+  thiopyrylium, and 1,3-dithiolium interpret.
+- Every SMILES writer brackets an aromatic atom whose hydrogens a reader
+  would not infer, as the `[pH]` of 1H-phosphole, instead of only aromatic
+  nitrogen.
+- A wedge that marks no stereocenter or axis is dropped and reported
+  (`MolfileInterpretIssue::StrayWedge`), and so is a directional mark
+  without a partner across a double bond that can have E/Z
+  (`SmilesInterpretationReport::unpaired_directional_bonds`), instead of
+  failing interpretation.
+- A Molfile whose chiral flag is unset keeps its drawn configurations
+  absolute and reports them
+  (`MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag`).
+- XYZ interpretation states that bond orders and charges are unknown
+  (`XyzInterpretIssue::BondOrdersAndChargesUnknown`) and reports atoms with
+  more single bonds than their largest valence
+  (`XyzInterpretIssue::ValenceExceeded`). Two non-metal atoms beyond the
+  radii sum plus 0.3 Å bond only within their valences
+  (`XyzInterpretIssue::LongContactNotBonded`), so the bridgeheads of
+  bicyclo[1.1.1]pentane stay unbonded, and a metal and a carbon bond only
+  within the sum plus 0.2 Å, so a chelating carboxylate's carbon stays
+  unbonded to its sodium or potassium.
 - PDB and mmCIF interpretation reads disulfide-bonded cysteines with explicit
   hydrogens as neutral: a covalent link to another residue takes the place of
   as many hydrogens as its order, as a disulfide replaces `HG`, instead of

@@ -505,7 +505,9 @@ impl MolfileDocument {
     }
 
     /// The counts-line chiral flag. It is retained as source metadata;
-    /// interpretation does not translate it into stereo groups.
+    /// interpretation does not translate it into stereo groups, and reports
+    /// [`MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag`](super::MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag)
+    /// when it is unset.
     pub const fn chiral_flag(&self) -> bool {
         self.ctab.chiral_flag
     }
