@@ -733,6 +733,11 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 force_field: self.str()?,
             },
+            22 if self.version >= DISULFIDE_SINCE => Issue::NeutralUnbondedMetal {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))

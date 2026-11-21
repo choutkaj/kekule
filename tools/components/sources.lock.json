@@ -60,7 +60,14 @@
       "CD",
       "HG",
       "IOD",
-      "BR"
+      "BR",
+      "LI",
+      "RB",
+      "CS",
+      "SR",
+      "BA",
+      "AL",
+      "F"
     ],
     "cofactors": [
       "HEM",
@@ -499,6 +506,62 @@
       "bytes": 3697,
       "sha256": "251c2a100e29c2eec983a8fc6024c928851f1021074bdb1f00e764a1c5d7789a",
       "modified": "2024-09-27"
+    },
+    {
+      "id": "LI",
+      "path": "crates/kekule/data/components/LI.cif",
+      "url": "https://files.rcsb.org/ligands/view/LI.cif",
+      "bytes": 3417,
+      "sha256": "c5c38ecc9edbb0146292363a6930ef66f590a3954673fba8f8f4e59431e5eb3b",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "RB",
+      "path": "crates/kekule/data/components/RB.cif",
+      "url": "https://files.rcsb.org/ligands/view/RB.cif",
+      "bytes": 3471,
+      "sha256": "c1fea5357bc60dfdfcfa991a32ea07d0f0568f7a8e11c8a58e553c631dc474d9",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "CS",
+      "path": "crates/kekule/data/components/CS.cif",
+      "url": "https://files.rcsb.org/ligands/view/CS.cif",
+      "bytes": 3417,
+      "sha256": "dbf4e605ea22a974b34a35f0737d64a529ed65dbc327e1efb0a78cda3a6ec219",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "SR",
+      "path": "crates/kekule/data/components/SR.cif",
+      "url": "https://files.rcsb.org/ligands/view/SR.cif",
+      "bytes": 3474,
+      "sha256": "9800ab12ed1559fc31a04b38a4eea5b2175aa72c13aa3ac28017d172e815c76f",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "BA",
+      "path": "crates/kekule/data/components/BA.cif",
+      "url": "https://files.rcsb.org/ligands/view/BA.cif",
+      "bytes": 3416,
+      "sha256": "8ab07a00dc6b5366272dcb3e1f5f2c6fa8940267e70ec21368342cd7eb9ba144",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "AL",
+      "path": "crates/kekule/data/components/AL.cif",
+      "url": "https://files.rcsb.org/ligands/view/AL.cif",
+      "bytes": 3471,
+      "sha256": "f675a5d2dd2e7ac4bb2841e420277aaed880d259f8bb305d65668bfd74096eb9",
+      "modified": "2011-06-04"
+    },
+    {
+      "id": "F",
+      "path": "crates/kekule/data/components/F.cif",
+      "url": "https://files.rcsb.org/ligands/view/F.cif",
+      "bytes": 3428,
+      "sha256": "7a131f5f398339527faf14e10f241f46167f16d38e51f5b5fc8de7d5f51fcaaa",
+      "modified": "2011-06-04"
     },
     {
       "id": "HEM",

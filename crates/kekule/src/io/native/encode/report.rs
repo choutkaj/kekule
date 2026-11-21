@@ -553,6 +553,16 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.str(force_field)
             }
+            Issue::NeutralUnbondedMetal {
+                residue,
+                component_id,
+                atom_name,
+            } => {
+                self.u8(22)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,

@@ -2010,6 +2010,8 @@ fn pdb_connectivity_matches_an_independent_reference() {
     // charges (+1), counted from the files. The bundled templates do not cover
     // AP5: its 62 bonds per chain come from CONECT records, none inferred, and
     // the 12 CONECT partners in the omitted alternate location B are reported.
+    // CONECT states no orders, so each of AP5's five phosphorus atoms has four
+    // single bonds and takes +1 as an onium centre, ten more in 1AKE.
     for (name, text, atoms, bonds, largest, molecules, charged, listed, disulfides, omitted) in [
         ("1CRN", CRAMBIN, 327, 337, vec![327], 1, 2, 0, 3, 0),
         (
@@ -2019,7 +2021,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
             3484,
             vec![1656, 1656, 57, 57],
             382,
-            68,
+            78,
             124,
             0,
             12,

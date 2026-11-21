@@ -930,6 +930,91 @@ fn residues_without_template_charges_take_the_charges_their_bonds_imply() {
 }
 
 #[test]
+fn onium_centres_without_template_charges_take_a_charge_not_a_hydrogen() {
+    // A sulfonium, phosphonium, or iodonium ligand whose component table
+    // states no charges is charged +1; it does not gain a hydrogen.
+    let mut table = String::from(
+            "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n",
+        );
+    for (component, center, ligands) in [("XSM", "S", 3), ("XPM", "P", 4), ("XIM", "I", 2)] {
+        for ligand in 1..=ligands {
+            table.push_str(&format!("{component} {center} C{ligand} sing\n"));
+        }
+    }
+    let result = interpret(&block(
+        "S S XSM A 1 0.000 0.000 0.000
+             C C1 XSM A 1 1.000 1.000 0.800
+             C C2 XSM A 1 -1.000 1.000 -0.800
+             C C3 XSM A 1 0.000 -1.400 0.000
+             P P XPM A 2 10.000 0.000 0.000
+             C C1 XPM A 2 10.950 0.950 0.950
+             C C2 XPM A 2 9.050 -0.950 0.950
+             C C3 XPM A 2 9.050 0.950 -0.950
+             C C4 XPM A 2 10.950 -0.950 -0.950
+             I I XIM A 3 20.000 0.000 0.000
+             C C1 XIM A 3 22.100 0.000 0.000
+             C C2 XIM A 3 20.000 2.100 0.000",
+        &table,
+    ));
+    assert_eq!(
+        charges(&result),
+        [
+            ("S".to_owned(), 1),
+            ("P".to_owned(), 1),
+            ("I".to_owned(), 1)
+        ]
+    );
+    let mut perceived = result.structure().clone();
+    perceived.perceive().unwrap();
+    for atom in perceived.topology().atoms() {
+        if atom.element().atomic_number() != 6 {
+            assert_eq!(atom.total_hydrogens(), Some(0), "{}", atom.element());
+        }
+    }
+    let charged = issues(&result)
+        .into_iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ChargesFromBonds { charged_atoms, .. } => Some(charged_atoms),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        charged,
+        [
+            vec![("S".to_owned(), 1)],
+            vec![("P".to_owned(), 1)],
+            vec![("I".to_owned(), 1)],
+        ]
+    );
+}
+
+#[test]
+fn unbonded_neutral_metals_without_templates_are_reported() {
+    // Lead is not bundled; the atom stays neutral, without hydrides.
+    let result = interpret(&block("PB PB PB A 1 0.000 0.000 0.000", ""));
+    assert_eq!(charges(&result), []);
+    let mut perceived = result.structure().clone();
+    perceived.perceive().unwrap();
+    assert_eq!(
+        perceived
+            .topology()
+            .atoms()
+            .next()
+            .unwrap()
+            .total_hydrogens(),
+        Some(0)
+    );
+    assert_eq!(
+        issues(&result),
+        [StructureInterpretIssue::NeutralUnbondedMetal {
+            residue: residue("A", 1),
+            component_id: "PB".to_owned(),
+            atom_name: "PB".to_owned(),
+        }]
+    );
+}
+
+#[test]
 fn residues_without_templates_infer_bonds_unless_disabled() {
     let text = block(UNKNOWN_LIGAND, "");
     let inferred = interpret(&text);

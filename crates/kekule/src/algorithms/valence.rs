@@ -331,6 +331,12 @@ fn rdkit_atom_inferred_hydrogen_count<L: SlotLiveness>(
     if !atom.hydrogens.is_inferred() {
         return Ok(0);
     }
+    // Unlike RDKit, no hydride is inferred on these metals. An unbonded or
+    // under-bonded one more likely lacks its charge or its bonds than carries
+    // hydrogens; its valence list stays a limit.
+    if is_main_group_metal(atom.element.atomic_number()) {
+        return Ok(0);
+    }
     if atom.element.atomic_number() == 1 && explicit == 0 && radical_electrons == 0 {
         return match atom.formal_charge {
             0 => Ok(1),
@@ -381,6 +387,105 @@ fn rdkit_atom_inferred_hydrogen_count<L: SlotLiveness>(
         });
     }
     Ok(0)
+}
+
+/// Whether atoms of this element are alkali, alkaline-earth, or p-block
+/// metals, on which [`ValenceModel::RdkitLike`] infers no hydrogens.
+pub(crate) const fn is_main_group_metal(atomic_number: u8) -> bool {
+    matches!(
+        atomic_number,
+        3 | 4 | 11 | 12 | 13 | 19 | 20 | 31 | 37 | 38 | 49 | 50 | 55 | 56 | 81 | 82 | 83 | 87 | 88
+    )
+}
+
+/// The hydrogens the model infers on a neutral onium centre: an atom with
+/// more bonded neighbors than its default valence, which takes hydrogens only
+/// at a higher allowed valence, as the sulfur of `CS(C)C` takes one at
+/// valence four. `None` for every other atom.
+///
+/// OpenSMILES specifies these hydrogens for its organic subset. Formats that
+/// state charges, such as Molfile and mmCIF component tables, more likely
+/// omit the centre's charge, as of trimethylsulfonium, than draw a hydride.
+pub(crate) fn onium_hydrogens<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<u8> {
+    if atom.formal_charge != 0 || atom.radical.is_some() || !atom.hydrogens.is_inferred() {
+        return None;
+    }
+    let default = usize::from(rdkit_default_valence(atom)?);
+    let neighbors = mol
+        .incident_bonds(atom_id)?
+        .filter(|(_, bond)| bond_order_valence(bond.order) > 0)
+        .count();
+    if neighbors <= default {
+        return None;
+    }
+    rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, true)
+        .ok()
+        .filter(|hydrogens| *hydrogens > 0)
+}
+
+/// The charge of a neutral onium centre ([`onium_hydrogens`]) drawn without
+/// it: +1, when that state is valid.
+pub(crate) fn onium_charge<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<i8> {
+    onium_hydrogens(mol, atom_id, atom)?;
+    valid_charge(mol, atom_id, atom, &[1])
+}
+
+/// The formal charge a neutral atom's bonds imply when its source states
+/// none. An atom with more bonds than any neutral valence allows, such as a
+/// quaternary nitrogen, takes the first of +1 and -1 that makes its valence
+/// valid; an onium centre takes +1 ([`onium_charge`]).
+pub(crate) fn implied_charge<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<i8> {
+    if atom.formal_charge != 0 {
+        return None;
+    }
+    if matches!(
+        rdkit_valence_violation(mol, atom_id, atom),
+        Some(ValenceViolation::ValenceExceeded { .. })
+    ) {
+        return valid_charge(mol, atom_id, atom, &[1, -1]);
+    }
+    onium_charge(mol, atom_id, atom)
+}
+
+fn valid_charge<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+    candidates: &[i8],
+) -> Option<i8> {
+    candidates.iter().copied().find(|&charge| {
+        let mut charged = atom.clone();
+        charged.formal_charge = charge;
+        rdkit_valence_violation(mol, atom_id, &charged).is_none()
+    })
+}
+
+/// Whether an unbonded neutral atom is a metal of [`is_main_group_metal`],
+/// whose source more likely omits its ionic charge than means the neutral
+/// atom. Radicals state their electrons and are not reported.
+pub(crate) fn is_neutral_unbonded_metal<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> bool {
+    atom.formal_charge == 0
+        && atom.radical.is_none()
+        && is_main_group_metal(atom.element.atomic_number())
+        && mol
+            .incident_bonds(atom_id)
+            .is_some_and(|mut bonds| bonds.next().is_none())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

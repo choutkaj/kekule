@@ -445,8 +445,10 @@ pub enum StructureInterpretIssue {
         next: SourceResidueId,
     },
     /// A residue that no template gives charges had atoms with more bonds
-    /// than a neutral atom allows. Each took the formal charge its bonds
-    /// imply, as the methylated N7 of 7-methylguanosine takes +1.
+    /// than a neutral atom allows, or onium centres that a neutral atom
+    /// completes only with a hydrogen above its default valence. Each took
+    /// the formal charge its bonds imply, as the methylated N7 of
+    /// 7-methylguanosine and the sulfur of trimethylsulfonium take +1.
     ChargesFromBonds {
         /// The residue.
         residue: SourceResidueId,
@@ -454,6 +456,18 @@ pub enum StructureInterpretIssue {
         component_id: String,
         /// The charged atoms, by atom name, with their formal charge in e.
         charged_atoms: Vec<(String, i8)>,
+    },
+    /// An alkali, alkaline-earth, or p-block metal atom that no template
+    /// gives a charge has no bonds and no stated charge. It stays a neutral
+    /// atom without hydrogens; the source likely omits its ionic charge.
+    /// Supplying the component as context gives it one.
+    NeutralUnbondedMetal {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atom's name.
+        atom_name: String,
     },
     /// The structure's hydrogens differ from the reference template: a
     /// protonation variant was selected, or heteroatom charges were adjusted by
@@ -721,6 +735,15 @@ impl fmt::Display for StructureInterpretIssue {
                     listed(&Charged::all(charged_atoms))
                 )
             }
+            Self::NeutralUnbondedMetal {
+                residue,
+                component_id,
+                atom_name,
+            } => write!(
+                formatter,
+                "Atom {atom_name:?} of {residue} (component {component_id:?}) is a metal atom \
+                 without bonds or charge."
+            ),
             Self::ProtonationFromHydrogens {
                 residue,
                 component_id,

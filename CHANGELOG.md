@@ -301,6 +301,13 @@ the main branch migrates by the table under "From the SampleSet API".
   `lowest_cell` is the cell with the lowest value, and `cell_at` and `center`
   convert between cells and axis values. Failures are a `LandscapeError`;
   `diagnostics::Resource::Cells` bounds the grid.
+- `Perception::warnings` and `Topology::perception_warnings` report
+  perception that succeeded incompletely: `PerceptionWarning::RingBasisFallback`
+  when the smallest-ring search stopped and depth-first cycles became the ring
+  set, which aromaticity then reads.
+- The bundled components include the ions `LI`, `RB`, `CS`, `SR`, `BA`,
+  `AL`, and `F`, so PDB and mmCIF ions without a charge column read as
+  Li+, Rb+, Cs+, Sr2+, Ba2+, Al3+, and F-.
 
 ### Changed
 
@@ -595,6 +602,11 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Removed
 
+- **Breaking:** `descriptors::HydrogenCountPolicy`. `molecular_formula`,
+  `average_mass`, and `monoisotopic_mass` take only the molecule and count
+  every hydrogen; an inferred count without valence perception fails with
+  `MolecularDescriptorError::UnknownHydrogenCount` instead of being omitted.
+  Perceive first, or use a perceived topology.
 - **Breaking:** `TopologyEditor::new` and its `Default`; build a topology
   from scratch with `TopologyBuilder`, or start an empty `StructureEditor`.
 - **Breaking:** `EnsembleMember`, its views, `EnsembleIter`, `EnsembleError`,
@@ -621,6 +633,22 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
+- A neutral onium centre in a Molfile or a residue without template charges,
+  an atom with more bonded neighbors than its default valence such as the
+  sulfur of trimethylsulfonium, takes +1 instead of a hydrogen
+  (`MolfileInterpretIssue::ChargeFromBonds`,
+  `StructureInterpretIssue::ChargesFromBonds`). SMILES keeps the OpenSMILES
+  hydrogen of `CS(C)C`, and Molfile writers state such an atom's valence.
+- Valence perception infers no hydrogens on alkali, alkaline-earth, and
+  p-block metals, so a lone Na, Mg, or Al is no longer NaH, MgH2, or AlH3 and
+  `StructureEditor::add_hydrogens` adds none. Molfile and PDB or mmCIF
+  interpretation report an unbonded neutral one
+  (`MolfileInterpretIssue::NeutralUnbondedMetal`,
+  `StructureInterpretIssue::NeutralUnbondedMetal`, native issue kind 22).
+- Placement counts two radical electrons as one domain, so carbenes and
+  nitrenes, singlet or triplet, are bent instead of linear.
+- `explicit_hydrogens` and `total_hydrogens` no longer count hydrogens joined
+  by zero-order or dative bonds, which valence does not count.
 - PDB and mmCIF interpretation reads disulfide-bonded cysteines with explicit
   hydrogens as neutral: a covalent link to another residue takes the place of
   as many hydrogens as its order, as a disulfide replaces `HG`, instead of

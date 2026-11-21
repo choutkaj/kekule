@@ -648,7 +648,11 @@ fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
 
         if symbol != "N" {
             let molecule = read_molfile(&input).expect("source fourth carrier interprets");
-            let expected_carrier = if symbol == "P" {
+            // Neutral sulfur with three neighbors is a sulfonium drawn without
+            // its charge: it takes +1 and keeps its lone pair.
+            let charge = i8::from(symbol == "S");
+            assert_eq!(molecule.atom(AtomId::new(0)).unwrap().formal_charge, charge);
+            let expected_carrier = if symbol == "P" || symbol == "S" {
                 StereoCarrier::ImplicitLonePair
             } else {
                 assert_eq!(

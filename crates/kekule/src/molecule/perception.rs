@@ -17,6 +17,9 @@ pub enum ValenceModel {
     ///
     /// Zero-order and dative bonds contribute zero at both endpoints. Dative
     /// acceptor valence therefore differs from RDKit's directional bond model.
+    /// Unlike RDKit, alkali, alkaline-earth, and p-block metals (Li, Be, Na,
+    /// Mg, Al, K, Ca, Ga, Rb, Sr, In, Sn, Cs, Ba, Tl, Pb, Bi, Fr, Ra) infer no
+    /// hydrogens: a lone sodium is Na, not NaH.
     RdkitLike,
 }
 
@@ -431,6 +434,46 @@ impl Perception {
     /// no descriptors.
     pub const fn cip(&self) -> Option<&CipPerception> {
         self.cip.as_ref()
+    }
+
+    /// The limits of the installed sections: perception that succeeded but
+    /// is less complete than its model intends. Empty for complete
+    /// perception. Applications show these beside the perceived results.
+    pub fn warnings(&self) -> Vec<PerceptionWarning> {
+        let mut warnings = Vec::new();
+        if self
+            .rings
+            .as_ref()
+            .and_then(RingPerception::basis)
+            .is_some_and(RingBasisState::used_depth_first_fallback)
+        {
+            warnings.push(PerceptionWarning::RingBasisFallback);
+        }
+        warnings
+    }
+}
+
+/// A limit of installed perception that leaves it valid but incomplete, as
+/// [`Perception::warnings`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PerceptionWarning {
+    /// The smallest-ring search was incomplete, as in some cage compounds,
+    /// and the ring set is depth-first cycles
+    /// ([`RingBasisState::used_depth_first_fallback`]). RDKit-like
+    /// aromaticity, canonical ranking, and stereo perception read that set,
+    /// so a ring outside it is not perceived aromatic. MDL aromaticity and
+    /// SMARTS ring counts refuse the set.
+    RingBasisFallback,
+}
+
+impl fmt::Display for PerceptionWarning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RingBasisFallback => formatter.write_str(
+                "The smallest-ring search did not finish. The ring set is depth-first cycles.",
+            ),
+        }
     }
 }
 

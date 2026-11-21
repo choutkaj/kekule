@@ -7,13 +7,16 @@ are attached hydrogens represented without separate atoms.
 
 | Method | Counts | Return value |
 | --- | --- | --- |
-| `explicit_hydrogens(atom)` | Hydrogen neighbors in the graph, including isotopic H | `Result<usize>` |
+| `explicit_hydrogens(atom)` | Hydrogen neighbors in the graph joined by bonds of order one or more, including isotopic H | `Result<usize>` |
 | `implicit_hydrogens(atom)` | Non-graph hydrogens | `Result<Option<usize>>` |
 | `total_hydrogens(atom)` | Explicit plus implicit hydrogens | `Result<Option<usize>>` |
 
 The error type depends on the owner. Invalid atom IDs return an error. `None`
 means an inferred count is unresolved; it never means zero. These getters
-neither mutate the graph nor run perception.
+neither mutate the graph nor run perception. A hydrogen joined only by a
+zero-order or dative bond is not counted, as valence does not count it.
+`descriptors::molecular_formula` and the masses count every hydrogen and fail
+on an unresolved count.
 
 ## Fixed and inferred counts
 
@@ -26,7 +29,8 @@ either wholly fixed or wholly inferred:
   until valence perception is installed.
 
 For example, `C` infers its count, `[CH4]` fixes four implicit hydrogens, and
-`[C]` fixes zero. `[H][CH3]` has one explicit hydrogen and three fixed implicit
+`[C]` fixes zero. The valence model infers no hydrogens on alkali,
+alkaline-earth, and p-block metals: an unbonded neutral sodium is Na, not NaH. `[H][CH3]` has one explicit hydrogen and three fixed implicit
 ones. SMILES bracket notation fixes a count; it does not create hydrogen atoms.
 Molfile atoms fix their count only when they declare a valence (the V2000
 valence field or V3000 `VAL`). The V2000 hydrogen-count field and V3000
@@ -94,4 +98,5 @@ Kekule 0.3.0 changes this API and its behavior from 0.2.1:
 | Adjustment `explicit_hydrogens` / `implicit_hydrogens` (`u8`) | `usize` counts, plus `hydrogens` (the resulting declaration) |
 | `HydrogenTransformError::HydrogenCountNotPreserved` | Removed; collapse preserves counts by construction |
 
-`HydrogenCountPolicy::StoredOnly` now counts graph hydrogens and fixed counts.
+`HydrogenCountPolicy` is removed: formula and masses take no policy and count
+every hydrogen.

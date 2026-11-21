@@ -8,6 +8,7 @@ use crate::diagnostics::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
+use crate::algorithms::{is_neutral_unbonded_metal, onium_charge};
 use crate::io::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
@@ -207,6 +208,65 @@ struct StagedMolfile {
     editor: MoleculeEditor,
     geometry: StagedCoordinates,
     source_stereo: Vec<SourceStereoBondMark>,
+    /// Staged atoms whose drawing leaves their charge implicit.
+    implicit_charges: BTreeMap<AtomId, ImplicitCharge>,
+}
+
+/// A staged atom whose drawing leaves its charge implicit, with its source
+/// line.
+#[derive(Debug, Clone, Copy)]
+enum ImplicitCharge {
+    /// A neutral onium centre ([`onium_charge`]), charged here.
+    Onium(i8, SourceLocation),
+    /// An unbonded neutral metal, which stays neutral.
+    Metal(SourceLocation),
+}
+
+impl ImplicitCharge {
+    /// The issue reporting it on the published `atom`.
+    const fn issue(self, atom: AtomId) -> MolfileInterpretIssue {
+        match self {
+            Self::Onium(charge, location) => MolfileInterpretIssue::ChargeFromBonds {
+                atom,
+                location,
+                charge,
+            },
+            Self::Metal(location) => MolfileInterpretIssue::NeutralUnbondedMetal { atom, location },
+        }
+    }
+}
+
+/// Charges each neutral onium centre +1, such as the sulfur of
+/// trimethylsulfonium, and finds the unbonded neutral metals, which stay
+/// neutral.
+fn assign_implicit_charges(
+    editor: &mut MoleculeEditor,
+    document: &MolfileDocument,
+) -> BTreeMap<AtomId, ImplicitCharge> {
+    let graph = editor.graph();
+    let found = graph
+        .atoms()
+        .zip(document.atoms())
+        .filter_map(|((id, atom), source)| {
+            let found = match onium_charge(graph, id, atom) {
+                Some(charge) => ImplicitCharge::Onium(charge, source.location),
+                None if is_neutral_unbonded_metal(graph, id, atom) => {
+                    ImplicitCharge::Metal(source.location)
+                }
+                None => return None,
+            };
+            Some((id, found))
+        })
+        .collect::<BTreeMap<_, _>>();
+    for (id, found) in &found {
+        if let ImplicitCharge::Onium(charge, _) = found {
+            editor
+                .atom_mut(*id)
+                .expect("staged atoms are live")
+                .set_formal_charge(*charge);
+        }
+    }
+    found
 }
 
 /// Builds the represented graph from decoded atoms and bonds in source order,
@@ -295,10 +355,12 @@ fn stage_molfile(document: &MolfileDocument) -> Result<StagedMolfile, FormatErro
         )
         .with_source(error)
     })?;
+    let implicit_charges = assign_implicit_charges(&mut editor, document);
     Ok(StagedMolfile {
         editor,
         geometry,
         source_stereo,
+        implicit_charges,
     })
 }
 
@@ -411,6 +473,28 @@ pub enum MolfileInterpretIssue {
         /// The stereocenter.
         center: AtomId,
         /// The source line of the stereocenter.
+        location: SourceLocation,
+    },
+    /// A neutral atom with more bonded neighbors than its default valence,
+    /// which takes hydrogens only above that valence, is an onium centre
+    /// drawn without its charge, as the sulfur of trimethylsulfonium or the
+    /// phosphorus of tetramethylphosphonium. It takes the charge, not a
+    /// hydrogen. A source that means the hydride states the atom's valence.
+    ChargeFromBonds {
+        /// The charged atom.
+        atom: AtomId,
+        /// Its source line.
+        location: SourceLocation,
+        /// The formal charge it takes, in e.
+        charge: i8,
+    },
+    /// An alkali, alkaline-earth, or p-block metal atom has no bonds and no
+    /// charge. It stays neutral and takes no hydrides; the source likely
+    /// omits its ionic charge.
+    NeutralUnbondedMetal {
+        /// The metal atom.
+        atom: AtomId,
+        /// Its source line.
         location: SourceLocation,
     },
 }
@@ -563,6 +647,7 @@ pub(crate) fn interpret_molfile_document(
         editor: mut staging,
         geometry,
         mut source_stereo,
+        implicit_charges,
     } = stage_molfile(document)?;
     let atom_lines = document
         .atoms()
@@ -737,6 +822,11 @@ pub(crate) fn interpret_molfile_document(
                 location,
             }
         }));
+        warnings.extend(
+            raw.atom_map
+                .iter()
+                .filter_map(|(staged, atom)| Some(implicit_charges.get(staged)?.issue(*atom))),
+        );
         let atom_mappings = raw
             .atom_map
             .iter()

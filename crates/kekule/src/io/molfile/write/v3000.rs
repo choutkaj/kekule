@@ -1,5 +1,5 @@
 //! V3000 CTAB rendering of a prepared record.
-use crate::algorithms::explicit_valence;
+use crate::algorithms::{explicit_valence, onium_hydrogens};
 use crate::diagnostics::FormatError;
 use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::SourceStereoBondMarkKind;
@@ -47,20 +47,25 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
         if let Some(radical) = atom.radical {
             line.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
-        match atom.hydrogens {
-            ImplicitHydrogens::Inferred => {}
-            ImplicitHydrogens::Fixed(explicit) => {
-                // HCOUNT is a query constraint in CTfile, not a molecular
-                // hydrogen declaration. VAL preserves the fixed total valence
-                // without turning the emitted atom into a query atom.
-                let valence =
-                    explicit_valence(record_atom.molecule, record_atom.id) + usize::from(explicit);
-                // VAL=0 means unspecified, whereas -1 explicitly means zero.
-                if valence == 0 {
-                    line.push_str(" VAL=-1");
-                } else {
-                    line.push_str(&format!(" VAL={valence}"));
-                }
+        // A reader charges an onium centre without a stated valence, so its
+        // inferred hydrogens are stated.
+        let stated = match atom.hydrogens {
+            ImplicitHydrogens::Inferred => {
+                onium_hydrogens(record_atom.molecule, record_atom.id, atom)
+            }
+            ImplicitHydrogens::Fixed(explicit) => Some(explicit),
+        };
+        if let Some(explicit) = stated {
+            // HCOUNT is a query constraint in CTfile, not a molecular
+            // hydrogen declaration. VAL preserves the fixed total valence
+            // without turning the emitted atom into a query atom.
+            let valence =
+                explicit_valence(record_atom.molecule, record_atom.id) + usize::from(explicit);
+            // VAL=0 means unspecified, whereas -1 explicitly means zero.
+            if valence == 0 {
+                line.push_str(" VAL=-1");
+            } else {
+                line.push_str(&format!(" VAL={valence}"));
             }
         }
         push_line(&mut out, &line);

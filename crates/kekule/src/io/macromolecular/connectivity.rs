@@ -6,7 +6,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::algorithms::{rdkit_valence_violation, ValenceViolation};
+use crate::algorithms::{implied_charge, is_neutral_unbonded_metal};
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
@@ -707,7 +707,10 @@ impl<'r> Resolver<'r, '_> {
     /// the component tables of wwPDB entry files do. A neutral atom with
     /// more bonds than its valence allows, such as the methylated N7 of
     /// 7-methylguanosine, then takes the charge of one that makes its
-    /// valence valid, +1 before -1. Stated charges are kept.
+    /// valence valid, +1 before -1, and an onium centre, such as a sulfur
+    /// bonded to three carbons, takes +1 rather than a hydrogen. Stated
+    /// charges are kept. An unbonded neutral alkali, alkaline-earth, or
+    /// p-block metal is reported, since its charge is likely missing.
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         let mut charged_atoms = Vec::new();
         for site in &residue.sites {
@@ -717,22 +720,16 @@ impl<'r> Resolver<'r, '_> {
             let atom = self
                 .graph
                 .require_atom(site.atom)
-                .map_err(interpret_error)?
-                .clone();
-            if atom.formal_charge != 0
-                || !matches!(
-                    rdkit_valence_violation(self.graph, site.atom, &atom),
-                    Some(ValenceViolation::ValenceExceeded { .. })
-                )
-            {
-                continue;
+                .map_err(interpret_error)?;
+            if is_neutral_unbonded_metal(self.graph, site.atom, atom) {
+                self.issues
+                    .push(raw::StructureInterpretIssue::NeutralUnbondedMetal {
+                        residue: residue.key.id(self.model_id),
+                        component_id: residue.key.component_id.clone(),
+                        atom_name: site.name.clone(),
+                    });
             }
-            let valid = |charge: i8| {
-                let mut charged = atom.clone();
-                charged.formal_charge = charge;
-                rdkit_valence_violation(self.graph, site.atom, &charged).is_none()
-            };
-            let Some(charge) = [1, -1].into_iter().find(|&charge| valid(charge)) else {
+            let Some(charge) = implied_charge(self.graph, site.atom, atom) else {
                 continue;
             };
             self.graph

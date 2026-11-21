@@ -13,6 +13,7 @@ mod documents;
 mod export;
 mod mmcif;
 mod mmcif_write;
+mod molfile_valence;
 mod native;
 mod native_versions;
 mod pdb;
