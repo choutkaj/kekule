@@ -172,7 +172,8 @@ impl Assembly {
     /// different copies within bonding distance form disulfides, as reading
     /// forms them within the asymmetric unit: when neither carries a hydrogen
     /// atom or a bond to another residue, nor lies within bonding distance of
-    /// a metal it may coordinate, nearest pairs first;
+    /// a transition or post-transition metal it may coordinate, nearest pairs
+    /// first;
     /// [`AssemblyReport::created_bonds`] lists them. Other links a source
     /// states to a symmetry mate stay import issues. The structure has no
     /// cell, since copies are not a lattice's content.
@@ -384,9 +385,9 @@ impl Assembly {
     }
 }
 
-/// The focus atoms of the stereo elements of `topology` whose first focus
-/// atom `selection` holds and that name an atom outside it, so that `part`,
-/// its subset, lost them.
+/// The focus atoms of the stereo elements of `topology` with a focus atom
+/// `selection` holds that name an atom outside it, so that `part`, its
+/// subset, lost them.
 fn stereo_outside(
     topology: &Topology,
     selection: &AtomSelection,
@@ -402,9 +403,7 @@ fn stereo_outside(
             let carriers = stereo_carriers(element);
             let selected =
                 |atoms: &[AtomId]| atoms.iter().all(|&atom| selection.contains(id(atom)));
-            if !focus
-                .first()
-                .is_some_and(|&atom| selection.contains(id(atom)))
+            if !focus.iter().any(|&atom| selection.contains(id(atom)))
                 || (selected(&focus) && selected(&carriers))
             {
                 continue;
@@ -572,12 +571,13 @@ fn bond_disulfides(
             sulfurs.push((index, handle, point));
         }
     }
-    // A sulfur within bonding distance of a metal may coordinate it, as a
+    // A sulfur within bonding distance of a metal that thiolates bind, a
+    // transition or post-transition metal, may coordinate it, as a
     // coordination record states for the asymmetric unit.
     let metals = editor
         .topology()
         .atoms()
-        .filter(|(_, atom)| atom.element.is_metal())
+        .filter(|(_, atom)| binds_thiolates(atom.element))
         .map(|(handle, atom)| {
             let point = editor
                 .position(handle)
@@ -625,6 +625,16 @@ fn bond_disulfides(
         created.push([left, right]);
     }
     Ok(created)
+}
+
+/// Whether `element` is a metal other than an alkali or alkaline-earth
+/// metal, as zinc, iron, copper, or mercury, which cysteine coordinates.
+fn binds_thiolates(element: Element) -> bool {
+    element.is_metal()
+        && !matches!(
+            element.atomic_number(),
+            3 | 4 | 11 | 12 | 19 | 20 | 37 | 38 | 55 | 56 | 87 | 88
+        )
 }
 
 /// An assembly built from a structure, with the bonds the build changed.

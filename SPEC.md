@@ -143,11 +143,14 @@ perception never overwrites them; inferred counts are unknown after chemical
 edits until perception is recomputed. Topology and structure edits keep fixed
 counts whole: an atom gains a hydrogen for each unit of bond valence a
 deletion, a lower order, or a subset cut takes from it, and gives one up for
-each unit it gains. Past the last hydrogen a gain fills open valence; past
-the largest allowed valence it is owed, later losses pay it back first, and
-publication fails while any is owed. A bond to
-a metal is coordination and changes neither endpoint's count, and an atom
-with declared radical electrons keeps its count.
+each unit it gains. A gain takes a declared radical electron first, then a
+hydrogen, then fills open valence; past the largest allowed valence it is
+owed, later losses pay it back first, and publication fails while any is
+owed. A loss adds hydrogens only for valence the radical electrons and
+hydrogens leave unfilled. A metal's count never changes. A non-metal's bond
+to a metal changes no count when the non-metal donates to it, as an ammine
+does; otherwise it is covalent, so a chloride or a methyl cut from its metal
+takes a hydrogen.
 `perception::valence::open_valences` names fixed atoms still short of their
 valence. Explicit/implicit conversion
 preserves composition and stereo. CIP assignment is transactional, respects
@@ -929,7 +932,8 @@ atoms that carry its partners' identity: chain, residue identifiers and
 occurrence among the chain's residues that share them, and atom names, with
 the recorded atom ID deciding between equals.
 `StructureInterpretationReport::follow_edit` re-keys a report through an
-edit's correspondence, so renamed chains and residues keep it. Coordination
+edit's correspondence, so renamed chains and residues keep it, and
+`follow_append` re-keys an appended structure's report. Coordination
 within one residue is a dative bond, so a metal complex that is one component
 stays one molecule.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.

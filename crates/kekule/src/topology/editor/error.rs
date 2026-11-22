@@ -97,7 +97,7 @@ impl fmt::Display for TopologyEditError {
             Self::HydrogenDeficit { atom, missing } => write!(
                 f,
                 "{} has {missing} more bond valence than its hydrogens can give up. \
-                 Delete a hydrogen or set its hydrogen count.",
+                 Delete a hydrogen, or set its hydrogen count or charge.",
                 Capitalized(atom)
             ),
             Self::Molecule(_) => f.write_str("Cannot edit the molecule."),

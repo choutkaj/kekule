@@ -274,3 +274,21 @@ fn coordination_in_segments_that_share_residue_numbers_is_written() {
     assert!(report.omissions().is_empty(), "{:?}", report.omissions());
     assert_eq!(written.matches(" metalc ").count(), 2, "{written}");
 }
+
+#[test]
+fn a_report_follows_its_structure_through_an_append() {
+    let water = read(&entry(&[hetatm(1, "O", "HOH", 'W', 1, 30.0)])).into_structure();
+    let zinc = read(&zinc_entry());
+    let mut editor = water.to_editor();
+    let append = editor.append_structure(zinc.structure()).unwrap();
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed = zinc
+        .report()
+        .follow_append(&append, edited.topology(), &correspondence);
+    let (written, _) = pdb::write(
+        PdbSource::structure(&edited).with_reports(std::slice::from_ref(&followed)),
+        omit_hydrogens(),
+    )
+    .unwrap();
+    assert_eq!(records(&written, "LINK").len(), 2, "{written}");
+}

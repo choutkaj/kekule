@@ -5,6 +5,7 @@ use super::types::{
     AtomProvenance, BondProvenance, CoordinationProvenance, InstanceProvenance,
     StructureInterpretationReport,
 };
+use crate::structure::StructureAppend;
 use crate::topology::edit::EditCorrespondence;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
 
@@ -30,10 +31,36 @@ impl StructureInterpretationReport {
         edited: &Topology,
         correspondence: &EditCorrespondence,
     ) -> Self {
-        let published = |atom: InstanceAtomId| {
+        self.follow(edited, |atom| {
             let index = correspondence.atoms().published(source.atom_index(atom)?)?;
             Some(edited.atom_at(index)?.id())
-        };
+        })
+    }
+
+    /// This report re-keyed to `edited`, which an editor published with
+    /// `correspondence` after appending the structure the report describes
+    /// with `append`. Only the appended atoms have provenance: the PDB writer
+    /// states their coordination, and the mmCIF writer refuses the other
+    /// atoms, which lack provenance. Otherwise as [`Self::follow_edit`].
+    #[must_use]
+    pub fn follow_append(
+        &self,
+        append: &StructureAppend,
+        edited: &Topology,
+        correspondence: &EditCorrespondence,
+    ) -> Self {
+        self.follow(edited, |atom| {
+            Some(correspondence.atom(append.atom(atom)?)?.0)
+        })
+    }
+
+    /// This report re-keyed to `edited`, with `published` naming each source
+    /// atom's published atom.
+    fn follow(
+        &self,
+        edited: &Topology,
+        published: impl Fn(InstanceAtomId) -> Option<InstanceAtomId>,
+    ) -> Self {
         let mut instances = BTreeMap::<MoleculeInstanceId, InstanceProvenance>::new();
         for instance in &self.instances {
             for atom in &instance.atoms {
@@ -59,7 +86,7 @@ impl StructureInterpretationReport {
                 target.atoms.push(followed_atom(atom, id, edited));
             }
             for bond in &instance.bonds {
-                let [Some(a), Some(b)] = bond.atoms.map(published) else {
+                let [Some(a), Some(b)] = bond.atoms.map(&published) else {
                     continue;
                 };
                 let kept = a.instance() == b.instance()

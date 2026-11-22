@@ -1561,12 +1561,13 @@ impl StructureInterpretationReport {
     /// atoms, as writers state them again. Each partner is found by the
     /// identity the report records for it: chain, residue numbers, insertion
     /// code, component, and occurrence among the chain's residues with those
-    /// identifiers, then atom names and type symbol. When several atom sites
-    /// carry it, the one with the recorded atom ID is the partner. A structure
-    /// edited since it was read numbers its atoms anew, so a report should
-    /// follow the edit first; see [`Self::follow_edit`]. A record whose
-    /// partner no atom site carries, or several without the recorded ID, does
-    /// not match.
+    /// identifiers, then atom names and type symbol. The atom with the
+    /// recorded ID is the partner while its site carries that identity;
+    /// otherwise the one atom site that carries it is. A structure edited
+    /// since it was read numbers its atoms anew, so a report should follow
+    /// the edit first; see [`Self::follow_edit`]. A record whose partner no
+    /// atom site carries, or several without the recorded ID, does not
+    /// match.
     pub(crate) fn coordination_in(&self, topology: &Topology) -> CoordinationMatch {
         let partners = self
             .coordination
@@ -1593,8 +1594,9 @@ impl StructureInterpretationReport {
             }
         }
         let bound = |atom: InstanceAtomId| match found[identities.get(&atom)?].as_slice() {
+            carriers if carriers.contains(&atom) => Some(atom),
             [only] => Some(*only),
-            several => several.contains(&atom).then_some(atom),
+            _ => None,
         };
         let mut records = Vec::new();
         let mut unmatched = 0;

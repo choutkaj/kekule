@@ -602,8 +602,9 @@ the main branch migrates by the table under "From the SampleSet API".
   gives a fixed neighbor a hydrogen per unit of lost valence; adding a bond or
   raising an order takes them back. Valence gained past the last hydrogen
   and the largest allowed valence is owed and fails publication
-  (`TopologyEditError::HydrogenDeficit`). Bonds to
-  metals and atoms with declared radicals keep their counts. Counts past 255
+  (`TopologyEditError::HydrogenDeficit`). A gain takes
+  radical electrons before hydrogens. A metal's count never changes, and a
+  donor's bond to a metal, as an ammine's, changes no count. Counts past 255
   fail with `HydrogenCountOverflow`.
 - Edited drafts publish an added atom placed in a residue that holds earlier
   atoms after the last of them, so residues stay contiguous for the PDB
@@ -684,8 +685,9 @@ the main branch migrates by the table under "From the SampleSet API".
   partners' identity, chain and residue occurrence included, instead of the
   atoms that took the recorded IDs after an edit, so segments that share
   residue numbers keep it. `StructureInterpretationReport::follow_edit`
-  re-keys a report through an edit.
-- Assembly disulfides skip sulfurs within bonding distance of a metal.
+  re-keys a report through an edit, and `follow_append` through an append.
+- Assembly disulfides skip sulfurs within bonding distance of a transition or
+  post-transition metal.
 
 ### From the SampleSet API
 

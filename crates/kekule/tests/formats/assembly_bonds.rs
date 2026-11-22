@@ -145,24 +145,47 @@ fn a_bond_to_a_chain_no_copy_holds_is_reported() {
     assert!(disulfides(built.structure()).is_empty());
 }
 
-#[test]
-fn a_sulfur_beside_a_metal_forms_no_disulfide() {
-    // A zinc ion on the two-fold axis, 2.35 A from both sulfurs, which
-    // coordinate it rather than bond each other.
+/// The disulfides an assembly of chain A and its two-fold copy forms with
+/// an ion of `element`, component `component`, on the axis 2.35 A from both
+/// sulfurs.
+fn disulfides_beside(element: &str, component: &str) -> usize {
     let text = block(
         &[("A", false)],
-        "metalc1 metalc A CYS 1 SG 1_555 B ZN . ZN 1_555\n",
-        "1 '1,2' A\n1 1 B",
+        &format!(
+            "metalc1 metalc A CYS 1 SG 1_555 B {component} . {component} 1_555
+"
+        ),
+        "1 '1,2' A
+1 1 B",
     )
     .replace(
-        "loop_\n_struct_conn.id",
-        "HETATM 8 Zn ZN ZN B 2 . 0.234 0.903 -4.600 1 B 1\nloop_\n_struct_conn.id",
+        "loop_
+_struct_conn.id",
+        &format!(
+            "HETATM 8 {element} {component} {component} B 2 . 0.234 0.903 -4.600 1 B 1
+loop_
+_struct_conn.id"
+        ),
     );
     let interpretation = read(&text);
     let assembly = &interpretation.report().assemblies()[0];
     let built = assembly.to_structure(interpretation.structure()).unwrap();
-    assert!(built.report().created_bonds().is_empty());
-    assert!(disulfides(built.structure()).is_empty());
+    assert_eq!(
+        built.report().created_bonds().len(),
+        disulfides(built.structure()).len()
+    );
+    built.report().created_bonds().len()
+}
+
+#[test]
+fn a_sulfur_beside_zinc_forms_no_disulfide() {
+    // The sulfurs coordinate the zinc rather than bond each other.
+    assert_eq!(disulfides_beside("Zn", "ZN"), 0);
+}
+
+#[test]
+fn a_sulfur_beside_sodium_still_forms_a_disulfide() {
+    assert_eq!(disulfides_beside("Na", "NA"), 1);
 }
 
 #[test]
@@ -210,12 +233,15 @@ fn stereo_across_generators_is_reported_lost() {
     let assembly = &interpretation.report().assemblies()[0];
     let built = assembly.to_structure(&stated).unwrap();
     assert!(built.report().cut_bonds().is_empty());
+    // Each chain's copy loses it.
     let lost = built.report().lost_stereo();
-    assert_eq!(lost.len(), 1);
-    let mut atoms = lost[0].atoms().to_vec();
-    atoms.sort_unstable();
+    assert_eq!(lost.len(), 2);
     let mut axis_atoms = vec![sulfur_a, sulfur_b];
     axis_atoms.sort_unstable();
-    assert_eq!(atoms, axis_atoms);
-    assert_eq!(lost[0].operation(), "1");
+    for loss in lost {
+        let mut atoms = loss.atoms().to_vec();
+        atoms.sort_unstable();
+        assert_eq!(atoms, axis_atoms);
+        assert_eq!(loss.operation(), "1");
+    }
 }

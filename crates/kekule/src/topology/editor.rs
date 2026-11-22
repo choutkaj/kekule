@@ -19,7 +19,7 @@ macro_rules! with_group_graph {
 
 mod append;
 mod error;
-mod fixed_counts;
+pub(crate) mod fixed_counts;
 mod hierarchy;
 mod identity;
 mod overlay;
@@ -693,7 +693,7 @@ impl TopologyEditor {
             return Ok(atom);
         }
         let previous = self.draft_mut(loc.group).replace_atom(loc.local, atom)?;
-        self.hydrogen_deficits.remove(&id);
+        self.settle_replaced_deficit(id)?;
         self.mark_group_changed(loc.group);
         self.invalidate_component_classes([id]);
         self.invalidate_residue_for_atom(id);
@@ -707,8 +707,10 @@ impl TopologyEditor {
     /// each unit of bond valence it loses, as an inferred count does on
     /// perception: a deleted substituent leaves a hydrogen in its place, and
     /// a deleted explicit hydrogen stays as an implicit one. A neighbor with
-    /// declared radical electrons keeps its count, and so do both ends of a
-    /// bond to a metal, which is coordination. To remove a hydrogen for
+    /// declared radical electrons gains only the hydrogens its valence has
+    /// room for. A metal's count never changes, and a neighbor that donates
+    /// to a metal, as an ammine nitrogen does, keeps its count when the bond
+    /// goes; other bonds to metals are covalent. To remove a hydrogen for
     /// good, as for hydroxide from water, delete it and then set the atom's
     /// charge and count with [`Self::replace_atom`]. Deleting a bridging atom
     /// splits its molecule at publication.
@@ -727,7 +729,7 @@ impl TopologyEditor {
         changes.forget(id);
         let mut counts = self.fixed_counts_after(&changes)?;
         if let Some(parent) = self.hand_carriers_to_implicit_hydrogen(id)? {
-            counts.push(Self::fixed_count(parent, 1));
+            counts.push(self.fixed_count(parent, 1)?);
         }
         let previous = self.remove_atom(id)?;
         self.set_fixed_counts(counts)?;
@@ -834,12 +836,13 @@ impl TopologyEditor {
     /// Adds an asserted bond. Different instances are merged transactionally.
     ///
     /// An endpoint with a fixed implicit-hydrogen count gives up a hydrogen
-    /// for each unit of bond valence it gains. Past its last hydrogen the
-    /// gain fills open valence; past its largest allowed valence it is owed,
-    /// later losses pay it back first, and publication fails with
-    /// [`TopologyEditError::HydrogenDeficit`] while any is owed. A bond
-    /// to a metal changes neither endpoint's count, and an endpoint with
-    /// declared radical electrons keeps its count.
+    /// for each unit of bond valence it gains, after its declared radical
+    /// electrons. Past its last hydrogen the gain fills open valence; past
+    /// its largest allowed valence it is owed, later losses pay it back
+    /// first, and publication fails with
+    /// [`TopologyEditError::HydrogenDeficit`] while any is owed. A metal's
+    /// count never changes, and neither does a donor's for its bond to a
+    /// metal; see [`Self::delete_atom`].
     ///
     /// # Errors
     ///
@@ -914,8 +917,8 @@ impl TopologyEditor {
     /// publication.
     ///
     /// An endpoint with a fixed implicit-hydrogen count gains a hydrogen for
-    /// each unit of bond valence it loses, as for [`Self::delete_atom`],
-    /// except at a metal bond or a declared radical.
+    /// each unit of bond valence it loses, with the exceptions of
+    /// [`Self::delete_atom`].
     ///
     /// # Errors
     ///

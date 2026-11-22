@@ -220,6 +220,18 @@ impl TopologyEditor {
         let replaced_local = replaced
             .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
             .transpose()?;
+        // The parent's count follows the new bond and the bond to the
+        // hydrogen it replaces, as edits make it follow.
+        let mut changes = super::ValenceChanges::default();
+        changes.change(parent, atom.element.is_metal(), None, Some(order));
+        if let Some(hydrogen) = replaced {
+            let bond = self
+                .bond_between(parent, hydrogen)?
+                .ok_or(TopologyEditError::InvalidAtom(hydrogen))?;
+            let bond = self.require_bond(bond)?.order;
+            changes.change(parent, false, Some(bond), None);
+        }
+        let counts = self.fixed_counts_after(&changes)?;
         let draft = self.draft_mut(loc.group);
         let local = draft.add_atom(atom)?;
         let bond = if order == BondOrder::Single {
@@ -274,6 +286,7 @@ impl TopologyEditor {
             self.remove_atom(hydrogen)?;
             dead = Some((atom_slot, bond_slots));
         }
+        self.set_fixed_counts(counts)?;
         Ok(AttachedInInstance { atom, bond, dead })
     }
 

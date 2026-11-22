@@ -1,4 +1,5 @@
 //! Shared connected-component publication for subsets and structural editors.
+use super::editor::fixed_counts::{settle, BondValence};
 use super::TopologyBuilder;
 use crate::molecule::{
     AtomId, BondId, Graph, ImplicitHydrogens, MoleculeEditor, MoleculeError,
@@ -59,14 +60,12 @@ where
         let mut editor = MoleculeEditor::new();
         for &atom in &component {
             let mut value = source_molecule.require_atom(atom)?.clone();
-            if let (ImplicitHydrogens::Fixed(count), None) = (value.hydrogens, value.radical) {
-                let cut = cut_valence(source_molecule, selected_local, atom)?;
-                if cut > 0 {
-                    let total = usize::from(count) + cut;
-                    let total = u8::try_from(total)
-                        .map_err(|_| MoleculeError::HydrogenCountOverflow { atom, count: total })?;
-                    value.hydrogens = ImplicitHydrogens::Fixed(total);
-                }
+            let (before, after) = cut_valence(source_molecule, selected_local, atom)?;
+            let settled = settle(&value, 0, before, after)
+                .map_err(|count| MoleculeError::HydrogenCountOverflow { atom, count })?;
+            if let Some(settled) = settled {
+                value.hydrogens = ImplicitHydrogens::Fixed(settled.count);
+                value.radical = settled.radical;
             }
             let target_atom = editor.add_atom(value)?;
             local_atoms.insert(atom, (components.len(), target_atom));
@@ -189,28 +188,25 @@ struct ComponentDraft {
 }
 
 /// The bond valence `atom` loses to neighbors outside `selected`.
+/// `atom`'s bond valence in `molecule`, and within `selected`.
 fn cut_valence<L: SlotLiveness>(
     molecule: &Graph<L>,
     selected: &BTreeSet<AtomId>,
     atom: AtomId,
-) -> Result<usize, MoleculeError> {
-    // A bond to a metal is coordination, not a place a hydrogen takes.
-    let metal = |atom| {
-        molecule
-            .atom(atom)
-            .is_some_and(|atom| atom.element.is_metal())
-    };
-    if metal(atom) {
-        return Ok(0);
+) -> Result<(BondValence, BondValence), MoleculeError> {
+    let mut before = BondValence::default();
+    let mut after = BondValence::default();
+    for (_, bond) in molecule.require_incident_bonds(atom)? {
+        let other = bond.other_atom(atom);
+        let metal = molecule
+            .atom(other)
+            .is_some_and(|atom| atom.element.is_metal());
+        before.add(metal, bond.order);
+        if selected.contains(&other) {
+            after.add(metal, bond.order);
+        }
     }
-    Ok(molecule
-        .require_incident_bonds(atom)?
-        .filter(|(_, bond)| {
-            let other = bond.other_atom(atom);
-            !selected.contains(&other) && !metal(other)
-        })
-        .map(|(_, bond)| usize::from(bond.order.valence()))
-        .sum())
+    Ok((before, after))
 }
 
 // Retain an assertion only when all its represented references survive in the

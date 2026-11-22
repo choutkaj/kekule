@@ -39,12 +39,16 @@ count can change with bond order or charge. Topology and structure edits keep a
 fixed count whole: an atom gains a hydrogen for each unit of bond valence a
 deletion, a lower order, or a subset cut takes from it, and gives one up for
 each unit a new bond or a higher order adds. A deleted explicit hydrogen of a
-fixed atom stays as an implicit one. Past the last hydrogen a gain fills open
-valence; past the largest allowed valence it is owed: later losses pay it back
-first, and publication fails with
+fixed atom stays as an implicit one. A gain takes a declared radical electron
+first, then a hydrogen, then fills open valence; past the largest allowed
+valence it is owed: later losses pay it back first, and publication fails with
 `TopologyEditError::HydrogenDeficit` while any is owed, rather than silently
-dropping valence. A bond to a metal is coordination, so it changes neither
-endpoint's count, and an atom with declared radical electrons keeps its count.
+dropping valence. A loss adds hydrogens only for valence the radical electrons
+and hydrogens leave unfilled, so deleting a hydrogen of an atom declared a
+radical leaves the radical. A metal's count never changes. A non-metal's bond
+to a metal changes no count when the non-metal donates to it, as an ammine
+does; otherwise it is covalent, so a chloride or a methyl cut from its metal
+takes a hydrogen.
 To remove a hydrogen for good, as for hydroxide from water, delete it and set
 the atom's charge and count with `TopologyEditor::replace_atom`. A molecule draft (`MoleculeEditor`) edits the
 graph as stated and keeps counts as they are;
