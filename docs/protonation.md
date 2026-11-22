@@ -224,10 +224,11 @@ residue whose component neither the caller's library nor the bundle holds:
 - Atoms match by name and element. A residue with a heavy atom the entry
   does not name takes none of its charges, and is reported
   (`DictionaryAtomsUnmatched`). Atoms the residue lacks need no match.
-- An atom takes its dictionary charge when the source states no charge for
-  it and no model hydrogen bonds it. So tris without hydrogens is the
-  ammonium, and with two hydrogens on its nitrogen it is the amine. A
-  stated 0 counts, unlike in a templated residue without hydrogens, so a
+- An atom takes its dictionary charge when neither the source nor the
+  block's `_chem_comp_atom` table states a charge for it and no model
+  hydrogen bonds it, whatever the other atoms state. So tris without
+  hydrogens is the ammonium, and with two hydrogens on its nitrogen it is
+  the amine. A stated 0 counts, unlike in a templated residue without hydrogens, so a
   written neutral amine reads back as one: writers check the charges
   readers derive only for templated residues.
 - A charge the atom's bonds cannot hold does not apply, as -1 on a chloride

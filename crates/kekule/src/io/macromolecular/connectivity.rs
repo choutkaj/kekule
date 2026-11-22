@@ -1416,11 +1416,7 @@ impl<'r> Resolver<'r, '_> {
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         let id = residue.key.id(self.model_id);
         let component_id = normalized(&residue.key.component_id);
-        let (dictionary, unheld) = if self.catalog.component_charges.contains_key(&component_id) {
-            (None, Vec::new())
-        } else {
-            self.dictionary_charges(residue, &id)?
-        };
+        let (dictionary, unheld) = self.dictionary_charges(residue, &id)?;
         let block = self.catalog.component_charges.get(&component_id);
         let stated = residue
             .sites
@@ -1460,17 +1456,15 @@ impl<'r> Resolver<'r, '_> {
             if site.stated_charge.is_some() {
                 continue;
             }
-            if let Some(charge) = block
-                .and_then(|atoms| atoms.get(&site.name).copied())
-                .or_else(|| from_dictionary(site.atom))
-            {
+            let block_charge = block.and_then(|atoms| atoms.get(&site.name).copied());
+            if let Some(charge) = block_charge.or_else(|| from_dictionary(site.atom)) {
                 match charge {
                     Some(charge) => {
                         self.graph
                             .require_atom_mut(site.atom)
                             .map_err(interpret_error)?
                             .formal_charge = charge;
-                        if block.is_none() {
+                        if block_charge.is_none() {
                             dictionary_charged.push((site.name.clone(), charge));
                         }
                     }
@@ -1510,6 +1504,7 @@ impl<'r> Resolver<'r, '_> {
             let mut deprotonated = false;
             for site in &residue.sites {
                 if site.stated_charge.is_none()
+                    && !block.is_some_and(|atoms| atoms.contains_key(&site.name))
                     && from_dictionary(site.atom).is_none()
                     && is_acid_hydroxyl(self.graph, site.atom)
                     && holds_charge(self.graph, site.atom, -1)
@@ -1619,7 +1614,8 @@ impl<'r> Resolver<'r, '_> {
     /// by atom: atoms it charges, with `None` where it states the charge as
     /// unknown, and the charges, by atom name, that the atom's bonds cannot
     /// hold, which do not apply. They apply to atoms whose charge neither the
-    /// source nor a bonded hydrogen states. `None` when the residue's
+    /// source, its block's component atom table, nor a bonded hydrogen
+    /// states. `None` when the residue's
     /// component has a template or no entry, or no atom takes a charge from
     /// it; also when the entry does not name each of the residue's atoms
     /// with its element, hydrogens aside, which is reported.
@@ -1634,9 +1630,16 @@ impl<'r> Resolver<'r, '_> {
         let Some(entry) = DictionaryCharges::get(&residue.key.component_id) else {
             return Ok((None, Vec::new()));
         };
+        let block = self
+            .catalog
+            .component_charges
+            .get(&normalized(&residue.key.component_id));
         let mut open = Vec::new();
         for site in &residue.sites {
-            if site.stated_charge.is_none() && self.hydrogen_neighbours(site.atom)? == 0 {
+            if site.stated_charge.is_none()
+                && !block.is_some_and(|atoms| atoms.contains_key(&site.name))
+                && self.hydrogen_neighbours(site.atom)? == 0
+            {
                 open.push(site);
             }
         }

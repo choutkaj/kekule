@@ -278,6 +278,39 @@ fn stated_charges_outrank_the_dictionary() {
     assert!(dictionary_issues(&result).is_empty());
 }
 
+#[test]
+fn atoms_the_blocks_component_table_omits_take_their_dictionary_charges() {
+    // The block's `_chem_comp_atom` states the charge of one tris carbon
+    // only; the nitrogen, which it omits, still takes the dictionary's +1.
+    let mut text = String::from(
+        "data_test\nloop_\n_chem_comp_atom.comp_id\n_chem_comp_atom.atom_id\n\
+         _chem_comp_atom.type_symbol\n_chem_comp_atom.charge\nTRS C C 0\n\
+         loop_\n_atom_site.group_PDB\n_atom_site.id\n_atom_site.type_symbol\n\
+         _atom_site.label_atom_id\n_atom_site.label_comp_id\n_atom_site.label_asym_id\n\
+         _atom_site.label_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n_atom_site.Cartn_z\n",
+    );
+    for (index, (name, element, [x, y, z])) in TRIS
+        .iter()
+        .filter(|(_, element, _)| *element != "H")
+        .enumerate()
+    {
+        text.push_str(&format!(
+            "HETATM {} {element} {name} TRS A . {x} {y} {z}\n",
+            index + 1
+        ));
+    }
+    let result = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(charge(&result, "TRS", "N"), 1);
+    assert_eq!(charge(&result, "TRS", "C"), 0);
+    assert_eq!(
+        applied(&result),
+        vec![("TRS".to_owned(), named(&[("N", 1)]), Vec::new())]
+    );
+}
+
 /// A block of betaine's heavy atoms, with its component bond table when
 /// `orders` holds.
 fn betaine_block(orders: bool) -> String {
