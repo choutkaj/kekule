@@ -6,7 +6,10 @@
 //! other residues or a `TER` record names a new residue, as when numbering
 //! wraps around or a segment restarts it. Without entity records, a chain's
 //! polymer is read from its `TER` records, and its residues' order gives
-//! polymer adjacency.
+//! polymer adjacency. A residue of `HETATM` records in it is polymer only
+//! when its template is a polymer one or, without a template, it has an atom
+//! a polymer link joins (`N`, `C`, `P`, `O3'`, or `O3*`), so a ligand listed
+//! between two residues does not separate them.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::types::{poll, poll_every, structure_error};
@@ -30,6 +33,7 @@ use super::types::{
     StructureSetInterpretation,
 };
 use super::{interpret_source, stated_cell, AltLocResidue, StructureSource};
+use crate::components::{ComponentLibrary, ComponentLinking};
 
 pub(crate) fn interpret_pdb(
     document: &PdbDocument,
@@ -82,7 +86,7 @@ pub(crate) fn interpret_pdb_conformations(
 pub(crate) fn pdb_alternate_locations(
     document: &PdbDocument,
 ) -> Result<Vec<AltLocResidue>, FormatError> {
-    inventory(&read_rows(document, None)?.0)
+    inventory(&read_rows(document, None, None)?.0)
 }
 
 fn pdb_source(
@@ -98,7 +102,11 @@ fn pdb_source(
             "A PDB entry declares no entity types. Turn off strict entity metadata.",
         ));
     }
-    let (rows, inferred) = read_rows(document, cancellation)?;
+    let (rows, inferred) = read_rows(
+        document,
+        connectivity.components().map(|library| library.as_ref()),
+        cancellation,
+    )?;
     poll(cancellation)?;
     let mut polymer_order = BTreeMap::new();
     for row in rows.iter().filter(|row| row.polymer_position.is_some()) {
@@ -178,6 +186,10 @@ struct Residue {
     repeat: usize,
     atom_record: bool,
     water: bool,
+    /// Whether its template is a polymer one, or `None` without a template.
+    polymer_template: Option<bool>,
+    /// Whether it has an atom a polymer link joins.
+    linking_atom: bool,
     polymer_position: Option<i32>,
 }
 
@@ -190,8 +202,8 @@ struct ChainRuns {
 
 impl ChainRuns {
     /// Ends a chain's run. A run a `TER` record ends is polymer; otherwise its
-    /// polymer spans its `ATOM` records. Water is never polymer, and neither
-    /// is a single residue.
+    /// polymer spans its `ATOM` records. Water is never polymer, nor is a
+    /// residue of `HETATM` records that cannot be, nor a single residue.
     fn close(&mut self, asym_id: &str, terminated: bool, residues: &mut [Residue]) {
         let Some(run) = self.open.remove(asym_id) else {
             return;
@@ -213,7 +225,12 @@ impl ChainRuns {
         let polymer = span
             .iter()
             .copied()
-            .filter(|&residue| !residues[residue].water)
+            .filter(|&residue| {
+                let residue = &residues[residue];
+                !residue.water
+                    && (residue.atom_record
+                        || residue.polymer_template.unwrap_or(residue.linking_atom))
+            })
             .collect::<Vec<_>>();
         if polymer.len() < 2 {
             return;
@@ -239,6 +256,7 @@ impl ChainRuns {
 /// inferred from the atom name.
 fn read_rows(
     document: &PdbDocument,
+    components: Option<&ComponentLibrary>,
     cancellation: Option<&Cancellation>,
 ) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
     let atoms = document.atoms();
@@ -288,6 +306,8 @@ fn read_rows(
                     repeat: *repeat,
                     atom_record: false,
                     water: is_water(atom.residue_name()),
+                    polymer_template: polymer_template(atom.residue_name(), components),
+                    linking_atom: false,
                     polymer_position: None,
                 });
                 *repeat += 1;
@@ -300,6 +320,7 @@ fn read_rows(
             }
         };
         residues[residue].atom_record |= atom.kind() == PdbAtomKind::Atom;
+        residues[residue].linking_atom |= matches!(atom.name(), "N" | "C" | "P" | "O3'" | "O3*");
         residue_of.push(residue);
         if terminated.contains(&index) {
             let chain = residues[residue].asym_id.clone();
@@ -396,6 +417,19 @@ fn read_rows(
     Ok((rows, inferred))
 }
 
+/// Whether the template of a residue named `name` is a polymer one, or
+/// `None` when no template has that name: the caller's library first, then
+/// the bundled one.
+fn polymer_template(name: &str, components: Option<&ComponentLibrary>) -> Option<bool> {
+    let template = components
+        .and_then(|library| library.get(name))
+        .or_else(|| ComponentLibrary::bundled().get(name))?;
+    Some(matches!(
+        template.linking(),
+        ComponentLinking::Peptide | ComponentLinking::Nucleotide
+    ))
+}
+
 /// The element a PDB atom name implies by convention: two-letter symbols
 /// start in column 13, one-letter symbols in column 14, and four-character
 /// hydrogen names fill columns 13-16. A one-atom residue named for its
@@ -446,13 +480,14 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             connection_id: None,
             connection_type: "LINK".to_owned(),
             line: Some(record.location().line()),
-            order: DeclaredOrder::ByElements(BondOrder::Single),
+            order: DeclaredOrder::ByElements(None),
             partners: [partner(left, None), partner(right, None)],
             connectivity_only: false,
         })));
     }
     // Each bond is usually listed from both atoms. Listing a partner twice or
-    // three times states a double or triple bond, by convention.
+    // three times states a double or triple bond, by convention, as Maestro
+    // and Kekule write.
     let mut listed = BTreeMap::<(u32, u32), ([u8; 2], usize)>::new();
     for record in document.conect_records() {
         let serial = record.serial();
@@ -472,13 +507,18 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             counts[direction] = counts[direction].saturating_add(1);
         }
     }
+    // A file that lists no pair twice, as wwPDB files do, states no orders.
+    let states_orders = listed
+        .values()
+        .any(|(counts, _)| counts.iter().any(|&count| count > 1));
     let mut listed = listed.into_iter().collect::<Vec<_>>();
     listed.sort_by_key(|&(pair, (_, line))| (line, pair));
     for ((left, right), (counts, line)) in listed {
         let order = match counts[0].max(counts[1]) {
-            1 => BondOrder::Single,
-            2 => BondOrder::Double,
-            3 => BondOrder::Triple,
+            _ if !states_orders => None,
+            1 => Some(BondOrder::Single),
+            2 => Some(BondOrder::Double),
+            3 => Some(BondOrder::Triple),
             count => {
                 return Err(structure_error(
                     DiagnosticKind::InvalidValue,

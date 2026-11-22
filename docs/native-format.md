@@ -509,6 +509,11 @@ An issue is its kind, then its fields in declaration order, with lists as
 | 9 | `AlternateLocationCombinationRejected` | 19 | `AssemblyOmitted` |
 | | | 20 | `DisulfideInferred` |
 | | | 21 | `ForceFieldTemplate` |
+| | | 22 | `ResidueBondOrdersUnstated` |
+| | | 23 | `BondNotInTemplate` |
+| | | 24 | `BondOrderDiffersFromTemplate` |
+| | | 25 | `PolymerLinkSkipped` |
+| | | 26 | `LinkingAtomMissing` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

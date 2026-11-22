@@ -1110,26 +1110,3 @@ fn template_mismatches_fail_and_split_residues_are_reported() {
         }]
     );
 }
-
-#[test]
-fn stated_internal_bonds_take_precedence_over_templates() {
-    // Files that enumerate a residue's bonds, as Kekule's writer does,
-    // are taken as stated; the template does not add the others.
-    let text = block(
-            &DIGLYCINE.lines().take(5).collect::<Vec<_>>().join("\n"),
-            "loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n_struct_conn.ptnr1_label_asym_id\n_struct_conn.ptnr1_label_atom_id\n_struct_conn.ptnr1_label_seq_id\n_struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_atom_id\n_struct_conn.ptnr2_label_seq_id\nc1 covale A N 1 A CA 1\n",
-        );
-    let stated = interpret(&text);
-    assert_eq!(
-        bonds(&stated),
-        [(
-            "N".to_owned(),
-            "CA".to_owned(),
-            BondOrder::Single,
-            BondEvidence::Connection {
-                connection_id: Some("c1".to_owned()),
-                connection_type: "covale".to_owned(),
-            },
-        )]
-    );
-}

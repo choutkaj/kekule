@@ -553,6 +553,55 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.str(force_field)
             }
+            Issue::ResidueBondOrdersUnstated {
+                residue,
+                component_id,
+                bonds,
+            } => {
+                self.u8(22)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.usize(*bonds)
+            }
+            Issue::BondNotInTemplate {
+                residue,
+                component_id,
+                atoms: [left, right],
+            } => {
+                self.u8(23)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(left)?;
+                self.str(right)
+            }
+            Issue::BondOrderDiffersFromTemplate {
+                residue,
+                component_id,
+                atoms: [left, right],
+                order,
+                template_order,
+            } => {
+                self.u8(24)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(left)?;
+                self.str(right)?;
+                self.u8(super::bond_order_code(*order))?;
+                self.u8(template_order.map_or(
+                    super::super::AROMATIC_TEMPLATE_ORDER,
+                    super::bond_order_code,
+                ))
+            }
+            Issue::PolymerLinkSkipped { residue, next } => {
+                self.u8(25)?;
+                self.residue(residue)?;
+                self.residue(next)
+            }
+            Issue::LinkingAtomMissing { residue, next } => {
+                self.u8(26)?;
+                self.residue(residue)?;
+                self.residue(next)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,

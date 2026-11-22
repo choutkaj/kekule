@@ -1456,8 +1456,8 @@ struct ConectPlan {
 }
 
 /// The template a reader applies to each residue without templates from the
-/// caller: the bundled one of its name, else the force-field template of its
-/// name that names all its heavy atoms.
+/// caller: the bundled one of its name when its atoms fit it, else the
+/// force-field template of its name that names all its heavy atoms.
 fn residue_templates<'r>(
     topology: &Topology,
     records: &'r [AtomRecord],
@@ -1478,12 +1478,10 @@ fn residue_templates<'r>(
         .into_iter()
         .filter_map(|(key, atoms)| {
             let id = &records[atoms[0]].residue_name;
-            let template = ComponentLibrary::bundled().get(id).or_else(|| {
-                let atoms = atoms
-                    .iter()
-                    .map(|&index| (records[index].name.trim(), element(index)));
-                ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
-            })?;
+            let atoms = atoms
+                .iter()
+                .map(|&index| (records[index].name.trim(), element(index)));
+            let (template, _) = ComponentLibrary::default_template(id, atoms)?;
             Some((key, template))
         })
         .collect()

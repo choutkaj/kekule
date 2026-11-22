@@ -331,9 +331,9 @@ impl ComponentLibrary {
     /// which distance inference finds.
     ///
     /// Readers apply a template of this library by default to a residue
-    /// whose name neither the caller's templates nor the bundled ones
-    /// define, when its atoms fit the template (see
-    /// [`ConnectivityOptions`](crate::macromolecular::ConnectivityOptions)).
+    /// whose name the caller's templates do not define and whose atoms fit
+    /// no bundled template of that name, when its atoms fit the template
+    /// (see [`ConnectivityOptions`](crate::macromolecular::ConnectivityOptions)).
     /// Supplying the library as context also applies the names that collide
     /// with dictionary identifiers, such as `ASP` and `GLU`.
     pub fn amber() -> Self {
@@ -357,26 +357,31 @@ impl ComponentLibrary {
     /// them. Nucleic acids keep dictionary names.
     ///
     /// Readers apply its templates by default as they do [`Self::amber`]'s,
-    /// after AMBER's. Supplying the library as context also applies the
-    /// names that collide with dictionary identifiers: CHARMM `CLA` is
+    /// after AMBER's, so a C-terminal isoleucine with `CD`, `OT1`, and `OT2`
+    /// reads without this library as context. Supplying the library as
+    /// context also applies the names that collide with dictionary
+    /// identifiers: CHARMM `CLA` is
     /// chloride, the dictionary's chlorophyll a.
     pub fn charmm() -> Self {
         force_field::charmm()
     }
 
-    /// The force-field template a reader applies to a residue named `id`
-    /// whose atoms, by name and element, are `atoms`, when no library it
-    /// consults defines `id`: the AMBER template of that name, else the
-    /// CHARMM one, the first that [fits](Component::fits) the atoms, and the
-    /// force field's name. `None` when the bundled library defines `id`.
-    pub(crate) fn force_field_template<'a>(
+    /// The template a reader applies to a residue named `id` whose atoms, by
+    /// name and element, are `atoms`, when the caller's library does not
+    /// define `id`: the bundled template when the atoms [fit](Component::fits)
+    /// it, else the AMBER template of that name, else the CHARMM one, the
+    /// first that fits, with the force field's name, else the bundled
+    /// template the atoms do not fit, which a reader rejects. `None` when no
+    /// template of that name exists or fits.
+    pub(crate) fn default_template<'a>(
         id: &str,
         atoms: impl IntoIterator<Item = (&'a str, Element)> + Clone,
-    ) -> Option<(&'static Component, &'static str)> {
+    ) -> Option<(&'static Component, Option<&'static str>)> {
         static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
         static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
-        if Self::bundled().get(id).is_some() {
-            return None;
+        let bundled = Self::bundled().get(id);
+        if bundled.is_some_and(|component| component.fits(atoms.clone())) {
+            return bundled.map(|component| (component, None));
         }
         [
             (AMBER.get_or_init(force_field::amber), "AMBER"),
@@ -387,8 +392,9 @@ impl ComponentLibrary {
             let component = library.get(id)?;
             component
                 .fits(atoms.clone())
-                .then_some((component, force_field))
+                .then_some((component, Some(force_field)))
         })
+        .or_else(|| bundled.map(|component| (component, None)))
     }
 
     /// Reads every data block that defines component atoms, such as a CCD

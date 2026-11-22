@@ -1869,9 +1869,34 @@ fn force_field_libraries_interpret_their_residue_names() {
         })
         .collect::<Vec<_>>();
     assert_eq!(attached, [("HT1", "N"), ("HT2", "N"), ("HT3", "N")]);
-    // Without the library, CHARMM chloride meets the dictionary's chlorophyll a.
-    let error = document.interpret(Default::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    // Without the library, each residue fits no dictionary template of its
+    // name, such as chlorophyll a for CHARMM chloride, and reads with the
+    // CHARMM one, which the report names.
+    let untemplated = document.interpret(Default::default()).unwrap();
+    assert_eq!(untemplated.topology().bond_count(), 23);
+    assert_eq!(charges(&untemplated), charges(&templated));
+    let force_field = untemplated
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ForceFieldTemplate {
+                component_id,
+                force_field,
+                ..
+            } => Some((component_id.as_str(), force_field.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        force_field,
+        [
+            ("ILE", "CHARMM"),
+            ("TIP3", "CHARMM"),
+            ("SOD", "CHARMM"),
+            ("CLA", "CHARMM")
+        ]
+    );
 }
 
 #[test]

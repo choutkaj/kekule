@@ -37,14 +37,17 @@ pub(super) fn residue_key(row: &AtomRow) -> ResidueKey<'_> {
 
 /// Marks each connection the reader derives, given the rows' elements in
 /// row order and coordinates written to `precision` decimal places.
-/// Connections reference rows through `row_of`.
+/// Connections reference rows through `row_of`. Returns, for each residue
+/// whose template the reader applies but whose atoms lack one of its bonds
+/// between heavy atoms, the rows of the first such pair: the reader adds
+/// the bond, so no `_struct_conn` row can keep it out.
 pub(super) fn mark_implied(
     rows: &[AtomRow],
     elements: &[Element],
     connections: &mut [ConnectionRow],
     row_of: &BTreeMap<crate::topology::InstanceAtomId, usize>,
     precision: usize,
-) {
+) -> Vec<[usize; 2]> {
     let mut residues = BTreeMap::<ResidueKey<'_>, Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
         residues.entry(residue_key(row)).or_default().push(index);
@@ -67,18 +70,24 @@ pub(super) fn mark_implied(
     }
 
     let library = ComponentLibrary::bundled();
+    let mut missing = Vec::new();
     for members in &residues {
         let id = &rows[members[0]].label_comp_id;
-        let Some(component) = library.get(id).or_else(|| {
-            let atoms = members
-                .iter()
-                .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
-            ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
-        }) else {
+        let atoms = members
+            .iter()
+            .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
+        let Some((component, _)) = ComponentLibrary::default_template(id, atoms) else {
             continue;
         };
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
         if !rebuilt_by_template(component, members, rows, elements, connections, &neighbours) {
+            missing.extend(missing_template_bond(
+                component,
+                members,
+                rows,
+                elements,
+                &neighbours,
+            ));
             continue;
         }
         for &row in members {
@@ -150,6 +159,40 @@ pub(super) fn mark_implied(
             connections[index].implied = Some(Implied::PolymerLink);
         }
     }
+    missing
+}
+
+/// The rows of the first bond between two heavy atoms of `component` that
+/// the residue lacks, when its atoms fit the component, as the reader
+/// requires to apply it.
+fn missing_template_bond(
+    component: &Component,
+    members: &[usize],
+    rows: &[AtomRow],
+    elements: &[Element],
+    neighbours: &[Vec<(usize, usize)>],
+) -> Option<[usize; 2]> {
+    if !component.fits(
+        members
+            .iter()
+            .map(|&row| (rows[row].label_atom_id.as_str(), elements[row])),
+    ) {
+        return None;
+    }
+    let row_of = |name: &str| {
+        members
+            .iter()
+            .copied()
+            .find(|&row| rows[row].label_atom_id == name)
+    };
+    component.bonds().iter().find_map(|bond| {
+        let [a, b] = bond.atoms().map(|atom| &component.atoms()[atom]);
+        if a.element().atomic_number() == 1 || b.element().atomic_number() == 1 {
+            return None;
+        }
+        let (left, right) = (row_of(a.name())?, row_of(b.name())?);
+        (!neighbours[left].iter().any(|&(other, _)| other == right)).then_some([left, right])
+    })
 }
 
 /// Whether reading the residue with its template gives it exactly its

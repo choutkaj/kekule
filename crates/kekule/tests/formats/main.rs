@@ -5,6 +5,7 @@
 mod support;
 
 mod assemblies;
+mod bond_sources;
 mod cancellation;
 mod canonical_smiles;
 mod components;
