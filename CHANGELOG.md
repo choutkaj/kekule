@@ -308,6 +308,11 @@ the main branch migrates by the table under "From the SampleSet API".
 - The bundled components include the ions `LI`, `RB`, `CS`, `SR`, `BA`,
   `AL`, and `F`, so PDB and mmCIF ions without a charge column read as
   Li+, Rb+, Cs+, Sr2+, Ba2+, Al3+, and F-.
+- `MolfileInterpretIssue`, `XyzInterpretIssue`, and
+  `UnrepresentableStereoReason` implement `Display` with sentences for
+  users. Molfile issues name atoms and bonds by source line, and XYZ
+  issues number atoms from 1 in file order. `ChargesSeparated` gains the
+  acceptor's line, `acceptor_location`.
 
 ### Changed
 
@@ -640,6 +645,10 @@ the main branch migrates by the table under "From the SampleSet API".
   and numbers that go back (`NumbersRestart`), each field named by a
   `NumberField`. `PdbAtom::charge_is_unsigned`, `PdbConect::model`, and
   `PdbDocument::hexadecimal_numbers` expose them.
+- **Breaking:** `MolfileInterpretIssue::CoordinateStereoValenceUnsupported`
+  names the first atom outside the valence model and its source line
+  (`atom`, `location`). Its `ValenceError` names atoms of the published
+  molecule.
 
 ### Removed
 

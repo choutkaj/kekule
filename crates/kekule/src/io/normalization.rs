@@ -83,6 +83,20 @@ pub enum UnrepresentableStereoReason {
     SeveralCandidateAxes,
 }
 
+/// Writes the reason as a sentence, such as `The marked atom has more than
+/// four neighbors.`
+impl fmt::Display for UnrepresentableStereoReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ZeroOrDativeBond => "The marked atom has a zero-order or dative bond.",
+            Self::MoreThanFourNeighbors => "The marked atom has more than four neighbors.",
+            Self::SeveralCandidateAxes => {
+                "The marked atom has several bonds that could be the marked axis."
+            }
+        })
+    }
+}
+
 /// One concrete source-stereo normalization issue.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SourceStereoNormalizationIssue {

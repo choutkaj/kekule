@@ -1,9 +1,10 @@
 //! Interprets XYZ frames as structures whose connectivity is inferred from
 //! interatomic distances.
 use std::collections::{BTreeSet, HashMap};
+use std::fmt;
 
 use crate::diagnostics::{
-    DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
+    counted, DiagnosticKind, Format, FormatError, FormatErrorDetail, LimitExceeded, Resource,
     SourceLocation, UnsupportedContent,
 };
 use crate::fixed_u32_id::FixedId;
@@ -309,6 +310,85 @@ pub enum XyzInterpretIssue {
         /// The atom line.
         location: SourceLocation,
     },
+}
+
+/// Writes the issue as one or two sentences, such as `Atoms 2 and 5 are 1.85
+/// Å apart, near bonding distance. They are not bonded.` Atoms are numbered
+/// from 1 in file order.
+impl fmt::Display for XyzInterpretIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BondOrdersAndChargesUnknown => formatter.write_str(
+                "The XYZ file states no bond orders or charges. Bonds are read as single or \
+                 dative, and atoms as neutral.",
+            ),
+            Self::FallbackCovalentRadius { atom, element } => write!(
+                formatter,
+                "Atom {} ({element}) has no tabulated covalent radius. Its bonds use the \
+                 fallback radius.",
+                AtomNumber(*atom)
+            ),
+            Self::CloseContact {
+                atoms: [left, right],
+                distance,
+            } => write!(
+                formatter,
+                "Atoms {} and {} are only {} apart. They are not bonded.",
+                AtomNumber(*left),
+                AtomNumber(*right),
+                Distance(distance)
+            ),
+            Self::LongContactNotBonded {
+                atoms: [left, right],
+                distance,
+            } => write!(
+                formatter,
+                "Atoms {} and {} are {} apart, near bonding distance. They are not bonded.",
+                AtomNumber(*left),
+                AtomNumber(*right),
+                Distance(distance)
+            ),
+            Self::ValenceExceeded {
+                atom,
+                element,
+                bonds,
+                maximum,
+            } => write!(
+                formatter,
+                "Atom {} ({element}) has {}, more than its largest valence of {maximum}. Its \
+                 distances do not give its connectivity.",
+                AtomNumber(*atom),
+                counted(*bonds, "single bond", "single bonds")
+            ),
+            Self::ExtraColumnsOmitted { atom, location } => write!(
+                formatter,
+                "The columns after the coordinates of atom {} at {location} are not read.",
+                AtomNumber(*atom)
+            ),
+        }
+    }
+}
+
+/// An atom's number in the file, counted from 1.
+struct AtomNumber(TopologyAtomIndex);
+
+impl fmt::Display for AtomNumber {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0.index() + 1)
+    }
+}
+
+/// A distance in ångströms to two decimals, or in its own unit when it does
+/// not convert.
+struct Distance<'a>(&'a Quantity<f64>);
+
+impl fmt::Display for Distance<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0.value_in(ANGSTROM) {
+            Ok(value) => write!(formatter, "{value:.2} Å"),
+            Err(_) => write!(formatter, "{} {}", self.0.value(), self.0.unit()),
+        }
+    }
 }
 
 /// What interpretation inferred from one frame and why.
