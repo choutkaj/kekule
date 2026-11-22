@@ -2,10 +2,11 @@
 //! from bond marks, atom parities, and 3D coordinates, and one structure with
 //! one molecule instance per connected component, with source-line reports.
 use crate::diagnostics::{
-    CapacityExceeded, Countable, DiagnosticKind, Format, FormatError, SourceLocation,
+    counted, CapacityExceeded, Countable, DiagnosticKind, Format, FormatError, SourceLocation,
     UnsupportedContent,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::algorithms::{
@@ -620,6 +621,99 @@ pub enum MolfileInterpretIssue {
         /// stereo element order.
         elements: Vec<StereoElementId>,
     },
+}
+
+/// Writes the issue as one or two sentences, such as `The stereo mark on the
+/// bond at line 14 is not read. The marked atom has more than four
+/// neighbors.` Atoms and bonds are named by their source lines.
+impl fmt::Display for MolfileInterpretIssue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConflictingAtropisomericWedgeMarks {
+                location,
+                mark_count,
+                ..
+            } => write!(
+                formatter,
+                "The axis bond at {location} has {}. Its configuration is not read.",
+                counted(
+                    *mark_count,
+                    "conflicting wedge mark",
+                    "conflicting wedge marks"
+                )
+            ),
+            Self::CoordinateStereoValenceUnsupported { error } => {
+                write!(formatter, "{error} No stereo is read from the coordinates.")
+            }
+            Self::AmbiguousTetrahedralWedgeMarks {
+                location,
+                mark_count,
+                ..
+            } => {
+                if *mark_count == 1 {
+                    write!(
+                        formatter,
+                        "The wedge mark at the atom at {location} does not set one configuration."
+                    )?;
+                } else {
+                    write!(
+                        formatter,
+                        "The {mark_count} wedge marks at the atom at {location} do not set one \
+                         configuration."
+                    )?;
+                }
+                formatter.write_str(" Its configuration is not read.")
+            }
+            Self::AtomParityContradictsCoordinates { location, .. } => write!(
+                formatter,
+                "The parity of the atom at {location} contradicts its 3D coordinates. The \
+                 coordinates set its configuration."
+            ),
+            Self::ChargeFromBonds {
+                location, charge, ..
+            } => write!(
+                formatter,
+                "The atom at {location} takes charge {charge:+} from its bonds."
+            ),
+            Self::ChargesSeparated { location, .. } => write!(
+                formatter,
+                "The atom at {location} takes charge +1 from its bonds. A singly bonded \
+                 neighbor takes charge -1."
+            ),
+            Self::MetalDonor { location, .. } => write!(
+                formatter,
+                "The atom at {location} is read as a donor to metals. It takes no hydrogens."
+            ),
+            Self::MetalValenceIncomplete {
+                location, valence, ..
+            } => write!(
+                formatter,
+                "The metal atom at {location} has valence {valence}, invalid for its element \
+                 and charge. It takes no hydrides."
+            ),
+            Self::StrayWedge { location, .. } => write!(
+                formatter,
+                "The stereo mark on the bond at {location} marks no stereocenter or axis. It \
+                 is not read."
+            ),
+            Self::UnrepresentableStereo {
+                reason, location, ..
+            } => write!(
+                formatter,
+                "The stereo mark on the bond at {location} is not read. {reason}"
+            ),
+            Self::AbsoluteStereoWithoutChiralFlag { elements } => write!(
+                formatter,
+                "The chiral flag is unset, but {} {} read as absolute.",
+                counted(
+                    elements.len(),
+                    "drawn configuration",
+                    "drawn configurations"
+                ),
+                if elements.len() == 1 { "is" } else { "are" }
+            ),
+        }
+    }
 }
 
 /// One final canonical structure and source reports in molecule-instance order.
