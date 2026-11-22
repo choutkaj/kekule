@@ -821,12 +821,15 @@ impl MmcifEntityClassifications {
 /// waters together, split where author numbers repeat. Only the monomers of
 /// a chain's sequence are polymer residues: those that state their place
 /// (`label_seq_id`), amino acids and nucleotides, and, in a chain where no
-/// residue states a place, residues a monomer's backbone atom bonds. A
-/// ligand a polymer holds by a bond is a non-polymer instance, and its
-/// saccharides bonded to each other are a glycan, branched when it has
-/// several. The residues whose sites state a `label_asym_id` stay the one
-/// asym the source names; a residue an edit added to its chain is an
-/// instance by the same rules, joining that asym only as part of its
+/// residue states a place, residues a monomer's backbone atom bonds.
+/// Residues that state their places and bond each other are polymer
+/// residues in a molecule of any class, as the D-amino acids of a
+/// D-peptide are; only polymer rows state a place. A ligand a polymer
+/// holds by a bond is a non-polymer instance, and its saccharides bonded to
+/// each other are a glycan, branched when it has several, with or without
+/// a PDB reader's report. The residues whose sites state a `label_asym_id`
+/// stay the one asym the source names; a residue an edit added to its chain
+/// is an instance by the same rules, joining that asym only as part of its
 /// molecule, its sequence, or water. A residue of a polymer residue class
 /// that states its place and that a chain break leaves alone stays in its
 /// chain's polymer asym. Asyms of one component are instances of one

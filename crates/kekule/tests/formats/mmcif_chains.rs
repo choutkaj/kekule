@@ -909,13 +909,25 @@ fn a_source_branched_saccharide_stays_branched() {
 /// The block written without a report from the structure read back from
 /// the PDB entry written from `source`.
 fn via_pdb(source: &StructureInterpretation) -> String {
-    let (text, _) = pdb::write(source, Default::default()).unwrap();
-    let read = pdb::parse_str(&text, Default::default())
-        .unwrap()
-        .interpret(Default::default())
-        .unwrap();
+    let read = pdb_round_trip(source);
     let (text, _) = mmcif::write([read.structure()], MmcifWriteOptions::default()).unwrap();
     text
+}
+
+/// The block written with its report from the interpretation of the PDB
+/// entry written from `source`.
+fn via_pdb_with_report(source: &StructureInterpretation) -> String {
+    let (text, _) = mmcif::write([&pdb_round_trip(source)], MmcifWriteOptions::default()).unwrap();
+    text
+}
+
+/// The interpretation of the PDB entry written from `source`.
+fn pdb_round_trip(source: &StructureInterpretation) -> StructureInterpretation {
+    let (text, _) = pdb::write(source, Default::default()).unwrap();
+    pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
 }
 
 /// The values of `tags` in each atom-site row, with the row's entity type
@@ -1029,6 +1041,11 @@ fn glycans_bound_to_a_protein_are_branched_entities() {
         let expected = glycans(&direct, saccharides);
         assert!(expected.iter().any(|(kind, _)| kind == "branched"));
         assert_eq!(glycans(&via_pdb(&source), saccharides), expected, "{name}");
+        assert_eq!(
+            glycans(&via_pdb_with_report(&source), saccharides),
+            expected,
+            "{name} with the report"
+        );
     }
 }
 
@@ -1071,6 +1088,144 @@ fn written_polymer_residues_state_their_places() {
         .collect::<BTreeSet<_>>();
         assert!(unplaced.is_empty(), "{name}: {unplaced:?}");
     }
+}
+
+/// An atom's site: its author chain, component, author number, insertion
+/// code, and name; blank for an atom outside the hierarchy.
+type SiteKey = [String; 5];
+
+fn site_key(atom: kekule::topology::AtomView<'_>) -> SiteKey {
+    let Some(site) = atom.atom_site() else {
+        return SiteKey::default();
+    };
+    let metadata = site.metadata();
+    let residue = site.residue();
+    let chain = residue.chain();
+    [
+        metadata
+            .auth_asym_id()
+            .or(chain.author_id())
+            .unwrap_or(chain.label_id()),
+        residue.name(),
+        residue.author_seq_id().unwrap_or_default(),
+        residue.insertion_code().unwrap_or_default(),
+        metadata
+            .label_atom_id()
+            .or(metadata.auth_atom_id())
+            .unwrap_or_default(),
+    ]
+    .map(str::to_owned)
+}
+
+/// A structure's bonds by their atoms' sites and orders, each with the
+/// number of bonds that share them.
+fn site_bonds(structure: &Structure) -> BTreeMap<(SiteKey, SiteKey, String), usize> {
+    let mut bonds = BTreeMap::new();
+    for bond in structure.topology().bonds() {
+        let [mut left, mut right] = bond.atoms().map(site_key);
+        if left > right {
+            std::mem::swap(&mut left, &mut right);
+        }
+        *bonds
+            .entry((left, right, format!("{:?}", bond.bond().order())))
+            .or_insert(0) += 1;
+    }
+    bonds
+}
+
+#[test]
+fn every_bond_survives_a_write_without_the_report() {
+    // Strand B of 7B3K is a peptide of D-amino acids, and strand B of 1K1H
+    // a DNA of modified nucleotides: no residue class names their monomers.
+    let directory = format!(
+        "{}/../../benchmarks/datasets/bio/curated/pdb",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut entries = std::fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        // 6GCY's residues pair two groups of alternate locations, which the
+        // default selection cannot combine.
+        .filter(|name| !name.starts_with("pdb_00006gcy"))
+        .map(|name| (curated(&name), name))
+        .collect::<Vec<_>>();
+    for name in ["7B3K-B.cif", "1K1H.cif"] {
+        entries.push((mmcif_fixture(name), name.to_owned()));
+    }
+    for (source, name) in entries {
+        let (text, _) = mmcif::write([source.structure()], MmcifWriteOptions::default()).unwrap();
+        let (before, after) = (
+            site_bonds(source.structure()),
+            site_bonds(&read_back(&text)),
+        );
+        let lost = before
+            .iter()
+            .filter(|(bond, count)| after.get(*bond) != Some(count))
+            .take(5)
+            .collect::<Vec<_>>();
+        let gained = after
+            .iter()
+            .filter(|(bond, count)| before.get(*bond) != Some(count))
+            .take(5)
+            .collect::<Vec<_>>();
+        assert!(
+            lost.is_empty() && gained.is_empty(),
+            "{name}: lost {lost:?}, gained {gained:?}"
+        );
+        // Only polymer residues state places.
+        let placed = site_values(
+            &text,
+            ["_atom_site.label_comp_id", "_atom_site.label_seq_id"],
+        )
+        .into_iter()
+        .filter(|row| row[2] != "polymer" && row[1] != ".")
+        .map(|row| row[0].clone())
+        .collect::<BTreeSet<_>>();
+        assert!(placed.is_empty(), "{name}: {placed:?}");
+    }
+}
+
+#[test]
+fn chains_of_monomers_no_residue_class_names_are_polymers() {
+    for (name, monomers) in [
+        (
+            "7B3K-B.cif",
+            &["DAR", "DPR", "2TL", "DLE", "DHI", "DSG"][..],
+        ),
+        ("1K1H.cif", &["DC", "CMR", "RMP", "SMP"][..]),
+    ] {
+        let source = mmcif_fixture(name);
+        let (text, _) = mmcif::write([source.structure()], MmcifWriteOptions::default()).unwrap();
+        let kinds = site_values(&text, ["_atom_site.label_comp_id"])
+            .into_iter()
+            .filter(|row| monomers.contains(&row[0].as_str()))
+            .map(|row| row[1].clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(kinds, ["polymer".to_owned()].into(), "{name}");
+    }
+}
+
+#[test]
+fn a_chain_the_caller_classifies_as_non_polymer_keeps_its_links() {
+    let source = mmcif_fixture("7B3K-B.cif");
+    let structure = source.structure();
+    let mut classifications = MmcifEntityClassifications::new();
+    for instance in structure.topology().instances() {
+        classifications
+            .insert(instance.id(), EntityKind::NonPolymer)
+            .unwrap();
+    }
+    let (text, _) = mmcif::write(
+        [MmcifBlockSource::structure(structure).with_classifications(&classifications)],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(site_bonds(&read_back(&text)), site_bonds(structure));
+    let places = site_values(&text, ["_atom_site.label_seq_id"])
+        .into_iter()
+        .map(|row| row[0].clone())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(places, [".".to_owned()].into());
 }
 
 #[test]

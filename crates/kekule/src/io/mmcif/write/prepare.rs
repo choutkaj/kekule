@@ -478,7 +478,10 @@ fn collect_macro_rows(
             label_atom_id: label_atom_id.clone(),
             label_alt_id: None,
             label_comp_id: label_comp_id.clone(),
-            label_seq_id: residue.label_seq_id(),
+            // Only a polymer's residues have places in a sequence.
+            label_seq_id: residue
+                .label_seq_id()
+                .filter(|_| assignment.kind == AssignedEntityKind::Polymer),
             insertion_code: residue.insertion_code().map(str::to_owned),
             position: structure
                 .position(qualified)

@@ -107,3 +107,23 @@ sha256 = "b7d583424b6f960a7421fd4c88cdb6bbb10025667cd863d8cd14f70bc775aceb"
 license = "CC0 1.0 (wwPDB archive data)"
 preprocessing = "None; original downloaded bytes"
 purpose = "Sequence regression (green fluorescent protein: selenomethionines, the CRO chromophore the canonical sequence states as X, unobserved termini); not a scientific benchmark"
+
+[[fixture]]
+path = "1K1H.cif"
+source = "RCSB PDB / wwPDB entry 1K1H"
+url = "https://files.rcsb.org/download/1K1H.cif"
+retrieved = "by 2026-07-25"
+sha256 = "8989a11cee76023de9122e2b9f7a816460afce3cbd5d5db6ede78ab781250e64"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "None; the bytes of the local pdb-1000 benchmark corpus copy"
+purpose = "mmCIF writer regression (a DNA duplex whose strand B chains modified nucleotides, CMR, RMP and SMP); not a scientific benchmark"
+
+[[fixture]]
+path = "7B3K-B.cif"
+source = "RCSB PDB / wwPDB entry 7B3K"
+url = "https://files.rcsb.org/download/7B3K.cif"
+retrieved = "by 2026-07-25"
+sha256 = "03a0a76e7df1ad3dbe8308c98dfee912d8691340c0630a144273f54196f13cf3"
+license = "CC0 1.0 (wwPDB archive data)"
+preprocessing = "Excerpt of the local pdb-1000 benchmark corpus copy: entity 2, its sequence, components, asym B, struct_conn rows and model 1 atom sites; loops otherwise verbatim"
+purpose = "mmCIF writer regression (the all-D peptide D3, a polymer of components no residue class names); not a scientific benchmark"

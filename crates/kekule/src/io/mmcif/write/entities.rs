@@ -500,6 +500,27 @@ fn report_entity_plan(
                     ));
                 }
             };
+            // A source without entities, as a PDB entry is, makes every
+            // saccharide a non-polymer; one of a glycan is branched.
+            let role = roles[&residue.id()];
+            if kind == AssignedEntityKind::NonPolymer
+                && source_entity_ids.is_empty()
+                && matches!(
+                    canonical_residue_kind(structure, chain, residue, sites, role),
+                    Ok(AssignedEntityKind::Branched)
+                )
+            {
+                return Ok(ResidueKind {
+                    kind: AssignedEntityKind::Branched,
+                    source_entity_id: None,
+                    canonical: true,
+                    glycan: canonical_entity_kind(structure.topology(), sites[0].instance())
+                        .ok()
+                        .and_then(|molecule| {
+                            role.glycan_of(molecule, AssignedEntityKind::Branched)
+                        }),
+                });
+            }
             Ok(ResidueKind {
                 kind,
                 source_entity_id: source_entity_ids.into_iter().next(),
@@ -796,6 +817,9 @@ const BACKBONE_ATOMS: [&str; 4] = ["N", "C", "P", "O3'"];
 struct ResidueRole {
     /// Whether it is a monomer of the chain's sequence.
     monomer: bool,
+    /// Whether it states its place and bonds a residue of the chain that
+    /// states one: a link along the chain.
+    chained: bool,
     /// The saccharides bonded to it and to each other, with it: their
     /// first residue and their number.
     glycan: Option<(ResidueId, usize)>,
@@ -822,8 +846,9 @@ impl ResidueRole {
 /// or a nucleotide. Where no residue of the chain states a place, as in a
 /// PDB entry without `SEQRES` records, a residue of another class is a
 /// monomer too when a backbone atom of a monomer (`N`, `C`, `P`, `O3'`)
-/// bonds it, as a modified residue's neighbours do. Saccharides bonded to
-/// each other are one glycan.
+/// bonds it, as a modified residue's neighbours do. A residue that states
+/// its place and bonds another that states one is chained to it.
+/// Saccharides bonded to each other are one glycan.
 fn residue_roles(chain: ChainView<'_>) -> BTreeMap<ResidueId, ResidueRole> {
     let residues = chain.residues().collect::<Vec<_>>();
     let classes = residues
@@ -852,9 +877,14 @@ fn residue_roles(chain: ChainView<'_>) -> BTreeMap<ResidueId, ResidueRole> {
             (residue.id(), links)
         })
         .collect::<BTreeMap<_, _>>();
+    let placed = residues
+        .iter()
+        .filter(|residue| residue.label_seq_id().is_some())
+        .map(|residue| residue.id())
+        .collect::<BTreeSet<_>>();
     let mut monomers = residues
         .iter()
-        .filter(|residue| residue.label_seq_id().is_some() || polymer_class(residue.class()))
+        .filter(|residue| placed.contains(&residue.id()) || polymer_class(residue.class()))
         .map(|residue| residue.id())
         .collect::<BTreeSet<_>>();
     if residues
@@ -906,6 +936,8 @@ fn residue_roles(chain: ChainView<'_>) -> BTreeMap<ResidueId, ResidueRole> {
             let id = residue.id();
             let role = ResidueRole {
                 monomer: monomers.contains(&id),
+                chained: placed.contains(&id)
+                    && links[&id].iter().any(|(other, _)| placed.contains(other)),
                 glycan: glycans.get(&id).copied(),
             };
             (id, role)
@@ -1261,11 +1293,13 @@ fn canonical_residue_kind(
 }
 
 /// The entity kind of one residue of a molecule of `molecule_kind`, in
-/// `role`. Only the monomers of a polymer's sequence are polymer residues.
-/// Water, ions, and other residues a polymer holds by a bond, such as a
-/// coordinated metal or a covalently bound ligand, are entities of their
-/// own; a glycan bonded to a polymer is a branched entity, or a non-polymer
-/// one when it is a single saccharide.
+/// `role`. Only the monomers of a polymer's sequence are polymer residues,
+/// and a chained residue other than a saccharide is one in a molecule of
+/// any kind, as a peptide of D-amino acids is. Water, ions, and other
+/// residues a polymer holds by a bond, such as a coordinated metal or a
+/// covalently bound ligand, are entities of their own; a glycan bonded to a
+/// polymer is a branched entity, or a non-polymer one when it is a single
+/// saccharide.
 fn residue_entity_kind(
     molecule_kind: AssignedEntityKind,
     class: ResidueClass,
@@ -1277,6 +1311,10 @@ fn residue_entity_kind(
         }
         (AssignedEntityKind::Polymer | AssignedEntityKind::Branched, ResidueClass::Ion) => {
             AssignedEntityKind::NonPolymer
+        }
+        (kind, ResidueClass::Water | ResidueClass::Ion) => kind,
+        (_, class) if role.chained && class != ResidueClass::Carbohydrate => {
+            AssignedEntityKind::Polymer
         }
         (AssignedEntityKind::Polymer, ResidueClass::Carbohydrate) => match role.glycan {
             Some((_, residues)) if residues > 1 => AssignedEntityKind::Branched,

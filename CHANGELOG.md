@@ -881,6 +881,16 @@ the main branch migrates by the table under "From the SampleSet API".
   that a chain break splits, numbered by one `SEQRES` sequence, are one
   polymer asym. Partly modelled instances of one component, as 6G7L's
   seven monooleins read from PDB, are one entity rather than seven.
+- Without a report, the mmCIF writer no longer loses the links of a chain
+  whose monomers no residue class names. Residues that state their places
+  and bond each other are polymer residues in a molecule of any class, so
+  the D-peptide of 7B3K and the modified DNA strand of 1K1H are polymers.
+  They were non-polymer asyms, and their peptide and phosphodiester bonds
+  did not read back. Only polymer rows state a `label_seq_id`, and every
+  bond between residues of other entities is written.
+- With a PDB reader's report, the mmCIF writer writes a glycan as a
+  branched entity, as it does without the report, rather than a
+  non-polymer entity per saccharide (7UKO, 7X9L).
 - The mmCIF writer writes a structure an edit added atoms to with its
   followed report (`follow_edit`, `follow_append`), instead of failing. Atoms
   without provenance, such as added hydrogens, join their residues' rows, and
