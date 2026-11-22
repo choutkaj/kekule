@@ -1,7 +1,8 @@
 //! Bonds an mmCIF reader derives without `_struct_conn` records: the bonds
 //! of residues their default template, bundled or force-field, rebuilds
-//! exactly, and the peptide and phosphodiester links between residues
-//! adjacent in sequence.
+//! exactly, the bonds of components no template covers, which the block's
+//! own `_chem_comp_bond` table states, and the peptide and phosphodiester
+//! links between residues adjacent in sequence.
 //!
 //! Each test mirrors the reader's connectivity resolution, so a bond is
 //! left unstated only when reading the block gives it back with its order.
@@ -11,6 +12,7 @@ use crate::io::macromolecular::connectivity::{
     hydrogen_differences, is_coordination, link_valence, standard_link, template_bond_order,
     within_bonding_distance, PolymerLink, StandardLink,
 };
+use crate::io::macromolecular::is_metal;
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,19 +38,40 @@ pub(super) fn residue_key(row: &AtomRow) -> ResidueKey<'_> {
     )
 }
 
+/// The `_chem_comp` row and `_chem_comp_bond` rows of one component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ComponentTable {
+    pub(super) id: String,
+    /// `_chem_comp.type`: `non-polymer`, or unknown for a component of a
+    /// polymer, whose linking no template states.
+    pub(super) polymer: bool,
+    pub(super) bonds: Vec<ComponentTableBond>,
+}
+
+/// One `_chem_comp_bond` row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ComponentTableBond {
+    pub(super) atoms: [String; 2],
+    /// Dative for metal coordination.
+    pub(super) order: BondOrder,
+    pub(super) aromatic: Option<bool>,
+}
+
 /// Marks each connection the reader derives, given the rows' elements in
 /// row order and coordinates written to `precision` decimal places.
-/// Connections reference rows through `row_of`. Returns, for each residue
-/// whose template the reader applies but whose atoms lack one of its bonds
-/// between heavy atoms, the rows of the first such pair: the reader adds
-/// the bond, so no `_struct_conn` row can keep it out.
+/// Connections reference rows through `row_of`, and `polymer` tells the rows
+/// of polymer entities. Returns the component tables the block states, and,
+/// for each residue whose template the reader applies but whose atoms lack
+/// one of its bonds between heavy atoms, the rows of the first such pair:
+/// the reader adds the bond, so no `_struct_conn` row can keep it out.
 pub(super) fn mark_implied(
     rows: &[AtomRow],
     elements: &[Element],
     connections: &mut [ConnectionRow],
     row_of: &BTreeMap<crate::topology::InstanceAtomId, usize>,
     precision: usize,
-) -> Vec<[usize; 2]> {
+    polymer: impl Fn(&AtomRow) -> bool,
+) -> (Vec<ComponentTable>, Vec<[usize; 2]>) {
     let mut residues = BTreeMap::<ResidueKey<'_>, Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
         residues.entry(residue_key(row)).or_default().push(index);
@@ -71,15 +94,23 @@ pub(super) fn mark_implied(
     }
 
     let library = ComponentLibrary::bundled();
+    // The reader keys component tables by upper-case identifier.
+    let mut untemplated = BTreeMap::<String, Vec<usize>>::new();
+    let mut templated = BTreeSet::new();
     let mut missing = Vec::new();
-    for members in &residues {
+    for (residue, members) in residues.iter().enumerate() {
         let id = &rows[members[0]].label_comp_id;
         let atoms = members
             .iter()
             .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
         let Some(template) = ComponentLibrary::default_template(id, atoms) else {
+            untemplated
+                .entry(id.to_ascii_uppercase())
+                .or_default()
+                .push(residue);
             continue;
         };
+        templated.insert(id.to_ascii_uppercase());
         let component = template.component;
         let variants = template.library.variants(component.id());
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
@@ -102,6 +133,41 @@ pub(super) fn mark_implied(
                 connections[connection].implied = Some(Implied::Template);
             }
         }
+    }
+
+    let mut tables = Vec::new();
+    for (id, of_component) in untemplated {
+        // A template covers some residues of the component.
+        if templated.contains(&id) {
+            continue;
+        }
+        let Some(table) = component_table(
+            &of_component,
+            &residues,
+            &residue_of,
+            rows,
+            elements,
+            connections,
+            &neighbours,
+        ) else {
+            continue;
+        };
+        for &residue in &of_component {
+            for &row in &residues[residue] {
+                for &(other, connection) in &neighbours[row] {
+                    if residue_of[other] == residue {
+                        connections[connection].implied = Some(Implied::ComponentTable);
+                    }
+                }
+            }
+        }
+        tables.push(ComponentTable {
+            id: rows[residues[of_component[0]][0]].label_comp_id.clone(),
+            polymer: of_component
+                .iter()
+                .any(|&residue| polymer(&rows[residues[residue][0]])),
+            bonds: table,
+        });
     }
 
     // The reader links only residues alone at their position along a chain.
@@ -193,7 +259,78 @@ pub(super) fn mark_implied(
             }
         }
     }
-    missing
+    (tables, missing)
+}
+
+/// The `_chem_comp_bond` rows that give every residue of one component its
+/// bonds, or `None` when no table can: residues that bond two names
+/// differently, or one that leaves unbonded two names another bonds,
+/// alternate locations, which repeat names, or a dative bond without a
+/// metal, which the coordination flag cannot state. A component without
+/// internal bonds needs no table.
+fn component_table(
+    of_component: &[usize],
+    residues: &[Vec<usize>],
+    residue_of: &[usize],
+    rows: &[AtomRow],
+    elements: &[Element],
+    connections: &[ConnectionRow],
+    neighbours: &[Vec<(usize, usize)>],
+) -> Option<Vec<ComponentTableBond>> {
+    let mut table = BTreeMap::<[&str; 2], (BondOrder, Option<bool>)>::new();
+    for &residue in of_component {
+        let mut names = BTreeSet::new();
+        for &row in &residues[residue] {
+            if rows[row].label_alt_id.is_some() || !names.insert(&rows[row].label_atom_id) {
+                return None;
+            }
+            for &(other, connection) in &neighbours[row] {
+                if residue_of[other] != residue || other < row {
+                    continue;
+                }
+                let mut pair = [
+                    rows[row].label_atom_id.as_str(),
+                    rows[other].label_atom_id.as_str(),
+                ];
+                pair.sort_unstable();
+                let connection = &connections[connection];
+                if connection.order == BondOrder::Dative
+                    && !is_metal(elements[row])
+                    && !is_metal(elements[other])
+                {
+                    return None;
+                }
+                let bond = (connection.order, connection.aromatic);
+                if *table.entry(pair).or_insert(bond) != bond {
+                    return None;
+                }
+            }
+        }
+    }
+    for &residue in of_component {
+        let named = residues[residue]
+            .iter()
+            .map(|&row| (rows[row].label_atom_id.as_str(), row))
+            .collect::<BTreeMap<_, _>>();
+        for [left, right] in table.keys() {
+            let (Some(&left), Some(&right)) = (named.get(left), named.get(right)) else {
+                continue;
+            };
+            if !neighbours[left].iter().any(|&(other, _)| other == right) {
+                return None;
+            }
+        }
+    }
+    (!table.is_empty()).then(|| {
+        table
+            .into_iter()
+            .map(|([left, right], (order, aromatic))| ComponentTableBond {
+                atoms: [left.to_owned(), right.to_owned()],
+                order,
+                aromatic,
+            })
+            .collect()
+    })
 }
 
 /// The rows of the first bond between two heavy atoms of `component`, whose

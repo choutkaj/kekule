@@ -304,10 +304,56 @@ pub enum StructureInterpretIssue {
         kind: EntityKind,
     },
     /// Atom records without an element symbol had their elements inferred
-    /// from the alignment of their atom names, as PDB convention places them.
+    /// from the alignment of their atom names, as PDB convention places them,
+    /// because no template of their residue names the atom.
     ElementsInferredFromAtomNames {
         /// The 1-based source lines of the affected records.
         source_lines: Vec<usize>,
+    },
+    /// Atom records without an element symbol took the element of the atom
+    /// of the same name in their residue's template: the caller's, the
+    /// bundled, or a force field's.
+    ElementsFromTemplates {
+        /// The 1-based source lines of the affected records.
+        source_lines: Vec<usize>,
+    },
+    /// Atom records state a charge as a digit without a sign, such as `1`,
+    /// which was read as positive.
+    UnsignedCharges {
+        /// The 1-based source lines of the affected records.
+        source_lines: Vec<usize>,
+    },
+    /// Numbers of one kind read as hexadecimal from this record on, as VMD
+    /// writes numbers beyond the decimal range of their columns. See
+    /// [`PdbDocument::hexadecimal_numbers`](crate::io::PdbDocument::hexadecimal_numbers).
+    HexadecimalNumbers {
+        /// The numbers.
+        field: NumberField,
+        /// The 1-based source line of the first hexadecimal number.
+        source_line: usize,
+    },
+    /// Numbers of one kind go back within a coordinate model: atom serial
+    /// numbers decrease, or residue numbers fall back after 9,999, as
+    /// writers that wrap numbers too wide for their columns write them.
+    /// `CONECT` records naming a repeated serial number match several atoms.
+    NumbersRestart {
+        /// The numbers.
+        field: NumberField,
+        /// The 1-based source line of the first record whose number goes
+        /// back.
+        source_line: usize,
+    },
+    /// A residue without hydrogens has single bonds between a metal and a
+    /// non-metal whose source states no type, such as PDB `CONECT` records,
+    /// and no template decides them. Without hydrogens the file cannot tell
+    /// covalent from dative bonds, so they were read as covalent. A residue
+    /// with hydrogens takes dative bonds to non-metals whose other bonds
+    /// already fill their valence.
+    MetalBondsUnstated {
+        /// The residue.
+        residue: SourceResidueId,
+        /// The number of such bonds.
+        bonds: usize,
     },
     /// Connection records of a non-covalent type, such as the hydrogen bonds
     /// a file lists, were not interpreted as bonds. Each such type is
@@ -657,6 +703,50 @@ impl fmt::Display for StructureInterpretIssue {
                     FirstLine(lines),
                 ),
             },
+            Self::ElementsFromTemplates { source_lines } => match source_lines.as_slice() {
+                [line] => write!(
+                    formatter,
+                    "The atom record at line {line} has no element symbol. Its element comes \
+                     from its residue's template."
+                ),
+                lines => write!(
+                    formatter,
+                    "{}{} have no element symbol. Their elements come from their residues' \
+                     templates.",
+                    counted(lines.len(), "atom record", "atom records"),
+                    FirstLine(lines),
+                ),
+            },
+            Self::UnsignedCharges { source_lines } => match source_lines.as_slice() {
+                [line] => write!(
+                    formatter,
+                    "The charge at line {line} has no sign. It is read as positive."
+                ),
+                lines => write!(
+                    formatter,
+                    "{}{} have no sign. They are read as positive.",
+                    counted(lines.len(), "charge", "charges"),
+                    FirstLine(lines),
+                ),
+            },
+            Self::HexadecimalNumbers { field, source_line } => write!(
+                formatter,
+                "{} from line {source_line} are hexadecimal.",
+                Capitalized(field)
+            ),
+            Self::MetalBondsUnstated { residue, bonds } => write!(
+                formatter,
+                "{} has {} whose source does not say if covalent or dative. {} read as \
+                 covalent.",
+                Capitalized(residue),
+                counted(*bonds, "metal bond", "metal bonds"),
+                if *bonds == 1 { "It is" } else { "They are" }
+            ),
+            Self::NumbersRestart { field, source_line } => write!(
+                formatter,
+                "{} restart at line {source_line}.",
+                Capitalized(field)
+            ),
             Self::ConnectionsIgnored {
                 connection_type,
                 count,
@@ -1108,6 +1198,27 @@ impl fmt::Display for Charged<'_> {
             0 => write!(formatter, "{:?} (0)", self.0),
             charge => write!(formatter, "{:?} ({charge:+})", self.0),
         }
+    }
+}
+
+/// A kind of number that PDB coordinate records state in fixed columns.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NumberField {
+    /// Atom serial numbers, columns 7-11.
+    AtomSerial,
+    /// Residue sequence numbers, columns 23-26.
+    ResidueNumber,
+}
+
+/// Writes the numbers as a plural noun phrase, such as `atom serial
+/// numbers`.
+impl fmt::Display for NumberField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::AtomSerial => "atom serial numbers",
+            Self::ResidueNumber => "residue numbers",
+        })
     }
 }
 

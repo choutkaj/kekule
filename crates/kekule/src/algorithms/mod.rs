@@ -62,9 +62,9 @@ pub use substructure::{
 };
 pub(crate) use valence::{
     allowed_valences, explicit_valence, implied_charges, incomplete_metal_valence, is_metal,
-    is_metal_donor, onium_hydrogens, rdkit_bracket_radical_electrons,
+    is_metal_donor, metal_bond_reading, onium_hydrogens, rdkit_bracket_radical_electrons,
     rdkit_charge_adjusted_default_valence, rdkit_default_valence, rdkit_inferred_hydrogen_count,
-    rdkit_reader_hydrogens, rdkit_valence_violation, ImpliedCharges,
+    rdkit_reader_hydrogens, rdkit_valence_violation, ImpliedCharges, MetalBondReading,
 };
 pub use valence::{
     perceive_valence, represented_valence, ValenceError, ValenceOptions, ValenceViolation,

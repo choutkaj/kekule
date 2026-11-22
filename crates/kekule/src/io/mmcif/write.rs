@@ -932,8 +932,8 @@ pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
 /// A block with its own [`MmcifBlockSource::block_name`] takes it. Otherwise a
 /// single block is named [`MmcifWriteOptions::block_name`], and among several
 /// blocks the one at 1-based position `n` is named `{block_name}_n`. Rows
-/// follow dense atom order, and `_struct_conn` states the bonds the reader
-/// does not derive (see the `implied` module).
+/// follow dense atom order, and `_chem_comp_bond` and `_struct_conn` state
+/// the bonds the reader does not derive (see the `implied` module).
 pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,

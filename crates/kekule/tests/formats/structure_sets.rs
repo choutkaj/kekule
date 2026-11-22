@@ -57,7 +57,7 @@ fn pdb_and_mmcif_structure_sets_are_their_models() {
         .map(|(serial, name, x, y, element)| {
             format!(
                 "HETATM{serial:>5}  {name:<3} UNL A   1    {x:>8}{y:>8}{z:>8}                       \
-                 {element}"
+                 {element}0"
             )
         })
         .join("\n")

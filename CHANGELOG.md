@@ -604,6 +604,47 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `AtomSelection::contains_index` and
   `BondSelection::contains_index` are `contains_at`, like other methods that
   take a dense index.
+- **Breaking:** `PdbWriteErrorKind::ChainIdTooLong`, `ResidueNameTooLong`,
+  and `InsertionCodeTooLong` are `InvalidChainId`, `InvalidResidueName`, and
+  `InvalidInsertionCode`; the PDB writer refuses identifiers that are not
+  printable ASCII.
+- **Breaking:** The PDB writer states every formal charge, `0` for a neutral
+  atom, so a neutral lysine `NZ` no longer reads back as +1 from its
+  template. The `0` states neutrality against such templates.
+- **Breaking:** A PDB atom name starting in column 14 reads a one-letter
+  element only in an entry that follows the alignment convention, where some
+  short name starts in column 13 with a two-letter element. In an entry that
+  pads every name, as GROMACS writes, ` CL1` without an element column is
+  ambiguous and fails rather than reading as carbon. A name led by `H`, such
+  as ` HG1`, reads as hydrogen. Only atoms without element columns count as
+  evidence of the convention.
+- **Breaking:** `CONECT` records repeated in every model state each model's
+  bonds: the interpreted model takes its own, and other models' records no
+  longer conflict with them.
+- **Breaking:** A `CONECT`, `LINK`, or `_chem_comp_bond` single bond between
+  a metal and a non-metal of one residue is dative only when the source or
+  the residue's template flags coordination, or, in a residue with explicit
+  hydrogens, when the non-metal's valence is allowed without it and not with
+  it. Cisplatin reads with covalent chlorides and dative ammines, and a
+  phosphonate phosphorus bonds covalently. A non-metal in a ring given as
+  aromatic bonds takes the reading under which the ring localizes. Bonds no
+  reading decides, such as a carbene's, and those of a residue without
+  hydrogens stay covalent and are reported
+  (`StructureInterpretIssue::MetalBondsUnstated`). A stated `_struct_conn`
+  bond keeps its type. Between residues such a bond stays coordination. The
+  PDB writer lists a metal bond within one residue only when a reader gives
+  its order back, and otherwise fails or omits it.
+- The mmCIF writer states the bonds of components no template covers as
+  `_chem_comp` and `_chem_comp_bond` rows, with aromatic and
+  metal-coordination flags, in place of `_struct_conn` rows. Components are
+  grouped by upper-case identifier, as readers key them, and a dative bond
+  without a metal stays a `_struct_conn` `metalc` row.
+- PDB interpretation reports atoms whose element came from a template
+  (`StructureInterpretIssue::ElementsFromTemplates`), unsigned charges
+  (`UnsignedCharges`), VMD hexadecimal numbering (`HexadecimalNumbers`),
+  and numbers that go back (`NumbersRestart`), each field named by a
+  `NumberField`. `PdbAtom::charge_is_unsigned`, `PdbConect::model`, and
+  `PdbDocument::hexadecimal_numbers` expose them.
 - **Breaking:** `MolfileInterpretIssue::CoordinateStereoValenceUnsupported`
   names the first atom outside the valence model and its source line
   (`atom`, `location`). Its `ValenceError` names atoms of the published
@@ -795,6 +836,27 @@ the main branch migrates by the table under "From the SampleSet API".
 - `xyz::write` omits and reports a structure set's own properties when
   `with_properties` omits them, as the PDB and mmCIF writers do, instead of
   always refusing them.
+- A PDB atom without an element symbol takes its element from the template
+  of its residue and name, bundled or force-field, before its name, so
+  CHARMM `SOD` is sodium and a heme's `NB` is nitrogen. A left-aligned name
+  that reads as two elements, such as `CL1` beside `C1`, fails instead of
+  guessing.
+- `CONECT` records repeated in every `MODEL` block state each bond once, and
+  models that list a bond a different number of times fail.
+- PDB charge columns `0`, ` 0`, `0+`, and `0-` are an explicit zero, and an
+  unsigned digit is a positive charge.
+- VMD's lowercase hexadecimal serial and residue numbers past 99,999 and
+  9,999 read in sequence when the numbering proves them.
+- `SOL`, `TIP3`, `TIP4`, `TIP5`, `T3P`, `T4P`, `SPC`, `H2O`, and similar water
+  names are water, and ion names such as `NA`, `CL`, `SOD`, `POT`, and `CLA`
+  are never polymer, even on `ATOM` records.
+- mmCIF charges such as `1+` and numbers with standard uncertainties such as
+  `12.345(3)` parse.
+- The PDB writer lists a polymer link stretched beyond bonding distance in
+  any geometry as `CONECT`, and writes a `TER` after each hierarchy chain of
+  polymer residues, so polymer chains that share a letter stay apart. A
+  ligand chain bonded to a polymer, such as retinal, ends with the chain
+  before it.
 
 ### From the SampleSet API
 

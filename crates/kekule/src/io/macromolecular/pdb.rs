@@ -21,10 +21,10 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::molecule::{BondOrder, Element};
 
 use super::super::element_symbol::parse_structure_element_symbol;
-use super::super::{PdbAtom, PdbAtomKind, PdbDocument, PdbPartner};
+use super::super::{PdbAtom, PdbAtomKind, PdbConect, PdbDocument, PdbPartner};
 use super::altloc::inventory;
 use super::assemblies::read_pdb_assemblies;
-use super::atom_site::{is_water, AtomRow};
+use super::atom_site::AtomRow;
 use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
@@ -32,13 +32,14 @@ use super::connections::{
 use super::connectivity::{within_bonding_distance, ConnectivityCatalog};
 use super::structure_set::{interpret_conformations, interpret_models};
 use super::types::{
-    ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureSetInterpretOptions,
-    StructureSetInterpretation,
+    ConnectionResolutionReason, ConnectivityOptions, EntityKind, NumberField,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 use super::{interpret_source, stated_cell, AltLocResidue, StructureSource};
 use crate::components::{ComponentLibrary, ComponentLinking};
 use crate::math::Point3;
+use crate::topology::{is_ion, is_water};
 
 pub(crate) fn interpret_pdb(
     document: &PdbDocument,
@@ -107,9 +108,9 @@ fn pdb_source(
             "A PDB entry declares no entity types. Turn off strict entity metadata.",
         ));
     }
-    let (rows, inferred) = read_rows(
+    let (rows, mut issues) = read_rows(
         document,
-        connectivity.components().map(|library| library.as_ref()),
+        connectivity.components().map(AsRef::as_ref),
         cancellation,
     )?;
     poll(cancellation)?;
@@ -117,12 +118,6 @@ fn pdb_source(
     for row in rows.iter().filter(|row| row.polymer_position.is_some()) {
         let next = polymer_order.len();
         polymer_order.entry(row.asym_id.clone()).or_insert(next);
-    }
-    let mut issues = Vec::new();
-    if !inferred.is_empty() {
-        issues.push(StructureInterpretIssue::ElementsInferredFromAtomNames {
-            source_lines: inferred,
-        });
     }
     let cell = match document.cryst1() {
         None => None,
@@ -191,6 +186,8 @@ struct Residue {
     repeat: usize,
     atom_record: bool,
     water: bool,
+    /// A water or an ion, which is never polymer.
+    solvent: bool,
     /// Whether its template is a polymer one.
     polymer_template: bool,
     /// Its atoms that a polymer link joins to the residue before it (`N`,
@@ -227,10 +224,10 @@ struct ChainRuns {
 impl ChainRuns {
     /// Ends a chain's run. A run a `TER` record ends is polymer; otherwise its
     /// polymer spans its `ATOM` records and the residues bonded to their
-    /// ends. Water is never polymer, nor a single residue, nor a residue of
-    /// `HETATM` records without a polymer template and, in a run a `TER`
-    /// record ends, without linking atoms, or otherwise without a link to a
-    /// neighbour.
+    /// ends. Water and ions are never polymer, nor a single residue, nor a
+    /// residue of `HETATM` records without a polymer template and, in a run
+    /// a `TER` record ends, without linking atoms, or otherwise without a
+    /// link to a neighbour.
     fn close(&mut self, asym_id: &str, terminated: bool, residues: &mut [Residue]) {
         let Some(run) = self.open.remove(asym_id) else {
             return;
@@ -272,7 +269,7 @@ impl ChainRuns {
                             .get(index + 1)
                             .is_some_and(|&next| residue.links_to(&residues[next]))
                 };
-                !residue.water && (residue.atom_record || residue.polymer_template || linked)
+                !residue.solvent && (residue.atom_record || residue.polymer_template || linked)
             })
             .map(|(_, &residue)| residue)
             .collect::<Vec<_>>();
@@ -296,13 +293,14 @@ impl ChainRuns {
     }
 }
 
-/// Atom rows of every model, and the lines of records whose element was
-/// inferred from the atom name.
+/// Atom rows of every model, and the issues of their records: elements
+/// taken from templates or atom names, charges without a sign, and numbers
+/// that read as hexadecimal or go back.
 fn read_rows(
     document: &PdbDocument,
     components: Option<&ComponentLibrary>,
     cancellation: Option<&Cancellation>,
-) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
+) -> Result<(Vec<AtomRow>, Vec<StructureInterpretIssue>), FormatError> {
     let atoms = document.atoms();
     if atoms.is_empty() {
         return Err(structure_error(
@@ -350,6 +348,7 @@ fn read_rows(
                     repeat: *repeat,
                     atom_record: false,
                     water: is_water(atom.residue_name()),
+                    solvent: is_water(atom.residue_name()) || is_ion(atom.residue_name()),
                     polymer_template: polymer_template(atom.residue_name(), components),
                     heads: Vec::new(),
                     tails: Vec::new(),
@@ -386,12 +385,16 @@ fn read_rows(
     }
     runs.close_all(&mut residues);
 
-    let mut inferred = Vec::new();
+    let conventional = follows_name_alignment(atoms);
+    let (mut from_templates, mut from_names, mut unsigned) = (Vec::new(), Vec::new(), Vec::new());
     let mut rows = Vec::with_capacity(atoms.len());
     for (index, atom) in atoms.iter().enumerate() {
         poll_every(cancellation, index)?;
         let residue = &residues[residue_of[index]];
         let line = atom.location().line();
+        if atom.charge_is_unsigned() {
+            unsigned.push(line);
+        }
         let (element, isotope) = match atom.element() {
             Some(symbol) => parse_structure_element_symbol(symbol).ok_or_else(|| {
                 structure_error(
@@ -401,19 +404,15 @@ fn read_rows(
                 )
             })?,
             None => {
-                inferred.push(line);
-                let element = element_from_atom_name(atom.name_field(), atom.residue_name())
-                    .ok_or_else(|| {
-                        structure_error(
-                            DiagnosticKind::InvalidValue,
-                            Some(line),
-                            format!(
-                                "Atom {:?} has no element symbol, and its name gives none.",
-                                atom.name()
-                            ),
-                        )
-                    })?;
-                (element, None)
+                if let Some(element) =
+                    ComponentLibrary::template_element(components, atom.residue_name(), atom.name())
+                {
+                    from_templates.push(line);
+                    (element, None)
+                } else {
+                    from_names.push(line);
+                    (name_element(atom, conventional)?, None)
+                }
             }
         };
         let sequence = atom.residue_sequence().to_string();
@@ -468,7 +467,24 @@ fn read_rows(
             formal_charge: atom.formal_charge(),
         });
     }
-    Ok((rows, inferred))
+    let mut issues = Vec::new();
+    if !from_templates.is_empty() {
+        issues.push(StructureInterpretIssue::ElementsFromTemplates {
+            source_lines: from_templates,
+        });
+    }
+    if !from_names.is_empty() {
+        issues.push(StructureInterpretIssue::ElementsInferredFromAtomNames {
+            source_lines: from_names,
+        });
+    }
+    if !unsigned.is_empty() {
+        issues.push(StructureInterpretIssue::UnsignedCharges {
+            source_lines: unsigned,
+        });
+    }
+    issues.extend(numbering_issues(document));
+    Ok((rows, issues))
 }
 
 /// Whether the template of a residue named `name` is a polymer one: the
@@ -498,34 +514,170 @@ fn linking_role(name: &str) -> Option<(bool, u8)> {
     }
 }
 
-/// The element a PDB atom name implies by convention: two-letter symbols
-/// start in column 13, one-letter symbols in column 14, and four-character
-/// hydrogen names fill columns 13-16. A one-atom residue named for its
-/// element, such as `ZN`, is that element.
-fn element_from_atom_name(name_field: &str, residue_name: &str) -> Option<Element> {
-    let symbol = |text: &str| match parse_structure_element_symbol(text) {
+/// Reports where numbering turns hexadecimal and where it goes back: atom
+/// serial numbers that decrease within a model, and residue numbers that
+/// fall back after 9,999.
+fn numbering_issues(document: &PdbDocument) -> Vec<StructureInterpretIssue> {
+    let mut issues = document
+        .hexadecimal_numbers()
+        .iter()
+        .map(
+            |(field, location)| StructureInterpretIssue::HexadecimalNumbers {
+                field: *field,
+                source_line: location.line(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let mut restarts = [None; 2];
+    let mut previous: Option<&PdbAtom> = None;
+    for atom in document.atoms() {
+        let Some(last) = previous
+            .replace(atom)
+            .filter(|last| last.model() == atom.model())
+        else {
+            continue;
+        };
+        let line = atom.location().line();
+        if matches!((last.serial(), atom.serial()), (Some(last), Some(serial)) if serial < last) {
+            restarts[0].get_or_insert(line);
+        }
+        if last.residue_sequence() == 9999 && atom.residue_sequence() < 9999 {
+            restarts[1].get_or_insert(line);
+        }
+    }
+    for (field, line) in [NumberField::AtomSerial, NumberField::ResidueNumber]
+        .into_iter()
+        .zip(restarts)
+    {
+        if let Some(source_line) = line {
+            issues.push(StructureInterpretIssue::NumbersRestart { field, source_line });
+        }
+    }
+    issues
+}
+
+/// What an atom name gives as its element.
+#[derive(Debug, PartialEq, Eq)]
+enum NameElement {
+    Element(Element),
+    /// A one-letter and a two-letter reading that alignment cannot tell
+    /// apart.
+    Ambiguous([Element; 2]),
+    None,
+}
+
+/// The element of an atom no template names, from its name; see
+/// [`element_from_atom_name`].
+fn name_element(atom: &PdbAtom, conventional: bool) -> Result<Element, FormatError> {
+    let line = Some(atom.location().line());
+    match element_from_atom_name(atom.name_field(), atom.residue_name(), conventional) {
+        NameElement::Element(element) => Ok(element),
+        NameElement::Ambiguous([one, two]) => Err(structure_error(
+            DiagnosticKind::InvalidValue,
+            line,
+            format!(
+                "Atom {:?} has no element symbol, and its name reads as {} or {}. Add element \
+                 symbols in columns 77-78.",
+                atom.name(),
+                one.symbol(),
+                two.symbol()
+            ),
+        )),
+        NameElement::None => Err(structure_error(
+            DiagnosticKind::InvalidValue,
+            line,
+            format!(
+                "Atom {:?} has no element symbol, and its name gives none.",
+                atom.name()
+            ),
+        )),
+    }
+}
+
+/// Whether the entry aligns atom names by the PDB element convention: among
+/// atoms without element symbols, some name shorter than four characters
+/// starts in column 13 with a two-letter element symbol, as `FE` does, and
+/// none starts there without one, as `C1` would. Writers that pad every
+/// short name into column 14 show no such name.
+fn follows_name_alignment(atoms: &[PdbAtom]) -> bool {
+    let mut evidence = false;
+    for atom in atoms.iter().filter(|atom| atom.element().is_none()) {
+        let starts_in_13 = atom
+            .name_field()
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic);
+        if starts_in_13 && atom.name().len() < 4 {
+            if two_letter_symbol(atom.name()).is_none() {
+                return false;
+            }
+            evidence = true;
+        }
+    }
+    evidence
+}
+
+/// An element symbol without a mass number.
+fn element_symbol(text: &str) -> Option<Element> {
+    match parse_structure_element_symbol(text) {
         Some((element, None)) => Some(element),
         _ => None,
-    };
+    }
+}
+
+/// The element whose symbol is the first two characters of `text`, when
+/// both are letters.
+fn two_letter_symbol(text: &str) -> Option<Element> {
+    text.get(..2)
+        .filter(|two| two.bytes().all(|byte| byte.is_ascii_alphabetic()))
+        .and_then(element_symbol)
+}
+
+/// The element a PDB atom name implies by convention, for an atom no
+/// template names. A one-atom residue named for its element, such as `CA`,
+/// is that element. A name starting with a digit, as in `1HG1`, has a
+/// one-letter symbol in column 14. A four-character name starting with `H`
+/// is a hydrogen. In an entry that follows the
+/// [alignment convention](follows_name_alignment), a name starting in
+/// column 14 has a one-letter symbol and a shorter name starting in column
+/// 13 a two-letter one. Otherwise, and for other four-character names, a
+/// name whose first letter and first two letters are both element symbols
+/// is ambiguous, as ` CL1` is in an entry that pads every name, unless its
+/// first letter is `H`: such a name, as ` HG1`, is a hydrogen.
+fn element_from_atom_name(name_field: &str, residue_name: &str, conventional: bool) -> NameElement {
     let name = name_field.trim();
     if name.eq_ignore_ascii_case(residue_name) {
-        if let Some(element) = symbol(name) {
-            return Some(element);
+        if let Some(element) = element_symbol(name) {
+            return NameElement::Element(element);
         }
     }
-    let bytes = name_field.as_bytes();
-    let first = *bytes.first()?;
-    if first.is_ascii_alphabetic() {
-        let hydrogen_name = first.eq_ignore_ascii_case(&b'H') && name.len() == 4;
-        if !hydrogen_name && bytes.get(1).is_some_and(u8::is_ascii_alphabetic) {
-            if let Some(element) = symbol(&name_field[..2]) {
-                return Some(element);
-            }
+    let Some(start) = name_field.find(|character: char| character.is_ascii_alphabetic()) else {
+        return NameElement::None;
+    };
+    let one = element_symbol(&name_field[start..=start]);
+    let two = two_letter_symbol(&name_field[start..]);
+    let four = start == 0 && name.len() == 4;
+    let digit_led = name_field[..start].bytes().any(|byte| byte != b' ');
+    let ambiguous = |one: Element, two: Element| {
+        if one.atomic_number() == 1 {
+            NameElement::Element(one)
+        } else {
+            NameElement::Ambiguous([one, two])
         }
-        return symbol(&name_field[..1]);
+    };
+    match (one, two) {
+        // A digit in column 13 leaves column 14 a one-letter symbol.
+        (Some(one), _) if digit_led => NameElement::Element(one),
+        (Some(one), Some(two)) if start > 0 && !conventional => ambiguous(one, two),
+        (Some(one), _) if start > 0 => NameElement::Element(one),
+        _ if four && name_field.as_bytes()[0].eq_ignore_ascii_case(&b'H') => {
+            NameElement::Element(Element::from_atomic_number(1).expect("hydrogen"))
+        }
+        (Some(one), Some(two)) if four || !conventional => ambiguous(one, two),
+        (_, Some(two)) => NameElement::Element(two),
+        (Some(one), None) => NameElement::Element(one),
+        (None, None) => NameElement::None,
     }
-    let index = name_field[1..].find(|character: char| character.is_ascii_alphabetic())? + 1;
-    symbol(&name_field[index..=index])
 }
 
 fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, FormatError> {
@@ -539,9 +691,11 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             order: DeclaredOrder::Stated(BondOrder::Single),
             partners: [partner(left, Some("SG")), partner(right, Some("SG"))],
             connectivity_only: false,
+            model: None,
         })));
     }
-    // LINK records state no bond type; links to a metal are coordination.
+    // LINK records state no bond type; a link between a metal and a
+    // non-metal of different residues is coordination.
     for record in document.link_records() {
         let [left, right] = record.partners();
         records.push(ConnectionRecord::Bond(Box::new(DeclaredBond {
@@ -551,12 +705,20 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             order: DeclaredOrder::ByElements(None),
             partners: [partner(left, None), partner(right, None)],
             connectivity_only: false,
+            model: None,
         })));
     }
     // Each bond is usually listed from both atoms. Listing a partner twice or
-    // three times states a double or triple bond, by convention, as Maestro
-    // and Kekule write.
-    let mut listed = BTreeMap::<(u32, u32), ([u8; 2], usize)>::new();
+    // three times states a double or triple bond, by convention. Files that
+    // repeat the records in every model state each model's bonds; others
+    // state them once for all models.
+    let models = document
+        .conect_records()
+        .iter()
+        .map(PdbConect::model)
+        .collect::<BTreeSet<_>>();
+    let per_model = models.len() > 1;
+    let mut listed = BTreeMap::<(Option<u32>, (u32, u32)), ([u8; 2], usize)>::new();
     for record in document.conect_records() {
         let serial = record.serial();
         let line = record.location().line();
@@ -568,8 +730,9 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
                     format!("CONECT record bonds atom {serial} to itself"),
                 ));
             }
+            let model = record.model().filter(|_| per_model);
             let (counts, _) = listed
-                .entry((serial.min(bonded), serial.max(bonded)))
+                .entry((model, (serial.min(bonded), serial.max(bonded))))
                 .or_insert(([0, 0], line));
             let direction = usize::from(serial > bonded);
             counts[direction] = counts[direction].saturating_add(1);
@@ -578,16 +741,16 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
     // Atoms the records bond, directly or through others, that list no pair
     // twice, as wwPDB files do, state no orders. Groups are counted apart, so
     // that a molecule a program appends with orders leaves the others alone.
-    let mut groups = ConectGroups::of(listed.keys().copied());
+    let mut groups = ConectGroups::of(listed.keys().map(|&(_, pair)| pair));
     let mut stating = BTreeSet::new();
-    for (&(left, _), (counts, _)) in &listed {
+    for (&(_, (left, _)), (counts, _)) in &listed {
         if counts.iter().any(|&count| count > 1) {
             stating.insert(groups.root(left));
         }
     }
     let mut listed = listed.into_iter().collect::<Vec<_>>();
-    listed.sort_by_key(|&(pair, (_, line))| (line, pair));
-    for ((left, right), (counts, line)) in listed {
+    listed.sort_by_key(|&((model, pair), (_, line))| (line, model, pair));
+    for ((model, (left, right)), (counts, line)) in listed {
         let states_orders = stating.contains(&groups.root(left));
         let order = match counts[0].max(counts[1]) {
             _ if !states_orders => None,
@@ -599,8 +762,9 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
                     DiagnosticKind::InvalidValue,
                     Some(line),
                     format!(
-                    "The CONECT records list the bond between atoms {left} and {right} {count} times."
-                ),
+                        "The CONECT records list the bond between atoms {left} and {right} \
+                         {count} times."
+                    ),
                 ))
             }
         };
@@ -611,6 +775,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             order: DeclaredOrder::ByElements(order),
             partners: [serial_partner(left), serial_partner(right)],
             connectivity_only: true,
+            model: model.map(|model| model_id(Some(model))),
         })));
     }
     Ok(records)
