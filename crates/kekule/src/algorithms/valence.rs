@@ -74,39 +74,64 @@ pub struct ValenceError {
     pub violations: Vec<ValenceViolation>,
 }
 
-impl fmt::Display for ValenceViolation {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl ValenceViolation {
+    /// The offending atom.
+    pub(crate) const fn atom(&self) -> AtomId {
         match self {
-            Self::InvalidFormalCharge {
-                atom,
-                formal_charge,
-            } => write!(
+            Self::InvalidFormalCharge { atom, .. }
+            | Self::ValenceExceeded { atom, .. }
+            | Self::ValenceOccupancyExceeded { atom, .. } => *atom,
+        }
+    }
+
+    /// The same violation of `atom`, as when publication renumbers atoms.
+    pub(crate) fn with_atom(mut self, atom: AtomId) -> Self {
+        match &mut self {
+            Self::InvalidFormalCharge { atom: old, .. }
+            | Self::ValenceExceeded { atom: old, .. }
+            | Self::ValenceOccupancyExceeded { atom: old, .. } => *old = atom,
+        }
+        self
+    }
+
+    /// Writes the violation as a sentence about `subject`, a capitalized
+    /// noun phrase for the atom, such as `The atom at line 5`.
+    pub(crate) fn write_about(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+        subject: impl fmt::Display,
+    ) -> fmt::Result {
+        match self {
+            Self::InvalidFormalCharge { formal_charge, .. } => write!(
                 formatter,
-                "{} is an unbonded hydrogen with formal charge {formal_charge:+}.",
-                Capitalized(atom)
+                "{subject} is an unbonded hydrogen with formal charge {formal_charge:+}."
             ),
             Self::ValenceExceeded {
-                atom,
                 explicit_valence,
                 max_allowed,
+                ..
             } => write!(
                 formatter,
-                "{} has valence {explicit_valence}, more than the allowed {max_allowed}.",
-                Capitalized(atom)
+                "{subject} has valence {explicit_valence}, more than the allowed {max_allowed}."
             ),
             Self::ValenceOccupancyExceeded {
-                atom,
                 explicit_valence,
                 radical_electrons,
                 charge_offset,
                 max_allowed,
+                ..
             } => write!(
                 formatter,
-                "{} has valence {explicit_valence} plus {} for its radical electrons and charge, more than the allowed {max_allowed}.",
-                Capitalized(atom),
+                "{subject} has valence {explicit_valence} plus {} for its radical electrons and charge, more than the allowed {max_allowed}.",
                 radical_electrons + charge_offset
             ),
         }
+    }
+}
+
+impl fmt::Display for ValenceViolation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_about(formatter, Capitalized(self.atom()))
     }
 }
 

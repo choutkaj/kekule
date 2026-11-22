@@ -10,7 +10,7 @@ use std::fmt;
 use std::num::{NonZeroU16, NonZeroU32};
 
 use crate::algorithms::{
-    implied_charges, incomplete_metal_valence, is_metal_donor, ImpliedCharges,
+    implied_charges, incomplete_metal_valence, is_metal_donor, ImpliedCharges, ValenceError,
 };
 use crate::io::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
@@ -221,8 +221,9 @@ struct StagedMolfile {
 enum ImplicitCharge {
     /// An atom charged here ([`implied_charges`]).
     Charged(i8, SourceLocation),
-    /// An atom charged +1 here, whose staged neighbor takes -1.
-    Separated(AtomId, SourceLocation),
+    /// An atom charged +1 here, whose staged neighbor takes -1, with the
+    /// neighbor's source line.
+    Separated(AtomId, SourceLocation, SourceLocation),
     /// A metal donor ([`is_metal_donor`]), given no hydrogens here.
     MetalDonor(SourceLocation),
     /// A main-group metal at a valence its element does not allow.
@@ -239,11 +240,14 @@ impl ImplicitCharge {
                 location,
                 charge,
             },
-            Self::Separated(acceptor, location) => MolfileInterpretIssue::ChargesSeparated {
-                atom,
-                acceptor: published[&acceptor],
-                location,
-            },
+            Self::Separated(acceptor, location, acceptor_location) => {
+                MolfileInterpretIssue::ChargesSeparated {
+                    atom,
+                    acceptor: published[&acceptor],
+                    location,
+                    acceptor_location,
+                }
+            }
             Self::MetalDonor(location) => MolfileInterpretIssue::MetalDonor { atom, location },
             Self::Metal(valence, location) => MolfileInterpretIssue::MetalValenceIncomplete {
                 atom,
@@ -286,7 +290,7 @@ fn assign_implicit_charges(
             ImpliedCharges::Separated(acceptor) => {
                 set_charge(editor, id, 1);
                 set_charge(editor, acceptor, -1);
-                ImplicitCharge::Separated(acceptor, location)
+                ImplicitCharge::Separated(acceptor, location, atoms[acceptor.index()].1)
             }
         };
         found.entry(id).or_default().push(implicit);
@@ -508,7 +512,12 @@ pub enum MolfileInterpretIssue {
     /// coordinate-stereo model. No new configuration is inferred. Resource
     /// exhaustion and structural failures remain interpretation errors.
     CoordinateStereoValenceUnsupported {
-        /// Why the valence is outside the model.
+        /// The first atom whose valence is outside the model.
+        atom: AtomId,
+        /// Its source line.
+        location: SourceLocation,
+        /// Why the valence is outside the model, with one violation per
+        /// atom, naming the atoms of the published molecule.
         error: crate::algorithms::ValenceError,
     },
     /// Wedge geometry does not establish one configuration. A single mark may
@@ -559,6 +568,8 @@ pub enum MolfileInterpretIssue {
         acceptor: AtomId,
         /// The centre's source line.
         location: SourceLocation,
+        /// The neighbor's source line.
+        acceptor_location: SourceLocation,
     },
     /// A non-metal atom bonded to metals has a bond valence its element and
     /// charge do not allow, but one they allow when some of its bonds to
@@ -642,8 +653,21 @@ impl fmt::Display for MolfileInterpretIssue {
                     "conflicting wedge marks"
                 )
             ),
-            Self::CoordinateStereoValenceUnsupported { error } => {
-                write!(formatter, "{error} No stereo is read from the coordinates.")
+            Self::CoordinateStereoValenceUnsupported {
+                atom,
+                location,
+                error,
+            } => {
+                let subject = format!("The atom at {location}");
+                match error
+                    .violations
+                    .iter()
+                    .find(|violation| violation.atom() == *atom)
+                {
+                    Some(violation) => violation.write_about(formatter, subject)?,
+                    None => write!(formatter, "{subject} has an invalid valence state.")?,
+                }
+                formatter.write_str(" No stereo is read from the coordinates.")
             }
             Self::AmbiguousTetrahedralWedgeMarks {
                 location,
@@ -675,10 +699,14 @@ impl fmt::Display for MolfileInterpretIssue {
                 formatter,
                 "The atom at {location} takes charge {charge:+} from its bonds."
             ),
-            Self::ChargesSeparated { location, .. } => write!(
+            Self::ChargesSeparated {
+                location,
+                acceptor_location,
+                ..
+            } => write!(
                 formatter,
-                "The atom at {location} takes charge +1 from its bonds. A singly bonded \
-                 neighbor takes charge -1."
+                "The atom at {location} takes charge +1 from its bonds. Its neighbor at \
+                 {acceptor_location} takes charge -1."
             ),
             Self::MetalDonor { location, .. } => write!(
                 formatter,
@@ -947,12 +975,11 @@ pub(crate) fn interpret_molfile_document(
         // Coordinates specify the configurations of a conformation, so only a
         // drawing's wedges and parities depend on the chiral flag.
         let drawing = molfile_coordinates_are_flat(&molfile_points(&editor, &raw.geometry)?);
-        let mut coordinate_warnings = Vec::new();
-        let inferred = molfile_coordinate_tetrahedra(
-            &editor.snapshot_keeping_ids(),
-            &raw.geometry,
-            &mut coordinate_warnings,
-        )?;
+        let (inferred, unsupported_valence) =
+            match molfile_coordinate_tetrahedra(&editor.snapshot_keeping_ids(), &raw.geometry)? {
+                Ok(inferred) => (inferred, None),
+                Err(error) => (Vec::new(), Some(error)),
+            };
         let centers = inferred.iter().filter_map(|element| match &element.kind {
             StereoElementKind::Tetrahedral(stereo) => Some(stereo.center),
             _ => None,
@@ -979,6 +1006,36 @@ pub(crate) fn interpret_molfile_document(
             )
             .with_source(error)
         })?;
+        // Staged atoms are source atoms, so each violation has a source line.
+        let valence_issue = unsupported_valence.map(|error| {
+            let error = ValenceError {
+                violations: error
+                    .violations
+                    .into_iter()
+                    .map(|violation| {
+                        let atom = ids
+                            .atom(violation.atom())
+                            .expect("valence violations name source atoms");
+                        violation.with_atom(atom)
+                    })
+                    .collect(),
+            };
+            let first = error
+                .violations
+                .first()
+                .expect("a valence error has a violation")
+                .atom();
+            let source = raw
+                .atom_map
+                .iter()
+                .find_map(|(source, staged)| (ids.atom(*staged) == Some(first)).then_some(*source))
+                .expect("published atoms map to source atoms");
+            MolfileInterpretIssue::CoordinateStereoValenceUnsupported {
+                atom: first,
+                location: atom_lines[source.index()],
+                error,
+            }
+        });
         // Publication renumbers IDs densely and may prune canonicalized stereo.
         for target in raw.atom_map.values_mut() {
             *target = ids
@@ -1064,7 +1121,7 @@ pub(crate) fn interpret_molfile_document(
                 }
             })
             .collect::<Vec<_>>();
-        warnings.extend(coordinate_warnings);
+        warnings.extend(valence_issue);
         warnings.extend(contradicted_parities.into_iter().map(|(center, location)| {
             MolfileInterpretIssue::AtomParityContradictsCoordinates {
                 center: ids.atom(center).expect("warned atoms survive publication"),
@@ -1410,14 +1467,15 @@ pub(super) fn molfile_coordinate_double_bonds(
 
 /// Uses the same detached inference for import and for lossless writer planning.
 /// A flat XY drawing carries tetrahedral stereo through annotations only.
+/// The inner error is a valence outside the coordinate-stereo model, for
+/// which no configuration is inferred.
 pub(super) fn molfile_coordinate_tetrahedra(
     molecule: &Molecule,
     geometry: &dyn crate::io::AtomPositionSource,
-    warnings: &mut Vec<MolfileInterpretIssue>,
-) -> Result<Vec<StereoElement>, FormatError> {
+) -> Result<Result<Vec<StereoElement>, ValenceError>, FormatError> {
     let points = molfile_points(molecule, geometry)?;
     if molfile_coordinates_are_flat(&points) {
-        return Ok(Vec::new());
+        return Ok(Ok(Vec::new()));
     }
     let positions = Positions::from_vec(Quantity::new(points, ANGSTROM)).map_err(chemistry)?;
     let inferred = match crate::algorithms::infer_coordinate_stereo(
@@ -1430,10 +1488,7 @@ pub(super) fn molfile_coordinate_tetrahedra(
             crate::algorithms::StereoSearchError::Perception(
                 crate::algorithms::PerceptionError::Valence(error),
             ),
-        )) => {
-            warnings.push(MolfileInterpretIssue::CoordinateStereoValenceUnsupported { error });
-            return Ok(Vec::new());
-        }
+        )) => return Ok(Err(error)),
         Err(error) => {
             return Err(interpret_error(
                 DiagnosticKind::Chemistry,
@@ -1443,11 +1498,11 @@ pub(super) fn molfile_coordinate_tetrahedra(
             .with_source(error))
         }
     };
-    Ok(inferred
+    Ok(Ok(inferred
         .elements
         .into_iter()
         .filter(|element| matches!(element.kind, StereoElementKind::Tetrahedral(_)))
-        .collect())
+        .collect()))
 }
 
 struct RawMolfileComponent {

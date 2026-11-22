@@ -25,12 +25,21 @@ fn molfile_issues() -> Vec<MolfileInterpretIssue> {
             mark_count: 2,
         },
         MolfileInterpretIssue::CoordinateStereoValenceUnsupported {
+            atom: AtomId::new(3),
+            location: line(8),
             error: ValenceError {
                 violations: vec![ValenceViolation::ValenceExceeded {
                     atom: AtomId::new(3),
                     explicit_valence: 5,
                     max_allowed: 4,
                 }],
+            },
+        },
+        MolfileInterpretIssue::CoordinateStereoValenceUnsupported {
+            atom: AtomId::new(0),
+            location: line(6),
+            error: ValenceError {
+                violations: Vec::new(),
             },
         },
         MolfileInterpretIssue::AtomParityContradictsCoordinates {
@@ -51,6 +60,7 @@ fn molfile_issues() -> Vec<MolfileInterpretIssue> {
             atom: AtomId::new(0),
             acceptor: AtomId::new(1),
             location: line(5),
+            acceptor_location: line(6),
         },
         MolfileInterpretIssue::MetalDonor {
             atom: AtomId::new(4),
@@ -147,7 +157,12 @@ fn molfile_issues_name_atoms_and_bonds_by_line() {
         .collect::<Vec<_>>();
     for expected in [
         "The axis bond at line 14 has 2 conflicting wedge marks. Its configuration is not read.",
-        "Atom 3 has valence 5, more than the allowed 4. No stereo is read from the coordinates.",
+        "The atom at line 8 has valence 5, more than the allowed 4. No stereo is read from \
+         the coordinates.",
+        "The atom at line 6 has an invalid valence state. No stereo is read from the \
+         coordinates.",
+        "The atom at line 5 takes charge +1 from its bonds. Its neighbor at line 6 takes \
+         charge -1.",
         "The atom at line 5 takes charge +1 from its bonds.",
         "The atom at line 5 takes charge -1 from its bonds.",
         "The wedge mark at the atom at line 7 does not set one configuration. Its \
@@ -190,12 +205,7 @@ fn xyz_issues_number_atoms_from_one() {
 #[test]
 fn interpreted_xyz_reports_carry_displayable_issues() {
     let interpretation = kekule::xyz::parse_str(
-        "3
-water
-O 0 0 0
-H 0.96 0 0
-H -0.24 0.93 0
-",
+        "3\nwater\nO 0 0 0\nH 0.96 0 0\nH -0.24 0.93 0\n",
         Default::default(),
     )
     .unwrap()
@@ -206,4 +216,77 @@ H -0.24 0.93 0
     for issue in issues {
         assert_sentences(&issue.to_string());
     }
+}
+
+/// A charged oxygen with a valence outside the coordinate-stereo model, in
+/// the second molecule: atom 4 of the file, at line 11, but atom 2 of its
+/// molecule.
+const UNSUPPORTED_VALENCE: &str = "\
+second molecule
+kekule
+unsupported valence
+  0  0  0  0  0  0            999 V3000
+M  V30 BEGIN CTAB
+M  V30 COUNTS 4 2 0 0 0
+M  V30 BEGIN ATOM
+M  V30 1 C 5.0000 5.0000 5.0000 0
+M  V30 2 N 0.1000 0.2000 0.3000 0 CHG=1 RAD=2
+M  V30 3 C 1.4000 0.0000 0.0000 0
+M  V30 4 O 2.5000 0.0000 0.0000 0 CHG=-1
+M  V30 END ATOM
+M  V30 BEGIN BOND
+M  V30 1 1 2 3
+M  V30 2 2 3 4
+M  V30 END BOND
+M  V30 END CTAB
+M  END
+";
+
+/// The atom a valence violation names.
+fn violating_atom(violation: &ValenceViolation) -> AtomId {
+    match violation {
+        ValenceViolation::InvalidFormalCharge { atom, .. }
+        | ValenceViolation::ValenceExceeded { atom, .. }
+        | ValenceViolation::ValenceOccupancyExceeded { atom, .. } => *atom,
+        _ => unreachable!("every valence violation names an atom"),
+    }
+}
+
+#[test]
+fn unsupported_coordinate_valence_names_the_atom_by_its_line() {
+    let interpretation = kekule::molfile::parse_str(UNSUPPORTED_VALENCE, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let report = &interpretation.reports()[1];
+    let [issue @ MolfileInterpretIssue::CoordinateStereoValenceUnsupported {
+        atom,
+        location,
+        error,
+    }] = report.issues()
+    else {
+        panic!("{:?}", report.issues());
+    };
+    let line_of = |atom: AtomId| {
+        report
+            .atom_mappings()
+            .iter()
+            .find(|mapping| mapping.atom() == atom)
+            .map(|mapping| mapping.location())
+    };
+    assert_eq!((*atom, *location), (AtomId::new(2), line(11)));
+    assert_eq!(line_of(*atom), Some(line(11)));
+    assert_eq!(violating_atom(&error.violations[0]), *atom);
+    for violation in &error.violations {
+        assert!(
+            line_of(violating_atom(violation)).is_some(),
+            "{violation:?}"
+        );
+    }
+    let text = issue.to_string();
+    assert!(text.starts_with("The atom at line 11 has "), "{text}");
+    assert!(
+        text.ends_with(" No stereo is read from the coordinates."),
+        "{text}"
+    );
 }

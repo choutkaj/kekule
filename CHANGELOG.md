@@ -311,7 +311,8 @@ the main branch migrates by the table under "From the SampleSet API".
 - `MolfileInterpretIssue`, `XyzInterpretIssue`, and
   `UnrepresentableStereoReason` implement `Display` with sentences for
   users. Molfile issues name atoms and bonds by source line, and XYZ
-  issues number atoms from 1 in file order.
+  issues number atoms from 1 in file order. `ChargesSeparated` gains the
+  acceptor's line, `acceptor_location`.
 
 ### Changed
 
@@ -603,6 +604,10 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `AtomSelection::contains_index` and
   `BondSelection::contains_index` are `contains_at`, like other methods that
   take a dense index.
+- **Breaking:** `MolfileInterpretIssue::CoordinateStereoValenceUnsupported`
+  names the first atom outside the valence model and its source line
+  (`atom`, `location`). Its `ValenceError` names atoms of the published
+  molecule.
 
 ### Removed
 
