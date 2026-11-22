@@ -198,22 +198,6 @@ fn smiles_ring_direction_preserves_the_textual_origin_endpoint() {
 }
 
 #[test]
-fn interpretation_enforces_small_ring_double_bond_boundary() {
-    let (cyclohexene, report) =
-        read_smiles_with_report(r"C1/C=C\CCC1").expect("marked cyclohexene interprets");
-    assert_eq!(cyclohexene.stereo_elements().count(), 0);
-    assert_eq!(report.unpaired_directional_bonds().len(), 2);
-
-    let (cyclooctene, report) =
-        read_smiles_with_report(r"C1/C=C\CCCCC1").expect("marked cyclooctene interprets");
-    assert_eq!(report.created_stereo_elements().len(), 1);
-    let element = cyclooctene
-        .stereo_element(report.created_stereo_elements()[0])
-        .expect("created stereo element");
-    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
-}
-
-#[test]
 fn interpretation_assembles_molfile_wedge_into_tetrahedral_element() {
     let input = "\
 wedge
@@ -1100,19 +1084,19 @@ fn molfile_writers_preserve_unasserted_3d_tetrahedra_as_unknown() {
 fn wedged_tetrahedron(symbol: &str, charge_code: u8, mirror: bool) -> String {
     let y = if mirror { -1.0 } else { 1.0 };
     format!(
-        "stereo drawing\nkekule\n\n  4  3  0  0  1  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  {charge_code}  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000{y:10.4}    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
+        "stereo drawing\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  {charge_code}  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000{y:10.4}    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
     )
 }
 
 fn wedge_drawing(points: &[[f64; 2]], scale: f64, mirror: f64, v3000: bool) -> String {
     let symbols = ["C", "F", "Cl", "Br", "I"];
     let mut source = format!(
-        "drawing\nkekule\n\n{:3}{:3}  0  0  1  0            999 V2000\n",
+        "drawing\nkekule\n\n{:3}{:3}  0  0  0  0            999 V2000\n",
         points.len(),
         points.len() - 1
     );
     if v3000 {
-        source = format!("drawing\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 1\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1);
+        source = format!("drawing\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 0\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1);
     }
     for (index, [x, y]) in points.iter().enumerate() {
         let (x, y) = (scale * (x + 3.0), scale * (mirror * y - 2.0));
@@ -1218,75 +1202,6 @@ fn molfile_specified_tetrahedral_export_requires_a_drawing() {
             result.is_err(),
             "a degenerate drawing cannot preserve specified stereo"
         );
-    }
-}
-
-#[test]
-fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
-    // RDKit 2026.03.3 independently checks these drawing configurations.
-    for (points, original) in [
-        (
-            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
-            StereoDescriptor::S,
-        ),
-        (
-            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
-            StereoDescriptor::R,
-        ),
-        (
-            vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [0.0, 1.0]],
-            StereoDescriptor::R,
-        ),
-        (
-            vec![[0.0, 0.0], [0.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
-            StereoDescriptor::S,
-        ),
-        // Local drawings from PubChem 10524, with distinct test ligands.
-        // The three unmarked bonds lie on the same side of the center;
-        // their drawing order must not be read as a displaced tetrahedron.
-        (
-            vec![
-                [6.3981, -0.4499],
-                [6.3820, -1.4914],
-                [7.2641, 0.0501],
-                [6.1950, -0.0800],
-                [5.5320, 0.0501],
-            ],
-            StereoDescriptor::S,
-        ),
-        (
-            vec![
-                [7.2641, 1.0501],
-                [7.6891, 1.7862],
-                [6.8422, 1.0410],
-                [7.2641, 0.0501],
-                [6.3981, 1.5501],
-            ],
-            StereoDescriptor::S,
-        ),
-    ] {
-        for v3000 in [false, true] {
-            for scale in [0.1, 1.0, 10.0] {
-                for mirror in [-1.0, 1.0] {
-                    let source = wedge_drawing(&points, scale, mirror, v3000);
-                    let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
-                    assert!(report.issues().is_empty(), "{source}");
-                    perceive(&mut molecule).unwrap();
-                    let assignment =
-                        stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
-                            .unwrap();
-                    let expected = if mirror > 0.0 {
-                        original
-                    } else if original == StereoDescriptor::R {
-                        StereoDescriptor::S
-                    } else {
-                        StereoDescriptor::R
-                    };
-                    assert_eq!(assignment.assigned.len(), 1, "{source}");
-                    assert_eq!(assignment.assigned[0].descriptor, expected, "{source}");
-                }
-            }
-        }
     }
 }
 
@@ -1467,49 +1382,6 @@ fn molfile_structure_writing_preserves_tetrahedral_drawing_orientation() {
             }
         }
     }
-}
-
-#[test]
-fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
-    let source = wedged_tetrahedron("C", 0, false)
-        .replace("   -1.0000    0.0000", "   -0.5000    0.8660")
-        .replace("    0.0000    1.0000", "   -0.5000   -0.8660");
-    let original = read_molfile(&source).expect("single wedge interprets");
-    let redundant = source.replace("  1  3  1  0", "  1  3  1  1");
-    let (molecule, report) =
-        read_molfile_with_report(&redundant).expect("redundant wedges interpret");
-    assert!(report.issues().is_empty());
-    assert_eq!(
-        molecule.stereo_elements().next().unwrap().1.kind,
-        original.stereo_elements().next().unwrap().1.kind
-    );
-
-    let unknown = source.replace("  1  3  1  0", "  1  3  1  4");
-    let molecule = read_molfile(&unknown).expect("wavy mark interprets");
-    assert!(molecule
-        .stereo_elements()
-        .next()
-        .unwrap()
-        .1
-        .is_explicitly_unknown());
-
-    let degenerate = unknown
-        .replace("    1.0000    0.0000", "    0.0000    0.0000")
-        .replace("   -0.5000    0.8660", "    0.0000    0.0000")
-        .replace("   -0.5000   -0.8660", "    0.0000    0.0000");
-    let (molecule, report) = read_molfile_with_report(&degenerate).unwrap();
-    assert!(report.issues().is_empty());
-    assert!(molecule
-        .stereo_elements()
-        .next()
-        .unwrap()
-        .1
-        .is_explicitly_unknown());
-
-    let conflicting = source.replace("  1  3  1  0", "  1  3  1  6");
-    let (molecule, report) = read_molfile_with_report(&conflicting).expect("conflict is reported");
-    assert_eq!(report.issues().len(), 1);
-    assert!(molecule.stereo_elements().next().is_none());
 }
 
 #[test]

@@ -6,7 +6,7 @@ use crate::molecule::{
 use crate::properties::{PropertyKey, PropertyValue};
 use crate::sdf::{SdfDataField, SdfParseOptions, SdfRecordInterpretation};
 use crate::test_fixtures::{
-    assert_all_stale, carbon, chain_text, molfile_failure, read_molfile, read_molfile_with_report,
+    assert_all_stale, carbon, molfile_failure, read_molfile, read_molfile_with_report,
     read_sdf_molecules, read_sdf_molecules_with_options, read_sdf_records, read_smiles,
     test_structure, FailureStage, MolfileInterpretationTestExt, SdfRecordTestExt,
 };
@@ -618,74 +618,6 @@ fn v2000_radical_codes_round_trip_exact_multiplicity() {
             reparsed.atom(AtomId::new(0)).expect("atom").radical,
             Some(expected)
         );
-    }
-}
-
-#[test]
-fn v2000_bond_stereo_requires_enough_source_context_to_canonicalize() {
-    // A wedge at a methyl is dropped with a report; a crossed double bond
-    // without carriers fails.
-    let input = |order_code: u8, stereo_code: u8| {
-        format!(
-            "stereo\nkekule\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
-        )
-    };
-    for stereo_code in [1, 4, 6] {
-        let interpretation = molfile::parse_str(&input(1, stereo_code), Default::default())
-            .expect("bond stereo syntax should parse")
-            .interpret(Default::default())
-            .expect("a stray mark is dropped");
-        assert!(
-            matches!(
-                interpretation.reports()[0].issues(),
-                [molfile::MolfileInterpretIssue::StrayWedge { location, .. }]
-                    if *location == SourceLocation::at_line(7)
-            ),
-            "stereo code {stereo_code}"
-        );
-    }
-    let error = molfile::parse_str(&input(2, 3), Default::default())
-        .expect("bond stereo syntax should parse")
-        .interpret(Default::default())
-        .expect_err("under-specified stereo must not publish a molecule");
-    assert_eq!(error.kind(), DiagnosticKind::Chemistry);
-    assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
-    let text = chain_text(&error);
-    assert!(text.contains("on bond 0"), "{text}");
-}
-
-#[test]
-fn v2000_materializes_omitted_tetrahedral_hydrogen_from_source_valence() {
-    for symbol in ["C", "N", "S", "P"] {
-        let input = format!(
-            "stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  0  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
-        );
-
-        if symbol != "N" {
-            let molecule = read_molfile(&input).expect("source fourth carrier interprets");
-            let expected_carrier = if symbol == "P" {
-                StereoCarrier::ImplicitLonePair
-            } else {
-                assert_eq!(
-                    molecule.atom(AtomId::new(0)).unwrap().hydrogens,
-                    ImplicitHydrogens::Fixed(1)
-                );
-                StereoCarrier::ImplicitHydrogen
-            };
-            assert!(molecule.perception().valence().is_none());
-            assert_eq!(molecule.stereo_elements().count(), 1);
-            assert!(molecule.stereo_elements().any(|(_, element)| {
-                matches!(
-                    &element.kind,
-                    StereoElementKind::Tetrahedral(stereo)
-                        if stereo.carriers.contains(&expected_carrier)
-                )
-            }));
-        } else {
-            // An amine nitrogen inverts, so its wedge marks no stereo center.
-            let molecule = read_molfile(&input).expect("a stray wedge is dropped");
-            assert_eq!(molecule.stereo_elements().count(), 0);
-        }
     }
 }
 

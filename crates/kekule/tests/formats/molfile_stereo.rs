@@ -1,9 +1,12 @@
 //! Molfile stereo marks and the chiral flag at interpretation.
 
+use kekule::diagnostics::{DiagnosticKind, SourceLocation};
+use kekule::molecule::{AtomId, ImplicitHydrogens, Molecule};
 use kekule::molfile::{
-    self, MolfileInterpretIssue, MolfileInterpretation, UnrepresentableStereoReason,
+    self, MolfileInterpretIssue, MolfileInterpretation, MolfileInterpretationReport,
+    UnrepresentableStereoReason,
 };
-use kekule::stereo::StereoElementKind;
+use kekule::stereo::{self, StereoCarrier, StereoDescriptor, StereoElementKind};
 
 /// A V2000 record of `atoms` (symbol, x, y) and `bonds` (from, to, order,
 /// stereo code), one-based, with the counts-line chiral flag `chiral`.
@@ -316,4 +319,253 @@ fn wedges_marking_stereo_kekule_cannot_represent_are_reported() {
             "{text}"
         );
     }
+}
+
+/// The published molecule and report of a one-component record.
+fn read_with_report(text: &str) -> (Molecule, MolfileInterpretationReport) {
+    let interpretation = interpret(text);
+    assert_eq!(interpretation.reports().len(), 1, "{text}");
+    let report = interpretation.reports()[0].clone();
+    (interpretation.into_molecules().pop().unwrap(), report)
+}
+
+fn chain_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+/// A V2000 tetrahedron of `symbol` with V2000 charge code `charge_code`,
+/// wedged from the center to fluorine, with the chiral flag set.
+fn wedged_tetrahedron(symbol: &str, charge_code: u8, mirror: bool) -> String {
+    let y = if mirror { -1.0 } else { 1.0 };
+    format!(
+        "stereo drawing\nkekule\n\n  4  3  0  0  1  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  {charge_code}  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000{y:10.4}    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
+    )
+}
+
+/// A carbon at `points[0]` bonded to F, Cl, Br, and I at the other points,
+/// wedged to fluorine, with the chiral flag set.
+fn wedge_drawing(points: &[[f64; 2]], scale: f64, mirror: f64, v3000: bool) -> String {
+    let symbols = ["C", "F", "Cl", "Br", "I"];
+    let mut source = format!(
+        "drawing\nkekule\n\n{:3}{:3}  0  0  1  0            999 V2000\n",
+        points.len(),
+        points.len() - 1
+    );
+    if v3000 {
+        source = format!("drawing\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 1\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1);
+    }
+    for (index, [x, y]) in points.iter().enumerate() {
+        let (x, y) = (scale * (x + 3.0), scale * (mirror * y - 2.0));
+        if v3000 {
+            source += &format!("M  V30 {} {} {x} {y} 0 0\n", index + 1, symbols[index]);
+        } else {
+            source += &format!(
+                "{x:10.4}{y:10.4}    0.0000 {:<3} 0  0  0  0  0  0\n",
+                symbols[index]
+            );
+        }
+    }
+    if v3000 {
+        source += "M  V30 END ATOM\nM  V30 BEGIN BOND\n";
+    }
+    for index in 1..points.len() {
+        if v3000 {
+            source += &format!(
+                "M  V30 {index} 1 1 {}{}\n",
+                index + 1,
+                if index == 1 { " CFG=1" } else { "" }
+            );
+        } else {
+            source += &format!(
+                "  1{:3}  1{:3}  0  0  0\n",
+                index + 1,
+                usize::from(index == 1)
+            );
+        }
+    }
+    if v3000 {
+        source += "M  V30 END BOND\nM  V30 END CTAB\n";
+    }
+    source + "M  END\n"
+}
+
+#[test]
+fn bond_stereo_needs_enough_source_context() {
+    // A wedge at a methyl is dropped with a report; a crossed double bond
+    // without carriers fails.
+    let input = |order_code: u8, stereo_code: u8| {
+        format!(
+            "stereo\nkekule\n\n  2  1  0  0  0  0            999 V2000\n   -1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n    1.2500    0.0000    0.0000 C   0  0  0  0  0  0\n  1  2  {order_code}  {stereo_code}  0  0  0\nM  END\n"
+        )
+    };
+    for stereo_code in [1, 4, 6] {
+        let interpretation = interpret(&input(1, stereo_code));
+        assert!(
+            matches!(
+                interpretation.reports()[0].issues(),
+                [MolfileInterpretIssue::StrayWedge { location, .. }]
+                    if *location == SourceLocation::at_line(7)
+            ),
+            "stereo code {stereo_code}"
+        );
+    }
+    let error = molfile::parse_str(&input(2, 3), Default::default())
+        .expect("bond stereo syntax should parse")
+        .interpret(Default::default())
+        .expect_err("under-specified stereo must not publish a molecule");
+    assert_eq!(error.kind(), DiagnosticKind::Chemistry);
+    assert_eq!(error.location(), Some(SourceLocation::at_line(7)));
+    let text = chain_text(&error);
+    assert!(text.contains("on bond 0"), "{text}");
+}
+
+#[test]
+fn omitted_tetrahedral_hydrogens_come_from_source_valence() {
+    for symbol in ["C", "N", "S", "P"] {
+        let input = format!(
+            "stereo hydrogen\nkekule\n\n  4  3  0  0  0  0            999 V2000\n    0.0000    0.0000    0.0000 {symbol:<3} 0  0  0  0  0  0\n    1.0000    0.0000    0.0000 F   0  0  0  0  0  0\n   -1.0000    0.0000    0.0000 Cl  0  0  0  0  0  0\n    0.0000    1.0000    0.0000 Br  0  0  0  0  0  0\n  1  2  1  1  0  0  0\n  1  3  1  0  0  0  0\n  1  4  1  0  0  0  0\nM  END\n"
+        );
+        let molecule = interpret(&input).into_molecules().pop().unwrap();
+        if symbol == "N" {
+            // An amine nitrogen inverts, so its wedge marks no stereo center.
+            assert_eq!(molecule.stereo_elements().count(), 0);
+            continue;
+        }
+        let expected_carrier = if symbol == "P" {
+            StereoCarrier::ImplicitLonePair
+        } else {
+            assert_eq!(
+                molecule.atom(AtomId::new(0)).unwrap().hydrogens(),
+                ImplicitHydrogens::Fixed(1)
+            );
+            StereoCarrier::ImplicitHydrogen
+        };
+        assert!(molecule.perception().valence().is_none());
+        assert_eq!(molecule.stereo_elements().count(), 1);
+        assert!(molecule.stereo_elements().any(|(_, element)| {
+            matches!(
+                &element.kind,
+                StereoElementKind::Tetrahedral(stereo)
+                    if stereo.carriers.contains(&expected_carrier)
+            )
+        }));
+    }
+}
+
+#[test]
+fn valid_wedge_geometry_is_scale_and_reflection_consistent() {
+    // RDKit 2026.03.3 independently checks these drawing configurations.
+    for (points, original) in [
+        (
+            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::S,
+        ),
+        (
+            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
+            StereoDescriptor::R,
+        ),
+        (
+            vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::R,
+        ),
+        (
+            vec![[0.0, 0.0], [0.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
+            StereoDescriptor::S,
+        ),
+        // Local drawings from PubChem 10524, with distinct test ligands.
+        // The three unmarked bonds lie on the same side of the center;
+        // their drawing order must not be read as a displaced tetrahedron.
+        (
+            vec![
+                [6.3981, -0.4499],
+                [6.3820, -1.4914],
+                [7.2641, 0.0501],
+                [6.1950, -0.0800],
+                [5.5320, 0.0501],
+            ],
+            StereoDescriptor::S,
+        ),
+        (
+            vec![
+                [7.2641, 1.0501],
+                [7.6891, 1.7862],
+                [6.8422, 1.0410],
+                [7.2641, 0.0501],
+                [6.3981, 1.5501],
+            ],
+            StereoDescriptor::S,
+        ),
+    ] {
+        for v3000 in [false, true] {
+            for scale in [0.1, 1.0, 10.0] {
+                for mirror in [-1.0, 1.0] {
+                    let source = wedge_drawing(&points, scale, mirror, v3000);
+                    let (mut molecule, report) = read_with_report(&source);
+                    assert!(report.issues().is_empty(), "{source}");
+                    molecule.perceive().unwrap();
+                    let assignment =
+                        stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())
+                            .unwrap();
+                    let expected = if mirror > 0.0 {
+                        original
+                    } else if original == StereoDescriptor::R {
+                        StereoDescriptor::S
+                    } else {
+                        StereoDescriptor::R
+                    };
+                    assert_eq!(assignment.assigned().len(), 1, "{source}");
+                    assert_eq!(assignment.assigned()[0].descriptor(), expected, "{source}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn redundant_wedges_preserve_consistent_and_unknown_configurations() {
+    let source = wedged_tetrahedron("C", 0, false)
+        .replace("   -1.0000    0.0000", "   -0.5000    0.8660")
+        .replace("    0.0000    1.0000", "   -0.5000   -0.8660");
+    let original = interpret(&source).into_molecules().pop().unwrap();
+    let redundant = source.replace("  1  3  1  0", "  1  3  1  1");
+    let (molecule, report) = read_with_report(&redundant);
+    assert!(report.issues().is_empty());
+    assert_eq!(
+        molecule.stereo_elements().next().unwrap().1.kind,
+        original.stereo_elements().next().unwrap().1.kind
+    );
+
+    let unknown = source.replace("  1  3  1  0", "  1  3  1  4");
+    let molecule = interpret(&unknown).into_molecules().pop().unwrap();
+    assert!(molecule
+        .stereo_elements()
+        .next()
+        .unwrap()
+        .1
+        .is_explicitly_unknown());
+
+    let degenerate = unknown
+        .replace("    1.0000    0.0000", "    0.0000    0.0000")
+        .replace("   -0.5000    0.8660", "    0.0000    0.0000")
+        .replace("   -0.5000   -0.8660", "    0.0000    0.0000");
+    let (molecule, report) = read_with_report(&degenerate);
+    assert!(report.issues().is_empty());
+    assert!(molecule
+        .stereo_elements()
+        .next()
+        .unwrap()
+        .1
+        .is_explicitly_unknown());
+
+    let conflicting = source.replace("  1  3  1  0", "  1  3  1  6");
+    let (molecule, report) = read_with_report(&conflicting);
+    assert_eq!(report.issues().len(), 1);
+    assert!(molecule.stereo_elements().next().is_none());
 }
