@@ -437,7 +437,8 @@ pub enum StructureInterpretIssue {
         residues: [SourceResidueId; 2],
     },
     /// Residues adjacent in sequence, or joined by a branched entity's link,
-    /// whose linking atoms lie beyond bonding distance are not bonded.
+    /// whose linking atoms lie beyond bonding distance are not bonded. Their
+    /// polymer linking atoms are reported as [`Self::PolymerLinkMissing`].
     ChainBreak {
         /// The first residue.
         residue: SourceResidueId,
@@ -457,7 +458,9 @@ pub enum StructureInterpretIssue {
     },
     /// The structure's hydrogens differ from the reference template: a
     /// protonation variant was selected, or heteroatom charges were adjusted by
-    /// one per added or removed hydrogen.
+    /// one per added or removed hydrogen. A cationic nitrogen with its
+    /// neutral count of hydrogens, as lysine's `NZ` with two, is the neutral
+    /// base.
     ProtonationFromHydrogens {
         /// The residue.
         residue: SourceResidueId,
@@ -465,24 +468,28 @@ pub enum StructureInterpretIssue {
         component_id: String,
         /// The selected protonation variant, if any.
         variant: Option<String>,
-        /// The atoms whose formal charge was adjusted, by atom name, with
-        /// their resulting formal charge in e.
+        /// The atoms whose formal charge the hydrogens set to a nonzero
+        /// value, by atom name, with that charge in e.
         charged_atoms: Vec<(String, i8)>,
     },
-    /// Residues without hydrogens on their heteroatoms took the usual
-    /// protonation of their groups at pH 7: carboxylic and phosphoric acids
-    /// deprotonated, the free amine of an N terminus protonated, histidine
-    /// neutral with its hydrogen on NE2, and thiols and phenols neutral.
-    /// Reported once per structure; covers amino acids and nucleotides read
-    /// with a dictionary template.
+    /// Residues without hydrogens on their heteroatoms took an assumed
+    /// protonation. Strong acids take their state at pH 7 in every residue
+    /// a dictionary template covers: carboxylic, phosphoric, phosphonic,
+    /// and sulfonic acids and sulfates are deprotonated. Polymer residues
+    /// also take the ammonium of a true N terminus and their least charged
+    /// variant, as neutral histidine with its hydrogen on `NE2`. Ligands
+    /// keep the template's state elsewhere, amines included. Reported once
+    /// per structure.
     ProtonationAssumed {
         /// Component IDs in order, each with its number of residues.
         components: Vec<(String, usize)>,
     },
     /// Heteroatoms of a residue with model hydrogens lack hydrogens that no
-    /// charge explains, as an amine or a hydroxyl group without its
-    /// hydrogens. They keep their template charge and take hydrogens by
-    /// valence; acids that lack their hydrogen are deprotonated instead.
+    /// charge explains, as an amine, a phenol, a thiol, or a hydroxyl group
+    /// without its hydrogens. They keep their template charge and take
+    /// hydrogens by valence. Strong acids that lack their hydrogen are
+    /// deprotonated instead, and a cationic nitrogen that keeps its neutral
+    /// count is the neutral base.
     HydrogensMissing {
         /// The residue.
         residue: SourceResidueId,
@@ -513,7 +520,9 @@ pub enum StructureInterpretIssue {
         atoms: Vec<String>,
     },
     /// An atom's stated formal charge differs from the one its template and
-    /// hydrogens give, and its bonds and hydrogens can hold it, so it is kept.
+    /// hydrogens give, and some hydrogen count holds it, so it is kept with
+    /// that count. In a residue without hydrogens the charge sets the count,
+    /// as a neutral aspartate `OD2` takes one.
     StatedChargeKept {
         /// The residue.
         residue: SourceResidueId,
@@ -526,9 +535,9 @@ pub enum StructureInterpretIssue {
         /// The charge the template and hydrogens give, in e.
         derived: i8,
     },
-    /// An atom's stated formal charge cannot be held by its bonds and
-    /// hydrogens, as a +1 on a carboxylate oxygen cannot, so the charge its
-    /// template and hydrogens give replaces it.
+    /// An atom's stated formal charge needs fewer hydrogens than none, or
+    /// fewer than the model gives it, as -2 on a hydroxyl oxygen does, so
+    /// the charge its template and hydrogens give replaces it.
     StatedChargeRejected {
         /// The residue.
         residue: SourceResidueId,
@@ -540,6 +549,33 @@ pub enum StructureInterpretIssue {
         stated: i8,
         /// The charge kept, in e.
         kept: i8,
+    },
+    /// Stated charges give another resonance form of their groups than the
+    /// template, as `OD1` -1 of an aspartate or `NH1` +1 of an arginine
+    /// do. The double bonds move to that form, and the charges are kept.
+    StatedChargeResonance {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atoms whose charge the form moves, by atom name, with their
+        /// formal charge in e.
+        charged_atoms: Vec<(String, i8)>,
+    },
+    /// A polymer residue's linking atom, a peptide's `N` or `C` or a
+    /// nucleotide's `P` or `O3'`, has no bond to its neighbour in the
+    /// chain: the model lacks that residue, as before the first modelled
+    /// residue of an entity that its sequence continues, or places it
+    /// beyond bonding distance. The atom keeps the hydrogens it has when
+    /// bonded, so an `N` after a gap is an amide with one hydrogen, not an
+    /// ammonium.
+    PolymerLinkMissing {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The linking atom's name.
+        atom_name: String,
     },
     /// A residue's template states no charge for some atoms, as the
     /// dictionary does for the iron of heme and of iron-sulfur clusters.
@@ -574,8 +610,9 @@ pub enum StructureInterpretIssue {
     },
     /// A terminal atom that leaves when the residue links, such as a
     /// carboxyl `OXT` or a phosphate `OP3`, is missing although nothing
-    /// links in its place. Its bonded atom takes no hydrogen for it, so a
-    /// carboxyl terminus without `OXT` does not become an aldehyde.
+    /// links in its place and the chain ends there. Its bonded atom takes no
+    /// hydrogen for it, so a carboxyl terminus without `OXT` does not become
+    /// an aldehyde.
     TerminalAtomMissing {
         /// The residue.
         residue: SourceResidueId,
@@ -821,6 +858,30 @@ impl fmt::Display for StructureInterpretIssue {
                 "{} and {next} are not bonded. Their linking atoms are too far apart.",
                 Capitalized(residue)
             ),
+            Self::PolymerLinkMissing {
+                residue,
+                component_id,
+                atom_name,
+            } => write!(
+                formatter,
+                "Atom {atom_name:?} of {residue} (component {component_id:?}) has no bond to \
+                 its neighbour in the chain, which the model lacks or places too far away. It \
+                 keeps the hydrogens it has when bonded."
+            ),
+            Self::StatedChargeResonance {
+                residue,
+                component_id,
+                charged_atoms,
+            } => write!(
+                formatter,
+                "The stated {} of {residue} (component {component_id:?}) give another \
+                 resonance form than the template. The double bonds move to it.",
+                if charged_atoms.len() == 1 {
+                    format!("charge of {}", listed(&Charged::all(charged_atoms)))
+                } else {
+                    format!("charges of {}", listed(&Charged::all(charged_atoms)))
+                }
+            ),
             Self::ChargesFromBonds {
                 residue,
                 component_id,
@@ -879,8 +940,9 @@ impl fmt::Display for StructureInterpretIssue {
                     .collect::<Vec<_>>();
                 write!(
                     formatter,
-                    "{} {have} no hydrogens on heteroatoms. {take} usual protonation at pH 7: \
-                     {}.",
+                    "{} {have} no hydrogens on heteroatoms. {take} assumed protonation: \
+                     {}. Acid groups take their state at pH 7, and polymer residues their \
+                     usual one. Ligands take nothing else.",
                     counted(residues, "residue", "residues"),
                     listed(&counts)
                 )
@@ -953,7 +1015,7 @@ impl fmt::Display for StructureInterpretIssue {
             } => write!(
                 formatter,
                 "Atom {atom_name:?} of {residue} (component {component_id:?}) states charge \
-                 {}, which its bonds and hydrogens cannot hold. It takes charge {} from its \
+                 {}, which no hydrogen count it can have holds. It takes charge {} from its \
                  template and hydrogens.",
                 Signed(*stated),
                 Signed(*kept)
@@ -1249,8 +1311,9 @@ pub enum BondEvidence {
     /// names, bonded to the nearest heavy atom of its residue.
     HydrogenDistance,
     /// A terminal hydrogen bonded to the atom its conventional name places
-    /// it on: `H1`-`H3`, `HT1`-`HT3` or `HN1`-`HN3` on a peptide's `N`, and
-    /// `HO5'` or `H5T` on a nucleotide's `O5'`.
+    /// it on: `H1`-`H3`, `HT1`-`HT3` or `HN1`-`HN3` on a peptide's `N`,
+    /// `HO5'` or `H5T` on a nucleotide's `O5'`, and `H3T` or `HO3*` on its
+    /// `O3'`.
     HydrogenName,
 }
 

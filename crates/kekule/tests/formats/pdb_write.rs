@@ -153,7 +153,7 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
     ));
     assert!(error.message().contains("does not fit PDB's chain columns"));
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
-    let (written, report) = pdb::write(&reread, options).unwrap();
+    let (written, report) = pdb::write(&reread, options.clone()).unwrap();
     assert_eq!(written, segmented);
     assert_eq!(report.omissions(), [WriteOmission::ChainIds { chains: 2 }]);
     // Each chain's polymer still ends in its own TER record.
@@ -214,7 +214,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
 
     // PDB writes the solvent chains as segments, which read back as chains.
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
-    let (text, report) = pdb::write(&structure, options).unwrap();
+    let (text, report) = pdb::write(&structure, options.clone()).unwrap();
     assert!(report.omissions().contains(&WriteOmission::ChainIds {
         chains: solvent.len()
     }));
@@ -411,9 +411,9 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     ));
     // The chemistry policy no longer covers implicit hydrogens.
     let chemistry = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&structure, chemistry).is_err());
+    assert!(pdb::write(&structure, chemistry.clone()).is_err());
     let hydrogens = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let (_, report) = pdb::write(&structure, hydrogens).unwrap();
+    let (_, report) = pdb::write(&structure, hydrogens.clone()).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::ImplicitHydrogens { atoms: 1 }]
@@ -543,7 +543,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
         "Cannot write the PDB output. The order coordinate of geometry 1 has no PDB representation."
     );
     let options = PdbWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
-    let (written, report) = pdb::write(&scan, options).unwrap();
+    let (written, report) = pdb::write(&scan, options.clone()).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::GeometryState {
@@ -599,7 +599,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
         error.to_string(),
         "Cannot write the PDB output. The order step of the geometry has no PDB representation."
     );
-    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
+    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options.clone()).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::GeometryState {
@@ -1080,7 +1080,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     let agreeing = [full.report().clone(), full.report().clone()];
     let (written, report) = pdb::write(
         PdbSource::structure_set(&set).with_reports(&agreeing),
-        options,
+        options.clone(),
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 4);
@@ -1102,7 +1102,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     let differing = [full.report().clone(), partial.report().clone()];
     let (written, report) = pdb::write(
         PdbSource::structure_set(&set).with_reports(&differing),
-        options,
+        options.clone(),
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 3);
@@ -1126,7 +1126,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     let reversed = [partial.report().clone(), full.report().clone()];
     let written = pdb::write(
         PdbSource::structure_set(&set).with_reports(&reversed),
-        options,
+        options.clone(),
     )
     .unwrap()
     .0;

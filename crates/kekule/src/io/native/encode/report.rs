@@ -677,6 +677,26 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(atom_name)?;
                 self.str(anchor)
             }
+            Issue::PolymerLinkMissing {
+                residue,
+                component_id,
+                atom_name,
+            } => {
+                self.u8(32)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)
+            }
+            Issue::StatedChargeResonance {
+                residue,
+                component_id,
+                charged_atoms,
+            } => {
+                self.u8(33)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.charged_atoms(charged_atoms)
+            }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
                 self.residue(residue)?;

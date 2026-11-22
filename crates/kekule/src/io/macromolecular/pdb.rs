@@ -6,7 +6,10 @@
 //! other residues or a `TER` record names a new residue, as when numbering
 //! wraps around or a segment restarts it. Without entity records, a chain's
 //! polymer is read from its `TER` records, and its residues' order gives
-//! polymer adjacency.
+//! polymer adjacency. Polymer residues take label sequence numbers: their
+//! places in the chain's `SEQRES` sequence, or else their record order.
+//! `SEQRES` also says whether a chain's sequence continues past its first
+//! or last modelled residue.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::types::{poll, poll_every, structure_error};
@@ -98,7 +101,8 @@ fn pdb_source(
             "A PDB entry declares no entity types. Turn off strict entity metadata.",
         ));
     }
-    let (rows, inferred) = read_rows(document, cancellation)?;
+    let (mut rows, inferred) = read_rows(document, cancellation)?;
+    let chain_ends = align_sequences(document, &mut rows);
     poll(cancellation)?;
     let mut polymer_order = BTreeMap::new();
     for row in rows.iter().filter(|row| row.polymer_position.is_some()) {
@@ -148,12 +152,152 @@ fn pdb_source(
         conformations: BTreeMap::new(),
         polymer_order,
         connections,
-        catalog: ConnectivityCatalog::new(connectivity),
+        catalog: ConnectivityCatalog::new(connectivity).with_chain_ends(chain_ends),
         cell,
         issues,
         polymer_entities: Vec::new(),
         assemblies,
     })
+}
+
+/// Numbers polymer residues by their place in the sequence `SEQRES` states,
+/// and gives the label sequence number of each. Returns whether each
+/// chain's sequence has residues before and after its modelled polymer
+/// residues in the first model. The modelled residues form segments, split
+/// by `TER` records and by jumps in residue numbers, and each segment
+/// matches a run of the sequence's residue names: the first at its earliest
+/// place, later ones after it, and the last at its latest place. A chain
+/// whose residues match no such runs keeps its record-order numbers.
+fn align_sequences(document: &PdbDocument, rows: &mut [AtomRow]) -> BTreeMap<String, [bool; 2]> {
+    let (ends, places) = sequence_places(document, rows);
+    for row in rows.iter_mut() {
+        if let (Some(position), Some(places)) = (row.polymer_position, places.get(&row.asym_id)) {
+            row.polymer_position = places.get(&position).copied().or(Some(position));
+        }
+        row.label_seq_id = row.polymer_position;
+    }
+    ends
+}
+
+/// The ends of [`align_sequences`] and, by chain, each record-order
+/// position's place in the sequence.
+type SequencePlaces = (
+    BTreeMap<String, [bool; 2]>,
+    BTreeMap<String, BTreeMap<i32, i32>>,
+);
+
+fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
+    let mut sequences = BTreeMap::<String, Vec<&str>>::new();
+    for record in document.other_records() {
+        if record.name() != "SEQRES" {
+            continue;
+        }
+        let text = record.text();
+        let Some(chain) = text.get(11..12) else {
+            continue;
+        };
+        sequences
+            .entry(chain.to_owned())
+            .or_default()
+            .extend(text.get(19..).unwrap_or("").split_whitespace());
+    }
+    if sequences.is_empty() {
+        return Default::default();
+    }
+    let first_model = rows.first().map(|row| row.model_id.as_str());
+    // Each chain's modelled polymer residues in order: name, position, and
+    // number.
+    let mut chains = BTreeMap::<&str, Vec<(&str, i32, Option<i32>)>>::new();
+    let mut last = None;
+    for row in rows {
+        let Some(position) = row.polymer_position else {
+            continue;
+        };
+        if Some(row.model_id.as_str()) != first_model {
+            continue;
+        }
+        let residue = (row.asym_id.as_str(), position);
+        if last == Some(residue) {
+            continue;
+        }
+        last = Some(residue);
+        let number = row
+            .auth_seq_id
+            .as_deref()
+            .and_then(|text| text.parse().ok());
+        chains
+            .entry(&row.asym_id)
+            .or_default()
+            .push((&row.comp_id, position, number));
+    }
+    let mut ends = BTreeMap::new();
+    let mut places = BTreeMap::new();
+    for (chain, residues) in chains {
+        let Some(sequence) = sequences.get(chain) else {
+            continue;
+        };
+        let mut segments = Vec::<Vec<&str>>::new();
+        let mut positions = Vec::<Vec<i32>>::new();
+        for (index, &(name, position, number)) in residues.iter().enumerate() {
+            let continues = index > 0 && {
+                let (_, previous_position, previous_number) = residues[index - 1];
+                position == previous_position + 1
+                    && match (previous_number, number) {
+                        (Some(previous), Some(number)) => matches!(number - previous, 0 | 1),
+                        _ => true,
+                    }
+            };
+            match (segments.last_mut(), positions.last_mut()) {
+                (Some(segment), Some(held)) if continues => {
+                    segment.push(name);
+                    held.push(position);
+                }
+                _ => {
+                    segments.push(vec![name]);
+                    positions.push(vec![position]);
+                }
+            }
+        }
+        let fits = |segment: &[&str], start: usize| {
+            sequence.get(start..start + segment.len()) == Some(segment)
+        };
+        let mut from = 0;
+        let mut starts = Vec::with_capacity(segments.len());
+        for segment in &segments {
+            let Some(start) = (from..=sequence.len()).find(|&start| fits(segment, start)) else {
+                break;
+            };
+            starts.push(start);
+            from = start + segment.len();
+        }
+        let (Some(&first), Some(&earliest), Some(segment)) =
+            (starts.first(), starts.last(), segments.last())
+        else {
+            continue;
+        };
+        if starts.len() < segments.len() {
+            continue;
+        }
+        let latest = (earliest..=sequence.len())
+            .rev()
+            .find(|&start| fits(segment, start))
+            .unwrap_or(earliest);
+        ends.insert(
+            chain.to_owned(),
+            [first > 0, latest + segment.len() < sequence.len()],
+        );
+        let mut placed = BTreeMap::new();
+        for (held, &start) in positions.iter().zip(&starts) {
+            for (offset, &position) in held.iter().enumerate() {
+                let Ok(place) = i32::try_from(start + offset + 1) else {
+                    continue;
+                };
+                placed.insert(position, place);
+            }
+        }
+        places.insert(chain.to_owned(), placed);
+    }
+    (ends, places)
 }
 
 fn model_id(model: Option<u32>) -> String {

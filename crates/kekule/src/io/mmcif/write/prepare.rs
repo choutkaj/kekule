@@ -1,16 +1,18 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
-use super::implied::{mark_implied, reader_fixed_hydrogens, residue_key};
+use super::implied::{mark_implied, residue_key, ReadBlock};
 use super::one_based_serial;
 use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
+use crate::components::ComponentLibrary;
 use crate::diagnostics::AtomField;
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::element_symbol::structure_element_symbol;
+use crate::io::macromolecular::connectivity::{dictionary_template, link_sides};
 use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::StructureView;
-use crate::topology::{Hierarchy, InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId};
+use crate::topology::{InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId};
 use crate::units::ANGSTROM;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -101,7 +103,6 @@ pub(super) fn prepare_model(
 
     let mut atoms = Vec::new();
     let mut omitted = OmittedChemistry::default();
-    let hierarchy = structure.topology().hierarchy();
     for (id, molecule) in structure.topology().instance_records() {
         let definition = structure
             .topology()
@@ -129,7 +130,8 @@ pub(super) fn prepare_model(
             .atom_index(row.atom)
             .expect("prepared atom-site row references a topology atom")
     });
-    number_unsequenced_polymers(&mut atoms, &entities, &asyms, hierarchy);
+    let library = options.components().map(|library| &**library);
+    number_unsequenced_polymers(&mut atoms, &entities, &asyms, structure, library);
 
     let atom_indexes = atoms
         .iter()
@@ -167,16 +169,26 @@ pub(super) fn prepare_model(
                 .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let block = ReadBlock::new(
+        library,
+        &atoms,
+        &elements,
+        &connections,
+        &coordination,
+        &atom_indexes,
+    );
     mark_implied(
+        &block,
         &atoms,
         &elements,
         &mut connections,
         &atom_indexes,
         options.coordinate_precision,
+        library,
     );
     // Fixed hydrogen counts have no mmCIF item; those a reader fixes again
     // are written as they are.
-    let fixed = reader_fixed_hydrogens(&atoms, &elements, &connections, &atom_indexes);
+    let fixed = block.fixed_hydrogens(&elements, &connections);
     for (index, row) in atoms.iter().enumerate() {
         let hydrogens = structure
             .topology()
@@ -548,14 +560,18 @@ impl<'a> ConnectionSelectors<'a> {
 
 /// mmCIF sequences every polymer residue by `label_seq_id`. Sources that
 /// number residues by author alone, as PDB does, leave a polymer asym without
-/// one; its residues are numbered from 1 in chain order. Unobserved residues
-/// are unknown, so the numbers count observed residues only.
+/// one; its residues are numbered in chain order. Unobserved residues are
+/// unknown, so the numbers count observed residues only. They start at 2
+/// when the first residue's linking atom has a fixed hydrogen count, as an
+/// `N` after a gap does, so readers keep the chain open there.
 fn number_unsequenced_polymers(
     rows: &mut [AtomRow],
     entities: &[EntityRow],
     asyms: &[AsymRow],
-    hierarchy: &Hierarchy,
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
 ) {
+    let hierarchy = structure.topology().hierarchy();
     let polymers = entities
         .iter()
         .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
@@ -588,11 +604,54 @@ fn number_unsequenced_polymers(
             .into_iter()
             .collect::<Vec<_>>();
         residues.sort_by_key(|residue| chain_position(*residue));
-        let numbers = residues.into_iter().zip(1..).collect::<BTreeMap<_, i32>>();
+        let open = residues
+            .first()
+            .is_some_and(|&first| opens_before(rows, first, structure, library));
+        let numbers = residues
+            .into_iter()
+            .zip(if open { 2 } else { 1 }..)
+            .collect::<BTreeMap<_, i32>>();
         for row in rows.iter_mut().filter(in_asym) {
             row.label_seq_id = row.residue.map(|residue| numbers[&residue]);
         }
     }
+}
+
+/// Whether the leading linking atom of `residue`, a peptide's `N` or a
+/// nucleotide's `P`, has a fixed hydrogen count and no bond to another
+/// residue: the chain continues before it.
+fn opens_before(
+    rows: &[AtomRow],
+    residue: ResidueId,
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
+) -> bool {
+    let topology = structure.topology();
+    rows.iter()
+        .filter(|row| row.residue == Some(residue))
+        .any(|row| {
+            let Some((component, _)) = dictionary_template(library, &row.label_comp_id) else {
+                return false;
+            };
+            if !link_sides(component.linking())[0].contains(&row.label_atom_id.as_str()) {
+                return false;
+            }
+            let Some(atom) = topology.atom(row.atom) else {
+                return false;
+            };
+            matches!(atom.atom().hydrogens, ImplicitHydrogens::Fixed(_))
+                && !topology.bonds().any(|bond| {
+                    let [a, b] = bond.atoms().map(|atom| atom.id());
+                    let other = match (a == row.atom, b == row.atom) {
+                        (true, _) => b,
+                        (_, true) => a,
+                        _ => return false,
+                    };
+                    rows.iter()
+                        .find(|candidate| candidate.atom == other)
+                        .is_none_or(|candidate| candidate.residue != Some(residue))
+                })
+        })
 }
 
 fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {

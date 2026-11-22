@@ -274,6 +274,7 @@ fn record_issues(result: &StructureInterpretation) -> Vec<StructureInterpretIssu
                     | StructureInterpretIssue::HydrogenReplacedByCoordination { .. }
                     | StructureInterpretIssue::AtomsMissing { .. }
                     | StructureInterpretIssue::TerminalAtomMissing { .. }
+                    | StructureInterpretIssue::PolymerLinkMissing { .. }
             )
         })
         .cloned()
@@ -781,7 +782,9 @@ fn conect_records_list_bonds_that_templates_outrank() {
                 bond("C", "OXT", BondOrder::Single, template("ACT")),
             ],
             vec![("OXT".to_owned(), -1)],
-            vec![],
+            vec![StructureInterpretIssue::ProtonationAssumed {
+                components: vec![("ACT".to_owned(), 1)],
+            }],
             3,
         ),
     ];
@@ -1816,8 +1819,9 @@ fn force_field_libraries_interpret_their_residue_names() {
     assert_eq!(templated.report().issues(), &[]);
     // The dictionary names neither HIE nor WAT, so without the library they
     // take the AMBER templates of their names; the dictionary's aspartic
-    // acid, without hydrogens, takes its pH 7 state, and Na+ is not a
-    // dictionary name.
+    // acid, without hydrogens and alone in its chain, takes the pH 7 state
+    // of its acids only, as a ligand does, and Na+ is not a dictionary
+    // name.
     let untemplated = document.interpret(Default::default()).unwrap();
     assert_eq!(inferred_components(&untemplated), Vec::<String>::new());
     let force_field = untemplated
@@ -1841,7 +1845,6 @@ fn force_field_libraries_interpret_their_residue_names() {
     assert_eq!(
         charges(&untemplated),
         [
-            ("N".to_owned(), 1),
             ("OD2".to_owned(), -1),
             ("OXT".to_owned(), -1),
             ("Na+".to_owned(), 1)

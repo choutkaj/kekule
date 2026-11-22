@@ -1,4 +1,5 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
+use crate::components::ComponentLibrary;
 use crate::diagnostics::{
     AtomField, Capitalized, CellReason, DiagnosticKind, Format, FormatError, FormatErrorDetail,
     GeometryField,
@@ -19,6 +20,7 @@ use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeIns
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Write;
+use std::sync::Arc;
 
 mod emit;
 mod entities;
@@ -55,6 +57,7 @@ pub struct MmcifWriteOptions {
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
+    components: Option<Arc<ComponentLibrary>>,
 }
 
 impl MmcifWriteOptions {
@@ -169,7 +172,9 @@ impl MmcifWriteOptions {
     /// Fixed implicit-hydrogen counts, which mmCIF cannot carry: readers
     /// infer implicit hydrogens from valence. A count readers fix again is
     /// written as it is: that of an atom whose residue lacks a leaving atom
-    /// bonded to it, such as the carbonyl carbon of a residue without `OXT`.
+    /// bonded to it, such as the carbonyl carbon of a residue without `OXT`,
+    /// or of a polymer linking atom whose neighbour the chain lacks, such as
+    /// the `N` after a gap.
     /// By default another atom with one fails to write;
     /// [`UnrepresentablePolicy::Omit`] writes it without the count and
     /// reports [`WriteOmission::ImplicitHydrogens`]. Structures whose files
@@ -208,6 +213,22 @@ impl MmcifWriteOptions {
         self.chemistry = chemistry;
         self
     }
+
+    /// The templates readers of the block consult before the bundled ones,
+    /// as [`ConnectivityOptions::components`](crate::macromolecular::ConnectivityOptions::components)
+    /// gives them. The writer leaves out the bonds and fixed hydrogen
+    /// counts that reading with them gives back. `None` by default: readers
+    /// use the bundled templates.
+    pub fn components(&self) -> Option<&Arc<ComponentLibrary>> {
+        self.components.as_ref()
+    }
+
+    /// Sets [`Self::components`].
+    #[must_use]
+    pub fn with_components(mut self, components: Option<Arc<ComponentLibrary>>) -> Self {
+        self.components = components;
+        self
+    }
 }
 
 impl Default for MmcifWriteOptions {
@@ -220,6 +241,7 @@ impl Default for MmcifWriteOptions {
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
             chemistry: UnrepresentablePolicy::Fail,
+            components: None,
         }
     }
 }

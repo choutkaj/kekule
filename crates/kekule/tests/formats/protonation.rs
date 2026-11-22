@@ -46,17 +46,22 @@ fn residue_sites(component: &str, asym: &str, sequence: i32, offset: [f64; 3]) -
         env!("CARGO_MANIFEST_DIR")
     );
     let text = std::fs::read_to_string(path).unwrap();
+    let ideal = text
+        .lines()
+        .filter(|line| line.starts_with("_chem_comp_atom."))
+        .position(|line| line.trim_end() == "_chem_comp_atom.pdbx_model_Cartn_x_ideal")
+        .unwrap();
     text.lines()
         .filter_map(|line| {
             let fields = line.split_whitespace().collect::<Vec<_>>();
-            if fields.len() < 18 || fields[0] != component {
+            if fields.len() < ideal + 3 || fields[0] != component {
                 return None;
             }
             let coordinate = |index: usize| fields[index].parse::<f64>().ok();
             let point = [
-                coordinate(15)? + offset[0],
-                coordinate(16)? + offset[1],
-                coordinate(17)? + offset[2],
+                coordinate(ideal)? + offset[0],
+                coordinate(ideal + 1)? + offset[1],
+                coordinate(ideal + 2)? + offset[2],
             ];
             Some(Site {
                 element: fields[3].to_owned(),
@@ -133,7 +138,12 @@ fn block(sites: &[Site], extra: &str) -> String {
             site.name,
             site.component,
             site.asym,
-            site.sequence,
+            // A ligand has no sequence position.
+            if site.sequence == 0 {
+                ".".to_owned()
+            } else {
+                site.sequence.to_string()
+            },
             site.point[0],
             site.point[1],
             site.point[2],
@@ -329,58 +339,6 @@ fn terminal_hydrogens_bond_by_name() {
             "{terminal:?}"
         );
     }
-}
-
-#[test]
-fn stated_charges_are_checked_against_bonds_and_hydrogens() {
-    // A stated +1 on a carboxylate oxygen would make an oxonium ion: the
-    // template's charge is kept, as for arginine's NH1, whose stated +1
-    // the guanidinium's NH2 already carries.
-    let mut rows = heavy(sites("GLU"));
-    state_charge(&mut rows, "OE2", 1);
-    let mut arginine = heavy(residue_sites("ARG", "B", 1, [20.0, 0.0, 0.0]));
-    state_charge(&mut arginine, "NH1", 1);
-    rows.extend(arginine);
-    let result = read(&rows, "");
-    let found = charges(&result);
-    assert!(
-        !found.contains(&("A".to_owned(), "OE2".to_owned(), 1)),
-        "{found:?}"
-    );
-    assert!(
-        !found.contains(&("B".to_owned(), "NH1".to_owned(), 1)),
-        "{found:?}"
-    );
-    assert!(
-        found.contains(&("B".to_owned(), "NH2".to_owned(), 1)),
-        "{found:?}"
-    );
-    for (asym, atom) in [("A", "OE2"), ("B", "NH1")] {
-        assert!(
-            has_issue(&result, |issue| matches!(
-                issue,
-                Issue::StatedChargeRejected { residue: rejected, atom_name, stated: 1, .. }
-                    if *rejected == residue(asym, 1) && atom_name == atom
-            )),
-            "{asym} {atom}"
-        );
-    }
-    // A stated charge the atom can hold is kept, and a difference reported.
-    let mut lysine = heavy(sites("LYS"));
-    state_charge(&mut lysine, "NZ", 0);
-    let neutral = read(&lysine, "");
-    assert!(!charges(&neutral).contains(&("A".to_owned(), "NZ".to_owned(), 1)));
-    assert!(has_issue(&neutral, |issue| matches!(
-        issue,
-        Issue::StatedChargeKept { atom_name, stated: 0, derived: 1, .. } if atom_name == "NZ"
-    )));
-    // A stated charge equal to the template's is no issue, and no
-    // charge is said to come from hydrogens when the source states it.
-    let mut aspartate = without(sites("ASP"), &["HD2"]);
-    state_charge(&mut aspartate, "OD2", -1);
-    let stated = read(&aspartate, "");
-    assert_eq!(charges(&stated), charged(&[("A", "OD2", -1)]));
-    assert_eq!(issues(&stated), []);
 }
 
 #[test]
@@ -668,4 +626,449 @@ fn missing_template_atoms_are_reported_and_termini_stay_open() {
         issue,
         Issue::TerminalAtomMissing { atom_name, anchor, .. } if atom_name == "OP3" && anchor == "P"
     )));
+}
+
+/// The formal charge and total hydrogens, after perception, of atom `name`
+/// of residue `sequence` of chain `asym`.
+fn state_at(
+    result: &StructureInterpretation,
+    asym: &str,
+    sequence: i32,
+    name: &str,
+) -> (i8, usize) {
+    let mut structure = result.structure().clone();
+    structure.perceive().unwrap();
+    let atom = result
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|atom| {
+            atom.asym_id() == asym
+                && atom.label_sequence_id() == Some(sequence)
+                && atom.atom_name() == name
+        })
+        .unwrap_or_else(|| panic!("{asym} {sequence} {name}"))
+        .atom();
+    let molecule = structure
+        .topology()
+        .instance(atom.instance())
+        .unwrap()
+        .molecule();
+    (
+        molecule.atom(atom.atom()).unwrap().formal_charge(),
+        molecule.total_hydrogens(atom.atom()).unwrap(),
+    )
+}
+
+/// The block with every row in entity `1`.
+fn with_entity(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line == "_atom_site.label_asym_id" {
+                return format!("{line}\n_atom_site.label_entity_id");
+            }
+            if !line.starts_with("ATOM ") {
+                return line.to_owned();
+            }
+            let mut fields = line.split(' ').collect::<Vec<_>>();
+            fields.insert(6, "1");
+            fields.join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+fn link_missing(asym: &str, sequence: i32, component: &str, atom: &str) -> Issue {
+    Issue::PolymerLinkMissing {
+        residue: residue(asym, sequence),
+        component_id: component.to_owned(),
+        atom_name: atom.to_owned(),
+    }
+}
+
+#[test]
+fn a_residue_after_a_gap_is_an_open_amide() {
+    // Alanines 1 and 3 of one chain, without hydrogens: only the first is
+    // an N terminus.
+    let mut rows = without(heavy(sites("ALA")), &["OXT"]);
+    rows.extend(heavy(residue_sites("ALA", "A", 3, [10.0, 0.0, 0.0])));
+    let result = read(&rows, "");
+    assert_eq!(state_at(&result, "A", 1, "N"), (1, 3));
+    assert_eq!(state_at(&result, "A", 3, "N"), (0, 1));
+    assert_eq!(state_at(&result, "A", 1, "C"), (0, 0));
+    assert_eq!(state_at(&result, "A", 3, "OXT"), (-1, 0));
+    let found = issues(&result);
+    assert!(
+        found.contains(&link_missing("A", 1, "ALA", "C")),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&link_missing("A", 3, "ALA", "N")),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|issue| matches!(issue, Issue::TerminalAtomMissing { .. })),
+        "{found:?}"
+    );
+}
+
+/// Alanines 2 and 3 of an entity of four residues, without hydrogens or
+/// `OXT`.
+fn inner_alanines() -> StructureInterpretation {
+    let mut rows = without(heavy(residue_sites("ALA", "A", 2, [0.0; 3])), &["OXT"]);
+    let carbon = point(&rows, "C");
+    let next = heavy(residue_sites("ALA", "A", 3, [0.0; 3]));
+    let nitrogen = point(&next, "N");
+    let shift = [0, 1, 2].map(|axis| carbon[axis] - nitrogen[axis] + [1.33, 0.0, 0.0][axis]);
+    rows.extend(without(
+        heavy(residue_sites("ALA", "A", 3, shift)),
+        &["OXT"],
+    ));
+    let sequence = "loop_\n_entity_poly_seq.entity_id\n_entity_poly_seq.num\n\
+                    _entity_poly_seq.mon_id\n1 1 MET\n1 2 ALA\n1 3 ALA\n1 4 GLY\n";
+    mmcif::parse_str(&with_entity(&block(&rows, sequence)), Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+#[test]
+fn a_sequence_that_continues_past_the_model_opens_its_ends() {
+    let result = inner_alanines();
+    assert!(!has_issue(&result, |issue| matches!(
+        issue,
+        Issue::ChainBreak { .. }
+    )));
+    assert_eq!(state_at(&result, "A", 2, "N"), (0, 1));
+    assert_eq!(state_at(&result, "A", 3, "C"), (0, 0));
+    let found = issues(&result);
+    assert!(
+        found.contains(&link_missing("A", 2, "ALA", "N")),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&link_missing("A", 3, "ALA", "C")),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|issue| matches!(issue, Issue::TerminalAtomMissing { .. })),
+        "{found:?}"
+    );
+
+    // mmCIF keeps the leading gap in `label_seq_id`; PDB states it with
+    // `SEQRES`, whose `UNK` residues readers align the chain against.
+    let (text, _) = mmcif::write([&result], Default::default()).unwrap();
+    let reread = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(state_at(&reread, "A", 2, "N"), (0, 1));
+    let (text, _) = kekule::pdb::write(&result, Default::default()).unwrap();
+    assert!(
+        text.starts_with("SEQRES   1 A    3  UNK ALA ALA\n"),
+        "{text}"
+    );
+    let reread = kekule::pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let nitrogen = reread
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| matches!(issue, Issue::PolymerLinkMissing { atom_name, .. } if atom_name == "N"))
+        .count();
+    assert_eq!(nitrogen, 1);
+    assert_eq!(
+        kekule::pdb::write(&reread, Default::default()).unwrap().0,
+        text
+    );
+    // mmCIF written from PDB numbers the chain from 2, after the gap.
+    let (text, _) = mmcif::write([&reread], Default::default()).unwrap();
+    let reread = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(state_at(&reread, "A", 2, "N"), (0, 1));
+}
+
+#[test]
+fn ligands_take_the_ph_7_state_of_their_acids_only() {
+    // Heavy-atom GTP and a free lysine as ligands: the phosphates lose their
+    // acidic hydrogens, and the lysine's amines keep the template's state.
+    let mut rows = heavy(residue_sites("GTP", "L", 0, [0.0; 3]));
+    rows.extend(heavy(residue_sites("LYS", "M", 0, [30.0, 0.0, 0.0])));
+    let result = read(&rows, "");
+    let found = charges(&result);
+    let gtp = found
+        .iter()
+        .filter(|(asym, _, _)| asym == "L")
+        .map(|(_, _, charge)| i32::from(*charge))
+        .sum::<i32>();
+    assert_eq!(gtp, -4, "{found:?}");
+    assert!(found
+        .iter()
+        .filter(|(asym, _, _)| asym == "L")
+        .all(|(_, name, charge)| *charge == -1 && name.starts_with('O')));
+    assert_eq!(
+        found
+            .iter()
+            .filter(|(asym, _, _)| asym == "M")
+            .cloned()
+            .collect::<Vec<_>>(),
+        charged(&[("M", "NZ", 1), ("M", "OXT", -1)])
+    );
+    assert!(has_issue(&result, |issue| matches!(
+        issue,
+        Issue::ProtonationAssumed { components }
+            if *components == [("GTP".to_owned(), 1), ("LYS".to_owned(), 1)]
+    )));
+    assert!(issues(&result)
+        .iter()
+        .find(|issue| matches!(issue, Issue::ProtonationAssumed { .. }))
+        .unwrap()
+        .to_string()
+        .contains("Ligands take nothing else."));
+}
+
+#[test]
+fn a_cationic_nitrogen_with_its_neutral_hydrogens_is_the_neutral_base() {
+    // Lysine with two hydrogens on NZ is neutral, not short of one.
+    let lysine = read(&without(sites("LYS"), &["HZ3"]), "");
+    assert_eq!(charges(&lysine), []);
+    assert_eq!(hydrogens(&lysine, "A", "NZ"), 2);
+    assert_eq!(
+        issues(&lysine),
+        [Issue::ProtonationFromHydrogens {
+            residue: residue("A", 1),
+            component_id: "LYS".to_owned(),
+            variant: None,
+            charged_atoms: Vec::new(),
+        }]
+    );
+    // Arginine without HH12 is the neutral base with NH1=CZ.
+    let arginine = read(&without(sites("ARG"), &["HH12"]), "");
+    assert_eq!(charges(&arginine), []);
+    assert_eq!(hydrogens(&arginine, "A", "NH1"), 1);
+    assert_eq!(bond(&arginine, "A", "CZ", "NH1").0, BondOrder::Double);
+    assert_eq!(bond(&arginine, "A", "CZ", "NH2").0, BondOrder::Single);
+    assert!(!has_issue(&arginine, |issue| matches!(
+        issue,
+        Issue::HydrogensMissing { .. }
+    )));
+    // Without any of its hydrogens, NZ keeps the template's charge.
+    let bare = read(&without(sites("LYS"), &["HZ1", "HZ2", "HZ3"]), "");
+    assert_eq!(charges(&bare), charged(&[("A", "NZ", 1)]));
+    assert!(has_issue(&bare, |issue| matches!(
+        issue,
+        Issue::HydrogensMissing { atoms, .. } if *atoms == names(&["NZ"])
+    )));
+}
+
+#[test]
+fn stated_charges_set_the_hydrogens_they_need() {
+    // A neutral aspartate without hydrogens: OD2 takes its hydrogen.
+    let mut aspartate = heavy(sites("ASP"));
+    state_charge(&mut aspartate, "OD2", 0);
+    let result = read(&aspartate, "");
+    assert!(!charges(&result).contains(&("A".to_owned(), "OD2".to_owned(), -1)));
+    assert_eq!(hydrogens(&result, "A", "OD2"), 1);
+    assert!(has_issue(&result, |issue| matches!(
+        issue,
+        Issue::StatedChargeKept { atom_name, stated: 0, derived: -1, .. } if atom_name == "OD2"
+    )));
+    // A stated phenolate explains its absent hydrogen.
+    let mut tyrosine = without(sites("TYR"), &["HH"]);
+    state_charge(&mut tyrosine, "OH", -1);
+    let result = read(&tyrosine, "");
+    assert_eq!(charges(&result), charged(&[("A", "OH", -1)]));
+    assert_eq!(
+        issues(&result),
+        [Issue::StatedChargeKept {
+            residue: residue("A", 1),
+            component_id: "TYR".to_owned(),
+            atom_name: "OH".to_owned(),
+            stated: -1,
+            derived: 0,
+        }]
+    );
+    // A stated neutral lysine NZ takes two hydrogens.
+    let mut lysine = heavy(sites("LYS"));
+    state_charge(&mut lysine, "NZ", 0);
+    let neutral = read(&lysine, "");
+    assert!(!charges(&neutral).contains(&("A".to_owned(), "NZ".to_owned(), 1)));
+    assert_eq!(hydrogens(&neutral, "A", "NZ"), 2);
+    // No hydrogen count holds -2 on a hydroxyl oxygen.
+    let mut serine = heavy(sites("SER"));
+    state_charge(&mut serine, "OG", -2);
+    let rejected = read(&serine, "");
+    assert!(has_issue(&rejected, |issue| matches!(
+        issue,
+        Issue::StatedChargeRejected { atom_name, stated: -2, kept: 0, .. } if atom_name == "OG"
+    )));
+    // A stated charge equal to the derived one is no issue of its own.
+    let mut aspartate = without(sites("ASP"), &["HD2"]);
+    state_charge(&mut aspartate, "OD2", -1);
+    let stated = read(&aspartate, "");
+    assert_eq!(charges(&stated), charged(&[("A", "OD2", -1)]));
+    assert_eq!(
+        issues(&stated),
+        [Issue::ProtonationFromHydrogens {
+            residue: residue("A", 1),
+            component_id: "ASP".to_owned(),
+            variant: None,
+            charged_atoms: vec![("OD2".to_owned(), -1)],
+        }]
+    );
+}
+
+#[test]
+fn stated_charges_of_another_resonance_form_move_its_double_bond() {
+    let mut rows = heavy(sites("ASP"));
+    state_charge(&mut rows, "OD1", -1);
+    let mut arginine = heavy(residue_sites("ARG", "B", 1, [20.0, 0.0, 0.0]));
+    state_charge(&mut arginine, "NH1", 1);
+    rows.extend(arginine);
+    let result = read(&rows, "");
+    let found = charges(&result);
+    for expected in [("A", "OD1", -1), ("B", "NH1", 1)] {
+        assert!(found.contains(&charged(&[expected])[0]), "{found:?}");
+    }
+    for absent in ["OD2", "NH2"] {
+        assert!(
+            !found.iter().any(|(_, name, _)| name == absent),
+            "{found:?}"
+        );
+    }
+    assert_eq!(bond(&result, "A", "CG", "OD1").0, BondOrder::Single);
+    assert_eq!(bond(&result, "A", "CG", "OD2").0, BondOrder::Double);
+    assert_eq!(bond(&result, "B", "CZ", "NH1").0, BondOrder::Double);
+    assert_eq!(bond(&result, "B", "CZ", "NH2").0, BondOrder::Single);
+    assert_eq!(hydrogens(&result, "B", "NH1"), 2);
+    let resonance = issues(&result)
+        .into_iter()
+        .filter(|issue| matches!(issue, Issue::StatedChargeResonance { .. }))
+        .count();
+    assert_eq!(resonance, 2);
+    assert!(!has_issue(&result, |issue| matches!(
+        issue,
+        Issue::StatedChargeRejected { .. }
+    )));
+    // Writers state the moved bonds' charges, from which readers move them
+    // again.
+    let (text, _) = mmcif::write([&result], Default::default()).unwrap();
+    assert!(!text.contains("CG OD2"), "{text}");
+    let reread = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(bond(&reread, "A", "CG", "OD2").0, BondOrder::Double);
+}
+
+#[test]
+fn a_carboxylate_bound_through_either_oxygen_keeps_its_template() {
+    let mut rows = heavy(sites("ASP"));
+    rows.push(zinc("Z", point(&rows, "OD2")));
+    let result = read(&rows, &metalc(&[("A", "OD2", 1, "Z", "ZN")]));
+    assert!(charges(&result).contains(&("A".to_owned(), "OD2".to_owned(), -1)));
+    assert_eq!(bond(&result, "A", "CG", "OD1").0, BondOrder::Double);
+    assert_eq!(
+        bond(&result, "A", "CG", "OD1").1,
+        BondEvidence::Template {
+            component_id: "ASP".to_owned(),
+            variant: None,
+        }
+    );
+    // Without the coordination, the template's bonds are still the ones
+    // readers give it.
+    kekule::pdb::write(result.structure(), Default::default()).unwrap();
+}
+
+#[test]
+fn phenols_and_thiols_without_their_hydrogen_stay_neutral() {
+    let mut rows = without(sites("TYR"), &["HH"]);
+    rows.extend(without(
+        residue_sites("CYS", "B", 1, [20.0, 0.0, 0.0]),
+        &["HG"],
+    ));
+    let result = read(&rows, "");
+    assert_eq!(charges(&result), []);
+    assert_eq!(hydrogens(&result, "A", "OH"), 1);
+    assert_eq!(hydrogens(&result, "B", "SG"), 1);
+    let missing = issues(&result)
+        .into_iter()
+        .filter_map(|issue| match issue {
+            Issue::HydrogensMissing { atoms, .. } => Some(atoms),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(missing, [names(&["OH"]), names(&["SG"])]);
+}
+
+#[test]
+fn a_hydrogen_and_a_deuterium_sharing_a_site_count_once() {
+    // A neutron structure's serine: HG and DG share OG, half each.
+    let mut rows = sites("SER");
+    let hg = rows.iter().position(|site| site.name == "HG").unwrap();
+    rows[hg].occupancy = Some(0.5);
+    let deuterium = Site {
+        element: "D".to_owned(),
+        name: "DG".to_owned(),
+        ..rows[hg].clone()
+    };
+    rows.push(deuterium);
+    let result = read(&rows, "");
+    assert_eq!(charges(&result), []);
+    assert!(!has_issue(&result, |issue| matches!(
+        issue,
+        Issue::ProtonationFromHydrogens { .. }
+    )));
+}
+
+#[test]
+fn writers_take_the_component_library_readers_use() {
+    // A component that only the caller's library has, without OXT: its C
+    // keeps no hydrogen, which only that library's readers fix again.
+    let path = format!("{}/data/components/ALA.cif", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(path)
+        .unwrap()
+        .replace("data_ALA", "data_XAL")
+        .replace("ALA ", "XAL ");
+    let library = std::sync::Arc::new(
+        kekule::components::ComponentLibrary::from_mmcif(
+            &mmcif::parse_str(&text, Default::default()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let mut rows = without(heavy(sites("ALA")), &["OXT"]);
+    for row in &mut rows {
+        row.component = "XAL".to_owned();
+    }
+    let options = kekule::macromolecular::StructureInterpretOptions::default().with_connectivity(
+        kekule::macromolecular::ConnectivityOptions::default()
+            .with_components(Some(library.clone())),
+    );
+    let result = mmcif::parse_str(&block(&rows, ""), Default::default())
+        .unwrap()
+        .interpret(options)
+        .unwrap();
+    assert_eq!(hydrogens(&result, "A", "C"), 0);
+    assert!(mmcif::write([&result], Default::default()).is_err());
+    assert!(kekule::pdb::write(&result, Default::default()).is_err());
+    mmcif::write(
+        [&result],
+        mmcif::MmcifWriteOptions::default().with_components(Some(library.clone())),
+    )
+    .unwrap();
+    kekule::pdb::write(
+        &result,
+        kekule::pdb::PdbWriteOptions::default().with_components(Some(library)),
+    )
+    .unwrap();
 }

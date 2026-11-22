@@ -623,24 +623,47 @@ the main branch migrates by the table under "From the SampleSet API".
 
 - PDB and mmCIF interpretation no longer changes a residue's chemistry
   silently; every case is reported ([protonation](docs/protonation.md)):
-  - Residues without hydrogens take the usual pH 7 state: carboxylates,
-    charged phosphodiesters and N termini, neutral NE2-protonated histidine
-    (`ProtonationAssumed`, once per structure). **Breaking:** an X-ray
-    protein's net charge changes.
-  - A hydrogen the model lacks on a nitrogen or an alcohol is missing
-    (`HydrogensMissing`), not a negative charge; acids still deprotonate.
+  - Residues without hydrogens take an assumed state (`ProtonationAssumed`,
+    once per structure, by component). Acid groups take their pH 7 state in
+    every residue, ligands included: carboxylates, phosphates, phosphonates,
+    sulfonates and sulfates. Polymer residues also take the ammonium of a
+    true N terminus and neutral NE2-protonated histidine. Ligand amines and
+    bases keep the template. **Breaking:** an X-ray protein's net charge
+    changes.
+  - An N terminus is an ammonium only at a chain's true start. A linking
+    `N`, `C`, `P` or `O3'` whose neighbour the chain lacks, by
+    `_entity_poly_seq`, `SEQRES`, or the modelled residues, keeps its bonded
+    hydrogen count (`PolymerLinkMissing`): an `N` after a gap is an amide.
+    The PDB writer writes `SEQRES` with `UNK` past such a chain end, and
+    the mmCIF writer numbers a chain from 2 after a leading gap.
+  - The PDB writer writes `TER` after a chain's last `ATOM` record, so a
+    ligand bonded to the protein and the heterogens written before it are
+    no polymer residues on reading. Sequenced residues are `ATOM` records,
+    also one a chain break leaves a molecule of its own.
+  - PDB polymer residues take label sequence numbers, their places in the
+    `SEQRES` sequence or else their record order.
+  - A hydrogen the model lacks deprotonates only a strong acid. On a
+    nitrogen, an alcohol, a phenol or a thiol it is missing
+    (`HydrogensMissing`), not a negative charge. A stated charge or metal
+    coordination deprotonates a phenol or a thiol.
+  - A cationic nitrogen with its neutral count of hydrogens is the neutral
+    base, as lysine `NZ` with two hydrogens (`ProtonationFromHydrogens`).
   - A hydrogen that fills an absent template atom's place, as `HO5'` at a
     5' end without phosphate, is no positive charge.
-  - Terminal hydrogens `H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`, `HO5'`, `H5T`
-    and `H3T` bond by name (`BondEvidence::HydrogenName`).
-  - Stated charges the atom cannot hold, such as +1 on a carboxylate
-    oxygen, are replaced (`StatedChargeRejected`); others that differ are
-    kept (`StatedChargeKept`).
+  - A hydrogen and a deuterium sharing one site count once.
+  - Terminal hydrogens `H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`, `HO5'`, `H5T`,
+    `H3T` and `HO3*` bond by name (`BondEvidence::HydrogenName`).
+  - A stated charge holds whenever some hydrogen count holds it, and sets
+    that count (`StatedChargeKept`). One that another resonance form gives,
+    as `OD1` -1 of an aspartate, moves the double bond
+    (`StatedChargeResonance`). Only charges no hydrogen count holds are
+    replaced (`StatedChargeRejected`).
   - Unknown template charges, such as heme iron, are reported
     (`TemplateChargeUnknown`).
   - Metal coordination to another residue replaces a hydrogen on thiols,
     acids and nitrogens (`HydrogenReplacedByCoordination`): zinc-bound
-    cysteine is a thiolate.
+    cysteine is a thiolate. A carboxylate bound through either oxygen keeps
+    its template.
   - Hydrogens with zero occupancy in observed residues are not read
     (`ZeroOccupancyHydrogens`).
   - Aspartic and glutamic acids protonated on `OD1` or `OE1` read as the
@@ -649,7 +672,9 @@ the main branch migrates by the table under "From the SampleSet API".
     or `OP3` that nothing replaces leaves its atom without a hydrogen in its
     place (`TerminalAtomMissing`), so a C terminus is no aldehyde. The
     mmCIF and PDB writers write such fixed hydrogen counts, which readers
-    fix again.
+    fix again, and take the readers' component library
+    (`MmcifWriteOptions::components`, `PdbWriteOptions::components`).
+    **Breaking:** `PdbWriteOptions` is no longer `Copy`.
   - Residues without a template take the block's `_chem_comp_atom`
     charges; nitro, nitrate, N-oxide and azide oxygens or nitrogens take
     -1 rather than a hydrogen; single atoms and metal residues that nothing

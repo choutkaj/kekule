@@ -44,7 +44,7 @@ Phosphorus, arsenic, sulfur and selenium bonded to terminal chalcogens can be dr
 
 ### Protonation
 
-Charges drive delocalization, so the result follows the represented protonation state. Structures read from mmCIF or PDB take the state their hydrogens give, and residues without hydrogens the usual state at pH 7 (see [protonation](protonation.md)): carboxylates and phosphodiesters are charged and delocalize, as does arginine's guanidinium. Lysine's ammonium has no path, and histidine is neutral and aromatic. A protonated carboxylic acid stays localized.
+Charges drive delocalization, so the result follows the represented protonation state. Structures read from mmCIF or PDB take the state their hydrogens give, and residues without hydrogens the pH 7 state of their acid groups (see [protonation](protonation.md)): carboxylates and phosphodiesters are charged and delocalize, as does arginine's guanidinium. Lysine's ammonium has no path, and histidine is neutral and aromatic. A protonated carboxylic acid stays localized.
 
 ### Cost
 

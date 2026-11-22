@@ -411,6 +411,15 @@ fn open_carboxyl(sequence: i32, component: &str) -> StructureInterpretIssue {
     }
 }
 
+/// The report of a polymer linking atom without a bond to its neighbour.
+fn link_missing(sequence: i32, component: &str, atom: &str) -> StructureInterpretIssue {
+    StructureInterpretIssue::PolymerLinkMissing {
+        residue: residue("A", sequence),
+        component_id: component.to_owned(),
+        atom_name: atom.to_owned(),
+    }
+}
+
 fn line_of(text: &str, needle: &str) -> usize {
     text.lines().position(|line| line.contains(needle)).unwrap() + 1
 }
@@ -1110,9 +1119,24 @@ fn polymer_links_require_bonding_distance() {
                 residue: residue("A", 1),
                 next: residue("A", 2),
             },
-            open_carboxyl(1, "GLY"),
+            link_missing(1, "GLY", "C"),
+            link_missing(2, "GLY", "N"),
             open_carboxyl(2, "GLY"),
             assumed(&[("GLY", 2)]),
+        ]
+    );
+    // The N after the break is an amide with one hydrogen, not an ammonium.
+    let nitrogen = broken
+        .topology()
+        .atoms()
+        .filter(|atom| atom.atom().element.atomic_number() == 7)
+        .map(|atom| (atom.atom().formal_charge, atom.atom().hydrogens))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        nitrogen,
+        [
+            (1, ImplicitHydrogens::Inferred),
+            (0, ImplicitHydrogens::Fixed(1))
         ]
     );
 }

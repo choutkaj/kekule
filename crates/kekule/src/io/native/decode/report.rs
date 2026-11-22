@@ -792,6 +792,16 @@ impl<R: Read> Decoder<'_, R> {
                 atom_name: self.str()?,
                 anchor: self.str()?,
             },
+            32 if self.version >= PROTONATION_SINCE => Issue::PolymerLinkMissing {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+            },
+            33 if self.version >= PROTONATION_SINCE => Issue::StatedChargeResonance {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                charged_atoms: self.charged_atoms()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))

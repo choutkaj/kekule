@@ -276,6 +276,8 @@ impl BuiltMolecule {
                 point: atom.point,
                 line: atom.source_line,
                 stated_charge: atom.stated_charge,
+                occupancy: atom.occupancy,
+                alternate_location: atom.selected_alternate_location.as_deref(),
             });
         super::connectivity::complete_editor_connectivity(
             catalog,
