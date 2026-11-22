@@ -610,6 +610,47 @@ fn residues_without_hydrogens_take_their_ph_7_states() {
 }
 
 #[test]
+fn heme_carboxylates_without_their_hydrogens_stay_single_anions() {
+    // The dictionary charges heme's O2A and O2D -1 and still lists H2A and
+    // H2D on them. Without those hydrogens they stay -1.
+    for rows in [
+        without(residue_sites("HEM", "A", 0, [0.0; 3]), &["H2A", "H2D"]),
+        heavy(residue_sites("HEM", "A", 0, [0.0; 3])),
+    ] {
+        let result = read(&rows, "");
+        let oxygens = charges(&result)
+            .into_iter()
+            .filter(|(_, name, _)| name.starts_with('O'))
+            .collect::<Vec<_>>();
+        assert_eq!(oxygens, charged(&[("A", "O2A", -1), ("A", "O2D", -1)]));
+        result.structure().clone().perceive().unwrap();
+    }
+}
+
+#[test]
+fn a_terminal_carboxylate_leaves_histidine_neutral() {
+    // Histidine 2 of a sequence of two, without hydrogens: residue 1 is not
+    // modelled, so N is an open amide, and OXT ends the chain.
+    let rows = heavy(residue_sites("HIS", "A", 2, [0.0; 3]));
+    let result = read_sequenced(&rows, &["ALA", "HIS"]);
+    assert_eq!(charges(&result), charged(&[("A", "OXT", -1)]));
+    assert_eq!(state_at(&result, "A", 2, "NE2"), (0, 1));
+    assert_eq!(state_at(&result, "A", 2, "ND1"), (0, 0));
+}
+
+#[test]
+fn a_stated_cation_after_a_gap_takes_three_hydrogens() {
+    // Alanine 3 of three, without hydrogens, states N +1: the gap to
+    // residue 2 is no bond, so N is an ammonium with three hydrogens.
+    let mut rows = without(heavy(sites("ALA")), &["OXT"]);
+    let mut third = heavy(residue_sites("ALA", "A", 3, [10.0, 0.0, 0.0]));
+    state_charge(&mut third, "N", 1);
+    rows.extend(third);
+    let result = read_sequenced(&rows, &["ALA", "ALA", "ALA"]);
+    assert_eq!(state_at(&result, "A", 3, "N"), (1, 3));
+}
+
+#[test]
 fn missing_template_atoms_are_reported_and_termini_stay_open() {
     // A carboxyl terminus without OXT is not an aldehyde.
     let result = read(&without(heavy(sites("GLY")), &["OXT"]), "");

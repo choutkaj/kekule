@@ -193,8 +193,8 @@ fn coordinates_in_place_of_hydrogen(component: &Component, index: usize, role: R
 /// when the model's hydrogens contradict every candidate. With hydrogens on
 /// heteroatoms the best fit lacks the fewest hydrogens, then changes the
 /// fewest charges; without, it charges the fewest atoms for coordination,
-/// then, for a polymer residue, has the smallest net charge. Ties go to
-/// the template. Stated charges then apply to the chosen state.
+/// then, for a polymer residue, charges the fewest atoms. Ties go to the
+/// template. Stated charges then apply to the chosen state.
 pub(crate) fn choose<'c>(
     candidates: impl IntoIterator<Item = &'c Component>,
     evidence: &ResidueEvidence<'_>,
@@ -223,19 +223,17 @@ pub(crate) fn choose<'c>(
                 .iter()
                 .filter(|atom| atom.coordinated != 0 && atom.charge != 0)
                 .count();
-            let net = if evidence.polymer {
-                atoms
-                    .iter()
-                    .map(|atom| i32::from(atom.charge))
-                    .sum::<i32>()
-                    .unsigned_abs() as usize
+            // Fewest charged atoms, not the smallest net charge: a terminal
+            // carboxylate must not pull a histidine into its cation.
+            let charged = if evidence.polymer {
+                atoms.iter().filter(|atom| atom.charge != 0).count()
             } else {
                 0
             };
             let key = if with_evidence {
                 (missing, changed, order)
             } else {
-                (coordination_charges, net, order)
+                (coordination_charges, charged, order)
             };
             Some((key, (candidate, atoms, reordered, assumed)))
         })
@@ -355,8 +353,10 @@ fn evaluate(
                 let lacking = expected - present;
                 match role {
                     Role::StrongAcid => {
-                        state.from_hydrogens = -i8::try_from(lacking).ok()?;
-                        charge -= count(lacking);
+                        let released =
+                            released_charge(candidate, index, charge, lacking, present, atom.links);
+                        state.from_hydrogens = i8::try_from(released - charge).ok()?;
+                        charge = released;
                         hydrogens = present;
                     }
                     // A cationic nitrogen with at least its neutral count of
@@ -379,7 +379,7 @@ fn evaluate(
             if evidence.dictionary {
                 match role {
                     Role::StrongAcid if links == 0 && expected > 0 => {
-                        charge -= count(expected);
+                        charge = released_charge(candidate, index, charge, expected, 0, 0);
                         hydrogens = 0;
                     }
                     Role::Base
@@ -585,7 +585,9 @@ impl Context<'_, '_> {
     ) -> Option<usize> {
         let atom = &self.candidate.atoms()[index];
         let evidence = self.evidence.heavy.get(atom.name())?;
-        let mut valence = effective_links(evidence);
+        // A gap is no bond: a stated charge sets the hydrogens of an atom
+        // without its neighbour.
+        let mut valence = evidence.links;
         for (other, bond) in neighbours(self.candidate, index) {
             let other = &self.candidate.atoms()[other];
             if is_hydrogen(other.element())
@@ -1013,6 +1015,50 @@ fn role(component: &Component, index: usize) -> Role {
         15 | 33 | 16 | 34 => Role::StrongAcid,
         _ => Role::Neutral,
     }
+}
+
+/// The charge of the acid atom `index` with charge `charge` once it lacks
+/// `lacking` of its template hydrogens, keeping `left` and the valence
+/// `links` to other residues: one less per hydrogen, but not below the
+/// charge at which its bonds give an allowed valence. A template that
+/// already charges the atom while listing its hydrogen, as the carboxylates
+/// of heme, keeps that charge.
+fn released_charge(
+    candidate: &Component,
+    index: usize,
+    charge: i32,
+    lacking: usize,
+    left: usize,
+    links: usize,
+) -> i32 {
+    let mut valence = links + left;
+    for (other, bond) in neighbours(candidate, index) {
+        if is_hydrogen(candidate.atoms()[other].element()) || bond.metal_coordination() {
+            continue;
+        }
+        let Some(order) = current_order(&[], bond) else {
+            return charge - count(lacking);
+        };
+        valence += match order {
+            BondOrder::Single => 1,
+            BondOrder::Double => 2,
+            BondOrder::Triple => 3,
+            BondOrder::Quadruple => 4,
+            BondOrder::Zero | BondOrder::Dative => 0,
+        };
+    }
+    let atomic_number = candidate.atoms()[index].element().atomic_number();
+    let holds = |charge: i32| {
+        i8::try_from(charge)
+            .ok()
+            .and_then(|charge| allowed_valences_with_charge(atomic_number, charge))
+            .is_some_and(|allowed| allowed.iter().any(|&value| usize::from(value) == valence))
+    };
+    (0..=lacking)
+        .rev()
+        .map(|released| charge - count(released))
+        .find(|&charge| holds(charge))
+        .unwrap_or(charge - count(lacking))
 }
 
 fn neighbours(
