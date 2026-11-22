@@ -17,6 +17,7 @@ mod native;
 mod native_versions;
 mod pdb;
 mod pdb_write;
+mod protonation;
 mod sequences;
 mod smiles_stereo;
 mod structure_sets;

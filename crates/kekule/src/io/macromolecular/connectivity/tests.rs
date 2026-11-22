@@ -390,6 +390,27 @@ fn issues(result: &StructureInterpretation) -> Vec<StructureInterpretIssue> {
         .collect()
 }
 
+/// The report of residues that took their pH 7 state, as
+/// `(component, residues)`.
+fn assumed(components: &[(&str, usize)]) -> StructureInterpretIssue {
+    StructureInterpretIssue::ProtonationAssumed {
+        components: components
+            .iter()
+            .map(|&(component, residues)| (component.to_owned(), residues))
+            .collect(),
+    }
+}
+
+/// The report of a residue whose carboxyl terminus lacks `OXT`.
+fn open_carboxyl(sequence: i32, component: &str) -> StructureInterpretIssue {
+    StructureInterpretIssue::TerminalAtomMissing {
+        residue: residue("A", sequence),
+        component_id: component.to_owned(),
+        atom_name: "OXT".to_owned(),
+        anchor: "C".to_owned(),
+    }
+}
+
 fn line_of(text: &str, needle: &str) -> usize {
     text.lines().position(|line| line.contains(needle)).unwrap() + 1
 }
@@ -616,7 +637,9 @@ fn templates_supply_bonds_and_metal_coordination_is_dative() {
 
     // A metal-coordination link between residues is recorded, not
     // bonded: the zinc ion and the cysteine stay separate molecules, and
-    // the ion's charge comes from its template.
+    // the ion's charge comes from its template. The cysteine, without
+    // hydrogens, is a thiolate for the zinc and an ammonium at its N
+    // terminus.
     let zinc = interpret(&block(
             "N N CYS A 1 1.585 0.483 -0.081
              C CA CYS A 1 0.141 0.450 0.186
@@ -646,7 +669,22 @@ fn templates_supply_bonds_and_metal_coordination_is_dative() {
             ("CB", "SG", BondOrder::Single, cysteine),
         ])
     );
-    assert_eq!(charges(&zinc), [("ZN".to_owned(), 2)]);
+    assert_eq!(
+        charges(&zinc),
+        [("N", 1), ("SG", -1), ("ZN", 2)].map(|(name, charge)| (name.to_owned(), charge))
+    );
+    assert_eq!(
+        issues(&zinc),
+        [
+            StructureInterpretIssue::HydrogenReplacedByCoordination {
+                residue: residue("A", 1),
+                component_id: "CYS".to_owned(),
+                atoms: vec!["SG".to_owned()],
+            },
+            open_carboxyl(1, "CYS"),
+            assumed(&[("CYS", 1)]),
+        ]
+    );
     let [record] = zinc.report().coordination() else {
         panic!("one coordination record");
     };
@@ -723,8 +761,8 @@ fn templates_supply_bonds_and_metal_coordination_is_dative() {
 
 #[test]
 fn model_hydrogens_set_heteroatom_charges_and_select_tautomers() {
-    // Without model hydrogens the template's charges apply: the
-    // dictionary's histidine is the ND1-protonated imidazolium.
+    // Without model hydrogens a histidine takes its pH 7 state: neutral,
+    // protonated on NE2, with an ammonium and a carboxylate terminus.
     let heavy = interpret(&block(
         &without(
             HISTIDINE,
@@ -734,12 +772,17 @@ fn model_hydrogens_set_heteroatom_charges_and_select_tautomers() {
         ),
         "",
     ));
-    assert_eq!(charges(&heavy), [("ND1".to_owned(), 1)]);
-    assert!(issues(&heavy).is_empty());
+    assert_eq!(
+        charges(&heavy),
+        [("N".to_owned(), 1), ("OXT".to_owned(), -1)]
+    );
+    assert_eq!(issues(&heavy), [assumed(&[("HIS", 1)])]);
+    assert_eq!(order_between(&heavy, "ND1", "CE1"), BondOrder::Double);
+    assert_eq!(order_between(&heavy, "CE1", "NE2"), BondOrder::Single);
 
     // An extra amine hydrogen named outside the template, or outside the
-    // block's own bond table, attaches by distance; with OXT unprotonated
-    // the aspartate is a zwitterion.
+    // block's own bond table, bonds to N by its terminal name; with OXT
+    // unprotonated the aspartate is a zwitterion.
     let table = "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n\
             _chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n\
             ASP N CA sing\nASP CA C sing\nASP C O doub\nASP C OXT sing\nASP CA CB sing\n\
@@ -759,21 +802,28 @@ fn model_hydrogens_set_heteroatom_charges_and_select_tautomers() {
             [("N".to_owned(), 1), ("OXT".to_owned(), -1)],
             "{extra}"
         );
+        let named = bonds(&zwitterion)
+            .into_iter()
+            .filter(|bond| bond.3 == BondEvidence::HydrogenName)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            named,
+            [(
+                "H3".to_owned(),
+                "N".to_owned(),
+                BondOrder::Single,
+                BondEvidence::HydrogenName
+            )],
+            "{extra}"
+        );
         assert_eq!(
             issues(&zwitterion),
-            [
-                StructureInterpretIssue::HydrogenAttachedByDistance {
-                    residue: residue("A", 1),
-                    atom_name: "H3".to_owned(),
-                    heavy_atom_name: "N".to_owned(),
-                },
-                StructureInterpretIssue::ProtonationFromHydrogens {
-                    residue: residue("A", 1),
-                    component_id: "ASP".to_owned(),
-                    variant: None,
-                    charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
-                },
-            ],
+            [StructureInterpretIssue::ProtonationFromHydrogens {
+                residue: residue("A", 1),
+                component_id: "ASP".to_owned(),
+                variant: None,
+                charged_atoms: vec![("N".to_owned(), 1), ("OXT".to_owned(), -1)],
+            }],
             "{extra}"
         );
     }
@@ -782,11 +832,11 @@ fn model_hydrogens_set_heteroatom_charges_and_select_tautomers() {
     let aspartate = interpret(&block(&without(ASPARTATE, &["HD2"]), ""));
     assert_eq!(charges(&aspartate), [("OD2".to_owned(), -1)]);
 
-    // A ring nitrogen takes or loses one proton whatever its bond orders:
-    // the cytosine base (ideal coordinates of the dictionary's DC)
-    // protonated at N3, as in i-motif DNA, and the imidazolate histidine.
-    let cytosine = "
-            N N1 DC A 1 -0.267 -0.584 2.528
+    // A ring nitrogen takes one proton whatever its bond orders: the
+    // cytosine base (ideal coordinates of the dictionary's DC, without its
+    // sugar) protonated at N3, as in i-motif DNA.
+    let cytosine = interpret(&block(
+        "N N1 DC A 1 -0.267 -0.584 2.528
             C C2 DC A 1 0.270 0.648 2.563
             O O2 DC A 1 0.052 1.424 1.647
             N N3 DC A 1 1.037 1.035 3.581
@@ -798,42 +848,54 @@ fn model_hydrogens_set_heteroatom_charges_and_select_tautomers() {
             H H42 DC A 1 2.265 0.019 6.373
             H H5 DC A 1 0.943 -1.771 5.394
             H H6 DC A 1 -0.467 -2.454 3.514
-            H H3 DC A 1 1.431 2.041 3.589";
-    let imidazolate = without(HISTIDINE, &["HD1", "HE2"]);
-    for (rows, component, charged, attached) in [
-        (cytosine, "DC", vec![("N3".to_owned(), 1)], Some("N3")),
-        (
-            imidazolate.as_str(),
-            "HIS",
-            vec![("ND1".to_owned(), 0), ("NE2".to_owned(), -1)],
-            None,
-        ),
-    ] {
-        let result = interpret(&block(rows, ""));
-        let nonzero = charged
-            .iter()
-            .filter(|(_, charge)| *charge != 0)
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(charges(&result), nonzero, "{component}");
-        let mut expected = attached
-            .map(
-                |heavy| StructureInterpretIssue::HydrogenAttachedByDistance {
-                    residue: residue("A", 1),
-                    atom_name: "H3".to_owned(),
-                    heavy_atom_name: heavy.to_owned(),
-                },
-            )
-            .into_iter()
-            .collect::<Vec<_>>();
-        expected.push(StructureInterpretIssue::ProtonationFromHydrogens {
-            residue: residue("A", 1),
-            component_id: component.to_owned(),
-            variant: None,
-            charged_atoms: charged,
-        });
-        assert_eq!(issues(&result), expected, "{component}");
-    }
+            H H3 DC A 1 1.431 2.041 3.589",
+        "",
+    ));
+    assert_eq!(charges(&cytosine), [("N3".to_owned(), 1)]);
+    assert_eq!(
+        issues(&cytosine),
+        [
+            StructureInterpretIssue::HydrogenAttachedByDistance {
+                residue: residue("A", 1),
+                atom_name: "H3".to_owned(),
+                heavy_atom_name: "N3".to_owned(),
+            },
+            StructureInterpretIssue::ProtonationFromHydrogens {
+                residue: residue("A", 1),
+                component_id: "DC".to_owned(),
+                variant: None,
+                charged_atoms: vec![("N3".to_owned(), 1)],
+            },
+            StructureInterpretIssue::AtomsMissing {
+                residue: residue("A", 1),
+                component_id: "DC".to_owned(),
+                atoms: ["O5'", "C5'", "C4'", "O4'", "C3'", "O3'", "C2'", "C1'"]
+                    .map(str::to_owned)
+                    .to_vec(),
+            },
+        ]
+    );
+
+    // A histidine without ring hydrogens lacks them: it is the neutral
+    // tautomer with one hydrogen missing, not an imidazolate.
+    let bare_ring = interpret(&block(&without(HISTIDINE, &["HD1", "HE2"]), ""));
+    assert_eq!(charges(&bare_ring), []);
+    assert_eq!(
+        issues(&bare_ring),
+        [
+            StructureInterpretIssue::ProtonationFromHydrogens {
+                residue: residue("A", 1),
+                component_id: "HIS".to_owned(),
+                variant: Some("NE2-protonated".to_owned()),
+                charged_atoms: Vec::new(),
+            },
+            StructureInterpretIssue::HydrogensMissing {
+                residue: residue("A", 1),
+                component_id: "HIS".to_owned(),
+                atoms: vec!["NE2".to_owned()],
+            },
+        ]
+    );
 
     // Missing ring hydrogens select a neutral tautomer, whose ring bonds
     // follow the hydrogen.
@@ -1015,7 +1077,11 @@ fn polymer_links_require_bonding_distance() {
             .collect::<Vec<_>>(),
         [("C".to_owned(), "N".to_owned())]
     );
-    assert!(issues(&linked).is_empty());
+    // Residue 2 ends the chain without OXT.
+    assert_eq!(
+        issues(&linked),
+        [open_carboxyl(2, "GLY"), assumed(&[("GLY", 2)])]
+    );
 
     // Residue 2 moved 3 A away: adjacent in sequence, but not bonded.
     let shifted = DIGLYCINE
@@ -1039,10 +1105,15 @@ fn polymer_links_require_bonding_distance() {
     assert_eq!(broken.topology().bond_count(), 6);
     assert_eq!(
         issues(&broken),
-        [StructureInterpretIssue::ChainBreak {
-            residue: residue("A", 1),
-            next: residue("A", 2),
-        }]
+        [
+            StructureInterpretIssue::ChainBreak {
+                residue: residue("A", 1),
+                next: residue("A", 2),
+            },
+            open_carboxyl(1, "GLY"),
+            open_carboxyl(2, "GLY"),
+            assumed(&[("GLY", 2)]),
+        ]
     );
 }
 
@@ -1056,8 +1127,20 @@ fn untemplated_polymer_residues_link_by_their_neighbours_linkage_or_atom_names()
     // Without _entity_poly, a residue without a template defers to its
     // templated neighbour, and two such residues link by atom names.
     for (first, second, expected) in [
-        ("GLY", "XGL", vec![inferred(2, "XGL")]),
-        ("XGL", "GLY", vec![inferred(1, "XGL")]),
+        (
+            "GLY",
+            "XGL",
+            vec![inferred(2, "XGL"), assumed(&[("GLY", 1)])],
+        ),
+        (
+            "XGL",
+            "GLY",
+            vec![
+                inferred(1, "XGL"),
+                open_carboxyl(2, "GLY"),
+                assumed(&[("GLY", 1)]),
+            ],
+        ),
         ("XGL", "YGL", vec![inferred(1, "XGL"), inferred(2, "YGL")]),
     ] {
         let rows = DIGLYCINE
@@ -1094,7 +1177,8 @@ fn template_mismatches_fail_and_split_residues_are_reported() {
     );
     assert_eq!(error.message(), "Atom \"CX\" is not in component \"GLY\".");
 
-    // Without its CA, a glycine's amine is cut off from its carbonyl.
+    // Without its CA, a glycine's amine is cut off from its carbonyl, and
+    // the residue lacks both.
     let split = interpret(&block(
         "N N GLY A 1 0.0 0.0 0.0
              C C GLY A 1 2.0 1.4 0.0
@@ -1104,10 +1188,19 @@ fn template_mismatches_fail_and_split_residues_are_reported() {
     assert_eq!(split.topology().instance_count(), 2);
     assert_eq!(
         issues(&split),
-        [StructureInterpretIssue::ResidueFragmented {
-            residue: residue("A", 1),
-            fragments: 2,
-        }]
+        [
+            open_carboxyl(1, "GLY"),
+            StructureInterpretIssue::AtomsMissing {
+                residue: residue("A", 1),
+                component_id: "GLY".to_owned(),
+                atoms: vec!["CA".to_owned()],
+            },
+            assumed(&[("GLY", 1)]),
+            StructureInterpretIssue::ResidueFragmented {
+                residue: residue("A", 1),
+                fragments: 2,
+            },
+        ]
     );
 }
 

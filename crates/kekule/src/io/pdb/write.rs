@@ -26,6 +26,9 @@ use crate::diagnostics::{
     FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
+use crate::io::macromolecular::connectivity::{
+    choose_protonation, fixed_hydrogens, link_valence, usual_state, AtomEvidence, ResidueEvidence,
+};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
@@ -164,11 +167,13 @@ impl PdbWriteOptions {
     }
 
     /// Fixed implicit-hydrogen counts, which PDB cannot carry: readers infer
-    /// implicit hydrogens from valence. By default an atom with one fails to
-    /// write; [`UnrepresentablePolicy::Omit`] writes it without the count
-    /// and reports [`WriteOmission::ImplicitHydrogens`]. Structures whose
-    /// files list every atom, such as XYZ interpretations, fix their counts
-    /// at zero.
+    /// implicit hydrogens from valence. A count readers fix again is written
+    /// as it is: that of an atom whose residue lacks a leaving atom bonded to
+    /// it, such as the carbonyl carbon of a residue without `OXT`. By default
+    /// another atom with one fails to write; [`UnrepresentablePolicy::Omit`]
+    /// writes it without the count and reports
+    /// [`WriteOmission::ImplicitHydrogens`]. Structures whose files list
+    /// every atom, such as XYZ interpretations, fix their counts at zero.
     pub const fn implicit_hydrogens(&self) -> UnrepresentablePolicy {
         self.implicit_hydrogens
     }
@@ -650,6 +655,16 @@ pub(crate) fn write_pdb_to<'a>(
         Some(reports) => plan.links(&views, reports, &mut omissions),
         None => Vec::new(),
     };
+    let conflicting = check_dictionary_bonds(
+        views[0].topology(),
+        &plan.records,
+        &plan.templated,
+        &links,
+        options.chemistry == UnrepresentablePolicy::Fail,
+    )?;
+    omissions.record(WriteOmission::DictionaryBonds {
+        residues: conflicting,
+    });
     // Check every structure's values before the first byte is written.
     let rows = views
         .iter()
@@ -801,6 +816,9 @@ struct Plan {
     /// For each atom with listed bonds, its partners by dense index, each
     /// listed once per step of bond order.
     conect: BTreeMap<usize, Vec<usize>>,
+    /// The residues other than water that readers apply a template to: the
+    /// template and the residue's atoms by name, as dense indices.
+    templated: Vec<(&'static Component, BTreeMap<String, usize>)>,
 }
 
 /// Encodes `value` in `width` columns as a decimal or, beyond it, as
@@ -865,6 +883,7 @@ impl Plan {
     ) -> Result<Self, FormatError> {
         let strict = options.chemistry == UnrepresentablePolicy::Fail;
         let mut omitted_hydrogens = 0;
+        let mut fixed_atoms = Vec::new();
         let (mut isotopes, mut radicals, mut atom_maps) = (0, 0, 0);
         let mut stereo = BTreeSet::new();
         let mut synthetic = BTreeMap::new();
@@ -913,13 +932,7 @@ impl Plan {
                 }
             }
             if atom.hydrogens != ImplicitHydrogens::default() {
-                if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
-                    return Err(fail(PdbWriteErrorKind::UnsupportedAtomField {
-                        atom: atom_id,
-                        field: AtomField::Hydrogens,
-                    }));
-                }
-                omitted_hydrogens += 1;
+                fixed_atoms.push((atom_id, atom.hydrogens));
             }
             if !(-9..=9).contains(&atom.formal_charge) {
                 return Err(fail(PdbWriteErrorKind::FormalChargeOutOfRange {
@@ -1055,8 +1068,30 @@ impl Plan {
         }
 
         let templates = residue_templates(topology, &records, &residues);
-        let conflicting =
-            check_dictionary_bonds(topology, &records, &residues, &templates, strict)?;
+        // Fixed hydrogen counts have no PDB field; those a reader fixes
+        // again are written as they are.
+        let refixed = reader_fixed_hydrogens(topology, &records, &residues, &templates);
+        for (atom, hydrogens) in fixed_atoms {
+            let index = topology
+                .atom_index(atom)
+                .expect("dense atoms name topology atoms")
+                .index();
+            if refixed
+                .get(&index)
+                .map(|&count| ImplicitHydrogens::Fixed(count))
+                == Some(hydrogens)
+            {
+                continue;
+            }
+            if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
+                return Err(fail(PdbWriteErrorKind::UnsupportedAtomField {
+                    atom,
+                    field: AtomField::Hydrogens,
+                }));
+            }
+            omitted_hydrogens += 1;
+        }
+        let templated = templated_residues(&records, &residues, &templates);
         let ConectPlan {
             listings: conect,
             unstated,
@@ -1078,10 +1113,11 @@ impl Plan {
         omissions.record(WriteOmission::CoordinationBonds {
             bonds: coordination_bonds,
         });
-        omissions.record(WriteOmission::DictionaryBonds {
-            residues: conflicting,
-        });
-        Ok(Self { records, conect })
+        Ok(Self {
+            records,
+            conect,
+            templated,
+        })
     }
 
     /// The source identity of one atom: its hierarchy atom site, or a
@@ -1489,14 +1525,15 @@ fn residue_templates<'r>(
         .collect()
 }
 
-fn check_dictionary_bonds(
+/// The fixed implicit hydrogen count a reader gives each atom, by dense
+/// index: atoms that anchor a leaving atom their residue lacks (see
+/// [`fixed_hydrogens`](crate::io::macromolecular::connectivity::fixed_hydrogens)).
+fn reader_fixed_hydrogens(
     topology: &Topology,
     records: &[AtomRecord],
     residues: &[AtomResidue],
     templates: &BTreeMap<&ResidueKey, &Component>,
-    strict: bool,
-) -> Result<usize, FormatError> {
-    let mut conflicting = 0;
+) -> BTreeMap<usize, u8> {
     let mut named = BTreeMap::<&ResidueKey, BTreeMap<&str, usize>>::new();
     for (index, (record, residue)) in records.iter().zip(residues).enumerate() {
         named
@@ -1504,27 +1541,146 @@ fn check_dictionary_bonds(
             .or_default()
             .insert(record.name.trim(), index);
     }
-    let library = ComponentLibrary::bundled();
+    let mut fixed = BTreeMap::new();
     for (key, atoms) in &named {
-        let Some(&first) = atoms.values().next() else {
-            continue;
-        };
-        let residue_name = &records[first].residue_name;
-        if residues[first].class == ResidueClass::Water {
-            continue;
-        }
         let Some(&template) = templates.get(key) else {
             continue;
         };
-        let Some((left, right, order)) = template_conflict(topology, template, atoms) else {
+        let has_atom = |atom: &crate::components::ComponentAtom| {
+            atoms.contains_key(atom.name())
+                || atom
+                    .alternate_name()
+                    .is_some_and(|name| atoms.contains_key(name))
+        };
+        for (&name, &index) in atoms {
+            let view = topology
+                .atom_at(TopologyAtomIndex::from_index(index))
+                .expect("records follow dense atoms");
+            let (mut linked, mut explicit) = (false, 0);
+            for bond in view.bonds() {
+                let Some(other) = bond
+                    .atoms()
+                    .into_iter()
+                    .map(|atom| atom.index().index())
+                    .find(|&other| other != index)
+                else {
+                    continue;
+                };
+                if residues[other].key != **key && link_valence(bond.bond().order) > 0 {
+                    linked = true;
+                }
+                if topology
+                    .atom_at(TopologyAtomIndex::from_index(other))
+                    .is_some_and(|atom| atom.atom().element.atomic_number() == 1)
+                {
+                    explicit += 1;
+                }
+            }
+            if let Some(count) = fixed_hydrogens(template, name, has_atom, linked, explicit) {
+                fixed.insert(index, count);
+            }
+        }
+    }
+    fixed
+}
+
+/// The residues other than water that readers apply a template to, with
+/// their atoms by name.
+fn templated_residues(
+    records: &[AtomRecord],
+    residues: &[AtomResidue],
+    templates: &BTreeMap<&ResidueKey, &'static Component>,
+) -> Vec<(&'static Component, BTreeMap<String, usize>)> {
+    let mut named = BTreeMap::<&ResidueKey, BTreeMap<String, usize>>::new();
+    for (index, (record, residue)) in records.iter().zip(residues).enumerate() {
+        if residue.class != ResidueClass::Water && templates.contains_key(&residue.key) {
+            named
+                .entry(&residue.key)
+                .or_default()
+                .insert(record.name.trim().to_owned(), index);
+        }
+    }
+    named
+        .into_iter()
+        .map(|(key, atoms)| (templates[key], atoms))
+        .collect()
+}
+
+/// Checks that readers give each templated residue its bonds: those of the
+/// template or of the protonation variant they choose from its hydrogens,
+/// its links to other residues, and the metal coordination the entry
+/// states as `LINK` records (`links`, as dense indices). Counts the
+/// residues that differ, or fails on the first unless `strict` is false.
+fn check_dictionary_bonds(
+    topology: &Topology,
+    records: &[AtomRecord],
+    templated: &[(&'static Component, BTreeMap<String, usize>)],
+    links: &[[usize; 2]],
+    strict: bool,
+) -> Result<usize, FormatError> {
+    let mut coordinated = BTreeMap::<usize, usize>::new();
+    for &index in links.iter().flatten() {
+        *coordinated.entry(index).or_default() += 1;
+    }
+    let atom = |index: usize| {
+        topology
+            .atom_at(TopologyAtomIndex::from_index(index))
+            .expect("records follow dense atoms")
+    };
+    let hydrogen = |index: usize| atom(index).atom().element.atomic_number() == 1;
+    let mut conflicting = 0;
+    for (template, atoms) in templated {
+        let members = atoms.values().copied().collect::<BTreeSet<_>>();
+        let mut heavy = BTreeMap::new();
+        for (name, &index) in atoms {
+            let Some((_, template_atom)) = template.atom(name) else {
+                continue;
+            };
+            if hydrogen(index) {
+                continue;
+            }
+            let mut evidence = AtomEvidence {
+                hydrogens: 0,
+                links: 0,
+                coordination: coordinated.get(&index).copied().unwrap_or(0),
+            };
+            for bond in atom(index).bonds() {
+                let Some(other) = bond
+                    .atoms()
+                    .into_iter()
+                    .map(|atom| atom.index().index())
+                    .find(|&other| other != index)
+                else {
+                    continue;
+                };
+                if hydrogen(other) {
+                    evidence.hydrogens += 1;
+                } else if !members.contains(&other) {
+                    evidence.links += link_valence(bond.bond().order);
+                }
+            }
+            heavy.insert(template_atom.name(), evidence);
+        }
+        let evidence = ResidueEvidence {
+            heavy,
+            has_hydrogens: members.iter().any(|&index| hydrogen(index)),
+            usual_state: usual_state(template),
+        };
+        let candidates =
+            std::iter::once(*template).chain(ComponentLibrary::bundled().variants(template.id()));
+        let chosen = choose_protonation(candidates, &evidence);
+        let names = atoms
+            .iter()
+            .map(|(name, &index)| (name.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+        // Readers fail loudly on hydrogens that fit no candidate.
+        let Some(chosen) = chosen else {
             continue;
         };
-        if library
-            .variants(residue_name)
-            .any(|variant| template_conflict(topology, variant, atoms).is_none())
-        {
+        let Some((left, right, order)) = template_conflict(topology, chosen.candidate, &names)
+        else {
             continue;
-        }
+        };
         if strict {
             return Err(fail(PdbWriteErrorKind::DictionaryBondConflict {
                 atoms: [records[left].atom, records[right].atom],

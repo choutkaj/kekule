@@ -948,23 +948,26 @@ fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
         .unwrap();
     let topology = interpretation.structure().shared_topology();
     let (_, report) = write_one_frame(Arc::clone(&topology));
-    // Heavy atoms only: every implicit count is inferred and unperceived.
+    // Heavy atoms only: every implicit count is inferred and unperceived,
+    // and the termini take their pH 7 charges.
     assert_eq!(
         report.omissions(),
         [
             WriteOmission::Bonds { bonds: 9 },
             WriteOmission::ImplicitHydrogens { atoms: 10 },
+            WriteOmission::FormalCharges { atoms: 2 },
             WriteOmission::AtomSites { atoms: 10 },
         ]
     );
-    // Perceived, the hydrogens of N, CA and CB of alanine, N and CA of
-    // glycine, and the terminal OXT.
+    // Perceived, the hydrogens of N, CA and CB of alanine, and N and CA of
+    // glycine; the carboxylate OXT has none.
     let (_, perceived) = write_one_frame(Arc::new(topology.perceived().unwrap()));
     assert_eq!(
         perceived.omissions(),
         [
             WriteOmission::Bonds { bonds: 9 },
-            WriteOmission::ImplicitHydrogens { atoms: 6 },
+            WriteOmission::ImplicitHydrogens { atoms: 5 },
+            WriteOmission::FormalCharges { atoms: 2 },
             WriteOmission::AtomSites { atoms: 10 },
         ]
     );

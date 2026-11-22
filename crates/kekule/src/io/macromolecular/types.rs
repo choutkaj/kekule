@@ -469,6 +469,123 @@ pub enum StructureInterpretIssue {
         /// their resulting formal charge in e.
         charged_atoms: Vec<(String, i8)>,
     },
+    /// Residues without hydrogens on their heteroatoms took the usual
+    /// protonation of their groups at pH 7: carboxylic and phosphoric acids
+    /// deprotonated, the free amine of an N terminus protonated, histidine
+    /// neutral with its hydrogen on NE2, and thiols and phenols neutral.
+    /// Reported once per structure; covers amino acids and nucleotides read
+    /// with a dictionary template.
+    ProtonationAssumed {
+        /// Component IDs in order, each with its number of residues.
+        components: Vec<(String, usize)>,
+    },
+    /// Heteroatoms of a residue with model hydrogens lack hydrogens that no
+    /// charge explains, as an amine or a hydroxyl group without its
+    /// hydrogens. They keep their template charge and take hydrogens by
+    /// valence; acids that lack their hydrogen are deprotonated instead.
+    HydrogensMissing {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The heavy atoms lacking hydrogens, by atom name.
+        atoms: Vec<String>,
+    },
+    /// Hydrogens of a residue whose source occupancy is zero, while its
+    /// heavy atoms have occupancy, as placed but unobserved hydrogens. They
+    /// are not read, so they decide no protonation.
+    ZeroOccupancyHydrogens {
+        /// The residue.
+        residue: SourceResidueId,
+        /// The hydrogens, by atom name.
+        atoms: Vec<String>,
+    },
+    /// Template heteroatoms that coordinate a metal in another residue, as
+    /// zinc-bound cysteine does, have one hydrogen fewer than the template:
+    /// a thiolate, a carboxylate, or an imidazole nitrogen without its
+    /// hydrogen. Alcohols and water keep their hydrogens.
+    HydrogenReplacedByCoordination {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The coordinating atoms, by atom name.
+        atoms: Vec<String>,
+    },
+    /// An atom's stated formal charge differs from the one its template and
+    /// hydrogens give, and its bonds and hydrogens can hold it, so it is kept.
+    StatedChargeKept {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atom name.
+        atom_name: String,
+        /// The stated charge in e.
+        stated: i8,
+        /// The charge the template and hydrogens give, in e.
+        derived: i8,
+    },
+    /// An atom's stated formal charge cannot be held by its bonds and
+    /// hydrogens, as a +1 on a carboxylate oxygen cannot, so the charge its
+    /// template and hydrogens give replaces it.
+    StatedChargeRejected {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atom name.
+        atom_name: String,
+        /// The stated charge in e.
+        stated: i8,
+        /// The charge kept, in e.
+        kept: i8,
+    },
+    /// A residue's template states no charge for some atoms, as the
+    /// dictionary does for the iron of heme and of iron-sulfur clusters.
+    /// They are read as neutral.
+    TemplateChargeUnknown {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atoms without a template charge, by atom name.
+        atoms: Vec<String>,
+    },
+    /// A residue of one atom, or one holding a metal, has no template, and
+    /// neither the source nor its component tables state its charges. Its
+    /// atoms are read as neutral and take hydrogens by valence.
+    TemplateMissing {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+    },
+    /// Heavy atoms of a residue's template that the residue lacks, other
+    /// than atoms that leave when it links. Their bonded atoms take
+    /// hydrogens by valence in their place.
+    AtomsMissing {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The missing atoms, by atom name.
+        atoms: Vec<String>,
+    },
+    /// A terminal atom that leaves when the residue links, such as a
+    /// carboxyl `OXT` or a phosphate `OP3`, is missing although nothing
+    /// links in its place. Its bonded atom takes no hydrogen for it, so a
+    /// carboxyl terminus without `OXT` does not become an aldehyde.
+    TerminalAtomMissing {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The missing atom's name.
+        atom_name: String,
+        /// The name of the atom it bonds to in the template.
+        anchor: String,
+    },
     /// The resolved atoms of one residue lie in more than one molecule, for
     /// example because a bridging atom is missing from the structure.
     ResidueFragmented {
@@ -749,6 +866,147 @@ impl fmt::Display for StructureInterpretIssue {
                 }
                 Ok(())
             }
+            Self::ProtonationAssumed { components } => {
+                let residues = components.iter().map(|(_, count)| count).sum::<usize>();
+                let (have, take) = if residues == 1 {
+                    ("has", "It takes its")
+                } else {
+                    ("have", "They take their")
+                };
+                let counts = components
+                    .iter()
+                    .map(|(component, count)| format!("{component:?} ({count})"))
+                    .collect::<Vec<_>>();
+                write!(
+                    formatter,
+                    "{} {have} no hydrogens on heteroatoms. {take} usual protonation at pH 7: \
+                     {}.",
+                    counted(residues, "residue", "residues"),
+                    listed(&counts)
+                )
+            }
+            Self::HydrogensMissing {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                let (noun, pronoun) = if atoms.len() == 1 {
+                    ("atom", "It takes")
+                } else {
+                    ("atoms", "They take")
+                };
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) lacks hydrogens on {noun} {}. {pronoun} \
+                     hydrogens by valence.",
+                    Capitalized(residue),
+                    listed(&Quoted::all(atoms))
+                )
+            }
+            Self::ZeroOccupancyHydrogens { residue, atoms } => {
+                let (noun, verb) = if atoms.len() == 1 {
+                    ("Hydrogen", "has zero occupancy. It is")
+                } else {
+                    ("Hydrogens", "have zero occupancy. They are")
+                };
+                write!(
+                    formatter,
+                    "{noun} {} of {residue} {verb} not read.",
+                    listed(&Quoted::all(atoms))
+                )
+            }
+            Self::HydrogenReplacedByCoordination {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                let (noun, verb) = if atoms.len() == 1 {
+                    ("Atom", "coordinates a metal in place of a hydrogen")
+                } else {
+                    ("Atoms", "coordinate metals in place of hydrogens")
+                };
+                write!(
+                    formatter,
+                    "{noun} {} of {residue} (component {component_id:?}) {verb}.",
+                    listed(&Quoted::all(atoms))
+                )
+            }
+            Self::StatedChargeKept {
+                residue,
+                component_id,
+                atom_name,
+                stated,
+                derived,
+            } => write!(
+                formatter,
+                "Atom {atom_name:?} of {residue} (component {component_id:?}) states charge \
+                 {}. Its template and hydrogens give {}. The stated charge is kept.",
+                Signed(*stated),
+                Signed(*derived)
+            ),
+            Self::StatedChargeRejected {
+                residue,
+                component_id,
+                atom_name,
+                stated,
+                kept,
+            } => write!(
+                formatter,
+                "Atom {atom_name:?} of {residue} (component {component_id:?}) states charge \
+                 {}, which its bonds and hydrogens cannot hold. It takes charge {} from its \
+                 template and hydrogens.",
+                Signed(*stated),
+                Signed(*kept)
+            ),
+            Self::TemplateChargeUnknown {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                let (noun, pronoun) = if atoms.len() == 1 {
+                    ("atom", "It is")
+                } else {
+                    ("atoms", "They are")
+                };
+                write!(
+                    formatter,
+                    "The template of {residue} (component {component_id:?}) states no charge \
+                     for {noun} {}. {pronoun} read as neutral.",
+                    listed(&Quoted::all(atoms))
+                )
+            }
+            Self::TemplateMissing {
+                residue,
+                component_id,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) has no template, and the source states no \
+                 charges for it. Its atoms are read as neutral.",
+                Capitalized(residue)
+            ),
+            Self::AtomsMissing {
+                residue,
+                component_id,
+                atoms,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) lacks template {} {}. Hydrogens take their \
+                 place.",
+                Capitalized(residue),
+                if atoms.len() == 1 { "atom" } else { "atoms" },
+                listed(&Quoted::all(atoms))
+            ),
+            Self::TerminalAtomMissing {
+                residue,
+                component_id,
+                atom_name,
+                anchor,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) lacks terminal atom {atom_name:?}. Atom \
+                 {anchor:?} takes no hydrogen in its place.",
+                Capitalized(residue)
+            ),
             Self::ResidueFragmented { residue, fragments } => write!(
                 formatter,
                 "The atoms of {residue} lie in {}.",
@@ -842,6 +1100,18 @@ impl fmt::Display for Charged<'_> {
         match self.1 {
             0 => write!(formatter, "{:?} (0)", self.0),
             charge => write!(formatter, "{:?} ({charge:+})", self.0),
+        }
+    }
+}
+
+/// A formal charge in e with its sign, such as `+1`; zero is `0`.
+struct Signed(i8);
+
+impl fmt::Display for Signed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            0 => formatter.write_str("0"),
+            charge => write!(formatter, "{charge:+}"),
         }
     }
 }
@@ -978,6 +1248,10 @@ pub enum BondEvidence {
     /// A hydrogen that no template, component bond table, or listed bond
     /// names, bonded to the nearest heavy atom of its residue.
     HydrogenDistance,
+    /// A terminal hydrogen bonded to the atom its conventional name places
+    /// it on: `H1`-`H3`, `HT1`-`HT3` or `HN1`-`HN3` on a peptide's `N`, and
+    /// `HO5'` or `H5T` on a nucleotide's `O5'`.
+    HydrogenName,
 }
 
 /// The evidence for one interpreted bond.

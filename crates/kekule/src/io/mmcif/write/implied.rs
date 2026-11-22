@@ -8,7 +8,8 @@
 use super::prepare::{AtomRow, ConnectionRow, Implied};
 use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
-    hydrogen_differences, link_valence, template_bond_order, within_bonding_distance, PolymerLink,
+    choose_protonation, fixed_hydrogens, link_valence, template_bond_order, usual_state,
+    within_bonding_distance, AtomEvidence, PolymerLink, ResidueEvidence,
 };
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
@@ -77,8 +78,17 @@ pub(super) fn mark_implied(
         }) else {
             continue;
         };
+        let usual_state = usual_state(component);
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
-        if !rebuilt_by_template(component, members, rows, elements, connections, &neighbours) {
+        if !rebuilt_by_template(
+            component,
+            usual_state,
+            members,
+            rows,
+            elements,
+            connections,
+            &neighbours,
+        ) {
             continue;
         }
         for &row in members {
@@ -152,6 +162,69 @@ pub(super) fn mark_implied(
     }
 }
 
+/// The fixed implicit hydrogen count a reader gives each row, by row index:
+/// atoms that anchor a leaving atom their residue lacks (see
+/// [`fixed_hydrogens`]).
+pub(super) fn reader_fixed_hydrogens(
+    rows: &[AtomRow],
+    elements: &[Element],
+    connections: &[ConnectionRow],
+    row_of: &BTreeMap<crate::topology::InstanceAtomId, usize>,
+) -> BTreeMap<usize, u8> {
+    let mut residues = BTreeMap::<ResidueKey<'_>, Vec<usize>>::new();
+    for (index, row) in rows.iter().enumerate() {
+        residues.entry(residue_key(row)).or_default().push(index);
+    }
+    let mut neighbours = vec![Vec::new(); rows.len()];
+    for connection in connections {
+        let (left, right) = (row_of[&connection.left], row_of[&connection.right]);
+        neighbours[left].push((right, connection.order));
+        neighbours[right].push((left, connection.order));
+    }
+    let library = ComponentLibrary::bundled();
+    let mut fixed = BTreeMap::new();
+    for members in residues.values() {
+        let id = &rows[members[0]].label_comp_id;
+        let Some(component) = library.get(id).or_else(|| {
+            let atoms = members
+                .iter()
+                .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
+            ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
+        }) else {
+            continue;
+        };
+        let names = members
+            .iter()
+            .map(|&row| rows[row].label_atom_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let has_atom = |atom: &crate::components::ComponentAtom| {
+            names.contains(atom.name())
+                || atom
+                    .alternate_name()
+                    .is_some_and(|name| names.contains(name))
+        };
+        for &row in members {
+            let linked = neighbours[row].iter().any(|&(other, order)| {
+                link_valence(order) > 0 && residue_key(&rows[other]) != residue_key(&rows[row])
+            });
+            let explicit = neighbours[row]
+                .iter()
+                .filter(|&&(other, _)| elements[other].atomic_number() == 1)
+                .count();
+            if let Some(count) = fixed_hydrogens(
+                component,
+                &rows[row].label_atom_id,
+                has_atom,
+                linked,
+                explicit,
+            ) {
+                fixed.insert(row, count);
+            }
+        }
+    }
+    fixed
+}
+
 /// Whether reading the residue with its template gives it exactly its
 /// bonds: every atom matches a template atom by name and element, and its
 /// bonds are the template's among those atoms with their localized orders,
@@ -159,6 +232,7 @@ pub(super) fn mark_implied(
 /// any, replaces them.
 fn rebuilt_by_template(
     component: &Component,
+    usual_state: bool,
     members: &[usize],
     rows: &[AtomRow],
     elements: &[Element],
@@ -191,49 +265,42 @@ fn rebuilt_by_template(
         .iter()
         .map(|(&index, &row)| (component.atoms()[index].name(), row))
         .collect::<Vec<_>>();
-    let has_hydrogens = members.iter().any(|&row| hydrogen(row));
-    let all_zero = |differences: &[(usize, usize, isize)]| {
-        differences
-            .iter()
-            .all(|&(_, _, difference)| difference == 0)
-    };
-    // As the reader does: the first candidate whose hydrogens match exactly,
-    // else the first the hydrogens do not contradict.
-    let mut evaluated = Vec::new();
-    for candidate in
-        std::iter::once(component).chain(ComponentLibrary::bundled().variants(component.id()))
-    {
-        let differences = hydrogen_differences(candidate, &named, has_hydrogens, hydrogen, |row| {
-            let present = neighbours[row]
-                .iter()
-                .filter(|&&(other, _)| hydrogen(other))
-                .count();
-            let links = neighbours[row]
-                .iter()
-                .filter(|&&(other, _)| !in_residue.contains(&other))
-                .map(|&(_, connection)| link_valence(connections[connection].order))
-                .sum();
-            Ok::<_, std::convert::Infallible>((present, links))
-        })
-        .unwrap_or_else(|never| match never {});
-        if let Some(differences) = differences {
-            // The reader fails on a difference no charge can hold.
-            if differences
-                .iter()
-                .any(|&(_, _, difference)| i8::try_from(difference).is_err())
-            {
-                return false;
-            }
-            evaluated.push((candidate, differences));
-        }
-    }
-    let Some((chosen, _)) = evaluated
+    // As the reader does: links and coordination to other residues are
+    // evidence, and coordination is a dative connection.
+    let heavy = named
         .iter()
-        .find(|(_, differences)| all_zero(differences))
-        .or_else(|| evaluated.first())
-    else {
+        .filter(|&&(_, row)| !hydrogen(row))
+        .map(|&(name, row)| {
+            let outside = neighbours[row]
+                .iter()
+                .filter(|&&(other, _)| !in_residue.contains(&other));
+            let evidence = AtomEvidence {
+                hydrogens: neighbours[row]
+                    .iter()
+                    .filter(|&&(other, _)| hydrogen(other))
+                    .count(),
+                links: outside
+                    .clone()
+                    .map(|&(_, connection)| link_valence(connections[connection].order))
+                    .sum(),
+                coordination: outside
+                    .filter(|&&(_, connection)| connections[connection].order == BondOrder::Dative)
+                    .count(),
+            };
+            (name, evidence)
+        })
+        .collect();
+    let evidence = ResidueEvidence {
+        heavy,
+        has_hydrogens: members.iter().any(|&row| hydrogen(row)),
+        usual_state,
+    };
+    let candidates =
+        std::iter::once(component).chain(ComponentLibrary::bundled().variants(component.id()));
+    let Some(chosen) = choose_protonation(candidates, &evidence) else {
         return false;
     };
+    let chosen = chosen.candidate;
     if chosen.variant().is_some() {
         let row_of = |index: usize| {
             let name = chosen.atoms()[index].name();

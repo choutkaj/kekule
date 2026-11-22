@@ -59,6 +59,9 @@ const SAMPLING_SINCE: u32 = 9;
 /// The first format version with disulfide bond evidence and the
 /// `DisulfideInferred` and `ForceFieldTemplate` interpretation issues.
 const DISULFIDE_SINCE: u32 = 9;
+/// The first format version with hydrogen-name bond evidence and the
+/// protonation interpretation issues, kinds 22 to 31.
+const PROTONATION_SINCE: u32 = 9;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;

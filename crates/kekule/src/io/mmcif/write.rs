@@ -167,11 +167,14 @@ impl MmcifWriteOptions {
     }
 
     /// Fixed implicit-hydrogen counts, which mmCIF cannot carry: readers
-    /// infer implicit hydrogens from valence. By default an atom with one
-    /// fails to write; [`UnrepresentablePolicy::Omit`] writes it without the
-    /// count and reports [`WriteOmission::ImplicitHydrogens`]. Structures
-    /// whose files list every atom, such as XYZ interpretations, fix their
-    /// counts at zero.
+    /// infer implicit hydrogens from valence. A count readers fix again is
+    /// written as it is: that of an atom whose residue lacks a leaving atom
+    /// bonded to it, such as the carbonyl carbon of a residue without `OXT`.
+    /// By default another atom with one fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes it without the count and
+    /// reports [`WriteOmission::ImplicitHydrogens`]. Structures whose files
+    /// list every atom, such as XYZ interpretations, fix their counts at
+    /// zero.
     pub const fn implicit_hydrogens(&self) -> UnrepresentablePolicy {
         self.implicit_hydrogens
     }

@@ -2,7 +2,7 @@
 
 use std::io::Read;
 
-use super::super::DISULFIDE_SINCE;
+use super::super::{DISULFIDE_SINCE, PROTONATION_SINCE};
 use super::{Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
 use crate::io::{
@@ -426,7 +426,9 @@ impl<R: Read> Decoder<'_, R> {
         }
 
         let refs = self.atom_refs(&molecules, &bond_lengths, 2)?;
-        let last_code = if self.version >= DISULFIDE_SINCE {
+        let last_code = if self.version >= PROTONATION_SINCE {
+            8
+        } else if self.version >= DISULFIDE_SINCE {
             7
         } else {
             6
@@ -459,7 +461,8 @@ impl<R: Read> Decoder<'_, R> {
                     },
                     5 => BondEvidence::Distance,
                     6 => BondEvidence::HydrogenDistance,
-                    _ => BondEvidence::Disulfide,
+                    7 => BondEvidence::Disulfide,
+                    _ => BondEvidence::HydrogenName,
                 },
             })
             .collect::<Vec<_>>();
@@ -732,6 +735,62 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 force_field: self.str()?,
+            },
+            22 if self.version >= PROTONATION_SINCE => {
+                let count = self.items()?;
+                let mut components = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+                for _ in 0..count {
+                    components.push((self.str()?, self.usize()?));
+                }
+                Issue::ProtonationAssumed { components }
+            }
+            23 if self.version >= PROTONATION_SINCE => Issue::HydrogensMissing {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: self.str_list()?,
+            },
+            24 if self.version >= PROTONATION_SINCE => Issue::ZeroOccupancyHydrogens {
+                residue: self.residue()?,
+                atoms: self.str_list()?,
+            },
+            25 if self.version >= PROTONATION_SINCE => Issue::HydrogenReplacedByCoordination {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: self.str_list()?,
+            },
+            26 if self.version >= PROTONATION_SINCE => Issue::StatedChargeKept {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+                stated: i8::from_le_bytes(self.array()?),
+                derived: i8::from_le_bytes(self.array()?),
+            },
+            27 if self.version >= PROTONATION_SINCE => Issue::StatedChargeRejected {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+                stated: i8::from_le_bytes(self.array()?),
+                kept: i8::from_le_bytes(self.array()?),
+            },
+            28 if self.version >= PROTONATION_SINCE => Issue::TemplateChargeUnknown {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: self.str_list()?,
+            },
+            29 if self.version >= PROTONATION_SINCE => Issue::TemplateMissing {
+                residue: self.residue()?,
+                component_id: self.str()?,
+            },
+            30 if self.version >= PROTONATION_SINCE => Issue::AtomsMissing {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: self.str_list()?,
+            },
+            31 if self.version >= PROTONATION_SINCE => Issue::TerminalAtomMissing {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+                anchor: self.str()?,
             },
             other => {
                 return Err(

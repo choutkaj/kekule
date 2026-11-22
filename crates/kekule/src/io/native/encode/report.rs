@@ -575,6 +575,108 @@ impl<W: Write> Encoder<'_, W> {
                 self.opt_str(variant.as_deref())?;
                 self.charged_atoms(charged_atoms)
             }
+            Issue::ProtonationAssumed { components } => {
+                self.u8(22)?;
+                self.count(components.len())?;
+                for (component, residues) in components {
+                    self.str(component)?;
+                    self.usize(*residues)?;
+                }
+                Ok(())
+            }
+            Issue::HydrogensMissing {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(23)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::ZeroOccupancyHydrogens { residue, atoms } => {
+                self.u8(24)?;
+                self.residue(residue)?;
+                self.str_list(atoms)
+            }
+            Issue::HydrogenReplacedByCoordination {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(25)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::StatedChargeKept {
+                residue,
+                component_id,
+                atom_name,
+                stated,
+                derived,
+            } => {
+                self.u8(26)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.bytes(&stated.to_le_bytes())?;
+                self.bytes(&derived.to_le_bytes())
+            }
+            Issue::StatedChargeRejected {
+                residue,
+                component_id,
+                atom_name,
+                stated,
+                kept,
+            } => {
+                self.u8(27)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.bytes(&stated.to_le_bytes())?;
+                self.bytes(&kept.to_le_bytes())
+            }
+            Issue::TemplateChargeUnknown {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(28)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::TemplateMissing {
+                residue,
+                component_id,
+            } => {
+                self.u8(29)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
+            Issue::AtomsMissing {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(30)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::TerminalAtomMissing {
+                residue,
+                component_id,
+                atom_name,
+                anchor,
+            } => {
+                self.u8(31)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.str(anchor)
+            }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
                 self.residue(residue)?;
@@ -790,6 +892,7 @@ fn evidence_code(evidence: &BondEvidence) -> u8 {
         BondEvidence::Distance => 5,
         BondEvidence::HydrogenDistance => 6,
         BondEvidence::Disulfide => 7,
+        BondEvidence::HydrogenName => 8,
     }
 }
 

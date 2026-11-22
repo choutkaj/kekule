@@ -1,6 +1,6 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
-use super::implied::{mark_implied, residue_key};
+use super::implied::{mark_implied, reader_fixed_hydrogens, residue_key};
 use super::one_based_serial;
 use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
 use crate::diagnostics::AtomField;
@@ -174,6 +174,31 @@ pub(super) fn prepare_model(
         &atom_indexes,
         options.coordinate_precision,
     );
+    // Fixed hydrogen counts have no mmCIF item; those a reader fixes again
+    // are written as they are.
+    let fixed = reader_fixed_hydrogens(&atoms, &elements, &connections, &atom_indexes);
+    for (index, row) in atoms.iter().enumerate() {
+        let hydrogens = structure
+            .topology()
+            .atom(row.atom)
+            .map(|atom| atom.atom().hydrogens)
+            .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))?;
+        if hydrogens == ImplicitHydrogens::default()
+            || fixed
+                .get(&index)
+                .map(|&count| ImplicitHydrogens::Fixed(count))
+                == Some(hydrogens)
+        {
+            continue;
+        }
+        if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
+                atom: row.atom,
+                field: AtomField::Hydrogens,
+            }));
+        }
+        omitted.hydrogens += 1;
+    }
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
@@ -280,15 +305,6 @@ fn validate_graph_chemistry(
                 AtomField::Radical => omitted.radicals += 1,
                 _ => omitted.atom_maps += 1,
             }
-        }
-        if atom.hydrogens != ImplicitHydrogens::default() {
-            if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
-                return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
-                    atom: atom_id,
-                    field: AtomField::Hydrogens,
-                }));
-            }
-            omitted.hydrogens += 1;
         }
         if !(-8..=8).contains(&atom.formal_charge) {
             return Err(fail(MmcifWriteErrorKind::FormalChargeOutOfRange {

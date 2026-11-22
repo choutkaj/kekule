@@ -621,6 +621,41 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
+- PDB and mmCIF interpretation no longer changes a residue's chemistry
+  silently; every case is reported ([protonation](docs/protonation.md)):
+  - Residues without hydrogens take the usual pH 7 state: carboxylates,
+    charged phosphodiesters and N termini, neutral NE2-protonated histidine
+    (`ProtonationAssumed`, once per structure). **Breaking:** an X-ray
+    protein's net charge changes.
+  - A hydrogen the model lacks on a nitrogen or an alcohol is missing
+    (`HydrogensMissing`), not a negative charge; acids still deprotonate.
+  - A hydrogen that fills an absent template atom's place, as `HO5'` at a
+    5' end without phosphate, is no positive charge.
+  - Terminal hydrogens `H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`, `HO5'`, `H5T`
+    and `H3T` bond by name (`BondEvidence::HydrogenName`).
+  - Stated charges the atom cannot hold, such as +1 on a carboxylate
+    oxygen, are replaced (`StatedChargeRejected`); others that differ are
+    kept (`StatedChargeKept`).
+  - Unknown template charges, such as heme iron, are reported
+    (`TemplateChargeUnknown`).
+  - Metal coordination to another residue replaces a hydrogen on thiols,
+    acids and nitrogens (`HydrogenReplacedByCoordination`): zinc-bound
+    cysteine is a thiolate.
+  - Hydrogens with zero occupancy in observed residues are not read
+    (`ZeroOccupancyHydrogens`).
+  - Aspartic and glutamic acids protonated on `OD1` or `OE1` read as the
+    bundled variants `OD1-protonated` and `OE1-protonated`.
+  - Missing template atoms are reported (`AtomsMissing`); a terminal `OXT`
+    or `OP3` that nothing replaces leaves its atom without a hydrogen in its
+    place (`TerminalAtomMissing`), so a C terminus is no aldehyde. The
+    mmCIF and PDB writers write such fixed hydrogen counts, which readers
+    fix again.
+  - Residues without a template take the block's `_chem_comp_atom`
+    charges; nitro, nitrate, N-oxide and azide oxygens or nitrogens take
+    -1 rather than a hydrogen; single atoms and metal residues that nothing
+    charges are reported (`TemplateMissing`).
+  - Force-field templates name their force field (`Component::force_field`)
+    and keep the protonation their residue names state.
 - PDB and mmCIF interpretation reads disulfide-bonded cysteines with explicit
   hydrogens as neutral: a covalent link to another residue takes the place of
   as many hydrogens as its order, as a disulfide replaces `HG`, instead of
