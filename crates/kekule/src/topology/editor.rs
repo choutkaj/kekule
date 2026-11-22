@@ -49,7 +49,7 @@ use crate::properties::{
 };
 pub(crate) use append::{AppendMapping, ChainIds};
 pub use error::TopologyEditError;
-use fixed_counts::ValenceChanges;
+use fixed_counts::{FixedCount, ValenceChanges};
 use hierarchy::EditHierarchy;
 pub use hierarchy::{EditAtomSite, EditChain, EditResidue};
 pub use identity::{EditAtomId, EditAtomSiteId, EditBondId, EditChainId, EditResidueId};
@@ -708,9 +708,11 @@ impl TopologyEditor {
     /// perception: a deleted substituent leaves a hydrogen in its place, and
     /// a deleted explicit hydrogen stays as an implicit one. A neighbor with
     /// declared radical electrons gains only the hydrogens its valence has
-    /// room for. A metal's count never changes, and a neighbor that donates
-    /// to a metal, as an ammine nitrogen does, keeps its count when the bond
-    /// goes; other bonds to metals are covalent. To remove a hydrogen for
+    /// room for, and an atom of several valences fills up only to the
+    /// smallest that its remaining bonds reach, so a sulfoxide that loses its
+    /// oxygen is a sulfide. A metal's count never changes. A single bond to
+    /// a metal trades a hydrogen as any single bond does; coordination that
+    /// trades none is a dative bond. To remove a hydrogen for
     /// good, as for hydroxide from water, delete it and then set the atom's
     /// charge and count with [`Self::replace_atom`]. Deleting a bridging atom
     /// splits its molecule at publication.
@@ -721,19 +723,8 @@ impl TopologyEditor {
     /// [`TopologyEditError::HydrogenCountOverflow`] when a neighbor's count
     /// would pass 255; nothing changes then.
     pub fn delete_atom(&mut self, id: EditAtomId) -> Result<Atom, TopologyEditError> {
-        let mut changes = ValenceChanges::default();
-        for bond in self.incident_bonds(id)?.collect::<Vec<_>>() {
-            let bond = self.require_bond(bond)?;
-            changes.bond(self, [bond.a, bond.b], Some(bond.order), None)?;
-        }
-        changes.forget(id);
-        let mut counts = self.fixed_counts_after(&changes)?;
-        if let Some(parent) = self.hand_carriers_to_implicit_hydrogen(id)? {
-            counts.push(self.fixed_count(parent, 1)?);
-        }
-        let previous = self.remove_atom(id)?;
-        self.set_fixed_counts(counts)?;
-        Ok(previous)
+        let mut deleted = self.delete_atoms([id])?;
+        Ok(deleted.pop().expect("one deleted atom").1)
     }
 
     /// [`Self::delete_atom`] without changing the neighbors' hydrogen
@@ -772,22 +763,46 @@ impl TopologyEditor {
     /// Deletes several atoms, returning them in handle order.
     ///
     /// Validates every handle before deleting any atom; duplicates are ignored.
+    /// Surviving neighbors' counts follow the valence the whole set takes
+    /// from them, as [`Self::delete_atom`] describes and as
+    /// [`Topology::subset`] of the survivors caps them.
     ///
     /// # Errors
     ///
-    /// [`TopologyEditError::InvalidAtom`] when any handle is deleted or foreign;
-    /// nothing is deleted then.
+    /// [`TopologyEditError::InvalidAtom`] when any handle is deleted or
+    /// foreign, and [`TopologyEditError::HydrogenCountOverflow`] when a
+    /// neighbor's count would pass 255; nothing is deleted then.
     pub fn delete_atoms(
         &mut self,
         ids: impl IntoIterator<Item = EditAtomId>,
     ) -> Result<Vec<(EditAtomId, Atom)>, TopologyEditError> {
         let ids = ids.into_iter().collect::<BTreeSet<_>>();
+        let mut changes = ValenceChanges::default();
         for &id in &ids {
-            self.atom_location(id)?;
+            for bond in self.incident_bonds(id)?.collect::<Vec<_>>() {
+                let bond = self.require_bond(bond)?;
+                let other = if bond.a == id { bond.b } else { bond.a };
+                if !ids.contains(&other) {
+                    changes.change(other, Some(bond.order), None);
+                }
+            }
         }
-        ids.into_iter()
-            .map(|id| self.delete_atom(id).map(|a| (id, a)))
-            .collect()
+        let counts = self.fixed_counts_after(&changes)?;
+        let one_hydrogen = FixedCount::with_one_hydrogen(&counts);
+        let mut handed = BTreeSet::new();
+        let mut deleted = Vec::with_capacity(ids.len());
+        for id in ids {
+            // A parent passes one stereo place to an implicit hydrogen; a
+            // second deleted carrier prunes its stereo.
+            if let Some(parent) =
+                self.hand_carriers_to_implicit_hydrogen(id, &handed, &one_hydrogen)?
+            {
+                handed.insert(parent);
+            }
+            deleted.push((id, self.remove_atom(id)?));
+        }
+        self.set_fixed_counts(counts)?;
+        Ok(deleted)
     }
     /// Deletes every live atom not in `ids`, returning the deleted atoms in
     /// handle order.
@@ -841,8 +856,7 @@ impl TopologyEditor {
     /// its largest allowed valence it is owed, later losses pay it back
     /// first, and publication fails with
     /// [`TopologyEditError::HydrogenDeficit`] while any is owed. A metal's
-    /// count never changes, and neither does a donor's for its bond to a
-    /// metal; see [`Self::delete_atom`].
+    /// count never changes; see [`Self::delete_atom`].
     ///
     /// # Errors
     ///
@@ -857,7 +871,7 @@ impl TopologyEditor {
         order: BondOrder,
     ) -> Result<EditBondId, TopologyEditError> {
         let mut changes = ValenceChanges::default();
-        changes.bond(self, [a, b], None, Some(order))?;
+        changes.bond([a, b], None, Some(order));
         let counts = self.fixed_counts_after(&changes)?;
         let bond = self.connect(a, b, order)?;
         self.set_fixed_counts(counts)?;
@@ -926,10 +940,13 @@ impl TopologyEditor {
     /// [`TopologyEditError::HydrogenCountOverflow`] when an endpoint's count
     /// would pass 255; nothing changes then.
     pub fn delete_bond(&mut self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
+        let mut deleted = self.delete_bonds([id])?;
+        Ok(deleted.pop().expect("one deleted bond").1)
+    }
+
+    /// [`Self::delete_bond`] without changing the endpoints' hydrogen counts.
+    fn remove_bond(&mut self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
         let previous = self.require_bond(id)?;
-        let mut changes = ValenceChanges::default();
-        changes.bond(self, [previous.a, previous.b], Some(previous.order), None)?;
-        let counts = self.fixed_counts_after(&changes)?;
         let loc = self.bond_location(id)?;
         self.draft_mut(loc.group).delete_bond(loc.local)?;
         self.record_pruned(loc.group);
@@ -943,28 +960,36 @@ impl TopologyEditor {
         self.invalidate_residue_for_atom(previous.a);
         self.invalidate_residue_for_atom(previous.b);
         self.changed();
-        self.set_fixed_counts(counts)?;
         Ok(previous)
     }
+
     /// Deletes several bonds, returning them in handle order.
     ///
-    /// Validates every handle first; duplicates are ignored.
+    /// Validates every handle first; duplicates are ignored. Endpoints'
+    /// counts follow the valence the whole set takes from them.
     ///
     /// # Errors
     ///
-    /// [`TopologyEditError::InvalidBond`] when any handle is deleted or foreign;
-    /// nothing is deleted then.
+    /// [`TopologyEditError::InvalidBond`] when any handle is deleted or
+    /// foreign, and [`TopologyEditError::HydrogenCountOverflow`] when an
+    /// endpoint's count would pass 255; nothing is deleted then.
     pub fn delete_bonds(
         &mut self,
         ids: impl IntoIterator<Item = EditBondId>,
     ) -> Result<Vec<(EditBondId, EditBond)>, TopologyEditError> {
         let ids = ids.into_iter().collect::<BTreeSet<_>>();
+        let mut changes = ValenceChanges::default();
         for &id in &ids {
-            self.bond_location(id)?;
+            let bond = self.require_bond(id)?;
+            changes.bond([bond.a, bond.b], Some(bond.order), None);
         }
-        ids.into_iter()
-            .map(|id| self.delete_bond(id).map(|b| (id, b)))
-            .collect()
+        let counts = self.fixed_counts_after(&changes)?;
+        let mut deleted = Vec::with_capacity(ids.len());
+        for id in ids {
+            deleted.push((id, self.remove_bond(id)?));
+        }
+        self.set_fixed_counts(counts)?;
+        Ok(deleted)
     }
     /// Changes represented order, removing stereo assertions focused on this bond.
     /// Assigning the current order leaves the draft unchanged.
@@ -990,13 +1015,15 @@ impl TopologyEditor {
             return Ok(());
         }
         let mut changes = ValenceChanges::default();
-        changes.bond(
-            self,
-            [previous.a, previous.b],
-            Some(previous.order),
-            Some(order),
-        )?;
+        changes.bond([previous.a, previous.b], Some(previous.order), Some(order));
         let counts = self.fixed_counts_after(&changes)?;
+        self.reorder_bond(id, order)?;
+        self.set_fixed_counts(counts)
+    }
+
+    /// [`Self::set_bond_order`] without changing hydrogen counts.
+    fn reorder_bond(&mut self, id: EditBondId, order: BondOrder) -> Result<(), TopologyEditError> {
+        let previous = self.require_bond(id)?;
         let loc = self.bond_location(id)?;
         self.draft_mut(loc.group).set_bond_order(loc.local, order)?;
         self.record_pruned(loc.group);
@@ -1005,7 +1032,7 @@ impl TopologyEditor {
         self.invalidate_residue_for_atom(previous.a);
         self.invalidate_residue_for_atom(previous.b);
         self.changed();
-        self.set_fixed_counts(counts)
+        Ok(())
     }
 
     /// Rewires a bond while retaining its editing handle and static annotations.
@@ -1033,29 +1060,26 @@ impl TopologyEditor {
         if (old.a == a && old.b == b) || (old.a == b && old.b == a) {
             return Ok(());
         }
+        let mut changes = ValenceChanges::default();
+        changes.bond([old.a, old.b], Some(old.order), None);
+        changes.bond([a, b], None, Some(old.order));
+        let counts = self.fixed_counts_after(&changes)?;
         let mut staged = self.clone();
-        staged.set_bond_endpoints_staged(id, a, b)?;
+        staged.rewire_bond(id, a, b)?;
+        staged.set_fixed_counts(counts)?;
         *self = staged;
         Ok(())
     }
 
-    // The caller owns rollback; group merging may precede a failed rewire.
-    fn set_bond_endpoints_staged(
+    /// [`Self::set_bond_endpoints`] without changing hydrogen counts. The
+    /// caller owns rollback; group merging may precede a failed rewire.
+    fn rewire_bond(
         &mut self,
         id: EditBondId,
         a: EditAtomId,
         b: EditAtomId,
     ) -> Result<(), TopologyEditError> {
         let old = self.require_bond(id)?;
-        self.atom_location(a)?;
-        self.atom_location(b)?;
-        if (old.a == a && old.b == b) || (old.a == b && old.b == a) {
-            return Ok(());
-        }
-        let mut changes = ValenceChanges::default();
-        changes.bond(self, [old.a, old.b], Some(old.order), None)?;
-        changes.bond(self, [a, b], None, Some(old.order))?;
-        let counts = self.fixed_counts_after(&changes)?;
         let old_loc = self.bond_location(id)?;
         // A checked replacement on the combined draft preserves definition-level
         // bond annotations too. Combine groups before rewiring, without new bonds.
@@ -1083,13 +1107,15 @@ impl TopologyEditor {
             self.invalidate_residue_for_atom(atom);
         }
         self.changed();
-        self.set_fixed_counts(counts)
+        Ok(())
     }
 
     /// Replaces one bond's endpoints and order, returning the previous bond.
     ///
     /// Transactional: combines [`Self::set_bond_endpoints`] and
-    /// [`Self::set_bond_order`].
+    /// [`Self::set_bond_order`]. Fixed counts follow the whole replacement
+    /// at once: the old endpoints lose the old bond, and the new endpoints
+    /// gain the new one.
     ///
     /// # Errors
     ///
@@ -1101,9 +1127,26 @@ impl TopologyEditor {
         replacement: EditBond,
     ) -> Result<EditBond, TopologyEditError> {
         let previous = self.require_bond(id)?;
+        self.atom_location(replacement.a)?;
+        self.atom_location(replacement.b)?;
+        let same_atoms = (previous.a == replacement.a && previous.b == replacement.b)
+            || (previous.a == replacement.b && previous.b == replacement.a);
+        let mut changes = ValenceChanges::default();
+        changes.bond([previous.a, previous.b], Some(previous.order), None);
+        changes.bond(
+            [replacement.a, replacement.b],
+            None,
+            Some(replacement.order),
+        );
+        let counts = self.fixed_counts_after(&changes)?;
         let mut staged = self.clone();
-        staged.set_bond_endpoints_staged(id, replacement.a, replacement.b)?;
-        staged.set_bond_order(id, replacement.order)?;
+        if !same_atoms {
+            staged.rewire_bond(id, replacement.a, replacement.b)?;
+        }
+        if previous.order != replacement.order {
+            staged.reorder_bond(id, replacement.order)?;
+        }
+        staged.set_fixed_counts(counts)?;
         *self = staged;
         Ok(previous)
     }

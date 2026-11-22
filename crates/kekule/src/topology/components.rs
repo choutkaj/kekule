@@ -1,7 +1,6 @@
 //! Shared connected-component publication for subsets and structural editors.
-use super::editor::fixed_counts::{settle, BondValence};
+use super::editor::fixed_counts::{bond_valence, settle};
 use super::TopologyBuilder;
-use crate::algorithms::is_metal;
 use crate::molecule::{
     AtomId, BondId, Graph, ImplicitHydrogens, MoleculeEditor, MoleculeError,
     MoleculePublicationError, SlotLiveness,
@@ -188,23 +187,18 @@ struct ComponentDraft {
     source_bonds: Vec<BondId>,
 }
 
-/// The bond valence `atom` loses to neighbors outside `selected`.
 /// `atom`'s bond valence in `molecule`, and within `selected`.
 fn cut_valence<L: SlotLiveness>(
     molecule: &Graph<L>,
     selected: &BTreeSet<AtomId>,
     atom: AtomId,
-) -> Result<(BondValence, BondValence), MoleculeError> {
-    let mut before = BondValence::default();
-    let mut after = BondValence::default();
+) -> Result<(usize, usize), MoleculeError> {
+    let mut before = 0;
+    let mut after = 0;
     for (_, bond) in molecule.require_incident_bonds(atom)? {
-        let other = bond.other_atom(atom);
-        let metal = molecule
-            .atom(other)
-            .is_some_and(|atom| is_metal(atom.element));
-        before.add(metal, bond.order);
-        if selected.contains(&other) {
-            after.add(metal, bond.order);
+        before += bond_valence(bond.order);
+        if selected.contains(&bond.other_atom(atom)) {
+            after += bond_valence(bond.order);
         }
     }
     Ok((before, after))

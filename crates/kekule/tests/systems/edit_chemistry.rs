@@ -7,7 +7,7 @@ use kekule::molecule::{
 use kekule::perception::valence::open_valences;
 use kekule::structure::placement::AttachmentSite;
 use kekule::structure::StructureEditor;
-use kekule::topology::edit::{EditAtomId, TopologyEditor};
+use kekule::topology::edit::{EditAtomId, EditBond, EditBondId, TopologyEditor};
 use kekule::topology::{AtomSelection, Topology, TopologyAtomIndex, TopologyBuilder};
 use kekule::units::{Quantity, NANOMETER};
 use std::sync::Arc;
@@ -206,38 +206,51 @@ fn closing_a_ring_at_a_center_puts_the_new_neighbor_where_its_hydrogen_was() {
     assert_eq!(canonical(&ring), canonical(&expected));
 }
 
-/// Cisplatin with every count fixed: Pt 0, Cl 0, N 3.
-const CISPLATIN: &str = "[Cl][Pt]([Cl])([NH3])[NH3]";
-
 fn fixed_counts(topology: &Topology) -> Vec<ImplicitHydrogens> {
     (0..topology.atom_count() as u32)
         .map(|index| hydrogens(topology, index))
         .collect()
 }
 
+/// The published draft, which must perceive.
+fn published(editor: TopologyEditor) -> Topology {
+    let topology = editor.finish().unwrap();
+    topology.perceived().unwrap()
+}
+
+/// The bond between atoms `a` and `b` of `editor`.
+fn bond_of(editor: &TopologyEditor, a: usize, b: usize) -> EditBondId {
+    let (a, b) = (handle(editor, a), handle(editor, b));
+    editor
+        .bonds()
+        .find(|(_, bond)| (bond.a() == a && bond.b() == b) || (bond.a() == b && bond.b() == a))
+        .unwrap()
+        .0
+}
+
+/// Cisplatin with every count fixed: Pt 0, Cl 0, N 3, the ammines dative.
+fn cisplatin() -> Arc<Topology> {
+    let mut editor = TopologyEditor::from_topology(topology("[Cl][Pt]([Cl])([NH3])[NH3]"));
+    for nitrogen in [3, 4] {
+        let bond = bond_of(&editor, 1, nitrogen);
+        editor.set_bond_order(bond, BondOrder::Dative).unwrap();
+    }
+    Arc::new(published(editor))
+}
+
 #[test]
-fn only_donor_bonds_to_a_metal_keep_hydrogen_counts() {
-    // The ammines donate to platinum, so their bonds change no count. The
-    // chlorides' bonds are covalent: a chloride cut off takes a hydrogen.
-    let source = topology(CISPLATIN);
+fn a_dative_bond_to_a_metal_keeps_hydrogen_counts() {
+    // The ammines coordinate platinum through dative bonds, which trade no
+    // hydrogen. The chlorides' bonds are single: a chloride cut off takes a
+    // hydrogen.
+    let source = cisplatin();
+    let ammine = [ImplicitHydrogens::Fixed(3); 2];
+    assert_eq!(fixed_counts(&source)[3..], ammine);
     let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
-    let bonds = editor.bonds().collect::<Vec<_>>();
-    let ending = |index| {
-        bonds
-            .iter()
-            .find(|(_, bond)| {
-                bond.a() == handle(&editor, index) || bond.b() == handle(&editor, index)
-            })
-            .unwrap()
-            .0
-    };
-    let (chloride, amine) = (ending(0), ending(3));
-    editor.delete_bond(chloride).unwrap();
-    editor.set_bond_order(amine, BondOrder::Dative).unwrap();
-    let edited = editor.finish().unwrap();
+    editor.delete_bond(bond_of(&editor, 0, 1)).unwrap();
+    let edited = published(editor);
     assert_eq!(hydrogens(&edited, 0), ImplicitHydrogens::Fixed(1));
     assert_eq!(hydrogens(&edited, 1), ImplicitHydrogens::Fixed(0));
-    assert_eq!(hydrogens(&edited, 3), ImplicitHydrogens::Fixed(3));
     let ligands = [
         ImplicitHydrogens::Fixed(1),
         ImplicitHydrogens::Fixed(1),
@@ -246,12 +259,89 @@ fn only_donor_bonds_to_a_metal_keep_hydrogen_counts() {
     ];
     let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
     editor.delete_atom(handle(&editor, 1)).unwrap();
-    assert_eq!(fixed_counts(&editor.finish().unwrap()), ligands);
+    assert_eq!(fixed_counts(&published(editor)), ligands);
     let without_metal = AtomSelection::from_predicate(Arc::clone(&source), |atom| {
         atom.atom().element().symbol() != "Pt"
     });
     let subset = Topology::subset(Arc::clone(&source), &without_metal).unwrap();
     assert_eq!(fixed_counts(subset.topology()), ligands);
+    subset.topology().perceived().unwrap();
+}
+
+#[test]
+fn a_single_bond_to_a_metal_trades_a_hydrogen() {
+    // A Grignard reagent, sodium methoxide, and a platinum amide: each
+    // single bond to the metal takes a hydrogen from the non-metal, and the
+    // metal's count stays.
+    for (text, [non_metal, metal], counts) in [
+        (
+            "[CH4].[Mg][Br]",
+            [0, 1],
+            [3, 0, 0].map(ImplicitHydrogens::Fixed).to_vec(),
+        ),
+        (
+            "[CH3][OH].[Na]",
+            [1, 2],
+            [3, 0, 0].map(ImplicitHydrogens::Fixed).to_vec(),
+        ),
+        (
+            "[NH3].[Pt]",
+            [0, 1],
+            [2, 0].map(ImplicitHydrogens::Fixed).to_vec(),
+        ),
+    ] {
+        let mut editor = TopologyEditor::from_topology(topology(text));
+        let (a, b) = (handle(&editor, non_metal), handle(&editor, metal));
+        let bond = editor.add_bond(a, b, BondOrder::Single).unwrap();
+        let bonded = editor.clone();
+        assert_eq!(fixed_counts(&published(bonded)), counts, "{text}");
+        // Deleting the bond gives the hydrogen back.
+        editor.delete_bond(bond).unwrap();
+        assert_eq!(
+            fixed_counts(&published(editor)),
+            fixed_counts(&topology(text)),
+            "{text}"
+        );
+    }
+    // A dative bond, as an ammine's, takes none.
+    let mut editor = TopologyEditor::from_topology(topology("[NH3].[Pt]"));
+    let (a, b) = (handle(&editor, 0), handle(&editor, 1));
+    editor.add_bond(a, b, BondOrder::Dative).unwrap();
+    assert_eq!(
+        hydrogens(&published(editor), 0),
+        ImplicitHydrogens::Fixed(3)
+    );
+}
+
+#[test]
+fn attaching_lithium_to_ethane_gives_ethyllithium() {
+    let mut editor = StructureEditor::new();
+    let carbon = Element::from_symbol("C").unwrap();
+    let methyl = |count| Atom::new(carbon).with_hydrogens(ImplicitHydrogens::Fixed(count));
+    let first = editor
+        .place_atom(methyl(4), Quantity::new(Point3::origin(), NANOMETER))
+        .unwrap();
+    let toward = |x| AttachmentSite::Toward(Vector3::new(x, 0.0, 0.0));
+    editor
+        .attach_atom(first, methyl(3), BondOrder::Single, toward(1.0))
+        .unwrap();
+    let lithium =
+        Atom::new(Element::from_symbol("Li").unwrap()).with_hydrogens(ImplicitHydrogens::Fixed(0));
+    editor
+        .attach_atom(first, lithium, BondOrder::Single, toward(-1.0))
+        .unwrap();
+    let ethyllithium = editor.finish().unwrap();
+    let topology = ethyllithium.topology().perceived().unwrap();
+    assert_eq!(
+        fixed_counts(&topology),
+        [2, 3, 0].map(ImplicitHydrogens::Fixed)
+    );
+    let mut editor = TopologyEditor::from_topology(Arc::new(topology));
+    editor.delete_atom(handle(&editor, 2)).unwrap();
+    assert_eq!(
+        fixed_counts(&published(editor)),
+        [ImplicitHydrogens::Fixed(3); 2]
+    );
 }
 
 #[test]
@@ -259,8 +349,186 @@ fn a_carbon_cut_from_lithium_takes_a_hydrogen() {
     let source = topology("[CH3][Li]");
     let mut editor = TopologyEditor::from_topology(source);
     editor.delete_atom(handle(&editor, 1)).unwrap();
-    let edited = editor.finish().unwrap();
-    assert_eq!(fixed_counts(&edited), [ImplicitHydrogens::Fixed(4)]);
+    assert_eq!(
+        fixed_counts(&published(editor)),
+        [ImplicitHydrogens::Fixed(4)]
+    );
+}
+
+#[test]
+fn a_lost_bond_fills_only_to_the_smallest_valence_left() {
+    // Each case deletes atom `deleted` and expects the count of atom `atom`
+    // of what remains.
+    for (text, deleted, atom, count) in [
+        // Dimethyl sulfoxide less its oxygen is dimethyl sulfide.
+        ("[CH3][S](=[O])[CH3]", 2, 1, 0),
+        // Trimethylphosphine oxide less its oxygen is trimethylphosphine.
+        ("[O]=[P]([CH3])([CH3])[CH3]", 0, 0, 0),
+        // Methyl phosphate less its double-bonded oxygen is a phosphite.
+        ("[CH3][O][P](=[O])([OH])[OH]", 3, 2, 0),
+        // An H-phosphonate keeps its P-H as an implicit hydrogen.
+        ("[H][P](=[O])([O][CH3])[O][CH3]", 0, 0, 1),
+        // A thiol less its carbon is hydrogen sulfide.
+        ("[CH3][SH]", 0, 0, 2),
+        // Methylammonium less its carbon is ammonium.
+        ("[CH3][NH3+]", 0, 0, 4),
+        // Ethane less a carbon is methane.
+        ("[CH3][CH3]", 0, 0, 4),
+    ] {
+        let mut editor = TopologyEditor::from_topology(topology(text));
+        editor.delete_atom(handle(&editor, deleted)).unwrap();
+        let edited = published(editor);
+        assert_eq!(
+            hydrogens(&edited, atom),
+            ImplicitHydrogens::Fixed(count),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn deleting_atoms_and_taking_the_rest_as_a_subset_agree() {
+    for (text, deleted) in [
+        // A chloride-bridged platinum dimer less one platinum.
+        ("[Cl][Pt]1([Cl])[Cl][Pt]([Cl])([Cl])[Cl]1", vec![1]),
+        // Sulfur hexafluoride less three fluorines is SF3H.
+        ("[S]([F])([F])([F])([F])([F])[F]", vec![1, 2, 3]),
+        ("[CH3][S](=[O])[CH3]", vec![0, 2]),
+        ("[CH3][C]1=[CH][CH]=[CH][CH]=[CH]1", vec![0]),
+        ("[CH3][CH2][OH]", vec![2]),
+        ("[CH3][O][P](=[O])([OH])[OH]", vec![0, 3]),
+    ] {
+        let source = topology(text);
+        let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+        let handles = deleted.iter().map(|&index| handle(&editor, index));
+        editor.delete_atoms(handles.collect::<Vec<_>>()).unwrap();
+        let edited = published(editor);
+        let kept = (0..source.atom_count() as u32)
+            .filter(|index| !deleted.contains(&(*index as usize)))
+            .map(TopologyAtomIndex::new);
+        let selection = AtomSelection::from_indices(Arc::clone(&source), kept).unwrap();
+        let subset = Topology::subset(Arc::clone(&source), &selection).unwrap();
+        let subset = subset.topology().perceived().unwrap();
+        let counts = |topology: &Topology| {
+            let mut counts = topology
+                .atoms()
+                .map(|atom| {
+                    (
+                        atom.atom().element().atomic_number(),
+                        atom.atom().hydrogens(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            counts.sort_by_key(|&(number, hydrogens)| (number, format!("{hydrogens:?}")));
+            counts
+        };
+        assert_eq!(counts(&edited), counts(&subset), "{text}");
+    }
+    let mut editor = TopologyEditor::from_topology(topology("[S]([F])([F])([F])([F])([F])[F]"));
+    let fluorines = (1..4)
+        .map(|index| handle(&editor, index))
+        .collect::<Vec<_>>();
+    editor.delete_atoms(fluorines).unwrap();
+    assert_eq!(
+        hydrogens(&published(editor), 0),
+        ImplicitHydrogens::Fixed(1)
+    );
+}
+
+#[test]
+fn replacing_a_bond_settles_its_endpoints_once() {
+    // Ethene's double bond becomes a single bond from one of its carbons to
+    // methanol's oxygen: methane and dimethyl ether.
+    let source = topology("[CH2]=[CH2].[CH3][OH]");
+    let mut editor = TopologyEditor::from_topology(source);
+    let double = bond_of(&editor, 0, 1);
+    let (carbon, oxygen) = (handle(&editor, 0), handle(&editor, 3));
+    editor
+        .replace_bond(double, EditBond::new(carbon, oxygen, BondOrder::Single))
+        .unwrap();
+    let edited = published(editor);
+    assert_eq!(
+        fixed_counts(&edited),
+        [3, 4, 3, 0].map(ImplicitHydrogens::Fixed)
+    );
+}
+
+/// Seeded xorshift.
+struct Random(u64);
+
+impl Random {
+    fn below(&mut self, bound: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % bound as u64) as usize
+    }
+}
+
+#[test]
+fn random_edits_of_molecules_with_metals_publish_only_what_perceives() {
+    let sources = [
+        "[CH3][Li]",
+        "[CH3][Mg][Br].[CH4]",
+        "[CH3][OH].[Na].[Cl]",
+        "[NH3].[Pt]([Cl])[Cl].[CH3][CH2][SH]",
+        "[CH3][S](=[O])[CH3].[Zn]",
+        "[O]=[P]([CH3])([CH3])[CH3].[K]",
+        "[CH2]=[CH][CH]=[CH2].[Fe]",
+    ];
+    let orders = [
+        BondOrder::Single,
+        BondOrder::Double,
+        BondOrder::Dative,
+        BondOrder::Zero,
+    ];
+    let mut random = Random(0x9e37_79b9_7f4a_7c15);
+    let mut published_count = 0;
+    for text in sources {
+        let source = topology(text);
+        for _ in 0..60 {
+            let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+            for _ in 0..1 + random.below(4) {
+                let atoms = editor.atom_ids().collect::<Vec<_>>();
+                let bonds = editor.bonds().map(|(id, _)| id).collect::<Vec<_>>();
+                if atoms.len() < 2 {
+                    break;
+                }
+                let atom = |random: &mut Random| atoms[random.below(atoms.len())];
+                let order = orders[random.below(orders.len())];
+                // Edits the editor refuses, such as a duplicate bond, leave
+                // the draft as it was.
+                let _ = match random.below(5) {
+                    0 => editor.delete_atom(atom(&mut random)).map(|_| ()),
+                    1 if !bonds.is_empty() => editor
+                        .delete_bond(bonds[random.below(bonds.len())])
+                        .map(|_| ()),
+                    2 => {
+                        let (a, b) = (atom(&mut random), atom(&mut random));
+                        editor.add_bond(a, b, order).map(|_| ())
+                    }
+                    3 if !bonds.is_empty() => {
+                        editor.set_bond_order(bonds[random.below(bonds.len())], order)
+                    }
+                    4 if !bonds.is_empty() => {
+                        let bond = bonds[random.below(bonds.len())];
+                        let (a, b) = (atom(&mut random), atom(&mut random));
+                        editor
+                            .replace_bond(bond, EditBond::new(a, b, order))
+                            .map(|_| ())
+                    }
+                    _ => Ok(()),
+                };
+            }
+            if let Ok(topology) = editor.finish() {
+                published_count += 1;
+                if let Err(error) = topology.perceived() {
+                    panic!("{text}: {error}");
+                }
+            }
+        }
+    }
+    assert!(published_count > 100, "{published_count}");
 }
 
 #[test]
@@ -414,5 +682,44 @@ fn deleting_a_deuterium_carrier_drops_the_stereo_it_told_apart() {
     editor.delete_atom(handle(&editor, 0)).unwrap();
     let edited = editor.finish().unwrap();
     let molecule = edited.instances().next().unwrap().molecule().clone();
+    assert_eq!(molecule.stereo_elements().count(), 0);
+}
+
+#[test]
+fn a_deleted_hydrogen_carrier_leaves_its_parent_count_as_settled() {
+    // An inferred parent stays inferred and perceives the hydrogen that
+    // takes the stereo place.
+    let mut editor = TopologyEditor::from_topology(topology("[H][C@](F)(Cl)Br"));
+    let carbon = handle(&editor, 1);
+    let inferred = editor
+        .atom(carbon)
+        .unwrap()
+        .clone()
+        .with_hydrogens(ImplicitHydrogens::Inferred);
+    editor.replace_atom(carbon, inferred).unwrap();
+    let source = Arc::new(published(editor));
+    let mut editor = TopologyEditor::from_topology(source);
+    editor.delete_atom(handle(&editor, 0)).unwrap();
+    let edited = published(editor);
+    assert_eq!(hydrogens(&edited, 0), ImplicitHydrogens::Inferred);
+    let center = edited.atom_at(TopologyAtomIndex::new(0)).unwrap();
+    assert_eq!(center.total_hydrogens(), Some(1));
+    let molecule = edited.instances().next().unwrap().molecule();
+    assert_eq!(molecule.stereo_elements().count(), 1);
+
+    // A fixed radical centre gains no hydrogen, so the stereo the deleted
+    // hydrogen told apart goes.
+    let mut editor = TopologyEditor::from_topology(topology("[H][C@](F)(Cl)Br"));
+    let carbon = handle(&editor, 1);
+    let radical = editor
+        .atom(carbon)
+        .unwrap()
+        .clone()
+        .with_radical(AtomRadical::new(1, None));
+    editor.replace_atom(carbon, radical).unwrap();
+    editor.delete_atom(handle(&editor, 0)).unwrap();
+    let edited = published(editor);
+    assert_eq!(hydrogens(&edited, 0), ImplicitHydrogens::Fixed(0));
+    let molecule = edited.instances().next().unwrap().molecule();
     assert_eq!(molecule.stereo_elements().count(), 0);
 }

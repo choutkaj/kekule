@@ -4,7 +4,7 @@
 //! scales with the edited atoms rather than the system.
 use super::{EditAtomId, EditBondId, GroupGraph, Location, TopologyEditError, TopologyEditor};
 use crate::algorithms::{
-    assign_collapsed_hydrogen_counts, collapse_stereo_hydrogen_carrier, is_metal,
+    assign_collapsed_hydrogen_counts, collapse_stereo_hydrogen_carrier,
     materialize_stereo_hydrogen_carriers, rdkit_inferred_hydrogen_count, rdkit_valence_violation,
     removable_hydrogen, stereo_hydrogen_bindings, stereo_hydrogen_is_collapsible,
     stereo_hydrogen_parents, AddedHydrogenOrigin, RetainedHydrogenReason,
@@ -223,13 +223,13 @@ impl TopologyEditor {
         // The parent's count follows the new bond and the bond to the
         // hydrogen it replaces, as edits make it follow.
         let mut changes = super::ValenceChanges::default();
-        changes.change(parent, is_metal(atom.element), None, Some(order));
+        changes.change(parent, None, Some(order));
         if let Some(hydrogen) = replaced {
             let bond = self
                 .bond_between(parent, hydrogen)?
                 .ok_or(TopologyEditError::InvalidAtom(hydrogen))?;
             let bond = self.require_bond(bond)?.order;
-            changes.change(parent, false, Some(bond), None);
+            changes.change(parent, Some(bond), None);
         }
         let counts = self.fixed_counts_after(&changes)?;
         let draft = self.draft_mut(loc.group);

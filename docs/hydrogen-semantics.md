@@ -66,12 +66,15 @@ fixed atom stays as an implicit one. A gain takes a declared radical electron
 first, then a hydrogen, then fills open valence; past the largest allowed
 valence it is owed: later losses pay it back first, and publication fails with
 `TopologyEditError::HydrogenDeficit` while any is owed, rather than silently
-dropping valence. A loss adds hydrogens only for valence the radical electrons
-and hydrogens leave unfilled, so deleting a hydrogen of an atom declared a
-radical leaves the radical. A metal's count never changes. A non-metal's bond
-to a metal changes no count when the non-metal donates to it, as an ammine
-does; otherwise it is covalent, so a chloride or a methyl cut from its metal
-takes a hydrogen.
+dropping valence. A loss fills the atom only up to the smallest valence its
+element and charge allow at or above what remains with its hydrogens and
+radical electrons: deleting a hydrogen of an atom declared a radical leaves
+the radical, and a sulfoxide that loses its oxygen is a sulfide. Batch
+deletions settle once for the whole set, as a subset of the survivors caps
+them. Every bond counts with its order's valence, so a single bond to a metal
+trades a hydrogen, as for a chloride or a methyl cut from its metal; draw
+coordination that trades none, as an ammine's, as a dative bond. A metal's
+count never changes.
 To remove a hydrogen for good, as for hydroxide from water, delete it and set
 the atom's charge and count with `TopologyEditor::replace_atom`. A molecule draft (`MoleculeEditor`) edits the
 graph as stated and keeps counts as they are;

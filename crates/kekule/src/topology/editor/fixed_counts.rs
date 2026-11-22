@@ -3,38 +3,23 @@
 //! lost bond becomes a hydrogen and a new bond takes the place of one, as
 //! inferred counts do on perception.
 //!
-//! A metal's count never changes. A non-metal's bonds to metals count as
-//! covalent unless it donates to them, as an ammine nitrogen does; donor
-//! bonds are coordination and change no count. A lost unit of valence first
-//! pays back valence the atom's radical electrons and hydrogens over-fill,
-//! then adds a hydrogen. A gained unit takes a radical electron, then a
-//! hydrogen, then fills open valence; past the atom's largest allowed
-//! valence it is owed, later losses pay it back first, and publication
-//! fails while it is owed.
+//! Every bond counts with its order's valence, so a single bond to a metal
+//! trades a hydrogen as any single bond does, and a dative or zero-order
+//! bond, which coordination is, trades none. A metal's own count never
+//! changes. A loss fills the atom up to the smallest valence its element and
+//! charge allow at or above what remains, counting its hydrogens and radical
+//! electrons, so a sulfoxide that loses its oxygen is a sulfide. A gain takes
+//! a radical electron, then a hydrogen, then fills open valence; past the
+//! atom's largest allowed valence it is owed, later losses pay it back
+//! first, and publication fails while it is owed.
 use super::{EditAtomId, TopologyEditError, TopologyEditor};
-use crate::algorithms::{allowed_valences, donates_to_metals, is_metal};
+use crate::algorithms::{allowed_valences, is_metal};
 use crate::molecule::{Atom, AtomRadical, BondOrder, ImplicitHydrogens};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// An atom's bond valence, split by whether the neighbor is a metal.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct BondValence {
-    /// Valence of bonds to non-metals.
-    pub(crate) other: usize,
-    /// Valence of bonds to metals.
-    pub(crate) metal: usize,
-}
-
-impl BondValence {
-    /// Adds the valence of a bond of `order`, to a metal or not.
-    pub(crate) fn add(&mut self, metal: bool, order: BondOrder) {
-        let units = usize::from(order.valence());
-        if metal {
-            self.metal += units;
-        } else {
-            self.other += units;
-        }
-    }
+/// The valence a bond of `order` gives each endpoint.
+pub(crate) fn bond_valence(order: BondOrder) -> usize {
+    usize::from(order.valence())
 }
 
 /// An atom's fixed count, radical, and owed hydrogens after an edit.
@@ -45,151 +30,130 @@ pub(crate) struct Settled {
     pub(crate) owed: usize,
 }
 
-/// The valence of `atom`'s bonds that hydrogens trade against: its bonds to
-/// non-metals, and its bonds to metals unless it donates to them.
-fn traded_valence(atom: &Atom, count: usize, electrons: usize, bonds: BondValence) -> usize {
-    let donor =
-        bonds.metal > 0 && donates_to_metals(atom, bonds.other + count + electrons, bonds.metal);
-    bonds.other + if donor { 0 } else { bonds.metal }
-}
-
 fn radical_electrons(atom: &Atom) -> usize {
     atom.radical
         .map_or(0, |radical| usize::from(radical.electron_count()))
 }
 
-fn largest_valence(atom: &Atom) -> Option<usize> {
-    allowed_valences(atom)?
+fn allowed(atom: &Atom) -> impl Iterator<Item = usize> + '_ {
+    allowed_valences(atom)
+        .unwrap_or(&[])
         .iter()
-        .max()
         .map(|&value| usize::from(value))
 }
 
+/// What `atom` owes with valence `total` from bonds, hydrogens, and radical
+/// electrons: what lies past its largest allowed valence, at most `owed`.
+fn still_owed(atom: &Atom, owed: usize, total: usize) -> usize {
+    allowed(atom)
+        .max()
+        .map_or(0, |largest| owed.min(total.saturating_sub(largest)))
+}
+
 /// The fixed count, radical, and owed hydrogens of `atom`, owing `owed`,
-/// after its bonds go from `before` to `after`; `None` when nothing
-/// changes: the count is inferred, the atom is a metal, or the traded
-/// valence stays.
+/// after its bond valence goes from `before` to `after`; `None` when nothing
+/// changes: the count is inferred, the atom is a metal, or the valence
+/// stays.
 ///
 /// # Errors
 ///
 /// The count, when it would pass 255.
 pub(crate) fn settle(
     atom: &Atom,
-    owed: usize,
-    before: BondValence,
-    after: BondValence,
+    mut owed: usize,
+    before: usize,
+    after: usize,
 ) -> Result<Option<Settled>, usize> {
     let ImplicitHydrogens::Fixed(count) = atom.hydrogens else {
         return Ok(None);
     };
-    if is_metal(atom.element) {
+    if is_metal(atom.element) || before == after {
         return Ok(None);
     }
-    let count = usize::from(count);
     let electrons = radical_electrons(atom);
-    let from = traded_valence(atom, count, electrons, before);
-    let to = traded_valence(atom, count, electrons, after);
-    let mut new_count = count;
-    let mut new_electrons = electrons;
-    let new_owed = if from > to {
-        let loss = from - to;
-        let total = from + count + electrons;
-        let target = allowed_valences(atom)
-            .unwrap_or(&[])
-            .iter()
-            .map(|&value| usize::from(value))
-            .find(|&value| value >= from + count)
-            .or_else(|| largest_valence(atom))
-            .unwrap_or(total);
-        let excess = total.saturating_sub(target);
-        new_count += loss - loss.min(excess);
-        owed.saturating_sub(loss)
-    } else if to > from {
-        let mut gain = to - from;
-        let taken = gain.min(new_electrons);
-        new_electrons -= taken;
-        gain -= taken;
-        let taken = gain.min(new_count);
-        new_count -= taken;
-        gain -= taken;
-        let total = to + new_count + new_electrons;
-        largest_valence(atom).map_or(0, |largest| {
-            (owed + gain).min(total.saturating_sub(largest))
-        })
+    let mut count = usize::from(count);
+    let mut remaining = electrons;
+    if after < before {
+        let filled = after + count + electrons;
+        if let Some(target) = allowed(atom).filter(|&value| value >= filled).min() {
+            count += target - filled;
+        }
     } else {
-        return Ok(None);
-    };
-    let count = u8::try_from(new_count).map_err(|_| new_count)?;
-    let radical = if new_electrons == electrons {
+        let mut gain = after - before;
+        let taken = gain.min(remaining);
+        remaining -= taken;
+        gain -= taken;
+        let taken = gain.min(count);
+        count -= taken;
+        gain -= taken;
+        owed += gain;
+    }
+    finish(atom, count, remaining, owed, after)
+}
+
+fn finish(
+    atom: &Atom,
+    count: usize,
+    electrons: usize,
+    owed: usize,
+    valence: usize,
+) -> Result<Option<Settled>, usize> {
+    let owed = still_owed(atom, owed, valence + count + electrons);
+    let radical = if electrons == radical_electrons(atom) {
         atom.radical
     } else {
         AtomRadical::new(
-            u8::try_from(new_electrons).expect("no more electrons than declared"),
+            u8::try_from(electrons).expect("no more electrons than declared"),
             None,
         )
     };
     Ok(Some(Settled {
-        count,
+        count: u8::try_from(count).map_err(|_| count)?,
         radical,
-        owed: new_owed,
+        owed,
     }))
 }
 
-/// What `atom`, owing `owed` with bonds `bonds`, still owes once it replaces
-/// the atom it was: only valence past the largest its new state allows.
-pub(crate) fn owed_after_replace(atom: &Atom, owed: usize, bonds: BondValence) -> usize {
+/// What `atom`, owing `owed` with bond valence `valence`, still owes once it
+/// replaces the atom it was: only valence past the largest its new state
+/// allows.
+pub(crate) fn owed_after_replace(atom: &Atom, owed: usize, valence: usize) -> usize {
     let ImplicitHydrogens::Fixed(count) = atom.hydrogens else {
         return 0;
     };
-    let count = usize::from(count);
-    let electrons = radical_electrons(atom);
-    let total = traded_valence(atom, count, electrons, bonds) + count + electrons;
-    largest_valence(atom).map_or(0, |largest| owed.min(total.saturating_sub(largest)))
+    still_owed(
+        atom,
+        owed,
+        valence + usize::from(count) + radical_electrons(atom),
+    )
 }
 
-/// The bond valence one edit gives to or takes from atoms, as changes to
-/// their bonds to non-metals and to metals.
+/// The bond valence one edit gives to or takes from atoms.
 #[derive(Debug, Default)]
-pub(super) struct ValenceChanges(BTreeMap<EditAtomId, (isize, isize)>);
+pub(super) struct ValenceChanges(BTreeMap<EditAtomId, isize>);
 
 impl ValenceChanges {
     /// The bond between `a` and `b` changes from `from` to `to`, `None` for
     /// no bond.
     pub(super) fn bond(
         &mut self,
-        editor: &TopologyEditor,
         [a, b]: [EditAtomId; 2],
         from: Option<BondOrder>,
         to: Option<BondOrder>,
-    ) -> Result<(), TopologyEditError> {
-        let metal = |atom| editor.require_atom(atom).map(|atom| is_metal(atom.element));
-        let (a_metal, b_metal) = (metal(a)?, metal(b)?);
-        self.change(a, b_metal, from, to);
-        self.change(b, a_metal, from, to);
-        Ok(())
+    ) {
+        self.change(a, from, to);
+        self.change(b, from, to);
     }
 
-    /// One bond of `atom`, to a metal or not, changes from `from` to `to`.
+    /// One bond of `atom` changes from `from` to `to`.
     pub(super) fn change(
         &mut self,
         atom: EditAtomId,
-        metal: bool,
         from: Option<BondOrder>,
         to: Option<BondOrder>,
     ) {
         let units = |order: Option<BondOrder>| isize::from(order.map_or(0, BondOrder::valence));
-        let change = units(to) - units(from);
-        let entry = self.0.entry(atom).or_default();
-        if metal {
-            entry.1 += change;
-        } else {
-            entry.0 += change;
-        }
-    }
-
-    /// Drops `atom`, which the edit deletes.
-    pub(super) fn forget(&mut self, atom: EditAtomId) {
-        self.0.remove(&atom);
+        *self.0.entry(atom).or_default() += units(to) - units(from);
     }
 }
 
@@ -200,14 +164,23 @@ pub(super) struct FixedCount {
     settled: Settled,
 }
 
+impl FixedCount {
+    /// The atoms `counts` leave with exactly one implicit hydrogen.
+    pub(super) fn with_one_hydrogen(counts: &[Self]) -> BTreeSet<EditAtomId> {
+        counts
+            .iter()
+            .filter(|count| count.settled.count == 1)
+            .map(|count| count.atom)
+            .collect()
+    }
+}
+
 impl TopologyEditor {
     /// The bond valence of `atom` in the draft.
-    pub(super) fn bond_valence(&self, atom: EditAtomId) -> Result<BondValence, TopologyEditError> {
-        let mut valence = BondValence::default();
+    pub(super) fn bond_valence(&self, atom: EditAtomId) -> Result<usize, TopologyEditError> {
+        let mut valence = 0;
         for bond in self.incident_bonds(atom)?.collect::<Vec<_>>() {
-            let bond = self.require_bond(bond)?;
-            let other = if bond.a == atom { bond.b } else { bond.a };
-            valence.add(is_metal(self.require_atom(other)?.element), bond.order);
+            valence += bond_valence(self.require_bond(bond)?.order);
         }
         Ok(valence)
     }
@@ -224,13 +197,10 @@ impl TopologyEditor {
         changes: &ValenceChanges,
     ) -> Result<Vec<FixedCount>, TopologyEditError> {
         let mut counts = Vec::new();
-        for (&atom, &(other, metal)) in &changes.0 {
+        for (&atom, &change) in &changes.0 {
             let value = self.require_atom(atom)?;
             let before = self.bond_valence(atom)?;
-            let after = BondValence {
-                other: before.other.saturating_add_signed(other),
-                metal: before.metal.saturating_add_signed(metal),
-            };
+            let after = before.saturating_add_signed(change);
             let owed = self.hydrogen_deficits.get(&atom).copied().unwrap_or(0);
             let settled = settle(value, owed, before, after)
                 .map_err(|count| TopologyEditError::HydrogenCountOverflow { atom, count })?;
@@ -259,23 +229,6 @@ impl TopologyEditor {
             }
         }
         Ok(())
-    }
-
-    /// Fixes `atom` at `count` hydrogens, keeping its radical and owing
-    /// none.
-    pub(super) fn fixed_count(
-        &self,
-        atom: EditAtomId,
-        count: u8,
-    ) -> Result<FixedCount, TopologyEditError> {
-        Ok(FixedCount {
-            atom,
-            settled: Settled {
-                count,
-                radical: self.require_atom(atom)?.radical,
-                owed: 0,
-            },
-        })
     }
 
     /// Keeps of what `atom` owes only what its replaced state still owes;

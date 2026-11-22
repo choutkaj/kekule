@@ -3,8 +3,9 @@
 //! elements edits remove, reported by handle.
 use super::{EditAtomId, EditBondId, TopologyEditError, TopologyEditor};
 use crate::algorithms::collapse_stereo_hydrogen_carrier;
-use crate::molecule::{BondOrder, ImplicitHydrogens};
+use crate::molecule::BondOrder;
 use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind};
+use std::collections::BTreeSet;
 
 /// A represented stereo element an edit removed because it no longer
 /// describes valid stereo, named by the handles of what it was about.
@@ -78,14 +79,17 @@ impl TopologyEditor {
         }
     }
 
-    /// Before `hydrogen` is deleted: when it is the only hydrogen of the atom
-    /// it is singly bonded to, the stereo carriers naming it at that atom
-    /// become the implicit hydrogen the deletion leaves, as hydrogen collapse
-    /// makes them. Returns the atom when its count is inferred, so the caller
-    /// fixes it at one, as collapse fixes stereo parents.
+    /// Before `hydrogen` is deleted: when the atom it is singly bonded to has
+    /// no implicit hydrogen, is not in `handed`, and gains one, the stereo
+    /// carriers naming it at that atom become the implicit hydrogen the
+    /// deletion leaves, as hydrogen collapse makes them, and returns the
+    /// atom. An inferred count gains one on perception; a fixed count gains
+    /// one when the deletion settles it in `one_hydrogen`.
     pub(super) fn hand_carriers_to_implicit_hydrogen(
         &mut self,
         hydrogen: EditAtomId,
+        handed: &BTreeSet<EditAtomId>,
+        one_hydrogen: &BTreeSet<EditAtomId>,
     ) -> Result<Option<EditAtomId>, TopologyEditError> {
         // An implicit hydrogen is protium, so only a protium carrier can
         // pass its place to one.
@@ -103,7 +107,8 @@ impl TopologyEditor {
         }
         let parent = if bond.a == hydrogen { bond.b } else { bond.a };
         let (implicit, _) = self.materializable_hydrogens(parent)?;
-        if implicit != 0 {
+        let fixed = !self.require_atom(parent)?.hydrogens.is_inferred();
+        if implicit != 0 || handed.contains(&parent) || (fixed && !one_hydrogen.contains(&parent)) {
             return Ok(None);
         }
         let loc = self.atom_location(hydrogen)?;
@@ -131,7 +136,6 @@ impl TopologyEditor {
         }
         collapse_stereo_hydrogen_carrier(self.draft_mut(loc.group), loc.local, &elements)
             .expect("the elements are live");
-        let inferred = self.require_atom(parent)?.hydrogens == ImplicitHydrogens::Inferred;
-        Ok(inferred.then_some(parent))
+        Ok(Some(parent))
     }
 }

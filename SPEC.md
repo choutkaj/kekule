@@ -149,11 +149,14 @@ deletion, a lower order, or a subset cut takes from it, and gives one up for
 each unit it gains. A gain takes a declared radical electron first, then a
 hydrogen, then fills open valence; past the largest allowed valence it is
 owed, later losses pay it back first, and publication fails while any is
-owed. A loss adds hydrogens only for valence the radical electrons and
-hydrogens leave unfilled. A metal's count never changes. A non-metal's bond
-to a metal changes no count when the non-metal donates to it, as an ammine
-does; otherwise it is covalent, so a chloride or a methyl cut from its metal
-takes a hydrogen.
+owed. A loss fills the atom only up to the smallest valence its element and
+charge allow at or above what remains with its hydrogens and radical
+electrons, so a sulfoxide that loses its oxygen is a sulfide. Batch
+deletions settle once for the whole set, as a subset of the survivors caps
+them. Every bond counts with its order's valence: a single bond to a metal
+trades a hydrogen, as for a chloride or a methyl cut from its metal, and
+coordination that trades none is a dative bond. A metal's count never
+changes.
 `perception::valence::open_valences` names fixed atoms still short of their
 valence. Explicit/implicit conversion
 preserves composition and stereo. CIP assignment is transactional, respects

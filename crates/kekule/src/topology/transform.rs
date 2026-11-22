@@ -107,9 +107,11 @@ impl Topology {
     /// A cut caps the selected atom with hydrogens: a fixed implicit-hydrogen
     /// count gains one per unit of bond valence the cut takes, as
     /// [`TopologyEditor::delete_bond`](crate::topology::edit::TopologyEditor::delete_bond)
-    /// gives it: never at a metal or a donor's bond to one, and on an atom
-    /// with declared radical electrons only as many as its valence has room
-    /// for. Inferred counts follow on perception. Stereo
+    /// gives it, and as
+    /// [`TopologyEditor::delete_atoms`](crate::topology::edit::TopologyEditor::delete_atoms)
+    /// of the other atoms leaves it: never at a metal, and only up to the
+    /// smallest valence the atom allows at or above what remains. Inferred
+    /// counts follow on perception. Stereo
     /// elements that name an atom outside the selection are dropped, unless
     /// the cut atom is a protium carrier that capping replaces with the
     /// center's one implicit hydrogen. The selection may

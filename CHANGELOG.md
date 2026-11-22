@@ -615,9 +615,12 @@ the main branch migrates by the table under "From the SampleSet API".
   raising an order takes them back. Valence gained past the last hydrogen
   and the largest allowed valence is owed and fails publication
   (`TopologyEditError::HydrogenDeficit`). A gain takes
-  radical electrons before hydrogens. A metal's count never changes, and a
-  donor's bond to a metal, as an ammine's, changes no count. Counts past 255
-  fail with `HydrogenCountOverflow`.
+  radical electrons before hydrogens. A loss fills an atom only up to the
+  smallest allowed valence it reaches, so a sulfoxide that loses its oxygen
+  is a sulfide. `delete_atoms` and `delete_bonds` settle once for the whole
+  set, as `Topology::subset` caps the survivors. A single bond to a metal
+  trades a hydrogen; a dative bond trades none. A metal's count never
+  changes. Counts past 255 fail with `HydrogenCountOverflow`.
 - Edited drafts publish an added atom placed in a residue that holds earlier
   atoms after the last of them, so residues stay contiguous for the PDB
   writer. The editor's per-atom APIs keep handle order.
