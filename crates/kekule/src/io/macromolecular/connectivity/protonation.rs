@@ -39,8 +39,8 @@ use crate::molecule::{BondOrder, Element};
 /// What the model shows about one template heavy atom of a residue.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct AtomEvidence {
-    /// Model hydrogen sites bonded to it: a hydrogen and a deuterium that
-    /// share one exchangeable site count once.
+    /// Model hydrogen sites bonded to it (see
+    /// [`super::hydrogen_sites`]).
     pub(crate) hydrogens: usize,
     /// The valence its bonds to other residues give it (see
     /// [`super::link_valence`]).
@@ -189,12 +189,14 @@ fn coordinates_in_place_of_hydrogen(component: &Component, index: usize, role: R
     }
 }
 
-/// The state of the first candidate that fits the evidence best, or `None`
-/// when the model's hydrogens contradict every candidate. With hydrogens on
-/// heteroatoms the best fit lacks the fewest hydrogens, then changes the
-/// fewest charges; without, it charges the fewest atoms for coordination,
-/// then, for a polymer residue, charges the fewest atoms. Ties go to the
-/// template. Stated charges then apply to the chosen state.
+/// The state of the first candidate that fits the evidence best, with the
+/// stated charges applied, or `None` when the model's hydrogens contradict
+/// every candidate. With hydrogens on heteroatoms the best fit lacks the
+/// fewest hydrogens, then changes the fewest charges, then gives the most
+/// stated charges by its own hydrogens or a resonance form. Without, it
+/// gives the most stated charges so, then charges the fewest atoms for
+/// coordination, then, for a polymer residue, charges the fewest atoms.
+/// Ties go to the template.
 pub(crate) fn choose<'c>(
     candidates: impl IntoIterator<Item = &'c Component>,
     evidence: &ResidueEvidence<'_>,
@@ -209,11 +211,11 @@ pub(crate) fn choose<'c>(
         }
     }
     let evidence = &evidence;
-    let (candidate, mut atoms, mut reordered, assumed) = candidates
+    let (candidate, atoms, reordered, assumed) = candidates
         .into_iter()
         .enumerate()
         .filter_map(|(order, candidate)| {
-            let (atoms, reordered, assumed) = evaluate(candidate, evidence, with_evidence)?;
+            let (mut atoms, mut reordered, assumed) = evaluate(candidate, evidence, with_evidence)?;
             let missing = atoms.iter().map(|atom| atom.missing).sum::<usize>();
             let changed = atoms
                 .iter()
@@ -230,22 +232,33 @@ pub(crate) fn choose<'c>(
             } else {
                 0
             };
+            apply_stated(
+                candidate,
+                evidence,
+                with_evidence,
+                &mut atoms,
+                &mut reordered,
+            );
+            // Stated charges the candidate gives only with other hydrogens,
+            // or not at all.
+            let unfit = atoms
+                .iter()
+                .filter(|atom| {
+                    matches!(
+                        atom.stated,
+                        Some(Stated::Kept { .. } | Stated::Rejected { .. })
+                    )
+                })
+                .count();
             let key = if with_evidence {
-                (missing, changed, order)
+                (missing, changed, unfit, order)
             } else {
-                (coordination_charges, charged, order)
+                (unfit, coordination_charges, charged, order)
             };
             Some((key, (candidate, atoms, reordered, assumed)))
         })
         .min_by_key(|(key, _)| *key)
         .map(|(_, chosen)| chosen)?;
-    apply_stated(
-        candidate,
-        evidence,
-        with_evidence,
-        &mut atoms,
-        &mut reordered,
-    );
     Some(Protonation {
         candidate,
         atoms,

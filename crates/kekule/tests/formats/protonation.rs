@@ -651,6 +651,17 @@ fn a_stated_cation_after_a_gap_takes_three_hydrogens() {
 }
 
 #[test]
+fn a_stated_histidine_cation_without_hydrogens_is_the_imidazolium() {
+    // Without hydrogens, NE2 +1 fits the doubly protonated histidine by
+    // resonance: one hydrogen on each ring nitrogen.
+    let mut rows = heavy(sites("HIS"));
+    state_charge(&mut rows, "NE2", 1);
+    let result = read(&rows, "");
+    assert_eq!(state_at(&result, "A", 1, "NE2"), (1, 1));
+    assert_eq!(state_at(&result, "A", 1, "ND1"), (0, 1));
+}
+
+#[test]
 fn missing_template_atoms_are_reported_and_termini_stay_open() {
     // A carboxyl terminus without OXT is not an aldehyde.
     let result = read(&without(heavy(sites("GLY")), &["OXT"]), "");
@@ -1116,22 +1127,45 @@ fn phenols_and_thiols_without_their_hydrogen_stay_neutral() {
 }
 
 #[test]
-fn a_hydrogen_and_a_deuterium_sharing_a_site_count_once() {
-    // A neutron structure's serine: HG and DG share OG, half each.
+fn a_hydrogen_and_a_deuterium_sharing_a_site_are_alternates() {
+    // A neutron structure's serine: HG and DG share OG, half each, 0.5 Å
+    // apart. The deuterium stays on the tie, and the hydrogen is omitted.
     let mut rows = sites("SER");
     let hg = rows.iter().position(|site| site.name == "HG").unwrap();
     rows[hg].occupancy = Some(0.5);
-    let deuterium = Site {
+    let mut deuterium = Site {
         element: "D".to_owned(),
         name: "DG".to_owned(),
         ..rows[hg].clone()
     };
+    deuterium.point[0] += 0.5;
     rows.push(deuterium);
     let result = read(&rows, "");
     assert_eq!(charges(&result), []);
+    assert_eq!(state_at(&result, "A", 1, "OG"), (0, 1));
+    let omitted = issues(&result)
+        .into_iter()
+        .filter_map(|issue| match issue {
+            Issue::AlternateLocationOmitted {
+                atom_name, alt_id, ..
+            } => Some((atom_name, alt_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(omitted, [("HG".to_owned(), None)]);
     assert!(!has_issue(&result, |issue| matches!(
         issue,
         Issue::ProtonationFromHydrogens { .. }
+    )));
+
+    // A larger occupancy stays.
+    rows[hg].occupancy = Some(0.6);
+    rows.last_mut().unwrap().occupancy = Some(0.4);
+    let result = read(&rows, "");
+    assert_eq!(state_at(&result, "A", 1, "OG"), (0, 1));
+    assert!(has_issue(&result, |issue| matches!(
+        issue,
+        Issue::AlternateLocationOmitted { atom_name, .. } if atom_name == "DG"
     )));
 }
 

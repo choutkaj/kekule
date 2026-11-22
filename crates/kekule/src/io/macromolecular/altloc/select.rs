@@ -4,6 +4,7 @@ use crate::diagnostics::{Cancellation, Capitalized, DiagnosticKind, FormatError}
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::atom_site::AtomRow;
+use super::super::connectivity::{share_hydrogen_site, HydrogenSite};
 use super::super::{StructureInterpretIssue, StructureInterpretationReport};
 use super::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
@@ -405,6 +406,8 @@ pub(in crate::io::macromolecular) fn select_alt_locations(
             selected.extend(retained);
         }
     }
+    let dropped = shared_hydrogen_sites(&residues, &selected, report);
+    selected.retain(|row| !dropped.contains(&row.row_index));
     // Dense atom order follows each site's first source occurrence, independently
     // of which alternative's row supplied its coordinates. Rows without
     // alternatives are their sites' only rows.
@@ -434,6 +437,65 @@ pub(in crate::io::macromolecular) fn select_alt_locations(
     poll(cancellation)?;
     selected.sort_by_key(|&(_, order)| order);
     Ok(selected)
+}
+
+/// The selected rows that alternate with another selected row at one
+/// hydrogen site: of a deuterium and a hydrogen of one residue that share a
+/// site (see [`share_hydrogen_site`]), the one with the smaller occupancy,
+/// the hydrogen on a tie. Each is reported as an omitted alternate.
+fn hydrogen_site(row: &AtomRow) -> HydrogenSite<'_> {
+    (
+        row.isotope == Some(2),
+        row.occupancy,
+        row.alt_id.as_deref(),
+        row.point,
+    )
+}
+
+fn shared_hydrogen_sites(
+    residues: &[Residue<'_>],
+    selected: &[&AtomRow],
+    report: &mut StructureInterpretationReport,
+) -> BTreeSet<usize> {
+    let selected = selected
+        .iter()
+        .map(|row| row.row_index)
+        .collect::<BTreeSet<_>>();
+    let mut dropped = BTreeSet::new();
+    for residue in residues {
+        let hydrogens =
+            residue.rows.iter().copied().filter(|row| {
+                row.element.atomic_number() == 1 && selected.contains(&row.row_index)
+            });
+        let (deuterium, protium): (Vec<_>, Vec<_>) =
+            hydrogens.partition(|row| row.isotope == Some(2));
+        let mut paired = vec![false; protium.len()];
+        for deuterium in deuterium {
+            let Some(index) = protium.iter().enumerate().position(|(index, other)| {
+                !paired[index]
+                    && share_hydrogen_site(hydrogen_site(deuterium), hydrogen_site(other))
+            }) else {
+                continue;
+            };
+            paired[index] = true;
+            let protium = protium[index];
+            let omitted = if protium.occupancy.unwrap_or(1.0) > deuterium.occupancy.unwrap_or(1.0) {
+                deuterium
+            } else {
+                protium
+            };
+            dropped.insert(omitted.row_index);
+            report
+                .issues
+                .push(StructureInterpretIssue::AlternateLocationOmitted {
+                    atom_name: omitted.atom_name.clone(),
+                    alt_id: omitted.alt_id.clone(),
+                    residue: residue.id.clone(),
+                    source_line: omitted.line,
+                });
+        }
+    }
+    dropped
 }
 
 fn choose<'a>(

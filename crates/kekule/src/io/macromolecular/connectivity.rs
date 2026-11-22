@@ -925,29 +925,35 @@ pub(crate) const fn link_sides(linking: ComponentLinking) -> [&'static [&'static
 /// occupancy, alternate location, and position, if known.
 pub(crate) type HydrogenSite<'a> = (bool, Option<f64>, Option<&'a str>, Option<Point3>);
 
-/// The hydrogen sites among the hydrogens bonded to one heavy atom. A
-/// hydrogen and a deuterium within 0.3 Å of each other share one
-/// exchangeable site when their occupancies sum to at most one, or when
-/// they are alternate locations of each other, as in neutron structures.
-pub(crate) fn hydrogen_sites<'a>(hydrogens: impl IntoIterator<Item = HydrogenSite<'a>>) -> usize {
+/// Whether a deuterium and a hydrogen are alternates of one exchangeable
+/// site, as neutron structures model it: within 0.6 Å of each other, with
+/// different alternate locations or occupancies that sum to at most one.
+pub(crate) fn share_hydrogen_site(deuterium: HydrogenSite<'_>, protium: HydrogenSite<'_>) -> bool {
     const TOLERANCE: f64 = 0.05;
-    const SAME_SITE: f64 = 0.3;
+    const SAME_SITE: f64 = 0.6;
+    let (_, occupancy, location, point) = deuterium;
+    let (_, other, other_location, other_point) = protium;
+    let alternate = matches!((location, other_location), (Some(a), Some(b)) if a != b);
+    let partial = occupancy.unwrap_or(1.0) + other.unwrap_or(1.0) <= 1.0 + TOLERANCE;
+    let near = matches!((point, other_point), (Some(a), Some(b))
+        if (a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2) <= SAME_SITE.powi(2));
+    near && (alternate || partial)
+}
+
+/// The hydrogen sites among the hydrogens bonded to one heavy atom: a
+/// deuterium and a hydrogen that share a site (see [`share_hydrogen_site`])
+/// count once. Readers keep one of them; writers count what a reader keeps.
+pub(crate) fn hydrogen_sites<'a>(hydrogens: impl IntoIterator<Item = HydrogenSite<'a>>) -> usize {
     let (deuterium, protium): (Vec<_>, Vec<_>) = hydrogens
         .into_iter()
         .partition(|&(deuterium, ..)| deuterium);
     let mut paired = vec![false; protium.len()];
     let mut shared = 0;
-    for &(_, occupancy, location, point) in &deuterium {
-        let partner = protium.iter().enumerate().position(
-            |(index, &(_, other, other_location, other_point))| {
-                let alternate = matches!((location, other_location), (Some(a), Some(b)) if a != b);
-                let partial = occupancy.unwrap_or(1.0) + other.unwrap_or(1.0) <= 1.0 + TOLERANCE;
-                let near = matches!((point, other_point), (Some(a), Some(b))
-                    if (a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)
-                        <= SAME_SITE.powi(2));
-                !paired[index] && near && (alternate || partial)
-            },
-        );
+    for &site in &deuterium {
+        let partner = protium
+            .iter()
+            .enumerate()
+            .position(|(index, &other)| !paired[index] && share_hydrogen_site(site, other));
         if let Some(index) = partner {
             paired[index] = true;
             shared += 1;

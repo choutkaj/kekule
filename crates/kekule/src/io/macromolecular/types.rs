@@ -400,7 +400,9 @@ pub enum StructureInterpretIssue {
         atom_site_rows: usize,
     },
     /// One atom-site row of an alternative that alternate-location selection
-    /// did not keep.
+    /// did not keep, or of a hydrogen and a deuterium that share one
+    /// exchangeable site: the one with the smaller occupancy, the hydrogen on
+    /// a tie.
     AlternateLocationOmitted {
         /// The atom name of the row.
         atom_name: String,
