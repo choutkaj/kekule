@@ -504,54 +504,6 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
 }
 
 #[test]
-fn valence_infers_no_hydrides_on_main_group_metals() {
-    // RDKit gives a lone neutral Na one hydrogen and Mg two; a missing
-    // charge is far likelier than a hydride, so none is inferred.
-    for (symbol, expected_inferred_hydrogens) in [
-        ("Li", 0),
-        ("Be", 0),
-        ("Na", 0),
-        ("Mg", 0),
-        ("K", 0),
-        ("Ca", 0),
-        ("Rb", 0),
-        ("Sr", 0),
-        ("Cs", 0),
-        ("Ba", 0),
-        ("Fr", 0),
-        ("Ra", 0),
-        ("Al", 0),
-        ("Ga", 0),
-        ("In", 0),
-        ("Sn", 0),
-        ("Pb", 0),
-        ("Bi", 0),
-        ("Po", 0),
-        ("Te", 2),
-        ("B", 3),
-        ("Si", 4),
-    ] {
-        let mut mol = crate::molecule::MoleculeEditor::new();
-        let atom_id = mol
-            .add_atom(element_atom(symbol))
-            .expect("atom identifier capacity");
-
-        let mut mol = mol.into_unchecked();
-        let report =
-            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
-
-        assert!(report.is_ok(), "neutral {symbol} should be supported");
-        assert_eq!(
-            mol.perception()
-                .valence()
-                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
-            Some(expected_inferred_hydrogens),
-            "neutral {symbol} implicit hydrogens"
-        );
-    }
-}
-
-#[test]
 fn valence_keeps_rdkit_hypervalent_anion_limits() {
     for (symbol, charge, accepted, rejected) in [
         ("P", -2, 3, 4),

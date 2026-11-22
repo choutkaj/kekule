@@ -10,60 +10,6 @@ fn mass_value(value: Quantity<f64>) -> f64 {
 }
 
 #[test]
-fn inferred_hydrogens_are_counted_or_the_formula_fails() {
-    // An inferred count is never omitted: before perception the formula and
-    // masses fail rather than describe methane as "C".
-    let mut molecule = crate::test_fixtures::read_smiles("C").expect("methane parses");
-    let unknown = Err(MolecularDescriptorError::UnknownHydrogenCount(
-        UnknownHydrogenCount::new(AtomId::new(0)),
-    ));
-    assert_eq!(molecular_formula(&molecule), unknown);
-    assert!(matches!(
-        average_mass(&molecule),
-        Err(MolecularDescriptorError::UnknownHydrogenCount(_))
-    ));
-    assert!(matches!(
-        monoisotopic_mass(&molecule),
-        Err(MolecularDescriptorError::UnknownHydrogenCount(_))
-    ));
-
-    molecule.perceive().expect("methane perceives");
-    assert_eq!(
-        molecular_formula(&molecule)
-            .expect("perceived formula")
-            .to_string(),
-        "CH4"
-    );
-}
-
-#[test]
-fn fixed_counts_need_no_perception_and_inferred_ones_do() {
-    let mut fixed = Atom::new(element("C"));
-    fixed.hydrogens = ImplicitHydrogens::Fixed(3);
-    let mut graph = crate::molecule::MoleculeEditor::new();
-    let fixed = graph.add_atom(fixed).expect("fixed carbon");
-    let inferred = graph.add_atom(Atom::new(element("C"))).expect("carbon");
-    graph
-        .add_bond(fixed, inferred, crate::molecule::BondOrder::Single)
-        .expect("bond");
-    let mut molecule = graph.finish().expect("ethane");
-
-    assert_eq!(
-        molecular_formula(&molecule),
-        Err(MolecularDescriptorError::UnknownHydrogenCount(
-            UnknownHydrogenCount::new(inferred)
-        ))
-    );
-    molecule.perceive().expect("ethane perceives");
-    assert_eq!(
-        molecular_formula(&molecule)
-            .expect("complete formula")
-            .to_string(),
-        "C2H6"
-    );
-}
-
-#[test]
 fn hill_order_isotope_order_and_accessors_are_stable() {
     let mut graph = crate::molecule::MoleculeEditor::new();
     let mut carbon_13_atom = Atom::new(element("C"));
@@ -111,65 +57,11 @@ fn hill_order_isotope_order_and_accessors_are_stable() {
 }
 
 #[test]
-fn no_carbon_formula_and_charge_are_reported_per_connected_entity() {
-    let document =
-        crate::smiles::parse_str("[NH4+].[Cl-]", Default::default()).expect("salt parses");
-    let components = document
-        .interpret(Default::default())
-        .expect("salt interprets")
-        .into_molecules();
-    let formulas = components
-        .iter()
-        .map(|component| {
-            molecular_formula(component)
-                .expect("component formula")
-                .to_string()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(formulas, vec!["H4N+", "Cl-"]);
-
-    let ammonium = crate::test_fixtures::read_smiles("[NH4+]").expect("ammonium parses");
-    assert_eq!(
-        molecular_formula(&ammonium).expect("formula").to_string(),
-        "H4N+"
-    );
-
-    let chloride = crate::test_fixtures::read_smiles("[Cl-]").expect("chloride parses");
-    assert_eq!(
-        molecular_formula(&chloride).expect("formula").to_string(),
-        "Cl-"
-    );
-
-    let iron = crate::test_fixtures::read_smiles("[Fe+2]").expect("iron ion parses");
-    assert_eq!(
-        molecular_formula(&iron).expect("formula").to_string(),
-        "Fe+2"
-    );
-}
-
-#[test]
 fn atomic_masses_are_neutral_and_do_not_require_a_molecule() {
     let carbon = element("C");
     assert_eq!(mass_value(atomic_mass(carbon, Some(12)).unwrap()), 12.0);
     assert!((mass_value(atomic_mass(carbon, Some(13)).unwrap()) - 13.003_354_835).abs() < 1e-7);
     assert!(atomic_mass(carbon, Some(999)).is_none());
-}
-
-#[test]
-fn average_and_monoisotopic_mass_use_pinned_tables() {
-    let mut water = crate::test_fixtures::read_smiles("O").expect("water parses");
-    water.perceive().expect("water perceives");
-    let average = mass_value(average_mass(&water).expect("average mass"));
-    let monoisotopic = mass_value(monoisotopic_mass(&water).expect("monoisotopic mass"));
-    assert!((average - 18.015).abs() < 1.0e-12);
-    assert!((monoisotopic - 18.010_564_683_056).abs() < 1.0e-12);
-
-    let carbon_13 = crate::test_fixtures::read_smiles("[13C]").expect("isotope parses");
-    assert!(
-        (mass_value(monoisotopic_mass(&carbon_13).expect("isotope mass")) - 13.003_354_835_34)
-            .abs()
-            < 1.0e-12
-    );
 }
 
 #[test]

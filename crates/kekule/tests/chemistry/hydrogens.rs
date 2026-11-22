@@ -318,3 +318,49 @@ fn hydrogens_on_zero_order_and_dative_bonds_are_not_counted() {
         );
     }
 }
+
+#[test]
+fn valence_infers_no_hydrides_on_main_group_metals() {
+    // RDKit gives a lone neutral Na one hydrogen and Mg two; a missing
+    // charge is far likelier than a hydride, so none is inferred.
+    for (symbol, expected_inferred_hydrogens) in [
+        ("Li", 0),
+        ("Be", 0),
+        ("Na", 0),
+        ("Mg", 0),
+        ("K", 0),
+        ("Ca", 0),
+        ("Rb", 0),
+        ("Sr", 0),
+        ("Cs", 0),
+        ("Ba", 0),
+        ("Fr", 0),
+        ("Ra", 0),
+        ("Al", 0),
+        ("Ga", 0),
+        ("In", 0),
+        ("Sn", 0),
+        ("Pb", 0),
+        ("Bi", 0),
+        ("Po", 0),
+        ("Te", 2),
+        ("B", 3),
+        ("Si", 4),
+    ] {
+        let mut editor = kekule::molecule::MoleculeEditor::new();
+        let atom = editor
+            .add_atom(kekule::molecule::Atom::new(
+                kekule::molecule::Element::from_symbol(symbol).unwrap(),
+            ))
+            .unwrap();
+        let mut molecule = editor.finish().unwrap();
+        molecule
+            .perceive()
+            .unwrap_or_else(|error| panic!("neutral {symbol} perceives: {error}"));
+        assert_eq!(
+            molecule.total_hydrogens(atom),
+            Some(expected_inferred_hydrogens),
+            "neutral {symbol} implicit hydrogens"
+        );
+    }
+}
