@@ -2529,36 +2529,6 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
     );
 }
 
-#[test]
-fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
-    // Asym A holds the glycine and a ligand. A lone amino acid would stay a
-    // polymer residue.
-    let input = MIXED.replace(
-        "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
-        "HETATM 2 C C1 LIG A 1 3 9.0 0.0 0.0 1",
-    );
-    let interpreted = (parse(&input)).interpret(Default::default()).unwrap();
-    let structure = interpreted.structure();
-    let mut instances = structure.topology().instance_records().map(|(id, _)| id);
-    let classified = instances.next().unwrap();
-    instances.next().unwrap();
-    let mut classifications = MmcifEntityClassifications::new();
-    classifications
-        .insert(classified, EntityKind::Polymer)
-        .unwrap();
-    assert!(matches!(
-        mmcif_issue(
-            mmcif::write(
-                [mmcif::MmcifBlockSource::structure(structure)
-                    .with_classifications(&classifications)],
-                MmcifWriteOptions::default()
-            )
-            .map(|(text, _)| text)
-        ),
-        Some(MmcifWriteErrorKind::ConflictingAsymEntityClassifications { .. })
-    ));
-}
-
 /// `_entity.type` of every entity in written mmCIF, in entity order.
 fn written_entity_types(text: &str) -> Vec<String> {
     let document = parse(text);

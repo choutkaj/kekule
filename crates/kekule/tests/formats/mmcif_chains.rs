@@ -2,9 +2,13 @@
 //! the instances of one chemical component into one entity.
 
 use kekule::diagnostics::FormatErrorDetail;
-use kekule::macromolecular::{ModelSelection, StructureInterpretOptions, StructureInterpretation};
+use kekule::macromolecular::{
+    EntityKind, ModelSelection, StructureInterpretOptions, StructureInterpretation,
+};
 use kekule::math::Point3;
-use kekule::mmcif::{self, MmcifWriteErrorKind, MmcifWriteOptions};
+use kekule::mmcif::{
+    self, MmcifBlockSource, MmcifEntityClassifications, MmcifWriteErrorKind, MmcifWriteOptions,
+};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use kekule::pdb;
 use kekule::structure::{Positions, Structure, StructureBuilder, StructureEditor};
@@ -1124,6 +1128,75 @@ fn a_residue_in_a_polymer_asym_without_a_place_fails_the_write() {
     }
     let edited = editor.finish().unwrap();
     let error = mmcif::write([&edited], MmcifWriteOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            error.detail(),
+            Some(FormatErrorDetail::MmcifWrite(
+                MmcifWriteErrorKind::ConflictingAsymEntityClassifications { .. }
+            ))
+        ),
+        "{error:?}"
+    );
+}
+
+/// A block whose asym A holds a glycine and a ligand, with a ligand asym
+/// and a water.
+const GLYCINE_AND_LIGAND: &str = "data_mixed
+loop_
+_entity.id
+_entity.type
+1 polymer
+2 non-polymer
+3 water
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+L 2
+W 3
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+ATOM 1 N N GLY A 1 1 0.0 0.0 0.0 1
+HETATM 2 C C1 LIG A 1 3 9.0 0.0 0.0 1
+HETATM 3 C C1 LIG L 2 . 2.0 0.0 0.0 1
+HETATM 4 O O HOH W 3 . 3.0 0.0 0.0 1
+";
+
+#[test]
+fn a_partial_classification_still_conflicts_within_one_asym() {
+    // The caller classifies the glycine a polymer; the ligand in its asym
+    // stays non-polymer, so the asym conflicts.
+    let interpreted = mmcif::parse_str(GLYCINE_AND_LIGAND, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let structure = interpreted.structure();
+    let mut instances = structure
+        .topology()
+        .instances()
+        .map(|instance| instance.id());
+    let classified = instances.next().unwrap();
+    instances.next().unwrap();
+    let mut classifications = MmcifEntityClassifications::new();
+    classifications
+        .insert(classified, EntityKind::Polymer)
+        .unwrap();
+    let error = mmcif::write(
+        [MmcifBlockSource::structure(structure).with_classifications(&classifications)],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap_err();
     assert!(
         matches!(
             error.detail(),
