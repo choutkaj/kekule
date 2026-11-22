@@ -578,12 +578,17 @@ impl<W: Write> Encoder<'_, W> {
             Issue::BondOrdersUnstated {
                 residue,
                 component_id,
-                atom_names,
+                hydrogens,
             } => {
                 self.u8(24)?;
                 self.residue(residue)?;
                 self.str(component_id)?;
-                self.str_list(atom_names)
+                self.count(hydrogens.len())?;
+                for (name, count) in hydrogens {
+                    self.str(name)?;
+                    self.u8(*count)?;
+                }
+                Ok(())
             }
             Issue::ChargesFromBonds {
                 residue,

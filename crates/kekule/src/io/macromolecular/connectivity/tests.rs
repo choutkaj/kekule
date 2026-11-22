@@ -990,14 +990,17 @@ fn onium_centres_without_template_charges_take_a_charge_not_a_hydrogen() {
 
 #[test]
 fn onium_oxides_and_boranes_without_template_charges_separate_charges() {
-    // DMSO drawn with a single S-O bond and trimethylphosphine-borane: the
-    // oxygen and boron take -1 with the onium centre's +1, not hydrogens.
+    // DMSO drawn with a single S-O bond, trimethylphosphine-borane,
+    // trimethylamine-borane, and trimethylamine N-oxide: the oxygen and
+    // boron take -1 with the centre's +1, not hydrogens.
     let mut table = String::from(
             "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n",
         );
     for (component, center, ligands) in [
         ("XSO", "S", ["C1", "C2", "O"].as_slice()),
         ("XPB", "P", &["C1", "C2", "C3", "B"]),
+        ("XNB", "N", &["C1", "C2", "C3", "B"]),
+        ("XNO", "N", &["C1", "C2", "C3", "O"]),
     ] {
         for ligand in ligands {
             table.push_str(&format!("{component} {center} {ligand} sing\n"));
@@ -1012,13 +1015,21 @@ fn onium_oxides_and_boranes_without_template_charges_separate_charges() {
              C C1 XPB A 2 11.050 1.050 1.050
              C C2 XPB A 2 8.950 -1.050 1.050
              C C3 XPB A 2 8.950 1.050 -1.050
-             B B XPB A 2 11.100 -1.100 -1.100",
+             B B XPB A 2 11.100 -1.100 -1.100
+             N N XNB A 3 20.000 0.000 0.000
+             C C1 XNB A 3 20.850 0.850 0.850
+             C C2 XNB A 3 19.150 -0.850 0.850
+             C C3 XNB A 3 19.150 0.850 -0.850
+             B B XNB A 3 20.920 -0.920 -0.920
+             N N XNO A 4 30.000 0.000 0.000
+             C C1 XNO A 4 30.850 0.850 0.850
+             C C2 XNO A 4 29.150 -0.850 0.850
+             C C3 XNO A 4 29.150 0.850 -0.850
+             O O XNO A 4 30.800 -0.800 -0.800",
         &table,
     ));
-    let separated = [
-        vec![("S".to_owned(), 1), ("O".to_owned(), -1)],
-        vec![("P".to_owned(), 1), ("B".to_owned(), -1)],
-    ];
+    let separated = [("S", "O"), ("P", "B"), ("N", "B"), ("N", "O")]
+        .map(|(centre, partner)| vec![(centre.to_owned(), 1), (partner.to_owned(), -1)]);
     assert_eq!(charges(&result), separated.concat());
     let mut perceived = result.structure().clone();
     perceived.perceive().unwrap();
@@ -1028,7 +1039,19 @@ fn onium_oxides_and_boranes_without_template_charges_separate_charges() {
         .filter(|atom| atom.element().atomic_number() != 6)
         .map(|atom| (atom.element().symbol(), atom.total_hydrogens().unwrap()))
         .collect::<Vec<_>>();
-    assert_eq!(hydrogens, [("S", 0), ("O", 0), ("P", 0), ("B", 3)]);
+    assert_eq!(
+        hydrogens,
+        [
+            ("S", 0),
+            ("O", 0),
+            ("P", 0),
+            ("B", 3),
+            ("N", 0),
+            ("B", 3),
+            ("N", 0),
+            ("O", 0)
+        ]
+    );
     let charged = issues(&result)
         .into_iter()
         .filter_map(|issue| match issue {

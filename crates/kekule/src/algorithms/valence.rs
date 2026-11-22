@@ -456,7 +456,7 @@ pub(crate) fn rdkit_reader_hydrogens<L: SlotLiveness>(
 ///
 /// OpenSMILES specifies these hydrogens for its organic subset. Formats that
 /// state charges, such as Molfile and mmCIF component tables, more likely
-/// omit charges than draw such a hydride ([`onium_charges`]).
+/// omit charges than draw such a hydride ([`implied_charges`]).
 pub(crate) fn onium_hydrogens<L: SlotLiveness>(
     mol: &Graph<L>,
     atom_id: AtomId,
@@ -478,96 +478,146 @@ pub(crate) fn onium_hydrogens<L: SlotLiveness>(
         .filter(|hydrogens| *hydrogens > 0)
 }
 
-/// How a source that states charges, but leaves those of an onium centre
-/// ([`onium_hydrogens`]) out, is read.
+/// The charges a neutral atom's bonds imply when its source states charges
+/// but none for it ([`implied_charges`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OniumCharges {
-    /// The centre takes +1, as the sulfur of trimethylsulfonium.
-    Centre,
-    /// The centre takes +1 and its singly bonded neighbor -1. The neighbor
-    /// is a terminal chalcogen, as the oxygen of DMSO drawn with a single
-    /// bond, or a boron or aluminium acceptor, as the boron of a
-    /// phosphine-borane.
+pub(crate) enum ImpliedCharges {
+    /// An onium centre ([`onium_hydrogens`]) takes +1, as the sulfur of
+    /// trimethylsulfonium.
+    Onium,
+    /// An atom with more bonds than any neutral valence allows takes the
+    /// first of +1 and -1 that makes its valence valid, as a quaternary
+    /// nitrogen takes +1 and a tetrahedral boron -1.
+    OverBonded(i8),
+    /// The atom takes +1 and its singly bonded neighbor -1. The neighbor is
+    /// a chalcogen with no other non-metal neighbor, as the oxygen of DMSO
+    /// or trimethylamine N-oxide drawn with a single bond, or a boron or
+    /// aluminium acceptor, as the boron of a phosphine-borane.
     Separated(AtomId),
-    /// The centre bonds a metal, as a phosphine on palladium, and has no
-    /// more non-metal neighbors than its default valence. It takes no charge
-    /// and the given hydrogens, those of its other bonds.
-    MetalDonor(u8),
 }
 
-/// The charges of a neutral onium centre ([`onium_hydrogens`]) whose source
-/// states charges but none for it. `may_charge` says which neighbors may
-/// take -1.
-pub(crate) fn onium_charges<L: SlotLiveness>(
+/// The charges a neutral atom with inferred hydrogens takes when its source
+/// states charges but none for it: an onium centre ([`onium_hydrogens`]) or
+/// an atom with more bonds than any neutral valence allows. `None` for every
+/// other atom, and for a metal donor ([`is_metal_donor`]). `may_charge` says
+/// which neighbors may take -1.
+pub(crate) fn implied_charges<L: SlotLiveness>(
     mol: &Graph<L>,
     atom_id: AtomId,
     atom: &Atom,
     may_charge: impl Fn(AtomId) -> bool,
-) -> Option<OniumCharges> {
-    onium_hydrogens(mol, atom_id, atom)?;
-    let default = usize::from(rdkit_default_valence(atom)?);
-    let (mut chalcogen, mut acceptor) = (None, None);
-    let (mut non_metal_neighbors, mut metal_valence) = (0, 0);
-    for (_, bond) in mol.incident_bonds(atom_id)? {
-        let valence = bond_order_valence(bond.order);
-        if valence == 0 {
-            continue;
+) -> Option<ImpliedCharges> {
+    if atom.formal_charge != 0
+        || atom.radical.is_some()
+        || !atom.hydrogens.is_inferred()
+        || is_metal_donor(mol, atom_id, atom)
+    {
+        return None;
+    }
+    let over_bonded = matches!(
+        rdkit_valence_violation(mol, atom_id, atom),
+        Some(ValenceViolation::ValenceExceeded { .. })
+    );
+    if !over_bonded && onium_hydrogens(mol, atom_id, atom).is_none() {
+        return None;
+    }
+    if valid_charge(mol, atom_id, atom, 1).is_some() {
+        if let Some(partner) = charge_partner(mol, atom_id, may_charge) {
+            return Some(ImpliedCharges::Separated(partner));
         }
+    }
+    if over_bonded {
+        return [1, -1]
+            .into_iter()
+            .find_map(|charge| valid_charge(mol, atom_id, atom, charge))
+            .map(ImpliedCharges::OverBonded);
+    }
+    valid_charge(mol, atom_id, atom, 1).map(|_| ImpliedCharges::Onium)
+}
+
+/// The singly bonded neighbor of `atom_id` that takes -1 with its +1
+/// ([`ImpliedCharges::Separated`]): a neutral chalcogen whose only non-metal
+/// neighbor is `atom_id`, or else a neutral boron or aluminium atom. Its bonds
+/// to metals may be donor bonds ([`is_metal_donor`]).
+fn charge_partner<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    may_charge: impl Fn(AtomId) -> bool,
+) -> Option<AtomId> {
+    let (mut chalcogen, mut acceptor) = (None, None);
+    for (_, bond) in mol.incident_bonds(atom_id)? {
         let neighbor_id = bond.other_atom(atom_id);
         let neighbor = mol.atom(neighbor_id)?;
-        if is_metal(neighbor.element) {
-            metal_valence += valence;
-        } else {
-            non_metal_neighbors += 1;
-        }
         if bond.order != BondOrder::Single
             || neighbor.formal_charge != 0
             || neighbor.radical.is_some()
             || !neighbor.hydrogens.is_inferred()
             || !may_charge(neighbor_id)
-            || valid_charge(mol, neighbor_id, neighbor, -1).is_none()
         {
             continue;
         }
-        let terminal = mol.incident_bonds(neighbor_id)?.len() == 1;
+        let mut anion = neighbor.clone();
+        anion.formal_charge = -1;
+        if rdkit_valence_violation(mol, neighbor_id, &anion).is_some()
+            && !is_metal_donor(mol, neighbor_id, &anion)
+        {
+            continue;
+        }
         match neighbor.element.atomic_number() {
-            8 | 16 | 34 | 52 if terminal => chalcogen = chalcogen.or(Some(neighbor_id)),
+            8 | 16 | 34 | 52 if non_metal_neighbors(mol, neighbor_id)? == 1 => {
+                chalcogen = chalcogen.or(Some(neighbor_id));
+            }
             5 | 13 => acceptor = acceptor.or(Some(neighbor_id)),
             _ => {}
         }
     }
-    let charged = valid_charge(mol, atom_id, atom, 1).is_some();
-    if let Some(partner) = chalcogen.or(acceptor).filter(|_| charged) {
-        return Some(OniumCharges::Separated(partner));
-    }
-    if metal_valence > 0 && non_metal_neighbors <= default {
-        let explicit = explicit_valence(mol, atom_id) - metal_valence;
-        return hydrogens_at_valence(atom_id, atom, explicit, true, true, Hydrides::Model)
-            .ok()
-            .map(OniumCharges::MetalDonor);
-    }
-    charged.then_some(OniumCharges::Centre)
+    chalcogen.or(acceptor)
 }
 
-/// The charge of a neutral atom with more bonds than any neutral valence
-/// allows, such as a quaternary nitrogen: the first of +1 and -1 that makes
-/// its valence valid.
-pub(crate) fn over_bonded_charge<L: SlotLiveness>(
+fn non_metal_neighbors<L: SlotLiveness>(mol: &Graph<L>, atom_id: AtomId) -> Option<usize> {
+    let mut count = 0;
+    for neighbor in mol.neighbors(atom_id)? {
+        if !is_metal(mol.atom(neighbor)?.element) {
+            count += 1;
+        }
+    }
+    Some(count)
+}
+
+/// Whether a non-metal atom with inferred hydrogens donates to metals: its
+/// bond valence is not one its element and charge allow, but some allowed
+/// valence lies between it less its bond valence to metals and it, as for
+/// the phosphorus of a phosphine on palladium, a sulfide bridging three iron
+/// atoms, or the sulfur of a sulfoxide on ruthenium. Its bonds to metals are
+/// then donor bonds drawn as covalent ones, and it takes no hydrogens.
+pub(crate) fn is_metal_donor<L: SlotLiveness>(
     mol: &Graph<L>,
     atom_id: AtomId,
     atom: &Atom,
-) -> Option<i8> {
-    if atom.formal_charge != 0
-        || !matches!(
-            rdkit_valence_violation(mol, atom_id, atom),
-            Some(ValenceViolation::ValenceExceeded { .. })
-        )
-    {
-        return None;
+) -> bool {
+    if is_metal(atom.element) || atom.radical.is_some() || !atom.hydrogens.is_inferred() {
+        return false;
     }
-    [1, -1]
-        .into_iter()
-        .find_map(|charge| valid_charge(mol, atom_id, atom, charge))
+    let Some(bonds) = mol.incident_bonds(atom_id) else {
+        return false;
+    };
+    let mut metal_valence = 0;
+    for (_, bond) in bonds {
+        if mol
+            .atom(bond.other_atom(atom_id))
+            .is_some_and(|neighbor| is_metal(neighbor.element))
+        {
+            metal_valence += bond_order_valence(bond.order);
+        }
+    }
+    let valence = explicit_valence(mol, atom_id);
+    let Some(allowed) = allowed_valences(atom) else {
+        return false;
+    };
+    let allowed = || allowed.iter().map(|value| usize::from(*value));
+    metal_valence > 0
+        && !allowed().any(|value| value == valence)
+        && allowed().any(|value| value < valence && value + metal_valence >= valence)
 }
 
 fn valid_charge<L: SlotLiveness>(

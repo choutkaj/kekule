@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::algorithms::{
-    incomplete_metal_valence, onium_charges, over_bonded_charge, OniumCharges,
+    implied_charges, incomplete_metal_valence, is_metal_donor, onium_hydrogens, ImpliedCharges,
 };
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
@@ -705,18 +705,18 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Charges the atoms of a residue that no template gives charges, as
-    /// their bonds imply. A source can state bond orders but no charges, as
-    /// the component tables of wwPDB entry files do. A neutral atom with
-    /// more bonds than its valence allows, such as the methylated N7 of
-    /// 7-methylguanosine, then takes the charge of one that makes its
-    /// valence valid, +1 before -1. An onium centre, such as a sulfur bonded
-    /// to three carbons, takes +1 rather than a hydrogen, and a singly bonded
-    /// terminal chalcogen or boron neighbor takes -1 with it, as the oxygen
-    /// of DMSO drawn with a single bond. An onium centre bonded to a metal
-    /// keeps the hydrogens of its other bonds. Onium centres are left alone
-    /// when the residue's bonds have no stated orders. Stated charges are
-    /// kept. Alkali, alkaline-earth, and p-block metals at a valence their
-    /// element does not allow are reported.
+    /// their bonds imply ([`implied_charges`]). A source can state bond
+    /// orders but no charges, as the component tables of wwPDB entry files
+    /// do. A neutral atom with more bonds than its valence allows, such as
+    /// the methylated N7 of 7-methylguanosine, takes the charge that makes
+    /// its valence valid, +1 before -1, and an onium centre, such as a sulfur
+    /// bonded to three carbons, takes +1 rather than a hydrogen. A singly
+    /// bonded chalcogen or boron neighbor of either takes -1 with its +1, as
+    /// the oxygen of DMSO drawn with a single bond. An onium centre without
+    /// such a neighbor stays neutral when the residue's bonds have no stated
+    /// orders. Metal donors ([`is_metal_donor`]) take no hydrogens. Stated
+    /// charges are kept. Alkali, alkaline-earth, and p-block metals at a
+    /// valence their element does not allow are reported.
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         let orders_unstated = self.has_unstated_orders(residue)?;
         let may_charge = |atom| {
@@ -725,7 +725,6 @@ impl<'r> Resolver<'r, '_> {
                 .is_some_and(|site| site.stated_charge.is_none())
         };
         let mut charged_atoms = Vec::new();
-        let mut donors = Vec::new();
         let mut uncharged = Vec::new();
         for site in &residue.sites {
             if site.stated_charge.is_some() {
@@ -735,25 +734,17 @@ impl<'r> Resolver<'r, '_> {
                 .graph
                 .require_atom(site.atom)
                 .map_err(interpret_error)?;
-            let mut charges = Vec::new();
-            if let Some(charge) = over_bonded_charge(self.graph, site.atom, atom) {
-                charges.push((site.atom, charge));
-            } else if let Some(onium) = onium_charges(self.graph, site.atom, atom, may_charge) {
-                match onium {
-                    _ if orders_unstated => uncharged.push(site.name.clone()),
-                    OniumCharges::Centre => charges.push((site.atom, 1)),
-                    OniumCharges::Separated(partner) => {
-                        charges.extend([(site.atom, 1), (partner, -1)]);
-                    }
-                    OniumCharges::MetalDonor(hydrogens) => {
-                        self.graph
-                            .require_atom_mut(site.atom)
-                            .map_err(interpret_error)?
-                            .hydrogens = ImplicitHydrogens::Fixed(hydrogens);
-                        donors.push(site.name.clone());
-                    }
+            let charges = match implied_charges(self.graph, site.atom, atom, may_charge) {
+                None => continue,
+                Some(ImpliedCharges::Onium) if orders_unstated => {
+                    let hydrogens = onium_hydrogens(self.graph, site.atom, atom).unwrap_or(0);
+                    uncharged.push((site.name.clone(), hydrogens));
+                    continue;
                 }
-            }
+                Some(ImpliedCharges::Onium) => vec![(site.atom, 1)],
+                Some(ImpliedCharges::OverBonded(charge)) => vec![(site.atom, charge)],
+                Some(ImpliedCharges::Separated(partner)) => vec![(site.atom, 1), (partner, -1)],
+            };
             for (atom, charge) in charges {
                 self.graph
                     .require_atom_mut(atom)
@@ -765,11 +756,21 @@ impl<'r> Resolver<'r, '_> {
         }
         let id = residue.key.id(self.model_id);
         let component_id = &residue.key.component_id;
-        for site in residue
-            .sites
-            .iter()
-            .filter(|site| site.stated_charge.is_none())
-        {
+        let mut donors = Vec::new();
+        for site in &residue.sites {
+            let atom = self
+                .graph
+                .require_atom(site.atom)
+                .map_err(interpret_error)?;
+            if is_metal_donor(self.graph, site.atom, atom) {
+                self.graph
+                    .require_atom_mut(site.atom)
+                    .map_err(interpret_error)?
+                    .hydrogens = ImplicitHydrogens::Fixed(0);
+                donors.push(site.name.clone());
+            }
+        }
+        for site in &residue.sites {
             let atom = self
                 .graph
                 .require_atom(site.atom)
@@ -804,7 +805,7 @@ impl<'r> Resolver<'r, '_> {
                 .push(raw::StructureInterpretIssue::BondOrdersUnstated {
                     residue: id,
                     component_id: component_id.clone(),
-                    atom_names: uncharged,
+                    hydrogens: uncharged,
                 });
         }
         Ok(())

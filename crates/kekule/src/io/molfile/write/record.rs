@@ -2,10 +2,12 @@
 //! projected against them.
 use std::collections::BTreeMap;
 
-use crate::algorithms::{onium_hydrogens, rdkit_inferred_hydrogen_count, rdkit_reader_hydrogens};
+use crate::algorithms::{
+    is_metal, onium_hydrogens, rdkit_inferred_hydrogen_count, rdkit_reader_hydrogens,
+};
 use crate::io::{project_molfile_stereo_bond_marks, AtomPositionSource, SourceStereoBondMarkKind};
 use crate::math::Point3;
-use crate::molecule::{Atom, AtomId, BondId, BondOrder, Molecule};
+use crate::molecule::{Atom, AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule};
 use crate::stereo::{StereoElementKind, StereoGroupKind};
 use crate::structure::StructureView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
@@ -119,9 +121,11 @@ impl<'a> MolfileRecord<'a> {
                     bond.endpoints(),
                     &projected,
                     &indexes,
+                    &|atom| is_metal_atom(molecule, atom),
                 )
             })
             .collect::<Vec<_>>();
+        check_dative_acceptors(&atoms, &bonds)?;
         let stereo_groups =
             project_stereo_groups(molecule, |atom| indexes[&(ComponentKey::Molecule, atom)])?;
         Ok(Self {
@@ -208,8 +212,10 @@ impl<'a> MolfileRecord<'a> {
                 bond.endpoints(),
                 projected,
                 &indexes,
+                &|atom| is_metal_atom(view.instance().molecule(), atom),
             ));
         }
+        check_dative_acceptors(&atoms, &bonds)?;
         // Readers such as RDKit take any nonzero z as 3D, then derive stereo
         // from coordinates and ignore bond marks. A flat drawing whose marks
         // carry stereo is emitted on z = 0, which moves no mark because XY is
@@ -258,6 +264,43 @@ fn asserts_absolute_stereo(molecule: &Molecule) -> bool {
     })
 }
 
+fn is_metal_atom(molecule: &Molecule, atom: AtomId) -> bool {
+    molecule
+        .atom(atom)
+        .is_some_and(|atom| is_metal(atom.element))
+}
+
+/// Readers such as RDKit count a dative bond toward the valence of its
+/// second atom, the acceptor, and none of them gives that atom back the
+/// hydrogens this crate's model infers with the bond not counted. A metal
+/// takes no hydrogens, so a metal acceptor reads back unchanged.
+fn check_dative_acceptors(
+    atoms: &[MolfileAtom<'_>],
+    bonds: &[MolfileBond],
+) -> Result<(), FormatError> {
+    for bond in bonds.iter().filter(|bond| bond.order == BondOrder::Dative) {
+        let acceptor = &atoms[usize::try_from(bond.to - 1).expect("serials index atoms")];
+        if is_metal(acceptor.atom.element) {
+            continue;
+        }
+        let hydrogens = match acceptor.atom.hydrogens {
+            ImplicitHydrogens::Fixed(count) => count,
+            ImplicitHydrogens::Inferred => {
+                rdkit_inferred_hydrogen_count(acceptor.molecule, acceptor.id, acceptor.atom)
+            }
+        };
+        if hydrogens > 0 {
+            return Err(MOLFILE_WRITE.unsupported(format!(
+                "Molfile readers count a dative bond toward its acceptor, {}, so they would read \
+                 fewer hydrogens on it. Add its hydrogens as atoms, or bond it another way.",
+                acceptor.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prepare_bond(
     component: ComponentKey,
     id: BondId,
@@ -265,8 +308,17 @@ fn prepare_bond(
     endpoints: (AtomId, AtomId),
     projected: &BTreeMap<BondId, (AtomId, SourceStereoBondMarkKind)>,
     indexes: &BTreeMap<(ComponentKey, AtomId), u64>,
+    is_metal: &dyn Fn(AtomId) -> bool,
 ) -> MolfileBond {
     let projection = projected.get(&id).copied();
+    // A dative bond is written toward its metal end, which readers take as
+    // the acceptor.
+    let endpoints = if order == BondOrder::Dative && is_metal(endpoints.0) && !is_metal(endpoints.1)
+    {
+        (endpoints.1, endpoints.0)
+    } else {
+        endpoints
+    };
     let (from, to) = projection
         .map(|(from, _)| {
             let other = if endpoints.0 == from {

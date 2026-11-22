@@ -747,7 +747,14 @@ impl<R: Read> Decoder<'_, R> {
             24 if self.version >= DISULFIDE_SINCE => Issue::BondOrdersUnstated {
                 residue: self.residue()?,
                 component_id: self.str()?,
-                atom_names: self.str_list()?,
+                hydrogens: {
+                    let count = self.items()?;
+                    let mut atoms = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+                    for _ in 0..count {
+                        atoms.push((self.str()?, self.u8()?));
+                    }
+                    atoms
+                },
             },
             other => {
                 return Err(

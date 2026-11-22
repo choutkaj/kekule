@@ -71,6 +71,26 @@ fn source_atom(
 fn perceived(molecule: &Molecule) -> Vec<(String, i8, usize)> {
     let mut molecule = molecule.clone();
     molecule.perceive().unwrap();
+    counts(&molecule)
+}
+
+/// [`perceived`] after permissive valence perception, for atoms whose bonds
+/// to metals exceed their valence.
+fn permissive(molecule: &Molecule) -> Vec<(String, i8, usize)> {
+    use kekule::perception::valence::{
+        perceive_valence, ValenceModel, ValenceOptions, ValenceValidation,
+    };
+    let mut molecule = molecule.clone();
+    perceive_valence(
+        &mut molecule,
+        ValenceModel::RdkitLike,
+        ValenceOptions::default().with_validation(ValenceValidation::Permissive),
+    )
+    .unwrap();
+    counts(&molecule)
+}
+
+fn counts(molecule: &Molecule) -> Vec<(String, i8, usize)> {
     molecule
         .atoms()
         .map(|(id, atom)| {
@@ -171,19 +191,251 @@ fn donor_bonds_to_boron_separate_charges() {
 }
 
 #[test]
-fn donor_bonds_to_metals_take_no_charge_or_hydrogen() {
-    // Trimethylphosphine on palladium and dimethyl sulfide on platinum.
-    for (center, carbons, metal) in [("P", 3, "Pd"), ("S", 2, "Pt")] {
-        let interpretation = interpret(&centre(center, carbons, &[metal]));
+fn metal_donors_take_no_charge_or_hydrogen() {
+    // Trimethylphosphine on palladium, dimethyl sulfide on platinum, a
+    // sulfide bridging three iron atoms (a corner of an Fe4S4 cubane), a
+    // methanethiolate and a dimethylphosphide bridging two, and DMSO bound
+    // to ruthenium through sulfur.
+    let cases: [(&[&str], &[(usize, usize, u8)]); 7] = [
+        (
+            &["P", "C", "C", "C", "Pd"],
+            &[(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1)],
+        ),
+        (&["S", "C", "C", "Pt"], &[(1, 2, 1), (1, 3, 1), (1, 4, 1)]),
+        (&["S", "Fe", "Fe", "Fe"], &[(1, 2, 1), (1, 3, 1), (1, 4, 1)]),
+        (&["S", "C", "Fe", "Fe"], &[(1, 2, 1), (1, 3, 1), (1, 4, 1)]),
+        (
+            &["P", "C", "C", "Fe", "Fe"],
+            &[(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1)],
+        ),
+        (
+            &["S", "C", "C", "O", "Ru"],
+            &[(1, 2, 1), (1, 3, 1), (1, 4, 2), (1, 5, 1)],
+        ),
+        (
+            &["N", "C", "C", "C", "C", "C", "Pd"],
+            &[
+                (1, 2, 2),
+                (2, 3, 1),
+                (3, 4, 2),
+                (4, 5, 1),
+                (5, 6, 2),
+                (6, 1, 1),
+                (1, 7, 1),
+            ],
+        ),
+    ];
+    for (symbols, bonds) in cases {
+        let atoms = symbols
+            .iter()
+            .map(|symbol| (*symbol, 0))
+            .collect::<Vec<_>>();
+        let text = v2000_orders(&atoms, bonds);
+        let interpretation = interpret(&text);
         let molecule = interpretation.molecules().next().unwrap();
-        let atoms = perceived(molecule);
-        assert_eq!(atoms[0], (center.to_owned(), 0, 0));
-        assert_eq!(atoms[carbons + 1], (metal.to_owned(), 0, 0));
+        let read = permissive(molecule);
+        assert_eq!(read[0], (symbols[0].to_owned(), 0, 0), "{symbols:?}");
+        let charge = read.iter().map(|(_, charge, _)| *charge).sum::<i8>();
+        assert_eq!(charge, 0, "{symbols:?}");
         let (atom, location) = source_atom(&interpretation, 0);
         assert_eq!(
             interpretation.reports()[0].issues(),
-            [Issue::MetalDonor { atom, location }]
+            [Issue::MetalDonor { atom, location }],
+            "{symbols:?}"
         );
+    }
+}
+
+#[test]
+fn chalcogens_bound_to_metals_take_the_opposite_charge() {
+    // DMSO and triphenylphosphine oxide, as trimethylphosphine oxide, bound
+    // through oxygen, all single bonds: S+ and P+ with O-, the O-M bond a
+    // donor bond, and no hydrogen on the oxygen.
+    for (symbols, bonds) in [
+        (
+            vec!["S", "C", "C", "O", "Ru"],
+            vec![(1, 2, 1), (1, 3, 1), (1, 4, 1), (4, 5, 1)],
+        ),
+        (
+            vec!["P", "C", "C", "C", "O", "Pd"],
+            vec![(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1), (5, 6, 1)],
+        ),
+    ] {
+        let atoms = symbols
+            .iter()
+            .map(|symbol| (*symbol, 0))
+            .collect::<Vec<_>>();
+        let interpretation = interpret(&v2000_orders(&atoms, &bonds));
+        let molecule = interpretation.molecules().next().unwrap();
+        let read = permissive(molecule);
+        let oxygen = symbols.len() - 2;
+        assert_eq!(read[0], (symbols[0].to_owned(), 1, 0));
+        assert_eq!(read[oxygen], ("O".to_owned(), -1, 0));
+        assert_eq!(read.iter().map(|(_, charge, _)| *charge).sum::<i8>(), 0);
+        let (centre, location) = source_atom(&interpretation, 0);
+        let (acceptor, oxygen_line) = source_atom(&interpretation, oxygen);
+        assert_eq!(
+            interpretation.reports()[0].issues(),
+            [
+                Issue::ChargesSeparated {
+                    atom: centre,
+                    acceptor,
+                    location,
+                },
+                Issue::MetalDonor {
+                    atom: acceptor,
+                    location: oxygen_line,
+                },
+            ],
+            "{symbols:?}"
+        );
+    }
+}
+
+#[test]
+fn over_bonded_atoms_take_charges_with_their_partners() {
+    // Trimethylamine-borane, THF-borane, trimethylamine N-oxide, and
+    // nitromethane drawn with one single N-O bond, each without charges.
+    let cases: [(&[&str], &[(usize, usize, u8)], usize, usize); 4] = [
+        (
+            &["N", "C", "C", "C", "B"],
+            &[(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1)],
+            4,
+            3,
+        ),
+        (
+            &["O", "C", "C", "C", "C", "B"],
+            &[
+                (1, 2, 1),
+                (2, 3, 1),
+                (3, 4, 1),
+                (4, 5, 1),
+                (5, 1, 1),
+                (1, 6, 1),
+            ],
+            5,
+            3,
+        ),
+        (
+            &["N", "C", "C", "C", "O"],
+            &[(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1)],
+            4,
+            0,
+        ),
+        (
+            &["N", "C", "O", "O"],
+            &[(1, 2, 1), (1, 3, 2), (1, 4, 1)],
+            3,
+            0,
+        ),
+    ];
+    for (symbols, bonds, partner, hydrogens) in cases {
+        let atoms = symbols
+            .iter()
+            .map(|symbol| (*symbol, 0))
+            .collect::<Vec<_>>();
+        let interpretation = interpret(&v2000_orders(&atoms, bonds));
+        let molecule = interpretation.molecules().next().unwrap();
+        let read = perceived(molecule);
+        assert_eq!(read[0], (symbols[0].to_owned(), 1, 0), "{symbols:?}");
+        assert_eq!(
+            read[partner],
+            (symbols[partner].to_owned(), -1, hydrogens),
+            "{symbols:?}"
+        );
+        let (atom, location) = source_atom(&interpretation, 0);
+        assert_eq!(
+            interpretation.reports()[0].issues(),
+            [Issue::ChargesSeparated {
+                atom,
+                acceptor: source_atom(&interpretation, partner).0,
+                location,
+            }],
+            "{symbols:?}"
+        );
+    }
+    // Without a partner, a quaternary nitrogen takes +1 and a tetrahedral
+    // boron -1.
+    for (center, charge) in [("N", 1), ("B", -1)] {
+        let interpretation = interpret(&centre(center, 4, &[]));
+        let molecule = interpretation.molecules().next().unwrap();
+        assert_eq!(perceived(molecule)[0], (center.to_owned(), charge, 0));
+        let (atom, location) = source_atom(&interpretation, 0);
+        assert_eq!(
+            interpretation.reports()[0].issues(),
+            [Issue::ChargeFromBonds {
+                atom,
+                location,
+                charge,
+            }]
+        );
+    }
+}
+
+#[test]
+fn dative_bonds_are_written_toward_their_metal() {
+    // Readers count a dative bond toward its second atom. An ammine on copper,
+    // stored copper first, is written ammine first, so it keeps three
+    // hydrogens.
+    let mut editor = MoleculeEditor::new();
+    let copper = editor
+        .add_atom(kekule::molecule::Atom::new(
+            Element::from_symbol("Cu").unwrap(),
+        ))
+        .unwrap();
+    let nitrogen = editor
+        .add_atom(kekule::molecule::Atom::new(
+            Element::from_symbol("N").unwrap(),
+        ))
+        .unwrap();
+    editor
+        .add_bond(copper, nitrogen, BondOrder::Dative)
+        .unwrap();
+    let ammine = editor.finish().unwrap();
+    for version in VERSIONS {
+        let text = write(&ammine, version);
+        let bond = match version {
+            molfile::MolfileWriteVersion::V2000 => "  2  1  9",
+            _ => "M  V30 1 9 2 1",
+        };
+        assert!(text.lines().any(|line| line.starts_with(bond)), "{text}");
+        let read = interpret(&text);
+        assert_eq!(
+            perceived(read.molecules().next().unwrap()),
+            perceived(&ammine)
+        );
+    }
+}
+
+#[test]
+fn dative_acceptors_with_hydrogens_are_not_written() {
+    // No Molfile spelling of ammonia-borane with a dative bond reads back
+    // with three hydrogens on the boron in readers that count the bond
+    // toward it.
+    let mut editor = MoleculeEditor::new();
+    let nitrogen = editor
+        .add_atom(kekule::molecule::Atom::new(
+            Element::from_symbol("N").unwrap(),
+        ))
+        .unwrap();
+    let boron = editor
+        .add_atom(kekule::molecule::Atom::new(
+            Element::from_symbol("B").unwrap(),
+        ))
+        .unwrap();
+    editor.add_bond(nitrogen, boron, BondOrder::Dative).unwrap();
+    let molecule = editor.finish().unwrap();
+    for version in VERSIONS {
+        let error = molfile::write(
+            &molecule,
+            molfile::MolfileWriteOptions::default().with_version(version),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.kind(),
+            kekule::diagnostics::DiagnosticKind::Unsupported
+        );
+        assert!(error.to_string().contains("dative bond"), "{error}");
     }
 }
 

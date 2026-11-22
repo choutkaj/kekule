@@ -42,15 +42,20 @@ Molfile atoms fix their count only when they declare a valence (the V2000
 valence field or V3000 `VAL`). The V2000 hydrogen-count field and V3000
 `HCOUNT` are query constraints ("at least n hydrogens"), not hydrogen
 declarations: a nonzero value is unsupported content, rejected by default or
-reported and omitted on request. A neutral atom with more bonded neighbors
-than its default valence and no declared valence, such as the sulfur of
-trimethylsulfonium, is read as an onium centre with its charge omitted: it
-takes +1, not a hydrogen. A singly bonded terminal chalcogen or a boron or
-aluminium neighbor takes -1 with it, so DMSO drawn with a single S-O bond is
-S+ with O-. An atom that counts a metal among those neighbors, such as the
-phosphorus of a phosphine on palladium, takes no charge and only the hydrogens
-of its other bonds. The Molfile writers declare a valence wherever the reader
-or the default-valence rule of other readers would infer a different count.
+reported and omitted on request.
+
+A Molfile atom without a declared valence whose bonds imply a charge takes
+the charge, not hydrogens. An onium centre, a neutral atom with more bonded
+neighbors than its default valence such as the sulfur of trimethylsulfonium,
+takes +1. A neutral atom with more bonds than any neutral valence allows, such
+as a quaternary nitrogen, takes +1 or -1. A singly bonded chalcogen with no
+other non-metal neighbor, or a boron or aluminium neighbor, takes -1 with its
++1, so DMSO drawn with a single S-O bond is S+ with O-. A non-metal atom
+bonded to metals whose bond valence its element allows only with some of those
+bonds not counted, such as the phosphorus of a phosphine on palladium, is a
+donor: it keeps its charge and takes no hydrogens. The Molfile writers declare
+a valence wherever this reader or the default-valence rule of other readers
+would infer a different count, and write dative bonds toward their metal end.
 
 Chemical edits invalidate inferred counts and keep fixed ones. After
 reperception, an inferred count can change with bond order or charge. A fixed

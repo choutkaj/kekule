@@ -8,7 +8,9 @@ use crate::diagnostics::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
-use crate::algorithms::{incomplete_metal_valence, onium_charges, OniumCharges};
+use crate::algorithms::{
+    implied_charges, incomplete_metal_valence, is_metal_donor, ImpliedCharges,
+};
 use crate::io::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
@@ -209,19 +211,18 @@ struct StagedMolfile {
     geometry: StagedCoordinates,
     source_stereo: Vec<SourceStereoBondMark>,
     /// Staged atoms whose drawing leaves their charge implicit.
-    implicit_charges: BTreeMap<AtomId, ImplicitCharge>,
+    implicit_charges: BTreeMap<AtomId, Vec<ImplicitCharge>>,
 }
 
 /// A staged atom whose drawing leaves its charge or hydrogens implicit, with
 /// its source line.
 #[derive(Debug, Clone, Copy)]
 enum ImplicitCharge {
-    /// An onium centre ([`onium_charges`]), charged +1 here.
-    Onium(SourceLocation),
-    /// An onium centre charged +1 here, whose staged neighbor takes -1.
+    /// An atom charged here ([`implied_charges`]).
+    Charged(i8, SourceLocation),
+    /// An atom charged +1 here, whose staged neighbor takes -1.
     Separated(AtomId, SourceLocation),
-    /// An onium centre bonded to a metal, given the hydrogens of its other
-    /// bonds here.
+    /// A metal donor ([`is_metal_donor`]), given no hydrogens here.
     MetalDonor(SourceLocation),
     /// A main-group metal at a valence its element does not allow.
     Metal(u8, SourceLocation),
@@ -232,10 +233,10 @@ impl ImplicitCharge {
     /// mapping staged atoms of the same component.
     fn issue(self, atom: AtomId, published: &BTreeMap<AtomId, AtomId>) -> MolfileInterpretIssue {
         match self {
-            Self::Onium(location) => MolfileInterpretIssue::ChargeFromBonds {
+            Self::Charged(charge, location) => MolfileInterpretIssue::ChargeFromBonds {
                 atom,
                 location,
-                charge: 1,
+                charge,
             },
             Self::Separated(acceptor, location) => MolfileInterpretIssue::ChargesSeparated {
                 atom,
@@ -252,44 +253,65 @@ impl ImplicitCharge {
     }
 }
 
-/// Reads the onium centres ([`onium_charges`]), in atom order, and then
-/// finds the main-group metals at a valence their element does not allow.
+/// Charges the atoms whose bonds imply a charge ([`implied_charges`]), in
+/// atom order, then gives the metal donors ([`is_metal_donor`]) no hydrogens,
+/// and finds the main-group metals at a valence their element does not allow.
 fn assign_implicit_charges(
     editor: &mut MoleculeEditor,
     document: &MolfileDocument,
-) -> BTreeMap<AtomId, ImplicitCharge> {
-    let ids = editor.graph().atoms().map(|(id, _)| id).collect::<Vec<_>>();
-    let mut found = BTreeMap::new();
-    for (&id, source) in ids.iter().zip(document.atoms()) {
+) -> BTreeMap<AtomId, Vec<ImplicitCharge>> {
+    let atoms = editor
+        .graph()
+        .atoms()
+        .map(|(id, _)| id)
+        .zip(document.atoms().iter().map(MolfileAtom::location))
+        .collect::<Vec<_>>();
+    let mut found = BTreeMap::<AtomId, Vec<ImplicitCharge>>::new();
+    for &(id, location) in &atoms {
         let graph = editor.graph();
         let atom = graph.atom(id).expect("staged atoms are live");
-        let Some(charges) = onium_charges(graph, id, atom, |_| true) else {
+        let Some(charges) = implied_charges(graph, id, atom, |_| true) else {
             continue;
         };
-        let location = source.location;
-        match charges {
-            OniumCharges::Centre => {
+        let implicit = match charges {
+            ImpliedCharges::Onium => {
                 set_charge(editor, id, 1);
-                found.insert(id, ImplicitCharge::Onium(location));
+                ImplicitCharge::Charged(1, location)
             }
-            OniumCharges::Separated(acceptor) => {
+            ImpliedCharges::OverBonded(charge) => {
+                set_charge(editor, id, charge);
+                ImplicitCharge::Charged(charge, location)
+            }
+            ImpliedCharges::Separated(acceptor) => {
                 set_charge(editor, id, 1);
                 set_charge(editor, acceptor, -1);
-                found.insert(id, ImplicitCharge::Separated(acceptor, location));
+                ImplicitCharge::Separated(acceptor, location)
             }
-            OniumCharges::MetalDonor(hydrogens) => {
-                editor
-                    .atom_mut(id)
-                    .expect("staged atoms are live")
-                    .set_hydrogens(ImplicitHydrogens::Fixed(hydrogens));
-                found.insert(id, ImplicitCharge::MetalDonor(location));
-            }
+        };
+        found.entry(id).or_default().push(implicit);
+    }
+    for &(id, location) in &atoms {
+        let graph = editor.graph();
+        let atom = graph.atom(id).expect("staged atoms are live");
+        if is_metal_donor(graph, id, atom) {
+            editor
+                .atom_mut(id)
+                .expect("staged atoms are live")
+                .set_hydrogens(ImplicitHydrogens::Fixed(0));
+            found
+                .entry(id)
+                .or_default()
+                .push(ImplicitCharge::MetalDonor(location));
         }
     }
     let graph = editor.graph();
-    for ((id, atom), source) in graph.atoms().zip(document.atoms()) {
+    for &(id, location) in &atoms {
+        let atom = graph.atom(id).expect("staged atoms are live");
         if let Some(valence) = incomplete_metal_valence(graph, id, atom) {
-            found.insert(id, ImplicitCharge::Metal(valence, source.location));
+            found
+                .entry(id)
+                .or_default()
+                .push(ImplicitCharge::Metal(valence, location));
         }
     }
     found
@@ -508,11 +530,13 @@ pub enum MolfileInterpretIssue {
         /// The source line of the stereocenter.
         location: SourceLocation,
     },
-    /// A neutral atom with more bonded neighbors than its default valence,
-    /// which takes hydrogens only above that valence, is an onium centre
-    /// drawn without its charge, as the sulfur of trimethylsulfonium or the
-    /// phosphorus of tetramethylphosphonium. It takes the charge, not a
-    /// hydrogen. A source that means the hydride states the atom's valence.
+    /// A neutral atom's bonds imply a charge the drawing omits. An onium
+    /// centre, with more bonded neighbors than its default valence and
+    /// hydrogens only above it, as the sulfur of trimethylsulfonium, takes
+    /// +1, not a hydrogen. An atom with more bonds than any neutral valence
+    /// allows, as a quaternary nitrogen, takes the first of +1 and -1 that
+    /// makes its valence valid. A source that means a hydride states the
+    /// atom's valence.
     ChargeFromBonds {
         /// The charged atom.
         atom: AtomId,
@@ -521,12 +545,12 @@ pub enum MolfileInterpretIssue {
         /// The formal charge it takes, in e.
         charge: i8,
     },
-    /// An onium centre ([`ChargeFromBonds`](Self::ChargeFromBonds)) has a
-    /// singly bonded neutral neighbor that takes the opposite charge: a
-    /// terminal oxygen, sulfur, selenium, or tellurium, as of DMSO or a
-    /// phosphine oxide drawn with a single bond, or a boron or aluminium
-    /// acceptor, as of a phosphine-borane. The centre takes +1 and the
-    /// neighbor -1, instead of a hydrogen each.
+    /// An atom whose bonds imply +1 ([`ChargeFromBonds`](Self::ChargeFromBonds))
+    /// has a singly bonded neutral neighbor that takes -1: an oxygen,
+    /// sulfur, selenium, or tellurium with no other non-metal neighbor, as of
+    /// DMSO, a phosphine oxide, or trimethylamine N-oxide drawn with a single
+    /// bond, or a boron or aluminium acceptor, as of a phosphine-borane. The
+    /// pair keeps its formula and net charge.
     ChargesSeparated {
         /// The centre, charged +1.
         atom: AtomId,
@@ -535,12 +559,13 @@ pub enum MolfileInterpretIssue {
         /// The centre's source line.
         location: SourceLocation,
     },
-    /// A neutral atom with more bonded neighbors than its default valence
-    /// counts a metal among them, as the phosphorus of a phosphine on
-    /// palladium, and has no more non-metal neighbors than that valence. Its
-    /// bond to the metal is a donor bond drawn as a single bond. The atom
-    /// takes no charge and only the hydrogens of its other bonds, as a fixed
-    /// count.
+    /// A non-metal atom bonded to metals has a bond valence its element and
+    /// charge do not allow, but one they allow when some of its bonds to
+    /// metals are not counted, as the phosphorus of a phosphine on
+    /// palladium, a sulfide bridging three iron atoms, or the sulfur of a
+    /// sulfoxide on ruthenium. Those bonds are donor bonds drawn as covalent
+    /// ones. The atom keeps its charge and takes no hydrogens, as a fixed
+    /// count of zero.
     MetalDonor {
         /// The donor atom.
         atom: AtomId,
@@ -884,8 +909,12 @@ pub(crate) fn interpret_molfile_document(
                 location,
             }
         }));
-        warnings.extend(raw.atom_map.iter().filter_map(|(staged, atom)| {
-            Some(implicit_charges.get(staged)?.issue(*atom, &raw.atom_map))
+        warnings.extend(raw.atom_map.iter().flat_map(|(staged, atom)| {
+            implicit_charges
+                .get(staged)
+                .into_iter()
+                .flatten()
+                .map(|implicit| implicit.issue(*atom, &raw.atom_map))
         }));
         let atom_mappings = raw
             .atom_map

@@ -633,25 +633,30 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
-- A neutral onium centre in a Molfile or a residue without template charges,
-  an atom with more bonded neighbors than its default valence such as the
-  sulfur of trimethylsulfonium, takes +1 instead of a hydrogen
+- A neutral atom whose bonds imply a charge, in a Molfile or a residue
+  without template charges, takes it instead of hydrogens
   (`MolfileInterpretIssue::ChargeFromBonds`,
-  `StructureInterpretIssue::ChargesFromBonds`). SMILES keeps the OpenSMILES
-  hydrogen of `CS(C)C`.
-- A singly bonded terminal chalcogen or boron neighbor of such a centre
-  takes -1 with the centre's +1, so DMSO or a phosphine oxide drawn with a
-  single bond, and a phosphine-borane, keep their formula
-  (`MolfileInterpretIssue::ChargesSeparated`, which also covers aluminium
-  acceptors, and `ChargesFromBonds`).
-- An atom that is such a centre only by counting a metal neighbor, as the
-  phosphorus of a phosphine on palladium, takes no charge and only the
-  hydrogens of its other bonds (`MolfileInterpretIssue::MetalDonor`,
-  `StructureInterpretIssue::MetalDonors`, native issue kind 23).
-- PDB and mmCIF interpretation charges no onium centre in a residue whose
-  bonds have no stated order, from atom distances or `CONECT` or `LINK`
-  records, and reports it (`StructureInterpretIssue::BondOrdersUnstated`,
-  native issue kind 24).
+  `StructureInterpretIssue::ChargesFromBonds`). An onium centre, with more
+  bonded neighbors than its default valence such as the sulfur of
+  trimethylsulfonium, takes +1. An atom with more bonds than any neutral
+  valence allows, such as a quaternary nitrogen, takes +1 or -1, now in
+  Molfiles too. SMILES keeps the OpenSMILES hydrogen of `CS(C)C`.
+- A singly bonded chalcogen with no other non-metal neighbor, or a boron or
+  aluminium neighbor, of such an atom takes -1 with its +1, so DMSO, a
+  phosphine oxide, trimethylamine N-oxide, or a nitro group drawn with a
+  single bond, and a phosphine-, amine-, or THF-borane, keep their formula
+  and net charge (`MolfileInterpretIssue::ChargesSeparated`, and both atoms
+  in `ChargesFromBonds`).
+- A non-metal atom bonded to metals whose bond valence its element does not
+  allow, but would with some of those bonds not counted, takes no hydrogens
+  and keeps its charge: a phosphine on palladium, a sulfide bridging three
+  iron atoms, or DMSO on ruthenium through sulfur or oxygen
+  (`MolfileInterpretIssue::MetalDonor`, `StructureInterpretIssue::MetalDonors`,
+  native issue kind 23).
+- PDB and mmCIF interpretation leaves an onium centre without such a
+  neighbor neutral in a residue whose bonds have no stated order, from atom
+  distances or `CONECT` or `LINK` records, and reports the hydrogens it took
+  (`StructureInterpretIssue::BondOrdersUnstated`, native issue kind 24).
 - Valence perception infers no hydrogens on alkali, alkaline-earth, and
   p-block metals, polonium included, so a lone Na, Mg, or Al is no longer
   NaH, MgH2, or AlH3 and `StructureEditor::add_hydrogens` adds none. Molfile
@@ -663,7 +668,10 @@ the main branch migrates by the table under "From the SampleSet API".
   iron, infers no hydrogen of its own, so it is FeH, not FeH2.
 - Molfile writers state the valence of every atom whose inferred count a
   reader would read otherwise: an onium centre's hydrogens, and the none of a
-  metal or of a hydride joined by a dative bond.
+  metal or of a hydride joined by a dative bond. They write a dative bond
+  toward its metal end, which readers take as its acceptor, and reject a
+  dative bond whose non-metal acceptor has hydrogens, which readers that
+  count the bond there would lose.
 - The unknown hydrogen count error names permissive validation as the way to
   perceive valence when strict validation fails.
 - Placement counts two radical electrons as one domain, so carbenes and

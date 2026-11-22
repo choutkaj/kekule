@@ -270,8 +270,8 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
         },
         Issue::BondOrdersUnstated {
             residue: label(8),
-            component_id: "XPO".into(),
-            atom_names: vec!["P".into()],
+            component_id: "XSM".into(),
+            hydrogens: vec![("S".into(), 1)],
         },
         Issue::ProtonationFromHydrogens {
             residue: label(57),
@@ -786,4 +786,16 @@ fn interpreted_structure_sets_need_one_report_per_geometry() {
         reports: Vec::new(),
     };
     assert!(native::write(&interpretation, NativeWriteOptions::default()).is_err());
+}
+
+#[test]
+fn issue_messages_have_no_double_spaces() {
+    // The report covers every issue kind, so a line continuation lost from a
+    // message shows here.
+    for foreign in [false, true] {
+        for issue in report(foreign).issues() {
+            let message = issue.to_string();
+            assert!(!message.contains("  "), "{message:?}");
+        }
+    }
 }
