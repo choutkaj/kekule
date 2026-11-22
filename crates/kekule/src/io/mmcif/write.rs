@@ -817,16 +817,24 @@ impl MmcifEntityClassifications {
 /// [`MmcifWriteErrorKind::DictionaryBondMissing`]).
 ///
 /// Every entity instance is a structural instance (asym) of its own: each
-/// polymer or branched molecule of a chain, each non-polymer residue, and a
-/// chain's waters together, split where author numbers repeat. The residues
-/// whose sites state a `label_asym_id` stay the one asym the source names;
-/// a residue an edit added to its chain is an instance by the same rules,
-/// joining that asym only as part of its molecule or water. A residue of a
-/// polymer residue class that a chain break leaves alone stays in its
-/// source's polymer asym. Asyms of one component and chemistry (atoms,
-/// charges, hydrogens, and bonds) are instances of one non-polymer entity,
-/// and all waters are one water entity; each polymer and branched asym is an
-/// entity of its own. A saccharide of several residues is branched.
+/// polymer of a chain, each glycan, each non-polymer residue, and a chain's
+/// waters together, split where author numbers repeat. Only the monomers of
+/// a chain's sequence are polymer residues: those that state their place
+/// (`label_seq_id`), amino acids and nucleotides, and, in a chain where no
+/// residue states a place, residues a monomer's backbone atom bonds. A
+/// ligand a polymer holds by a bond is a non-polymer instance, and its
+/// saccharides bonded to each other are a glycan, branched when it has
+/// several. The residues whose sites state a `label_asym_id` stay the one
+/// asym the source names; a residue an edit added to its chain is an
+/// instance by the same rules, joining that asym only as part of its
+/// molecule, its sequence, or water. A residue of a polymer residue class
+/// that states its place and that a chain break leaves alone stays in its
+/// chain's polymer asym. Asyms of one component are instances of one
+/// non-polymer entity, however much of it they model; for a placeholder
+/// component such as `LIG` or `UNL`, which names no one chemistry, only
+/// asyms of one chemistry (atoms, charges, hydrogens, and bonds) are. All
+/// waters are one water entity; each polymer and branched asym is an entity
+/// of its own. A saccharide of several residues is branched.
 ///
 /// Coordination between residues is no bond of the structure: the
 /// interpretation report holds it, and [`Self::with_reports`] writes it as
@@ -914,8 +922,8 @@ impl<'a> MmcifBlockSource<'a> {
     /// copying author identifiers into the required label fields. Atoms
     /// without provenance, such as those an edit added, join their residues;
     /// a residue or molecule of such atoms alone is written as without a
-    /// report, as an instance of the source entity of its component and
-    /// chemistry, or of the source's water entity, where there is one.
+    /// report, as an instance of the source entity of its component, or of
+    /// the source's water entity, where there is one.
     #[must_use]
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.entities = EntitySemantics::Reports(reports);

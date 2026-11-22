@@ -1,14 +1,16 @@
 //! mmCIF round trips keep each chain's author name and residues, and group
 //! the instances of one chemical component into one entity.
 
-use kekule::macromolecular::StructureInterpretation;
+use kekule::diagnostics::FormatErrorDetail;
+use kekule::macromolecular::{ModelSelection, StructureInterpretOptions, StructureInterpretation};
 use kekule::math::Point3;
-use kekule::mmcif::{self, MmcifWriteOptions};
+use kekule::mmcif::{self, MmcifWriteErrorKind, MmcifWriteOptions};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use kekule::pdb;
 use kekule::structure::{Positions, Structure, StructureBuilder, StructureEditor};
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId, MoleculeClass};
 use kekule::units::{Quantity, ANGSTROM};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A coordinate record of atom `name` of residue `residue` `sequence`, with
 /// chain column `chain` and segment `segment`, at `position` Å.
@@ -568,7 +570,7 @@ fn added_instances_of_source_entities_join_them() {
         component_rows(&text, component)
             .into_iter()
             .map(|(_, entity)| entity)
-            .collect::<std::collections::BTreeSet<_>>()
+            .collect::<BTreeSet<_>>()
     };
     assert_eq!(entities("MG"), ["2".to_owned()].into(), "{text}");
     assert_eq!(entities("HOH"), ["5".to_owned()].into(), "{text}");
@@ -588,7 +590,7 @@ fn curated(name: &str) -> StructureInterpretation {
         .unwrap();
     mmcif::parse_str(&text, Default::default())
         .unwrap()
-        .interpret(Default::default())
+        .interpret(StructureInterpretOptions::default().with_model_selection(ModelSelection::First))
         .unwrap()
 }
 
@@ -898,4 +900,237 @@ fn a_source_branched_saccharide_stays_branched() {
         let (text, _) = written.unwrap();
         assert_eq!(entity_types(&text), ["branched"]);
     }
+}
+
+/// The block written without a report from the structure read back from
+/// the PDB entry written from `source`.
+fn via_pdb(source: &StructureInterpretation) -> String {
+    let (text, _) = pdb::write(source, Default::default()).unwrap();
+    let read = pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let (text, _) = mmcif::write([read.structure()], MmcifWriteOptions::default()).unwrap();
+    text
+}
+
+/// The values of `tags` in each atom-site row, with the row's entity type
+/// last.
+fn site_values<const N: usize>(text: &str, tags: [&str; N]) -> Vec<Vec<String>> {
+    let document = mmcif::parse_str(text, Default::default()).unwrap();
+    let block = &document.blocks()[0];
+    let entities = block.loop_with_tag("_entity.id").unwrap();
+    let types = (0..entities.row_count())
+        .map(|row| {
+            ["_entity.id", "_entity.type"].map(|tag| entities.value(row, tag).unwrap().text())
+        })
+        .map(|[id, kind]| (id.to_owned(), kind.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+    let table = block.loop_with_tag("_atom_site.id").unwrap();
+    (0..table.row_count())
+        .map(|row| {
+            let mut values = tags
+                .iter()
+                .map(|tag| table.value(row, tag).unwrap().text().to_owned())
+                .collect::<Vec<_>>();
+            let entity = table
+                .value(row, "_atom_site.label_entity_id")
+                .unwrap()
+                .text();
+            values.push(types[entity].clone());
+            values
+        })
+        .collect()
+}
+
+#[test]
+fn covalently_bound_ligands_are_instances_of_their_own() {
+    // Sotorasib (MOV) binds cysteine 12 of KRas, and retinal (RET) a lysine
+    // of its opsin; neither is a monomer of the chain.
+    for (source, ligand) in [
+        (mmcif_fixture("6OIM.cif"), "MOV"),
+        (curated("pdb_00006g7l_xyz_v1-4.cif.gz"), "RET"),
+    ] {
+        let text = via_pdb(&source);
+        let rows = site_values(
+            &text,
+            ["_atom_site.label_comp_id", "_atom_site.label_asym_id"],
+        );
+        let polymer_asyms = rows
+            .iter()
+            .filter(|row| row[2] == "polymer")
+            .map(|row| row[1].clone())
+            .collect::<BTreeSet<_>>();
+        let ligand_asyms = rows
+            .iter()
+            .filter(|row| row[0] == ligand)
+            .map(|row| (row[1].clone(), row[2].clone()))
+            .collect::<BTreeSet<_>>();
+        let [(asym, kind)] = ligand_asyms
+            .into_iter()
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        assert_eq!(kind, "non-polymer", "{ligand}");
+        assert!(!polymer_asyms.contains(&asym), "{ligand}");
+    }
+}
+
+/// The asyms of a block that hold saccharides `names`: each one's entity
+/// type and components.
+fn glycans(text: &str, names: &[&str]) -> Vec<(String, Vec<String>)> {
+    let mut asyms = BTreeMap::<String, (String, BTreeSet<(String, String)>)>::new();
+    for row in site_values(
+        text,
+        [
+            "_atom_site.label_comp_id",
+            "_atom_site.label_asym_id",
+            "_atom_site.auth_seq_id",
+        ],
+    ) {
+        if names.contains(&row[0].as_str()) {
+            asyms
+                .entry(row[1].clone())
+                .or_insert_with(|| (row[3].clone(), BTreeSet::new()))
+                .1
+                .insert((row[2].clone(), row[0].clone()));
+        }
+    }
+    let mut glycans = asyms
+        .into_values()
+        .map(|(kind, residues)| {
+            let mut components = residues
+                .into_iter()
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>();
+            components.sort();
+            (kind, components)
+        })
+        .collect::<Vec<_>>();
+    glycans.sort();
+    glycans
+}
+
+#[test]
+fn glycans_bound_to_a_protein_are_branched_entities() {
+    // 7UKO's N-linked glycans of two and more saccharides are branched
+    // entities, and its single N-acetylglucosamines non-polymer ones; 7X9L's
+    // sucrose, bound to no protein, is branched too.
+    for (name, saccharides) in [
+        ("pdb_00007uko_xyz_v1-4.cif.gz", &["NAG", "BMA", "MAN"][..]),
+        ("pdb_00007x9l_xyz_v1-1.cif.gz", &["GLC", "FRU"][..]),
+    ] {
+        let source = curated(name);
+        let (direct, _) = mmcif::write([&source], MmcifWriteOptions::default()).unwrap();
+        let expected = glycans(&direct, saccharides);
+        assert!(expected.iter().any(|(kind, _)| kind == "branched"));
+        assert_eq!(glycans(&via_pdb(&source), saccharides), expected, "{name}");
+    }
+}
+
+#[test]
+fn instances_of_a_named_component_are_one_entity_however_much_they_model() {
+    // 6G7L models seven monoolein lipids (LI1), each in part.
+    let text = via_pdb(&curated("pdb_00006g7l_xyz_v1-4.cif.gz"));
+    let entities = component_rows(&text, "LI1")
+        .into_iter()
+        .map(|(_, entity)| entity)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(entities.len(), 1, "{entities:?}");
+}
+
+#[test]
+fn written_polymer_residues_state_their_places() {
+    let directory = format!(
+        "{}/../../benchmarks/datasets/bio/curated/pdb",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        // 6GCY's residues pair two groups of alternate locations, which the
+        // default selection cannot combine.
+        if name.starts_with("pdb_00006gcy") {
+            continue;
+        }
+        let text = via_pdb(&curated(&name));
+        let unplaced = site_values(
+            &text,
+            [
+                "_atom_site.label_asym_id",
+                "_atom_site.label_comp_id",
+                "_atom_site.label_seq_id",
+            ],
+        )
+        .into_iter()
+        .filter(|row| row[3] == "polymer" && row[2] == ".")
+        .map(|row| (row[0].clone(), row[1].clone()))
+        .collect::<BTreeSet<_>>();
+        assert!(unplaced.is_empty(), "{name}: {unplaced:?}");
+    }
+}
+
+#[test]
+fn a_residue_in_a_polymer_asym_without_a_place_fails_the_write() {
+    // A free glycine states asym A, rubredoxin's chain, but no place in its
+    // sequence.
+    let source = mmcif_fixture("1IRO.cif");
+    let mut editor = source.structure().to_editor();
+    let element = |symbol| Atom::new(Element::from_symbol(symbol).unwrap());
+    let mut glycine = MoleculeEditor::new();
+    let atoms = [("N", 1), ("C", 0), ("C", 0), ("O", 0), ("O", -1)].map(|(symbol, charge)| {
+        glycine
+            .add_atom(element(symbol).with_formal_charge(charge))
+            .unwrap()
+    });
+    for (left, right, order) in [
+        (0, 1, BondOrder::Single),
+        (1, 2, BondOrder::Single),
+        (2, 3, BondOrder::Double),
+        (2, 4, BondOrder::Single),
+    ] {
+        glycine.add_bond(atoms[left], atoms[right], order).unwrap();
+    }
+    let points = [
+        [0.0, 0.0],
+        [1.458, 0.0],
+        [2.009, 1.42],
+        [1.251, 2.39],
+        [3.25, 1.5],
+    ]
+    .map(|[x, y]| Point3::new(x + 60.0, y, 0.0));
+    let positions = Positions::new(Quantity::new(points.to_vec(), ANGSTROM)).unwrap();
+    let molecule = editor
+        .add_molecule(glycine.finish().unwrap(), &positions)
+        .unwrap();
+    let chain = editor
+        .topology()
+        .chains()
+        .find(|(_, chain)| chain.label_id() == "A")
+        .map(|(id, _)| id)
+        .unwrap();
+    let residue = editor
+        .add_residue(chain, "GLY", None, Some("1001".to_owned()), None)
+        .unwrap();
+    for (index, name) in (0u32..).zip(["N", "CA", "C", "O", "OXT"]) {
+        editor
+            .add_atom_site(
+                residue,
+                molecule.atoms()[&AtomId::new(index)],
+                AtomSiteMetadata::default()
+                    .with_label_atom_id(Some(name.to_owned()))
+                    .with_label_asym_id(Some("A".to_owned())),
+            )
+            .unwrap();
+    }
+    let edited = editor.finish().unwrap();
+    let error = mmcif::write([&edited], MmcifWriteOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            error.detail(),
+            Some(FormatErrorDetail::MmcifWrite(
+                MmcifWriteErrorKind::ConflictingAsymEntityClassifications { .. }
+            ))
+        ),
+        "{error:?}"
+    );
 }

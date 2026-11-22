@@ -713,18 +713,31 @@ fn metal_bond(residue: &ResidueAtoms, atoms: [AtomId; 2]) -> bool {
 
 /// Whether two atoms lie within covalent bonding distance: the sum of their
 /// covalent radii plus a tolerance, and not implausibly close.
-pub(crate) fn within_bonding_distance(
+pub(crate) fn within_bonding_distance(left: (Element, Point3), right: (Element, Point3)) -> bool {
+    let (distance_squared, cutoff) = bonding_distance(left, right);
+    distance_squared > MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2)
+        && distance_squared <= cutoff * cutoff
+}
+
+/// Whether two atoms lie farther apart than covalent bonding distance.
+fn beyond_bonding_distance(left: (Element, Point3), right: (Element, Point3)) -> bool {
+    let (distance_squared, cutoff) = bonding_distance(left, right);
+    distance_squared > cutoff * cutoff
+}
+
+/// The squared distance between two atoms, and their covalent bonding
+/// distance: the sum of their covalent radii plus a tolerance.
+fn bonding_distance(
     (left, left_point): (Element, Point3),
     (right, right_point): (Element, Point3),
-) -> bool {
+) -> (f64, f64) {
     let cutoff = covalent_bonding_radius(left).0
         + covalent_bonding_radius(right).0
         + COVALENT_BOND_TOLERANCE_ANGSTROM;
     let distance_squared = (left_point.x - right_point.x).powi(2)
         + (left_point.y - right_point.y).powi(2)
         + (left_point.z - right_point.z).powi(2);
-    distance_squared > MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2)
-        && distance_squared <= cutoff * cutoff
+    (distance_squared, cutoff)
 }
 
 /// The coordination flag `component` gives the bond between the two named
@@ -1188,12 +1201,16 @@ impl<'r> Resolver<'r, '_> {
                 if let Some((matched, strays)) = match_template(residue, component, !complete)? {
                     let stated =
                         self.add_checked_listed_bonds(residue, component, &matched, &listed)?;
-                    self.add_template_bonds(component, &matched)?;
+                    let far = self.add_template_bonds(residue, component, &matched)?;
                     // Listed bonds of atoms the template does not name, such
                     // as hydrogens, follow its own.
                     self.add_listed_bonds(&listed)?;
-                    stray_hydrogens
-                        .extend(strays.into_iter().map(|atom| (residue.key.clone(), atom)));
+                    stray_hydrogens.extend(
+                        strays
+                            .into_iter()
+                            .chain(far)
+                            .map(|atom| (residue.key.clone(), atom)),
+                    );
                     templated.push(TemplatedResidue {
                         key: residue.key.clone(),
                         component,
@@ -1999,17 +2016,50 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Adds the template bonds among matched atoms. Bonds the source states
-    /// explicitly outrank the template.
+    /// explicitly outrank the template. A bond to a hydrogen that lies beyond
+    /// bonding distance of its other atom but within bonding distance of
+    /// another heavy atom of the residue, as one a writer names after
+    /// another template atom, is left out and reported; the hydrogens it
+    /// leaves without their template bond are returned, to be attached as
+    /// strays.
     fn add_template_bonds(
         &mut self,
+        residue: &ResidueAtoms,
         component: &Component,
         matched: &BTreeMap<usize, AtomId>,
-    ) -> Result<(), FormatError> {
+    ) -> Result<Vec<AtomId>, FormatError> {
+        let mut far = Vec::new();
         for bond in component.bonds() {
             let [a, b] = bond.atoms();
             let (Some(&left), Some(&right)) = (matched.get(&a), matched.get(&b)) else {
                 continue;
             };
+            let sites = [left, right].map(|atom| {
+                residue
+                    .site(atom)
+                    .expect("matched template atoms are residue sites")
+            });
+            if let Some(index) = sites.iter().position(|site| is_hydrogen(site.element)) {
+                let (hydrogen, anchor) = (sites[index], sites[1 - index]);
+                let at = |site: &ResidueSite| (site.element, site.point);
+                let elsewhere = || {
+                    residue.sites.iter().any(|other| {
+                        other.atom != anchor.atom
+                            && !is_hydrogen(other.element)
+                            && within_bonding_distance(at(hydrogen), at(other))
+                    })
+                };
+                if beyond_bonding_distance(at(hydrogen), at(anchor)) && elsewhere() {
+                    self.issues
+                        .push(raw::StructureInterpretIssue::HydrogenBeyondTemplateBond {
+                            residue: residue.key.id(self.model_id),
+                            atom_name: hydrogen.name.clone(),
+                            anchor_name: anchor.name.clone(),
+                        });
+                    far.push(hydrogen.atom);
+                    continue;
+                }
+            }
             if self
                 .graph
                 .require_bond_between(left, right)
@@ -2028,7 +2078,7 @@ impl<'r> Resolver<'r, '_> {
                 },
             )?;
         }
-        Ok(())
+        Ok(far)
     }
 
     /// Whether a bond of the block's own component table is metal

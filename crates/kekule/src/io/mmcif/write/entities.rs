@@ -6,7 +6,7 @@ use crate::io::macromolecular::{EntityKind, StructureInterpretationReport};
 use crate::structure::StructureView;
 use crate::topology::{
     AtomSiteView, ChainView, InstanceAtomId, MoleculeClass, MoleculeInstanceId, ResidueClass,
-    ResidueView, Topology,
+    ResidueId, ResidueView, Topology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -251,8 +251,8 @@ impl AuthorIds {
     }
 }
 
-/// What makes asyms instances of one entity: components of one chemistry,
-/// or water. Each polymer and branched asym is an entity of its own.
+/// What makes asyms instances of one entity: the same components, or
+/// water. Each polymer and branched asym is an entity of its own.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum EntityKey {
     NonPolymer(Vec<ResidueChemistry>),
@@ -308,16 +308,18 @@ pub(super) fn generic_entity_plan(
     };
 
     for chain in structure.topology().chains() {
+        let roles = residue_roles(chain);
         let segments = chain_segments(chain, |residue, sites| {
             // Canonical classes describe molecules; a residue that a polymer
             // holds by a bond may still be an entity of another kind. Stated
             // classifications hold as given.
+            let role = roles[&residue.id()];
             let molecule_kinds = sites
                 .iter()
                 .filter_map(|atom| classifications.get(&atom.instance()).copied())
                 .map(|molecule| {
                     if molecule.canonical {
-                        residue_entity_kind(molecule.kind, residue.class())
+                        residue_entity_kind(molecule.kind, residue.class(), role)
                     } else {
                         molecule.kind
                     }
@@ -346,6 +348,10 @@ pub(super) fn generic_entity_plan(
                 kind,
                 source_entity_id: None,
                 canonical,
+                glycan: classifications
+                    .get(&sites[0].instance())
+                    .filter(|_| canonical)
+                    .and_then(|molecule| role.glycan_of(molecule.kind, kind)),
             })
         })?;
         let label = asym_ids.chain(chain.label_id());
@@ -435,6 +441,7 @@ fn report_entity_plan(
 
     let mut chains = Vec::new();
     for chain in structure.topology().chains() {
+        let roles = residue_roles(chain);
         let segments = chain_segments(chain, |residue, sites| {
             let source_atoms = sites
                 .iter()
@@ -444,10 +451,16 @@ fn report_entity_plan(
             // atoms alone takes the kind the structure gives it, as without
             // a report; another takes its source atoms' kind and entity.
             if source_atoms.is_empty() {
+                let role = roles[&residue.id()];
+                let kind = canonical_residue_kind(structure, chain, residue, sites, role)?;
                 return Ok(ResidueKind {
-                    kind: canonical_residue_kind(structure, chain, residue, sites)?,
+                    kind,
                     source_entity_id: None,
                     canonical: true,
+                    glycan: role.glycan_of(
+                        canonical_entity_kind(structure.topology(), sites[0].instance())?,
+                        kind,
+                    ),
                 });
             }
             for atom in &source_atoms {
@@ -491,6 +504,7 @@ fn report_entity_plan(
                 kind,
                 source_entity_id: source_entity_ids.into_iter().next(),
                 canonical: false,
+                glycan: None,
             })
         })?;
         let label = asym_ids.chain(chain.label_id());
@@ -649,6 +663,11 @@ struct ChainSegment {
     source_entity_id: Option<String>,
     /// The molecules its atoms lie in.
     molecules: BTreeSet<MoleculeInstanceId>,
+    /// The places in a sequence its residues state.
+    places: BTreeSet<i32>,
+    /// The first residue of the glycan it is, when it is one that a
+    /// polymer holds.
+    glycan: Option<ResidueId>,
     /// The chemistry of its non-polymer residues, in residue order.
     chemistry: Vec<ResidueChemistry>,
     /// Its residues' author numbers and insertion codes, which identify
@@ -663,6 +682,8 @@ impl ChainSegment {
             kind: entry.kind,
             source_entity_id: entry.source_entity_id.clone(),
             molecules: BTreeSet::new(),
+            places: BTreeSet::new(),
+            glycan: entry.glycan,
             chemistry: Vec::new(),
             author_keys: BTreeSet::new(),
             sites: Vec::new(),
@@ -671,17 +692,28 @@ impl ChainSegment {
         segment
     }
 
+    /// Whether it is a polymer whose residues state their places in its
+    /// sequence, and the place `entry` states is free.
+    fn places_free(&self, entry: &ResidueEntry) -> bool {
+        self.kind == AssignedEntityKind::Polymer
+            && !self.places.is_empty()
+            && entry
+                .place
+                .is_some_and(|place| !self.places.contains(&place))
+    }
+
     fn push(&mut self, entry: ResidueEntry) {
         self.molecules
             .extend(entry.sites.iter().map(|atom| atom.instance()));
+        self.places.extend(entry.place);
         self.chemistry.extend(entry.chemistry);
         self.author_keys.insert(entry.author_key);
         self.sites.extend(entry.sites);
     }
 }
 
-/// A component and its atoms' chemistry, which decides whether two
-/// non-polymer residues are instances of one entity.
+/// A component and, for a placeholder name, its atoms' chemistry, which
+/// decide whether two non-polymer residues are instances of one entity.
 type ResidueChemistry = (String, Vec<AtomChemistry>);
 
 /// An atom's name, atomic number, mass number, charge, and hydrogens, and
@@ -696,15 +728,16 @@ type AtomChemistry = (
     Vec<(String, String)>,
 );
 
-/// The chemistry of a residue's atoms, by name.
+/// A residue's component and, when its name is a placeholder, the
+/// chemistry of its atoms by name. A named component is one chemistry, as
+/// the chemical component dictionary defines it, however much of it a
+/// residue models.
 fn residue_chemistry(residue: ResidueView<'_>) -> ResidueChemistry {
-    let name = |site: AtomSiteView<'_>| {
-        site.metadata()
-            .label_atom_id()
-            .or(site.metadata().auth_atom_id())
-            .unwrap_or_default()
-            .to_owned()
-    };
+    let component = residue.label_comp_id().unwrap_or(residue.name());
+    if !placeholder_component(component) {
+        return (component.to_owned(), Vec::new());
+    }
+    let name = |site: AtomSiteView<'_>| site_name(site).to_owned();
     let mut atoms = residue
         .atom_sites()
         .map(|site| {
@@ -733,9 +766,158 @@ fn residue_chemistry(residue: ResidueView<'_>) -> ResidueChemistry {
         })
         .collect::<Vec<_>>();
     atoms.sort();
-    (
-        residue.label_comp_id().unwrap_or(residue.name()).to_owned(),
-        atoms,
+    (component.to_owned(), atoms)
+}
+
+/// Whether a component name names no one chemistry: no name, the codes the
+/// wwPDB reserves for unknown and in-house ligands (`UNL`, `UNX`, `UNK`,
+/// `LIG`, `DRG`, `INH`, and `01` to `99`), or `MOL`, the component of a
+/// molecule outside the hierarchy.
+fn placeholder_component(name: &str) -> bool {
+    matches!(
+        name,
+        "" | "UNL" | "UNX" | "UNK" | "LIG" | "DRG" | "INH" | "MOL"
+    ) || (name.len() == 2 && name.bytes().all(|byte| byte.is_ascii_digit()) && name != "00")
+}
+
+/// An atom site's name: its label, or else its author name.
+fn site_name(site: AtomSiteView<'_>) -> &str {
+    site.metadata()
+        .label_atom_id()
+        .or(site.metadata().auth_atom_id())
+        .unwrap_or_default()
+}
+
+/// The atoms of a polymer's monomers that its backbone links join.
+const BACKBONE_ATOMS: [&str; 4] = ["N", "C", "P", "O3'"];
+
+/// Where canonical classification places a residue of a chain.
+#[derive(Debug, Clone, Copy)]
+struct ResidueRole {
+    /// Whether it is a monomer of the chain's sequence.
+    monomer: bool,
+    /// The saccharides bonded to it and to each other, with it: their
+    /// first residue and their number.
+    glycan: Option<(ResidueId, usize)>,
+}
+
+impl ResidueRole {
+    /// The glycan a residue of `kind` in a molecule of `molecule_kind` is
+    /// an instance of: one a polymer holds.
+    fn glycan_of(
+        self,
+        molecule_kind: AssignedEntityKind,
+        kind: AssignedEntityKind,
+    ) -> Option<ResidueId> {
+        self.glycan
+            .filter(|_| {
+                molecule_kind == AssignedEntityKind::Polymer && kind == AssignedEntityKind::Branched
+            })
+            .map(|(first, _)| first)
+    }
+}
+
+/// The roles of a chain's residues. A residue is a monomer of the chain's
+/// sequence when it states its place (`label_seq_id`) or is an amino acid
+/// or a nucleotide. Where no residue of the chain states a place, as in a
+/// PDB entry without `SEQRES` records, a residue of another class is a
+/// monomer too when a backbone atom of a monomer (`N`, `C`, `P`, `O3'`)
+/// bonds it, as a modified residue's neighbours do. Saccharides bonded to
+/// each other are one glycan.
+fn residue_roles(chain: ChainView<'_>) -> BTreeMap<ResidueId, ResidueRole> {
+    let residues = chain.residues().collect::<Vec<_>>();
+    let classes = residues
+        .iter()
+        .map(|residue| (residue.id(), residue.class()))
+        .collect::<BTreeMap<_, _>>();
+    // Each residue's bonds to the chain's other residues: the other residue
+    // and the name of its atom.
+    let links = residues
+        .iter()
+        .map(|residue| {
+            let mut links = Vec::new();
+            for site in residue.atom_sites() {
+                let atom = site.atom();
+                for bond in atom.bonds() {
+                    let [left, right] = bond.atoms();
+                    let other = if left.id() == atom.id() { right } else { left };
+                    if let Some(other) = other.atom_site().filter(|other| {
+                        other.residue().id() != residue.id()
+                            && classes.contains_key(&other.residue().id())
+                    }) {
+                        links.push((other.residue().id(), site_name(other)));
+                    }
+                }
+            }
+            (residue.id(), links)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut monomers = residues
+        .iter()
+        .filter(|residue| residue.label_seq_id().is_some() || polymer_class(residue.class()))
+        .map(|residue| residue.id())
+        .collect::<BTreeSet<_>>();
+    if residues
+        .iter()
+        .all(|residue| residue.label_seq_id().is_none())
+    {
+        loop {
+            let joined = residues
+                .iter()
+                .filter(|residue| {
+                    residue.class() == ResidueClass::Other && !monomers.contains(&residue.id())
+                })
+                .filter(|residue| {
+                    links[&residue.id()].iter().any(|(other, name)| {
+                        monomers.contains(other) && BACKBONE_ATOMS.contains(name)
+                    })
+                })
+                .map(|residue| residue.id())
+                .collect::<Vec<_>>();
+            if joined.is_empty() {
+                break;
+            }
+            monomers.extend(joined);
+        }
+    }
+    let saccharide = |residue: &ResidueId| classes[residue] == ResidueClass::Carbohydrate;
+    let mut glycans = BTreeMap::new();
+    for residue in residues.iter().map(|residue| residue.id()) {
+        if !saccharide(&residue) || glycans.contains_key(&residue) {
+            continue;
+        }
+        let mut members = vec![residue];
+        let mut next = 0;
+        while let Some(&at) = members.get(next) {
+            next += 1;
+            for (other, _) in &links[&at] {
+                if saccharide(other) && !members.contains(other) {
+                    members.push(*other);
+                }
+            }
+        }
+        for &member in &members {
+            glycans.insert(member, (residue, members.len()));
+        }
+    }
+    residues
+        .iter()
+        .map(|residue| {
+            let id = residue.id();
+            let role = ResidueRole {
+                monomer: monomers.contains(&id),
+                glycan: glycans.get(&id).copied(),
+            };
+            (id, role)
+        })
+        .collect()
+}
+
+/// Whether residues of `class` are monomers of a polymer.
+fn polymer_class(class: ResidueClass) -> bool {
+    matches!(
+        class,
+        ResidueClass::AminoAcid | ResidueClass::DnaNucleotide | ResidueClass::RnaNucleotide
     )
 }
 
@@ -746,6 +928,9 @@ struct ResidueKind {
     /// Whether canonical classification gave the kind, rather than the
     /// caller or the source.
     canonical: bool,
+    /// The first residue of the glycan it is part of, when canonical
+    /// classification makes it branched.
+    glycan: Option<ResidueId>,
 }
 
 /// One residue's entity kind and atoms, before it joins a segment.
@@ -756,9 +941,24 @@ struct ResidueEntry {
     /// Whether canonical classification gave the kind, rather than the
     /// caller or the source.
     canonical: bool,
+    /// Its stated place in a sequence (`label_seq_id`).
+    place: Option<i32>,
+    glycan: Option<ResidueId>,
     chemistry: Option<ResidueChemistry>,
     author_key: (Option<String>, Option<String>),
     sites: Vec<InstanceAtomId>,
+}
+
+impl ResidueEntry {
+    /// Whether it is a monomer of a polymer that canonical classification
+    /// makes no polymer, as one a chain break leaves alone: a residue of a
+    /// polymer's residue class that states its place in the sequence.
+    fn fragment(&self) -> bool {
+        self.kind == AssignedEntityKind::NonPolymer
+            && self.canonical
+            && self.place.is_some()
+            && polymer_class(self.class)
+    }
 }
 
 /// Splits a chain into label asyms, one per entity instance, with the asym
@@ -769,13 +969,16 @@ struct ResidueEntry {
 /// The residues whose sites state a `label_asym_id` are the source's asym,
 /// which stays one; residues of other kinds or source entities in it are
 /// conflicting classifications, except that a residue of a polymer's
-/// residue class that canonical classification makes no polymer, as one
-/// a chain break leaves alone, is a polymer residue. Of the other
-/// residues, each non-polymer residue is an instance of its own; a polymer
-/// or branched residue joins the asym of its molecule, so that the
-/// sequence of one molecule does not continue into the next; and water
-/// joins the chain's water asym, or the next one, so that no two waters of
-/// an asym share an author number.
+/// residue class that states its place in the sequence and that canonical
+/// classification makes no polymer, as one a chain break leaves alone, is
+/// a polymer residue. Of the other residues, each non-polymer residue is an
+/// instance of its own; a polymer residue joins the asym of its molecule,
+/// so that the sequence of one molecule does not continue into the next,
+/// or the polymer asym whose residues state their places when it states a
+/// free one, as do the pieces of a chain a PDB reader numbers by its
+/// `SEQRES` sequence and such a fragment; a branched residue joins the asym
+/// of its glycan; and water joins the chain's water asym, or the next one,
+/// so that no two waters of an asym share an author number.
 fn chain_segments<'h>(
     chain: ChainView<'h>,
     mut classify: impl FnMut(ResidueView<'h>, &[InstanceAtomId]) -> Result<ResidueKind, FormatError>,
@@ -794,12 +997,15 @@ fn chain_segments<'h>(
             kind,
             source_entity_id,
             canonical,
+            glycan,
         } = classify(residue, &sites)?;
         let entry = ResidueEntry {
             kind,
             source_entity_id,
             class: residue.class(),
             canonical,
+            place: residue.label_seq_id(),
+            glycan,
             chemistry: (kind == AssignedEntityKind::NonPolymer).then(|| residue_chemistry(residue)),
             author_key: (
                 residue.author_seq_id().map(str::to_owned),
@@ -819,19 +1025,28 @@ fn chain_segments<'h>(
     let mut segments = source_segment(chain, sourced)?
         .into_iter()
         .collect::<Vec<_>>();
-    for entry in added {
+    // Fragments join a polymer once the chain's polymers have their asyms.
+    let (fragments, others): (Vec<_>, Vec<_>) = added.into_iter().partition(ResidueEntry::fragment);
+    for entry in others.into_iter().chain(fragments) {
         let shared = match entry.kind {
+            AssignedEntityKind::NonPolymer if entry.fragment() => segments
+                .iter_mut()
+                .find(|segment| segment.places_free(&entry)),
             AssignedEntityKind::NonPolymer => None,
             AssignedEntityKind::Water => segments.iter_mut().find(|segment| {
                 segment.kind == AssignedEntityKind::Water
                     && !segment.author_keys.contains(&entry.author_key)
             }),
-            AssignedEntityKind::Polymer | AssignedEntityKind::Branched => {
-                segments.iter_mut().find(|segment| {
-                    segment.kind == entry.kind
-                        && segment.molecules.contains(&entry.sites[0].instance())
-                })
-            }
+            AssignedEntityKind::Polymer => segments.iter_mut().find(|segment| {
+                segment.kind == AssignedEntityKind::Polymer
+                    && (segment.molecules.contains(&entry.sites[0].instance())
+                        || segment.places_free(&entry))
+            }),
+            AssignedEntityKind::Branched => segments.iter_mut().find(|segment| {
+                segment.kind == AssignedEntityKind::Branched
+                    && segment.glycan == entry.glycan
+                    && segment.molecules.contains(&entry.sites[0].instance())
+            }),
         };
         match shared {
             Some(segment) => segment.push(entry),
@@ -851,20 +1066,13 @@ fn source_segment(
         .iter()
         .map(|entry| entry.kind)
         .collect::<BTreeSet<_>>();
-    let polymer_class = |class: ResidueClass| {
-        matches!(
-            class,
-            ResidueClass::AminoAcid | ResidueClass::DnaNucleotide | ResidueClass::RnaNucleotide
-        )
-    };
     let kind = match kinds.iter().copied().collect::<Vec<_>>().as_slice() {
         [] => return Ok(None),
         [kind] => *kind,
         [AssignedEntityKind::Polymer, AssignedEntityKind::NonPolymer]
-            if entries.iter().all(|entry| {
-                entry.kind == AssignedEntityKind::Polymer
-                    || entry.canonical && polymer_class(entry.class)
-            }) =>
+            if entries
+                .iter()
+                .all(|entry| entry.kind == AssignedEntityKind::Polymer || entry.fragment()) =>
         {
             AssignedEntityKind::Polymer
         }
@@ -1030,12 +1238,13 @@ fn canonical_residue_kind(
     chain: ChainView<'_>,
     residue: ResidueView<'_>,
     sites: &[InstanceAtomId],
+    role: ResidueRole,
 ) -> Result<AssignedEntityKind, FormatError> {
     let kinds = sites
         .iter()
         .map(|atom| {
             canonical_entity_kind(structure.topology(), atom.instance())
-                .map(|kind| residue_entity_kind(kind, residue.class()).as_source())
+                .map(|kind| residue_entity_kind(kind, residue.class(), role).as_source())
         })
         .collect::<Result<BTreeSet<_>, _>>()?
         .into_iter()
@@ -1051,20 +1260,29 @@ fn canonical_residue_kind(
     }
 }
 
-/// The entity kind of one residue of a molecule of `molecule_kind`. Water,
-/// ions, and saccharides bonded to a polymer, such as a coordinated metal or
-/// an N-linked glycan, are entities of their own rather than polymer
-/// residues; each saccharide residue is a non-polymer instance.
+/// The entity kind of one residue of a molecule of `molecule_kind`, in
+/// `role`. Only the monomers of a polymer's sequence are polymer residues.
+/// Water, ions, and other residues a polymer holds by a bond, such as a
+/// coordinated metal or a covalently bound ligand, are entities of their
+/// own; a glycan bonded to a polymer is a branched entity, or a non-polymer
+/// one when it is a single saccharide.
 fn residue_entity_kind(
     molecule_kind: AssignedEntityKind,
     class: ResidueClass,
+    role: ResidueRole,
 ) -> AssignedEntityKind {
     match (molecule_kind, class) {
         (AssignedEntityKind::Polymer | AssignedEntityKind::Branched, ResidueClass::Water) => {
             AssignedEntityKind::Water
         }
-        (AssignedEntityKind::Polymer, ResidueClass::Ion | ResidueClass::Carbohydrate)
-        | (AssignedEntityKind::Branched, ResidueClass::Ion) => AssignedEntityKind::NonPolymer,
+        (AssignedEntityKind::Polymer | AssignedEntityKind::Branched, ResidueClass::Ion) => {
+            AssignedEntityKind::NonPolymer
+        }
+        (AssignedEntityKind::Polymer, ResidueClass::Carbohydrate) => match role.glycan {
+            Some((_, residues)) if residues > 1 => AssignedEntityKind::Branched,
+            _ => AssignedEntityKind::NonPolymer,
+        },
+        (AssignedEntityKind::Polymer, _) if !role.monomer => AssignedEntityKind::NonPolymer,
         (kind, _) => kind,
     }
 }

@@ -858,6 +858,16 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(atom_name)?;
                 self.usize(*bonds)
             }
+            Issue::HydrogenBeyondTemplateBond {
+                residue,
+                atom_name,
+                anchor_name,
+            } => {
+                self.u8(52)?;
+                self.residue(residue)?;
+                self.str(atom_name)?;
+                self.str(anchor_name)
+            }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
                 self.residue(residue)?;
