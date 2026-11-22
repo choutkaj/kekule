@@ -332,8 +332,6 @@ pub enum MmcifWriteErrorKind {
     },
     /// An atom duplicates another atom's identity within one residue.
     DuplicateAtomIdentity(InstanceAtomId),
-    /// Interpretation reports carry no atom-level provenance for this atom.
-    MissingAtomProvenance(InstanceAtomId),
     /// Interpretation reports carry atom-level provenance for this atom twice.
     DuplicateAtomProvenance(InstanceAtomId),
     /// Interpretation reports carry provenance for an atom the structure does
@@ -485,7 +483,6 @@ impl MmcifWriteErrorKind {
             | Self::DuplicateAtomSite(_)
             | Self::InconsistentAtomSite { .. }
             | Self::DuplicateAtomIdentity(_)
-            | Self::MissingAtomProvenance(_)
             | Self::DuplicateAtomProvenance(_)
             | Self::EmptyStructureSet
             | Self::ReportCountMismatch(_)
@@ -584,10 +581,6 @@ impl fmt::Display for MmcifWriteErrorKind {
                 f,
                 "{} repeats the identity of another atom of its residue.",
                 Capitalized(atom)
-            ),
-            Self::MissingAtomProvenance(atom) => write!(
-                f,
-                "The interpretation reports have no source record of {atom}."
             ),
             Self::DuplicateAtomProvenance(atom) => write!(
                 f,
@@ -823,19 +816,52 @@ impl MmcifEntityClassifications {
 /// lacks a template bond cannot be written as it is (see
 /// [`MmcifWriteErrorKind::DictionaryBondMissing`]).
 ///
-/// Every hierarchy chain is a structural instance of its own, even when
-/// chains share a label, as the copies
+/// Every entity instance is a structural instance (asym) of its own: each
+/// polymer of a chain, each glycan, each non-polymer residue, and a chain's
+/// waters together, split where author numbers repeat. Only the monomers of
+/// a chain's sequence are polymer residues: those that state their place
+/// (`label_seq_id`), amino acids and nucleotides, and, in a chain where no
+/// residue states a place, residues a monomer's backbone atom bonds.
+/// Residues that state their places and bond each other are polymer
+/// residues in a molecule of any class, as the D-amino acids of a
+/// D-peptide are; only polymer rows state a place. A ligand a polymer
+/// holds by a bond is a non-polymer instance, and its saccharides bonded to
+/// each other are a glycan, branched when it has several, with or without
+/// a PDB reader's report. The residues whose sites state a `label_asym_id`
+/// stay the one asym the source names; a residue an edit added to its chain
+/// is an instance by the same rules, joining that asym only as part of its
+/// molecule, its sequence, or water. A residue of a polymer residue class
+/// that states its place and that a chain break leaves alone stays in its
+/// chain's polymer asym. Asyms of one component are instances of one
+/// non-polymer entity, however much of it they model; for a placeholder
+/// component such as `LIG` or `UNL`, which names no one chemistry, only
+/// asyms of one chemistry (atoms, charges, hydrogens, and bonds) are. All
+/// waters are one water entity; each polymer and branched asym is an entity
+/// of its own. A saccharide of several residues is branched.
+///
+/// Coordination between residues is no bond of the structure: the
+/// interpretation report holds it, and [`Self::with_reports`] writes it as
+/// `metalc` rows. A structure written without its report has none.
+///
+/// Every hierarchy chain has asyms of its own, even when chains share a
+/// label, as the copies
 /// [`StructureEditor::append_structure`](crate::structure::StructureEditor::append_structure)
-/// appends do. The first chain with a label keeps it as `label_asym_id`; each
+/// appends do. The first chain with a label keeps it as its asym ID; each
 /// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
-/// on, skipping IDs another chain or asym uses. A chain without a label
-/// takes the first of `A`, `B`, and so on that no chain or asym uses.
-/// `auth_asym_id` keeps the author chain name, which falls back to the
-/// written asym ID. Reading the block
-/// back gives the same chains, residues, atoms, and bonds, in the same order
-/// and under the same author names, with the written asym IDs as their
-/// labels. The hierarchy itself keeps labels as appended, since a label
-/// names a source's instance, not one of the combined structure's.
+/// on. A chain without a label takes the first of `A`, `B`, and so on that no
+/// chain or asym uses. A chain's first asym takes the chain's asym ID, and
+/// each later one the ID with a serial, `A_2`, `A_3`, and so on, skipping IDs
+/// another chain or asym uses.
+///
+/// `auth_asym_id` keeps the author chain name. All asyms of a chain without
+/// one take the chain's asym ID, or that ID with a serial, `A-2`, `A-3`, and
+/// so on, where another chain states it, so chains never share a name they
+/// did not share. Reading the block back gives one chain per asym, with the
+/// written asym IDs as labels, and the same residues, atoms, and bonds in the
+/// same order. The chains under one author name hold the residues of the
+/// source chains under that name. The hierarchy itself keeps labels as
+/// appended, since a label names a source's instance, not one of the
+/// combined structure's.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
     content: BlockContent<'a>,
@@ -881,9 +907,9 @@ impl<'a> MmcifBlockSource<'a> {
     /// Overrides derived entity kinds for the listed molecule instances;
     /// omitted instances keep canonical classification.
     ///
-    /// One mmCIF entity is assigned to each populated hierarchy chain (and one
-    /// to each hierarchy-free instance), so instances touched by the same chain
-    /// must have the same classification.
+    /// Each asym has one entity kind, so the molecules of one residue, and
+    /// the residues of a chain the source names as one asym, must have the
+    /// same classification.
     #[must_use]
     pub fn with_classifications(mut self, classifications: &'a MmcifEntityClassifications) -> Self {
         self.entities = EntitySemantics::Classifications(classifications);
@@ -896,7 +922,11 @@ impl<'a> MmcifBlockSource<'a> {
     /// Atom-level provenance keeps one source entity and structural asymmetry
     /// consistent even when it spans several molecule instances; conflicting
     /// source identity is rejected. An auth-only source is normalized by
-    /// copying author identifiers into the required label fields.
+    /// copying author identifiers into the required label fields. Atoms
+    /// without provenance, such as those an edit added, join their residues;
+    /// a residue or molecule of such atoms alone is written as without a
+    /// report, as an instance of the source entity of its component, or of
+    /// the source's water entity, where there is one.
     #[must_use]
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.entities = EntitySemantics::Reports(reports);

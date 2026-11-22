@@ -79,6 +79,12 @@ const PDB_NUMBERING_SINCE: u32 = 9;
 /// The first format version with the `ChargesFromDictionary` and
 /// `DictionaryAtomsUnmatched` interpretation issues.
 const DICTIONARY_CHARGES_SINCE: u32 = 9;
+/// The first format version with the `HydrogenWithSeveralBonds`
+/// interpretation issue.
+const SEVERAL_BONDS_SINCE: u32 = 9;
+/// The first format version with the `HydrogenBeyondTemplateBond`
+/// interpretation issue.
+const BEYOND_TEMPLATE_BOND_SINCE: u32 = 9;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;

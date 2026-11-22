@@ -322,6 +322,15 @@ the main branch migrates by the table under "From the SampleSet API".
   hold does not apply. Without hydrogens and with stated bond orders, the
   neutral acid hydroxyls of such a residue take their pH 7 state, as in a
   templated one (`ProtonationAssumed`).
+- PDB and mmCIF readers report a hydrogen with more than one bond
+  (`StructureInterpretIssue::HydrogenWithSeveralBonds`), as when its name
+  places it on one atom and a record bonds it to another.
+- PDB and mmCIF readers leave out a template bond to a hydrogen that lies
+  beyond bonding distance of its other atom and within bonding distance of
+  another heavy atom of its residue, and report it
+  (`StructureInterpretIssue::HydrogenBeyondTemplateBond`). The hydrogen is
+  attached as one no bond source names. An isoleucine `HG12` renamed `H2`
+  was bonded to the `N` 3.9 Å away, which became +1.
 - `MolfileInterpretIssue`, `XyzInterpretIssue`, and
   `UnrepresentableStereoReason` implement `Display` with sentences for
   users. Molfile issues name atoms and bonds by source line, and XYZ
@@ -719,6 +728,8 @@ the main branch migrates by the table under "From the SampleSet API".
   `StructureSetError::NonFiniteLogWeight`.
 - **Breaking:** `DcdWriter::finalize`; `finish` and `TrajectoryWriter::flush`
   write the frame count.
+- **Breaking:** `MmcifWriteErrorKind::MissingAtomProvenance`; the mmCIF
+  writer writes atoms without provenance as it does without a report.
 
 ### Fixed
 
@@ -823,6 +834,69 @@ the main branch migrates by the table under "From the SampleSet API".
     charges are reported (`TemplateMissing`).
   - Force-field templates name their force field (`Component::force_field`)
     and keep the protonation their residue names state.
+- The mmCIF writer keeps a chain without an author ID one author chain. All
+  its asyms take the chain's asym ID as `auth_asym_id`, so the ions of a
+  simulation's segment `ION1` read back under `ION1`, not each under its own
+  name. Where another chain states that name, the chain takes it with a
+  serial, `ION1-2`, so two chains never read back as one; so does a molecule
+  outside the hierarchy. Asyms of one component are one non-polymer entity,
+  and all waters one water entity, instead of an entity per asym. A
+  placeholder component that names no one chemistry, such as `LIG` or
+  `UNL`, is one entity per chemistry (atoms, charges, hydrogens, and
+  bonds). A site without an author ID takes the one the rest of its chain
+  states.
+- Hydrogens that placement adds (`add_hydrogens`, `attach_atom`,
+  `attach_fragment`) take the name the residue's template gives a hydrogen
+  on their atom (`HA` on `CA`, `HB2` and `HB3` on `CB`), or a free terminal
+  name readers bond to it. No new atom takes a name the template places on
+  another atom: a hydrogen on `CA` was `H2`, which readers bond to the
+  peptide `N`, so the written hydrogen read back with two bonds and the `N`
+  charged. Hydrogens added to rubredoxin, adenylate kinase, and KRas now
+  read back from mmCIF with their bonds, charges, and hydrogen counts.
+  A name is taken when an atom holds it under an older name, so a
+  hydrogen added beside a `1HB` is `HB3`, not a second `HB2`.
+  `next_atom_name` and the mmCIF writer's names for unnamed sites skip
+  template names too.
+- The mmCIF writer gives a residue an edit added to a chain an asym of its
+  own, as an instance of its kind: a sodium added to rubredoxin's iron asym
+  is no longer written as part of the iron's asym and entity, and a ligand
+  added to a protein chain read from mmCIF no longer fails. With the source
+  report, an added residue or water of a source entity's component and
+  chemistry is an instance of that entity, also outside the hierarchy.
+  Only the source's polymer takes the report's sequence; a peptide added to
+  its chain is numbered by its own residues, not extended by the source's.
+- The mmCIF writer writes structures it failed on without their reports:
+  a residue of an amino acid that a chain break leaves alone stays in its
+  polymer asym (7LPM), a saccharide of several residues is a branched
+  entity (7X9L), and waters whose author numbers repeat in a chain take a
+  second asym rather than failing with `DuplicateAtomIdentity`. A free
+  residue that states a polymer's asym but no place in its sequence fails
+  with `ConflictingAsymEntityClassifications` instead of joining it.
+- Without a report, the mmCIF writer makes only the monomers of a chain's
+  sequence polymer residues. A ligand bound to a polymer, as sotorasib to
+  KRas (6OIM) or retinal to its opsin (6G7L), was written into the polymer
+  asym without a `label_seq_id`; it is a non-polymer instance of its own.
+  Glycans bound to a protein are branched entities, one asym each, rather
+  than a non-polymer entity per saccharide (7UKO). The pieces of a chain
+  that a chain break splits, numbered by one `SEQRES` sequence, are one
+  polymer asym. Partly modelled instances of one component, as 6G7L's
+  seven monooleins read from PDB, are one entity rather than seven.
+- Without a report, the mmCIF writer no longer loses the links of a chain
+  whose monomers no residue class names. Residues that state their places
+  and bond each other are polymer residues in a molecule of any class, so
+  the D-peptide of 7B3K and the modified DNA strand of 1K1H are polymers.
+  They were non-polymer asyms, and their peptide and phosphodiester bonds
+  did not read back. Only polymer rows state a `label_seq_id`, and every
+  bond between residues of other entities is written.
+- With a PDB reader's report, the mmCIF writer writes a glycan as a
+  branched entity, as it does without the report, rather than a
+  non-polymer entity per saccharide (7UKO, 7X9L).
+- The mmCIF writer writes a structure an edit added atoms to with its
+  followed report (`follow_edit`, `follow_append`), instead of failing. Atoms
+  without provenance, such as added hydrogens, join their residues' rows, and
+  a residue or molecule of such atoms alone is written as without a report.
+  The report's coordination and entities still apply, so hydrogens added to
+  rubredoxin keep its four `metalc` rows.
 - A double or triple bond the source states between aromatic atoms is their
   pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
   and 4 read as benzene, not as a ring of six double bonds or a cumulene.

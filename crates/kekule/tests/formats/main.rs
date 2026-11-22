@@ -18,6 +18,7 @@ mod edited_structures;
 mod export;
 mod issue_texts;
 mod mmcif;
+mod mmcif_chains;
 mod mmcif_write;
 mod molfile_stereo;
 mod molfile_valence;

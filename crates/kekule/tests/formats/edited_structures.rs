@@ -9,7 +9,8 @@ use kekule::pdb::{self, PdbSource, PdbWriteOptions};
 use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::structure::StructureEditor;
 use kekule::topology::edit::EditAtomId;
-use kekule::units::Quantity;
+use kekule::topology::InstanceAtomId;
+use kekule::units::{Quantity, ANGSTROM};
 
 /// A `HETATM` record of atom `name` of residue `residue` `sequence` of chain
 /// `chain` at `x` Å.
@@ -291,4 +292,423 @@ fn a_report_follows_its_structure_through_an_append() {
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 2, "{written}");
+}
+
+/// An atom by author chain, component, author sequence number, and name.
+type AtomKey = (String, String, String, String);
+
+/// Each atom's element, formal charge, hydrogen count, and bonded atoms.
+type AtomChemistry = (String, i8, Option<usize>, Vec<AtomKey>);
+
+fn atom_key(structure: &kekule::structure::Structure, atom: InstanceAtomId) -> AtomKey {
+    let site = structure
+        .topology()
+        .atom(atom)
+        .and_then(|atom| atom.atom_site())
+        .unwrap();
+    let residue = site.residue();
+    let chain = residue.chain();
+    (
+        chain.author_id().unwrap_or(chain.label_id()).to_owned(),
+        residue.name().to_owned(),
+        residue.author_seq_id().unwrap_or_default().to_owned(),
+        site.metadata()
+            .label_atom_id()
+            .or(site.metadata().auth_atom_id())
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
+/// The chemistry of every atom by its key.
+fn atom_chemistry(
+    structure: &kekule::structure::Structure,
+) -> std::collections::BTreeMap<AtomKey, AtomChemistry> {
+    structure
+        .topology()
+        .atoms()
+        .map(|atom| {
+            let mut neighbors = atom
+                .neighbors()
+                .map(|neighbor| atom_key(structure, neighbor.id()))
+                .collect::<Vec<_>>();
+            neighbors.sort();
+            (
+                atom_key(structure, atom.id()),
+                (
+                    atom.atom().element().symbol().to_owned(),
+                    atom.atom().formal_charge(),
+                    atom.total_hydrogens(),
+                    neighbors,
+                ),
+            )
+        })
+        .collect()
+}
+
+/// The keys of the atoms whose chemistry differs between `left` and `right`,
+/// with both sides.
+fn chemistry_changes(
+    left: &kekule::structure::Structure,
+    right: &kekule::structure::Structure,
+) -> Vec<(AtomKey, Option<AtomChemistry>, Option<AtomChemistry>)> {
+    let (left, right) = (atom_chemistry(left), atom_chemistry(right));
+    left.keys()
+        .chain(right.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|key| left.get(*key) != right.get(*key))
+        .map(|key| (key.clone(), left.get(key).cloned(), right.get(key).cloned()))
+        .collect()
+}
+
+fn pdb_fixture(text: &str) -> StructureInterpretation {
+    pdb::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+/// A source with hydrogens added to every atom, and its report followed
+/// through the edit.
+fn with_hydrogens(
+    source: &StructureInterpretation,
+) -> (
+    kekule::structure::Structure,
+    kekule::macromolecular::StructureInterpretationReport,
+) {
+    let mut editor = source.structure().to_editor();
+    let atoms = editor.topology().atom_ids().collect::<Vec<_>>();
+    let added = editor
+        .add_hydrogens(atoms, AddHydrogensOptions::default())
+        .unwrap();
+    assert!(added.added_count() > 0);
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed =
+        source
+            .report()
+            .follow_edit(source.topology(), edited.topology(), &correspondence);
+    (edited, followed)
+}
+
+fn reread(written: &str) -> StructureInterpretation {
+    mmcif::parse_str(written, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+#[test]
+fn a_followed_report_writes_mmcif_with_added_hydrogens() {
+    // Rubredoxin's iron is coordinated by four cysteines; its waters have
+    // no hydrogens.
+    let (edited, followed) = with_hydrogens(&pdb_fixture(include_str!("../fixtures/pdb/1IRO.pdb")));
+    let (written, report) =
+        mmcif::write(
+            [mmcif::MmcifBlockSource::structure(&edited)
+                .with_reports(std::slice::from_ref(&followed))],
+            Default::default(),
+        )
+        .unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+    assert_eq!(written.matches(" metalc ").count(), 4, "{written}");
+    let reread = reread(&written);
+    assert_eq!(reread.report().coordination().len(), 4);
+    let changes = chemistry_changes(&edited, reread.structure());
+    assert!(
+        changes.is_empty(),
+        "{:#?}",
+        &changes[..changes.len().min(4)]
+    );
+}
+
+#[test]
+fn added_hydrogens_keep_their_bonds_through_mmcif() {
+    // Added hydrogens take their templates' names, never one a template
+    // places on another atom, as `H2` on a peptide's `N`.
+    for text in [
+        include_str!("../fixtures/pdb/1IRO.pdb"),
+        include_str!("../fixtures/pdb/1AKE.pdb"),
+    ] {
+        let (edited, _) = with_hydrogens(&pdb_fixture(text));
+        let (written, _) = mmcif::write([&edited], Default::default()).unwrap();
+        let reread = reread(&written);
+        let changes = chemistry_changes(&edited, reread.structure());
+        assert!(
+            changes.is_empty(),
+            "{:#?}",
+            &changes[..changes.len().min(4)]
+        );
+    }
+}
+
+#[test]
+fn a_followed_report_writes_mmcif_with_a_molecule_added_outside_the_hierarchy() {
+    let source = read(&zinc_entry());
+    let mut editor = source.structure().to_editor();
+    let mut sodium = kekule::molecule::MoleculeEditor::new();
+    sodium
+        .add_atom(
+            kekule::molecule::Atom::new(kekule::molecule::Element::from_symbol("Na").unwrap())
+                .with_formal_charge(1),
+        )
+        .unwrap();
+    editor
+        .add_molecule(
+            sodium.finish().unwrap(),
+            &kekule::structure::Positions::zeros(1),
+        )
+        .unwrap();
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed =
+        source
+            .report()
+            .follow_edit(source.topology(), edited.topology(), &correspondence);
+    let (written, _) =
+        mmcif::write(
+            [mmcif::MmcifBlockSource::structure(&edited)
+                .with_reports(std::slice::from_ref(&followed))],
+            Default::default(),
+        )
+        .unwrap();
+    // The zincs keep their coordination; the sodium is an asym of its own.
+    assert_eq!(written.matches(" metalc ").count(), 2, "{written}");
+    let reread = mmcif::parse_str(&written, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(reread.report().coordination().len(), 2);
+    assert_eq!(reread.structure().atom_count(), edited.atom_count());
+    let chains = reread
+        .structure()
+        .topology()
+        .chains()
+        .map(|chain| chain.label_id().to_owned())
+        .collect::<Vec<_>>();
+    assert!(chains.last().unwrap().starts_with('M'), "{written}");
+}
+
+/// Reads back the block written from 1IRO with hydrogens whose second `HA`
+/// is renamed `H2`, placed `between` its `CA` and the `N` the template bonds
+/// an `H2` to, or left in place; returns its issues on `H2` and whether the
+/// read changed any atom's chemistry.
+fn reread_ha_as_h2(between: bool) -> (Vec<String>, bool) {
+    let (edited, _) = with_hydrogens(&pdb_fixture(include_str!("../fixtures/pdb/1IRO.pdb")));
+    let mut editor = edited.to_editor();
+    let (site, hydrogen, residue, metadata) = editor
+        .topology()
+        .atom_sites()
+        .filter(|(_, site)| site.metadata().auth_atom_id() == Some("HA"))
+        .map(|(id, site)| (id, site.atom(), site.residue(), site.metadata().clone()))
+        .nth(1)
+        .unwrap();
+    editor
+        .set_atom_site_metadata(
+            site,
+            metadata
+                .with_label_atom_id(Some("H2".to_owned()))
+                .with_auth_atom_id(Some("H2".to_owned())),
+        )
+        .unwrap();
+    if between {
+        let point = |editor: &StructureEditor, name: &str| {
+            let atom = editor
+                .topology()
+                .atom_sites()
+                .find(|(_, site)| {
+                    site.residue() == residue && site.metadata().auth_atom_id() == Some(name)
+                })
+                .map(|(_, site)| site.atom())
+                .unwrap();
+            editor.position(atom).unwrap().value_in(ANGSTROM).unwrap()
+        };
+        let (nitrogen, carbon, at) = (
+            point(&editor, "N"),
+            point(&editor, "CA"),
+            point(&editor, "H2"),
+        );
+        // 1.0 Å from both: 0.68 Å off the middle of the N-CA bond, towards
+        // where the hydrogen was.
+        let middle = [
+            (nitrogen.x + carbon.x) / 2.0,
+            (nitrogen.y + carbon.y) / 2.0,
+            (nitrogen.z + carbon.z) / 2.0,
+        ];
+        let axis = [
+            carbon.x - nitrogen.x,
+            carbon.y - nitrogen.y,
+            carbon.z - nitrogen.z,
+        ];
+        let toward = [at.x - middle[0], at.y - middle[1], at.z - middle[2]];
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let along = dot(toward, axis) / dot(axis, axis);
+        let off = [0, 1, 2].map(|index| toward[index] - along * axis[index]);
+        let length = dot(off, off).sqrt();
+        let half = dot(axis, axis).sqrt() / 2.0;
+        let reach = (1.0 - half * half).sqrt();
+        let moved = [0, 1, 2].map(|index| middle[index] + off[index] / length * reach);
+        editor
+            .set_position(
+                hydrogen,
+                Quantity::new(Point3::new(moved[0], moved[1], moved[2]), ANGSTROM),
+            )
+            .unwrap();
+    }
+    let renamed = editor.finish().unwrap();
+    let (written, _) = mmcif::write([&renamed], Default::default()).unwrap();
+    let reread = reread(&written);
+    let issues = reread
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            kekule::macromolecular::StructureInterpretIssue::HydrogenWithSeveralBonds {
+                atom_name,
+                bonds,
+                ..
+            } => Some(format!("{atom_name} has {bonds} bonds")),
+            kekule::macromolecular::StructureInterpretIssue::HydrogenBeyondTemplateBond {
+                atom_name,
+                anchor_name,
+                ..
+            } => Some(format!("{atom_name} is far from {anchor_name}")),
+            _ => None,
+        })
+        .collect();
+    let changed = !chemistry_changes(&renamed, reread.structure()).is_empty();
+    (issues, changed)
+}
+
+#[test]
+fn a_hydrogen_named_after_another_atom_reads_back_reported() {
+    // An `HA` renamed `H2` keeps its bond to `CA`; the template bonds an
+    // `H2` to `N`, 2.1 Å away, which is left out.
+    assert_eq!(
+        reread_ha_as_h2(false),
+        (vec!["H2 is far from N".to_owned()], false)
+    );
+    // Within bonding distance of `N` as well, it takes both bonds.
+    assert_eq!(
+        reread_ha_as_h2(true),
+        (vec!["H2 has 2 bonds".to_owned()], true)
+    );
+}
+
+#[test]
+fn added_hydrogens_on_a_residue_after_a_gap_write_without_a_report() {
+    // KRas starts at residue 14, whose N has one fixed hydrogen for the gap
+    // before it; an added hydrogen takes its place.
+    let source = mmcif::parse_str(
+        include_str!("../fixtures/mmcif/6OIM.cif"),
+        Default::default(),
+    )
+    .unwrap()
+    .interpret(Default::default())
+    .unwrap();
+    let (edited, _) = with_hydrogens(&source);
+    let (written, report) = mmcif::write([&edited], Default::default()).unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+    let changes = chemistry_changes(&edited, reread(&written).structure());
+    assert!(
+        changes.is_empty(),
+        "{:#?}",
+        &changes[..changes.len().min(4)]
+    );
+}
+
+#[test]
+fn a_hydrogen_added_beside_one_under_an_older_name_takes_the_other_name() {
+    // A leucine's CB carries `1HB`, the older name of `HB2`; the hydrogen
+    // added beside it is `HB3`, so the two read back as two template atoms.
+    let (edited, _) = with_hydrogens(&pdb_fixture(include_str!("../fixtures/pdb/1AKE.pdb")));
+    let mut editor = edited.to_editor();
+    let leucine = |editor: &StructureEditor, name: &str| {
+        let residue = editor
+            .topology()
+            .atom_sites()
+            .find(|(_, site)| editor.topology().residue(site.residue()).unwrap().name() == "LEU")
+            .map(|(_, site)| site.residue())
+            .unwrap();
+        editor
+            .topology()
+            .atom_sites()
+            .find(|(_, site)| {
+                site.residue() == residue && site.metadata().auth_atom_id() == Some(name)
+            })
+            .map(|(id, site)| (id, site.atom(), site.metadata().clone()))
+            .unwrap()
+    };
+    let (site, _, metadata) = leucine(&editor, "HB2");
+    editor
+        .set_atom_site_metadata(
+            site,
+            metadata
+                .with_label_atom_id(Some("1HB".to_owned()))
+                .with_auth_atom_id(Some("1HB".to_owned())),
+        )
+        .unwrap();
+    let (_, hydrogen, _) = leucine(&editor, "HB3");
+    editor.delete_atoms([hydrogen]).unwrap();
+    let (_, carbon, _) = leucine(&editor, "CB");
+    editor
+        .add_hydrogens([carbon], AddHydrogensOptions::default())
+        .unwrap();
+    // The new hydrogen is `HB3`.
+    leucine(&editor, "HB3");
+    let renamed = editor.finish().unwrap();
+    let (written, _) = mmcif::write([&renamed], Default::default()).unwrap();
+    let changes = chemistry_changes(&renamed, reread(&written).structure());
+    assert!(
+        changes.is_empty(),
+        "{:#?}",
+        &changes[..changes.len().min(4)]
+    );
+}
+
+#[test]
+fn a_hydrogen_far_from_the_atom_its_name_places_it_on_keeps_its_place() {
+    // An isoleucine's `HG12` renamed `H2`, which its template bonds to `N`
+    // 3.9 Å away, stays on `CG1`, and `N` keeps its charge.
+    let (edited, _) = with_hydrogens(&pdb_fixture(include_str!("../fixtures/pdb/1AKE.pdb")));
+    let mut editor = edited.to_editor();
+    let (site, metadata) = editor
+        .topology()
+        .atom_sites()
+        .find(|(_, site)| {
+            editor.topology().residue(site.residue()).unwrap().name() == "ILE"
+                && site.metadata().auth_atom_id() == Some("HG12")
+        })
+        .map(|(id, site)| (id, site.metadata().clone()))
+        .unwrap();
+    editor
+        .set_atom_site_metadata(
+            site,
+            metadata
+                .with_label_atom_id(Some("H2".to_owned()))
+                .with_auth_atom_id(Some("H2".to_owned())),
+        )
+        .unwrap();
+    let renamed = editor.finish().unwrap();
+    let (written, _) = mmcif::write([&renamed], Default::default()).unwrap();
+    let reread = reread(&written);
+    let changes = chemistry_changes(&renamed, reread.structure());
+    assert!(
+        changes.is_empty(),
+        "{:#?}",
+        &changes[..changes.len().min(4)]
+    );
+    let far = reread
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            kekule::macromolecular::StructureInterpretIssue::HydrogenBeyondTemplateBond {
+                atom_name,
+                anchor_name,
+                ..
+            } => Some((atom_name.as_str(), anchor_name.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(far, [("H2", "N")]);
 }

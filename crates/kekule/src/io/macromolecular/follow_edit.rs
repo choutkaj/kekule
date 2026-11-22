@@ -40,9 +40,9 @@ impl StructureInterpretationReport {
 
     /// This report re-keyed to `edited`, which an editor published with
     /// `correspondence` after appending the structure the report describes
-    /// with `append`. Only the appended atoms have provenance: the PDB writer
-    /// states their coordination, and the mmCIF writer refuses the other
-    /// atoms, which lack provenance. Otherwise as [`Self::follow_edit`].
+    /// with `append`. Only the appended atoms have provenance, and the
+    /// writers state their coordination; the mmCIF writer writes the other
+    /// atoms as it does without a report. Otherwise as [`Self::follow_edit`].
     #[must_use]
     pub fn follow_append(
         &self,

@@ -489,7 +489,8 @@ pub(super) fn mark_implied(
         });
     }
 
-    // The reader links only residues alone at their position along a chain.
+    // The reader links only residues alone at their position along the
+    // chain of a polymer entity.
     let mut positions = BTreeMap::<(&str, &str, i32), usize>::new();
     for members in &residues {
         let row = &rows[members[0]];
@@ -518,7 +519,8 @@ pub(super) fn mark_implied(
             continue;
         };
         let (left_row, right_row) = (&rows[left], &rows[right]);
-        if left_row.asym_id != right_row.asym_id
+        if !polymer(left_row)
+            || left_row.asym_id != right_row.asym_id
             || left_row.entity_id != right_row.entity_id
             || !alone(left_row, a.min(b))
             || !alone(right_row, a.max(b))

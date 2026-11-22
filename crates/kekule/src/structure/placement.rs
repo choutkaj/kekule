@@ -49,8 +49,14 @@
 //! An atom a placement adds joins the residue of the atom it bonds to, named
 //! by its element's uppercase symbol and the next free number in that
 //! residue, as chemical components name theirs (`C21`, `H31`): one more than
-//! the largest number following that symbol in a name of the residue. An
-//! atom without a residue gives its new neighbors none. A new molecule gets a
+//! the largest number following that symbol in a name of the residue. Names
+//! that the bundled template of the residue's component places elsewhere are
+//! skipped, as are the terminal hydrogen names readers bond by convention
+//! (`H1` to `H3` of a peptide's `N`), so that a reader does not bond the atom
+//! where its name says. A hydrogen takes the first free name the template
+//! gives a hydrogen on its heavy neighbor instead (`HA` on a `CA`, `HB2` and
+//! `HB3` on a `CB`), or a free terminal name that readers bond to that atom.
+//! An atom without a residue gives its new neighbors none. A new molecule gets a
 //! chain and a residue `UNL` of its own; a fragment placed alone names its
 //! ring atoms by locant (pyridine `N1`, `C2`, …; naphthalene `C4A`) and its
 //! hydrogens after the atoms carrying them (`H2`; `H21`, `H22`), as
@@ -89,7 +95,7 @@ pub use crate::topology::editor::RemovedHydrogens;
 pub use domains::{ideal_bond_length, AtomDomains, AtomShape};
 pub(crate) use domains::{perceive_domains, DomainInput};
 pub use fragments::{fragment, fragments, Fragment, FragmentKind};
-pub(crate) use names::{fragment_names, name_prefix, next_free_number, NameAllocator};
+pub(crate) use names::{fragment_names, name_prefix, residue_names, NameAllocator, ResidueNames};
 pub use reports::{
     AttachedAtom, AttachedFragment, AttachmentSite, PlacedFragment, PlacedHydrogens,
     PlacedHydrogensReport, PlacementError, RemovedHydrogensReport,

@@ -15,7 +15,7 @@ use crate::test_fixtures::{
     deterministic_text_mutations, error_detail, geometry_atoms, mmcif_issue, test_positions,
 };
 use crate::topology::AtomSiteMetadata;
-use crate::topology::{InstanceAtomId, MoleculeClass, MoleculeInstanceId, TopologyAtomIndex};
+use crate::topology::{InstanceAtomId, MoleculeInstanceId, TopologyAtomIndex};
 use crate::units::{Quantity, DIMENSIONLESS, SQUARE_NANOMETER};
 
 const MIXED: &str = r#"
@@ -53,44 +53,6 @@ loop_
 _audit_author.name
 _audit_author.pdbx_ordinal
 'Example Author' 1
-"#;
-
-const BRANCHED_CARBOHYDRATE: &str = r#"
-data_branched_carbohydrate
-loop_
-_entity.id
-_entity.type
-1 branched
-loop_
-_struct_asym.id
-_struct_asym.entity_id
-A 1
-loop_
-_atom_site.group_PDB
-_atom_site.id
-_atom_site.type_symbol
-_atom_site.label_atom_id
-_atom_site.label_comp_id
-_atom_site.label_asym_id
-_atom_site.label_entity_id
-_atom_site.label_seq_id
-_atom_site.Cartn_x
-_atom_site.Cartn_y
-_atom_site.Cartn_z
-HETATM 1 C C1 GLC A 1 1 0.0 0.0 0.0
-HETATM 2 C C1 GAL A 1 2 3.0 0.0 0.0
-HETATM 3 C C1 GLC A 1 3 6.0 0.0 0.0
-loop_
-_struct_conn.id
-_struct_conn.conn_type_id
-_struct_conn.ptnr1_label_asym_id
-_struct_conn.ptnr1_label_atom_id
-_struct_conn.ptnr1_label_seq_id
-_struct_conn.ptnr2_label_asym_id
-_struct_conn.ptnr2_label_atom_id
-_struct_conn.ptnr2_label_seq_id
-link-1 covale A C1 1 A C1 2
-link-2 covale A C1 2 A C1 3
 "#;
 
 const SPLIT_SOURCE_CHAIN: &str = r#"
@@ -2484,56 +2446,6 @@ fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
 }
 
 #[test]
-fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
-    let linear = carbohydrate_structure(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
-    let graph_branched =
-        carbohydrate_structure(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
-    for structure in [&linear, &graph_branched] {
-        let molecule = structure.topology().instances().next().unwrap().id();
-        assert_eq!(
-            mmcif_issue(
-                mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)
-            ),
-            Some(
-                MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
-                    molecule,
-                    classification: MoleculeClass::Carbohydrate,
-                }
-            )
-        );
-    }
-}
-
-#[test]
-fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
-    let interpreted = (parse(BRANCHED_CARBOHYDRATE))
-        .interpret(Default::default())
-        .unwrap();
-    let structure = interpreted.structure();
-    let molecule = structure.topology().instances().next().unwrap();
-    assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
-    assert_eq!(molecule.residues().count(), 3);
-    assert!(matches!(
-        mmcif_issue(mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(
-            MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
-                classification: MoleculeClass::Carbohydrate,
-                ..
-            }
-        )
-    ));
-
-    let written = mmcif::write(
-        [mmcif::MmcifBlockSource::structure(structure)
-            .with_reports(std::slice::from_ref(interpreted.report()))],
-        MmcifWriteOptions::default(),
-    )
-    .map(|(text, _)| text)
-    .unwrap();
-    assert_eq!(written_entity_types(&written), ["branched"]);
-}
-
-#[test]
 fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classifications() {
     let structure = hierarchical_single_atom_structure("NAG", "C1", "C");
     let molecule = structure.topology().instance_records().next().unwrap().0;
@@ -2615,34 +2527,6 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
         ),
         Some(MmcifWriteErrorKind::UnknownClassifiedMolecule(unknown))
     );
-}
-
-#[test]
-fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
-    let input = MIXED.replace(
-        "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
-        "ATOM 2 C CA GLY A 1 3 9.0 0.0 0.0 1",
-    );
-    let interpreted = (parse(&input)).interpret(Default::default()).unwrap();
-    let structure = interpreted.structure();
-    let mut instances = structure.topology().instance_records().map(|(id, _)| id);
-    let classified = instances.next().unwrap();
-    instances.next().unwrap();
-    let mut classifications = MmcifEntityClassifications::new();
-    classifications
-        .insert(classified, EntityKind::Polymer)
-        .unwrap();
-    assert!(matches!(
-        mmcif_issue(
-            mmcif::write(
-                [mmcif::MmcifBlockSource::structure(structure)
-                    .with_classifications(&classifications)],
-                MmcifWriteOptions::default()
-            )
-            .map(|(text, _)| text)
-        ),
-        Some(MmcifWriteErrorKind::ConflictingAsymEntityClassifications { .. })
-    ));
 }
 
 /// `_entity.type` of every entity in written mmCIF, in entity order.

@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide (`7`) or hydrogen-name (`8`) bond evidence, no issue kinds 20 to 50, and no neutral onium centres in issue kind 12. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide (`7`) or hydrogen-name (`8`) bond evidence, no issue kinds 20 to 52, and no neutral onium centres in issue kind 12. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -529,6 +529,8 @@ as `list` of `str` and `usize`.
 |  |  | 48 | `SequenceNotPlaced` |
 |  |  | 49 | `ChargesFromDictionary` |
 |  |  | 50 | `DictionaryAtomsUnmatched` |
+|  |  | 51 | `HydrogenWithSeveralBonds` |
+|  |  | 52 | `HydrogenBeyondTemplateBond` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

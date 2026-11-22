@@ -562,6 +562,30 @@ pub enum StructureInterpretIssue {
         /// The atom name of the heavy atom it was bonded to.
         heavy_atom_name: String,
     },
+    /// A hydrogen lies beyond bonding distance of the atom its template
+    /// bonds it to, and within bonding distance of another heavy atom of its
+    /// residue, as one a writer names after another template atom. That
+    /// bond is left out, and the hydrogen is attached as one no bond source
+    /// names.
+    HydrogenBeyondTemplateBond {
+        /// The residue.
+        residue: SourceResidueId,
+        /// The hydrogen's atom name.
+        atom_name: String,
+        /// The atom name of the atom its template bonds it to.
+        anchor_name: String,
+    },
+    /// A hydrogen has more than one bond: its name places it on one atom
+    /// while a record or its distance bonds it to another, as when a
+    /// writer names a new hydrogen after a template atom.
+    HydrogenWithSeveralBonds {
+        /// The residue.
+        residue: SourceResidueId,
+        /// The hydrogen's atom name.
+        atom_name: String,
+        /// Its bonds.
+        bonds: usize,
+    },
     /// Two cysteines whose `SG` atoms lie within bonding distance, without
     /// hydrogens or a record linking them, were bonded as a disulfide.
     DisulfideInferred {
@@ -1176,6 +1200,23 @@ impl fmt::Display for StructureInterpretIssue {
                 formatter,
                 "Hydrogen {atom_name:?} of {residue} has no stated bond. It is bonded to \
                  {heavy_atom_name:?}, the nearest heavy atom."
+            ),
+            Self::HydrogenBeyondTemplateBond {
+                residue,
+                atom_name,
+                anchor_name,
+            } => write!(
+                formatter,
+                "Hydrogen {atom_name:?} of {residue} lies beyond bonding distance of \
+                 {anchor_name:?}. The bond between them is left out."
+            ),
+            Self::HydrogenWithSeveralBonds {
+                residue,
+                atom_name,
+                bonds,
+            } => write!(
+                formatter,
+                "Hydrogen {atom_name:?} of {residue} has {bonds} bonds."
             ),
             Self::DisulfideInferred {
                 residues: [left, right],

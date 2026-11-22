@@ -2393,7 +2393,9 @@ fn a_chain_without_its_first_residues_keeps_its_places() {
 }
 
 /// Each heavy atom's formal charge and total hydrogens after perception, by
-/// chain, residue number, and atom name.
+/// chain, residue number, and atom name. A residue's number is its place, or
+/// its author number where it states no place, as a non-polymer residue
+/// written to mmCIF does.
 fn heavy_states(structure: &Structure) -> BTreeMap<(String, Option<i32>, String), (i8, usize)> {
     let mut structure = structure.clone();
     structure.perceive().unwrap();
@@ -2406,7 +2408,11 @@ fn heavy_states(structure: &Structure) -> BTreeMap<(String, Option<i32>, String)
             let residue = site.residue();
             let key = (
                 residue.chain().label_id().to_owned(),
-                residue.label_seq_id(),
+                residue.label_seq_id().or_else(|| {
+                    residue
+                        .author_seq_id()
+                        .and_then(|number| number.parse().ok())
+                }),
                 site.metadata().label_atom_id().unwrap().to_owned(),
             );
             let state = (atom.atom().formal_charge(), atom.total_hydrogens().unwrap());

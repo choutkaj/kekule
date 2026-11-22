@@ -241,6 +241,16 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             atom_name: "H12".into(),
             heavy_atom_name: "C5".into(),
         },
+        Issue::HydrogenWithSeveralBonds {
+            residue: label(14),
+            atom_name: "H2".into(),
+            bonds: 2,
+        },
+        Issue::HydrogenBeyondTemplateBond {
+            residue: label(15),
+            atom_name: "H2".into(),
+            anchor_name: "N".into(),
+        },
         Issue::ChainBreak {
             residue: label(12),
             next: label(13),
@@ -928,7 +938,7 @@ fn interpreted_structure_sets_need_one_report_per_geometry() {
 }
 
 /// Every issue kind, in declaration order.
-const ISSUE_KINDS: [&str; 51] = [
+const ISSUE_KINDS: [&str; 53] = [
     "EntityTypeInferred",
     "ElementsInferredFromAtomNames",
     "ElementsFromTemplates",
@@ -954,6 +964,8 @@ const ISSUE_KINDS: [&str; 51] = [
     "BondNotInTemplate",
     "BondOrderDiffersFromTemplate",
     "HydrogenAttachedByDistance",
+    "HydrogenWithSeveralBonds",
+    "HydrogenBeyondTemplateBond",
     "DisulfideInferred",
     "ChainBreak",
     "PolymerLinkSkipped",
@@ -1014,6 +1026,8 @@ fn issue_kind(issue: &StructureInterpretIssue) -> &'static str {
         Issue::BondNotInTemplate { .. } => "BondNotInTemplate",
         Issue::BondOrderDiffersFromTemplate { .. } => "BondOrderDiffersFromTemplate",
         Issue::HydrogenAttachedByDistance { .. } => "HydrogenAttachedByDistance",
+        Issue::HydrogenWithSeveralBonds { .. } => "HydrogenWithSeveralBonds",
+        Issue::HydrogenBeyondTemplateBond { .. } => "HydrogenBeyondTemplateBond",
         Issue::DisulfideInferred { .. } => "DisulfideInferred",
         Issue::ChainBreak { .. } => "ChainBreak",
         Issue::PolymerLinkSkipped { .. } => "PolymerLinkSkipped",

@@ -7,7 +7,7 @@ use crate::diagnostics::{LimitExceeded, Resource};
 use crate::math::{Point3, Vector3};
 use crate::molecule::{Atom, AtomId, BondOrder, Element};
 use crate::structure::placement::{
-    fragment_names, free_sites, ideal_bond_length, name_prefix, next_free_number, perceive_domains,
+    fragment_names, free_sites, ideal_bond_length, name_prefix, perceive_domains, residue_names,
     unit, AtomDomains, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
     Fragment, NameAllocator, PlacedFragment, PlacedHydrogens, PlacedHydrogensReport,
     PlacementError, RemovedHydrogensReport, Rotation, SiteQuery,
@@ -293,9 +293,10 @@ impl StructureEditor {
     }
 
     /// The next free name for an atom of `element` in `residue`, by the rule
-    /// placement names new atoms with: the element's uppercase symbol and one
-    /// more than the largest number following it in a label or author atom
-    /// name of the residue.
+    /// placement names new heavy atoms with: the element's uppercase symbol
+    /// and one more than the largest number following it in a label or
+    /// author atom name of the residue, skipping the names its component's
+    /// bundled template places (see [`crate::structure::placement`]).
     ///
     /// # Errors
     ///
@@ -306,9 +307,7 @@ impl StructureEditor {
         element: Element,
     ) -> Result<String, PlacementError> {
         self.topology.require_residue(residue)?;
-        let prefix = name_prefix(element);
-        let number = next_free_number(&self.topology, residue, &prefix);
-        Ok(format!("{prefix}{number}"))
+        Ok(residue_names(&self.topology, residue).numbered_name(element))
     }
 
     /// Renames `atom` by the placement rule for its current element, as after
@@ -736,7 +735,7 @@ impl StructureEditor {
         let parent_site = self.topology.require_atom_site(site)?;
         let residue = parent_site.residue();
         let element = self.element(atom);
-        let name = names.allocate(&self.topology, residue, element);
+        let name = names.allocate(&self.topology, residue, atom, element);
         let metadata = parent_site
             .metadata()
             .clone()
@@ -762,7 +761,7 @@ impl StructureEditor {
         atom: EditAtomId,
         names: &mut NameAllocator,
     ) -> Result<(), PlacementError> {
-        let name = names.allocate(&self.topology, residue, self.element(atom));
+        let name = names.allocate(&self.topology, residue, atom, self.element(atom));
         self.site_in(residue, atom, name)
     }
 
