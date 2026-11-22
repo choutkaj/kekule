@@ -11,7 +11,7 @@ use crate::diagnostics::{
 use crate::io::{
     canonicalize_molecule_for_publication, has_specified_double_bond_stereo,
     localize_source_aromatic_bonds, remove_unkept_source_stereo, NormalizationError,
-    SourceStereoBondMark, SourceStereoBondMarkKind,
+    NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
 };
 use crate::molecule::{
     Atom, AtomId, AtomRadical, BondId, BondOrder, Element, Graph, ImplicitHydrogens, Molecule,
@@ -125,6 +125,7 @@ pub struct SmilesInterpretationReport {
     bond_mappings: Vec<SmilesBondMapping>,
     created_stereo_elements: Vec<StereoElementId>,
     omitted_double_bond_stereo: Vec<BondId>,
+    unpaired_directional_bonds: Vec<BondId>,
 }
 
 impl SmilesInterpretationReport {
@@ -152,6 +153,15 @@ impl SmilesInterpretationReport {
     /// [`SmilesDocument`].
     pub fn omitted_double_bond_stereo(&self) -> &[BondId] {
         &self.omitted_double_bond_stereo
+    }
+
+    /// Bonds, in bond order, whose `/` or `\` has no partner mark across a
+    /// double bond that can have E/Z: the bond is next to no double bond,
+    /// the double bond's other end has no mark, or the double bond is in a
+    /// ring of fewer than eight atoms. The molecule ignores these marks, as
+    /// RDKit does; they stay in the [`SmilesDocument`].
+    pub fn unpaired_directional_bonds(&self) -> &[BondId] {
+        &self.unpaired_directional_bonds
     }
 }
 
@@ -613,7 +623,19 @@ fn interpret_smiles_program_component(
         )
         .with_source(error)
     })?;
-    debug_assert!(publication_report.warnings.is_empty());
+    // SMILES has no wedges, so directional marks are its only warnings.
+    let unpaired_directional_bonds = publication_report
+        .warnings
+        .iter()
+        .filter_map(|warning| match warning {
+            NormalizationWarning::UnpairedDirectionalBondMark { bond } => Some(*bond),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    debug_assert_eq!(
+        unpaired_directional_bonds.len(),
+        publication_report.warnings.len()
+    );
     let omitted_double_bond_stereo = omit_nonstereogenic_double_bond_stereo(
         &mut editor,
         &mut publication_report.created_stereo_elements,
@@ -653,6 +675,14 @@ fn interpret_smiles_program_component(
         })
         .collect::<Vec<_>>();
     omitted_double_bond_stereo.sort_unstable();
+    let mut unpaired_directional_bonds = unpaired_directional_bonds
+        .into_iter()
+        .map(|bond| {
+            ids.bond(bond)
+                .expect("interpreted bonds survive publication")
+        })
+        .collect::<Vec<_>>();
+    unpaired_directional_bonds.sort_unstable();
     Ok((
         molecule,
         SmilesInterpretationReport {
@@ -660,6 +690,7 @@ fn interpret_smiles_program_component(
             bond_mappings,
             created_stereo_elements,
             omitted_double_bond_stereo,
+            unpaired_directional_bonds,
         },
     ))
 }

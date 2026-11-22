@@ -621,6 +621,45 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
+- A double or triple bond the source states between aromatic atoms is their
+  pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
+  and 4 read as benzene, not as a ring of six double bonds or a cumulene.
+  At an atom with no valence for a further pi bond, such as the charged
+  carbon of a phenyl cation or anion or a neutral boron, the stated bond is
+  that pi bond and the atom takes no hydrogen.
+- An aromatic O, S, Se, or Te with a +1 charge and no hydrogen count takes
+  no hydrogen, as pyridine nitrogen does, so V2000 pyrylium,
+  thiopyrylium, and 1,3-dithiolium interpret.
+- Every SMILES writer brackets an aromatic atom whose hydrogens a reader
+  would not infer, as the `[pH]` of 1H-phosphole, instead of only aromatic
+  nitrogen.
+- A wedge that marks no stereocenter or axis is dropped and reported
+  (`MolfileInterpretIssue::StrayWedge`), and so is a directional mark
+  without a partner across a double bond that can have E/Z
+  (`SmilesInterpretationReport::unpaired_directional_bonds`), instead of
+  failing interpretation.
+- A wedge that marks stereo kekule cannot represent is dropped and reported
+  with the reason (`MolfileInterpretIssue::UnrepresentableStereo`,
+  `UnrepresentableStereoReason`): its atom has a zero-order or dative bond
+  or more than four neighbors, or ends several candidate axes.
+- Molfile wedges, hashes, and wavy marks on aromatic (type 4) bonds are
+  read, and an atropisomer wedge on a ring bond means the same whichever
+  Kekulé structure localization picks.
+- A Molfile flat drawing whose chiral flag is unset keeps its drawn
+  configurations absolute and reports them
+  (`MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag`). 3D records,
+  whose coordinates specify configurations, never have this issue.
+- XYZ interpretation states that bond orders and charges are unknown
+  (`XyzInterpretIssue::BondOrdersAndChargesUnknown`) and reports atoms with
+  more single bonds than their largest valence
+  (`XyzInterpretIssue::ValenceExceeded`). Two non-metal atoms beyond the
+  radii sum plus 0.3 Å bond only within their valences
+  (`XyzInterpretIssue::LongContactNotBonded`), so the bridgeheads of
+  bicyclo[1.1.1]pentane stay unbonded, and a metal and a carbon bond only
+  within the sum plus 0.2 Å, so a chelating carboxylate's carbon stays
+  unbonded to its sodium or potassium. A metal and a carbon up to 0.45 Å
+  beyond the sum, as Li and C in methyllithium's tetramer, are reported
+  unbonded (`XyzInterpretIssue::LongContactNotBonded`).
 - PDB and mmCIF interpretation reads disulfide-bonded cysteines with explicit
   hydrogens as neutral: a covalent link to another residue takes the place of
   as many hydrogens as its order, as a disulfide replaces `HG`, instead of

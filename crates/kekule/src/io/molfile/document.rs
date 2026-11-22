@@ -279,11 +279,12 @@ pub enum MolfileBondOrder {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum MolfileBondStereo {
-    /// Wedge toward the viewer on a single bond.
+    /// Wedge toward the viewer on a single or aromatic bond.
     Up,
-    /// Hashed wedge away from the viewer on a single bond.
+    /// Hashed wedge away from the viewer on a single or aromatic bond.
     Down,
-    /// Wavy single bond, or crossed double bond: the configuration is unknown.
+    /// Wavy single or aromatic bond, or crossed double bond: the configuration
+    /// is unknown.
     Either,
 }
 
@@ -505,7 +506,9 @@ impl MolfileDocument {
     }
 
     /// The counts-line chiral flag. It is retained as source metadata;
-    /// interpretation does not translate it into stereo groups.
+    /// interpretation does not translate it into stereo groups, and reports
+    /// [`MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag`](super::MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag)
+    /// when it is unset on a flat drawing with configurations.
     pub const fn chiral_flag(&self) -> bool {
         self.ctab.chiral_flag
     }
