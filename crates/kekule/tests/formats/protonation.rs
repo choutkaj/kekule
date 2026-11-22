@@ -342,6 +342,50 @@ fn terminal_hydrogens_bond_by_name() {
 }
 
 #[test]
+fn terminal_hydrogen_names_keep_the_fixed_counts_a_writer_needs() {
+    // Glycine without OXT, with H1-H3 on N: no template names H1 or H3, so
+    // a reader does not fix C at no hydrogen again from the template. The
+    // mmCIF writer fails, or reports the count it omits.
+    let mut rows = without(sites("GLY"), &["H", "H2", "OXT", "HXT"]);
+    for name in ["H1", "H2", "H3"] {
+        rows.push(hydrogen(&rows, name, "N", "CA"));
+    }
+    let result = read(&rows, "");
+    let carbon = |result: &StructureInterpretation| {
+        let mut structure = result.structure().clone();
+        structure.perceive().unwrap();
+        let atom = result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .find(|atom| atom.atom_name() == "C")
+            .unwrap()
+            .atom();
+        structure
+            .topology()
+            .instance(atom.instance())
+            .unwrap()
+            .molecule()
+            .total_hydrogens(atom.atom())
+            .unwrap()
+    };
+    assert_eq!(carbon(&result), 0);
+    let error = mmcif::write([&result], Default::default()).unwrap_err();
+    assert!(
+        error.to_string().contains("fixed implicit hydrogen count"),
+        "{error}"
+    );
+    let options = mmcif::MmcifWriteOptions::default()
+        .with_implicit_hydrogens(kekule::diagnostics::UnrepresentablePolicy::Omit);
+    let (_, report) = mmcif::write([&result], options).unwrap();
+    assert!(report.omissions().iter().any(|omission| matches!(
+        omission,
+        kekule::diagnostics::WriteOmission::ImplicitHydrogens { atoms } if *atoms > 0
+    )));
+}
+
+#[test]
 fn unknown_template_charges_are_reported() {
     for (component, atoms) in [
         ("HEM", vec!["FE"]),
@@ -646,6 +690,20 @@ fn a_terminal_carboxylate_leaves_histidine_neutral() {
     let rows = heavy(residue_sites("HIS", "A", 2, [0.0; 3]));
     let result = read_sequenced(&rows, &["ALA", "HIS"]);
     assert_eq!(charges(&result), charged(&[("A", "OXT", -1)]));
+    assert_eq!(state_at(&result, "A", 2, "NE2"), (0, 1));
+    assert_eq!(state_at(&result, "A", 2, "ND1"), (0, 0));
+
+    // So does an ammonium at the other end: alanine 1 bonded to histidine 2.
+    let mut rows = without(heavy(residue_sites("ALA", "A", 1, [0.0; 3])), &["OXT"]);
+    let carbon = point(&rows, "C");
+    let nitrogen = point(&residue_sites("HIS", "A", 2, [0.0; 3]), "N");
+    let shift = [0, 1, 2].map(|axis| carbon[axis] - nitrogen[axis] + [1.33, 0.0, 0.0][axis]);
+    rows.extend(heavy(residue_sites("HIS", "A", 2, shift)));
+    let result = read_sequenced(&rows, &["ALA", "HIS"]);
+    assert_eq!(
+        charges(&result),
+        charged(&[("A", "N", 1), ("A", "OXT", -1)])
+    );
     assert_eq!(state_at(&result, "A", 2, "NE2"), (0, 1));
     assert_eq!(state_at(&result, "A", 2, "ND1"), (0, 0));
 }

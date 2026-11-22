@@ -735,14 +735,19 @@ the main branch migrates by the table under "From the SampleSet API".
     the larger occupancy stays, the deuterium on a tie. The other is
     reported (`AlternateLocationOmitted`).
   - An acid oxygen the template already charges keeps that charge without
-    its hydrogen, as heme's carboxylates. Without hydrogens a polymer
-    residue takes the variant that charges the fewest atoms, so a
-    C-terminal histidine stays neutral, and the one that gives the stated
-    charges comes first: histidine with `NE2` +1 is the imidazolium.
+    its hydrogen, as heme's carboxylates. With it, the charge follows the
+    hydrogen: a template charge the atom's bonds and hydrogens cannot hold
+    takes the nearest allowed charge towards zero
+    (`ProtonationFromHydrogens`). Without hydrogens a residue of a
+    polymer template, in a chain or alone, takes the variant that charges
+    the fewest atoms, so a C-terminal histidine stays neutral, and the one
+    that gives the stated charges comes first: histidine with `NE2` +1 is
+    the imidazolium. A free amino acid is the zwitterion.
   - Without a sequence, a break between residues next to each other, by
     mmCIF label sequence numbers or in one PDB run between `TER` records
     and chain or segment changes, is a gap unless either side shows a true
-    end.
+    end. In PDB, a polymer residue numbered lower than the one before it,
+    or of another linkage, also ends a run unless a link joins the two.
   - PDB `SEQRES` places a chain with substituted residues, at most a tenth,
     and caps it does not list. A sequence that places nothing is reported
     (`StructureInterpretIssue::SequenceNotPlaced`). The PDB writer writes

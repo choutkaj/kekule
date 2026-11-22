@@ -56,6 +56,8 @@ ties go to the template, then the variants in order.
   The atom keeps its template charge and takes hydrogens by valence
   (`HydrogensMissing`). A stated charge or metal coordination deprotonates a
   phenol or a thiol.
+- A template charge the atom's bonds and hydrogens cannot hold, as heme's
+  `O2A` -1 with `H2A`, takes the nearest allowed charge towards zero.
 - Changed charges and a chosen variant are reported
   (`ProtonationFromHydrogens`), with the atoms left charged.
 
@@ -109,7 +111,9 @@ residue is at a gap when the polymer's sequence has residues past it. The
 mmCIF `_entity_poly_seq` and the PDB `SEQRES` records give the sequence.
 Without one, a modelled residue next to it is one: at the next label
 sequence number of an mmCIF asym, or the next residue of a PDB run, which
-`TER` records and changes of chain or segment end. At such a break, a true
+`TER` records and changes of chain or segment end. A polymer residue
+numbered lower than the one before it, or of another linkage, also ends a
+run unless a link joins the two. At such a break, a true
 end on either side, as `OXT` before it or `H1`-`H3` after it, ends both
 residues.
 
