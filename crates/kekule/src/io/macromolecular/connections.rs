@@ -4,8 +4,9 @@ use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
+use crate::algorithms::allowed_valences;
 use crate::diagnostics::{Cancellation, FormatError};
-use crate::molecule::{BondOrder, Element};
+use crate::molecule::{Atom, BondOrder, Element};
 
 use super::atom_site::AtomRow;
 use super::types::{
@@ -224,6 +225,52 @@ pub(crate) fn is_metal(element: Element) -> bool {
         element.atomic_number(),
         3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=84 | 87..=116
     )
+}
+
+/// How a reader takes a single bond between a metal and a non-metal of one
+/// residue whose source states no type, as PDB `CONECT` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetalBondReading {
+    Covalent,
+    Dative,
+    /// The source cannot tell: the bond is read as covalent and reported.
+    Unstated,
+}
+
+/// The reading of an untyped metal bond from its non-metal `donor`.
+/// `other` is the donor's valence from its other bonds, those of
+/// `undecided` untyped metal bonds of the residue left out, and `hydrogens`
+/// whether the residue has explicit hydrogens.
+///
+/// The bond is covalent when one more bond leaves the donor at an allowed
+/// valence, as for a chloride or a phosphonate phosphorus. It is dative
+/// when the donor's valence is allowed without it, as for an ammine
+/// nitrogen or a phosphine. A residue without hydrogens, a donor of several
+/// untyped metal bonds, such as a bridging chloride, and a donor that
+/// neither reading satisfies, such as a carbene carbon, are unstated.
+pub(crate) fn metal_bond_reading(
+    donor: &Atom,
+    other: usize,
+    undecided: usize,
+    hydrogens: bool,
+) -> MetalBondReading {
+    if !hydrogens || undecided != 1 {
+        return MetalBondReading::Unstated;
+    }
+    let allowed = |valence: usize| {
+        allowed_valences(donor).is_some_and(|valences| {
+            valences
+                .iter()
+                .any(|&allowed| usize::from(allowed) == valence)
+        })
+    };
+    if allowed(other + 1) {
+        MetalBondReading::Covalent
+    } else if allowed(other) {
+        MetalBondReading::Dative
+    } else {
+        MetalBondReading::Unstated
+    }
 }
 
 fn report_connection_partner_resolution<'a>(

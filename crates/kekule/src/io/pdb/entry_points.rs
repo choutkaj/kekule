@@ -69,9 +69,12 @@ pub fn parse_reader(
 ///
 /// Bonds within standard residues the dictionary covers, polymer
 /// linkage within bonding distance, and bonds within water are derived by
-/// readers and not listed. Readers take a listing within one residue for a
-/// covalent bond, and one between a metal and a non-metal of different
-/// residues for coordination.
+/// readers and not listed. Readers take a listing between a metal and a
+/// non-metal of different residues for coordination, and any other listing
+/// for a covalent bond, except that a metal bond within one residue reads
+/// as covalent or dative by its non-metal's other bonds. Such a bond is
+/// listed only when that reading gives its order back; otherwise
+/// `CONECT` cannot state it.
 ///
 /// Metal coordination between residues is no bond of the structure: an
 /// interpretation report keeps it

@@ -107,6 +107,9 @@ pub(super) struct BuiltMolecule {
     /// Bonds connectivity-only records list within one residue, for the
     /// connectivity resolver.
     listed: Vec<ListedBond>,
+    /// Single bonds between a metal and a non-metal of one residue that
+    /// other records, such as `LINK`, state without a type.
+    metal_bonds: Vec<[AtomId; 2]>,
 }
 
 pub(super) struct PublishedMolecule {
@@ -241,6 +244,7 @@ impl BuiltMolecule {
             provenance,
             evidence,
             listed,
+            metal_bonds,
             ..
         } = self;
         let atoms = provenance
@@ -267,6 +271,7 @@ impl BuiltMolecule {
             editor,
             atoms,
             listed,
+            metal_bonds,
             &provenance.coordinate_model_id,
             evidence,
             &mut report.issues,
@@ -542,6 +547,7 @@ pub(super) fn build_molecule(
     }
     let mut evidence = BondEvidenceMap::new();
     let mut listed = Vec::new();
+    let mut metal_bonds = Vec::new();
     for (step, connection) in connections.iter().enumerate() {
         poll_every(cancellation, step)?;
         let [Some(left), Some(right)] = connection.rows.map(|row| endpoints[&row]) else {
@@ -559,6 +565,9 @@ pub(super) fn build_molecule(
             continue;
         }
         record_evidence(&mut evidence, left, right, source);
+        if connection.unstated_metal_bond {
+            metal_bonds.push([left, right]);
+        }
         if editor
             .graph()
             .require_bond_between(left, right)
@@ -664,6 +673,7 @@ pub(super) fn build_molecule(
         provenance,
         evidence,
         listed,
+        metal_bonds,
     })
 }
 

@@ -6,7 +6,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::algorithms::{allowed_valences, rdkit_valence_violation, ValenceViolation};
+use crate::algorithms::{rdkit_valence_violation, ValenceViolation};
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
@@ -73,6 +73,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
     editor: &mut MoleculeEditor,
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
     listed: &[ListedBond],
+    metal_bonds: &[[AtomId; 2]],
     model_id: &str,
     evidence: &mut BondEvidenceMap,
     issues: &mut Vec<raw::StructureInterpretIssue>,
@@ -87,7 +88,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
         issues,
         model_id,
         cancellation,
-        unstated_metal_bonds: Vec::new(),
+        unstated_metal_bonds: metal_bonds.to_vec(),
     };
     let residues = residue_atoms(atoms, cancellation)?;
     resolver.resolve(residues, listed)?;
@@ -619,13 +620,21 @@ impl<'r> Resolver<'r, '_> {
                     ) else {
                         continue;
                     };
+                    // A bond another record states, such as a `_struct_conn`
+                    // row, keeps its type.
+                    let stated = self
+                        .graph
+                        .require_bond_between(left, right)
+                        .map_err(interpret_error)?
+                        .is_some();
                     let order =
                         match self.is_coordination(bond, residue, template.as_ref(), [left, right])
                         {
                             Some(true) => SourceBondOrder::Localized(BondOrder::Dative),
                             Some(false) => bond.order,
                             None => {
-                                if bond.order == SourceBondOrder::Localized(BondOrder::Single)
+                                if !stated
+                                    && bond.order == SourceBondOrder::Localized(BondOrder::Single)
                                     && metal_bond(residue, [left, right])
                                 {
                                     self.unstated_metal_bonds.push([left, right]);
@@ -708,7 +717,7 @@ impl<'r> Resolver<'r, '_> {
         self.apply_polymer_links(&residues)?;
         raw::poll(self.cancellation)?;
         self.attach_stray_hydrogens(&residues, stray_hydrogens)?;
-        self.decide_metal_bonds(&residues)?;
+        self.decide_metal_bonds(&residues, &residue_of)?;
         for residue in &templated {
             raw::poll(self.cancellation)?;
             self.assign_template_charges(residue, &residues[&residue.key])?;
@@ -833,39 +842,37 @@ impl<'r> Resolver<'r, '_> {
 
     /// Decides whether each single bond between a metal and a non-metal of
     /// one residue, which its source states without a type, is covalent or
-    /// dative. In a residue with explicit hydrogens, the bond is dative when
-    /// the non-metal's other bonds already reach its lowest allowed valence,
-    /// as the nitrogen of an ammine or a pyridine does (an aromatic bond
-    /// counting one and a half), and covalent
-    /// otherwise, as a chloride's is. Without hydrogens the file cannot tell:
-    /// the bonds stay covalent, and the report says so for each residue.
+    /// dative. A donor follows [`raw::metal_bond_reading`], unless aromatic
+    /// bonds awaiting localization join it, as when a pyridine or
+    /// cyclopentadienyl ring is given as `AROM` rows. Such donors take the
+    /// reading under which the residue's aromatic bonds localize, all
+    /// covalent or all dative. Bonds that no reading decides stay covalent,
+    /// and the report counts them for each residue.
     fn decide_metal_bonds(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+        residue_of: &BTreeMap<AtomId, &ResidueKey>,
     ) -> Result<(), FormatError> {
-        let bonds = std::mem::take(&mut self.unstated_metal_bonds);
+        let bonds = std::mem::take(&mut self.unstated_metal_bonds)
+            .into_iter()
+            .map(|[left, right]| [left.min(right), left.max(right)])
+            .collect::<BTreeSet<_>>();
         let mut by_residue = BTreeMap::<&ResidueKey, Vec<[AtomId; 2]>>::new();
         for pair in bonds {
-            if let Some(residue) = residues
-                .values()
-                .find(|residue| residue.site(pair[0]).is_some())
-            {
-                by_residue.entry(&residue.key).or_default().push(pair);
+            if let Some(&key) = residue_of.get(&pair[0]) {
+                by_residue.entry(key).or_default().push(pair);
             }
         }
         for (key, pairs) in by_residue {
             raw::poll(self.cancellation)?;
             let residue = &residues[key];
-            if !residue.sites.iter().any(|site| is_hydrogen(site.element)) {
-                self.issues
-                    .push(raw::StructureInterpretIssue::MetalBondsUnstated {
-                        residue: key.id(self.model_id),
-                        bonds: pairs.len(),
-                    });
-                continue;
-            }
-            for [left, right] in pairs {
-                let non_metal = if raw::is_metal(
+            let hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
+            let mut dative = Vec::new();
+            let mut aromatic = Vec::new();
+            let mut unstated = 0;
+            for &pair in &pairs {
+                let [left, right] = pair;
+                let donor = if raw::is_metal(
                     residue
                         .site(left)
                         .expect("unstated metal bonds join residue sites")
@@ -875,43 +882,96 @@ impl<'r> Resolver<'r, '_> {
                 } else {
                     left
                 };
-                let metal = if non_metal == left { right } else { left };
-                // In half units: an aromatic bond awaiting localization gives
-                // one and a half.
-                let other = self
+                let undecided = pairs.iter().filter(|pair| pair.contains(&donor)).count();
+                let mut other = 0;
+                let mut joins_aromatic = false;
+                for (id, bond) in self
                     .graph
-                    .require_incident_bonds(non_metal)
+                    .require_incident_bonds(donor)
                     .map_err(interpret_error)?
-                    .filter(|(_, bond)| bond.other_atom(non_metal) != metal)
-                    .map(|(id, bond)| {
-                        if self.source_aromatic_bonds.contains(&id) {
-                            3
-                        } else {
-                            2 * link_valence(bond.order())
-                        }
-                    })
-                    .sum::<usize>();
-                let atom = self
+                {
+                    let partner = bond.other_atom(donor);
+                    if pairs.contains(&[donor.min(partner), donor.max(partner)]) {
+                        continue;
+                    }
+                    joins_aromatic |= self.source_aromatic_bonds.contains(&id);
+                    other += link_valence(bond.order());
+                }
+                if joins_aromatic && hydrogens && undecided == 1 {
+                    aromatic.push(pair);
+                    continue;
+                }
+                let atom = self.graph.require_atom(donor).map_err(interpret_error)?;
+                match raw::metal_bond_reading(atom, other, undecided, hydrogens) {
+                    raw::MetalBondReading::Covalent => {}
+                    raw::MetalBondReading::Dative => dative.push(pair),
+                    raw::MetalBondReading::Unstated => unstated += 1,
+                }
+            }
+            if !aromatic.is_empty() {
+                match self.aromatic_metal_bonds_dative(residue, &aromatic)? {
+                    Some(true) => dative.extend(aromatic),
+                    Some(false) => {}
+                    None => unstated += aromatic.len(),
+                }
+            }
+            for [left, right] in dative {
+                let bond = self
                     .graph
-                    .require_atom(non_metal)
+                    .require_bond_between(left, right)
                     .map_err(interpret_error)?
-                    .clone();
-                let satisfied = allowed_valences(&atom)
-                    .and_then(|valences| valences.first())
-                    .is_some_and(|&lowest| other >= 2 * usize::from(lowest));
-                if satisfied {
-                    let bond = self
-                        .graph
+                    .expect("an unstated metal bond was added");
+                self.graph
+                    .set_bond_order(bond, BondOrder::Dative)
+                    .map_err(interpret_error)?;
+            }
+            if unstated > 0 {
+                self.issues
+                    .push(raw::StructureInterpretIssue::MetalBondsUnstated {
+                        residue: key.id(self.model_id),
+                        bonds: unstated,
+                    });
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the metal bonds of aromatic donors in `residue` are dative:
+    /// `Some(false)` when only the covalent reading lets the residue's
+    /// aromatic bonds localize, `Some(true)` when only the dative one does,
+    /// and `None` when both or neither do.
+    fn aromatic_metal_bonds_dative(
+        &self,
+        residue: &ResidueAtoms,
+        pairs: &[[AtomId; 2]],
+    ) -> Result<Option<bool>, FormatError> {
+        let mut aromatic = BTreeSet::new();
+        for &id in self.source_aromatic_bonds.iter() {
+            let bond = self.graph.require_bond(id).map_err(interpret_error)?;
+            if residue.site(bond.a).is_some() && residue.site(bond.b).is_some() {
+                aromatic.insert(id);
+            }
+        }
+        let localizes = |dative: bool| -> Result<bool, FormatError> {
+            let mut trial = self.graph.clone();
+            if dative {
+                for &[left, right] in pairs {
+                    let bond = trial
                         .require_bond_between(left, right)
                         .map_err(interpret_error)?
                         .expect("an unstated metal bond was added");
-                    self.graph
+                    trial
                         .set_bond_order(bond, BondOrder::Dative)
                         .map_err(interpret_error)?;
                 }
             }
-        }
-        Ok(())
+            Ok(localize_source_aromatic_bonds(&mut trial, &aromatic).is_ok())
+        };
+        Ok(match (localizes(false)?, localizes(true)?) {
+            (true, false) => Some(false),
+            (false, true) => Some(true),
+            _ => None,
+        })
     }
 
     /// Adds the template bonds among matched atoms. Bonds the source states

@@ -27,9 +27,10 @@ use crate::diagnostics::{
     FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
-use crate::io::macromolecular::connectivity::{within_bonding_distance, PolymerLink};
+use crate::io::macromolecular::connectivity::{link_valence, within_bonding_distance, PolymerLink};
 use crate::io::macromolecular::{
-    is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
+    is_metal, metal_bond_reading, MetalBondReading, StructureInterpretation,
+    StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::io::mmcif::write::{bond_order_name, cell_values};
 use crate::io::write_policy::{
@@ -323,10 +324,12 @@ pub enum PdbWriteErrorKind {
     /// A bond `CONECT` cannot state, with [`PdbWriteOptions::chemistry`] set
     /// to fail. Readers take a pair listed once as single, twice as double,
     /// and three times as triple, and a metal and a non-metal of different
-    /// residues as dative whatever their listing. Zero-order and quadruple
-    /// bonds, dative bonds within one residue or between other pairs, and
-    /// other orders between a metal and a non-metal of different residues
-    /// have no listing.
+    /// residues as dative whatever their listing. Within one residue, a
+    /// metal bond reads as covalent or dative by its non-metal's other
+    /// bonds. Zero-order and quadruple bonds, dative bonds between other
+    /// pairs, metal bonds within one residue whose order that reading does
+    /// not give, and other orders between a metal and a non-metal of
+    /// different residues have no listing.
     UnsupportedBondOrder {
         /// The bond.
         bond: InstanceBondId,
@@ -1200,6 +1203,11 @@ impl Plan {
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
         let mut unstated = 0;
         let mut coordination_bonds = 0;
+        let hydrogens = topology
+            .atoms()
+            .filter(|atom| atom.atom().element.atomic_number() == 1)
+            .map(|atom| &residues[atom.index().index()].key)
+            .collect::<BTreeSet<_>>();
         for bond in topology.bonds() {
             let [left, right] = bond.atoms().map(|atom| atom.index().index());
             let standard = !records[left].hetatm && !records[right].hetatm;
@@ -1220,28 +1228,55 @@ impl Plan {
             // different residues for coordination, and any other listing for
             // a covalent bond.
             let elements = bond.atoms().map(|atom| atom.atom().element);
-            let coordination = !same_residue && is_metal(elements[0]) != is_metal(elements[1]);
+            let metal_bond = is_metal(elements[0]) != is_metal(elements[1]);
+            let coordination = !same_residue && metal_bond;
             if bond.order == BondOrder::Dative && coordination {
                 // Readers record this listing as coordination, not a bond.
                 coordination_bonds += 1;
             }
-            let listings = match (bond.order, coordination) {
-                (BondOrder::Dative, true) | (BondOrder::Single, false) => 1,
-                (BondOrder::Double, false) => 2,
-                (BondOrder::Triple, false) => 3,
+            // Within one residue, a listing between a metal and a non-metal
+            // states the bond only when a reader gives it this order.
+            let metal = (same_residue
+                && metal_bond
+                && matches!(bond.order, BondOrder::Single | BondOrder::Dative))
+            .then(|| {
+                let template = templates
+                    .get(&residues[left].key)
+                    .copied()
+                    .filter(|_| templated);
+                listed_metal_bond(
+                    topology,
+                    records,
+                    residues,
+                    template,
+                    &hydrogens,
+                    [left, right],
+                )
+            });
+            let listings = match (bond.order, coordination, metal) {
                 // A template supplies bonds a listing cannot state, such as
                 // a heme's dative iron-nitrogen bonds.
+                (BondOrder::Dative, _, Some(MetalListing::Template)) => continue,
+                (_, _, Some(MetalListing::Template)) => Some(1),
+                (order, _, Some(MetalListing::Reads(read))) => (read == order).then_some(1),
+                (_, _, Some(MetalListing::Unknown)) => None,
+                (BondOrder::Dative, true, None) | (BondOrder::Single, false, None) => Some(1),
+                (BondOrder::Double, false, None) => Some(2),
+                (BondOrder::Triple, false, None) => Some(3),
+                // A template supplies the residue's other bonds a listing
+                // cannot state.
                 _ if templated => continue,
-                (order, _) => {
-                    if strict {
-                        return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
-                            bond: bond.id(),
-                            order,
-                        }));
-                    }
-                    unstated += 1;
-                    continue;
+                (_, _, None) => None,
+            };
+            let Some(listings) = listings else {
+                if strict {
+                    return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
+                        bond: bond.id(),
+                        order: bond.order,
+                    }));
                 }
+                unstated += 1;
+                continue;
             };
             for _ in 0..listings {
                 conect.entry(left).or_default().push(right);
@@ -1481,6 +1516,98 @@ struct ConectPlan {
     /// Dative bonds between residues, listed as coordination that readers
     /// record rather than bond.
     coordination_bonds: usize,
+}
+
+/// What a reader makes of a `CONECT` listing between a metal and a
+/// non-metal of one residue.
+enum MetalListing {
+    /// The residue's template lists the bond, and its order wins.
+    Template,
+    /// The listing reads as this order ([`metal_bond_reading`]).
+    Reads(BondOrder),
+    /// The donor's template bonds are aromatic, which the reader localizes
+    /// before it decides.
+    Unknown,
+}
+
+/// What a reader makes of the listing of the bond between `atoms`, a metal
+/// and a non-metal of one residue whose reader template is `template`, with
+/// `hydrogens` the residues that have explicit hydrogens.
+fn listed_metal_bond(
+    topology: &Topology,
+    records: &[AtomRecord],
+    residues: &[AtomResidue],
+    template: Option<&Component>,
+    hydrogens: &BTreeSet<&ResidueKey>,
+    atoms: [usize; 2],
+) -> MetalListing {
+    let atom = |index: usize| {
+        topology
+            .atom_at(TopologyAtomIndex::from_index(index))
+            .expect("records follow dense atoms")
+    };
+    let named = |index: usize| {
+        template
+            .and_then(|template| template.atom(records[index].name.trim()))
+            .map(|(named, _)| named)
+    };
+    let template_lists = |left: usize, right: usize| {
+        let (Some(template), Some(left), Some(right)) = (template, named(left), named(right))
+        else {
+            return false;
+        };
+        template.bonds().iter().any(|bond| {
+            let [a, b] = bond.atoms();
+            (a, b) == (left, right) || (a, b) == (right, left)
+        })
+    };
+    let [left, right] = atoms;
+    if template_lists(left, right) {
+        return MetalListing::Template;
+    }
+    let donor = if is_metal(atom(left).atom().element) {
+        right
+    } else {
+        left
+    };
+    if let (Some(template), Some(named)) = (template, named(donor)) {
+        if template.bonds().iter().any(|bond| {
+            bond.atoms().contains(&named)
+                && !bond.metal_coordination()
+                && matches!(
+                    bond.order(),
+                    ComponentBondOrder::Aromatic | ComponentBondOrder::Delocalized
+                )
+        }) {
+            return MetalListing::Unknown;
+        }
+    }
+    let (mut other, mut undecided) = (0, 0);
+    for bond in atom(donor).bonds() {
+        let partner = bond
+            .atoms()
+            .map(|atom| atom.index().index())
+            .into_iter()
+            .find(|&index| index != donor)
+            .expect("a bond joins two atoms");
+        let order = bond.bond().order;
+        if residues[partner].key == residues[donor].key
+            && is_metal(atom(partner).atom().element)
+            && matches!(order, BondOrder::Single | BondOrder::Dative)
+            && !template_lists(donor, partner)
+        {
+            undecided += 1;
+        } else {
+            other += link_valence(order);
+        }
+    }
+    let hydrogens = hydrogens.contains(&residues[donor].key);
+    MetalListing::Reads(
+        match metal_bond_reading(atom(donor).atom(), other, undecided, hydrogens) {
+            MetalBondReading::Dative => BondOrder::Dative,
+            MetalBondReading::Covalent | MetalBondReading::Unstated => BondOrder::Single,
+        },
+    )
 }
 
 /// The template a reader applies to each residue without templates from the

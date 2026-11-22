@@ -892,9 +892,9 @@ component in source order. In a conformation the coordinates are the
 configuration: annotations that contradict them yield to them with a warning.
 mmCIF keeps label and author hierarchy identities; PDB carries author
 identities only. A PDB atom without an element symbol takes its element from
-its residue's template, else from its name by the column convention, and one
-whose name reads as two elements fails; the report names the atoms either
-way. Water and ion residue names of the PDB and of simulation programs are
+its residue's template, else from its name by the column convention. A name
+that reads as two elements fails, unless it starts with `H`, which makes it a
+hydrogen; the report names the atoms either way. Water and ion residue names of the PDB and of simulation programs are
 never polymer. Multiple coordinate models do not imply a time order, and the
 formats state no distribution: every coordinate model becomes a geometry, a
 host that reads the models as draws builds an `Ensemble`, and occupancy is
@@ -918,10 +918,16 @@ report keeps it as connection metadata, while coordination within one residue
 is a dative bond, so a metal complex that is one component stays one molecule.
 A record that states a bond without its type, such as PDB `CONECT`, states
 coordination between a metal and a non-metal of different residues. Within
-one residue a source or template flag decides; without one, explicit
-hydrogens do: the bond is dative when the non-metal's other bonds fill its
-valence, as an ammine's do, and covalent otherwise, as a chloride's is. A
-residue without hydrogens keeps such bonds covalent, and the report says so.
+one residue a source or template flag decides. Without one, explicit
+hydrogens do. The bond is covalent when one more bond leaves the non-metal at
+an allowed valence, as for a chloride or a phosphonate phosphorus. It is
+dative when the non-metal's valence is allowed without it, as for an ammine or
+a phosphine. A non-metal in an aromatic ring given as aromatic bonds takes
+the reading under which the ring localizes. A carbene carbon satisfies
+neither reading, so its bond stays covalent. Such bonds, a non-metal bonded
+to several metals, and every such bond of a residue without hydrogens stay
+covalent, and the report says so. The PDB writer lists a metal bond within
+one residue only when this reading gives its order back.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral

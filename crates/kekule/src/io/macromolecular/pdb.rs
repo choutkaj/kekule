@@ -498,14 +498,14 @@ fn name_element(atom: &PdbAtom, conventional: bool) -> Result<Element, FormatErr
     }
 }
 
-/// Whether the entry aligns atom names by the PDB element convention: some
-/// name shorter than four characters starts in column 13 with a two-letter
-/// element symbol, as `FE` does, and none starts there without one, as `C1`
-/// would. Writers that pad every short name into column 14 show no such
-/// name.
+/// Whether the entry aligns atom names by the PDB element convention: among
+/// atoms without element symbols, some name shorter than four characters
+/// starts in column 13 with a two-letter element symbol, as `FE` does, and
+/// none starts there without one, as `C1` would. Writers that pad every
+/// short name into column 14 show no such name.
 fn follows_name_alignment(atoms: &[PdbAtom]) -> bool {
     let mut evidence = false;
-    for atom in atoms {
+    for atom in atoms.iter().filter(|atom| atom.element().is_none()) {
         let starts_in_13 = atom
             .name_field()
             .as_bytes()
@@ -546,7 +546,8 @@ fn two_letter_symbol(text: &str) -> Option<Element> {
 /// column 14 has a one-letter symbol and a shorter name starting in column
 /// 13 a two-letter one. Otherwise, and for other four-character names, a
 /// name whose first letter and first two letters are both element symbols
-/// is ambiguous, as ` CL1` is in an entry that pads every name.
+/// is ambiguous, as ` CL1` is in an entry that pads every name, unless its
+/// first letter is `H`: such a name, as ` HG1`, is a hydrogen.
 fn element_from_atom_name(name_field: &str, residue_name: &str, conventional: bool) -> NameElement {
     let name = name_field.trim();
     if name.eq_ignore_ascii_case(residue_name) {
@@ -561,15 +562,22 @@ fn element_from_atom_name(name_field: &str, residue_name: &str, conventional: bo
     let two = two_letter_symbol(&name_field[start..]);
     let four = start == 0 && name.len() == 4;
     let digit_led = name_field[..start].bytes().any(|byte| byte != b' ');
+    let ambiguous = |one: Element, two: Element| {
+        if one.atomic_number() == 1 {
+            NameElement::Element(one)
+        } else {
+            NameElement::Ambiguous([one, two])
+        }
+    };
     match (one, two) {
         // A digit in column 13 leaves column 14 a one-letter symbol.
         (Some(one), _) if digit_led => NameElement::Element(one),
-        (Some(one), Some(two)) if start > 0 && !conventional => NameElement::Ambiguous([one, two]),
+        (Some(one), Some(two)) if start > 0 && !conventional => ambiguous(one, two),
         (Some(one), _) if start > 0 => NameElement::Element(one),
         _ if four && name_field.as_bytes()[0].eq_ignore_ascii_case(&b'H') => {
             NameElement::Element(Element::from_atomic_number(1).expect("hydrogen"))
         }
-        (Some(one), Some(two)) if four || !conventional => NameElement::Ambiguous([one, two]),
+        (Some(one), Some(two)) if four || !conventional => ambiguous(one, two),
         (_, Some(two)) => NameElement::Element(two),
         (Some(one), None) => NameElement::Element(one),
         (None, None) => NameElement::None,

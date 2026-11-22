@@ -7,14 +7,16 @@ use std::sync::Arc;
 
 use kekule::components::ComponentLibrary;
 use kekule::diagnostics::DiagnosticKind;
+use kekule::diagnostics::{FormatErrorDetail, UnrepresentablePolicy, WriteOmission};
 use kekule::macromolecular::{
     ConnectivityOptions, EntityKind, ModelSelection, NumberField, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
 use kekule::molecule::BondOrder;
-use kekule::structure::Structure;
+use kekule::pdb::{PdbWriteErrorKind, PdbWriteOptions};
+use kekule::structure::{Positions, Structure};
 use kekule::topology::ResidueClass;
-use kekule::{mmcif, pdb};
+use kekule::{mmcif, pdb, smiles};
 
 /// One `ATOM` or `HETATM` record in the 80 fixed columns: `name` fills
 /// columns 13-16 as written.
@@ -299,10 +301,9 @@ HETATM 5 CL CL2 CPT A 1 . 0.000 -2.300 0.000 1
     assert_eq!(bonds(read.structure()), bonds(structure));
 }
 
-#[test]
-fn explicit_hydrogens_tell_dative_metal_bonds_from_covalent_ones() {
-    // Cisplatin with its ammine hydrogens: CONECT lists only the platinum
-    // bonds, and each hydrogen attaches to its nearest nitrogen.
+/// Cisplatin with its ammine hydrogens, without CONECT records: each
+/// hydrogen attaches to its nearest nitrogen.
+fn cisplatin_with_hydrogens() -> Vec<String> {
     let hydrogens = [
         ("6", "H11 ", [2.390, 0.940, 0.000], "H"),
         ("7", "H12 ", [2.390, -0.470, 0.820], "H"),
@@ -311,7 +312,7 @@ fn explicit_hydrogens_tell_dative_metal_bonds_from_covalent_ones() {
         ("10", "H22 ", [-0.470, 2.390, 0.820], "H"),
         ("11", "H23 ", [-0.470, 2.390, -0.820], "H"),
     ];
-    let mut lines = CISPLATIN
+    CISPLATIN
         .iter()
         .chain(&hydrogens)
         .map(|&(serial, name, position, element)| {
@@ -319,7 +320,32 @@ fn explicit_hydrogens_tell_dative_metal_bonds_from_covalent_ones() {
                 "HETATM", serial, name, "CPT", 'A', "1", position, element, "",
             )
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+/// The bonds of the first atom, by dense atom indices and order.
+fn first_atom_bonds(structure: &Structure) -> Vec<(usize, usize, BondOrder)> {
+    bonds(structure)
+        .into_iter()
+        .filter(|&(left, _, _)| left == 0)
+        .collect()
+}
+
+fn unstated_metal_bonds(read: &StructureInterpretation) -> Vec<usize> {
+    read.report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::MetalBondsUnstated { bonds, .. } => Some(*bonds),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn explicit_hydrogens_tell_dative_metal_bonds_from_covalent_ones() {
+    // CONECT lists only the platinum bonds.
+    let mut lines = cisplatin_with_hydrogens();
     lines.push("CONECT    1    2    3    4    5".to_owned());
     let read = read(&entry(&lines));
     let structure = read.structure();
@@ -893,6 +919,307 @@ fn reports_name_how_atoms_and_numbers_were_read() {
         };
         assert!(issues.contains(&issue), "{issue:?} in {issues:?}");
     }
+}
+
+#[test]
+fn donors_take_the_bond_their_valence_allows() {
+    // A phosphonate phosphorus needs the platinum bond for valence five; a
+    // phosphine has valence three without it.
+    let atom = |serial: &str, name: &str, position: [f64; 3], element: &str| {
+        record(
+            "HETATM", serial, name, "PPT", 'A', "1", position, element, "",
+        )
+    };
+    let lines = [
+        atom("1", "PT1 ", [0.0, 0.0, 0.0], "PT"),
+        atom("2", " P1 ", [2.3, 0.0, 0.0], "P"),
+        atom("3", " O1 ", [3.0, 1.3, 0.0], "O"),
+        atom("4", " O2 ", [3.0, -0.7, 1.2], "O"),
+        atom("5", " O3 ", [3.0, -0.7, -1.2], "O"),
+        atom("6", " HO2", [3.9, -0.5, 1.3], "H"),
+        atom("7", " HO3", [3.9, -0.5, -1.3], "H"),
+        atom("8", " P2 ", [0.0, 2.3, 0.0], "P"),
+        atom("9", " HP1", [0.0, 3.7, 0.0], "H"),
+        atom("10", " HP2", [1.2, 2.8, 0.0], "H"),
+        atom("11", " HP3", [-1.2, 2.8, 0.0], "H"),
+        atom("12", "CL1 ", [-2.3, 0.0, 0.0], "CL"),
+        "CONECT    1    2    8   12".to_owned(),
+        "CONECT    2    3    3    4    5".to_owned(),
+        "CONECT    4    6".to_owned(),
+        "CONECT    5    7".to_owned(),
+        "CONECT    8    9   10   11".to_owned(),
+    ];
+    let read = read(&entry(&lines));
+    assert_eq!(
+        first_atom_bonds(read.structure()),
+        [
+            (0, 1, BondOrder::Single),
+            (0, 7, BondOrder::Dative),
+            (0, 11, BondOrder::Single),
+        ]
+    );
+    assert!(charges(read.structure()).iter().all(|&charge| charge == 0));
+    assert!(unstated_metal_bonds(&read).is_empty());
+}
+
+#[test]
+fn carbene_bonds_stay_covalent_and_are_reported() {
+    // A diaminocarbene carbon is short of its valence either way.
+    let atom = |serial: &str, name: &str, position: [f64; 3], element: &str| {
+        record(
+            "HETATM", serial, name, "CBN", 'A', "1", position, element, "",
+        )
+    };
+    let lines = [
+        atom("1", "PT1 ", [0.0, 0.0, 0.0], "PT"),
+        atom("2", " C1 ", [2.0, 0.0, 0.0], "C"),
+        atom("3", " N1 ", [2.7, 1.1, 0.0], "N"),
+        atom("4", " N2 ", [2.7, -1.1, 0.0], "N"),
+        atom("5", " H11", [3.7, 1.1, 0.0], "H"),
+        atom("6", " H12", [2.2, 2.0, 0.0], "H"),
+        atom("7", " H21", [3.7, -1.1, 0.0], "H"),
+        atom("8", " H22", [2.2, -2.0, 0.0], "H"),
+        atom("9", "CL1 ", [-2.3, 0.0, 0.0], "CL"),
+        "CONECT    1    2    9".to_owned(),
+        "CONECT    2    3    4".to_owned(),
+        "CONECT    3    5    6".to_owned(),
+        "CONECT    4    7    8".to_owned(),
+    ];
+    let read = read(&entry(&lines));
+    assert_eq!(
+        first_atom_bonds(read.structure()),
+        [(0, 1, BondOrder::Single), (0, 8, BondOrder::Single)]
+    );
+    assert_eq!(unstated_metal_bonds(&read), [1]);
+}
+
+#[test]
+fn link_records_within_one_residue_are_decided_like_conect() {
+    // The first ammine's platinum bond is a LINK record.
+    let mut lines = cisplatin_with_hydrogens();
+    lines.insert(
+        0,
+        format!("LINK        PT1  CPT A   1{:16} N1  CPT A   1", ""),
+    );
+    // A bond the residue states makes its listing complete, so the
+    // hydrogens are listed too.
+    lines.extend([
+        "CONECT    1    3    4    5".to_owned(),
+        "CONECT    2    6    7    8".to_owned(),
+        "CONECT    3    9   10   11".to_owned(),
+    ]);
+    let read = read(&entry(&lines));
+    assert_eq!(
+        first_atom_bonds(read.structure()),
+        [
+            (0, 1, BondOrder::Dative),
+            (0, 2, BondOrder::Dative),
+            (0, 3, BondOrder::Single),
+            (0, 4, BondOrder::Single),
+        ]
+    );
+    assert!(charges(read.structure()).iter().all(|&charge| charge == 0));
+}
+
+#[test]
+fn pdb_writes_metal_bonds_a_reader_gives_back() {
+    let mut lines = cisplatin_with_hydrogens();
+    lines.push("CONECT    1    2    3    4    5".to_owned());
+    let structure = read(&entry(&lines)).into_structure();
+    let (written, _) = pdb::write(&structure, Default::default()).unwrap();
+    assert_eq!(bonds(read(&written).structure()), bonds(&structure));
+
+    // A covalent bond to an ammine nitrogen would read back as dative.
+    let topology = smiles::to_topology("[H][N]([H])([H])[Pt]Cl").unwrap();
+    let structure = Structure::new(topology, Positions::zeros(6)).unwrap();
+    let hydrogens = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
+    let error = pdb::write(&structure, hydrogens).unwrap_err();
+    assert!(
+        matches!(
+            error.detail(),
+            Some(FormatErrorDetail::PdbWrite(
+                PdbWriteErrorKind::UnsupportedBondOrder {
+                    order: BondOrder::Single,
+                    ..
+                }
+            ))
+        ),
+        "{error}"
+    );
+    let (written, report) = pdb::write(
+        &structure,
+        hydrogens.with_chemistry(UnrepresentablePolicy::Omit),
+    )
+    .unwrap();
+    assert!(report
+        .omissions()
+        .contains(&WriteOmission::Bonds { bonds: 1 }));
+    // The nitrogen lists its hydrogens only.
+    assert!(
+        written.contains("CONECT    2    1    3    4\n"),
+        "{written}"
+    );
+}
+
+#[test]
+fn aromatic_rings_on_metals_take_the_bonds_that_localize() {
+    // Cyclopentadienyl iron chloride with the ring given as aromatic bonds:
+    // only covalent iron-carbon bonds let the ring localize.
+    let mut rows = String::new();
+    let mut atoms = vec![
+        ("FE1", "FE", [0.0, 0.0, 0.0]),
+        ("CL1", "CL", [0.0, 0.0, -2.2]),
+    ];
+    let mut table = String::from("CPF FE1 CL1 SING\n");
+    let ring = ["C1", "C2", "C3", "C4", "C5"];
+    let hydrogens = ["H1", "H2", "H3", "H4", "H5"];
+    for (index, (carbon, hydrogen)) in ring.iter().zip(hydrogens).enumerate() {
+        let angle = std::f64::consts::TAU * index as f64 / 5.0;
+        let (sin, cos) = angle.sin_cos();
+        atoms.push((carbon, "C", [1.2 * cos, 1.2 * sin, 1.65]));
+        atoms.push((hydrogen, "H", [2.2 * cos, 2.2 * sin, 1.65]));
+        let next = ring[(index + 1) % 5];
+        table.push_str(&format!(
+            "CPF FE1 {carbon} SING\nCPF {carbon} {next} AROM\nCPF {carbon} {hydrogen} SING\n"
+        ));
+    }
+    for (index, (name, element, [x, y, z])) in atoms.iter().enumerate() {
+        rows.push_str(&format!(
+            "HETATM {} {element} {name} CPF A 1 . {x:.3} {y:.3} {z:.3} 1\n",
+            index + 1
+        ));
+    }
+    let cif = format!(
+        "data_x
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+{table}loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+{rows}"
+    );
+    let read = read_mmcif(&cif);
+    let iron = first_atom_bonds(read.structure());
+    assert_eq!(iron.len(), 6);
+    assert!(iron.iter().all(|&(_, _, order)| order == BondOrder::Single));
+    assert!(unstated_metal_bonds(&read).is_empty());
+}
+
+#[test]
+fn stated_covalent_bonds_outrank_unflagged_table_rows() {
+    let cif = "data_x
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+PTA PT1 N1 SING
+PTA PT1 CL1 SING
+PTA N1 H11 SING
+PTA N1 H12 SING
+PTA N1 H13 SING
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_model_num
+HETATM 1 PT PT1 PTA A 1 . 0.000 0.000 0.000 1 1
+HETATM 2 N N1 PTA A 1 . 2.050 0.000 0.000 1 1
+HETATM 3 CL CL1 PTA A 1 . -2.300 0.000 0.000 1 1
+HETATM 4 H H11 PTA A 1 . 2.390 0.940 0.000 1 1
+HETATM 5 H H12 PTA A 1 . 2.390 -0.470 0.820 1 1
+HETATM 6 H H13 PTA A 1 . 2.390 -0.470 -0.820 1 1
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_auth_seq_id
+covale1 covale A PTA PT1 1 A PTA N1 1
+";
+    let read = read_mmcif(cif);
+    assert_eq!(
+        first_atom_bonds(read.structure()),
+        [(0, 1, BondOrder::Single), (0, 2, BondOrder::Single)]
+    );
+}
+
+#[test]
+fn padded_hydrogen_names_read_as_hydrogen() {
+    let atom = |serial: &str, name: &str, x: f64| {
+        record(
+            "HETATM",
+            serial,
+            name,
+            "LIG",
+            'A',
+            "1",
+            [x, 0.0, 0.0],
+            "",
+            "",
+        )
+    };
+    let read = read(&entry(&[
+        atom("1", " C1 ", 0.0),
+        atom("2", " O1 ", 1.43),
+        atom("3", " HO1", 2.4),
+        "CONECT    1    2".to_owned(),
+        "CONECT    2    3".to_owned(),
+    ]));
+    assert_eq!(elements(read.structure()), ["C", "O", "H"]);
+    assert!(read.report().issues().iter().any(|issue| matches!(
+        issue,
+        StructureInterpretIssue::ElementsInferredFromAtomNames { .. }
+    )));
+
+    // An atom with its element column shows nothing about alignment.
+    let text = entry(&[
+        record(
+            "HETATM",
+            "1",
+            "ZN  ",
+            " ZN",
+            'B',
+            "2",
+            [9.0, 0.0, 0.0],
+            "ZN",
+            "",
+        ),
+        atom("2", " C1 ", 0.0),
+        atom("3", " CL1", 1.75),
+    ]);
+    let error = pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap_err();
+    assert!(error.to_string().contains("\"CL1\""), "{error}");
 }
 
 #[test]

@@ -603,18 +603,25 @@ the main branch migrates by the table under "From the SampleSet API".
   element only in an entry that follows the alignment convention, where some
   short name starts in column 13 with a two-letter element. In an entry that
   pads every name, as GROMACS writes, ` CL1` without an element column is
-  ambiguous and fails rather than reading as carbon.
+  ambiguous and fails rather than reading as carbon. A name led by `H`, such
+  as ` HG1`, reads as hydrogen. Only atoms without element columns count as
+  evidence of the convention.
 - **Breaking:** `CONECT` records repeated in every model state each model's
   bonds: the interpreted model takes its own, and other models' records no
   longer conflict with them.
-- **Breaking:** A `CONECT` or `_chem_comp_bond` single bond between a metal
-  and a non-metal of one residue is dative only when the source or the
-  residue's template flags coordination, or, in a residue with explicit
-  hydrogens, when the non-metal's other bonds fill its valence. Cisplatin
-  reads with covalent chlorides and dative ammines. A residue without
-  hydrogens keeps such bonds covalent and reports them
-  (`StructureInterpretIssue::MetalBondsUnstated`). Between residues such a
-  bond stays coordination.
+- **Breaking:** A `CONECT`, `LINK`, or `_chem_comp_bond` single bond between
+  a metal and a non-metal of one residue is dative only when the source or
+  the residue's template flags coordination, or, in a residue with explicit
+  hydrogens, when the non-metal's valence is allowed without it and not with
+  it. Cisplatin reads with covalent chlorides and dative ammines, and a
+  phosphonate phosphorus bonds covalently. A non-metal in a ring given as
+  aromatic bonds takes the reading under which the ring localizes. Bonds no
+  reading decides, such as a carbene's, and those of a residue without
+  hydrogens stay covalent and are reported
+  (`StructureInterpretIssue::MetalBondsUnstated`). A stated `_struct_conn`
+  bond keeps its type. Between residues such a bond stays coordination. The
+  PDB writer lists a metal bond within one residue only when a reader gives
+  its order back, and otherwise fails or omits it.
 - The mmCIF writer states the bonds of components no template covers as
   `_chem_comp` and `_chem_comp_bond` rows, with aromatic and
   metal-coordination flags, in place of `_struct_conn` rows. Components are

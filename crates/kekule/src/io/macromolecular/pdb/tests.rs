@@ -57,5 +57,9 @@ fn names_that_read_as_two_elements_are_ambiguous() {
         ambiguous("C", "Cl")
     );
     assert_eq!(element_from_atom_name(" C1 ", "LIG", false), element("C"));
+    // A name led by `H` is a hydrogen, as four-character names are.
+    for name in [" HO1", " HG1", " HE2", "HG1 "] {
+        assert_eq!(element_from_atom_name(name, "LIG", false), element("H"));
+    }
     assert_eq!(element_from_atom_name("1HG1", "LIG", false), element("H"));
 }
