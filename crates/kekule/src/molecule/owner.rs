@@ -140,6 +140,8 @@ impl Molecule {
 
     /// Counts explicit hydrogen atoms among this atom's graph neighbors.
     /// Includes isotopic and charged hydrogen neighbors; requires no perception.
+    /// A hydrogen joined by a zero-order or dative bond, which valence does not
+    /// count, is not counted either.
     /// Returns `None` when `atom` names no atom of this molecule.
     pub fn explicit_hydrogens(&self, atom: AtomId) -> Option<usize> {
         explicit_hydrogen_count(&self.graph, atom)
@@ -332,12 +334,14 @@ pub(crate) fn explicit_hydrogen_count<L: SlotLiveness>(
         graph
             .incident_bonds(atom)?
             .filter(|(_, bond)| {
-                graph
-                    .atom(bond.other_atom(atom))
-                    .expect("bonds join live atoms")
-                    .element
-                    .atomic_number()
-                    == 1
+                // Valence counts neither bond, so neither does the count.
+                !matches!(bond.order, BondOrder::Zero | BondOrder::Dative)
+                    && graph
+                        .atom(bond.other_atom(atom))
+                        .expect("bonds join live atoms")
+                        .element
+                        .atomic_number()
+                        == 1
             })
             .count(),
     )

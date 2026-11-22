@@ -306,6 +306,21 @@ pub struct ComponentLibrary {
     entries: BTreeMap<String, ComponentEntry>,
 }
 
+/// A template a reader applies by default (see
+/// [`ComponentLibrary::default_template`]), with the library that holds its
+/// protonation variants.
+#[derive(Clone, Copy)]
+pub(crate) struct DefaultTemplate {
+    pub(crate) library: &'static ComponentLibrary,
+    pub(crate) component: &'static Component,
+    /// The force field whose names the template has, when they are not the
+    /// dictionary's.
+    pub(crate) force_field: Option<&'static str>,
+    /// Whether the residue's atoms fit the template. A residue that fits
+    /// none takes the bonds its connection records state.
+    pub(crate) fits: bool,
+}
+
 impl ComponentLibrary {
     /// An empty library.
     pub fn new() -> Self {
@@ -342,8 +357,9 @@ impl ComponentLibrary {
     /// which distance inference finds.
     ///
     /// Readers apply a template of this library by default to a residue
-    /// whose name neither the caller's templates nor the bundled ones
-    /// define, when its atoms fit the template (see
+    /// whose name the caller's templates do not define and whose atoms fit
+    /// no bundled template of that name, under dictionary or CHARMM atom
+    /// names, when its atoms fit the template (see
     /// [`ConnectivityOptions`](crate::macromolecular::ConnectivityOptions)).
     /// Supplying the library as context also applies the names that collide
     /// with dictionary identifiers, such as `ASP` and `GLU`.
@@ -369,38 +385,60 @@ impl ComponentLibrary {
     /// them. Nucleic acids keep dictionary names.
     ///
     /// Readers apply its templates by default as they do [`Self::amber`]'s,
-    /// after AMBER's. Supplying the library as context also applies the
-    /// names that collide with dictionary identifiers: CHARMM `CLA` is
-    /// chloride, the dictionary's chlorophyll a.
+    /// after AMBER's. A dictionary residue under CHARMM atom names, such as
+    /// a C-terminal isoleucine with `CD`, `OT1`, and `OT2`, reads without
+    /// this library as context, with the dictionary's hydrogens and charges.
+    /// Supplying the library as context applies its own templates to the
+    /// names that collide with dictionary identifiers: CHARMM `ASP` is an
+    /// anion, and `CLA` is chloride, the dictionary's chlorophyll a.
     pub fn charmm() -> Self {
         force_field::charmm()
     }
 
-    /// The force-field template a reader applies to a residue named `id`
-    /// whose atoms, by name and element, are `atoms`, when no library it
-    /// consults defines `id`: the AMBER template of that name, else the
-    /// CHARMM one, the first that [fits](Component::fits) the atoms, and the
-    /// force field's name. `None` when the bundled library defines `id`.
-    pub(crate) fn force_field_template<'a>(
+    /// The template a reader applies to a residue named `id` whose atoms, by
+    /// name and element, are `atoms`, when the caller's library does not
+    /// define `id`. The bundled template applies when the atoms
+    /// [fit](Component::fits) it. A dictionary residue under CHARMM atom
+    /// names, such as isoleucine with `CD` or a C-terminal residue with `OT1`
+    /// and `OT2`, takes the bundled template under those names, with its
+    /// hydrogens and charges. Other residues take the AMBER template of that
+    /// name, else the CHARMM one, the first that fits. Otherwise the bundled template applies although the atoms do
+    /// not fit it, and a reader rejects or reports the residue. `None` when
+    /// no template of that name exists or fits.
+    pub(crate) fn default_template<'a>(
         id: &str,
         atoms: impl IntoIterator<Item = (&'a str, Element)> + Clone,
-    ) -> Option<(&'static Component, &'static str)> {
+    ) -> Option<DefaultTemplate> {
         static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
         static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
-        if Self::bundled().get(id).is_some() {
-            return None;
-        }
-        [
-            (AMBER.get_or_init(force_field::amber), "AMBER"),
-            (CHARMM.get_or_init(force_field::charmm), "CHARMM"),
-        ]
-        .into_iter()
-        .find_map(|(library, force_field)| {
+        static CHARMM_DICTIONARY: OnceLock<ComponentLibrary> = OnceLock::new();
+        let fitting = |library: &'static ComponentLibrary, force_field| {
             let component = library.get(id)?;
-            component
-                .fits(atoms.clone())
-                .then_some((component, force_field))
-        })
+            component.fits(atoms.clone()).then_some(DefaultTemplate {
+                library,
+                component,
+                force_field,
+                fits: true,
+            })
+        };
+        let bundled = Self::bundled();
+        fitting(bundled, None)
+            .or_else(|| {
+                fitting(
+                    CHARMM_DICTIONARY.get_or_init(force_field::charmm_dictionary),
+                    Some("CHARMM"),
+                )
+            })
+            .or_else(|| fitting(AMBER.get_or_init(force_field::amber), Some("AMBER")))
+            .or_else(|| fitting(CHARMM.get_or_init(force_field::charmm), Some("CHARMM")))
+            .or_else(|| {
+                Some(DefaultTemplate {
+                    library: bundled,
+                    component: bundled.get(id)?,
+                    force_field: None,
+                    fits: false,
+                })
+            })
     }
 
     /// Reads every data block that defines component atoms, such as a CCD

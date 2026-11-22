@@ -27,7 +27,9 @@
 //! An atom's shape is its number of electron domains: its neighbors, its
 //! implicit hydrogens, and the lone pairs that its element's valence
 //! electrons, formal charge, radical electrons, and bond orders leave
-//! ([`AtomShape`]). A neutral three-coordinate nitrogen with single bonds to a
+//! ([`AtomShape`]). Two radical electrons take one domain, so a carbene or
+//! nitrene is bent; a single one takes none, so a methyl radical is planar.
+//! A neutral three-coordinate nitrogen with single bonds to a
 //! boron, carbon, nitrogen, or oxygen that has a multiple bond (an amide,
 //! aniline, or pyrrole nitrogen) is conjugated and planar. Elements outside
 //! the s and p blocks have no lone pairs here, so their shape follows their

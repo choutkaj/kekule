@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+use kekule::descriptors::molecular_formula;
 use kekule::perception::aromaticity::{self, AromaticityModel};
 use kekule::perception::resonance;
 use kekule::perception::rings::{self, RingPerceptionOptions};
@@ -587,8 +587,8 @@ fn symmetry(components: &[Component], facts: &mut Facts) {
 
 fn formula(components: &[Component], facts: &mut Facts) -> Result<(), Failure> {
     for component in components {
-        let formula = molecular_formula(&component.molecule, HydrogenCountPolicy::IncludePerceived)
-            .map_err(|e| Failure::new("formula", e))?;
+        let formula =
+            molecular_formula(&component.molecule).map_err(|e| Failure::new("formula", e))?;
         let first = min_atom(component);
         for (element, isotope, count) in formula.terms() {
             facts.push(json!([

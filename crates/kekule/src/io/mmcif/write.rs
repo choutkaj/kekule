@@ -193,12 +193,14 @@ impl MmcifWriteOptions {
 
     /// Other represented chemistry mmCIF cannot carry: isotopes other than
     /// deuterium and tritium, radicals, atom maps, represented stereo, and
-    /// zero-order bonds, which `_struct_conn` cannot state. By default it
-    /// fails to write; [`UnrepresentablePolicy::Omit`] writes the rows
-    /// without it and reports each kind left out
-    /// ([`WriteOmission::Isotopes`], [`WriteOmission::Radicals`],
-    /// [`WriteOmission::AtomMaps`], [`WriteOmission::Stereo`], and
-    /// [`WriteOmission::Bonds`]). An omitted isotope is written as its
+    /// zero-order bonds, which `_struct_conn` cannot state, and bonds a
+    /// dictionary residue lacks, which a reader adds back
+    /// ([`MmcifWriteErrorKind::DictionaryBondMissing`]). By default it fails
+    /// to write; [`UnrepresentablePolicy::Omit`] writes the rows without it
+    /// and reports each kind left out ([`WriteOmission::Isotopes`],
+    /// [`WriteOmission::Radicals`], [`WriteOmission::AtomMaps`],
+    /// [`WriteOmission::Stereo`], [`WriteOmission::Bonds`], and
+    /// [`WriteOmission::DictionaryBonds`]). An omitted isotope is written as its
     /// element. mmCIF readers read no stereo, but the coordinates still
     /// define it, and [`crate::stereo::coordinates`] infers it from them.
     /// Fixed implicit-hydrogen counts have their own policy,
@@ -362,6 +364,14 @@ pub enum MmcifWriteErrorKind {
         /// Its order.
         order: BondOrder,
     },
+    /// A residue the component dictionary covers lacks a bond its template
+    /// has between these two heavy atoms, which a reader adds to the
+    /// residue whatever `_struct_conn` states, with
+    /// [`MmcifWriteOptions::chemistry`] set to fail.
+    DictionaryBondMissing {
+        /// The two atoms.
+        atoms: [InstanceAtomId; 2],
+    },
     /// A `_struct_conn` partner cannot select this atom unambiguously.
     AmbiguousConnectionSelector(InstanceAtomId),
     /// A text value cannot be written as a single mmCIF token, for example
@@ -443,6 +453,7 @@ impl MmcifWriteErrorKind {
             | Self::FormalChargeOutOfRange { .. }
             | Self::UnsupportedStereo(_)
             | Self::UnsupportedBondOrder { .. }
+            | Self::DictionaryBondMissing { .. }
             | Self::AmbiguousConnectionSelector(_)
             | Self::UnsupportedTextValue { .. }
             | Self::UnrepresentableGeometry { .. }
@@ -587,6 +598,13 @@ impl fmt::Display for MmcifWriteErrorKind {
                 f,
                 "The {} order of {bond} has no mmCIF representation.",
                 bond_order_name(*order)
+            ),
+            Self::DictionaryBondMissing {
+                atoms: [left, right],
+            } => write!(
+                f,
+                "{} and {right} are not bonded, but the component dictionary bonds them.",
+                Capitalized(left)
             ),
             Self::AmbiguousConnectionSelector(atom) => write!(
                 f,
@@ -775,9 +793,11 @@ impl MmcifEntityClassifications {
 ///
 /// Entity kinds follow canonical classification; hierarchy alone does not
 /// establish polymer status. The writer states only the bonds its reader
-/// cannot derive, and states a residue's bonds whole or not at all, since one
-/// stated internal bond makes the reader take all of that residue's bonds
-/// from the source.
+/// cannot derive, and states a residue's bonds whole or not at all. A reader
+/// applies a residue's template whatever `_struct_conn` states, keeping
+/// stated bonds and orders the template does not give, so a residue that
+/// lacks a template bond cannot be written as it is (see
+/// [`MmcifWriteErrorKind::DictionaryBondMissing`]).
 ///
 /// Every hierarchy chain is a structural instance of its own, even when
 /// chains share a label, as the copies

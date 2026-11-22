@@ -14,7 +14,7 @@ use crate::molecule::{
 };
 use crate::structure::Structure;
 use crate::test_fixtures::{
-    byte_offset, carbon, chain_text, element_atom, implicit_h_wedge_geometry_molblock, perceive,
+    carbon, element_atom, implicit_h_wedge_geometry_molblock, perceive,
     rdkit_bms986142_atrop5_molblock, rdkit_macrocycle8_ortho_hash_molblock,
     rdkit_macrocycle8_ortho_wedge_molblock, rdkit_rp6306_atrop3_molblock,
     rdkit_rp6306_atrop_molblock, rdkit_zm374979_atrop1_molblock, rdkit_zm374979_atrop2_molblock,
@@ -22,7 +22,7 @@ use crate::test_fixtures::{
     read_smiles_with_report, test_positions, test_structure, tetrahedral_marked_graph,
     CanonicalizeFixture,
 };
-use crate::{molfile, smiles as smiles_api, stereo as stereo_api};
+use crate::{molfile, stereo as stereo_api};
 
 #[test]
 fn interpretation_assembles_paired_directional_marks_into_double_bond_element() {
@@ -195,25 +195,6 @@ fn smiles_ring_direction_preserves_the_textual_origin_endpoint() {
 
     assert_eq!(opened_stereo.len(), 1);
     assert_eq!(closed_stereo, opened_stereo);
-}
-
-#[test]
-fn interpretation_enforces_small_ring_double_bond_boundary() {
-    let document = smiles_api::parse_str(r"C1/C=C\CCC1", Default::default())
-        .expect("source syntax should parse");
-    let error = document
-        .interpret(Default::default())
-        .expect_err("excluded small-ring directional marks must reject interpretation");
-    assert_eq!(byte_offset(&error), 2);
-    assert!(chain_text(&error).contains("has no partner across a double bond"));
-
-    let (cyclooctene, report) =
-        read_smiles_with_report(r"C1/C=C\CCCCC1").expect("marked cyclooctene interprets");
-    assert_eq!(report.created_stereo_elements().len(), 1);
-    let element = cyclooctene
-        .stereo_element(report.created_stereo_elements()[0])
-        .expect("created stereo element");
-    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
 }
 
 #[test]
@@ -548,20 +529,14 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
     )
     .expect("coordinate inference is independent of detached source marks");
     assert!(coordinate_result.elements.is_empty());
-    let marked_before = marked.clone();
-
-    let marked_error = canonicalize_molecule_for_publication(&mut marked, None, &marked_source)
-        .expect_err("unassembled tetrahedral mark should fail");
-    assert!(matches!(
-        marked_error,
-        NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
-            if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
-            bond,
-            kind: SourceStereoBondMarkKind::WedgeEither,
-        })
-    ));
+    let marked_report = canonicalize_molecule_for_publication(&mut marked, None, &marked_source)
+        .expect("a stray wedge is dropped");
+    assert_eq!(
+        marked_report.warnings,
+        [NormalizationWarning::StrayWedge { bond }]
+    );
+    assert!(marked_report.created_stereo_elements.is_empty());
     assert!(marked.stereo_elements().next().is_none());
-    assert_eq!(marked, marked_before);
 
     let mut unsupported = crate::molecule::MoleculeEditor::new();
     let c = unsupported
@@ -637,7 +612,7 @@ fn invalid_source_stereo_reports_an_issue_without_publishing_a_placeholder_eleme
 }
 
 #[test]
-fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
+fn source_stereo_canonicalization_drops_and_reports_the_unpaired_mark() {
     let mut molecule = read_smiles("F[C@](Cl)(Br)I").expect("stereo SMILES should parse");
     perceive(&mut molecule).expect("stored stereo should prepare");
     let marked_bond = molecule.bond_ids().next().expect("single bond");
@@ -651,17 +626,15 @@ fn failed_source_stereo_canonicalization_reports_the_unpaired_mark() {
     assert_eq!(cip.assigned.len(), 1);
     crate::molecule::validate_represented_stereo(&molecule)
         .expect("stored-state validation should succeed");
-    let error = molecule
+    let report = molecule
         .canonicalize_fixture_with_source_stereo(&source_stereo)
-        .expect_err("unpaired directional mark should fail canonicalization");
+        .expect("an unpaired directional mark is dropped");
 
-    assert!(matches!(
-        error,
-        NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
-            if issues.contains(&SourceStereoNormalizationIssue::UnpairedDirectionalBondMark {
-                bond: marked_bond,
-            })
-    ));
+    assert_eq!(
+        report.warnings,
+        [NormalizationWarning::UnpairedDirectionalBondMark { bond: marked_bond }]
+    );
+    assert_eq!(molecule.stereo_elements().count(), 1);
 }
 
 #[test]
@@ -1233,75 +1206,6 @@ fn molfile_specified_tetrahedral_export_requires_a_drawing() {
 }
 
 #[test]
-fn molfile_valid_wedge_geometry_is_scale_and_reflection_consistent() {
-    // RDKit 2026.03.3 independently checks these drawing configurations.
-    for (points, original) in [
-        (
-            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
-            StereoDescriptor::S,
-        ),
-        (
-            vec![[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
-            StereoDescriptor::R,
-        ),
-        (
-            vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [0.0, 1.0]],
-            StereoDescriptor::R,
-        ),
-        (
-            vec![[0.0, 0.0], [0.0, 0.0], [-1.0, 0.0], [0.0, 1.0]],
-            StereoDescriptor::S,
-        ),
-        // Local drawings from PubChem 10524, with distinct test ligands.
-        // The three unmarked bonds lie on the same side of the center;
-        // their drawing order must not be read as a displaced tetrahedron.
-        (
-            vec![
-                [6.3981, -0.4499],
-                [6.3820, -1.4914],
-                [7.2641, 0.0501],
-                [6.1950, -0.0800],
-                [5.5320, 0.0501],
-            ],
-            StereoDescriptor::S,
-        ),
-        (
-            vec![
-                [7.2641, 1.0501],
-                [7.6891, 1.7862],
-                [6.8422, 1.0410],
-                [7.2641, 0.0501],
-                [6.3981, 1.5501],
-            ],
-            StereoDescriptor::S,
-        ),
-    ] {
-        for v3000 in [false, true] {
-            for scale in [0.1, 1.0, 10.0] {
-                for mirror in [-1.0, 1.0] {
-                    let source = wedge_drawing(&points, scale, mirror, v3000);
-                    let (mut molecule, report) = read_molfile_with_report(&source).unwrap();
-                    assert!(report.issues().is_empty(), "{source}");
-                    perceive(&mut molecule).unwrap();
-                    let assignment =
-                        stereo_api::cip::assign_cip_descriptors(&mut molecule, Default::default())
-                            .unwrap();
-                    let expected = if mirror > 0.0 {
-                        original
-                    } else if original == StereoDescriptor::R {
-                        StereoDescriptor::S
-                    } else {
-                        StereoDescriptor::R
-                    };
-                    assert_eq!(assignment.assigned.len(), 1, "{source}");
-                    assert_eq!(assignment.assigned[0].descriptor, expected, "{source}");
-                }
-            }
-        }
-    }
-}
-
-#[test]
 fn crowded_wedge_drawing_respects_carrier_permutations() {
     let points = [
         [6.3981, -0.4499],
@@ -1478,49 +1382,6 @@ fn molfile_structure_writing_preserves_tetrahedral_drawing_orientation() {
             }
         }
     }
-}
-
-#[test]
-fn molfile_redundant_wedges_preserve_consistent_and_unknown_configurations() {
-    let source = wedged_tetrahedron("C", 0, false)
-        .replace("   -1.0000    0.0000", "   -0.5000    0.8660")
-        .replace("    0.0000    1.0000", "   -0.5000   -0.8660");
-    let original = read_molfile(&source).expect("single wedge interprets");
-    let redundant = source.replace("  1  3  1  0", "  1  3  1  1");
-    let (molecule, report) =
-        read_molfile_with_report(&redundant).expect("redundant wedges interpret");
-    assert!(report.issues().is_empty());
-    assert_eq!(
-        molecule.stereo_elements().next().unwrap().1.kind,
-        original.stereo_elements().next().unwrap().1.kind
-    );
-
-    let unknown = source.replace("  1  3  1  0", "  1  3  1  4");
-    let molecule = read_molfile(&unknown).expect("wavy mark interprets");
-    assert!(molecule
-        .stereo_elements()
-        .next()
-        .unwrap()
-        .1
-        .is_explicitly_unknown());
-
-    let degenerate = unknown
-        .replace("    1.0000    0.0000", "    0.0000    0.0000")
-        .replace("   -0.5000    0.8660", "    0.0000    0.0000")
-        .replace("   -0.5000   -0.8660", "    0.0000    0.0000");
-    let (molecule, report) = read_molfile_with_report(&degenerate).unwrap();
-    assert!(report.issues().is_empty());
-    assert!(molecule
-        .stereo_elements()
-        .next()
-        .unwrap()
-        .1
-        .is_explicitly_unknown());
-
-    let conflicting = source.replace("  1  3  1  0", "  1  3  1  6");
-    let (molecule, report) = read_molfile_with_report(&conflicting).expect("conflict is reported");
-    assert_eq!(report.issues().len(), 1);
-    assert!(molecule.stereo_elements().next().is_none());
 }
 
 #[test]

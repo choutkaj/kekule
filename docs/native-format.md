@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide (`7`) or hydrogen-name (`8`) bond evidence and no issue kinds 20 to 33. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide (`7`) or hydrogen-name (`8`) bond evidence, no issue kinds 20 to 47, and no neutral onium centres in issue kind 12. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -493,8 +493,11 @@ component, `1` parent, `2` sequence, `3` unknown.
 
 An issue is its kind, then its fields in declaration order, with lists as
 `list`, line lists as `count packed`, residues as `residue`, entity kinds as
-`u8` (`str` follows `4`), charges as `i8`, and partners as `u8`.
-`ProtonationAssumed` lists its components as `list` of `str` and `usize`.
+`u8` (`str` follows `4`), charges as `i8`, partners and valences as
+`u8`, bond orders as the `order` of a bond, with `255` for an aromatic
+template bond, and neutral onium centres as a `list` of an atom name `str`
+and its hydrogens `u8`. `ProtonationAssumed` lists its components as `list`
+of `str` and `usize`.
 
 | Kind | Issue | Kind | Issue |
 | --- | --- | --- | --- |
@@ -510,18 +513,27 @@ An issue is its kind, then its fields in declaration order, with lists as
 | 9 | `AlternateLocationCombinationRejected` | 19 | `AssemblyOmitted` |
 | | | 20 | `DisulfideInferred` |
 | | | 21 | `ForceFieldTemplate` |
-| | | 22 | `ProtonationAssumed` |
-| | | 23 | `HydrogensMissing` |
-| | | 24 | `ZeroOccupancyHydrogens` |
-| | | 25 | `HydrogenReplacedByCoordination` |
-| | | 26 | `StatedChargeKept` |
-| | | 27 | `StatedChargeRejected` |
-| | | 28 | `TemplateChargeUnknown` |
-| | | 29 | `TemplateMissing` |
-| | | 30 | `AtomsMissing` |
-| | | 31 | `TerminalAtomMissing` |
-| | | 32 | `PolymerLinkMissing` |
-| | | 33 | `StatedChargeResonance` |
+| | | 22 | `ResidueBondOrdersUnstated` |
+| | | 23 | `BondNotInTemplate` |
+| | | 24 | `BondOrderDiffersFromTemplate` |
+| | | 25 | `PolymerLinkSkipped` |
+| | | 26 | `LinkingAtomMissing` |
+| | | 27 | `ResidueFitsNoTemplate` |
+| | | 28 | `StatedOrdersDisagreeWithHydrogens` |
+| | | 29 | `MetalValenceIncomplete` |
+| | | 30 | `MetalDonors` |
+| | | 36 | `ProtonationAssumed` |
+| | | 37 | `HydrogensMissing` |
+| | | 38 | `ZeroOccupancyHydrogens` |
+| | | 39 | `HydrogenReplacedByCoordination` |
+| | | 40 | `StatedChargeKept` |
+| | | 41 | `StatedChargeRejected` |
+| | | 42 | `TemplateChargeUnknown` |
+| | | 43 | `TemplateMissing` |
+| | | 44 | `AtomsMissing` |
+| | | 45 | `TerminalAtomMissing` |
+| | | 46 | `PolymerLinkMissing` |
+| | | 47 | `StatedChargeResonance` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

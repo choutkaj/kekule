@@ -164,25 +164,45 @@ const CHARMM_RENAMES: &[(&str, &[(&str, &str)])] = &[
     ("VAL", &[]),
 ];
 
+/// A dictionary amino acid, or one of its variants, under CHARMM atom names.
+fn charmm_amino_acid(id: &str, from: &Component) -> Component {
+    let (_, renames) = CHARMM_RENAMES
+        .iter()
+        .find(|(residue, _)| *residue == id)
+        .expect("CHARMM renames exist");
+    // Backbone: HN for the amide hydrogen, and the terminal patches' OT1 and
+    // OT2 for the carboxyl oxygens. Proline has no amide hydrogen; its
+    // N-terminal patch names the ammonium hydrogens HN1 and HN2. Terminal
+    // hydrogens HT1-HT3 name different atoms in different patches, so
+    // templates leave them out; readers bond them to a nearby N by name,
+    // else by distance.
+    let amide = if id == "PRO" { "HN1" } else { "HN" };
+    from.clone()
+        .renamed(&[*renames, &[("H", amide), ("OXT", "OT2")]].concat())
+        .alternates(&[("O", "OT1")])
+}
+
+/// The dictionary amino acids and their variants under CHARMM atom names,
+/// with the dictionary's hydrogens and charges: only the names differ.
+pub(super) fn charmm_dictionary() -> ComponentLibrary {
+    let bundled = ComponentLibrary::bundled();
+    let mut library = ComponentLibrary::new();
+    for &(id, _) in CHARMM_RENAMES {
+        let base = bundled.get(id).expect("bundled component exists");
+        library.insert(charmm_amino_acid(id, base));
+        for variant in bundled.variants(id) {
+            library
+                .insert_variant(charmm_amino_acid(id, variant))
+                .expect("a renamed variant names its component");
+        }
+    }
+    library.retitle("CHARMM")
+}
+
 pub(super) fn charmm() -> ComponentLibrary {
     let bundled = ComponentLibrary::bundled();
     let base = |id: &str| bundled.get(id).expect("bundled component exists");
-    let amino_acid = |id: &str, from: &Component| {
-        let (_, renames) = CHARMM_RENAMES
-            .iter()
-            .find(|(residue, _)| *residue == id)
-            .expect("CHARMM renames exist");
-        // Backbone: HN for the amide hydrogen, and the terminal patches'
-        // OT1 and OT2 for the carboxyl oxygens. Proline has no amide
-        // hydrogen; its N-terminal patch names the ammonium hydrogens HN1 and
-        // HN2. Terminal hydrogens HT1-HT3 name different atoms in different
-        // patches, so templates leave them out; readers bond them to a
-        // nearby N by name, else by distance.
-        let amide = if id == "PRO" { "HN1" } else { "HN" };
-        from.clone()
-            .renamed(&[*renames, &[("H", amide), ("OXT", "OT2")]].concat())
-            .alternates(&[("O", "OT1")])
-    };
+    let amino_acid = charmm_amino_acid;
     let mut library = ComponentLibrary::new();
     for &(id, _) in CHARMM_RENAMES {
         if id != "HIS" {
@@ -322,7 +342,14 @@ impl ComponentLibrary {
             let mut component = component.clone();
             component.name = format!("{} ({force_field} {})", component.name, component.id);
             component.force_field = Some(force_field.to_owned());
-            library.insert(component);
+            library.insert(component.clone());
+            for variant in self.variants(&component.id) {
+                let mut variant = variant.clone();
+                variant.force_field = Some(force_field.to_owned());
+                library
+                    .insert_variant(variant)
+                    .expect("a variant names its component");
+            }
         }
         library
     }

@@ -24,7 +24,8 @@ const ENTRIES: &[(&str, &str)] = bundled_components![
     "HOH", "DOD",
     // Ions.
     "ZN", "MG", "CA", "NA", "K", "CL", "MN", "FE", "FE2", "CU", "CU1",
-    "NI", "CO", "CD", "HG", "IOD", "BR",
+    "NI", "CO", "CD", "HG", "IOD", "BR", "LI", "RB", "CS", "SR", "BA",
+    "AL", "F",
     // Cofactors.
     "HEM", "HEC", "FAD", "FMN", "NAD", "NAI", "NAP", "NDP", "ATP", "ADP",
     "AMP", "GTP", "GDP", "SAM", "SAH", "COA", "ACO", "PLP", "TPP", "BTN",

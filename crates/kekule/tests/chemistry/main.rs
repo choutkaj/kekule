@@ -5,6 +5,7 @@
 mod support;
 
 mod aromaticity;
+mod descriptors;
 mod editor;
 mod enhanced_stereo;
 mod hydrogens;

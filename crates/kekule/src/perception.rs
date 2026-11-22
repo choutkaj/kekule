@@ -45,7 +45,7 @@ pub mod conjugation {
 pub use crate::algorithms::PerceptionError;
 pub use crate::molecule::perception::{
     DelocalizationViolation, Perception, PerceptionBuildError, PerceptionBuilder,
-    PerceptionComponent, PerceptionInstallError,
+    PerceptionComponent, PerceptionInstallError, PerceptionWarning,
 };
 
 /// Expert valence perception for canonical represented chemistry.

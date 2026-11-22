@@ -407,3 +407,41 @@ fn fused_aromatic_systems_are_aromatic_whole() {
     assert_eq!(atoms, (0..10).collect::<Vec<_>>());
     assert_eq!(bonds, ring_bonds_among(&azulene, &atoms, &[(3, 7)]));
 }
+
+#[test]
+fn a_depth_first_ring_basis_is_a_perception_warning() {
+    // In a cage where every atom has four ring bonds, as in this K5 of
+    // carbons, the smallest-ring search stops and depth-first cycles stand
+    // in. Perception succeeds and says so.
+    let carbon = Element::from_symbol("C").unwrap();
+    let mut editor = MoleculeEditor::new();
+    let atoms = (0..5)
+        .map(|_| editor.add_atom(Atom::new(carbon)).unwrap())
+        .collect::<Vec<_>>();
+    for (i, left) in atoms.iter().enumerate() {
+        for right in &atoms[i + 1..] {
+            editor.add_bond(*left, *right, BondOrder::Single).unwrap();
+        }
+    }
+    let mut cage = editor.finish().unwrap();
+    cage.perceive().unwrap();
+    assert_eq!(
+        cage.perception().warnings(),
+        [kekule::perception::PerceptionWarning::RingBasisFallback]
+    );
+    let topology = kekule::topology::Topology::from_molecules([cage.clone()])
+        .unwrap()
+        .perceived()
+        .unwrap();
+    assert_eq!(
+        topology
+            .perception_warnings()
+            .map(|(_, warning)| warning)
+            .collect::<Vec<_>>(),
+        [kekule::perception::PerceptionWarning::RingBasisFallback]
+    );
+
+    let mut benzene = smiles::to_molecules("c1ccccc1").unwrap().remove(0);
+    benzene.perceive().unwrap();
+    assert!(benzene.perception().warnings().is_empty());
+}

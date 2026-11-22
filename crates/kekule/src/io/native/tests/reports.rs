@@ -234,6 +234,7 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             residue: label(401),
             component_id: "LIG".into(),
             bonds: 24,
+            neutral_centres: Vec::new(),
         },
         Issue::HydrogenAttachedByDistance {
             residue: label(401),
@@ -252,10 +253,68 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             component_id: "CYX".into(),
             force_field: "AMBER".into(),
         },
+        Issue::ResidueBondOrdersUnstated {
+            residue: label(401),
+            component_id: "LIG".into(),
+            bonds: 6,
+            neutral_centres: Vec::new(),
+        },
+        Issue::BondNotInTemplate {
+            residue: label(301),
+            component_id: "SO4".into(),
+            atoms: ["O1".into(), "O2".into()],
+        },
+        Issue::BondOrderDiffersFromTemplate {
+            residue: label(1),
+            component_id: "GLY".into(),
+            atoms: ["C".into(), "O".into()],
+            order: crate::molecule::BondOrder::Single,
+            template_order: Some(crate::molecule::BondOrder::Double),
+        },
+        Issue::BondOrderDiffersFromTemplate {
+            residue: label(2),
+            component_id: "PHX".into(),
+            atoms: ["C1".into(), "C2".into()],
+            order: crate::molecule::BondOrder::Triple,
+            template_order: None,
+        },
+        Issue::PolymerLinkSkipped {
+            residue: label(1),
+            next: label(2),
+        },
+        Issue::LinkingAtomMissing {
+            residue: label(12),
+            next: label(13),
+        },
+        Issue::ResidueFitsNoTemplate {
+            residue: label(1),
+            component_id: "GLY".into(),
+        },
+        Issue::StatedOrdersDisagreeWithHydrogens {
+            residue: label(4),
+            component_id: "HIS".into(),
+        },
         Issue::ChargesFromBonds {
             residue: label(5),
             component_id: "XYZ".into(),
             charged_atoms: vec![("N1".into(), 1), ("B2".into(), -1)],
+        },
+        Issue::MetalValenceIncomplete {
+            residue: label(6),
+            component_id: "XNA".into(),
+            atom_name: "NA".into(),
+            valence: 0,
+        },
+        Issue::MetalDonors {
+            residue: label(7),
+            component_id: "XPD".into(),
+            atom_names: vec!["P1".into(), "P2".into()],
+        },
+        Issue::ResidueBondsInferred {
+            residue: label(8),
+            component_id: "XSM".into(),
+            bonds: 3,
+            neutral_centres: vec![("S".into(), 1), ("SE".into(), 2)],
         },
         Issue::ProtonationFromHydrogens {
             residue: label(57),
@@ -770,4 +829,16 @@ fn interpreted_structure_sets_need_one_report_per_geometry() {
         reports: Vec::new(),
     };
     assert!(native::write(&interpretation, NativeWriteOptions::default()).is_err());
+}
+
+#[test]
+fn issue_messages_have_no_double_spaces() {
+    // The report covers every issue kind, so a line continuation lost from a
+    // message shows here.
+    for foreign in [false, true] {
+        for issue in report(foreign).issues() {
+            let message = issue.to_string();
+            assert!(!message.contains("  "), "{message:?}");
+        }
+    }
 }

@@ -93,7 +93,9 @@ impl AtomDomains {
         self.implicit_hydrogens
     }
     /// Lone pairs that take sites of the shape; a conjugated nitrogen's lone
-    /// pair takes none.
+    /// pair takes none. Two radical electrons take one site, so a carbene,
+    /// singlet (H–C–H about 102°) or triplet (about 134°), places bent at
+    /// the trigonal 120°.
     pub const fn lone_pairs(&self) -> usize {
         self.lone_pairs
     }
@@ -130,9 +132,14 @@ pub(crate) fn perceive_domains(input: DomainInput) -> (usize, usize) {
     let lone_pairs = valence_electrons(input.element.atomic_number()).map_or(0, |valence| {
         let free = i64::from(valence)
             - i64::from(input.formal_charge)
-            - i64::try_from(input.bond_valence).unwrap_or(i64::MAX / 4)
-            - i64::try_from(input.radical_electrons).unwrap_or(i64::MAX / 4);
-        let pairs = usize::try_from(free.max(0) / 2).expect("non-negative");
+            - i64::try_from(input.bond_valence).unwrap_or(i64::MAX / 4);
+        let free = usize::try_from(free.max(0)).expect("non-negative");
+        let radical = input.radical_electrons.min(free);
+        // Each two radical electrons take a site, as a carbene's do: a
+        // singlet's lone pair, or a triplet's in-plane electron (its other
+        // one is in the p orbital). A single one, as of a methyl radical,
+        // takes none.
+        let pairs = (free - radical) / 2 + radical / 2;
         // A coordinate bond donates one of the atom's own pairs.
         pairs.saturating_sub(input.coordinate_bonds)
     });

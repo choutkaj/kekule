@@ -177,7 +177,7 @@ pub(super) fn prepare_model(
         &coordination,
         &atom_indexes,
     );
-    mark_implied(
+    let missing = mark_implied(
         &block,
         &atoms,
         &elements,
@@ -186,6 +186,13 @@ pub(super) fn prepare_model(
         options.coordinate_precision,
         library,
     );
+    if let Some(&[left, right]) = missing.first() {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::DictionaryBondMissing {
+                atoms: [atoms[left].atom, atoms[right].atom],
+            }));
+        }
+    }
     // Fixed hydrogen counts have no mmCIF item; those a reader fixes again
     // are written as they are.
     let fixed = block.fixed_hydrogens(&elements, &connections);
@@ -268,6 +275,9 @@ pub(super) fn prepare_model(
             },
             WriteOmission::CoordinationBonds {
                 bonds: coordination_bonds,
+            },
+            WriteOmission::DictionaryBonds {
+                residues: missing.len(),
             },
         ],
     })

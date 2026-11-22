@@ -34,7 +34,8 @@ SELECTION = {
     "water": ["HOH", "DOD"],
     "ions": [
         "ZN", "MG", "CA", "NA", "K", "CL", "MN", "FE", "FE2", "CU", "CU1",
-        "NI", "CO", "CD", "HG", "IOD", "BR",
+        "NI", "CO", "CD", "HG", "IOD", "BR", "LI", "RB", "CS", "SR", "BA",
+        "AL", "F",
     ],
     "cofactors": [
         "HEM", "HEC", "FAD", "FMN", "NAD", "NAI", "NAP", "NDP", "ATP", "ADP",
