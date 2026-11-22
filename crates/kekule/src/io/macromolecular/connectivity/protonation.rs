@@ -33,7 +33,9 @@
 use std::collections::BTreeMap;
 
 use crate::algorithms::allowed_valences_with_charge;
-use crate::components::{Component, ComponentBond, ComponentBondOrder as TemplateOrder};
+use crate::components::{
+    Component, ComponentBond, ComponentBondOrder as TemplateOrder, ComponentLinking,
+};
 use crate::molecule::{BondOrder, Element};
 
 /// What the model shows about one template heavy atom of a residue.
@@ -63,7 +65,8 @@ pub(crate) struct ResidueEvidence<'a> {
     /// Whether a dictionary template applies, not a force field's, whose
     /// residue names state their protonation.
     pub(crate) dictionary: bool,
-    /// Whether the residue is a monomer of a polymer chain.
+    /// Whether the residue is a monomer of a polymer chain. [`choose`]
+    /// treats a residue of a polymer template as one even alone.
     pub(crate) polymer: bool,
 }
 
@@ -205,6 +208,12 @@ pub(crate) fn choose<'c>(
     let base = *candidates.first()?;
     let with_evidence = has_evidence(base, evidence);
     let mut evidence = evidence.clone();
+    // A residue of a polymer template is a monomer even alone, as a free
+    // amino acid: with no residue beside it, its ends are true ones.
+    evidence.polymer |= matches!(
+        base.linking(),
+        ComponentLinking::Peptide | ComponentLinking::Nucleotide
+    );
     if !with_evidence {
         for atom in evidence.heavy.values_mut() {
             atom.stated = atom.stated.filter(|&charge| charge != 0);
@@ -938,7 +947,7 @@ fn is_free_amine(component: &Component, index: usize) -> bool {
     let atom = &component.atoms()[index];
     atom.name() == "N"
         && atom.formal_charge() == Some(0)
-        && component.linking() == crate::components::ComponentLinking::Peptide
+        && component.linking() == ComponentLinking::Peptide
         && only_single_bonds(component, index)
         && neighbours(component, index).any(|(other, _)| {
             let other = &component.atoms()[other];

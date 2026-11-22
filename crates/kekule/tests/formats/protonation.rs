@@ -651,6 +651,18 @@ fn a_terminal_carboxylate_leaves_histidine_neutral() {
 }
 
 #[test]
+fn a_free_histidine_is_the_zwitterion_with_a_neutral_ring() {
+    // A lone histidine without hydrogens, with OXT, in PDB without SEQRES:
+    // nothing comes before it, so N is a true N terminus.
+    let rows = heavy(residue_sites("HIS", "A", 1, [0.0; 3]));
+    let result = read_pdb(&pdb_text(&rows, 'A', &[]));
+    assert_eq!(pdb_state_at(&result, 1, "N"), (1, 3));
+    assert_eq!(pdb_state_at(&result, 1, "OXT"), (-1, 0));
+    assert_eq!(pdb_state_at(&result, 1, "NE2"), (0, 1));
+    assert_eq!(pdb_state_at(&result, 1, "ND1"), (0, 0));
+}
+
+#[test]
 fn a_stated_cation_after_a_gap_takes_three_hydrogens() {
     // Alanine 3 of three, without hydrogens, states N +1: the gap to
     // residue 2 is no bond, so N is an ammonium with three hydrogens.
@@ -911,7 +923,8 @@ fn a_sequence_that_continues_past_the_model_opens_its_ends() {
 #[test]
 fn ligands_take_the_ph_7_state_of_their_acids_only() {
     // Heavy-atom GTP and a free lysine as ligands: the phosphates lose their
-    // acidic hydrogens, and the lysine's amines keep the template's state.
+    // acidic hydrogens, and the lysine, of a polymer template, is the
+    // zwitterion.
     let mut rows = heavy(residue_sites("GTP", "L", 0, [0.0; 3]));
     rows.extend(heavy(residue_sites("LYS", "M", 0, [30.0, 0.0, 0.0])));
     let result = read(&rows, "");
@@ -932,7 +945,7 @@ fn ligands_take_the_ph_7_state_of_their_acids_only() {
             .filter(|(asym, _, _)| asym == "M")
             .cloned()
             .collect::<Vec<_>>(),
-        charged(&[("M", "NZ", 1), ("M", "OXT", -1)])
+        charged(&[("M", "N", 1), ("M", "NZ", 1), ("M", "OXT", -1)])
     );
     assert!(has_issue(&result, |issue| matches!(
         issue,
@@ -944,7 +957,7 @@ fn ligands_take_the_ph_7_state_of_their_acids_only() {
         .find(|issue| matches!(issue, Issue::ProtonationAssumed { .. }))
         .unwrap()
         .to_string()
-        .contains("Ligands take nothing else."));
+        .contains("Other ligands take nothing else."));
 }
 
 #[test]
@@ -1786,9 +1799,9 @@ fn a_break_inside_a_chain_without_a_sequence_is_a_gap() {
     )));
 
     // A TER record between them ends the chain there: each glycine is a
-    // molecule of its own, with a free amine.
+    // molecule of its own, a free amino acid with its ammonium.
     let ended = read_pdb(&pdb_text(&rows, 'A', &[1, 5]));
-    assert_eq!(pdb_state_at(&ended, 5, "N"), (0, 2));
+    assert_eq!(pdb_state_at(&ended, 5, "N"), (1, 3));
     assert!(!has_issue(&ended, |issue| matches!(
         issue,
         Issue::PolymerLinkMissing { .. }

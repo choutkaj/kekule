@@ -83,18 +83,19 @@ template, take an assumed state:
 | Group | State |
 | --- | --- |
 | Carboxylic, phosphoric, phosphonic, or sulfonic acid, sulfate | One -1 per acidic hydroxyl, not below the template's charge on it |
-| Free amine of a polymer's true N terminus | Ammonium, +1 |
+| Free amine of a true N terminus, as a free amino acid's | Ammonium, +1 |
 | Lysine, arginine, and other bases | As the dictionary |
-| Histidine in a polymer | Neutral, hydrogen on `NE2` |
+| Histidine | Neutral, hydrogen on `NE2` |
 | Thiol, phenol, hydroxyl | Neutral |
 
 Acid groups take their pH 7 state in every residue, ligands included. An
 acid oxygen the template already charges keeps that charge, as heme's
-`O2A` and `O2D`. Polymer residues also take the ammonium of a true N
-terminus and the variant that charges the fewest atoms, so a C-terminal
-histidine stays neutral. A variant that gives the stated charges by its own
+`O2A` and `O2D`. Residues of polymer templates, in a chain or alone, also
+take the ammonium of a true N terminus and the variant that charges the
+fewest atoms. So a C-terminal histidine stays neutral, and a free amino acid
+is the zwitterion. A variant that gives the stated charges by its own
 hydrogens or a resonance form comes first: a histidine stated with `NE2` +1
-is the imidazolium. Ligands take nothing else. One issue per structure counts
+is the imidazolium. Other ligands take nothing else. One issue per structure counts
 the residues with an assumed state by component (`ProtonationAssumed`).
 Force-field residues, whose names state their protonation, take their
 template's state. Coordination then takes the place of a hydrogen the state

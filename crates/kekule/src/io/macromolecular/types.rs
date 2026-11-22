@@ -659,11 +659,11 @@ pub enum StructureInterpretIssue {
     /// Residues without hydrogens on their heteroatoms took an assumed
     /// protonation. Strong acids take their state at pH 7 in every residue
     /// a dictionary template covers: carboxylic, phosphoric, phosphonic,
-    /// and sulfonic acids and sulfates are deprotonated. Polymer residues
-    /// also take the ammonium of a true N terminus and their least charged
-    /// variant, as neutral histidine with its hydrogen on `NE2`. Ligands
-    /// keep the template's state elsewhere, amines included. Reported once
-    /// per structure.
+    /// and sulfonic acids and sulfates are deprotonated. Residues of polymer
+    /// templates, in a chain or alone, also take the ammonium of a true N
+    /// terminus and their least charged variant, as neutral histidine with
+    /// its hydrogen on `NE2`. Other ligands keep the template's state
+    /// elsewhere, amines included. Reported once per structure.
     ProtonationAssumed {
         /// Component IDs in order, each with its number of residues.
         components: Vec<(String, usize)>,
@@ -1285,8 +1285,8 @@ impl fmt::Display for StructureInterpretIssue {
                 write!(
                     formatter,
                     "{} {have} no hydrogens on heteroatoms. {take} assumed protonation: \
-                     {}. Acid groups take their state at pH 7, and polymer residues their \
-                     usual one. Ligands take nothing else.",
+                     {}. Acid groups take their state at pH 7, and residues of polymer \
+                     templates their usual one. Other ligands take nothing else.",
                     counted(residues, "residue", "residues"),
                     listed(&counts)
                 )
