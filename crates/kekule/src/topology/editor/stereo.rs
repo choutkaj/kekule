@@ -87,7 +87,10 @@ impl TopologyEditor {
         &mut self,
         hydrogen: EditAtomId,
     ) -> Result<Option<EditAtomId>, TopologyEditError> {
-        if self.require_atom(hydrogen)?.element.atomic_number() != 1 {
+        // An implicit hydrogen is protium, so only a protium carrier can
+        // pass its place to one.
+        let atom = self.require_atom(hydrogen)?;
+        if atom.element.atomic_number() != 1 || atom.isotope.is_some_and(|mass| mass.get() != 1) {
             return Ok(None);
         }
         let bonds = self.incident_bonds(hydrogen)?.collect::<Vec<_>>();

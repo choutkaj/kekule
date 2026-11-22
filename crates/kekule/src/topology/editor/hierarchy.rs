@@ -454,7 +454,8 @@ impl TopologyEditor {
     /// The live atom locations in publication order, when it differs from
     /// handle order, which is slot order: an added atom placed in a residue
     /// that holds atoms before it follows the last of them, in creation
-    /// order, so the residue stays contiguous.
+    /// order, so the residue stays contiguous. Only publication reorders;
+    /// the editor's own per-atom APIs keep handle order.
     pub(super) fn residue_order(&self) -> Option<Vec<(EditAtomId, Location<AtomId>)>> {
         if self.hierarchy.added_atom_sites.is_empty() {
             return None;

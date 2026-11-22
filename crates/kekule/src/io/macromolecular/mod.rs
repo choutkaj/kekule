@@ -8,6 +8,7 @@ mod build;
 mod connections;
 pub(super) mod connectivity;
 mod disulfides;
+mod follow_edit;
 pub(crate) use connections::is_metal;
 mod mmcif;
 mod pdb;
@@ -37,7 +38,7 @@ pub use altloc::{
 };
 pub use assemblies::{
     Assembly, AssemblyBond, AssemblyCut, AssemblyError, AssemblyGenerator, AssemblyOperation,
-    AssemblyReport, AssemblyStructure,
+    AssemblyReport, AssemblyStereoLoss, AssemblyStructure,
 };
 pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
@@ -518,17 +519,7 @@ fn publish_structure(
             SQUARE_NANOMETER,
         )))
         .map_err(graph_error)?;
-    report.macromolecules = report
-        .instances
-        .iter()
-        .filter(|instance| instance.entity_kinds().iter().any(EntityKind::is_macro))
-        .count();
-    report.small_molecules = report.instances.len() - report.macromolecules;
-    report.solvent_molecules = report
-        .instances
-        .iter()
-        .filter(|instance| instance.entity_kinds().contains(&EntityKind::Water))
-        .count();
+    report.count_instances();
     Ok(StructureInterpretation { structure, report })
 }
 

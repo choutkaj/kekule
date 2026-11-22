@@ -3,6 +3,9 @@
 //! disulfides between copies.
 use kekule::macromolecular::StructureInterpretation;
 use kekule::mmcif;
+use kekule::stereo::{
+    AxisOrientation, AxisStereo, StereoCarrier, StereoElement, StereoElementKind,
+};
 use kekule::structure::Structure;
 
 /// A cysteine without `HG`, as the dictionary's ideal `CYS` places it.
@@ -140,4 +143,79 @@ fn a_bond_to_a_chain_no_copy_holds_is_reported() {
     assert_eq!(cut.len(), 1);
     assert_eq!(cut[0].operation(), "1");
     assert!(disulfides(built.structure()).is_empty());
+}
+
+#[test]
+fn a_sulfur_beside_a_metal_forms_no_disulfide() {
+    // A zinc ion on the two-fold axis, 2.35 A from both sulfurs, which
+    // coordinate it rather than bond each other.
+    let text = block(
+        &[("A", false)],
+        "metalc1 metalc A CYS 1 SG 1_555 B ZN . ZN 1_555\n",
+        "1 '1,2' A\n1 1 B",
+    )
+    .replace(
+        "loop_\n_struct_conn.id",
+        "HETATM 8 Zn ZN ZN B 2 . 0.234 0.903 -4.600 1 B 1\nloop_\n_struct_conn.id",
+    );
+    let interpretation = read(&text);
+    let assembly = &interpretation.report().assemblies()[0];
+    let built = assembly.to_structure(interpretation.structure()).unwrap();
+    assert!(built.report().created_bonds().is_empty());
+    assert!(disulfides(built.structure()).is_empty());
+}
+
+#[test]
+fn stereo_across_generators_is_reported_lost() {
+    // The disulfide's helicity, stated as an axis about its S-S bond, names
+    // a carbon of each chain, and the assembly copies the chains apart.
+    let a_to_b = "disulf1 disulf A CYS 1 SG 1_555 B CYS 1 SG 1_555\n";
+    let interpretation = read(&block(&[("A", false), ("B", true)], a_to_b, "1 1 A\n1 1 B"));
+    let structure = interpretation.structure();
+    let topology = structure.topology();
+    let named = |chain: &str, name: &str| {
+        topology
+            .atom_sites()
+            .find(|site| {
+                site.residue().chain().label_id() == chain
+                    && site.metadata().label_atom_id() == Some(name)
+            })
+            .unwrap()
+            .atom()
+            .id()
+    };
+    let [sulfur_a, sulfur_b, carbon_a, carbon_b] =
+        [("A", "SG"), ("B", "SG"), ("A", "CB"), ("B", "CB")]
+            .map(|(chain, name)| named(chain, name));
+    let instance = sulfur_a.instance();
+    let axis = topology
+        .instance(instance)
+        .unwrap()
+        .molecule()
+        .bond_between(sulfur_a.atom(), sulfur_b.atom())
+        .unwrap();
+    let helicity = StereoElement::new(StereoElementKind::Axis(AxisStereo {
+        axis,
+        carriers: [
+            StereoCarrier::Atom(carbon_a.atom()),
+            StereoCarrier::Atom(carbon_b.atom()),
+        ],
+        orientation: Some(AxisOrientation::Clockwise),
+    }));
+    let mut editor = structure.to_editor();
+    editor
+        .replace_source_instance_stereo(instance, &[helicity])
+        .unwrap();
+    let stated = editor.finish().unwrap();
+    let assembly = &interpretation.report().assemblies()[0];
+    let built = assembly.to_structure(&stated).unwrap();
+    assert!(built.report().cut_bonds().is_empty());
+    let lost = built.report().lost_stereo();
+    assert_eq!(lost.len(), 1);
+    let mut atoms = lost[0].atoms().to_vec();
+    atoms.sort_unstable();
+    let mut axis_atoms = vec![sulfur_a, sulfur_b];
+    axis_atoms.sort_unstable();
+    assert_eq!(atoms, axis_atoms);
+    assert_eq!(lost[0].operation(), "1");
 }

@@ -102,7 +102,15 @@ impl Topology {
     /// correspondence to translate source identities into target identities.
     /// Instances selecting the same atoms from a shared definition reuse the
     /// reconstructed definitions. Complete molecules and residues retain their
-    /// classifications; changed entities are reclassified. The selection may
+    /// classifications; changed entities are reclassified.
+    ///
+    /// A cut caps the selected atom with hydrogens: a fixed implicit-hydrogen
+    /// count gains one per unit of bond valence the cut takes, except at a
+    /// bond to a metal, which is coordination, and on an atom with declared
+    /// radical electrons. Inferred counts follow on perception. Stereo
+    /// elements that name an atom outside the selection are dropped, unless
+    /// the cut atom is a protium carrier that capping replaces with the
+    /// center's one implicit hydrogen. The selection may
     /// come from any snapshot sharing this layout; the subset and its
     /// correspondence always use the `source` snapshot, which they retain.
     pub fn subset(

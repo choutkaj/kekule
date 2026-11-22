@@ -59,7 +59,7 @@ where
         let mut editor = MoleculeEditor::new();
         for &atom in &component {
             let mut value = source_molecule.require_atom(atom)?.clone();
-            if let ImplicitHydrogens::Fixed(count) = value.hydrogens {
+            if let (ImplicitHydrogens::Fixed(count), None) = (value.hydrogens, value.radical) {
                 let cut = cut_valence(source_molecule, selected_local, atom)?;
                 if cut > 0 {
                     let total = usize::from(count) + cut;
@@ -92,13 +92,13 @@ where
         local_bonds.insert(source_bond, (component, target_bond));
     }
     let mut local_stereo = BTreeMap::new();
-    // A cut hydrogen of an atom whose capped count is exactly one is that
+    // A cut protium of an atom whose capped count is exactly one is that
     // implicit hydrogen.
     let capped_hydrogen = |focus: AtomId, carrier: AtomId| {
         !selected_local.contains(&carrier)
-            && source_molecule
-                .atom(carrier)
-                .is_some_and(|atom| atom.element.atomic_number() == 1)
+            && source_molecule.atom(carrier).is_some_and(|atom| {
+                atom.element.atomic_number() == 1 && atom.isotope.is_none_or(|mass| mass.get() == 1)
+            })
             && local_atoms.get(&focus).is_some_and(|&(component, target)| {
                 components[component]
                     .editor
@@ -194,9 +194,21 @@ fn cut_valence<L: SlotLiveness>(
     selected: &BTreeSet<AtomId>,
     atom: AtomId,
 ) -> Result<usize, MoleculeError> {
+    // A bond to a metal is coordination, not a place a hydrogen takes.
+    let metal = |atom| {
+        molecule
+            .atom(atom)
+            .is_some_and(|atom| atom.element.is_metal())
+    };
+    if metal(atom) {
+        return Ok(0);
+    }
     Ok(molecule
         .require_incident_bonds(atom)?
-        .filter(|(_, bond)| !selected.contains(&bond.other_atom(atom)))
+        .filter(|(_, bond)| {
+            let other = bond.other_atom(atom);
+            !selected.contains(&other) && !metal(other)
+        })
         .map(|(_, bond)| usize::from(bond.order.valence()))
         .sum())
 }

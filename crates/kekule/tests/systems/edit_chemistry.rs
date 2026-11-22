@@ -199,3 +199,115 @@ fn closing_a_ring_at_a_center_puts_the_new_neighbor_where_its_hydrogen_was() {
     expected.perceive().unwrap();
     assert_eq!(canonical(&ring), canonical(&expected));
 }
+
+/// Cisplatin with every count fixed: Pt 0, Cl 0, N 3.
+const CISPLATIN: &str = "[Cl][Pt]([Cl])([NH3])[NH3]";
+
+fn fixed_counts(topology: &Topology) -> Vec<ImplicitHydrogens> {
+    (0..topology.atom_count() as u32)
+        .map(|index| hydrogens(topology, index))
+        .collect()
+}
+
+#[test]
+fn bonds_to_a_metal_change_no_hydrogen_count() {
+    let source = topology(CISPLATIN);
+    let before = fixed_counts(&source);
+    // Deleting a Pt-Cl bond, lowering a Pt-N bond to dative, and deleting
+    // the metal leave every count as it was.
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+    let bonds = editor.bonds().collect::<Vec<_>>();
+    let chloride = bonds
+        .iter()
+        .find(|(_, bond)| bond.a() == handle(&editor, 0) || bond.b() == handle(&editor, 0))
+        .unwrap()
+        .0;
+    let amine = bonds
+        .iter()
+        .find(|(_, bond)| bond.a() == handle(&editor, 3) || bond.b() == handle(&editor, 3))
+        .unwrap()
+        .0;
+    editor.delete_bond(chloride).unwrap();
+    editor.set_bond_order(amine, BondOrder::Dative).unwrap();
+    let edited = editor.finish().unwrap();
+    assert_eq!(
+        hydrogens(&edited, 0),
+        ImplicitHydrogens::Fixed(0),
+        "a chloride stays a chloride"
+    );
+    assert_eq!(hydrogens(&edited, 1), ImplicitHydrogens::Fixed(0));
+    assert_eq!(hydrogens(&edited, 3), ImplicitHydrogens::Fixed(3));
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+    editor.delete_atom(handle(&editor, 1)).unwrap();
+    let edited = editor.finish().unwrap();
+    let mut left = before.clone();
+    left.remove(1);
+    assert_eq!(fixed_counts(&edited), left);
+    // A subset without the metal caps nothing.
+    let ligands = AtomSelection::from_predicate(Arc::clone(&source), |atom| {
+        atom.atom().element().symbol() != "Pt"
+    });
+    let subset = Topology::subset(Arc::clone(&source), &ligands).unwrap();
+    assert_eq!(fixed_counts(subset.topology()), left);
+}
+
+#[test]
+fn a_kekule_swap_keeps_every_count_in_any_order() {
+    // Doubling the single bonds first leaves the substituted carbon owing a
+    // hydrogen until a double bond becomes single.
+    let source = topology("[CH3][C]1=[CH][CH]=[CH][CH]=[CH]1");
+    let before = fixed_counts(&source);
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+    let ring = editor
+        .bonds()
+        .filter(|(_, bond)| bond.a() != handle(&editor, 0) && bond.b() != handle(&editor, 0))
+        .map(|(id, bond)| (id, bond.order))
+        .collect::<Vec<_>>();
+    assert_eq!(ring.len(), 6);
+    for &(id, order) in &ring {
+        if order == BondOrder::Single {
+            editor.set_bond_order(id, BondOrder::Double).unwrap();
+        }
+    }
+    for &(id, order) in &ring {
+        if order == BondOrder::Double {
+            editor.set_bond_order(id, BondOrder::Single).unwrap();
+        }
+    }
+    let edited = editor.finish().unwrap();
+    assert_eq!(fixed_counts(&edited), before);
+}
+
+#[test]
+fn a_bond_past_the_last_hydrogen_fails_publication() {
+    let source = topology("[O]=[C]=[O]");
+    let mut editor = TopologyEditor::from_topology(source);
+    let (left, right) = (handle(&editor, 0), handle(&editor, 2));
+    editor.add_bond(left, right, BondOrder::Single).unwrap();
+    let error = editor.finish().unwrap_err();
+    assert!(error.to_string().contains("bond valence"), "{error}");
+}
+
+#[test]
+fn a_neighbor_with_a_declared_radical_keeps_its_count() {
+    let source = topology("[CH3][CH2][CH2]");
+    let radical = source.atom_at(TopologyAtomIndex::new(2)).unwrap();
+    assert!(radical.atom().radical().is_some());
+    let mut editor = TopologyEditor::from_topology(Arc::clone(&source));
+    editor.delete_atom(handle(&editor, 1)).unwrap();
+    let edited = editor.finish().unwrap();
+    assert_eq!(hydrogens(&edited, 0), ImplicitHydrogens::Fixed(4));
+    assert_eq!(hydrogens(&edited, 1), ImplicitHydrogens::Fixed(2));
+}
+
+#[test]
+fn deleting_a_deuterium_carrier_drops_the_stereo_it_told_apart() {
+    // An implicit protium in the deuterium's place would give the centre two
+    // protium atoms, so the stereo goes.
+    let source = topology("[2H][C@]([H])(F)Cl");
+    let mut editor = TopologyEditor::from_topology(source);
+    editor.delete_atom(handle(&editor, 0)).unwrap();
+    let edited = editor.finish().unwrap();
+    let molecule = edited.instances().next().unwrap().molecule().clone();
+    assert_eq!(molecule.stereo_elements().count(), 0);
+}

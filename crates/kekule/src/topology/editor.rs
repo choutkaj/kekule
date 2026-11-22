@@ -214,35 +214,6 @@ struct Group {
     class: Option<MoleculeClass>,
     class_explicit: bool,
 }
-/// Live atom locations in handle order, or reordered for publication.
-enum PublishedAtoms<H> {
-    Handles(H),
-    Moved(std::vec::IntoIter<(EditAtomId, Location<AtomId>)>),
-}
-
-impl<H: Iterator<Item = (EditAtomId, Location<AtomId>)>> Iterator for PublishedAtoms<H> {
-    type Item = (EditAtomId, Location<AtomId>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Handles(atoms) => atoms.next(),
-            Self::Moved(atoms) => atoms.next(),
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        match self {
-            Self::Handles(atoms) => atoms.size_hint(),
-            Self::Moved(atoms) => atoms.size_hint(),
-        }
-    }
-}
-
-impl<H: ExactSizeIterator<Item = (EditAtomId, Location<AtomId>)>> ExactSizeIterator
-    for PublishedAtoms<H>
-{
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Location<Id> {
     group: usize,
@@ -331,7 +302,10 @@ impl GroupIdentity {
 /// Deleting bonds can split molecules; adding bonds can merge them. Publication
 /// constructs valid connected definitions and one immutable topology snapshot.
 /// Its dense atom order keeps surviving atoms in source order, followed by added
-/// atoms in creation order; [`Self::atom_ids`] already iterates in that order.
+/// atoms in creation order, except that an added atom placed in a residue that
+/// holds earlier atoms follows the last of them. [`Self::atom_ids`] and every
+/// other per-atom editor API keep handle order; the correspondence of
+/// [`Self::finish_with_correspondence`] maps handles to published atoms.
 /// Stable opaque handles survive these changes within the draft. Use `*_handle`
 /// to resolve source IDs. [`Self::finish`] returns the completed topology; editing
 /// handles do not identify entities in the published result.
@@ -385,6 +359,8 @@ pub struct TopologyEditor {
     shared: sharing::SharedDefinitions,
     // Stereo elements edits removed, until a caller takes them.
     pruned_stereo: Vec<PrunedStereo>,
+    // Hydrogens atoms owe for valence they gained past their fixed counts.
+    hydrogen_deficits: BTreeMap<EditAtomId, usize>,
 }
 
 /// The unchanged location of the source atom at dense index `index`.
@@ -445,6 +421,7 @@ impl TopologyEditor {
             deleted_slots: Default::default(),
             shared: sharing::SharedDefinitions::default(),
             pruned_stereo: Vec::new(),
+            hydrogen_deficits: BTreeMap::new(),
         }
     }
 
@@ -461,6 +438,7 @@ impl TopologyEditor {
         self.deleted_slots = Default::default();
         self.shared.clear();
         self.pruned_stereo.clear();
+        self.hydrogen_deficits.clear();
         self.cleared = true;
         self.changed();
     }
@@ -508,21 +486,20 @@ impl TopologyEditor {
     pub fn is_empty(&self) -> bool {
         self.atoms.is_empty()
     }
-    /// Live atom handles in publication order: surviving atoms in source
-    /// order, then added atoms in creation order, except that an added atom
-    /// placed in a residue that holds atoms before it follows the last of
-    /// them, so residues stay contiguous.
+    /// Live atom handles in handle order: surviving source atoms in source
+    /// order, then added atoms in creation order. Every per-atom editor API
+    /// uses this order. Publication groups an added atom with its residue;
+    /// [`EditCorrespondence`] maps handles to the published atoms.
     pub fn atom_ids(&self) -> impl ExactSizeIterator<Item = EditAtomId> + '_ {
-        self.published_atom_locations().map(|(id, _)| id)
+        self.atoms.keys()
     }
     /// Live bond handles in handle order.
     pub fn bond_ids(&self) -> impl ExactSizeIterator<Item = EditBondId> + '_ {
         self.bonds.keys()
     }
-    /// Live atoms with their handles, in publication order; see
-    /// [`Self::atom_ids`].
+    /// Live atoms with their handles, in handle order; see [`Self::atom_ids`].
     pub fn atoms(&self) -> impl ExactSizeIterator<Item = (EditAtomId, &Atom)> + '_ {
-        self.published_atom_locations().map(|(id, loc)| {
+        self.atom_locations().map(|(id, loc)| {
             (
                 id,
                 self.molecule(loc.group)
@@ -716,6 +693,7 @@ impl TopologyEditor {
             return Ok(atom);
         }
         let previous = self.draft_mut(loc.group).replace_atom(loc.local, atom)?;
+        self.hydrogen_deficits.remove(&id);
         self.mark_group_changed(loc.group);
         self.invalidate_component_classes([id]);
         self.invalidate_residue_for_atom(id);
@@ -728,9 +706,12 @@ impl TopologyEditor {
     /// A neighbor with a fixed implicit-hydrogen count gains a hydrogen for
     /// each unit of bond valence it loses, as an inferred count does on
     /// perception: a deleted substituent leaves a hydrogen in its place, and
-    /// a deleted explicit hydrogen stays as an implicit one. Declare a
-    /// radical on the neighbor to leave its valence open instead. Deleting a
-    /// bridging atom splits its molecule at publication.
+    /// a deleted explicit hydrogen stays as an implicit one. A neighbor with
+    /// declared radical electrons keeps its count, and so do both ends of a
+    /// bond to a metal, which is coordination. To remove a hydrogen for
+    /// good, as for hydroxide from water, delete it and then set the atom's
+    /// charge and count with [`Self::replace_atom`]. Deleting a bridging atom
+    /// splits its molecule at publication.
     ///
     /// # Errors
     ///
@@ -741,11 +722,12 @@ impl TopologyEditor {
         let mut changes = ValenceChanges::default();
         for bond in self.incident_bonds(id)?.collect::<Vec<_>>() {
             let bond = self.require_bond(bond)?;
-            changes.lose(if bond.a == id { bond.b } else { bond.a }, bond.order);
+            changes.bond(self, [bond.a, bond.b], Some(bond.order), None)?;
         }
+        changes.forget(id);
         let mut counts = self.fixed_counts_after(&changes)?;
         if let Some(parent) = self.hand_carriers_to_implicit_hydrogen(id)? {
-            counts.push((parent, 1));
+            counts.push(Self::fixed_count(parent, 1));
         }
         let previous = self.remove_atom(id)?;
         self.set_fixed_counts(counts)?;
@@ -760,6 +742,7 @@ impl TopologyEditor {
         let neighbors = self.neighbors(id)?.collect::<Vec<_>>();
         let previous = self.draft_mut(loc.group).delete_atom(loc.local)?;
         self.record_pruned(loc.group);
+        self.hydrogen_deficits.remove(&id);
         for bond in bonds {
             let source = self.source.as_deref();
             let bond_loc = self
@@ -851,8 +834,12 @@ impl TopologyEditor {
     /// Adds an asserted bond. Different instances are merged transactionally.
     ///
     /// An endpoint with a fixed implicit-hydrogen count gives up a hydrogen
-    /// for each unit of bond valence it gains, down to zero; an endpoint
-    /// left over its valence fails strict perception.
+    /// for each unit of bond valence it gains. Past its last hydrogen the
+    /// gain fills open valence; past its largest allowed valence it is owed,
+    /// later losses pay it back first, and publication fails with
+    /// [`TopologyEditError::HydrogenDeficit`] while any is owed. A bond
+    /// to a metal changes neither endpoint's count, and an endpoint with
+    /// declared radical electrons keeps its count.
     ///
     /// # Errors
     ///
@@ -867,8 +854,7 @@ impl TopologyEditor {
         order: BondOrder,
     ) -> Result<EditBondId, TopologyEditError> {
         let mut changes = ValenceChanges::default();
-        changes.gain(a, order);
-        changes.gain(b, order);
+        changes.bond(self, [a, b], None, Some(order))?;
         let counts = self.fixed_counts_after(&changes)?;
         let bond = self.connect(a, b, order)?;
         self.set_fixed_counts(counts)?;
@@ -928,7 +914,8 @@ impl TopologyEditor {
     /// publication.
     ///
     /// An endpoint with a fixed implicit-hydrogen count gains a hydrogen for
-    /// each unit of bond valence it loses, as for [`Self::delete_atom`].
+    /// each unit of bond valence it loses, as for [`Self::delete_atom`],
+    /// except at a metal bond or a declared radical.
     ///
     /// # Errors
     ///
@@ -938,8 +925,7 @@ impl TopologyEditor {
     pub fn delete_bond(&mut self, id: EditBondId) -> Result<EditBond, TopologyEditError> {
         let previous = self.require_bond(id)?;
         let mut changes = ValenceChanges::default();
-        changes.lose(previous.a, previous.order);
-        changes.lose(previous.b, previous.order);
+        changes.bond(self, [previous.a, previous.b], Some(previous.order), None)?;
         let counts = self.fixed_counts_after(&changes)?;
         let loc = self.bond_location(id)?;
         self.draft_mut(loc.group).delete_bond(loc.local)?;
@@ -983,7 +969,7 @@ impl TopologyEditor {
     /// Endpoints with fixed implicit-hydrogen counts gain a hydrogen for each
     /// unit of bond valence a lower order takes from them and give one up
     /// for each unit a higher order adds, as for [`Self::delete_bond`] and
-    /// [`Self::add_bond`].
+    /// [`Self::add_bond`], with their exceptions.
     ///
     /// # Errors
     ///
@@ -1001,7 +987,12 @@ impl TopologyEditor {
             return Ok(());
         }
         let mut changes = ValenceChanges::default();
-        changes.reorder([previous.a, previous.b], previous.order, order);
+        changes.bond(
+            self,
+            [previous.a, previous.b],
+            Some(previous.order),
+            Some(order),
+        )?;
         let counts = self.fixed_counts_after(&changes)?;
         let loc = self.bond_location(id)?;
         self.draft_mut(loc.group).set_bond_order(loc.local, order)?;
@@ -1059,10 +1050,8 @@ impl TopologyEditor {
             return Ok(());
         }
         let mut changes = ValenceChanges::default();
-        changes.lose(old.a, old.order);
-        changes.lose(old.b, old.order);
-        changes.gain(a, old.order);
-        changes.gain(b, old.order);
+        changes.bond(self, [old.a, old.b], Some(old.order), None)?;
+        changes.bond(self, [a, b], None, Some(old.order))?;
         let counts = self.fixed_counts_after(&changes)?;
         let old_loc = self.bond_location(id)?;
         // A checked replacement on the combined draft preserves definition-level
@@ -1239,20 +1228,9 @@ impl TopologyEditor {
             self.deleted_slots.1.get(mark.1..).unwrap_or_default(),
         )
     }
-    /// The slots of the live atoms in publication order.
+    /// The slots of the live atoms in handle order.
     pub(crate) fn live_atom_slots(&self) -> Vec<usize> {
-        self.published_atom_locations()
-            .map(|(_, loc)| loc.slot)
-            .collect()
-    }
-    /// The live atom locations in publication order.
-    fn published_atom_locations(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (EditAtomId, Location<AtomId>)> + '_ {
-        match self.residue_order() {
-            None => PublishedAtoms::Handles(self.atom_locations()),
-            Some(order) => PublishedAtoms::Moved(order.into_iter()),
-        }
+        self.atom_locations().map(|(_, loc)| loc.slot).collect()
     }
     pub(crate) fn atom_slot_count(&self) -> usize {
         self.properties.atoms().len()

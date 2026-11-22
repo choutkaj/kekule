@@ -14,8 +14,9 @@ use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled, FormatError};
 use crate::math::{Matrix3, Point3, Vector3};
-use crate::molecule::{BondOrder, Element};
+use crate::molecule::{AtomId, BondOrder, Element, Molecule};
 use crate::parallel::Run;
+use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind};
 use crate::structure::{Structure, StructureEditError, StructureEditor, StructureError};
 use crate::topology::edit::EditAtomId;
 use crate::topology::{
@@ -164,10 +165,14 @@ impl Assembly {
     /// operation both generators apply. A copy whose chain is bonded to a
     /// chain no copy under its operation holds loses the bond, and its atom
     /// with a fixed hydrogen count takes a hydrogen in its place, as a
-    /// subset does; [`AssemblyReport::cut_bonds`] lists these. Cysteine `SG`
-    /// atoms of different copies within bonding distance form disulfides,
-    /// as reading forms them within the asymmetric unit: when neither carries
-    /// a hydrogen atom or a bond to another residue, nearest pairs first;
+    /// subset does; [`AssemblyReport::cut_bonds`] lists these. A copy of
+    /// only some chains of a molecule loses the stereo elements that name
+    /// atoms of its other chains, even when the copies are bonded again;
+    /// [`AssemblyReport::lost_stereo`] lists these. Cysteine `SG` atoms of
+    /// different copies within bonding distance form disulfides, as reading
+    /// forms them within the asymmetric unit: when neither carries a hydrogen
+    /// atom or a bond to another residue, nor lies within bonding distance of
+    /// a metal it may coordinate, nearest pairs first;
     /// [`AssemblyReport::created_bonds`] lists them. Other links a source
     /// states to a symmetry mate stay import issues. The structure has no
     /// cell, since copies are not a lattice's content.
@@ -207,6 +212,7 @@ impl Assembly {
         let mut editor = StructureEditor::new();
         let mut copies = HashSet::<(ChainId, String)>::new();
         let mut placed = Vec::<PlacedCopy>::new();
+        let mut lost_stereo = Vec::new();
         for (generator_index, generator) in self.generators.iter().enumerate() {
             Cancellation::poll(cancellation).map_err(cancelled)?;
             let listed = generator
@@ -241,6 +247,11 @@ impl Assembly {
                         assembly: self.id.clone(),
                         source,
                     })?
+            };
+            let lost = if whole {
+                Vec::new()
+            } else {
+                stereo_outside(&topology, &selection, part.topology())
             };
             // The atoms each copy is tracked by: the ends of bonds that leave
             // the generator's chains, and sulfurs that can form disulfides.
@@ -281,6 +292,10 @@ impl Assembly {
                         },
                     )
                     .map_err(edit)?;
+                lost_stereo.extend(lost.iter().map(|atoms| AssemblyStereoLoss {
+                    atoms: atoms.clone(),
+                    operation: operation.name(),
+                }));
                 placed.push(PlacedCopy {
                     generator: generator_index,
                     operation: operation_index,
@@ -319,6 +334,7 @@ impl Assembly {
             structure,
             report: AssemblyReport {
                 cut_bonds,
+                lost_stereo,
                 created_bonds,
             },
         })
@@ -366,6 +382,91 @@ impl Assembly {
         }
         Ok(cut)
     }
+}
+
+/// The focus atoms of the stereo elements of `topology` whose first focus
+/// atom `selection` holds and that name an atom outside it, so that `part`,
+/// its subset, lost them.
+fn stereo_outside(
+    topology: &Topology,
+    selection: &AtomSelection,
+    part: &Topology,
+) -> Vec<Vec<InstanceAtomId>> {
+    let mut in_part = None::<HashMap<InstanceAtomId, InstanceAtomId>>;
+    let mut lost = Vec::new();
+    for instance in topology.instances() {
+        let molecule = instance.molecule();
+        let id = |atom| InstanceAtomId::new(instance.id(), atom);
+        for (_, element) in molecule.stereo_elements() {
+            let focus = stereo_focus(molecule, element);
+            let carriers = stereo_carriers(element);
+            let selected =
+                |atoms: &[AtomId]| atoms.iter().all(|&atom| selection.contains(id(atom)));
+            if !focus
+                .first()
+                .is_some_and(|&atom| selection.contains(id(atom)))
+                || (selected(&focus) && selected(&carriers))
+            {
+                continue;
+            }
+            // A subset keeps an element whose cut carrier its capping hands
+            // to an implicit hydrogen.
+            if selected(&focus) {
+                let map = in_part.get_or_insert_with(|| {
+                    selection
+                        .atom_ids()
+                        .zip(part.atom_ids().iter().copied())
+                        .collect()
+                });
+                let mut mapped = focus.iter().map(|&atom| map[&id(atom)]).collect::<Vec<_>>();
+                mapped.sort_unstable();
+                let kept = part.instance(mapped[0].instance()).is_some_and(|target| {
+                    let molecule = target.molecule();
+                    molecule.stereo_elements().any(|(_, kept)| {
+                        let mut atoms = stereo_focus(molecule, kept)
+                            .into_iter()
+                            .map(|atom| InstanceAtomId::new(target.id(), atom))
+                            .collect::<Vec<_>>();
+                        atoms.sort_unstable();
+                        atoms == mapped
+                    })
+                });
+                if kept {
+                    continue;
+                }
+            }
+            lost.push(focus.into_iter().map(id).collect());
+        }
+    }
+    lost
+}
+
+/// A tetrahedral center, or the two atoms of a double bond or axis.
+fn stereo_focus(molecule: &Molecule, element: &StereoElement) -> Vec<AtomId> {
+    match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => vec![stereo.center],
+        StereoElementKind::DoubleBond(stereo) => vec![stereo.left, stereo.right],
+        StereoElementKind::Axis(stereo) => molecule
+            .bond(stereo.axis)
+            .map(|bond| vec![bond.a(), bond.b()])
+            .unwrap_or_default(),
+    }
+}
+
+/// The atoms an element's carriers name.
+fn stereo_carriers(element: &StereoElement) -> Vec<AtomId> {
+    let carriers: &[StereoCarrier] = match &element.kind {
+        StereoElementKind::Tetrahedral(stereo) => &stereo.carriers,
+        StereoElementKind::DoubleBond(stereo) => &[stereo.left_carrier, stereo.right_carrier],
+        StereoElementKind::Axis(stereo) => &stereo.carriers,
+    };
+    carriers
+        .iter()
+        .filter_map(|carrier| match carrier {
+            StereoCarrier::Atom(atom) => Some(*atom),
+            _ => None,
+        })
+        .collect()
 }
 
 /// One copy an assembly placed, with the draft handles of its tracked atoms.
@@ -471,6 +572,26 @@ fn bond_disulfides(
             sulfurs.push((index, handle, point));
         }
     }
+    // A sulfur within bonding distance of a metal may coordinate it, as a
+    // coordination record states for the asymmetric unit.
+    let metals = editor
+        .topology()
+        .atoms()
+        .filter(|(_, atom)| atom.element.is_metal())
+        .map(|(handle, atom)| {
+            let point = editor
+                .position(handle)
+                .expect("live atoms have positions")
+                .value_in(ANGSTROM)
+                .expect("positions are lengths");
+            (atom.element, point)
+        })
+        .collect::<Vec<_>>();
+    sulfurs.retain(|&(_, _, point)| {
+        !metals
+            .iter()
+            .any(|&metal| within_bonding_distance((sulfur, point), metal))
+    });
     // Sorted along x, each sulfur meets only those within bonding reach on x.
     let reach = 2.0 * covalent_bonding_radius(sulfur).0 + COVALENT_BOND_TOLERANCE_ANGSTROM;
     sulfurs.sort_by(|a, b| a.2.x.total_cmp(&b.2.x).then(a.1.cmp(&b.1)));
@@ -535,6 +656,7 @@ impl AssemblyStructure {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AssemblyReport {
     cut_bonds: Vec<AssemblyCut>,
+    lost_stereo: Vec<AssemblyStereoLoss>,
     created_bonds: Vec<AssemblyBond>,
 }
 
@@ -544,6 +666,12 @@ impl AssemblyReport {
     /// took a hydrogen in the bond's place.
     pub fn cut_bonds(&self) -> &[AssemblyCut] {
         &self.cut_bonds
+    }
+
+    /// The source stereo elements a copy lost because they name atoms of
+    /// chains outside its generator, in copy order.
+    pub fn lost_stereo(&self) -> &[AssemblyStereoLoss] {
+        &self.lost_stereo
     }
 
     /// The disulfides formed between copies, nearest first.
@@ -563,6 +691,27 @@ impl AssemblyCut {
     /// The bond in the source structure.
     pub const fn bond(&self) -> InstanceBondId {
         self.bond
+    }
+
+    /// The name of the operation that placed the copy; see
+    /// [`AssemblyOperation::name`].
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+}
+
+/// A source stereo element one copy of an assembly lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssemblyStereoLoss {
+    atoms: Vec<InstanceAtomId>,
+    operation: String,
+}
+
+impl AssemblyStereoLoss {
+    /// The element's focus in the source structure: a tetrahedral center,
+    /// or the two atoms of a double bond or axis.
+    pub fn atoms(&self) -> &[InstanceAtomId] {
+        &self.atoms
     }
 
     /// The name of the operation that placed the copy; see

@@ -40,6 +40,14 @@ pub enum TopologyEditError {
         /// The count it would hold.
         count: usize,
     },
+    /// Bonds an edit added to an atom took it past its largest allowed
+    /// valence, with no hydrogen left to give up.
+    HydrogenDeficit {
+        /// The atom.
+        atom: EditAtomId,
+        /// The hydrogens it lacks.
+        missing: usize,
+    },
     /// A molecule edit failed; see the source.
     Molecule(Box<MoleculeError>),
     /// An edited molecule could not be published; see the source.
@@ -84,6 +92,12 @@ impl fmt::Display for TopologyEditError {
             Self::HydrogenCountOverflow { atom, count } => write!(
                 f,
                 "{} would have {count} implicit hydrogens. The most is 255.",
+                Capitalized(atom)
+            ),
+            Self::HydrogenDeficit { atom, missing } => write!(
+                f,
+                "{} has {missing} more bond valence than its hydrogens can give up. \
+                 Delete a hydrogen or set its hydrogen count.",
                 Capitalized(atom)
             ),
             Self::Molecule(_) => f.write_str("Cannot edit the molecule."),

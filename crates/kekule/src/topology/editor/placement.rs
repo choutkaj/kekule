@@ -263,6 +263,7 @@ impl TopologyEditor {
             draft.add_bond(loc.local, local, order)?
         };
         let (atom, bond) = self.register_bonded_atom(loc.group, local, bond, parent);
+        self.record_pruned(loc.group);
         let mut dead = None;
         if let Some(hydrogen) = replaced {
             let atom_slot = self.atom_location(hydrogen)?.slot;

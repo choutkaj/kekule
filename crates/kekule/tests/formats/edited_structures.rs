@@ -3,9 +3,13 @@
 use kekule::diagnostics::UnrepresentablePolicy;
 use kekule::hydrogens::AddHydrogensOptions;
 use kekule::macromolecular::StructureInterpretation;
+use kekule::math::Point3;
+use kekule::mmcif;
 use kekule::pdb::{self, PdbSource, PdbWriteOptions};
+use kekule::properties::{PropertyColumn, PropertyKey};
 use kekule::structure::StructureEditor;
 use kekule::topology::edit::EditAtomId;
+use kekule::units::Quantity;
 
 /// A `HETATM` record of atom `name` of residue `residue` `sequence` of chain
 /// `chain` at `x` Å.
@@ -160,4 +164,113 @@ fn appending_a_chain_under_a_taken_identifier_is_reported() {
     assert_eq!(colliding.len(), 1);
     let chain = ion.topology().chain(colliding[0]).unwrap();
     assert_eq!(chain.label_id(), "A");
+}
+
+fn two_waters() -> StructureEditor {
+    read(&entry(&[
+        hetatm(1, "O", "HOH", 'A', 1, 0.0),
+        hetatm(2, "O", "HOH", 'A', 2, 3.0),
+    ]))
+    .into_structure()
+    .to_editor()
+}
+
+#[test]
+fn a_column_in_editor_order_follows_its_atoms_through_publication() {
+    let mut editor = two_waters();
+    let oxygen = atom(&editor, 0);
+    editor
+        .add_hydrogens([oxygen], AddHydrogensOptions::default())
+        .unwrap();
+    let numbers = editor
+        .topology()
+        .atoms()
+        .map(|(_, atom)| Some(i64::from(atom.element().atomic_number())))
+        .collect::<Vec<_>>();
+    let key = PropertyKey::new("element").unwrap();
+    editor
+        .properties_mut()
+        .atoms_mut()
+        .insert(key.clone(), PropertyColumn::Int(numbers))
+        .unwrap();
+    let edited = editor.finish().unwrap();
+    let column = edited.properties().atoms().get(&key).unwrap().clone();
+    let expected = edited
+        .topology()
+        .atoms()
+        .map(|atom| Some(i64::from(atom.atom().element().atomic_number())))
+        .collect::<Vec<_>>();
+    assert_eq!(column, PropertyColumn::Int(expected));
+}
+
+#[test]
+fn positions_keep_handle_order_when_an_added_atom_joins_a_residue() {
+    let mut editor = two_waters();
+    let positions = editor.positions();
+    let unit = positions.values().unit();
+    let before = positions.values().value().to_vec();
+    let oxygen = atom(&editor, 0);
+    editor
+        .add_hydrogens([oxygen], AddHydrogensOptions::default())
+        .unwrap();
+    let mut points = before.clone();
+    points.extend([Point3::new(0.09, 0.0, 0.0), Point3::new(-0.02, 0.09, 0.0)]);
+    editor.set_positions(Quantity::new(points, unit)).unwrap();
+    let second = atom(&editor, 1);
+    let at = editor.position(second).unwrap().value_in(unit).unwrap();
+    assert_eq!(at, before[1]);
+}
+
+#[test]
+fn a_followed_report_keeps_coordination_through_a_chain_rename() {
+    let source = read(&zinc_entry());
+    let mut editor = source.structure().to_editor();
+    let (chain, _) = editor.topology().chains().next().unwrap();
+    editor
+        .set_chain_identifiers(chain, "B", Some("B".to_owned()))
+        .unwrap();
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed =
+        source
+            .report()
+            .follow_edit(source.topology(), edited.topology(), &correspondence);
+    let (written, _) = pdb::write(
+        PdbSource::structure(&edited).with_reports(std::slice::from_ref(&followed)),
+        omit_hydrogens(),
+    )
+    .unwrap();
+    let links = records(&written, "LINK");
+    assert_eq!(links.len(), 2, "{written}");
+    assert!(links.iter().all(|link| &link[21..22] == "B"), "{written}");
+}
+
+/// A `HETATM` record of residue `sequence` with a blank chain and segment
+/// `segment`.
+fn segment_hetatm(
+    serial: usize,
+    name: &str,
+    residue: &str,
+    segment: &str,
+    sequence: i32,
+    x: f64,
+) -> String {
+    let record = hetatm(serial, name, residue, ' ', sequence, x);
+    format!("{}{segment:<4}{}", &record[..72], &record[76..])
+}
+
+#[test]
+fn coordination_in_segments_that_share_residue_numbers_is_written() {
+    // Each segment holds zinc 1, coordinated by the oxygen of water 2.
+    let source = read(&entry(&[
+        segment_hetatm(1, "ZN", "ZN", "PROA", 1, 0.0),
+        segment_hetatm(2, "O", "HOH", "PROA", 2, 2.1),
+        segment_hetatm(3, "ZN", "ZN", "PROB", 1, 10.0),
+        segment_hetatm(4, "O", "HOH", "PROB", 2, 12.1),
+        "CONECT    1    2".to_owned(),
+        "CONECT    3    4".to_owned(),
+    ]));
+    assert_eq!(source.report().coordination().len(), 2);
+    let (written, report) = mmcif::write([&source], Default::default()).unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+    assert_eq!(written.matches(" metalc ").count(), 2, "{written}");
 }

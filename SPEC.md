@@ -143,8 +143,13 @@ perception never overwrites them; inferred counts are unknown after chemical
 edits until perception is recomputed. Topology and structure edits keep fixed
 counts whole: an atom gains a hydrogen for each unit of bond valence a
 deletion, a lower order, or a subset cut takes from it, and gives one up for
-each unit it gains, down to none. `perception::valence::open_valences` names
-fixed atoms still short of their valence. Explicit/implicit conversion
+each unit it gains. Past the last hydrogen a gain fills open valence; past
+the largest allowed valence it is owed, later losses pay it back first, and
+publication fails while any is owed. A bond to
+a metal is coordination and changes neither endpoint's count, and an atom
+with declared radical electrons keeps its count.
+`perception::valence::open_valences` names fixed atoms still short of their
+valence. Explicit/implicit conversion
 preserves composition and stereo. CIP assignment is transactional, respects
 represented stereo, and reports unsupported or exhausted ranking rather than
 treating unfinished work as a tie.
@@ -263,8 +268,10 @@ edits retain the exact shared topology.
 Append-oriented construction preserves existing IDs and dense order. General
 structural edits keep surviving atoms in source dense order and append new
 atoms in creation order, except that an added atom placed in a residue that
-holds earlier atoms follows the last of them, so residues stay contiguous,
-while repartitioned molecules receive deterministic new definitions and
+holds earlier atoms follows the last of them, so residues stay contiguous.
+The editor's own per-atom APIs, `atom_ids` and position and property columns
+among them, keep handle order: surviving source atoms, then added atoms in
+creation order. Repartitioned molecules receive deterministic new definitions and
 instances. Hierarchy is filtered and empty nodes are pruned; its partition is
 independent of molecule splits and merges. Per-entity annotations follow the
 operation's explicit correspondence: an editor maps surviving handles to
@@ -918,7 +925,11 @@ hydrogens as its order, as a disulfide replaces cysteine's `HG`, so it
 charges no atom.
 Metal coordination between residues is not a bond: the
 report keeps it as connection metadata, which writers state again for the
-atoms that still carry its partners' source identity, while coordination
+atoms that carry its partners' identity: chain, residue identifiers and
+occurrence among the chain's residues that share them, and atom names, with
+the recorded atom ID deciding between equals.
+`StructureInterpretationReport::follow_edit` re-keys a report through an
+edit's correspondence, so renamed chains and residues keep it. Coordination
 within one residue is a dative bond, so a metal complex that is one component
 stays one molecule.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.

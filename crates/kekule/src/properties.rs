@@ -493,7 +493,8 @@ pub(crate) mod rows {
     pub trait HandleSlots {
         /// The slot of the live handle at `position`, or `None`.
         fn slot(&self, position: u64) -> Option<usize>;
-        /// Live slots in handle order, which is publication order.
+        /// Live slots in handle order. Publication keeps it, except that an
+        /// added atom joins its residue's atoms.
         fn live_slots(&self) -> Vec<usize>;
     }
 
@@ -731,8 +732,9 @@ impl<R: PropertyRow> PropertyTable<R> {
 /// draft accept missing values alone and fail with
 /// [`PropertyError::RemovedRow`]. With an editing handle of a topology or
 /// structure draft, columns are read and inserted in live-handle order, which
-/// is the dense order of the published result, and a deleted or foreign handle
-/// fails with the editor's matching error (`InvalidAtom`, `InvalidBond`, ...).
+/// publication keeps except that an added atom joins its residue's atoms, and
+/// a deleted or foreign handle fails with the editor's matching error
+/// (`InvalidAtom`, `InvalidBond`, ...).
 ///
 /// Every mutation is transactional: on error the table is unchanged.
 ///

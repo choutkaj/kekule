@@ -198,10 +198,7 @@ pub(super) fn resolve_connections(
 /// Alkali, alkaline-earth, transition, post-transition, lanthanide, and
 /// actinide metals; metalloids are not metals.
 pub(crate) fn is_metal(element: Element) -> bool {
-    matches!(
-        element.atomic_number(),
-        3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=84 | 87..=116
-    )
+    element.is_metal()
 }
 
 fn report_connection_partner_resolution<'a>(

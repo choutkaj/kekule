@@ -334,7 +334,9 @@ impl TopologyEditor {
     ///
     /// # Errors
     ///
-    /// [`TopologyEditError::EmptyTopology`] when no atoms remain, or a
+    /// [`TopologyEditError::EmptyTopology`] when no atoms remain,
+    /// [`TopologyEditError::HydrogenDeficit`] when an atom owes hydrogens for
+    /// valence an edit took it past its largest, or a
     /// [`TopologyEditError::Molecule`], [`TopologyEditError::Publication`],
     /// [`TopologyEditError::Topology`], or [`TopologyEditError::Property`]
     /// error when a component, the topology, or its properties cannot be
@@ -352,6 +354,7 @@ impl TopologyEditor {
         if self.is_empty() {
             return Err(TopologyEditError::EmptyTopology);
         }
+        self.check_hydrogen_deficits()?;
         let owner_unchanged = self
             .source
             .as_ref()
