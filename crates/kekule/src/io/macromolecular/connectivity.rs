@@ -6,14 +6,16 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::algorithms::{implied_charge, is_neutral_unbonded_metal};
+use crate::algorithms::{
+    incomplete_metal_valence, onium_charges, over_bonded_charge, OniumCharges,
+};
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
 };
 use crate::io::localize_source_aromatic_bonds;
 use crate::math::Point3;
-use crate::molecule::{AtomId, BondOrder, Element, MoleculeEditor};
+use crate::molecule::{AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
 
 use crate::io::macromolecular as raw;
 use crate::io::mmcif::category::MmcifCategory;
@@ -707,12 +709,24 @@ impl<'r> Resolver<'r, '_> {
     /// the component tables of wwPDB entry files do. A neutral atom with
     /// more bonds than its valence allows, such as the methylated N7 of
     /// 7-methylguanosine, then takes the charge of one that makes its
-    /// valence valid, +1 before -1, and an onium centre, such as a sulfur
-    /// bonded to three carbons, takes +1 rather than a hydrogen. Stated
-    /// charges are kept. An unbonded neutral alkali, alkaline-earth, or
-    /// p-block metal is reported, since its charge is likely missing.
+    /// valence valid, +1 before -1. An onium centre, such as a sulfur bonded
+    /// to three carbons, takes +1 rather than a hydrogen, and a singly bonded
+    /// terminal chalcogen or boron neighbor takes -1 with it, as the oxygen
+    /// of DMSO drawn with a single bond. An onium centre bonded to a metal
+    /// keeps the hydrogens of its other bonds. Onium centres are left alone
+    /// when the residue's bonds have no stated orders. Stated charges are
+    /// kept. Alkali, alkaline-earth, and p-block metals at a valence their
+    /// element does not allow are reported.
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
+        let orders_unstated = self.has_unstated_orders(residue)?;
+        let may_charge = |atom| {
+            residue
+                .site(atom)
+                .is_some_and(|site| site.stated_charge.is_none())
+        };
         let mut charged_atoms = Vec::new();
+        let mut donors = Vec::new();
+        let mut uncharged = Vec::new();
         for site in &residue.sites {
             if site.stated_charge.is_some() {
                 continue;
@@ -721,32 +735,109 @@ impl<'r> Resolver<'r, '_> {
                 .graph
                 .require_atom(site.atom)
                 .map_err(interpret_error)?;
-            if is_neutral_unbonded_metal(self.graph, site.atom, atom) {
+            let mut charges = Vec::new();
+            if let Some(charge) = over_bonded_charge(self.graph, site.atom, atom) {
+                charges.push((site.atom, charge));
+            } else if let Some(onium) = onium_charges(self.graph, site.atom, atom, may_charge) {
+                match onium {
+                    _ if orders_unstated => uncharged.push(site.name.clone()),
+                    OniumCharges::Centre => charges.push((site.atom, 1)),
+                    OniumCharges::Separated(partner) => {
+                        charges.extend([(site.atom, 1), (partner, -1)]);
+                    }
+                    OniumCharges::MetalDonor(hydrogens) => {
+                        self.graph
+                            .require_atom_mut(site.atom)
+                            .map_err(interpret_error)?
+                            .hydrogens = ImplicitHydrogens::Fixed(hydrogens);
+                        donors.push(site.name.clone());
+                    }
+                }
+            }
+            for (atom, charge) in charges {
+                self.graph
+                    .require_atom_mut(atom)
+                    .map_err(interpret_error)?
+                    .formal_charge = charge;
+                let name = &residue.site(atom).expect("charged atoms are sites").name;
+                charged_atoms.push((name.clone(), charge));
+            }
+        }
+        let id = residue.key.id(self.model_id);
+        let component_id = &residue.key.component_id;
+        for site in residue
+            .sites
+            .iter()
+            .filter(|site| site.stated_charge.is_none())
+        {
+            let atom = self
+                .graph
+                .require_atom(site.atom)
+                .map_err(interpret_error)?;
+            if let Some(valence) = incomplete_metal_valence(self.graph, site.atom, atom) {
                 self.issues
-                    .push(raw::StructureInterpretIssue::NeutralUnbondedMetal {
-                        residue: residue.key.id(self.model_id),
-                        component_id: residue.key.component_id.clone(),
+                    .push(raw::StructureInterpretIssue::MetalValenceIncomplete {
+                        residue: id.clone(),
+                        component_id: component_id.clone(),
                         atom_name: site.name.clone(),
+                        valence,
                     });
             }
-            let Some(charge) = implied_charge(self.graph, site.atom, atom) else {
-                continue;
-            };
-            self.graph
-                .require_atom_mut(site.atom)
-                .map_err(interpret_error)?
-                .formal_charge = charge;
-            charged_atoms.push((site.name.clone(), charge));
         }
         if !charged_atoms.is_empty() {
             self.issues
                 .push(raw::StructureInterpretIssue::ChargesFromBonds {
-                    residue: residue.key.id(self.model_id),
-                    component_id: residue.key.component_id.clone(),
+                    residue: id.clone(),
+                    component_id: component_id.clone(),
                     charged_atoms,
                 });
         }
+        if !donors.is_empty() {
+            self.issues.push(raw::StructureInterpretIssue::MetalDonors {
+                residue: id.clone(),
+                component_id: component_id.clone(),
+                atom_names: donors,
+            });
+        }
+        if !uncharged.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::BondOrdersUnstated {
+                    residue: id,
+                    component_id: component_id.clone(),
+                    atom_names: uncharged,
+                });
+        }
         Ok(())
+    }
+
+    /// Whether a bond within the residue has no stated order: one inferred
+    /// from distance, or one from a PDB `CONECT` or `LINK` record.
+    fn has_unstated_orders(&self, residue: &ResidueAtoms) -> Result<bool, FormatError> {
+        for site in &residue.sites {
+            for neighbor in self
+                .graph
+                .require_neighbors(site.atom)
+                .map_err(interpret_error)?
+            {
+                if residue.site(neighbor).is_none() {
+                    continue;
+                }
+                let evidence = self
+                    .evidence
+                    .get(&(site.atom.min(neighbor), site.atom.max(neighbor)));
+                let unstated = match evidence {
+                    Some(raw::BondEvidence::Distance) => true,
+                    Some(raw::BondEvidence::Connection {
+                        connection_type, ..
+                    }) => matches!(connection_type.as_str(), "CONECT" | "LINK"),
+                    _ => false,
+                };
+                if unstated {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a declared connection already bonds two atoms of the residue.

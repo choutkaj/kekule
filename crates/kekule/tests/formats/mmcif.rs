@@ -498,10 +498,6 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                 .map(|(_, atom)| atom.formal_charge())
                 .collect::<Vec<_>>();
             let case = format!("{name} stripped={stripped}");
-            // Without the bond tables, AP5's bonds are inferred single, so
-            // each of its five phosphorus atoms has four single bonds and
-            // takes +1 as an onium centre, ten more in 1AKE.
-            let charged = charged + if stripped && name == "1AKE" { 10 } else { 0 };
             assert_eq!(topology.atom_count(), atoms, "{case}");
             assert_eq!(topology.bond_count(), bonds, "{case}");
             assert_eq!(sizes.len(), molecules, "{case}");

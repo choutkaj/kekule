@@ -989,28 +989,96 @@ fn onium_centres_without_template_charges_take_a_charge_not_a_hydrogen() {
 }
 
 #[test]
-fn unbonded_neutral_metals_without_templates_are_reported() {
-    // Lead is not bundled; the atom stays neutral, without hydrides.
-    let result = interpret(&block("PB PB PB A 1 0.000 0.000 0.000", ""));
+fn onium_oxides_and_boranes_without_template_charges_separate_charges() {
+    // DMSO drawn with a single S-O bond and trimethylphosphine-borane: the
+    // oxygen and boron take -1 with the onium centre's +1, not hydrogens.
+    let mut table = String::from(
+            "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n",
+        );
+    for (component, center, ligands) in [
+        ("XSO", "S", ["C1", "C2", "O"].as_slice()),
+        ("XPB", "P", &["C1", "C2", "C3", "B"]),
+    ] {
+        for ligand in ligands {
+            table.push_str(&format!("{component} {center} {ligand} sing\n"));
+        }
+    }
+    let result = interpret(&block(
+        "S S XSO A 1 0.000 0.000 0.000
+             C C1 XSO A 1 1.800 0.000 0.000
+             C C2 XSO A 1 -0.600 1.700 0.000
+             O O XSO A 1 -0.500 -0.600 1.300
+             P P XPB A 2 10.000 0.000 0.000
+             C C1 XPB A 2 11.050 1.050 1.050
+             C C2 XPB A 2 8.950 -1.050 1.050
+             C C3 XPB A 2 8.950 1.050 -1.050
+             B B XPB A 2 11.100 -1.100 -1.100",
+        &table,
+    ));
+    let separated = [
+        vec![("S".to_owned(), 1), ("O".to_owned(), -1)],
+        vec![("P".to_owned(), 1), ("B".to_owned(), -1)],
+    ];
+    assert_eq!(charges(&result), separated.concat());
+    let mut perceived = result.structure().clone();
+    perceived.perceive().unwrap();
+    let hydrogens = perceived
+        .topology()
+        .atoms()
+        .filter(|atom| atom.element().atomic_number() != 6)
+        .map(|atom| (atom.element().symbol(), atom.total_hydrogens().unwrap()))
+        .collect::<Vec<_>>();
+    assert_eq!(hydrogens, [("S", 0), ("O", 0), ("P", 0), ("B", 3)]);
+    let charged = issues(&result)
+        .into_iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ChargesFromBonds { charged_atoms, .. } => Some(charged_atoms),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(charged, separated);
+}
+
+#[test]
+fn metals_without_templates_report_valences_their_element_does_not_allow() {
+    // Lead is not bundled; the unbonded atom stays neutral, without hydrides.
+    // Tin with three carbons and aluminium with two, bonded by distance, are
+    // tributylstannane and DIBAL-H without their hydrides.
+    let result = interpret(&block(
+        "PB PB PB A 1 0.000 0.000 0.000
+             SN SN XSN A 2 10.000 0.000 0.000
+             C C1 XSN A 2 12.140 0.000 0.000
+             C C2 XSN A 2 10.000 2.140 0.000
+             C C3 XSN A 2 10.000 0.000 2.140
+             AL AL XAL A 3 20.000 0.000 0.000
+             C C1 XAL A 3 21.960 0.000 0.000
+             C C2 XAL A 3 20.000 1.960 0.000",
+        "",
+    ));
     assert_eq!(charges(&result), []);
     let mut perceived = result.structure().clone();
     perceived.perceive().unwrap();
+    for atom in perceived.topology().atoms() {
+        if atom.element().atomic_number() != 6 {
+            assert_eq!(atom.total_hydrogens(), Some(0), "{}", atom.element());
+        }
+    }
+    let incomplete = issues(&result)
+        .into_iter()
+        .filter(|issue| !matches!(issue, StructureInterpretIssue::ResidueBondsInferred { .. }))
+        .collect::<Vec<_>>();
     assert_eq!(
-        perceived
-            .topology()
-            .atoms()
-            .next()
-            .unwrap()
-            .total_hydrogens(),
-        Some(0)
-    );
-    assert_eq!(
-        issues(&result),
-        [StructureInterpretIssue::NeutralUnbondedMetal {
-            residue: residue("A", 1),
-            component_id: "PB".to_owned(),
-            atom_name: "PB".to_owned(),
-        }]
+        incomplete,
+        [("PB", "PB", 1, 0), ("XSN", "SN", 2, 3), ("XAL", "AL", 3, 2)].map(
+            |(component, atom, sequence, valence)| {
+                StructureInterpretIssue::MetalValenceIncomplete {
+                    residue: residue("A", sequence),
+                    component_id: component.to_owned(),
+                    atom_name: atom.to_owned(),
+                    valence,
+                }
+            }
+        )
     );
 }
 

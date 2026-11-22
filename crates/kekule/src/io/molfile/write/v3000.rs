@@ -1,11 +1,12 @@
 //! V3000 CTAB rendering of a prepared record.
-use crate::algorithms::{explicit_valence, onium_hydrogens};
+use crate::algorithms::explicit_valence;
 use crate::diagnostics::FormatError;
 use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::SourceStereoBondMarkKind;
 use crate::molecule::{AtomRadical, BondOrder, ImplicitHydrogens};
 use crate::stereo::StereoGroupKind;
 
+use super::record::stated_inferred_hydrogens;
 use super::MolfileRecord;
 
 /// CTfile lines hold at most 80 characters.
@@ -47,11 +48,9 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
         if let Some(radical) = atom.radical {
             line.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
-        // A reader charges an onium centre without a stated valence, so its
-        // inferred hydrogens are stated.
         let stated = match atom.hydrogens {
             ImplicitHydrogens::Inferred => {
-                onium_hydrogens(record_atom.molecule, record_atom.id, atom)
+                stated_inferred_hydrogens(record_atom.molecule, record_atom.id, atom)
             }
             ImplicitHydrogens::Fixed(explicit) => Some(explicit),
         };

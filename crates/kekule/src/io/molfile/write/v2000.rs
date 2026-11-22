@@ -1,11 +1,12 @@
 //! V2000 CTAB rendering of a prepared record.
-use crate::algorithms::{explicit_valence, onium_hydrogens};
+use crate::algorithms::explicit_valence;
 use crate::diagnostics::FormatError;
 use crate::io::molfile::v2000::{V2000_MAX_ATOMS, V2000_MAX_BONDS};
 use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::SourceStereoBondMarkKind;
 use crate::molecule::{Atom, AtomId, AtomRadical, BondOrder, ImplicitHydrogens, Molecule};
 
+use super::record::stated_inferred_hydrogens;
 use super::MolfileRecord;
 
 /// Coordinates occupy fixed 10-column fields with four decimal places.
@@ -152,9 +153,7 @@ fn v2000_charge_code(charge: i8) -> i8 {
 
 fn v2000_valence_code(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> Result<u8, FormatError> {
     let fixed_hydrogens = match atom.hydrogens {
-        // A reader charges an onium centre without a stated valence, so its
-        // inferred hydrogens are stated.
-        ImplicitHydrogens::Inferred => match onium_hydrogens(mol, atom_id, atom) {
+        ImplicitHydrogens::Inferred => match stated_inferred_hydrogens(mol, atom_id, atom) {
             Some(hydrogens) => hydrogens,
             None => return Ok(0),
         },

@@ -18,8 +18,9 @@ pub enum ValenceModel {
     /// Zero-order and dative bonds contribute zero at both endpoints. Dative
     /// acceptor valence therefore differs from RDKit's directional bond model.
     /// Unlike RDKit, alkali, alkaline-earth, and p-block metals (Li, Be, Na,
-    /// Mg, Al, K, Ca, Ga, Rb, Sr, In, Sn, Cs, Ba, Tl, Pb, Bi, Fr, Ra) infer no
-    /// hydrogens: a lone sodium is Na, not NaH.
+    /// Mg, Al, K, Ca, Ga, Rb, Sr, In, Sn, Cs, Ba, Tl, Pb, Bi, Po, Fr, Ra)
+    /// infer no hydrogens: a lone sodium is Na, not NaH. Nor does a hydrogen
+    /// atom joined only by zero-order or dative bonds, as a hydride on iron.
     RdkitLike,
 }
 

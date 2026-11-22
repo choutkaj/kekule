@@ -2010,8 +2010,6 @@ fn pdb_connectivity_matches_an_independent_reference() {
     // charges (+1), counted from the files. The bundled templates do not cover
     // AP5: its 62 bonds per chain come from CONECT records, none inferred, and
     // the 12 CONECT partners in the omitted alternate location B are reported.
-    // CONECT states no orders, so each of AP5's five phosphorus atoms has four
-    // single bonds and takes +1 as an onium centre, ten more in 1AKE.
     for (name, text, atoms, bonds, largest, molecules, charged, listed, disulfides, omitted) in [
         ("1CRN", CRAMBIN, 327, 337, vec![327], 1, 2, 0, 3, 0),
         (
@@ -2021,7 +2019,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
             3484,
             vec![1656, 1656, 57, 57],
             382,
-            78,
+            68,
             124,
             0,
             12,
@@ -2225,4 +2223,117 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
             .unwrap_err(),
         StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
+}
+
+#[test]
+fn onium_centres_with_unstated_bond_orders_take_no_charge() {
+    // A phosphate whose bonds come from CONECT records and a DMSO whose bonds
+    // come from atom distances state no bond orders. Their phosphorus and
+    // sulfur atoms, with more bonds than their default valence, may carry a
+    // double bond, so they take no charge.
+    let phosphate = vec![
+        site("HETATM", "1", " P  ", "XPO", 'L', "1", [0.0, 0.0, 0.0], "P").line(),
+        site(
+            "HETATM",
+            "2",
+            " O1 ",
+            "XPO",
+            'L',
+            "1",
+            [0.87, 0.87, 0.87],
+            "O",
+        )
+        .line(),
+        site(
+            "HETATM",
+            "3",
+            " O2 ",
+            "XPO",
+            'L',
+            "1",
+            [-0.87, -0.87, 0.87],
+            "O",
+        )
+        .line(),
+        site(
+            "HETATM",
+            "4",
+            " O3 ",
+            "XPO",
+            'L',
+            "1",
+            [-0.87, 0.87, -0.87],
+            "O",
+        )
+        .line(),
+        site(
+            "HETATM",
+            "5",
+            " O4 ",
+            "XPO",
+            'L',
+            "1",
+            [0.87, -0.87, -0.87],
+            "O",
+        )
+        .line(),
+        "CONECT    1    2    3    4    5".to_owned(),
+        "CONECT    2    1".to_owned(),
+        "CONECT    3    1".to_owned(),
+        "CONECT    4    1".to_owned(),
+        "CONECT    5    1".to_owned(),
+    ];
+    let dmso = vec![
+        site("HETATM", "1", " S  ", "XSO", 'L', "1", [0.0, 0.0, 0.0], "S").line(),
+        site("HETATM", "2", " C1 ", "XSO", 'L', "1", [1.8, 0.0, 0.0], "C").line(),
+        site(
+            "HETATM",
+            "3",
+            " C2 ",
+            "XSO",
+            'L',
+            "1",
+            [-0.6, 1.7, 0.0],
+            "C",
+        )
+        .line(),
+        site(
+            "HETATM",
+            "4",
+            " O  ",
+            "XSO",
+            'L',
+            "1",
+            [-0.5, -0.6, 1.3],
+            "O",
+        )
+        .line(),
+    ];
+    for (lines, component, center) in [(phosphate, "XPO", "P"), (dmso, "XSO", "S")] {
+        let text = format!("{}\nEND\n", lines.join("\n"));
+        let interpretation = pdb::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap();
+        let unstated = interpretation
+            .report()
+            .issues()
+            .iter()
+            .filter_map(|issue| match issue {
+                StructureInterpretIssue::BondOrdersUnstated {
+                    component_id,
+                    atom_names,
+                    ..
+                } => Some((component_id.clone(), atom_names.clone())),
+                StructureInterpretIssue::ChargesFromBonds { .. } => panic!("{issue}"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(unstated, [(component.to_owned(), vec![center.to_owned()])]);
+        let structure = interpretation.into_structure();
+        assert!(structure
+            .topology()
+            .atoms()
+            .all(|atom| atom.formal_charge() == 0));
+    }
 }

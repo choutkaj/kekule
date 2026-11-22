@@ -309,5 +309,12 @@ fn hydrogens_on_zero_order_and_dative_bonds_are_not_counted() {
             "{order:?}"
         );
         assert_eq!(molecule.total_hydrogens(iron), Some(expected), "{order:?}");
+        // The hydride takes no hydrogen of its own either way.
+        assert_eq!(molecule.total_hydrogens(hydrogen), Some(0), "{order:?}");
+        assert_eq!(
+            molecular_formula(&molecule).unwrap().to_string(),
+            "FeH",
+            "{order:?}"
+        );
     }
 }

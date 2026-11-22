@@ -232,7 +232,7 @@ fn common_ions_take_their_bundled_charges_without_a_charge_column() {
             .iter()
             .all(|issue| !matches!(
                 issue,
-                kekule::macromolecular::StructureInterpretIssue::NeutralUnbondedMetal { .. }
+                kekule::macromolecular::StructureInterpretIssue::MetalValenceIncomplete { .. }
             )));
         let mut structure = interpretation.into_structure();
         structure.perceive().unwrap();

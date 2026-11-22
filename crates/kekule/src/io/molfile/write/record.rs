@@ -2,6 +2,7 @@
 //! projected against them.
 use std::collections::BTreeMap;
 
+use crate::algorithms::{onium_hydrogens, rdkit_inferred_hydrogen_count, rdkit_reader_hydrogens};
 use crate::io::{project_molfile_stereo_bond_marks, AtomPositionSource, SourceStereoBondMarkKind};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondId, BondOrder, Molecule};
@@ -20,6 +21,21 @@ use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::MolfileVersion;
 
 const PROGRAM: &str = "kekule";
+
+/// The hydrogens a writer states, as a valence, for an atom with inferred
+/// hydrogens that a reader would read otherwise: those of an onium centre,
+/// which this crate's reader charges instead, and a count that differs from
+/// RDKit's rule, which Molfile readers share, as the none of a metal atom.
+pub(super) fn stated_inferred_hydrogens(
+    molecule: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<u8> {
+    onium_hydrogens(molecule, atom_id, atom).or_else(|| {
+        let hydrogens = rdkit_inferred_hydrogen_count(molecule, atom_id, atom);
+        (hydrogens != rdkit_reader_hydrogens(molecule, atom_id, atom)).then_some(hydrogens)
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ComponentKey {

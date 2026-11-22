@@ -526,6 +526,8 @@ fn valence_infers_no_hydrides_on_main_group_metals() {
         ("Sn", 0),
         ("Pb", 0),
         ("Bi", 0),
+        ("Po", 0),
+        ("Te", 2),
         ("B", 3),
         ("Si", 4),
     ] {

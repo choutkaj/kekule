@@ -638,13 +638,34 @@ the main branch migrates by the table under "From the SampleSet API".
   sulfur of trimethylsulfonium, takes +1 instead of a hydrogen
   (`MolfileInterpretIssue::ChargeFromBonds`,
   `StructureInterpretIssue::ChargesFromBonds`). SMILES keeps the OpenSMILES
-  hydrogen of `CS(C)C`, and Molfile writers state such an atom's valence.
+  hydrogen of `CS(C)C`.
+- A singly bonded terminal chalcogen or boron neighbor of such a centre
+  takes -1 with the centre's +1, so DMSO or a phosphine oxide drawn with a
+  single bond, and a phosphine-borane, keep their formula
+  (`MolfileInterpretIssue::ChargesSeparated`, which also covers aluminium
+  acceptors, and `ChargesFromBonds`).
+- An atom that is such a centre only by counting a metal neighbor, as the
+  phosphorus of a phosphine on palladium, takes no charge and only the
+  hydrogens of its other bonds (`MolfileInterpretIssue::MetalDonor`,
+  `StructureInterpretIssue::MetalDonors`, native issue kind 23).
+- PDB and mmCIF interpretation charges no onium centre in a residue whose
+  bonds have no stated order, from atom distances or `CONECT` or `LINK`
+  records, and reports it (`StructureInterpretIssue::BondOrdersUnstated`,
+  native issue kind 24).
 - Valence perception infers no hydrogens on alkali, alkaline-earth, and
-  p-block metals, so a lone Na, Mg, or Al is no longer NaH, MgH2, or AlH3 and
-  `StructureEditor::add_hydrogens` adds none. Molfile and PDB or mmCIF
-  interpretation report an unbonded neutral one
-  (`MolfileInterpretIssue::NeutralUnbondedMetal`,
-  `StructureInterpretIssue::NeutralUnbondedMetal`, native issue kind 22).
+  p-block metals, polonium included, so a lone Na, Mg, or Al is no longer
+  NaH, MgH2, or AlH3 and `StructureEditor::add_hydrogens` adds none. Molfile
+  and PDB or mmCIF interpretation report one whose valence its element does
+  not allow, unbonded or under-bonded, as tin with three carbons
+  (`MolfileInterpretIssue::MetalValenceIncomplete`,
+  `StructureInterpretIssue::MetalValenceIncomplete`, native issue kind 22).
+- A hydrogen atom joined only by zero-order or dative bonds, as a hydride on
+  iron, infers no hydrogen of its own, so it is FeH, not FeH2.
+- Molfile writers state the valence of every atom whose inferred count a
+  reader would read otherwise: an onium centre's hydrogens, and the none of a
+  metal or of a hydride joined by a dative bond.
+- The unknown hydrogen count error names permissive validation as the way to
+  perceive valence when strict validation fails.
 - Placement counts two radical electrons as one domain, so carbenes and
   nitrenes, singlet or triplet, are bent instead of linear.
 - `explicit_hydrogens` and `total_hydrogens` no longer count hydrogens joined

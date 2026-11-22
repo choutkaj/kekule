@@ -8,7 +8,7 @@ use crate::diagnostics::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::{NonZeroU16, NonZeroU32};
 
-use crate::algorithms::{is_neutral_unbonded_metal, onium_charge};
+use crate::algorithms::{incomplete_metal_valence, onium_charges, OniumCharges};
 use crate::io::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning, SourceStereoBondMark, SourceStereoBondMarkKind,
@@ -212,61 +212,94 @@ struct StagedMolfile {
     implicit_charges: BTreeMap<AtomId, ImplicitCharge>,
 }
 
-/// A staged atom whose drawing leaves its charge implicit, with its source
-/// line.
+/// A staged atom whose drawing leaves its charge or hydrogens implicit, with
+/// its source line.
 #[derive(Debug, Clone, Copy)]
 enum ImplicitCharge {
-    /// A neutral onium centre ([`onium_charge`]), charged here.
-    Onium(i8, SourceLocation),
-    /// An unbonded neutral metal, which stays neutral.
-    Metal(SourceLocation),
+    /// An onium centre ([`onium_charges`]), charged +1 here.
+    Onium(SourceLocation),
+    /// An onium centre charged +1 here, whose staged neighbor takes -1.
+    Separated(AtomId, SourceLocation),
+    /// An onium centre bonded to a metal, given the hydrogens of its other
+    /// bonds here.
+    MetalDonor(SourceLocation),
+    /// A main-group metal at a valence its element does not allow.
+    Metal(u8, SourceLocation),
 }
 
 impl ImplicitCharge {
-    /// The issue reporting it on the published `atom`.
-    const fn issue(self, atom: AtomId) -> MolfileInterpretIssue {
+    /// The issue reporting it on the published `atom`, with `published`
+    /// mapping staged atoms of the same component.
+    fn issue(self, atom: AtomId, published: &BTreeMap<AtomId, AtomId>) -> MolfileInterpretIssue {
         match self {
-            Self::Onium(charge, location) => MolfileInterpretIssue::ChargeFromBonds {
+            Self::Onium(location) => MolfileInterpretIssue::ChargeFromBonds {
                 atom,
                 location,
-                charge,
+                charge: 1,
             },
-            Self::Metal(location) => MolfileInterpretIssue::NeutralUnbondedMetal { atom, location },
+            Self::Separated(acceptor, location) => MolfileInterpretIssue::ChargesSeparated {
+                atom,
+                acceptor: published[&acceptor],
+                location,
+            },
+            Self::MetalDonor(location) => MolfileInterpretIssue::MetalDonor { atom, location },
+            Self::Metal(valence, location) => MolfileInterpretIssue::MetalValenceIncomplete {
+                atom,
+                location,
+                valence,
+            },
         }
     }
 }
 
-/// Charges each neutral onium centre +1, such as the sulfur of
-/// trimethylsulfonium, and finds the unbonded neutral metals, which stay
-/// neutral.
+/// Reads the onium centres ([`onium_charges`]), in atom order, and then
+/// finds the main-group metals at a valence their element does not allow.
 fn assign_implicit_charges(
     editor: &mut MoleculeEditor,
     document: &MolfileDocument,
 ) -> BTreeMap<AtomId, ImplicitCharge> {
+    let ids = editor.graph().atoms().map(|(id, _)| id).collect::<Vec<_>>();
+    let mut found = BTreeMap::new();
+    for (&id, source) in ids.iter().zip(document.atoms()) {
+        let graph = editor.graph();
+        let atom = graph.atom(id).expect("staged atoms are live");
+        let Some(charges) = onium_charges(graph, id, atom, |_| true) else {
+            continue;
+        };
+        let location = source.location;
+        match charges {
+            OniumCharges::Centre => {
+                set_charge(editor, id, 1);
+                found.insert(id, ImplicitCharge::Onium(location));
+            }
+            OniumCharges::Separated(acceptor) => {
+                set_charge(editor, id, 1);
+                set_charge(editor, acceptor, -1);
+                found.insert(id, ImplicitCharge::Separated(acceptor, location));
+            }
+            OniumCharges::MetalDonor(hydrogens) => {
+                editor
+                    .atom_mut(id)
+                    .expect("staged atoms are live")
+                    .set_hydrogens(ImplicitHydrogens::Fixed(hydrogens));
+                found.insert(id, ImplicitCharge::MetalDonor(location));
+            }
+        }
+    }
     let graph = editor.graph();
-    let found = graph
-        .atoms()
-        .zip(document.atoms())
-        .filter_map(|((id, atom), source)| {
-            let found = match onium_charge(graph, id, atom) {
-                Some(charge) => ImplicitCharge::Onium(charge, source.location),
-                None if is_neutral_unbonded_metal(graph, id, atom) => {
-                    ImplicitCharge::Metal(source.location)
-                }
-                None => return None,
-            };
-            Some((id, found))
-        })
-        .collect::<BTreeMap<_, _>>();
-    for (id, found) in &found {
-        if let ImplicitCharge::Onium(charge, _) = found {
-            editor
-                .atom_mut(*id)
-                .expect("staged atoms are live")
-                .set_formal_charge(*charge);
+    for ((id, atom), source) in graph.atoms().zip(document.atoms()) {
+        if let Some(valence) = incomplete_metal_valence(graph, id, atom) {
+            found.insert(id, ImplicitCharge::Metal(valence, source.location));
         }
     }
     found
+}
+
+fn set_charge(editor: &mut MoleculeEditor, atom: AtomId, charge: i8) {
+    editor
+        .atom_mut(atom)
+        .expect("staged atoms are live")
+        .set_formal_charge(charge);
 }
 
 /// Builds the represented graph from decoded atoms and bonds in source order,
@@ -488,14 +521,43 @@ pub enum MolfileInterpretIssue {
         /// The formal charge it takes, in e.
         charge: i8,
     },
-    /// An alkali, alkaline-earth, or p-block metal atom has no bonds and no
-    /// charge. It stays neutral and takes no hydrides; the source likely
-    /// omits its ionic charge.
-    NeutralUnbondedMetal {
+    /// An onium centre ([`ChargeFromBonds`](Self::ChargeFromBonds)) has a
+    /// singly bonded neutral neighbor that takes the opposite charge: a
+    /// terminal oxygen, sulfur, selenium, or tellurium, as of DMSO or a
+    /// phosphine oxide drawn with a single bond, or a boron or aluminium
+    /// acceptor, as of a phosphine-borane. The centre takes +1 and the
+    /// neighbor -1, instead of a hydrogen each.
+    ChargesSeparated {
+        /// The centre, charged +1.
+        atom: AtomId,
+        /// The neighbor, charged -1.
+        acceptor: AtomId,
+        /// The centre's source line.
+        location: SourceLocation,
+    },
+    /// A neutral atom with more bonded neighbors than its default valence
+    /// counts a metal among them, as the phosphorus of a phosphine on
+    /// palladium, and has no more non-metal neighbors than that valence. Its
+    /// bond to the metal is a donor bond drawn as a single bond. The atom
+    /// takes no charge and only the hydrogens of its other bonds, as a fixed
+    /// count.
+    MetalDonor {
+        /// The donor atom.
+        atom: AtomId,
+        /// Its source line.
+        location: SourceLocation,
+    },
+    /// An alkali, alkaline-earth, or p-block metal atom with inferred
+    /// hydrogens has a valence its element and charge do not allow, as a tin
+    /// atom with three bonds or an unbonded neutral sodium atom. It takes no
+    /// hydrides; the source likely omits a charge, a bond, or a hydrogen.
+    MetalValenceIncomplete {
         /// The metal atom.
         atom: AtomId,
         /// Its source line.
         location: SourceLocation,
+        /// Its valence: bond orders and radical electrons.
+        valence: u8,
     },
 }
 
@@ -822,11 +884,9 @@ pub(crate) fn interpret_molfile_document(
                 location,
             }
         }));
-        warnings.extend(
-            raw.atom_map
-                .iter()
-                .filter_map(|(staged, atom)| Some(implicit_charges.get(staged)?.issue(*atom))),
-        );
+        warnings.extend(raw.atom_map.iter().filter_map(|(staged, atom)| {
+            Some(implicit_charges.get(staged)?.issue(*atom, &raw.atom_map))
+        }));
         let atom_mappings = raw
             .atom_map
             .iter()

@@ -257,10 +257,21 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             component_id: "XYZ".into(),
             charged_atoms: vec![("N1".into(), 1), ("B2".into(), -1)],
         },
-        Issue::NeutralUnbondedMetal {
+        Issue::MetalValenceIncomplete {
             residue: label(6),
             component_id: "XNA".into(),
             atom_name: "NA".into(),
+            valence: 0,
+        },
+        Issue::MetalDonors {
+            residue: label(7),
+            component_id: "XPD".into(),
+            atom_names: vec!["P1".into(), "P2".into()],
+        },
+        Issue::BondOrdersUnstated {
+            residue: label(8),
+            component_id: "XPO".into(),
+            atom_names: vec!["P".into()],
         },
         Issue::ProtonationFromHydrogens {
             residue: label(57),

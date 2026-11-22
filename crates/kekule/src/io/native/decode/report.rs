@@ -733,10 +733,21 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 force_field: self.str()?,
             },
-            22 if self.version >= DISULFIDE_SINCE => Issue::NeutralUnbondedMetal {
+            22 if self.version >= DISULFIDE_SINCE => Issue::MetalValenceIncomplete {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atom_name: self.str()?,
+                valence: self.u8()?,
+            },
+            23 if self.version >= DISULFIDE_SINCE => Issue::MetalDonors {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_names: self.str_list()?,
+            },
+            24 if self.version >= DISULFIDE_SINCE => Issue::BondOrdersUnstated {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_names: self.str_list()?,
             },
             other => {
                 return Err(

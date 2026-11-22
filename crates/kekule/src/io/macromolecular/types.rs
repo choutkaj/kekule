@@ -448,7 +448,9 @@ pub enum StructureInterpretIssue {
     /// than a neutral atom allows, or onium centres that a neutral atom
     /// completes only with a hydrogen above its default valence. Each took
     /// the formal charge its bonds imply, as the methylated N7 of
-    /// 7-methylguanosine and the sulfur of trimethylsulfonium take +1.
+    /// 7-methylguanosine and the sulfur of trimethylsulfonium take +1. A
+    /// singly bonded terminal chalcogen or boron neighbor of an onium centre
+    /// took -1, as the oxygen of DMSO drawn with a single bond.
     ChargesFromBonds {
         /// The residue.
         residue: SourceResidueId,
@@ -458,16 +460,45 @@ pub enum StructureInterpretIssue {
         charged_atoms: Vec<(String, i8)>,
     },
     /// An alkali, alkaline-earth, or p-block metal atom that no template
-    /// gives a charge has no bonds and no stated charge. It stays a neutral
-    /// atom without hydrogens; the source likely omits its ionic charge.
-    /// Supplying the component as context gives it one.
-    NeutralUnbondedMetal {
+    /// gives a charge has a valence its element and charge do not allow, as
+    /// a tin atom with three bonds or an unbonded neutral sodium atom. It
+    /// takes no hydrides; the source likely omits a charge, a bond, or a
+    /// hydrogen. Supplying the component as context gives it its charge.
+    MetalValenceIncomplete {
         /// The residue.
         residue: SourceResidueId,
         /// Its component ID.
         component_id: String,
         /// The atom's name.
         atom_name: String,
+        /// Its valence: bond orders and radical electrons.
+        valence: u8,
+    },
+    /// Atoms of a residue that no template gives charges have more bonded
+    /// neighbors than their default valence, counting a metal, as the
+    /// phosphorus of a phosphine on palladium. Each bond to the metal is a
+    /// donor bond stated as a covalent one. The atoms take no charge and only
+    /// the hydrogens of their other bonds.
+    MetalDonors {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The donor atoms, by atom name.
+        atom_names: Vec<String>,
+    },
+    /// Atoms of a residue that no template gives charges have more bonded
+    /// neighbors than their default valence, but the residue's bonds have no
+    /// stated orders: some come from atom distances or PDB `CONECT` or `LINK`
+    /// records. A neutral atom then takes hydrogens to its next allowed
+    /// valence; the atoms may instead carry a charge or a double bond.
+    BondOrdersUnstated {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atoms, by atom name.
+        atom_names: Vec<String>,
     },
     /// The structure's hydrogens differ from the reference template: a
     /// protonation variant was selected, or heteroatom charges were adjusted by
@@ -735,15 +766,49 @@ impl fmt::Display for StructureInterpretIssue {
                     listed(&Charged::all(charged_atoms))
                 )
             }
-            Self::NeutralUnbondedMetal {
+            Self::MetalValenceIncomplete {
                 residue,
                 component_id,
                 atom_name,
+                valence,
             } => write!(
                 formatter,
-                "Atom {atom_name:?} of {residue} (component {component_id:?}) is a metal atom \
-                 without bonds or charge."
+                "Atom {atom_name:?} of {residue} (component {component_id:?}) is a metal atom                  with valence {valence}, which its element does not allow. It takes no hydrogens."
             ),
+            Self::MetalDonors {
+                residue,
+                component_id,
+                atom_names,
+            } => {
+                let (atoms, verb) = if atom_names.len() == 1 {
+                    ("Atom", "bonds a metal and takes")
+                } else {
+                    ("Atoms", "bond a metal and take")
+                };
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) has no template charges. {atoms} {} {verb}                      no hydrogens for that bond.",
+                    Capitalized(residue),
+                    listed(&Quoted::all(atom_names))
+                )
+            }
+            Self::BondOrdersUnstated {
+                residue,
+                component_id,
+                atom_names,
+            } => {
+                let (atoms, their) = if atom_names.len() == 1 {
+                    ("Atom", "its")
+                } else {
+                    ("Atoms", "their")
+                };
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) states no bond orders. {atoms} {} took no                      charge from {their} bonds.",
+                    Capitalized(residue),
+                    listed(&Quoted::all(atom_names))
+                )
+            }
             Self::ProtonationFromHydrogens {
                 residue,
                 component_id,
