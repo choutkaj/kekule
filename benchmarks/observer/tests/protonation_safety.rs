@@ -1,8 +1,9 @@
 //! Protonation safety net: every curated structure that Kekule's tests and
-//! benchmarks carry reads as it is and with its hydrogens stripped, and
-//! both structures perceive. Without hydrogens, the standard residues take
-//! the net charge their pH 7 states give, counted here from the residues'
-//! atoms alone.
+//! benchmarks carry, and a heme with every hydrogen, reads as it is and
+//! with its hydrogens stripped, and both structures perceive. Without
+//! hydrogens, the standard residues take the net charge their pH 7 states
+//! give, counted here from the residues' atoms alone. As it is, a structure
+//! keeps its net charge through a PDB round trip.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -19,6 +20,51 @@ use kekule::{mmcif, pdb};
 struct Entry {
     path: PathBuf,
     pdb: bool,
+}
+
+/// Heme with every hydrogen of its template, at the template's ideal
+/// coordinates, as an mmCIF block: its carboxylic acids are protonated.
+fn protonated_heme() -> String {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let template =
+        std::fs::read_to_string(root.join("../../crates/kekule/data/components/HEM.cif"))
+            .expect("bundled heme template");
+    let header = template
+        .lines()
+        .filter(|line| line.starts_with("_chem_comp_atom."))
+        .collect::<Vec<_>>();
+    let column = |name: &str| {
+        header
+            .iter()
+            .position(|line| line.trim_end() == name)
+            .expect("template column")
+    };
+    let (atom, symbol, x) = (
+        column("_chem_comp_atom.atom_id"),
+        column("_chem_comp_atom.type_symbol"),
+        column("_chem_comp_atom.pdbx_model_Cartn_x_ideal"),
+    );
+    let mut text = "data_HEM\nloop_\n_atom_site.group_PDB\n_atom_site.id\n\
+                    _atom_site.type_symbol\n_atom_site.label_atom_id\n\
+                    _atom_site.label_comp_id\n_atom_site.label_asym_id\n\
+                    _atom_site.label_seq_id\n_atom_site.Cartn_x\n_atom_site.Cartn_y\n\
+                    _atom_site.Cartn_z\n_atom_site.auth_seq_id\n"
+        .to_owned();
+    let rows = template
+        .lines()
+        .map(tokens)
+        .filter(|fields| fields.len() > x + 2 && fields[0] == "HEM");
+    for (serial, fields) in (1..).zip(rows) {
+        text.push_str(&format!(
+            "HETATM {serial} {} \"{}\" HEM A . {} {} {} 1\n",
+            fields[symbol],
+            fields[atom],
+            fields[x],
+            fields[x + 1],
+            fields[x + 2]
+        ));
+    }
+    text
 }
 
 fn entries() -> Vec<Entry> {
@@ -309,17 +355,61 @@ fn charge_mismatches(result: &StructureInterpretation) -> Vec<String> {
     mismatches
 }
 
+/// The net formal charge of a structure.
+fn net_charge(result: &StructureInterpretation) -> i32 {
+    result
+        .structure()
+        .topology()
+        .atoms()
+        .map(|atom| i32::from(atom.atom().formal_charge()))
+        .sum()
+}
+
+/// How a PDB round trip changes the net charge, if it does.
+fn round_trip_charge(result: &StructureInterpretation) -> Option<String> {
+    let (text, _) = match pdb::write(result, Default::default()) {
+        Ok(written) => written,
+        // PDB has no room for five-character component names.
+        Err(error) if error.to_string().contains("residue-name columns") => return None,
+        Err(error) => return Some(format!("does not write as PDB: {error}")),
+    };
+    let entry = Entry {
+        path: PathBuf::new(),
+        pdb: true,
+    };
+    let reread = match read(&entry, &text) {
+        Ok(reread) => reread,
+        Err(error) => return Some(format!("does not read back from PDB: {error}")),
+    };
+    let (before, after) = (net_charge(result), net_charge(&reread));
+    (before != after).then(|| format!("net charge {before} reads back from PDB as {after}"))
+}
+
 #[test]
 fn curated_structures_perceive_with_and_without_hydrogens() {
     let mut failures = Vec::new();
-    for entry in entries() {
-        let label = entry
-            .path
-            .file_name()
-            .expect("file name")
-            .to_string_lossy()
-            .into_owned();
-        let source = text(&entry.path);
+    let mut sources = entries()
+        .into_iter()
+        .map(|entry| {
+            let label = entry
+                .path
+                .file_name()
+                .expect("file name")
+                .to_string_lossy()
+                .into_owned();
+            let source = text(&entry.path);
+            (label, entry, source)
+        })
+        .collect::<Vec<_>>();
+    sources.push((
+        "protonated heme".to_owned(),
+        Entry {
+            path: PathBuf::new(),
+            pdb: false,
+        },
+        protonated_heme(),
+    ));
+    for (label, entry, source) in sources {
         let stripped = if entry.pdb {
             strip_pdb(&source)
         } else {
@@ -339,6 +429,11 @@ fn curated_structures_perceive_with_and_without_hydrogens() {
             let mut structure = result.structure().clone();
             if let Err(error) = structure.perceive() {
                 failures.push(format!("{label} {version}: does not perceive: {error}"));
+            }
+            if version == "as is" {
+                if let Some(failure) = round_trip_charge(&result) {
+                    failures.push(format!("{label}: {failure}"));
+                }
             }
             if version == "without hydrogens" {
                 let mismatches = charge_mismatches(&result);

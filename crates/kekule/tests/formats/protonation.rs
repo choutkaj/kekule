@@ -612,7 +612,19 @@ fn residues_without_hydrogens_take_their_ph_7_states() {
 #[test]
 fn heme_carboxylates_without_their_hydrogens_stay_single_anions() {
     // The dictionary charges heme's O2A and O2D -1 and still lists H2A and
-    // H2D on them. Without those hydrogens they stay -1.
+    // H2D on them. Without those hydrogens they stay -1; with them they are
+    // neutral acids, which the report names.
+    let result = read(&residue_sites("HEM", "A", 0, [0.0; 3]), "");
+    let oxygens = charges(&result)
+        .into_iter()
+        .filter(|(_, name, _)| name.starts_with('O'))
+        .collect::<Vec<_>>();
+    assert_eq!(oxygens, []);
+    result.structure().clone().perceive().unwrap();
+    assert!(has_issue(&result, |issue| matches!(
+        issue,
+        Issue::ProtonationFromHydrogens { component_id, .. } if component_id == "HEM"
+    )));
     for rows in [
         without(residue_sites("HEM", "A", 0, [0.0; 3]), &["H2A", "H2D"]),
         heavy(residue_sites("HEM", "A", 0, [0.0; 3])),

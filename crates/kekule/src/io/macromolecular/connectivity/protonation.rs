@@ -366,8 +366,9 @@ fn evaluate(
                 let lacking = expected - present;
                 match role {
                     Role::StrongAcid => {
-                        let released =
-                            released_charge(candidate, index, charge, lacking, present, atom.links);
+                        let released = released_charge(
+                            candidate, index, evidence, charge, lacking, present, atom.links,
+                        );
                         state.from_hydrogens = i8::try_from(released - charge).ok()?;
                         charge = released;
                         hydrogens = present;
@@ -387,12 +388,19 @@ fn evaluate(
                     }
                     _ => state.missing = lacking,
                 }
+            } else if base != 0 {
+                // A template charge the atom's bonds and hydrogens cannot
+                // hold, as heme's `O2A` -1 with `H2A`, follows the hydrogens.
+                let held = held_charge(candidate, index, evidence, charge, present + links);
+                state.from_hydrogens = i8::try_from(held - charge).ok()?;
+                charge = held;
             }
         } else {
             if evidence.dictionary {
                 match role {
                     Role::StrongAcid if links == 0 && expected > 0 => {
-                        charge = released_charge(candidate, index, charge, expected, 0, 0);
+                        charge =
+                            released_charge(candidate, index, evidence, charge, expected, 0, 0);
                         hydrogens = 0;
                     }
                     Role::Base
@@ -1039,20 +1047,66 @@ fn role(component: &Component, index: usize) -> Role {
 fn released_charge(
     candidate: &Component,
     index: usize,
+    evidence: &ResidueEvidence<'_>,
     charge: i32,
     lacking: usize,
     left: usize,
     links: usize,
 ) -> i32 {
-    let mut valence = links + left;
+    let Some(valence) = heavy_valence(candidate, index, evidence) else {
+        return charge - count(lacking);
+    };
+    (0..=lacking)
+        .rev()
+        .map(|released| charge - count(released))
+        .find(|&charge| holds(candidate, index, charge, valence + links + left))
+        .unwrap_or(charge - count(lacking))
+}
+
+/// The charge of the template atom `index`, charged `charge`, whose
+/// hydrogens and bonds to other residues give the valence `outside`: the
+/// charge itself where its valence is allowed, else the one nearest it
+/// towards zero that allows it. Unchanged where none does or a bond has no
+/// localized order.
+fn held_charge(
+    candidate: &Component,
+    index: usize,
+    evidence: &ResidueEvidence<'_>,
+    charge: i32,
+    outside: usize,
+) -> i32 {
+    let Some(valence) = heavy_valence(candidate, index, evidence).map(|valence| valence + outside)
+    else {
+        return charge;
+    };
+    if holds(candidate, index, charge, valence) {
+        return charge;
+    }
+    let step = -charge.signum();
+    (1..=charge.abs())
+        .map(|offset| charge + step * offset)
+        .find(|&charge| holds(candidate, index, charge, valence))
+        .unwrap_or(charge)
+}
+
+/// The valence the template bonds of atom `index` to heavy atoms give it:
+/// all but metal coordination and bonds to leaving atoms the residue lacks.
+/// `None` when a bond has no localized order.
+fn heavy_valence(
+    candidate: &Component,
+    index: usize,
+    evidence: &ResidueEvidence<'_>,
+) -> Option<usize> {
+    let mut valence = 0;
     for (other, bond) in neighbours(candidate, index) {
-        if is_hydrogen(candidate.atoms()[other].element()) || bond.metal_coordination() {
+        let other = &candidate.atoms()[other];
+        if is_hydrogen(other.element())
+            || bond.metal_coordination()
+            || (other.leaving() && !evidence.heavy.contains_key(other.name()))
+        {
             continue;
         }
-        let Some(order) = current_order(&[], bond) else {
-            return charge - count(lacking);
-        };
-        valence += match order {
+        valence += match current_order(&[], bond)? {
             BondOrder::Single => 1,
             BondOrder::Double => 2,
             BondOrder::Triple => 3,
@@ -1060,18 +1114,17 @@ fn released_charge(
             BondOrder::Zero | BondOrder::Dative => 0,
         };
     }
+    Some(valence)
+}
+
+/// Whether the template atom `index` has `valence` among its allowed
+/// valences with `charge`.
+fn holds(candidate: &Component, index: usize, charge: i32, valence: usize) -> bool {
     let atomic_number = candidate.atoms()[index].element().atomic_number();
-    let holds = |charge: i32| {
-        i8::try_from(charge)
-            .ok()
-            .and_then(|charge| allowed_valences_with_charge(atomic_number, charge))
-            .is_some_and(|allowed| allowed.iter().any(|&value| usize::from(value) == valence))
-    };
-    (0..=lacking)
-        .rev()
-        .map(|released| charge - count(released))
-        .find(|&charge| holds(charge))
-        .unwrap_or(charge - count(lacking))
+    i8::try_from(charge)
+        .ok()
+        .and_then(|charge| allowed_valences_with_charge(atomic_number, charge))
+        .is_some_and(|allowed| allowed.iter().any(|&value| usize::from(value) == valence))
 }
 
 fn neighbours(
