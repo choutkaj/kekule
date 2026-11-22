@@ -1752,6 +1752,139 @@ fn a_break_inside_a_chain_without_a_sequence_is_a_gap() {
 }
 
 #[test]
+fn lower_numbers_and_other_linkages_start_a_molecule() {
+    // Two glycine dipeptides and a DNA dinucleotide in one blank chain,
+    // without TER or SEQRES: residue numbers restart for the second
+    // dipeptide, and the linkage changes for the DNA.
+    let dipeptide = |shift: f64| {
+        heavy(glycine_pair())
+            .into_iter()
+            .map(|mut site| {
+                site.sequence -= 1;
+                site.point[1] += shift;
+                site
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut rows = dipeptide(0.0);
+    rows.extend(dipeptide(30.0));
+    let first = without(
+        heavy(residue_sites("DA", "A", 3, [0.0, 60.0, 0.0])),
+        &["OP3"],
+    );
+    let oxygen = point(&first, "O3'");
+    let phosphorus = point(&residue_sites("DA", "A", 4, [0.0; 3]), "P");
+    let shift = [0, 1, 2].map(|axis| oxygen[axis] - phosphorus[axis] + [1.6, 0.0, 0.0][axis]);
+    rows.extend(first);
+    rows.extend(without(heavy(residue_sites("DA", "A", 4, shift)), &["OP3"]));
+    let read = read_pdb(&pdb_text(&rows, ' ', &[]));
+    // A writer finds the same molecules.
+    let (text, _) = kekule::pdb::write(&read, Default::default()).unwrap();
+    for result in [read, read_pdb(&text)] {
+        assert_eq!(result.structure().topology().instance_count(), 3);
+        let mut structure = result.structure().clone();
+        structure.perceive().unwrap();
+        let amines = result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .filter(|atom| atom.author_sequence_id() == Some("1") && atom.atom_name() == "N")
+            .map(|atom| {
+                let atom = atom.atom();
+                let molecule = structure
+                    .topology()
+                    .instance(atom.instance())
+                    .unwrap()
+                    .molecule();
+                (
+                    molecule.atom(atom.atom()).unwrap().formal_charge(),
+                    molecule.total_hydrogens(atom.atom()).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(amines, [(1, 3), (1, 3)]);
+        let open = issues(&result)
+            .into_iter()
+            .filter_map(|issue| match issue {
+                Issue::PolymerLinkMissing {
+                    component_id,
+                    atom_name,
+                    ..
+                } => Some((component_id, atom_name)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(open, []);
+    }
+}
+
+#[test]
+fn a_link_joins_residues_whatever_their_numbers() {
+    // Chain B's dipeptide is numbered 5, 1. Both chains are named A in PDB,
+    // so no SEQRES places them, but the peptide bond keeps 5 and 1 one
+    // molecule.
+    let mut rows = heavy(glycine_pair());
+    rows.extend(heavy(glycine_pair()).into_iter().map(|mut site| {
+        site.asym = "B".to_owned();
+        site.point[1] += 30.0;
+        site
+    }));
+    let text = block(&rows, "")
+        .lines()
+        .map(|line| {
+            if line == "_atom_site.pdbx_formal_charge" {
+                format!(
+                    "{line}
+_atom_site.auth_seq_id
+_atom_site.auth_asym_id"
+                )
+            } else if line.starts_with("ATOM") {
+                let fields = line.split_whitespace().collect::<Vec<_>>();
+                let number = match (fields[5], fields[6]) {
+                    ("B", "2") => 5,
+                    ("B", _) => 1,
+                    (_, number) => number.parse().unwrap(),
+                };
+                format!("{line} {number} A")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    let result = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let (text, _) = kekule::pdb::write(&result, Default::default()).unwrap();
+    assert!(
+        text.contains("GLY A   5") && text.contains("GLY A   1"),
+        "{text}"
+    );
+    let reread = read_pdb(&text);
+    assert_eq!(reread.structure().topology().instance_count(), 2);
+    assert_eq!(
+        charges(&reread),
+        charged(&[
+            ("A", "N", 1),
+            ("A", "OXT", -1),
+            ("A", "N", 1),
+            ("A", "OXT", -1)
+        ])
+    );
+    assert_eq!(
+        issues(&reread),
+        [Issue::ProtonationAssumed {
+            components: vec![("GLY".to_owned(), 2)]
+        }]
+    );
+}
+
+#[test]
 fn chains_sharing_a_letter_get_no_merged_sequence() {
     // Two chains named A, each a dipeptide whose first N is an open amide:
     // one SEQRES sequence for the letter would join theirs, so none is

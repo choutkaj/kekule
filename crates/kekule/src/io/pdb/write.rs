@@ -37,7 +37,9 @@ use crate::io::macromolecular::connectivity::{
     standard_link, true_ends, within_bonding_distance, AtomEvidence, PolymerLink, Protonation,
     ResidueEvidence, ResidueTemplate, StandardLink,
 };
-use crate::io::macromolecular::pdb::{linking_role, polymer_template, segment_starts, Segment};
+use crate::io::macromolecular::pdb::{
+    linking_role, polymer_linking, polymer_template, segment_starts, Segment,
+};
 use crate::io::macromolecular::{
     is_metal, Signed, StructureInterpretation, StructureInterpretationReport,
     StructureSetInterpretation,
@@ -52,7 +54,7 @@ use crate::io::{
     WriteReport,
 };
 use crate::math::{PeriodicCell, PeriodicCellError, Point3};
-use crate::molecule::{BondOrder, ImplicitHydrogens};
+use crate::molecule::{BondOrder, Element, ImplicitHydrogens};
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
     ChainId, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass,
@@ -2193,6 +2195,29 @@ impl<'o> Plan<'o> {
             }
             seqres.push((chain.0, sequence));
         }
+        // Whether a reader finds a linking atom of the residue whose records
+        // start at `left` within bonding distance of one of the residue's
+        // at `right`.
+        let (records, record_residues) = (&self.records, &self.residues);
+        let linking_atoms = |start: usize, head: bool| {
+            let key = &record_residues[start].key;
+            (start..records.len())
+                .take_while(|&index| record_residues[index].key == *key)
+                .filter_map(|index| {
+                    let (role, atomic_number) = linking_role(records[index].name.trim())?;
+                    let element = Element::from_atomic_number(atomic_number)?;
+                    (role == head).then_some((element, positions[index]?))
+                })
+                .collect::<Vec<_>>()
+        };
+        let reader_link = |left: usize, right: usize| {
+            let heads = linking_atoms(right, true);
+            linking_atoms(left, false).into_iter().any(|tail| {
+                heads
+                    .iter()
+                    .any(|&head| within_bonding_distance(tail, head))
+            })
+        };
         let shows_end = |key: &ResidueKey, side: usize| {
             templated_of.get(key).is_some_and(|&templated| {
                 true_ends(self.templated[templated].component, &evidences[templated])[side]
@@ -2206,15 +2231,37 @@ impl<'o> Plan<'o> {
                 continue;
             }
             // A `TER` record or a record of another chain or segment ends
-            // a reader's run.
+            // a reader's run. So does a residue of a polymer template
+            // numbered lower than the last one before it, or of another
+            // linkage, unless a link joins the two.
+            let templated = |index: usize| {
+                let record = &self.records[index];
+                polymer_linking(&record.residue_name, library)
+                    .map(|linking| (linking, record.sequence.trim().parse::<i32>().ok()))
+            };
             let mut run = 0;
+            let mut last = None;
             for at in 0..residues.len() {
+                if templated(residues[at].1).is_some() {
+                    last = Some(residues[at].1);
+                }
                 let ends_run = residues.get(at + 1).is_none_or(|&(_, next)| {
-                    (residues[at].1..next).any(|index| {
-                        let record = &self.records[index];
-                        record.ter || (record.chain, record.segment.as_str()) != chain
-                    })
+                    let parted = last.is_some_and(|last| {
+                        matches!(
+                            (templated(last), templated(next)),
+                            (Some((a, m)), Some((b, n)))
+                                if a != b || matches!((m, n), (Some(m), Some(n)) if n < m)
+                        ) && !reader_link(last, next)
+                    });
+                    parted
+                        || (residues[at].1..next).any(|index| {
+                            let record = &self.records[index];
+                            record.ter || (record.chain, record.segment.as_str()) != chain
+                        })
                 });
+                if ends_run {
+                    last = None;
+                }
                 if !ends_run {
                     continue;
                 }

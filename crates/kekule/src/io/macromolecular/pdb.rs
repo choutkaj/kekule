@@ -567,6 +567,10 @@ struct Residue {
     solvent: bool,
     /// Whether its template is a polymer one.
     polymer_template: bool,
+    /// Its template's polymer linkage, if a polymer one.
+    linking: Option<ComponentLinking>,
+    /// Its residue number.
+    number: i32,
     /// Its atoms that a polymer link joins to the residue before it (`N`,
     /// `P`) and to the one after it (`C`, `O3'`).
     heads: Vec<(Element, Point3)>,
@@ -599,18 +603,48 @@ struct ChainRuns {
 }
 
 impl ChainRuns {
-    /// Ends a chain's run. A run a `TER` record ends is polymer; otherwise its
-    /// polymer spans its `ATOM` records and the residues bonded to their
-    /// ends. Water and ions are never polymer, nor a single residue, nor a
-    /// residue of `HETATM` records without a polymer template and, in a run
-    /// a `TER` record ends, without linking atoms, or otherwise without a
-    /// link to a neighbour.
+    /// Ends a chain's run. A residue of a polymer template numbered lower
+    /// than the last one before it, or of another linkage, starts another
+    /// molecule unless a link joins the two.
     fn close(&mut self, asym_id: &str, terminated: bool, residues: &mut [Residue]) {
         let Some(run) = self.open.remove(asym_id) else {
             return;
         };
+        let mut start = 0;
+        let mut last = None::<usize>;
+        for (at, &residue) in run.iter().enumerate() {
+            let here = &residues[residue];
+            if here.linking.is_none() {
+                continue;
+            }
+            if let Some(before) = last.map(|last| &residues[last]) {
+                if (here.number < before.number || here.linking != before.linking)
+                    && !before.links_to(here)
+                {
+                    self.close_molecule(asym_id, terminated, &run[start..at], residues);
+                    start = at;
+                }
+            }
+            last = Some(residue);
+        }
+        self.close_molecule(asym_id, terminated, &run[start..], residues);
+    }
+
+    /// Ends one molecule of a chain's run. A run a `TER` record ends is
+    /// polymer; otherwise its polymer spans its `ATOM` records and the
+    /// residues bonded to their ends. Water and ions are never polymer, nor
+    /// a single residue, nor a residue of `HETATM` records without a polymer
+    /// template and, in a run a `TER` record ends, without linking atoms, or
+    /// otherwise without a link to a neighbour.
+    fn close_molecule(
+        &mut self,
+        asym_id: &str,
+        terminated: bool,
+        run: &[usize],
+        residues: &mut [Residue],
+    ) {
         let span = if terminated {
-            &run[..]
+            run
         } else {
             let first = run
                 .iter()
@@ -733,6 +767,7 @@ fn read_rows(
         let residue = match &current {
             Some((current_identity, residue)) if *current_identity == identity => *residue,
             _ => {
+                let linking = polymer_linking(atom.residue_name(), components);
                 let repeat = repeats.entry(identity.clone()).or_insert(0);
                 let residue = residues.len();
                 residues.push(Residue {
@@ -741,7 +776,9 @@ fn read_rows(
                     atom_record: false,
                     water: is_water(atom.residue_name()),
                     solvent: is_water(atom.residue_name()) || is_ion(atom.residue_name()),
-                    polymer_template: polymer_template(atom.residue_name(), components),
+                    polymer_template: linking.is_some(),
+                    linking,
+                    number: identity.1,
                     heads: Vec::new(),
                     tails: Vec::new(),
                     polymer_position: None,
@@ -882,12 +919,23 @@ fn read_rows(
 /// Whether the template of a residue named `name` is a polymer one: the
 /// caller's library first, then the bundled one.
 pub(crate) fn polymer_template(name: &str, components: Option<&ComponentLibrary>) -> bool {
+    polymer_linking(name, components).is_some()
+}
+
+/// The polymer linkage of the template of a residue named `name`, peptide or
+/// nucleotide, if a polymer one: the caller's library first, then the
+/// bundled one.
+pub(crate) fn polymer_linking(
+    name: &str,
+    components: Option<&ComponentLibrary>,
+) -> Option<ComponentLinking> {
     components
         .and_then(|library| library.get(name))
         .or_else(|| ComponentLibrary::bundled().get(name))
-        .is_some_and(|template| {
+        .map(|template| template.linking())
+        .filter(|linking| {
             matches!(
-                template.linking(),
+                linking,
                 ComponentLinking::Peptide | ComponentLinking::Nucleotide
             )
         })
