@@ -593,7 +593,8 @@ fn only_polymer_residues_take_positions_along_a_pdb_chain() {
 
 #[test]
 fn absent_linking_atoms_break_the_chain() {
-    // Residue 1 without its carbonyl, as a model that leaves it out.
+    // Residue 1 without its carbonyl, as a model that leaves it out. The
+    // break is inside one run of the chain, so residue 2's N is an amide.
     let mut lines = glycine_records(2);
     lines.drain(2..4);
     let read = read_pdb(&lines);
@@ -609,6 +610,11 @@ fn absent_linking_atoms_break_the_chain() {
                 residue: author(1),
                 component_id: "GLY".to_owned(),
                 atoms: vec!["C".to_owned(), "O".to_owned()],
+            },
+            StructureInterpretIssue::PolymerLinkMissing {
+                residue: author(2),
+                component_id: "GLY".to_owned(),
+                atom_name: "N".to_owned(),
             },
             StructureInterpretIssue::TerminalAtomMissing {
                 residue: author(2),

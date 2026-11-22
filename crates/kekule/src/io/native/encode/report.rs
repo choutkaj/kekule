@@ -822,6 +822,10 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.charged_atoms(charged_atoms)
             }
+            Issue::SequenceNotPlaced { chain_id } => {
+                self.u8(48)?;
+                self.str(chain_id)
+            }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
                 self.residue(residue)?;

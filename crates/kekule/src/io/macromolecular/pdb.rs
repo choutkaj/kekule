@@ -116,7 +116,12 @@ fn pdb_source(
         connectivity.components().map(AsRef::as_ref),
         cancellation,
     )?;
-    let sequences = align_sequences(document, &mut rows);
+    let sequences = align_sequences(
+        document,
+        &mut rows,
+        connectivity.components().map(AsRef::as_ref),
+        &mut issues,
+    );
     let chain_lengths = sequences
         .iter()
         .filter_map(|(chain, monomers)| Some((chain.clone(), i32::try_from(monomers.len()).ok()?)))
@@ -178,10 +183,19 @@ fn pdb_source(
 /// places them by their places in it, which become their label sequence
 /// numbers. Returns, by chain, each such sequence's residue names. Other
 /// chains keep their record-order positions and have no label sequence
-/// numbers: without a sequence, nothing says which residues their polymer
-/// lacks.
-fn align_sequences(document: &PdbDocument, rows: &mut [AtomRow]) -> BTreeMap<String, Vec<String>> {
-    let (sequences, places) = sequence_places(document, rows);
+/// numbers; a `SEQRES` sequence that does not place them is reported.
+fn align_sequences(
+    document: &PdbDocument,
+    rows: &mut [AtomRow],
+    components: Option<&ComponentLibrary>,
+    issues: &mut Vec<StructureInterpretIssue>,
+) -> BTreeMap<String, Vec<String>> {
+    let (sequences, places, unplaced) = sequence_places(document, rows, components);
+    issues.extend(
+        unplaced
+            .into_iter()
+            .map(|chain_id| StructureInterpretIssue::SequenceNotPlaced { chain_id }),
+    );
     for row in rows.iter_mut() {
         if let (Some(position), Some(places)) = (row.polymer_position, places.get(&row.asym_id)) {
             row.polymer_position = places.get(&position).copied().or(Some(position));
@@ -191,18 +205,26 @@ fn align_sequences(document: &PdbDocument, rows: &mut [AtomRow]) -> BTreeMap<Str
     sequences
 }
 
-/// The sequences of [`align_sequences`] and, by chain, each
-/// record-order position's place in the sequence.
+/// The sequences of [`align_sequences`], by chain each record-order
+/// position's place in the sequence, and the chains whose sequence places
+/// none.
 type SequencePlaces = (
     BTreeMap<String, Vec<String>>,
     BTreeMap<String, BTreeMap<i32, i32>>,
+    Vec<String>,
 );
 
 /// The modelled residues of each chain form segments, split by `TER`
 /// records and by jumps in residue numbers, and each segment matches a run
-/// of the sequence's residue names (see [`segment_starts`]). A chain whose
+/// of the sequence's residue names (see [`segment_starts`]). A cap at
+/// either end of the chain that the sequence does not list, as an `ACE` or
+/// `NME`, takes the place next to the residue it caps. A chain whose
 /// segments match no such runs keeps its record-order positions.
-fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
+fn sequence_places(
+    document: &PdbDocument,
+    rows: &[AtomRow],
+    components: Option<&ComponentLibrary>,
+) -> SequencePlaces {
     let mut sequences = BTreeMap::<String, Vec<&str>>::new();
     for record in document.other_records() {
         if record.name() != "SEQRES" {
@@ -248,10 +270,21 @@ fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
     }
     let mut aligned = BTreeMap::new();
     let mut places = BTreeMap::new();
-    for (chain, residues) in chains {
+    let mut unplaced = Vec::new();
+    for (chain, mut residues) in chains {
         let Some(sequence) = sequences.get(chain) else {
             continue;
         };
+        let unlisted_cap = |residue: Option<&(&str, i32, Option<i32>)>| {
+            residue.is_some_and(|&(name, ..)| {
+                !polymer_template(name, components) && !sequence.contains(&name)
+            })
+        };
+        let trailing = (residues.len() > 2 && unlisted_cap(residues.last()))
+            .then(|| residues.pop())
+            .flatten();
+        let leading =
+            (residues.len() > 1 && unlisted_cap(residues.first())).then(|| residues.remove(0));
         let mut segments = Vec::<Segment<'_>>::new();
         let mut positions = Vec::<Vec<i32>>::new();
         for (index, &(name, position, number)) in residues.iter().enumerate() {
@@ -277,12 +310,36 @@ fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
                 }
             }
         }
-        let Some(starts) = segment_starts(sequence, &segments) else {
+        let Some(mut starts) = segment_starts(sequence, &segments) else {
+            unplaced.push(chain.to_owned());
             continue;
         };
+        let mut names = sequence.clone();
+        if let Some((name, position, _)) = leading {
+            names.insert(starts[0], name);
+            for start in &mut starts {
+                *start += 1;
+            }
+            segments.insert(
+                0,
+                Segment {
+                    names: vec![name],
+                    number: None,
+                },
+            );
+            positions.insert(0, vec![position]);
+            starts.insert(0, starts[0] - 1);
+        }
+        if let Some((name, position, _)) = trailing {
+            let end = starts.last().copied().unwrap_or(0)
+                + segments.last().map_or(0, |segment| segment.names.len());
+            names.insert(end, name);
+            positions.push(vec![position]);
+            starts.push(end);
+        }
         aligned.insert(
             chain.to_owned(),
-            sequence.iter().map(|&name| name.to_owned()).collect(),
+            names.iter().map(|&name| name.to_owned()).collect(),
         );
         let mut placed = BTreeMap::new();
         for (held, &start) in positions.iter().zip(&starts) {
@@ -295,7 +352,7 @@ fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
         }
         places.insert(chain.to_owned(), placed);
     }
-    (aligned, places)
+    (aligned, places, unplaced)
 }
 
 /// A run of modelled residues that follow each other in a chain: their
@@ -306,12 +363,25 @@ pub(crate) struct Segment<'a> {
 }
 
 /// Where each segment starts in `sequence`, by zero-based index, or `None`
-/// when they do not all fit in order. Segments follow the residue numbers
-/// when one offset between number and place fits every segment, the
-/// smallest such offset. Otherwise the first segment takes its earliest
-/// place, a lone residue its latest before the second segment, later ones
-/// the earliest after the one before, and the last its latest.
+/// when they do not fit in order. Segments follow the residue numbers when
+/// one offset between number and place fits every segment, the smallest
+/// such offset. Otherwise the first segment takes its earliest place, a
+/// lone residue its latest before the second segment, later ones the
+/// earliest after the one before, and the last its latest.
+///
+/// Where no places fit every name, places where at most a tenth of the
+/// modelled residues, and at least one, differ from the sequence still
+/// place them, as in a mutant: by one offset between number and place,
+/// when every segment has a number, the fewest differences first, then the
+/// places nearest the numbers; else in order with each segment matching
+/// more names than it differs in, the fewest differences first, then the
+/// earliest places.
 pub(crate) fn segment_starts(sequence: &[&str], segments: &[Segment<'_>]) -> Option<Vec<usize>> {
+    exact_starts(sequence, segments).or_else(|| substituted_starts(sequence, segments))
+}
+
+/// The places of [`segment_starts`] where every name fits.
+fn exact_starts(sequence: &[&str], segments: &[Segment<'_>]) -> Option<Vec<usize>> {
     let fits = |segment: &Segment<'_>, start: usize| {
         sequence.get(start..start + segment.names.len()) == Some(&segment.names[..])
     };
@@ -364,6 +434,109 @@ pub(crate) fn segment_starts(sequence: &[&str], segments: &[Segment<'_>]) -> Opt
         if let Some(start) = end {
             starts[last] = start;
         }
+    }
+    Some(starts)
+}
+
+/// The places of [`segment_starts`] where some names differ.
+fn substituted_starts(sequence: &[&str], segments: &[Segment<'_>]) -> Option<Vec<usize>> {
+    let modelled = segments
+        .iter()
+        .map(|segment| segment.names.len())
+        .sum::<usize>();
+    let limit = (modelled / 10).max(1);
+    let differences = |segment: &Segment<'_>, start: usize| {
+        let names = sequence.get(start..start + segment.names.len())?;
+        Some(
+            names
+                .iter()
+                .zip(&segment.names)
+                .filter(|(name, other)| name != other)
+                .count(),
+        )
+    };
+    if let Some(numbers) = segments
+        .iter()
+        .map(|segment| segment.number)
+        .collect::<Option<Vec<_>>>()
+    {
+        let mut best: Option<((usize, u64), Vec<usize>)> = None;
+        for first in 0..sequence.len() {
+            let offset = i64::try_from(first).ok()? - i64::from(numbers[0]);
+            let (mut end, mut total) = (0, 0);
+            let starts = segments
+                .iter()
+                .zip(&numbers)
+                .map(|(segment, &number)| {
+                    let start = usize::try_from(i64::from(number) + offset)
+                        .ok()
+                        .filter(|&start| start >= end)?;
+                    total += differences(segment, start)?;
+                    end = start + segment.names.len();
+                    Some(start)
+                })
+                .collect::<Option<Vec<_>>>();
+            // Places nearest the numbers: one-based places equal to them.
+            let rank = (total, (offset + 1).unsigned_abs());
+            if let Some(starts) = starts {
+                if total <= limit && best.as_ref().is_none_or(|(fewest, _)| rank < *fewest) {
+                    best = Some((rank, starts));
+                }
+            }
+        }
+        if let Some((_, starts)) = best {
+            return Some(starts);
+        }
+    }
+    // In order: the fewest differences of the segments up to each one,
+    // with the place of the one before.
+    let mut table = Vec::<Vec<Option<(usize, usize)>>>::with_capacity(segments.len());
+    for (index, segment) in segments.iter().enumerate() {
+        let mut row = vec![None; sequence.len() + 1];
+        // The fewest differences of the earlier segments ending by each
+        // place, and the place of the last of them.
+        let mut before = None::<(usize, usize)>;
+        let mut reach = 0;
+        for (start, slot) in row.iter_mut().enumerate() {
+            if index > 0 {
+                let previous = &table[index - 1];
+                let length = segments[index - 1].names.len();
+                while reach + length <= start {
+                    if let Some((cost, _)) = previous[reach] {
+                        if before.is_none_or(|(fewest, _)| cost < fewest) {
+                            before = Some((cost, reach));
+                        }
+                    }
+                    reach += 1;
+                }
+            }
+            let Some(own) = differences(segment, start) else {
+                continue;
+            };
+            if own * 2 >= segment.names.len() {
+                continue;
+            }
+            *slot = match (index, before) {
+                (0, _) => Some((own, 0)),
+                (_, Some((cost, place))) => Some((cost + own, place)),
+                (_, None) => None,
+            };
+        }
+        table.push(row);
+    }
+    let last = table.last()?;
+    let (mut start, total) = last
+        .iter()
+        .enumerate()
+        .filter_map(|(start, slot)| slot.map(|(cost, _)| (start, cost)))
+        .min_by_key(|&(start, cost)| (cost, start))?;
+    if total > limit {
+        return None;
+    }
+    let mut starts = vec![0; segments.len()];
+    for index in (0..segments.len()).rev() {
+        starts[index] = start;
+        start = table[index][start]?.1;
     }
     Some(starts)
 }
@@ -527,6 +700,8 @@ fn read_rows(
     let mut model = None;
     let mut runs = ChainRuns::default();
     let mut current = None;
+    // The chain and segment of the last record, with its chain identifier.
+    let mut group = None::<((Option<char>, Option<&str>), String)>;
     let mut repeats = HashMap::<(String, i32, Option<char>), usize>::new();
     for (index, atom) in atoms.iter().enumerate() {
         poll_every(cancellation, index)?;
@@ -534,8 +709,21 @@ fn read_rows(
             runs.close_all(&mut residues);
             runs = ChainRuns::default();
             current = None;
+            group = None;
             repeats.clear();
             model = Some(atom.model());
+        }
+        // A change of chain or segment ends the last one's run, as `TER`
+        // does, but without making its heterogens polymer.
+        let here = (atom.chain_id(), atom.segment_id());
+        match &group {
+            Some((last, _)) if *last == here => {}
+            _ => {
+                if let Some((_, asym)) = group.take() {
+                    runs.close(&asym, false, &mut residues);
+                }
+                group = Some((here, asym_id(atom)));
+            }
         }
         let identity = (
             asym_id(atom),

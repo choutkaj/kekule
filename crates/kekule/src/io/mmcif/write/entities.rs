@@ -134,32 +134,37 @@ pub(super) fn entity_plan_from_report(
 /// appends do, while mmCIF requires every structural instance to have an ID of
 /// its own. The first chain with a label keeps it; each later one is the label
 /// with a copy serial, `A-2`, `A-3`, and so on, that no chain label or other
-/// written asym uses. Author chain identifiers are written as they are.
+/// written asym uses. A chain without a label, as a PDB chain with a blank
+/// chain column, takes the first of `A` to `Z`, `AA`, `AB`, and so on that no
+/// chain label or other written asym uses. Author chain identifiers are
+/// written as they are.
 struct AsymIds {
     reserved: BTreeSet<String>,
     named: BTreeSet<String>,
 }
 
 impl AsymIds {
-    fn new(structure: StructureView<'_>) -> Result<Self, FormatError> {
-        let mut reserved = BTreeSet::new();
-        for chain in structure.topology().chains() {
-            if chain.label_id().is_empty() {
-                return Err(invalid_structure(format!(
-                    "{} has an empty label ID.",
-                    crate::diagnostics::Capitalized(chain.id())
-                )));
-            }
-            reserved.insert(chain.label_id().to_owned());
-        }
-        Ok(Self {
+    fn new(structure: StructureView<'_>) -> Self {
+        let reserved = structure
+            .topology()
+            .chains()
+            .map(|chain| chain.label_id().to_owned())
+            .filter(|label| !label.is_empty())
+            .collect();
+        Self {
             reserved,
             named: BTreeSet::new(),
-        })
+        }
     }
 
     /// The asym ID of the next chain, in hierarchy order, with this label.
     fn chain(&mut self, label: &str) -> String {
+        if label.is_empty() {
+            return (1..)
+                .map(letters)
+                .find(|candidate| self.reserved.insert(candidate.clone()))
+                .expect("letter IDs are unbounded");
+        }
         if self.named.insert(label.to_owned()) {
             return label.to_owned();
         }
@@ -174,11 +179,23 @@ impl AsymIds {
     }
 }
 
+/// The `number`th letter ID, from 1: `A` to `Z`, then `AA`, `AB`, and so on.
+fn letters(mut number: usize) -> String {
+    let mut id = Vec::new();
+    while number > 0 {
+        number -= 1;
+        id.push(b'A' + u8::try_from(number % 26).expect("a letter offset"));
+        number /= 26;
+    }
+    id.reverse();
+    String::from_utf8(id).expect("ASCII letters")
+}
+
 pub(super) fn generic_entity_plan(
     structure: StructureView<'_>,
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<EntityPlan, FormatError> {
-    let mut asym_ids = AsymIds::new(structure)?;
+    let mut asym_ids = AsymIds::new(structure);
     let mut entities = Vec::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
@@ -299,7 +316,7 @@ fn report_entity_plan(
     structure: StructureView<'_>,
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
-    let mut asym_ids = AsymIds::new(structure)?;
+    let mut asym_ids = AsymIds::new(structure);
     let mut seen_instances = BTreeSet::new();
     let mut provenance = BTreeMap::new();
     let mut reserved_entity_ids = BTreeSet::new();

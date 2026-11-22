@@ -828,8 +828,10 @@ impl MmcifEntityClassifications {
 /// [`StructureEditor::append_structure`](crate::structure::StructureEditor::append_structure)
 /// appends do. The first chain with a label keeps it as `label_asym_id`; each
 /// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
-/// on, skipping IDs another chain or asym uses, while `auth_asym_id` keeps
-/// the author chain name, which falls back to the label. Reading the block
+/// on, skipping IDs another chain or asym uses. A chain without a label
+/// takes the first of `A`, `B`, and so on that no chain or asym uses.
+/// `auth_asym_id` keeps the author chain name, which falls back to the
+/// written asym ID. Reading the block
 /// back gives the same chains, residues, atoms, and bonds, in the same order
 /// and under the same author names, with the written asym IDs as their
 /// labels. The hierarchy itself keeps labels as appended, since a label

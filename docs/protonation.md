@@ -36,8 +36,9 @@ coordination fails to write (`DictionaryBondConflict`) unless omitted.
 
 Hydrogens decide when the model has them on heteroatoms, or has hydrogens
 and the template places none on its heteroatoms. The candidate that fits
-best lacks the fewest hydrogens, then changes the fewest charges; ties go
-to the template, then the variants in order.
+best lacks the fewest hydrogens, then changes the fewest charges, then
+gives the most stated charges by its own hydrogens or a resonance form;
+ties go to the template, then the variants in order.
 
 - A hydrogen beyond the template's first fills the place of a template heavy
   atom the residue lacks: `HO5'` of a 5' end without phosphate replaces `P`.
@@ -61,9 +62,10 @@ to the template, then the variants in order.
 Hydrogens with zero occupancy, in a residue whose heavy atoms have
 occupancy, are not read (`ZeroOccupancyHydrogens`). A source whose
 occupancies are all zero states none and keeps its hydrogens. A hydrogen and
-a deuterium on one heavy atom share one site, as in neutron structures, when
-they lie within 0.3 Å of each other and their occupancies sum to at most
-one or they are alternate locations of each other.
+a deuterium within 0.6 Å of each other whose occupancies sum to at most one
+are alternates of one site, as in neutron structures. The one with the
+larger occupancy stays, the deuterium on a tie, and the other is reported
+as an omitted alternate location (`AlternateLocationOmitted`).
 
 Hydrogens no template names bond by name where convention places them, with
 `BondEvidence::HydrogenName`: `H1`-`H3`, `HT1`-`HT3`, and `HN1`-`HN3` on a
@@ -78,15 +80,19 @@ template, take an assumed state:
 
 | Group | State |
 | --- | --- |
-| Carboxylic, phosphoric, phosphonic, or sulfonic acid, sulfate | One -1 per acidic hydroxyl |
+| Carboxylic, phosphoric, phosphonic, or sulfonic acid, sulfate | One -1 per acidic hydroxyl, not below the template's charge on it |
 | Free amine of a polymer's true N terminus | Ammonium, +1 |
 | Lysine, arginine, and other bases | As the dictionary |
 | Histidine in a polymer | Neutral, hydrogen on `NE2` |
 | Thiol, phenol, hydroxyl | Neutral |
 
-Acid groups take their pH 7 state in every residue, ligands included.
-Polymer residues also take the ammonium of a true N terminus and their least
-charged variant. Ligands take nothing else. One issue per structure counts
+Acid groups take their pH 7 state in every residue, ligands included. An
+acid oxygen the template already charges keeps that charge, as heme's
+`O2A` and `O2D`. Polymer residues also take the ammonium of a true N
+terminus and the variant that charges the fewest atoms, so a C-terminal
+histidine stays neutral. A variant that gives the stated charges by its own
+hydrogens or a resonance form comes first: a histidine stated with `NE2` +1
+is the imidazolium. Ligands take nothing else. One issue per structure counts
 the residues with an assumed state by component (`ProtonationAssumed`).
 Force-field residues, whose names state their protonation, take their
 template's state. Coordination then takes the place of a hydrogen the state
@@ -96,10 +102,13 @@ leaves.
 
 A polymer residue's linking atoms are a peptide's `N` and `C` and a
 nucleotide's `P` and `O3'`. A linking atom without a bond to the next
-residue is at a gap only when the polymer's sequence has residues past it.
-The mmCIF `_entity_poly_seq` and the PDB `SEQRES` records give the
-sequence. Modelled residues in another `TER` segment or another molecule
-make no gap, and a chain without a sequence has none.
+residue is at a gap when the polymer's sequence has residues past it. The
+mmCIF `_entity_poly_seq` and the PDB `SEQRES` records give the sequence.
+Without one, a modelled residue next to it is one: at the next label
+sequence number of an mmCIF asym, or the next residue of a PDB run, which
+`TER` records and changes of chain or segment end. At such a break, a true
+end on either side, as `OXT` before it or `H1`-`H3` after it, ends both
+residues.
 
 The model's terminal atoms end a chain whatever the sequence says: an extra
 hydrogen on `N` (`H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`), `OXT` or `HXT`, and
@@ -114,20 +123,29 @@ keyed by the chain letter. `TER` records and jumps in residue numbers split
 them into segments, and each segment matches a run of the sequence: by one
 residue-number offset where one fits every segment, else at its earliest
 run, with a lone first residue at its last place before the next segment
-and the last segment at its last run. Each polymer residue takes its place
-in the sequence as its label sequence number, and each such chain is a
-polymer entity of the report, whose monomers are the `SEQRES` names.
+and the last segment at its last run. Where no runs fit every name, as in a
+mutant, places where at most a tenth of the residues differ still match:
+by one offset where every segment has a number, else in order. A cap at
+either end of the chain that the sequence does not list, as `ACE` or
+`NME`, takes the place next to the residue it caps. Each polymer residue
+takes its place in the sequence as its label sequence number, and each such
+chain is a polymer entity of the report, whose monomers are the `SEQRES`
+names. A sequence that places no residues is reported
+(`SequenceNotPlaced`), and its chain's residues keep their record order.
 
 The PDB writer writes `SEQRES` for a chain whose sequence has residues the
 model lacks or that a chain break opens inside, with the residues' names
-where the report's entity gives them and `UNK` elsewhere. It writes
+where the report's entity gives them and `UNK` elsewhere. A letter that
+several chains share gets none, since readers would join their sequences. It writes
 sequenced residues as `ATOM` records, also one a chain break leaves a
 molecule of its own. Each hierarchy chain holding amino acids or
 nucleotides ends with `TER` after its last polymer residue, so ligands
 bonded to the chain, such as retinal, are no part of it. A sequenced
 `HETATM` residue without a polymer template or a linking atom also follows
 the `TER`, since readers cannot place it. The mmCIF writer writes `_entity_poly_seq`, and numbers a chain without
-sequence numbers from 2 when its first linking atom is at a gap.
+sequence numbers from 2 when its first linking atom is at a gap. It names a
+chain without a label, as a PDB chain with a blank chain column, by the
+first of `A`, `B`, and so on that no other chain uses.
 
 ## Atoms the residue lacks
 
@@ -158,7 +176,8 @@ with that charge:
   (`StatedChargeResonance`).
 - Otherwise, in a residue without hydrogens, the charge sets the atom's
   hydrogen count within its valence (`StatedChargeKept`): +1 on a
-  carboxylate oxygen is kept as `-OH2+`. In a residue with hydrogens, the
+  carboxylate oxygen is kept as `-OH2+`. A gap is no bond here, so `N` +1
+  after a gap is an ammonium with three hydrogens. In a residue with hydrogens, the
   charge is kept only with the hydrogens the model has, and no hydrogen is
   added for it: a stated phenolate lacks no hydrogen.
 - Any other charge, such as -2 on a hydroxyl oxygen or +1 on a serine's

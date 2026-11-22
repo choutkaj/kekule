@@ -895,6 +895,9 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 charged_atoms: self.charged_atoms()?,
             },
+            48 if self.version >= PROTONATION_SINCE => Issue::SequenceNotPlaced {
+                chain_id: self.str()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))

@@ -793,12 +793,43 @@ pub(crate) fn reader_protonation<'c>(
                 .zip(ends)
                 .any(|(names, end)| end && names.contains(name));
         atom.gap = open
-            && template.atom(name).is_some_and(|(index, _)| {
-                atom.hydrogens <= protonation::expected_hydrogens(template, index, 1)
-                    && !protonation::bonds_leaving_atom(template, index, &present)
-            });
+            && template
+                .atom(name)
+                .is_some_and(|(index, _)| !shows_end(template, index, atom, &present));
     }
     protonation::choose(std::iter::once(template).chain(variants), &evidence)
+}
+
+/// Whether the template's linking atom `index`, with `atom` its evidence,
+/// shows a true chain end: more hydrogens than a link leaves, as `H1` to
+/// `H3` of an N terminus or `HO3'` of a 3' end, or a leaving heavy atom
+/// bonded to it, as `OXT`.
+fn shows_end(
+    template: &Component,
+    index: usize,
+    atom: &protonation::AtomEvidence,
+    present: &BTreeSet<&str>,
+) -> bool {
+    atom.hydrogens > protonation::expected_hydrogens(template, index, 1)
+        || protonation::bonds_leaving_atom(template, index, present)
+}
+
+/// Whether a residue shows a true chain end before and after it: an
+/// unlinked linking atom on that side shows one (see [`reader_protonation`]).
+/// At a break between residues that no sequence places, either side's end
+/// ends both. Writers mirror readers with it.
+pub(crate) fn true_ends(template: &Component, evidence: &ResidueEvidence<'_>) -> [bool; 2] {
+    let present = evidence.heavy.keys().copied().collect::<BTreeSet<_>>();
+    link_sides(template.linking()).map(|names| {
+        names.iter().any(|name| {
+            evidence.heavy.get(name).is_some_and(|atom| {
+                atom.links == 0
+                    && template
+                        .atom(name)
+                        .is_some_and(|(index, _)| shows_end(template, index, atom, &present))
+            })
+        })
+    })
 }
 
 /// What readers make of the protonation of a templated residue.
@@ -1147,7 +1178,8 @@ impl<'r> Resolver<'r, '_> {
         raw::poll(self.cancellation)?;
         self.attach_stray_hydrogens(&residues, stray_hydrogens)?;
         self.decide_metal_bonds(&residues, &residue_of)?;
-        let ends = self.polymer_ends(&residues);
+        let (mut ends, unsequenced) = self.polymer_ends(&residues);
+        self.end_breaks(&templated, &residues, &unsequenced, &mut ends)?;
         let mut assumed = BTreeMap::new();
         for residue in &templated {
             raw::poll(self.cancellation)?;
@@ -1171,15 +1203,28 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Whether each polymer residue, by key, has residues before and after
-    /// it in its chain's sequence. Only a sequence says so: an entity's
-    /// `_entity_poly_seq`, or the `SEQRES` records that place a PDB chain's
-    /// residues. Residues of a chain without one have none, and neither do
-    /// entities whose polymer type has no standard linkage.
+    /// it in its chain's sequence: an entity's `_entity_poly_seq`, or the
+    /// `SEQRES` records that place a PDB chain's residues. Without one, a
+    /// modelled residue at the position next to it is one: in a PDB chain,
+    /// the residues of one run between `TER` records and changes of chain
+    /// or segment take consecutive positions. Entities whose polymer type
+    /// has no standard linkage have none. Also returns the residues no
+    /// sequence places.
     fn polymer_ends(
         &self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
-    ) -> BTreeMap<ResidueKey, [bool; 2]> {
+    ) -> (BTreeMap<ResidueKey, [bool; 2]>, BTreeSet<ResidueKey>) {
+        let modelled = residues
+            .keys()
+            .filter_map(|key| {
+                Some((
+                    (key.asym_id.as_str(), key.entity_id.as_deref()),
+                    key.polymer_position?,
+                ))
+            })
+            .collect::<BTreeSet<_>>();
         let mut ends = BTreeMap::new();
+        let mut unsequenced = BTreeSet::new();
         for key in residues.keys() {
             let Some(position) = key.polymer_position else {
                 continue;
@@ -1197,9 +1242,63 @@ impl<'r> Resolver<'r, '_> {
             };
             if let Some(&length) = length {
                 ends.insert(key.clone(), [position > 1, position < length]);
+            } else {
+                let chain = (key.asym_id.as_str(), key.entity_id.as_deref());
+                ends.insert(
+                    key.clone(),
+                    [
+                        modelled.contains(&(chain, position - 1)),
+                        modelled.contains(&(chain, position + 1)),
+                    ],
+                );
+                unsequenced.insert(key.clone());
             }
         }
-        ends
+        (ends, unsequenced)
+    }
+
+    /// Ends both residues at each break between modelled residues that no
+    /// sequence places where either shows a true end there (see
+    /// [`true_ends`]), as `OXT` before the break or `H1` to `H3` after it.
+    /// Otherwise the break is a gap.
+    fn end_breaks(
+        &self,
+        templated: &[TemplatedResidue<'_>],
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+        unsequenced: &BTreeSet<ResidueKey>,
+        ends: &mut BTreeMap<ResidueKey, [bool; 2]>,
+    ) -> Result<(), FormatError> {
+        let mut shown = BTreeMap::new();
+        for residue in templated {
+            let Some(position) = residue.key.polymer_position else {
+                continue;
+            };
+            if !unsequenced.contains(&residue.key) {
+                continue;
+            }
+            let evidence = self.residue_evidence(residue, &residues[&residue.key])?;
+            shown.insert(
+                (
+                    residue.key.asym_id.as_str(),
+                    residue.key.entity_id.as_deref(),
+                    position,
+                ),
+                (&residue.key, true_ends(residue.component, &evidence)),
+            );
+        }
+        for (&(asym, entity, position), &(key, own)) in &shown {
+            let Some(&(next_key, next)) = shown.get(&(asym, entity, position + 1)) else {
+                continue;
+            };
+            if own[1] || next[0] {
+                for (key, side) in [(key, 1), (next_key, 0)] {
+                    if let Some(end) = ends.get_mut(key) {
+                        end[side] = false;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Adds residues that took the usual pH 7 state to the structure's one
@@ -2180,23 +2279,8 @@ impl<'r> Resolver<'r, '_> {
             .iter()
             .map(|(&index, &atom)| (component.atoms()[index].name(), atom))
             .collect::<Vec<_>>();
-        let mut heavy = BTreeMap::new();
-        for &(name, atom) in &named {
-            let site = residue.site(atom).expect("matched atom is a residue site");
-            if is_hydrogen(site.element) {
-                continue;
-            }
-            let mut evidence = self.atom_evidence(atom, residue)?;
-            evidence.stated = site.stated_charge;
-            heavy.insert(name, evidence);
-        }
-        let has_hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
-        let evidence = protonation::ResidueEvidence {
-            heavy,
-            has_hydrogens,
-            dictionary: component.force_field().is_none(),
-            polymer: templated.key.polymer_position.is_some(),
-        };
+        let evidence = self.residue_evidence(templated, residue)?;
+        let has_hydrogens = evidence.has_hydrogens;
         let stated = templated
             .stated
             .iter()
@@ -2446,6 +2530,32 @@ impl<'r> Resolver<'r, '_> {
                     atoms: missing,
                 });
         }
+    }
+
+    /// What the model shows about a templated residue's matched heavy
+    /// atoms, with their stated charges.
+    fn residue_evidence<'c>(
+        &self,
+        templated: &TemplatedResidue<'c>,
+        residue: &ResidueAtoms,
+    ) -> Result<protonation::ResidueEvidence<'c>, FormatError> {
+        let component = templated.component;
+        let mut heavy = BTreeMap::new();
+        for (&index, &atom) in &templated.matched {
+            let site = residue.site(atom).expect("matched atom is a residue site");
+            if is_hydrogen(site.element) {
+                continue;
+            }
+            let mut evidence = self.atom_evidence(atom, residue)?;
+            evidence.stated = site.stated_charge;
+            heavy.insert(component.atoms()[index].name(), evidence);
+        }
+        Ok(protonation::ResidueEvidence {
+            heavy,
+            has_hydrogens: residue.sites.iter().any(|site| is_hydrogen(site.element)),
+            dictionary: component.force_field().is_none(),
+            polymer: templated.key.polymer_position.is_some(),
+        })
     }
 
     /// What the model shows about one matched heavy atom: its hydrogen

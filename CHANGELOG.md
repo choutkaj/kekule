@@ -729,7 +729,25 @@ the main branch migrates by the table under "From the SampleSet API".
     count is zero (`ProtonationFromHydrogens`).
   - A hydrogen that fills an absent template atom's place, as `HO5'` at a
     5' end without phosphate, is no positive charge.
-  - A hydrogen and a deuterium sharing one site, within 0.3 Å, count once.
+  - A hydrogen and a deuterium within 0.6 Å of each other whose
+    occupancies sum to at most one are alternates of one site: the larger
+    occupancy stays, the deuterium on a tie, and the other is reported
+    (`AlternateLocationOmitted`).
+  - An acid oxygen the template already charges keeps that charge without
+    its hydrogen, as heme's carboxylates. Without hydrogens a polymer
+    residue takes the variant that charges the fewest atoms, so a
+    C-terminal histidine stays neutral, and the one that gives the stated
+    charges comes first: histidine with `NE2` +1 is the imidazolium.
+  - Without a sequence, a break between residues next to each other, by
+    mmCIF label sequence numbers or in one PDB run between `TER` records
+    and chain or segment changes, is a gap unless either side shows a true
+    end.
+  - PDB `SEQRES` places a chain with substituted residues, at most a tenth,
+    and caps it does not list. A sequence that places nothing is reported
+    (`StructureInterpretIssue::SequenceNotPlaced`). The PDB writer writes
+    no `SEQRES` for a chain letter several chains share.
+  - The mmCIF writer names chains without a label, as blank PDB chains,
+    `A`, `B`, and so on.
   - Terminal hydrogens `H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`, `HO5'`, `H5T`,
     `H3T` and `HO3*` bond by name (`BondEvidence::HydrogenName`).
   - A stated charge holds where the atom holds it at an allowed valence.

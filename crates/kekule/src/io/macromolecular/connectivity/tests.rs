@@ -402,6 +402,14 @@ fn assumed(components: &[(&str, usize)]) -> StructureInterpretIssue {
 }
 
 /// The report of a residue whose carboxyl terminus lacks `OXT`.
+fn open_link(sequence: i32, atom: &str) -> StructureInterpretIssue {
+    StructureInterpretIssue::PolymerLinkMissing {
+        residue: residue("A", sequence),
+        component_id: "GLY".to_owned(),
+        atom_name: atom.to_owned(),
+    }
+}
+
 fn open_carboxyl(sequence: i32, component: &str) -> StructureInterpretIssue {
     StructureInterpretIssue::TerminalAtomMissing {
         residue: residue("A", sequence),
@@ -1058,13 +1066,14 @@ fn polymer_links_require_bonding_distance() {
                 residue: residue("A", 1),
                 next: residue("A", 2),
             },
-            open_carboxyl(1, "GLY"),
+            open_link(1, "C"),
+            open_link(2, "N"),
             open_carboxyl(2, "GLY"),
             assumed(&[("GLY", 2)]),
         ]
     );
-    // Without a sequence, the break makes no gap: each glycine is a
-    // molecule with its own termini, and the N after it an ammonium.
+    // Neighbours in one asym without a sequence: the break is a gap, and
+    // the N after it an amide.
     let nitrogen = broken
         .topology()
         .atoms()
@@ -1075,7 +1084,7 @@ fn polymer_links_require_bonding_distance() {
         nitrogen,
         [
             (1, ImplicitHydrogens::Inferred),
-            (1, ImplicitHydrogens::Inferred)
+            (0, ImplicitHydrogens::Fixed(1))
         ]
     );
 }

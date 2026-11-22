@@ -34,7 +34,7 @@ use crate::diagnostics::{
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::macromolecular::connectivity::{
     hydrogen_sites, is_coordination, link_sides, link_valence, reader_protonation, reader_template,
-    standard_link, within_bonding_distance, AtomEvidence, PolymerLink, Protonation,
+    standard_link, true_ends, within_bonding_distance, AtomEvidence, PolymerLink, Protonation,
     ResidueEvidence, ResidueTemplate, StandardLink,
 };
 use crate::io::macromolecular::pdb::{linking_role, polymer_template, segment_starts, Segment};
@@ -1961,14 +1961,17 @@ impl<'o> Plan<'o> {
     ///   [`PdbWriteErrorKind::ChargeNotReadBack`], or are counted as
     ///   [`WriteOmission::FormalCharges`].
     ///
-    /// Only `SEQRES` records say which residues a chain's polymer lacks.
-    /// A chain gets them when its residues' places in their sequence
-    /// (`label_seq_id`) leave residues out, or when a residue's linking
-    /// atom has the fixed hydrogens of a gap: at the chain's first or last
-    /// polymer residue, or at a chain break inside it. They name the
-    /// modelled residues, the residues `report`'s sequence names elsewhere,
-    /// and `UNK` where none is known, or wherever names a reader could
-    /// align elsewhere.
+    /// A chain gets `SEQRES` records when its residues' places in their
+    /// sequence (`label_seq_id`) leave residues out, or when a residue's
+    /// linking atom has the fixed hydrogens of a gap: at the chain's first
+    /// or last polymer residue, or at a chain break inside it. They name
+    /// the modelled residues, the residues `report`'s sequence names
+    /// elsewhere, and `UNK` where none is known, or wherever names a reader
+    /// could align elsewhere. Readers key `SEQRES` by chain letter, so a
+    /// letter that several chains share gets none. Without
+    /// them, a reader's neighbours of a residue are those of its run
+    /// between `TER` records and changes of chain or segment, and a break
+    /// between two of them is a gap unless either shows a true end.
     fn check_reader(
         &mut self,
         topology: &Topology,
@@ -2018,6 +2021,17 @@ impl<'o> Plan<'o> {
                     .unwrap_or(self.records.len());
                 reader_polymer(&self.records, start..end, library)
             });
+        }
+        // Readers would join the `SEQRES` records of chains that share a
+        // letter.
+        let mut letters = BTreeMap::<char, BTreeSet<_>>::new();
+        for (&(letter, _), residues) in &chains {
+            for &(_, index) in residues {
+                letters
+                    .entry(letter)
+                    .or_default()
+                    .insert(self.residues[index].chain);
+            }
         }
         chains.retain(|_, residues| residues.len() > 1);
         let in_chain = chains
@@ -2125,7 +2139,7 @@ impl<'o> Plan<'o> {
         let mut residue_ends = BTreeMap::<&ResidueKey, [bool; 2]>::new();
         let mut seqres = Vec::new();
         for (&chain, residues) in &chains {
-            if chain.0 == ' ' {
+            if chain.0 == ' ' || letters.get(&chain.0).is_some_and(|chains| chains.len() > 1) {
                 continue;
             }
             let names = residues
@@ -2178,6 +2192,53 @@ impl<'o> Plan<'o> {
                 residue_ends.insert(key, [place > 1, place < length]);
             }
             seqres.push((chain.0, sequence));
+        }
+        let shows_end = |key: &ResidueKey, side: usize| {
+            templated_of.get(key).is_some_and(|&templated| {
+                true_ends(self.templated[templated].component, &evidences[templated])[side]
+            })
+        };
+        for (&chain, residues) in &chains {
+            if residues
+                .iter()
+                .any(|(key, _)| residue_ends.contains_key(key))
+            {
+                continue;
+            }
+            // A `TER` record or a record of another chain or segment ends
+            // a reader's run.
+            let mut run = 0;
+            for at in 0..residues.len() {
+                let ends_run = residues.get(at + 1).is_none_or(|&(_, next)| {
+                    (residues[at].1..next).any(|index| {
+                        let record = &self.records[index];
+                        record.ter || (record.chain, record.segment.as_str()) != chain
+                    })
+                });
+                if !ends_run {
+                    continue;
+                }
+                if at > run {
+                    for (offset, &(key, _)) in residues[run..=at].iter().enumerate() {
+                        residue_ends.insert(key, [offset > 0, run + offset < at]);
+                    }
+                }
+                run = at + 1;
+            }
+            for pair in residues.windows(2) {
+                let ([(left, _), (right, _)], Some(open)) =
+                    (pair, residue_ends.get(pair[0].0).copied())
+                else {
+                    continue;
+                };
+                if open[1] && (shows_end(left, 1) || shows_end(right, 0)) {
+                    for (key, side) in [(*left, 1), (*right, 0)] {
+                        if let Some(end) = residue_ends.get_mut(key) {
+                            end[side] = false;
+                        }
+                    }
+                }
+            }
         }
         let states = (0..self.templated.len())
             .map(|templated| {

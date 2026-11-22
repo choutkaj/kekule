@@ -1334,10 +1334,8 @@ fn modelled_residues_elsewhere_make_no_gap() {
                 amines.iter().all(|&count| count >= 2),
                 "{with_hydrogens} {ter_after:?}: {amines:?}"
             );
-            // mmCIF gives each molecule a sequence of its own.
-            if chain == ' ' {
-                continue;
-            }
+            // mmCIF gives each molecule a sequence of its own, and a blank
+            // chain a label.
             let (written, _) = mmcif::write([&result], Default::default()).unwrap();
             let reread = mmcif::parse_str(&written, Default::default())
                 .unwrap()
@@ -1554,6 +1552,241 @@ fn a_lone_first_residue_takes_its_last_place_before_the_next_segment() {
             ("ALA".to_owned(), Some(11)),
             ("ALA".to_owned(), Some(12)),
         ]
+    );
+}
+
+/// `SEQRES` records of chain `chain` listing `sequence`.
+fn seqres(chain: char, sequence: &[&str]) -> String {
+    sequence
+        .chunks(13)
+        .enumerate()
+        .map(|(serial, names)| {
+            let names = names
+                .iter()
+                .map(|name| format!("{name:>3}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "SEQRES {:>3} {chain} {:>4}  {names}\n",
+                serial + 1,
+                sequence.len()
+            )
+        })
+        .collect()
+}
+
+/// Residues of chain `A` without hydrogens or `OXT`, numbered from
+/// `first`, apart from each other.
+fn separate_residues(components: &[&str], first: i32) -> Vec<Site> {
+    let mut rows = Vec::new();
+    for (step, &component) in (0..).zip(components) {
+        let offset = [12.0 * f64::from(step), 0.0, 0.0];
+        rows.extend(without(
+            heavy(residue_sites(component, "A", first + step, offset)),
+            &["OXT"],
+        ));
+    }
+    rows
+}
+
+/// The formal charge and total hydrogens, after perception, of atom `name`
+/// of the PDB residue numbered `number`.
+fn pdb_state_at(result: &StructureInterpretation, number: i32, name: &str) -> (i8, usize) {
+    let mut structure = result.structure().clone();
+    structure.perceive().unwrap();
+    let number = number.to_string();
+    let atom = result
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .find(|atom| atom.author_sequence_id() == Some(number.as_str()) && atom.atom_name() == name)
+        .unwrap_or_else(|| panic!("{number} {name}"))
+        .atom();
+    let molecule = structure
+        .topology()
+        .instance(atom.instance())
+        .unwrap()
+        .molecule();
+    (
+        molecule.atom(atom.atom()).unwrap().formal_charge(),
+        molecule.total_hydrogens(atom.atom()).unwrap(),
+    )
+}
+
+fn sequence_not_placed(result: &StructureInterpretation) -> bool {
+    has_issue(
+        result,
+        |issue| matches!(issue, Issue::SequenceNotPlaced { chain_id } if chain_id == "A"),
+    )
+}
+
+#[test]
+fn a_sequence_with_a_substituted_residue_places_its_chain() {
+    // Residues 2 to 4 of a mutant whose SEQRES lists TRP where the model
+    // has PHE: the sequence still places them, so the N of residue 2 is an
+    // amide after a gap.
+    let rows = separate_residues(&["GLY", "PHE", "LYS"], 2);
+    let text = seqres('A', &["SER", "GLY", "TRP", "LYS", "ALA"]) + &pdb_text(&rows, 'A', &[4]);
+    let result = read_pdb(&text);
+    assert!(!sequence_not_placed(&result));
+    assert_eq!(pdb_state_at(&result, 2, "N"), (0, 1));
+    assert_eq!(pdb_state_at(&result, 4, "NZ"), (1, 3));
+    assert!(has_issue(&result, |issue| matches!(
+        issue,
+        Issue::PolymerLinkMissing { component_id, atom_name, .. }
+            if component_id == "LYS" && atom_name == "C"
+    )));
+
+    // A sequence that fits none of them is reported, and the residues keep
+    // their record order: the first is the chain's start.
+    let text = seqres('A', &["ALA"; 5]) + &pdb_text(&rows, 'A', &[4]);
+    let result = read_pdb(&text);
+    assert!(sequence_not_placed(&result));
+    assert_eq!(pdb_state_at(&result, 2, "N"), (1, 3));
+}
+
+#[test]
+fn caps_a_sequence_does_not_list_take_the_places_next_to_their_residues() {
+    // An acetyl cap before three glycines and an N-methyl cap after them,
+    // which SEQRES leaves out.
+    let mut rows = vec![
+        cap_site("C", "C", "ACE", 0, [-14.0, 0.0, 0.0]),
+        cap_site("O", "O", "ACE", 0, [-14.0, 1.2, 0.0]),
+        cap_site("CH3", "C", "ACE", 0, [-15.3, -0.7, 0.0]),
+    ];
+    rows.extend(separate_residues(&["GLY", "GLY", "GLY"], 1));
+    rows.push(cap_site("N", "N", "NME", 4, [40.0, 0.0, 0.0]));
+    rows.push(cap_site("C", "C", "NME", 4, [41.4, 0.0, 0.0]));
+    let text = seqres('A', &["GLY"; 3]) + &pdb_text(&rows, 'A', &[4]);
+    let text = text
+        .lines()
+        .map(|line| {
+            if line.contains(" ACE ") || line.contains(" NME ") {
+                line.replacen("ATOM  ", "HETATM", 1)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = read_pdb(&text);
+    assert!(!sequence_not_placed(&result), "{:?}", issues(&result));
+    let places = result
+        .structure()
+        .topology()
+        .chains()
+        .flat_map(|chain| chain.residues())
+        .map(|residue| (residue.name().to_owned(), residue.label_seq_id()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        places,
+        [("ACE", 1), ("GLY", 2), ("GLY", 3), ("GLY", 4), ("NME", 5)]
+            .map(|(name, place)| (name.to_owned(), Some(place)))
+    );
+}
+
+fn cap_site(name: &str, element: &str, component: &str, sequence: i32, point: [f64; 3]) -> Site {
+    Site {
+        element: element.to_owned(),
+        name: name.to_owned(),
+        component: component.to_owned(),
+        asym: "A".to_owned(),
+        sequence,
+        point,
+        occupancy: None,
+        charge: None,
+    }
+}
+
+#[test]
+fn a_break_inside_a_chain_without_a_sequence_is_a_gap() {
+    // Glycines 1 and 5 of chain A without hydrogens or SEQRES, the first
+    // without OXT, in one run of records: the break between them is a gap,
+    // so the N of the second is an amide.
+    let rows = [
+        separate_residues(&["GLY"], 1),
+        heavy(residue_sites("GLY", "A", 5, [12.0, 0.0, 0.0])),
+    ]
+    .concat();
+    let gap = read_pdb(&pdb_text(&rows, 'A', &[5]));
+    assert_eq!(pdb_state_at(&gap, 5, "N"), (0, 1));
+    assert!(has_issue(&gap, |issue| matches!(
+        issue,
+        Issue::PolymerLinkMissing { atom_name, .. } if atom_name == "C"
+    )));
+
+    // A TER record between them ends the chain there: each glycine is a
+    // molecule of its own, with a free amine.
+    let ended = read_pdb(&pdb_text(&rows, 'A', &[1, 5]));
+    assert_eq!(pdb_state_at(&ended, 5, "N"), (0, 2));
+    assert!(!has_issue(&ended, |issue| matches!(
+        issue,
+        Issue::PolymerLinkMissing { .. }
+    )));
+
+    // So does OXT before the break, whatever the residue after it shows.
+    let rows = [
+        heavy(residue_sites("GLY", "A", 1, [0.0; 3])),
+        heavy(residue_sites("GLY", "A", 5, [12.0, 0.0, 0.0])),
+    ]
+    .concat();
+    let ended = read_pdb(&pdb_text(&rows, 'A', &[5]));
+    assert_eq!(pdb_state_at(&ended, 5, "N"), (1, 3));
+    assert!(!has_issue(&ended, |issue| matches!(
+        issue,
+        Issue::PolymerLinkMissing { .. }
+    )));
+}
+
+#[test]
+fn chains_sharing_a_letter_get_no_merged_sequence() {
+    // Two chains named A, each a dipeptide whose first N is an open amide:
+    // one SEQRES sequence for the letter would join theirs, so none is
+    // written. A reader would make the amides ammoniums: writing them
+    // fails, or reports them under Omit.
+    let sequenced = |asym: &str, offset: f64| {
+        let mut rows = separate_residues(&["GLY", "ALA"], 2);
+        for site in &mut rows {
+            site.asym = asym.to_owned();
+            site.point[1] += offset;
+        }
+        rows
+    };
+    let rows = [sequenced("A", 0.0), sequenced("B", 30.0)].concat();
+    let mut text = with_entity(&block(&rows, &entity_sequence(&["SER", "GLY", "ALA"])));
+    text = text.replace(
+        "_atom_site.label_asym_id\n",
+        "_atom_site.label_asym_id\n_atom_site.auth_asym_id\n",
+    );
+    text = text
+        .lines()
+        .map(|line| {
+            if !line.starts_with("ATOM ") {
+                return line.to_owned();
+            }
+            let mut fields = line.split(' ').collect::<Vec<_>>();
+            fields.insert(6, "A");
+            fields.join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = read_mmcif(&text);
+    assert_eq!(state_at(&result, "A", 2, "N"), (0, 1));
+    assert!(kekule::pdb::write(&result, Default::default()).is_err());
+    let omit = kekule::diagnostics::UnrepresentablePolicy::Omit;
+    let options = kekule::pdb::PdbWriteOptions::default()
+        .with_implicit_hydrogens(omit)
+        .with_chemistry(omit);
+    let (written, report) = kekule::pdb::write(&result, options).unwrap();
+    assert!(!written.contains("SEQRES"), "{written}");
+    assert!(
+        report
+            .omissions()
+            .iter()
+            .any(|omission| matches!(omission, kekule::diagnostics::WriteOmission::ImplicitHydrogens { atoms } if *atoms > 0)),
+        "{:?}",
+        report.omissions()
     );
 }
 

@@ -485,12 +485,15 @@ fn collect_macro_rows(
                 .author_comp_id()
                 .map(str::to_owned)
                 .unwrap_or(label_comp_id),
+            // A blank author chain, as a PDB chain column states, takes the
+            // written asym ID.
             auth_asym_id: site
                 .metadata()
                 .auth_asym_id
                 .clone()
                 .or_else(|| chain.author_id().map(str::to_owned))
-                .unwrap_or_else(|| chain.label_id().to_owned()),
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| assignment.asym_id.clone()),
             auth_atom_id: site
                 .metadata()
                 .auth_atom_id

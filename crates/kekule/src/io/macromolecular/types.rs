@@ -761,6 +761,14 @@ pub enum StructureInterpretIssue {
         /// The linking atom's name.
         atom_name: String,
     },
+    /// A PDB chain's `SEQRES` sequence does not place its modelled
+    /// residues, even where some differ from it, as in a mutant. The
+    /// residues keep their record order, and the sequence says nothing of
+    /// their gaps.
+    SequenceNotPlaced {
+        /// The chain identifier.
+        chain_id: String,
+    },
     /// A residue's template states no charge for some atoms, as the
     /// dictionary does for the iron of heme and of iron-sulfur clusters.
     /// They are read as neutral.
@@ -1170,6 +1178,10 @@ impl fmt::Display for StructureInterpretIssue {
                 "Atom {atom_name:?} of {residue} (component {component_id:?}) has no bond to \
                  its neighbour in the chain, which the model lacks or places too far away. It \
                  keeps the hydrogens it has when bonded."
+            ),
+            Self::SequenceNotPlaced { chain_id } => write!(
+                formatter,
+                "The SEQRES sequence of chain {chain_id:?} does not fit its modelled residues.                  They keep their record order."
             ),
             Self::StatedChargeResonance {
                 residue,
