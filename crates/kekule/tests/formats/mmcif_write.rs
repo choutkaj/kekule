@@ -3,13 +3,18 @@
 use kekule::diagnostics::{
     AtomField, FormatError, FormatErrorDetail, UnrepresentablePolicy, WriteOmission,
 };
+use kekule::macromolecular::EntityKind;
 use kekule::math::Point3;
-use kekule::mmcif::{self, MmcifWriteErrorKind, MmcifWriteOptions};
-use kekule::molecule::{Atom, AtomRadical, BondOrder, Element, MoleculeEditor};
+use kekule::mmcif::{
+    self, MmcifBlockSource, MmcifEntityClassifications, MmcifWriteErrorKind, MmcifWriteOptions,
+};
+use kekule::molecule::{Atom, AtomId, AtomRadical, BondOrder, Element, MoleculeEditor};
 use kekule::sdf;
 use kekule::stereo::coordinates::{infer_coordinate_stereo, CoordinateStereoOptions};
-use kekule::structure::{Positions, Structure, StructureSet};
-use kekule::topology::Topology;
+use kekule::structure::{
+    Positions, Structure, StructureBuildError, StructureBuilder, StructureSet,
+};
+use kekule::topology::{AtomSiteMetadata, InstanceAtomId, Topology, TopologyBuildError};
 use kekule::units::{Quantity, ANGSTROM};
 
 /// A 3D glucoside with five stereocenters and the chiral flag set.
@@ -271,4 +276,109 @@ fn atom_maps_and_zero_order_bonds_fail_unless_omitted() {
     let (text, report) = mmcif::write([&pair], omit_chemistry()).unwrap();
     assert_eq!(report.omissions(), [WriteOmission::Bonds { bonds: 1 }]);
     assert_eq!(read_back(&text).topology().bond_count(), 0);
+}
+
+/// Two carbons joined by a bond of `order`, as one non-polymer molecule.
+fn carbon_pair(order: BondOrder) -> (Structure, MmcifEntityClassifications) {
+    let mut editor = MoleculeEditor::new();
+    let [left, right] = [(); 2].map(|()| {
+        editor
+            .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+            .unwrap()
+    });
+    editor.add_bond(left, right, order).unwrap();
+    let topology = Topology::from_molecule(editor.finish().unwrap()).unwrap();
+    let positions = [Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0)];
+    let positions = Positions::new(Quantity::new(positions.to_vec(), ANGSTROM)).unwrap();
+    let structure = Structure::new(topology, positions).unwrap();
+    let mut classifications = MmcifEntityClassifications::new();
+    for instance in structure.topology().instances() {
+        classifications
+            .insert(instance.id(), EntityKind::NonPolymer)
+            .unwrap();
+    }
+    (structure, classifications)
+}
+
+#[test]
+fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hierarchy() {
+    let (zero, classifications) = carbon_pair(BondOrder::Zero);
+    assert!(matches!(
+        issue(mmcif::write(
+            [MmcifBlockSource::structure(&zero).with_classifications(&classifications)],
+            MmcifWriteOptions::default()
+        )),
+        MmcifWriteErrorKind::UnsupportedBondOrder {
+            order: BondOrder::Zero,
+            ..
+        }
+    ));
+
+    // Dative bonds are metal coordination and survive a round trip as such.
+    let (dative, classifications) = carbon_pair(BondOrder::Dative);
+    let (written, _) = mmcif::write(
+        [MmcifBlockSource::structure(&dative).with_classifications(&classifications)],
+        MmcifWriteOptions::default(),
+    )
+    .unwrap();
+    let document = mmcif::parse_str(&written, Default::default()).unwrap();
+    // The dative bond joins two carbons, which a coordination flag would
+    // misstate, so a `metalc` row states it rather than a component table.
+    let block = &document.blocks()[0];
+    assert!(block
+        .loop_with_tag("_chem_comp_bond.pdbx_metal_coordination_flag")
+        .is_none());
+    let table = block.loop_with_tag("_struct_conn.conn_type_id").unwrap();
+    assert_eq!(
+        table.value(0, "_struct_conn.conn_type_id").unwrap().text(),
+        "metalc"
+    );
+    let reread = document.interpret(Default::default()).unwrap();
+    let molecule = reread
+        .structure()
+        .topology()
+        .instances()
+        .next()
+        .unwrap()
+        .molecule();
+    assert_eq!(
+        molecule.bonds().next().unwrap().1.order(),
+        BondOrder::Dative
+    );
+
+    // An atom site naming an atom the molecule lacks fails the build.
+    let mut editor = MoleculeEditor::new();
+    editor
+        .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+        .unwrap();
+    let molecule = editor.finish().unwrap();
+    let mut builder = StructureBuilder::new();
+    let instance = builder
+        .add_molecule(molecule, &Positions::zeros(1))
+        .unwrap();
+    let chain = builder
+        .topology_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
+    let residue = builder
+        .topology_mut()
+        .hierarchy_mut()
+        .add_residue(chain, "GLY", Some(1), None, None)
+        .unwrap();
+    builder
+        .topology_mut()
+        .hierarchy_mut()
+        .add_atom_site(
+            residue,
+            InstanceAtomId::new(instance, AtomId::new(99)),
+            AtomSiteMetadata::default(),
+        )
+        .unwrap();
+    assert!(matches!(
+        builder.build(),
+        Err(StructureBuildError::Topology(
+            TopologyBuildError::MissingHierarchyAtom { .. }
+        ))
+    ));
 }
