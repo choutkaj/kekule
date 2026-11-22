@@ -373,22 +373,39 @@ impl ComponentLibrary {
         id: &str,
         atoms: impl IntoIterator<Item = (&'a str, Element)> + Clone,
     ) -> Option<(&'static Component, &'static str)> {
-        static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
-        static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
         if Self::bundled().get(id).is_some() {
             return None;
         }
+        Self::force_fields()
+            .into_iter()
+            .find_map(|(library, force_field)| {
+                let component = library.get(id)?;
+                component
+                    .fits(atoms.clone())
+                    .then_some((component, force_field))
+            })
+    }
+
+    /// The AMBER and CHARMM libraries, in the order readers consult them.
+    fn force_fields() -> [(&'static Self, &'static str); 2] {
+        static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
+        static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
         [
             (AMBER.get_or_init(force_field::amber), "AMBER"),
             (CHARMM.get_or_init(force_field::charmm), "CHARMM"),
         ]
-        .into_iter()
-        .find_map(|(library, force_field)| {
-            let component = library.get(id)?;
-            component
-                .fits(atoms.clone())
-                .then_some((component, force_field))
-        })
+    }
+
+    /// The element of the atom named `atom` in the first template of a
+    /// residue named `id` that names it: the caller's library, the bundled
+    /// one, then AMBER's and CHARMM's, as a reader without element symbols
+    /// takes it.
+    pub(crate) fn template_element(caller: Option<&Self>, id: &str, atom: &str) -> Option<Element> {
+        caller
+            .into_iter()
+            .chain([Self::bundled()])
+            .chain(Self::force_fields().map(|(library, _)| library))
+            .find_map(|library| Some(library.get(id)?.atom(atom)?.1.element()))
     }
 
     /// Reads every data block that defines component atoms, such as a CCD

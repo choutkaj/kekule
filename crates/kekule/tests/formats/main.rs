@@ -16,6 +16,7 @@ mod mmcif_write;
 mod native;
 mod native_versions;
 mod pdb;
+mod pdb_conventions;
 mod pdb_write;
 mod sequences;
 mod smiles_stereo;

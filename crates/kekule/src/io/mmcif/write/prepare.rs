@@ -1,6 +1,6 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
-use super::implied::{mark_implied, residue_key};
+use super::implied::{mark_implied, residue_key, ComponentTable};
 use super::one_based_serial;
 use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
 use crate::diagnostics::AtomField;
@@ -44,6 +44,9 @@ pub(super) struct ConnectionRow {
     pub(super) left: InstanceAtomId,
     pub(super) right: InstanceAtomId,
     pub(super) order: BondOrder,
+    /// Perceived aromaticity, `None` before perception and for
+    /// coordination between residues.
+    pub(super) aromatic: Option<bool>,
     /// How the reader derives the bond, or `None` when the block states it.
     pub(super) implied: Option<Implied>,
 }
@@ -57,6 +60,9 @@ pub(super) enum Implied {
     /// Polymer linkage between residues adjacent in sequence, within bonding
     /// distance in the written coordinates.
     PolymerLink,
+    /// The block's own `_chem_comp_bond` table of a component no template
+    /// covers.
+    ComponentTable,
 }
 
 #[derive(Debug)]
@@ -65,6 +71,8 @@ pub(super) struct PreparedModel {
     pub(super) asyms: Vec<AsymRow>,
     pub(super) atoms: Vec<AtomRow>,
     pub(super) connections: Vec<ConnectionRow>,
+    /// The `_chem_comp_bond` tables of components no template covers.
+    pub(super) component_tables: Vec<ComponentTable>,
     /// What the rows leave out, in report order: fixed implicit-hydrogen
     /// counts; the chemistry [`MmcifWriteOptions::chemistry`] omits;
     /// interpretation-report coordination records that no longer match the
@@ -154,6 +162,7 @@ pub(super) fn prepare_model(
             left,
             right,
             order: bond.order,
+            aromatic: bond.is_aromatic(),
             implied: None,
         });
     }
@@ -167,12 +176,18 @@ pub(super) fn prepare_model(
                 .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    mark_implied(
+    let polymer_entities = entities
+        .iter()
+        .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
+        .map(|entity| entity.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let component_tables = mark_implied(
         &atoms,
         &elements,
         &mut connections,
         &atom_indexes,
         options.coordinate_precision,
+        |row| polymer_entities.contains(row.entity_id.as_str()),
     );
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
@@ -190,15 +205,18 @@ pub(super) fn prepare_model(
         left,
         right,
         order: BondOrder::Dative,
+        aromatic: None,
         implied: None,
     }));
     // A polymer link another geometry stretches beyond bonding
     // distance is stated after all, so its partners are checked too.
     let selectors = ConnectionSelectors::new(&atoms);
-    for connection in connections
-        .iter()
-        .filter(|connection| connection.implied != Some(Implied::Template))
-    {
+    for connection in connections.iter().filter(|connection| {
+        !matches!(
+            connection.implied,
+            Some(Implied::Template | Implied::ComponentTable)
+        )
+    }) {
         selectors.validate(connection.left, &atoms, &atom_indexes)?;
         selectors.validate(connection.right, &atoms, &atom_indexes)?;
     }
@@ -207,6 +225,7 @@ pub(super) fn prepare_model(
         asyms,
         atoms,
         connections,
+        component_tables,
         omissions: vec![
             WriteOmission::ImplicitHydrogens {
                 atoms: omitted.hydrogens,

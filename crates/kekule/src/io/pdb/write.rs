@@ -21,11 +21,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
 
+use crate::components::ComponentLinking;
 use crate::diagnostics::{
     AtomField, Capitalized, CellReason, Count, DiagnosticKind, Format, FormatError,
     FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
+use crate::io::macromolecular::connectivity::{within_bonding_distance, PolymerLink};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
@@ -42,8 +44,8 @@ use crate::math::{PeriodicCell, PeriodicCellError, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
-    InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
-    Topology, TopologyAtomIndex,
+    ChainId, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass,
+    ResidueId, Topology, TopologyAtomIndex,
 };
 use crate::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -67,7 +69,7 @@ const MAX_RESIDUE_NUMBER: i64 = 2_436_111;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PdbChainIdPolicy {
-    /// Fail with [`PdbWriteErrorKind::ChainIdTooLong`].
+    /// Fail with [`PdbWriteErrorKind::InvalidChainId`].
     #[default]
     Fail,
     /// Write an identifier of up to four printable ASCII characters, such as
@@ -224,18 +226,18 @@ impl PdbWriteOptions {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PdbWriteErrorKind {
-    /// The chain identifier is longer than PDB's one column, and under
-    /// [`PdbChainIdPolicy::SegmentId`] than the four segment identifier
-    /// columns or not printable ASCII. [`PdbChainIdPolicy::SegmentId`]
-    /// writes identifiers of up to four printable characters.
-    ChainIdTooLong {
+    /// The chain identifier is not one printable ASCII character, and under
+    /// [`PdbChainIdPolicy::SegmentId`] not up to four, the segment
+    /// identifier columns.
+    InvalidChainId {
         /// An atom of the chain.
         atom: InstanceAtomId,
         /// The identifier.
         chain_id: String,
     },
-    /// The residue name is longer than PDB's three columns.
-    ResidueNameTooLong {
+    /// The residue name is longer than PDB's three columns or not printable
+    /// ASCII without whitespace.
+    InvalidResidueName {
         /// An atom of the residue.
         atom: InstanceAtomId,
         /// The name.
@@ -257,8 +259,8 @@ pub enum PdbWriteErrorKind {
         /// The name.
         name: String,
     },
-    /// The insertion code is longer than PDB's one column.
-    InsertionCodeTooLong {
+    /// The insertion code is not one printable ASCII character.
+    InvalidInsertionCode {
         /// An atom of the residue.
         atom: InstanceAtomId,
         /// The code.
@@ -320,10 +322,11 @@ pub enum PdbWriteErrorKind {
     UnsupportedStereo(MoleculeInstanceId),
     /// A bond `CONECT` cannot state, with [`PdbWriteOptions::chemistry`] set
     /// to fail. Readers take a pair listed once as single, twice as double,
-    /// and three times as triple, and a pair of a metal and a non-metal as
-    /// dative whatever its listing; zero-order and quadruple bonds, dative
-    /// bonds between other pairs, and other orders between a metal and a
-    /// non-metal have no listing.
+    /// and three times as triple, and a metal and a non-metal of different
+    /// residues as dative whatever their listing. Zero-order and quadruple
+    /// bonds, dative bonds within one residue or between other pairs, and
+    /// other orders between a metal and a non-metal of different residues
+    /// have no listing.
     UnsupportedBondOrder {
         /// The bond.
         bond: InstanceBondId,
@@ -381,13 +384,14 @@ impl PdbWriteErrorKind {
 impl fmt::Display for PdbWriteErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ChainIdTooLong { atom, chain_id } => write!(
+            Self::InvalidChainId { atom, chain_id } => write!(
                 f,
                 "Chain ID {chain_id:?} of {atom} does not fit PDB's chain columns."
             ),
-            Self::ResidueNameTooLong { atom, name } => write!(
+            Self::InvalidResidueName { atom, name } => write!(
                 f,
-                "Residue name {name:?} of {atom} is longer than PDB's three characters."
+                "Residue name {name:?} of {atom} does not fit PDB's three ASCII residue-name \
+                 columns."
             ),
             Self::InvalidAtomName { atom, name } => write!(
                 f,
@@ -398,9 +402,9 @@ impl fmt::Display for PdbWriteErrorKind {
                 "{} repeats atom name {name:?} in its residue.",
                 Capitalized(atom)
             ),
-            Self::InsertionCodeTooLong { atom, code } => write!(
+            Self::InvalidInsertionCode { atom, code } => write!(
                 f,
-                "Insertion code {code:?} of {atom} is longer than PDB's one character."
+                "Insertion code {code:?} of {atom} does not fit PDB's one ASCII column."
             ),
             Self::InvalidResidueNumber { atom, number } => match number {
                 Some(number) => write!(
@@ -640,7 +644,7 @@ pub(crate) fn write_pdb_to<'a>(
             structures: views.iter().filter(|view| view.cell().is_some()).count(),
         });
     }
-    let plan = Plan::new(views[0].topology(), &options, &mut omissions)?;
+    let plan = Plan::new(&views, &options, &mut omissions)?;
     let links = match source.reports {
         Some(reports) if reports.len() != views.len() => {
             return Err(fail(PdbWriteErrorKind::ReportCountMismatch(
@@ -775,6 +779,8 @@ enum ResidueKey {
 #[derive(Debug, Clone)]
 struct AtomResidue {
     key: ResidueKey,
+    /// The hierarchy chain, which a `TER` record ends.
+    chain: Option<ChainId>,
     polymer: bool,
     class: ResidueClass,
 }
@@ -839,30 +845,35 @@ fn aligned_name(name: &str, element: &str) -> String {
     }
 }
 
-/// Columns 79-80, such as `2+` or `1-`; blank for a neutral atom.
+/// Columns 79-80, such as `2+`, `1-`, or `0`. A neutral atom states its
+/// zero, so a reader keeps it neutral rather than giving it its template's
+/// charge.
 fn charge_field(charge: i8) -> String {
     match charge {
-        0 => String::new(),
+        0 => "0".to_owned(),
         charge if charge > 0 => format!("{charge}+"),
         charge => format!("{}-", -i16::from(charge)),
     }
 }
 
+/// The column of a one-character identifier: blank when empty, else its one
+/// printable ASCII character.
 fn single_character(text: &str) -> Option<char> {
     let mut characters = text.chars();
     match (characters.next(), characters.next()) {
         (None, _) => Some(' '),
-        (Some(character), None) => Some(character),
+        (Some(character), None) if character.is_ascii_graphic() => Some(character),
         _ => None,
     }
 }
 
 impl Plan {
     fn new(
-        topology: &Topology,
+        views: &[StructureView<'_>],
         options: &PdbWriteOptions,
         omissions: &mut Omissions,
     ) -> Result<Self, FormatError> {
+        let topology = views[0].topology();
         let strict = options.chemistry == UnrepresentablePolicy::Fail;
         let mut omitted_hydrogens = 0;
         let (mut isotopes, mut radicals, mut atom_maps) = (0, 0, 0);
@@ -944,14 +955,19 @@ impl Plan {
                     (' ', identity.chain_id.clone())
                 }
                 None => {
-                    return Err(fail(PdbWriteErrorKind::ChainIdTooLong {
+                    return Err(fail(PdbWriteErrorKind::InvalidChainId {
                         atom: atom_id,
                         chain_id: identity.chain_id,
                     }))
                 }
             };
-            if identity.residue_name.chars().count() > 3 {
-                return Err(fail(PdbWriteErrorKind::ResidueNameTooLong {
+            if identity.residue_name.len() > 3
+                || !identity
+                    .residue_name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_graphic())
+            {
+                return Err(fail(PdbWriteErrorKind::InvalidResidueName {
                     atom: atom_id,
                     name: identity.residue_name,
                 }));
@@ -968,7 +984,7 @@ impl Plan {
             }
             let insertion_code = single_character(identity.insertion_code.as_deref().unwrap_or(""))
                 .ok_or_else(|| {
-                    fail(PdbWriteErrorKind::InsertionCodeTooLong {
+                    fail(PdbWriteErrorKind::InvalidInsertionCode {
                         atom: atom_id,
                         code: identity.insertion_code.clone().unwrap_or_default(),
                     })
@@ -1030,11 +1046,11 @@ impl Plan {
         }
 
         // `TER` follows the last polymer atom of each chain and takes the
-        // next serial number.
+        // next serial number. Chains that share an identifier stay apart.
         let mut last_polymer_atom = BTreeMap::new();
-        for (index, (residue, record)) in residues.iter().zip(&records).enumerate() {
+        for (index, residue) in residues.iter().enumerate() {
             if residue.polymer {
-                last_polymer_atom.insert((record.chain, record.segment.as_str()), index);
+                last_polymer_atom.insert(residue.chain, index);
             }
         }
         let last_polymer_atom = last_polymer_atom.into_values().collect::<Vec<_>>();
@@ -1057,11 +1073,19 @@ impl Plan {
         let templates = residue_templates(topology, &records, &residues);
         let conflicting =
             check_dictionary_bonds(topology, &records, &residues, &templates, strict)?;
+        let polymer_links = polymer_links(views, &records, &residues);
         let ConectPlan {
             listings: conect,
             unstated,
             coordination_bonds,
-        } = Self::conect(topology, &records, &residues, &templates, strict)?;
+        } = Self::conect(
+            topology,
+            &records,
+            &residues,
+            &templates,
+            &polymer_links,
+            strict,
+        )?;
         omissions.record(WriteOmission::ChainIds {
             chains: segments.len(),
         });
@@ -1116,6 +1140,7 @@ impl Plan {
             return Identity {
                 residue: AtomResidue {
                     key: ResidueKey::Instance(instance.id()),
+                    chain: None,
                     polymer: false,
                     class: if water {
                         ResidueClass::Water
@@ -1136,6 +1161,7 @@ impl Plan {
         Identity {
             residue: AtomResidue {
                 key: ResidueKey::Hierarchy(residue.id()),
+                chain: Some(chain.id()),
                 polymer,
                 class: residue.class(),
             },
@@ -1161,17 +1187,16 @@ impl Plan {
     }
 
     /// `CONECT` lists every bond a reader cannot derive: all but bonds
-    /// within one standard residue that a default template covers, linkage
-    /// between standard residues adjacent in one polymer chain, and bonds
-    /// within water.
+    /// within one standard residue that a default template covers, the
+    /// [`polymer_links`] a reader makes, and bonds within water.
     fn conect(
         topology: &Topology,
         records: &[AtomRecord],
         residues: &[AtomResidue],
         templates: &BTreeMap<&ResidueKey, &Component>,
+        polymer_links: &BTreeSet<[usize; 2]>,
         strict: bool,
     ) -> Result<ConectPlan, FormatError> {
-        let chain_positions = residue_chain_positions(topology);
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
         let mut unstated = 0;
         let mut coordination_bonds = 0;
@@ -1185,14 +1210,18 @@ impl Plan {
             let derived = if same_residue {
                 residues[left].class == ResidueClass::Water || (standard && templated)
             } else {
-                standard && adjacent(&chain_positions, &residues[left].key, &residues[right].key)
+                bond.order == BondOrder::Single
+                    && polymer_links.contains(&[left.min(right), left.max(right)])
             };
             if derived {
                 continue;
             }
+            // Readers take a listing between a metal and a non-metal of
+            // different residues for coordination, and any other listing for
+            // a covalent bond.
             let elements = bond.atoms().map(|atom| atom.atom().element);
-            let coordination = is_metal(elements[0]) != is_metal(elements[1]);
-            if bond.order == BondOrder::Dative && coordination && !same_residue {
+            let coordination = !same_residue && is_metal(elements[0]) != is_metal(elements[1]);
+            if bond.order == BondOrder::Dative && coordination {
                 // Readers record this listing as coordination, not a bond.
                 coordination_bonds += 1;
             }
@@ -1200,9 +1229,8 @@ impl Plan {
                 (BondOrder::Dative, true) | (BondOrder::Single, false) => 1,
                 (BondOrder::Double, false) => 2,
                 (BondOrder::Triple, false) => 3,
-                // A template supplies bonds a listing would misstate, such
-                // as a heme's single iron-nitrogen bonds, which a listing
-                // would make dative.
+                // A template supplies bonds a listing cannot state, such as
+                // a heme's dative iron-nitrogen bonds.
                 _ if templated => continue,
                 (order, _) => {
                     if strict {
@@ -1583,31 +1611,71 @@ fn template_conflict(
     None
 }
 
-/// Each hierarchy residue's chain and position within it.
-fn residue_chain_positions(topology: &Topology) -> BTreeMap<ResidueId, (usize, usize)> {
-    let mut positions = BTreeMap::new();
-    for (chain_index, chain) in topology.chains().enumerate() {
-        for (position, residue) in chain.residues().enumerate() {
-            positions.insert(residue.id(), (chain_index, position));
+/// The peptide and phosphodiester bonds a reader makes, as pairs of dense
+/// indices: between standard residues adjacent in one chain, by the atom
+/// names their templates link, and within bonding distance at the written
+/// coordinates of every structure.
+fn polymer_links(
+    views: &[StructureView<'_>],
+    records: &[AtomRecord],
+    residues: &[AtomResidue],
+) -> BTreeSet<[usize; 2]> {
+    let mut named = BTreeMap::<&ResidueKey, BTreeMap<&str, usize>>::new();
+    for (index, (record, residue)) in records.iter().zip(residues).enumerate() {
+        if !record.hetatm {
+            named
+                .entry(&residue.key)
+                .or_default()
+                .insert(record.name.trim(), index);
         }
     }
-    positions
-}
-
-fn adjacent(
-    positions: &BTreeMap<ResidueId, (usize, usize)>,
-    left: &ResidueKey,
-    right: &ResidueKey,
-) -> bool {
-    let (ResidueKey::Hierarchy(left), ResidueKey::Hierarchy(right)) = (left, right) else {
-        return false;
+    let library = ComponentLibrary::bundled();
+    let linking = |atoms: &BTreeMap<&str, usize>| {
+        let first = atoms.values().next().expect("a residue has atoms");
+        library
+            .get(&records[*first].residue_name)
+            .map_or(ComponentLinking::None, Component::linking)
     };
-    match (positions.get(left), positions.get(right)) {
-        (Some(&(left_chain, left)), Some(&(right_chain, right))) => {
-            left_chain == right_chain && left.abs_diff(right) == 1
+    let written = |index: usize| {
+        views.iter().map(move |view| {
+            let topology = view.topology();
+            let element = topology
+                .atom_at(TopologyAtomIndex::from_index(index))
+                .expect("records follow dense atoms")
+                .atom()
+                .element;
+            let position = view.positions().get(index)?.value_in(ANGSTROM).ok()?;
+            let round = |value: f64| rounded(value, 3);
+            Some((
+                element,
+                Point3::new(round(position.x), round(position.y), round(position.z)),
+            ))
+        })
+    };
+    let mut links = BTreeSet::new();
+    for chain in views[0].topology().chains() {
+        let keys = chain
+            .residues()
+            .map(|residue| ResidueKey::Hierarchy(residue.id()))
+            .collect::<Vec<_>>();
+        for pair in keys.windows(2) {
+            let (Some(left), Some(right)) = (named.get(&pair[0]), named.get(&pair[1])) else {
+                continue;
+            };
+            let Some((&first, &second)) = PolymerLink::undeclared(linking(left), linking(right))
+                .and_then(|link| link.atoms(|name| left.get(name), |name| right.get(name)))
+            else {
+                continue;
+            };
+            if written(first).zip(written(second)).all(|pair| match pair {
+                (Some(left), Some(right)) => within_bonding_distance(left, right),
+                _ => false,
+            }) {
+                links.insert([first.min(second), first.max(second)]);
+            }
         }
-        _ => false,
     }
+    links
 }
 
 /// One structure's coordinates, occupancies, and B factors in dense order,

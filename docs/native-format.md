@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide bond evidence (`7`) and no issue kinds 20 and 21. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide bond evidence (`7`) and no issue kinds 20 to 25. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -493,22 +493,24 @@ component, `1` parent, `2` sequence, `3` unknown.
 
 An issue is its kind, then its fields in declaration order, with lists as
 `list`, line lists as `count packed`, residues as `residue`, entity kinds as
-`u8` (`str` follows `4`), charges as `i8`, and partners as `u8`.
+`u8` (`str` follows `4`), charges as `i8`, partners as `u8`, and number
+fields as `u8` (`0` atom serial numbers, `1` residue numbers).
 
 | Kind | Issue | Kind | Issue |
 | --- | --- | --- | --- |
-| 0 | `EntityTypeInferred` | 10 | `AlternateLocationOccupancyTie` |
-| 1 | `ElementsInferredFromAtomNames` | 11 | `ConnectivityCandidatesInferred` |
-| 2 | `ConnectionsIgnored` | 12 | `ResidueBondsInferred` |
-| 3 | `ConnectionUnresolved` | 13 | `HydrogenAttachedByDistance` |
-| 4 | `ConnectionAmbiguous` | 14 | `ChainBreak` |
-| 5 | `CoordinateModelIgnored` | 15 | `ChargesFromBonds` |
-| 6 | `AlternateLocationOmitted` | 16 | `ProtonationFromHydrogens` |
-| 7 | `AlternateLocationIncomplete` | 17 | `ResidueFragmented` |
-| 8 | `AlternateLocationOccupancyMissing` | 18 | `CellOmitted` |
-| 9 | `AlternateLocationCombinationRejected` | 19 | `AssemblyOmitted` |
-| | | 20 | `DisulfideInferred` |
-| | | 21 | `ForceFieldTemplate` |
+| 0 | `EntityTypeInferred` | 13 | `HydrogenAttachedByDistance` |
+| 1 | `ElementsInferredFromAtomNames` | 14 | `ChainBreak` |
+| 2 | `ConnectionsIgnored` | 15 | `ChargesFromBonds` |
+| 3 | `ConnectionUnresolved` | 16 | `ProtonationFromHydrogens` |
+| 4 | `ConnectionAmbiguous` | 17 | `ResidueFragmented` |
+| 5 | `CoordinateModelIgnored` | 18 | `CellOmitted` |
+| 6 | `AlternateLocationOmitted` | 19 | `AssemblyOmitted` |
+| 7 | `AlternateLocationIncomplete` | 20 | `DisulfideInferred` |
+| 8 | `AlternateLocationOccupancyMissing` | 21 | `ForceFieldTemplate` |
+| 9 | `AlternateLocationCombinationRejected` | 22 | `ElementsFromTemplates` |
+| 10 | `AlternateLocationOccupancyTie` | 23 | `UnsignedCharges` |
+| 11 | `ConnectivityCandidatesInferred` | 24 | `HexadecimalNumbers` |
+| 12 | `ResidueBondsInferred` | 25 | `NumbersRestart` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

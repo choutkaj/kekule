@@ -6,8 +6,8 @@ use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
-    EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
-    SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+    EntityMonomer, InstanceProvenance, NumberField, PolymerEntity, PolymerEntityInstance,
+    PolymerType, SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport, StructureSetInterpretation,
 };
 use crate::math::{Matrix3, Vector3};
@@ -251,6 +251,20 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             residue: label(42),
             component_id: "CYX".into(),
             force_field: "AMBER".into(),
+        },
+        Issue::ElementsFromTemplates {
+            source_lines: vec![3, 4],
+        },
+        Issue::UnsignedCharges {
+            source_lines: vec![9],
+        },
+        Issue::HexadecimalNumbers {
+            field: NumberField::AtomSerial,
+            source_line: 100_002,
+        },
+        Issue::NumbersRestart {
+            field: NumberField::ResidueNumber,
+            source_line: 12,
         },
         Issue::ChargesFromBonds {
             residue: label(5),

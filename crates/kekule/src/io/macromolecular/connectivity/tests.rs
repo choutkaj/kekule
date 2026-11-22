@@ -534,7 +534,7 @@ fn without(rows: &str, atoms: &[&str]) -> String {
 }
 
 #[test]
-fn unstated_coordination_in_a_component_table_follows_template_then_elements() {
+fn unstated_coordination_in_a_component_table_follows_the_template() {
     // wwPDB entry files list `_chem_comp_bond` without the coordination
     // flag; the SF4 template flags its Fe-S bonds, so they are dative as
     // a PDB reading of the same structure makes them.
@@ -569,8 +569,8 @@ fn unstated_coordination_in_a_component_table_follows_template_then_elements() {
     // A stated flag wins over the template.
     let stated = interpret(&block(sf4, &table(true, "SF4 FE1 S2 sing N\n")));
     assert_eq!(bonds(&stated)[0].2, BondOrder::Single);
-    // Without a template, a metal and a non-metal are coordinated, as for
-    // PDB `LINK` and `CONECT`; other pairs keep their stated order.
+    // Without a template, every bond keeps its stated order, as a PDB
+    // `CONECT` within one residue does.
     let unknown = interpret(&block(
         "FE FE XFC A 1 0.000 0.000 0.000
              CL CL1 XFC A 1 2.200 0.000 0.000
@@ -582,7 +582,7 @@ fn unstated_coordination_in_a_component_table_follows_template_then_elements() {
         .into_iter()
         .map(|(a, b, order, _)| (a, b, order))
         .collect::<Vec<_>>();
-    assert!(orders.contains(&("FE".to_owned(), "CL1".to_owned(), BondOrder::Dative)));
+    assert!(orders.contains(&("FE".to_owned(), "CL1".to_owned(), BondOrder::Single)));
     assert!(orders.contains(&("C1".to_owned(), "O1".to_owned(), BondOrder::Double)));
 }
 

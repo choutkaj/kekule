@@ -44,7 +44,8 @@ pub(super) enum DeclaredOrder {
     /// The order the record states.
     Stated(BondOrder),
     /// A record without a bond type: a bond between a metal and a non-metal
-    /// is coordination, and dative; any other bond has this order.
+    /// of different residues is coordination, and dative; any other bond,
+    /// such as one within a metal complex's residue, has this order.
     ByElements(BondOrder),
 }
 
@@ -155,16 +156,18 @@ pub(super) fn resolve_connections(
         if !declared.insert(pair) && bond.connectivity_only {
             continue;
         }
+        let same_residue = left.asym_id == right.asym_id
+            && left.residue_key == right.residue_key
+            && left.comp_id == right.comp_id;
         let order = match bond.order {
             DeclaredOrder::Stated(order) => order,
-            DeclaredOrder::ByElements(_) if is_metal(left.element) != is_metal(right.element) => {
+            DeclaredOrder::ByElements(_)
+                if !same_residue && is_metal(left.element) != is_metal(right.element) =>
+            {
                 BondOrder::Dative
             }
             DeclaredOrder::ByElements(order) => order,
         };
-        let same_residue = left.asym_id == right.asym_id
-            && left.residue_key == right.residue_key
-            && left.comp_id == right.comp_id;
         report.applied_connections += 1;
         // Coordination between residues is recorded, not bonded: covalent
         // connectedness alone decides molecule boundaries.

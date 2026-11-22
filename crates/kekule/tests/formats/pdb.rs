@@ -1290,9 +1290,10 @@ fn atom_names_imply_elements_without_element_columns() {
         })
         .collect::<Vec<_>>();
     assert_eq!(elements, ["C", "Ca", "Zn"]);
+    // Glycine's and the calcium ion's templates name both atoms.
     assert_eq!(
         interpreted.report().issues(),
-        &[StructureInterpretIssue::ElementsInferredFromAtomNames {
+        &[StructureInterpretIssue::ElementsFromTemplates {
             source_lines: vec![1, 2],
         }]
     );

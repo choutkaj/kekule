@@ -2,15 +2,15 @@
 
 use std::io::Read;
 
-use super::super::DISULFIDE_SINCE;
+use super::super::{DISULFIDE_SINCE, PDB_NUMBERING_SINCE};
 use super::{Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
-    EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
-    SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+    EntityMonomer, InstanceProvenance, NumberField, PolymerEntity, PolymerEntityInstance,
+    PolymerType, SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::math::{Matrix3, Vector3};
@@ -733,12 +733,34 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 force_field: self.str()?,
             },
+            22 if self.version >= PDB_NUMBERING_SINCE => Issue::ElementsFromTemplates {
+                source_lines: self.usizes()?,
+            },
+            23 if self.version >= PDB_NUMBERING_SINCE => Issue::UnsignedCharges {
+                source_lines: self.usizes()?,
+            },
+            24 if self.version >= PDB_NUMBERING_SINCE => Issue::HexadecimalNumbers {
+                field: self.number_field()?,
+                source_line: self.usize()?,
+            },
+            25 if self.version >= PDB_NUMBERING_SINCE => Issue::NumbersRestart {
+                field: self.number_field()?,
+                source_line: self.usize()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))
                 )
             }
         })
+    }
+
+    fn number_field(&mut self) -> Result<NumberField> {
+        match self.u8()? {
+            0 => Ok(NumberField::AtomSerial),
+            1 => Ok(NumberField::ResidueNumber),
+            other => Err(self.invalid(format!("The number field {other} is unknown."))),
+        }
     }
 
     fn sequence_source(&mut self) -> Result<SequenceSource> {

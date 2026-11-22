@@ -891,7 +891,11 @@ projections check cardinality; plural molecule projections keep every connected
 component in source order. In a conformation the coordinates are the
 configuration: annotations that contradict them yield to them with a warning.
 mmCIF keeps label and author hierarchy identities; PDB carries author
-identities only. Multiple coordinate models do not imply a time order, and the
+identities only. A PDB atom without an element symbol takes its element from
+its residue's template, else from its name by the column convention, and one
+whose name reads as two elements fails; the report names the atoms either
+way. Water and ion residue names of the PDB and of simulation programs are
+never polymer. Multiple coordinate models do not imply a time order, and the
 formats state no distribution: every coordinate model becomes a geometry, a
 host that reads the models as draws builds an `Ensemble`, and occupancy is
 never converted into a weight. Interpretation selects whole alternate-location
@@ -912,6 +916,10 @@ charges no atom.
 Metal coordination between residues is not a bond: the
 report keeps it as connection metadata, while coordination within one residue
 is a dative bond, so a metal complex that is one component stays one molecule.
+A record that states a bond without its type, such as PDB `CONECT`, states
+coordination only between a metal and a non-metal of different residues;
+within one residue it states a covalent bond, and only a source or template
+flag makes such a bond coordination.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral

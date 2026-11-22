@@ -1,7 +1,8 @@
 //! Bonds an mmCIF reader derives without `_struct_conn` records: the bonds
 //! of residues their default template, bundled or force-field, rebuilds
-//! exactly, and the peptide and phosphodiester links between residues
-//! adjacent in sequence.
+//! exactly, the bonds of components no template covers, which the block's
+//! own `_chem_comp_bond` table states, and the peptide and phosphodiester
+//! links between residues adjacent in sequence.
 //!
 //! Each test mirrors the reader's connectivity resolution, so a bond is
 //! left unstated only when reading the block gives it back with its order.
@@ -35,16 +36,37 @@ pub(super) fn residue_key(row: &AtomRow) -> ResidueKey<'_> {
     )
 }
 
+/// The `_chem_comp` row and `_chem_comp_bond` rows of one component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ComponentTable {
+    pub(super) id: String,
+    /// `_chem_comp.type`: `non-polymer`, or unknown for a component of a
+    /// polymer, whose linking no template states.
+    pub(super) polymer: bool,
+    pub(super) bonds: Vec<ComponentTableBond>,
+}
+
+/// One `_chem_comp_bond` row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ComponentTableBond {
+    pub(super) atoms: [String; 2],
+    /// Dative for metal coordination.
+    pub(super) order: BondOrder,
+    pub(super) aromatic: Option<bool>,
+}
+
 /// Marks each connection the reader derives, given the rows' elements in
-/// row order and coordinates written to `precision` decimal places.
-/// Connections reference rows through `row_of`.
+/// row order and coordinates written to `precision` decimal places, and
+/// returns the component tables the block states. Connections reference
+/// rows through `row_of`, and `polymer` tells the rows of polymer entities.
 pub(super) fn mark_implied(
     rows: &[AtomRow],
     elements: &[Element],
     connections: &mut [ConnectionRow],
     row_of: &BTreeMap<crate::topology::InstanceAtomId, usize>,
     precision: usize,
-) {
+    polymer: impl Fn(&AtomRow) -> bool,
+) -> Vec<ComponentTable> {
     let mut residues = BTreeMap::<ResidueKey<'_>, Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
         residues.entry(residue_key(row)).or_default().push(index);
@@ -67,7 +89,9 @@ pub(super) fn mark_implied(
     }
 
     let library = ComponentLibrary::bundled();
-    for members in &residues {
+    let mut untemplated = BTreeMap::<&str, Vec<usize>>::new();
+    let mut templated = BTreeSet::new();
+    for (residue, members) in residues.iter().enumerate() {
         let id = &rows[members[0]].label_comp_id;
         let Some(component) = library.get(id).or_else(|| {
             let atoms = members
@@ -75,8 +99,10 @@ pub(super) fn mark_implied(
                 .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
             ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
         }) else {
+            untemplated.entry(id).or_default().push(residue);
             continue;
         };
+        templated.insert(id.as_str());
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
         if !rebuilt_by_template(component, members, rows, elements, connections, &neighbours) {
             continue;
@@ -86,6 +112,40 @@ pub(super) fn mark_implied(
                 connections[connection].implied = Some(Implied::Template);
             }
         }
+    }
+
+    let mut tables = Vec::new();
+    for (id, of_component) in untemplated {
+        // A template covers some residues of the component.
+        if templated.contains(id) {
+            continue;
+        }
+        let Some(table) = component_table(
+            &of_component,
+            &residues,
+            &residue_of,
+            rows,
+            connections,
+            &neighbours,
+        ) else {
+            continue;
+        };
+        for &residue in &of_component {
+            for &row in &residues[residue] {
+                for &(other, connection) in &neighbours[row] {
+                    if residue_of[other] == residue {
+                        connections[connection].implied = Some(Implied::ComponentTable);
+                    }
+                }
+            }
+        }
+        tables.push(ComponentTable {
+            id: id.to_owned(),
+            polymer: of_component
+                .iter()
+                .any(|&residue| polymer(&rows[residues[residue][0]])),
+            bonds: table,
+        });
     }
 
     // The reader links only residues alone at their position along a chain.
@@ -150,6 +210,70 @@ pub(super) fn mark_implied(
             connections[index].implied = Some(Implied::PolymerLink);
         }
     }
+    tables
+}
+
+/// The `_chem_comp_bond` rows that give every residue of one component its
+/// bonds, or `None` when no table can: residues that bond two names
+/// differently, or one that leaves unbonded two names another bonds, or
+/// alternate locations, which repeat names. A component without internal
+/// bonds needs no table.
+fn component_table(
+    of_component: &[usize],
+    residues: &[Vec<usize>],
+    residue_of: &[usize],
+    rows: &[AtomRow],
+    connections: &[ConnectionRow],
+    neighbours: &[Vec<(usize, usize)>],
+) -> Option<Vec<ComponentTableBond>> {
+    let mut table = BTreeMap::<[&str; 2], (BondOrder, Option<bool>)>::new();
+    for &residue in of_component {
+        let mut names = BTreeSet::new();
+        for &row in &residues[residue] {
+            if rows[row].label_alt_id.is_some() || !names.insert(&rows[row].label_atom_id) {
+                return None;
+            }
+            for &(other, connection) in &neighbours[row] {
+                if residue_of[other] != residue || other < row {
+                    continue;
+                }
+                let mut pair = [
+                    rows[row].label_atom_id.as_str(),
+                    rows[other].label_atom_id.as_str(),
+                ];
+                pair.sort_unstable();
+                let connection = &connections[connection];
+                let bond = (connection.order, connection.aromatic);
+                if *table.entry(pair).or_insert(bond) != bond {
+                    return None;
+                }
+            }
+        }
+    }
+    for &residue in of_component {
+        let named = residues[residue]
+            .iter()
+            .map(|&row| (rows[row].label_atom_id.as_str(), row))
+            .collect::<BTreeMap<_, _>>();
+        for [left, right] in table.keys() {
+            let (Some(&left), Some(&right)) = (named.get(left), named.get(right)) else {
+                continue;
+            };
+            if !neighbours[left].iter().any(|&(other, _)| other == right) {
+                return None;
+            }
+        }
+    }
+    (!table.is_empty()).then(|| {
+        table
+            .into_iter()
+            .map(|([left, right], (order, aromatic))| ComponentTableBond {
+                atoms: [left.to_owned(), right.to_owned()],
+                order,
+                aromatic,
+            })
+            .collect()
+    })
 }
 
 /// Whether reading the residue with its template gives it exactly its

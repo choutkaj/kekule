@@ -3,9 +3,10 @@
 //! A PDB file holds one entry. Its unit-cell (`CRYST1`), coordinate (`ATOM`,
 //! `HETATM`), chain termination (`TER`), model (`MODEL`, `ENDMDL`), and
 //! connection (`CONECT`, `LINK`, `SSBOND`) records are typed by their fixed
-//! columns; every other record is kept verbatim. Numbers wider than their columns follow the
-//! hybrid-36 convention.
-use std::collections::BTreeSet;
+//! columns; every other record is kept verbatim. Numbers wider than their
+//! columns follow the hybrid-36 convention, or VMD's hexadecimal one where
+//! the numbering proves it (see [`PdbDocument::hexadecimal_numbers`]).
+use std::collections::{BTreeSet, HashSet};
 
 use crate::diagnostics::{
     read_bounded, DiagnosticKind, Format, FormatError, LimitExceeded, Resource, SourceLocation,
@@ -14,7 +15,7 @@ use crate::math::Point3;
 
 use crate::io::macromolecular::{
     interpret_pdb, interpret_pdb_conformations, interpret_pdb_structure_set,
-    pdb_alternate_locations,
+    pdb_alternate_locations, NumberField,
 };
 use crate::io::{
     AltLocResidue, StructureInterpretOptions, StructureInterpretation,
@@ -107,6 +108,7 @@ pub struct PdbAtom {
     segment_id: Option<String>,
     element: Option<String>,
     formal_charge: Option<i8>,
+    unsigned_charge: bool,
     model: Option<u32>,
     location: SourceLocation,
 }
@@ -183,9 +185,17 @@ impl PdbAtom {
         self.element.as_deref()
     }
 
-    /// The formal charge in e (columns 79-80), or `None` when blank.
+    /// The formal charge in e (columns 79-80), or `None` when blank. A zero
+    /// is a stated charge, written `0`, `0+`, or `0-`; a digit without a
+    /// sign is positive (see [`Self::charge_is_unsigned`]).
     pub const fn formal_charge(&self) -> Option<i8> {
         self.formal_charge
+    }
+
+    /// Whether the charge columns hold a nonzero digit without a sign, which
+    /// [`Self::formal_charge`] reads as positive.
+    pub const fn charge_is_unsigned(&self) -> bool {
+        self.unsigned_charge
     }
 
     /// The serial number of the enclosing `MODEL`, if the entry has models.
@@ -278,11 +288,13 @@ impl PdbModel {
 /// A `CONECT` record: the atoms bonded to one atom, by serial number.
 ///
 /// The record states connectivity without bond orders. By a widespread
-/// convention, a partner listed more than once has a multiple bond.
+/// convention, a partner listed more than once within one model has a
+/// multiple bond.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PdbConect {
     serial: u32,
     bonded: Vec<u32>,
+    model: Option<u32>,
     location: SourceLocation,
 }
 
@@ -290,6 +302,13 @@ impl PdbConect {
     /// The serial number of the atom whose bonds the record lists.
     pub const fn serial(&self) -> u32 {
         self.serial
+    }
+
+    /// The serial number of the `MODEL` whose block holds the record, or
+    /// that last closed before it, as writers that repeat `CONECT` records
+    /// after each model place them; `None` before any `MODEL`.
+    pub const fn model(&self) -> Option<u32> {
+        self.model
     }
 
     /// Serial numbers of the bonded atoms, in column order.
@@ -534,6 +553,7 @@ pub struct PdbDocument {
     ssbond_records: Vec<PdbSsbond>,
     other_records: Vec<PdbRecord>,
     biomolecules: Vec<PdbBiomolecule>,
+    hexadecimal_numbers: Vec<(NumberField, SourceLocation)>,
 }
 
 impl PdbDocument {
@@ -585,6 +605,21 @@ impl PdbDocument {
     /// The biomolecules of the `REMARK 350` records, in source order.
     pub(crate) fn biomolecules(&self) -> &[PdbBiomolecule] {
         &self.biomolecules
+    }
+
+    /// The coordinate records from which atom serial numbers or residue
+    /// numbers read as hexadecimal, in source order.
+    ///
+    /// VMD writes serial numbers above 99,999 and residue numbers above 9,999
+    /// as lower-case hexadecimal in the same columns, such as `186a0` for
+    /// 100,000 and `2710` for 10,000. A field reads so only where the
+    /// numbering proves it: the decimal reading is invalid or goes back,
+    /// while the hexadecimal one continues the previous record's number by
+    /// one or two. Later fields of that kind then read as hexadecimal while
+    /// they do not go back, within the `MODEL` block. `CONECT` serial numbers
+    /// read as hexadecimal when only that reading names an atom.
+    pub fn hexadecimal_numbers(&self) -> &[(NumberField, SourceLocation)] {
+        &self.hexadecimal_numbers
     }
 
     /// Interprets one selected coordinate model under the model,
@@ -697,9 +732,18 @@ pub(crate) fn parse_pdb_str(
 struct Parser {
     document: Option<PdbDocument>,
     model: Option<u32>,
+    /// The model whose block last closed.
+    closed_model: Option<u32>,
     model_serials: BTreeSet<u32>,
     /// The first coordinate record outside a model, if any.
     unmodelled_atom: Option<usize>,
+    serials: Numbering,
+    residues: Numbering,
+    /// The first atom serial number read as hexadecimal, if any.
+    first_hexadecimal_serial: Option<i64>,
+    /// The serial numbers of the coordinate records so far, built when a
+    /// `CONECT` record needs them in an entry with hexadecimal serials.
+    known_serials: Option<(usize, HashSet<u32>)>,
     ended: bool,
 }
 
@@ -716,7 +760,113 @@ impl Parser {
             ssbond_records: Vec::new(),
             other_records: Vec::new(),
             biomolecules: Vec::new(),
+            hexadecimal_numbers: Vec::new(),
         })
+    }
+
+    /// Decodes the serial number in columns 7-11 and the residue number in
+    /// columns 23-26 of a coordinate or `TER` record, recording where
+    /// hexadecimal numbering starts.
+    fn numbers(
+        &mut self,
+        fields: &Fields<'_>,
+        residue_required: bool,
+    ) -> Result<(Option<u32>, Option<i32>), FormatError> {
+        let at_line = SourceLocation::at_line(fields.number);
+        let serial = if fields.is_overflow(7, 11) {
+            None
+        } else {
+            let (value, began) = self
+                .serials
+                .decode(fields.text(7, 11), 5)
+                .map_err(|()| fields.invalid(7, 11, "atom serial number"))?;
+            if began {
+                self.first_hexadecimal_serial
+                    .get_or_insert(value.expect("a hexadecimal number is stated"));
+                self.document()
+                    .hexadecimal_numbers
+                    .push((NumberField::AtomSerial, at_line));
+            }
+            value
+                .map(|value| {
+                    u32::try_from(value).map_err(|_| fields.invalid(7, 11, "atom serial number"))
+                })
+                .transpose()?
+        };
+        let (residue, began) = self
+            .residues
+            .decode(fields.text(23, 26), 4)
+            .map_err(|()| fields.invalid(23, 26, "residue sequence number"))?;
+        if began {
+            self.document()
+                .hexadecimal_numbers
+                .push((NumberField::ResidueNumber, at_line));
+        }
+        let residue = residue
+            .map(|value| {
+                i32::try_from(value).map_err(|_| fields.invalid(23, 26, "residue sequence number"))
+            })
+            .transpose()?;
+        if residue_required && residue.is_none() {
+            return Err(fields.error(23, "The residue sequence number is missing."));
+        }
+        Ok((serial, residue))
+    }
+
+    /// Decodes one `CONECT` serial number. In an entry whose atom serial
+    /// numbers turned hexadecimal, a field reads as hexadecimal when only
+    /// that reading names a coordinate record.
+    fn conect_serial(
+        &mut self,
+        fields: &Fields<'_>,
+        first: usize,
+    ) -> Result<Option<u32>, FormatError> {
+        let last = first + 4;
+        let what = "CONECT serial number";
+        let field = fields.text(first, last);
+        let invalid = || fields.invalid(first, last, what);
+        let standard = hybrid36(field, 5);
+        let hexadecimal = self
+            .first_hexadecimal_serial
+            .and_then(|start| vmd_hexadecimal(field, 5).filter(|&value| value >= start));
+        let Some(hexadecimal) = hexadecimal else {
+            return standard
+                .map_err(|()| invalid())?
+                .map(|value| u32::try_from(value).map_err(|_| invalid()))
+                .transpose();
+        };
+        let hexadecimal = u32::try_from(hexadecimal).map_err(|_| invalid())?;
+        let Ok(Some(decimal)) = standard else {
+            return Ok(Some(hexadecimal));
+        };
+        let atoms = self
+            .document
+            .as_ref()
+            .map_or(&[][..], |document| &document.atoms[..]);
+        let count = atoms.len();
+        let known = match &mut self.known_serials {
+            Some((seen, serials)) if *seen == count => serials,
+            slot => {
+                let serials = atoms.iter().filter_map(PdbAtom::serial).collect();
+                &mut slot.insert((count, serials)).1
+            }
+        };
+        let decimal = u32::try_from(decimal).ok();
+        match (
+            decimal.filter(|value| known.contains(value)),
+            known.contains(&hexadecimal),
+        ) {
+            (Some(_), true) => Err(fields.error(
+                first,
+                format!(
+                    "The CONECT serial number {:?} names atom {} or atom {hexadecimal}.",
+                    field.trim(),
+                    decimal.expect("a known decimal serial")
+                ),
+            )),
+            (None, true) => Ok(Some(hexadecimal)),
+            _ => decimal.map(Some).ok_or_else(invalid),
+        }
     }
 
     fn finish(mut self) -> PdbDocument {
@@ -795,7 +945,13 @@ impl Parser {
                 } else {
                     PdbAtomKind::Hetatm
                 };
-                let atom = fields.atom(kind, self.model)?;
+                let (serial, sequence) = self.numbers(&fields, true)?;
+                let atom = fields.atom(
+                    kind,
+                    serial,
+                    sequence.expect("a required residue number"),
+                    self.model,
+                )?;
                 let document = self.document();
                 if document.atoms.len() >= options.max_atom_records {
                     let limit =
@@ -811,8 +967,9 @@ impl Parser {
             }
             "TER" => {
                 let model = self.model;
+                let (serial, sequence) = self.numbers(&fields, false)?;
                 let document = self.document();
-                let ter = fields.ter(document.atoms.len(), model)?;
+                let ter = fields.ter(serial, sequence, document.atoms.len(), model);
                 document.ter_records.push(ter);
             }
             "MODEL" => {
@@ -839,23 +996,43 @@ impl Parser {
                     ));
                 }
                 self.model = Some(serial);
+                // Each model numbers its records afresh.
+                self.serials = Numbering::default();
+                self.residues = Numbering::default();
                 self.document().models.push(PdbModel {
                     serial,
                     location: at_line,
                 });
             }
             "ENDMDL" => {
-                if self.model.take().is_none() {
+                let Some(model) = self.model.take() else {
                     return Err(pdb_parse_error(
                         DiagnosticKind::Syntax,
                         at_line,
                         "An ENDMDL record has no open MODEL block.",
                     ));
-                }
+                };
+                self.closed_model = Some(model);
             }
             "CONECT" => {
-                let record = fields.conect()?;
-                self.document().conect_records.push(record);
+                let serial = self
+                    .conect_serial(&fields, 7)?
+                    .ok_or_else(|| fields.error(7, "The CONECT serial number is missing."))?;
+                let mut bonded = Vec::new();
+                // Columns 32-61 held hydrogen bonds and salt bridges in older
+                // versions of the format; they are not bonds and are not read.
+                for first in [12, 17, 22, 27] {
+                    if let Some(partner) = self.conect_serial(&fields, first)? {
+                        bonded.push(partner);
+                    }
+                }
+                let model = self.model.or(self.closed_model);
+                self.document().conect_records.push(PdbConect {
+                    serial,
+                    bonded,
+                    model,
+                    location: at_line,
+                });
             }
             "LINK" => {
                 let record = fields.link()?;
@@ -1023,14 +1200,17 @@ impl<'a> Fields<'a> {
             .map_err(|()| self.invalid(first, last, what))
     }
 
-    fn serial(&self, first: usize, last: usize, what: &str) -> Result<Option<u32>, FormatError> {
-        // Some writers fill an overflowing serial number with asterisks.
-        if self
-            .text(first, last)
+    /// Whether columns `first..=last` are blank or filled with asterisks, as
+    /// some writers fill an overflowing serial number.
+    fn is_overflow(&self, first: usize, last: usize) -> bool {
+        self.text(first, last)
             .trim()
             .bytes()
             .all(|byte| byte == b'*')
-        {
+    }
+
+    fn serial(&self, first: usize, last: usize, what: &str) -> Result<Option<u32>, FormatError> {
+        if self.is_overflow(first, last) {
             return Ok(None);
         }
         self.integer(first, last, what)?
@@ -1068,19 +1248,27 @@ impl<'a> Fields<'a> {
             .ok_or_else(|| self.error(first, format!("The {axis} coordinate is missing.")))
     }
 
-    fn atom(&self, kind: PdbAtomKind, model: Option<u32>) -> Result<PdbAtom, FormatError> {
+    /// A coordinate record with its decoded serial and residue numbers.
+    fn atom(
+        &self,
+        kind: PdbAtomKind,
+        serial: Option<u32>,
+        residue_sequence: i32,
+        model: Option<u32>,
+    ) -> Result<PdbAtom, FormatError> {
         let name_field = format!("{:<4}", self.text(13, 16));
         if name_field.trim().is_empty() {
             return Err(self.error(13, "The atom name is missing."));
         }
+        let (formal_charge, unsigned_charge) = self.charge()?;
         Ok(PdbAtom {
             kind,
-            serial: self.serial(7, 11, "atom serial number")?,
+            serial,
             name_field,
             alternate_location: self.character(17),
             residue_name: self.text(18, 21).trim().to_owned(),
             chain_id: self.character(22),
-            residue_sequence: self.required_sequence(23, 26)?,
+            residue_sequence,
             insertion_code: self.character(27),
             position: Point3::new(
                 self.coordinate(31, "x")?,
@@ -1091,28 +1279,37 @@ impl<'a> Fields<'a> {
             temperature_factor: self.real(61, 66, "temperature factor")?,
             segment_id: self.optional_text(73, 76),
             element: self.optional_text(77, 78),
-            formal_charge: self.charge()?,
+            formal_charge,
+            unsigned_charge,
             model,
             location: SourceLocation::at_line(self.number),
         })
     }
 
-    /// A charge such as `2+` or `1-`; the sign may also lead.
-    fn charge(&self) -> Result<Option<i8>, FormatError> {
+    /// A charge such as `2+` or `1-`, whose sign may also lead, and whether
+    /// it lacks a sign. A zero needs none; another digit without one is
+    /// positive.
+    fn charge(&self) -> Result<(Option<i8>, bool), FormatError> {
         let text = self.text(79, 80).trim();
         if text.is_empty() {
-            return Ok(None);
+            return Ok((None, false));
         }
-        let (digits, sign) = match text.as_bytes() {
+        let (digit, sign) = match text.as_bytes() {
             [digit, sign @ (b'+' | b'-')] | [sign @ (b'+' | b'-'), digit]
                 if digit.is_ascii_digit() =>
             {
-                (digit - b'0', *sign)
+                (digit - b'0', Some(*sign))
             }
+            [digit] if digit.is_ascii_digit() => (digit - b'0', None),
             _ => return Err(self.error(79, format!("The charge {text:?} is invalid."))),
         };
-        let magnitude = i8::try_from(digits).expect("one digit");
-        Ok(Some(if sign == b'-' { -magnitude } else { magnitude }))
+        let magnitude = i8::try_from(digit).expect("one digit");
+        let charge = if sign == Some(b'-') {
+            -magnitude
+        } else {
+            magnitude
+        };
+        Ok((Some(charge), sign.is_none() && magnitude != 0))
     }
 
     fn cryst1(&self) -> Result<PdbCryst1, FormatError> {
@@ -1136,17 +1333,24 @@ impl<'a> Fields<'a> {
         })
     }
 
-    fn ter(&self, preceding_atoms: usize, model: Option<u32>) -> Result<PdbTer, FormatError> {
-        Ok(PdbTer {
-            serial: self.serial(7, 11, "TER serial number")?,
+    /// A `TER` record with its decoded serial and residue numbers.
+    fn ter(
+        &self,
+        serial: Option<u32>,
+        residue_sequence: Option<i32>,
+        preceding_atoms: usize,
+        model: Option<u32>,
+    ) -> PdbTer {
+        PdbTer {
+            serial,
             residue_name: self.optional_text(18, 21),
             chain_id: self.character(22),
-            residue_sequence: self.sequence(23, 26)?,
+            residue_sequence,
             insertion_code: self.character(27),
             preceding_atoms,
             model,
             location: SourceLocation::at_line(self.number),
-        })
+        }
     }
 
     fn model_serial(&self) -> Result<u32, FormatError> {
@@ -1154,30 +1358,6 @@ impl<'a> Fields<'a> {
         let text = self.text(7, self.line.len()).trim();
         text.parse::<u32>()
             .map_err(|_| self.error(7, format!("The MODEL serial number {text:?} is invalid.")))
-    }
-
-    fn conect(&self) -> Result<PdbConect, FormatError> {
-        let serial = self
-            .integer(7, 11, "CONECT serial number")?
-            .ok_or_else(|| self.error(7, "The CONECT serial number is missing."))?;
-        let serial =
-            u32::try_from(serial).map_err(|_| self.invalid(7, 11, "CONECT serial number"))?;
-        let mut bonded = Vec::new();
-        // Columns 32-61 held hydrogen bonds and salt bridges in older versions
-        // of the format; they are not bonds and are not read.
-        for first in [12, 17, 22, 27] {
-            if let Some(partner) = self.integer(first, first + 4, "CONECT serial number")? {
-                bonded.push(
-                    u32::try_from(partner)
-                        .map_err(|_| self.invalid(first, first + 4, "CONECT serial number"))?,
-                );
-            }
-        }
-        Ok(PdbConect {
-            serial,
-            bonded,
-            location: SourceLocation::at_line(self.number),
-        })
     }
 
     fn partner(&self, columns: PartnerColumns) -> Result<PdbPartner, FormatError> {
@@ -1306,6 +1486,65 @@ fn hybrid36(field: &str, width: usize) -> Result<Option<i64>, ()> {
     } else {
         value + 16 * span + decimal
     }))
+}
+
+/// The value of a field of `width` lower-case hexadecimal digits beyond the
+/// decimal range, as VMD writes serial and residue numbers too wide for
+/// their columns; `None` for any other field.
+fn vmd_hexadecimal(field: &str, width: usize) -> Option<i64> {
+    if field.len() != width
+        || !field
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    let value = i64::from_str_radix(field, 16).ok()?;
+    let decimal = 10i64.pow(u32::try_from(width).ok()?);
+    (value >= decimal).then_some(value)
+}
+
+/// The numbering of one kind of field within a model: the last number read
+/// and whether fields read as VMD hexadecimal.
+#[derive(Debug, Default)]
+struct Numbering {
+    previous: Option<i64>,
+    hexadecimal: bool,
+}
+
+impl Numbering {
+    /// Decodes a field of `width` columns and whether it starts hexadecimal
+    /// numbering; see [`PdbDocument::hexadecimal_numbers`].
+    fn decode(&mut self, field: &str, width: usize) -> Result<(Option<i64>, bool), ()> {
+        let hexadecimal = vmd_hexadecimal(field, width);
+        let continues = |value: i64| self.previous.is_none_or(|previous| value >= previous);
+        let (value, began) = match hexadecimal {
+            Some(value) if self.hexadecimal && continues(value) => (Some(value), false),
+            _ => {
+                self.hexadecimal = false;
+                let standard = hybrid36(field, width);
+                let proven = hexadecimal.filter(|&value| {
+                    self.previous.is_some_and(|previous| {
+                        (1..=2).contains(&(value - previous))
+                            && standard.map_or(true, |standard| {
+                                standard.is_some_and(|standard| standard < previous)
+                            })
+                    })
+                });
+                match proven {
+                    Some(value) => {
+                        self.hexadecimal = true;
+                        (Some(value), true)
+                    }
+                    None => (standard?, false),
+                }
+            }
+        };
+        if value.is_some() {
+            self.previous = value;
+        }
+        Ok((value, began))
+    }
 }
 
 #[cfg(test)]

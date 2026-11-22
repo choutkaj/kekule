@@ -8,8 +8,8 @@ use super::{Encoder, Result};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyOmissionReason, AtomProvenance,
     BondEvidence, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason, EntityKind,
-    PolymerEntity, PolymerType, SequenceSource, SourceResidueId, SourceResiduePosition,
-    StructureInterpretIssue, StructureInterpretationReport,
+    NumberField, PolymerEntity, PolymerType, SequenceSource, SourceResidueId,
+    SourceResiduePosition, StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::math::Vector3;
 use crate::sequence::CodeOrigin;
@@ -553,6 +553,24 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.str(force_field)
             }
+            Issue::ElementsFromTemplates { source_lines } => {
+                self.u8(22)?;
+                self.usizes(source_lines)
+            }
+            Issue::UnsignedCharges { source_lines } => {
+                self.u8(23)?;
+                self.usizes(source_lines)
+            }
+            Issue::HexadecimalNumbers { field, source_line } => {
+                self.u8(24)?;
+                self.u8(number_field_code(*field))?;
+                self.usize(*source_line)
+            }
+            Issue::NumbersRestart { field, source_line } => {
+                self.u8(25)?;
+                self.u8(number_field_code(*field))?;
+                self.usize(*source_line)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,
@@ -812,5 +830,12 @@ const fn sequence_source_code(source: SequenceSource) -> u8 {
     match source {
         SequenceSource::Stated => 0,
         SequenceSource::Derived => 1,
+    }
+}
+
+fn number_field_code(field: NumberField) -> u8 {
+    match field {
+        NumberField::AtomSerial => 0,
+        NumberField::ResidueNumber => 1,
     }
 }

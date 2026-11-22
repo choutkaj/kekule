@@ -592,6 +592,26 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `AtomSelection::contains_index` and
   `BondSelection::contains_index` are `contains_at`, like other methods that
   take a dense index.
+- **Breaking:** `PdbWriteErrorKind::ChainIdTooLong`, `ResidueNameTooLong`,
+  and `InsertionCodeTooLong` are `InvalidChainId`, `InvalidResidueName`, and
+  `InvalidInsertionCode`; the PDB writer refuses identifiers that are not
+  printable ASCII.
+- **Breaking:** The PDB writer states every formal charge, `0` for a neutral
+  atom, so a neutral lysine `NZ` no longer reads back as +1 from its
+  template.
+- **Breaking:** A `CONECT`, `LINK`, or `_chem_comp_bond` bond between a metal
+  and a non-metal of one residue is covalent with its stated order unless the
+  source or the residue's template flags coordination; between residues it
+  stays coordination. Cisplatin's chlorides no longer read with a hydrogen.
+- The mmCIF writer states the bonds of components no template covers as
+  `_chem_comp` and `_chem_comp_bond` rows, with aromatic and
+  metal-coordination flags, in place of `_struct_conn` rows.
+- PDB interpretation reports atoms whose element came from a template
+  (`StructureInterpretIssue::ElementsFromTemplates`), unsigned charges
+  (`UnsignedCharges`), VMD hexadecimal numbering (`HexadecimalNumbers`),
+  and numbers that go back (`NumbersRestart`), each field named by a
+  `NumberField`. `PdbAtom::charge_is_unsigned`, `PdbConect::model`, and
+  `PdbDocument::hexadecimal_numbers` expose them.
 
 ### Removed
 
@@ -651,6 +671,25 @@ the main branch migrates by the table under "From the SampleSet API".
 - `xyz::write` omits and reports a structure set's own properties when
   `with_properties` omits them, as the PDB and mmCIF writers do, instead of
   always refusing them.
+- A PDB atom without an element symbol takes its element from the template
+  of its residue and name, bundled or force-field, before its name, so
+  CHARMM `SOD` is sodium and a heme's `NB` is nitrogen. A left-aligned name
+  that reads as two elements, such as `CL1` beside `C1`, fails instead of
+  guessing.
+- `CONECT` records repeated in every `MODEL` block state each bond once, and
+  models that list a bond a different number of times fail.
+- PDB charge columns `0`, ` 0`, `0+`, and `0-` are an explicit zero, and an
+  unsigned digit is a positive charge.
+- VMD's lowercase hexadecimal serial and residue numbers past 99,999 and
+  9,999 read in sequence when the numbering proves them.
+- `SOL`, `TIP3`, `TIP4`, `TIP5`, `T3P`, `T4P`, `SPC`, `H2O`, and similar water
+  names are water, and ion names such as `NA`, `CL`, `SOD`, `POT`, and `CLA`
+  are never polymer, even on `ATOM` records.
+- mmCIF charges such as `1+` and numbers with standard uncertainties such as
+  `12.345(3)` parse.
+- The PDB writer lists a polymer link stretched beyond bonding distance in
+  any geometry as `CONECT`, and writes a `TER` after each hierarchy chain, so
+  chains that share a letter stay apart.
 
 ### From the SampleSet API
 

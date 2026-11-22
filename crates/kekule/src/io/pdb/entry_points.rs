@@ -44,15 +44,18 @@ pub fn parse_reader(
 /// - residues of protein and nucleic-acid instances with an amino-acid or
 ///   nucleotide class are `ATOM` records, everything else `HETATM`;
 /// - a `TER` record, which takes the next serial number, follows each
-///   chain's last polymer atom;
+///   hierarchy chain's last polymer atom, so chains that share an
+///   identifier stay apart;
 /// - an instance without atom sites becomes one `MOL` (or `HOH`) residue
 ///   without a chain identifier, and atoms without a name are named by
 ///   their element and 1-based molecule-local number.
 ///
 /// Serial numbers beyond 99,999 and residue numbers beyond 9,999 use
 /// hybrid-36. Coordinates are written to 0.001 Å, occupancies and B
-/// factors to 0.01, and absent occupancies and B factors are blank. A
-/// representable periodic cell is a `CRYST1` record in space group P 1.
+/// factors to 0.01, and absent occupancies and B factors are blank. Every
+/// atom states its formal charge, `0` when neutral, so a reader keeps it
+/// rather than taking a template's. A representable periodic cell is a
+/// `CRYST1` record in space group P 1.
 ///
 /// `CONECT` lists every bond a reader could not derive, each from both
 /// atoms and once per step of bond order:
@@ -60,10 +63,14 @@ pub fn parse_reader(
 ///   [`ComponentLibrary`](crate::components::ComponentLibrary) does not
 ///   cover;
 /// - bonds between residues other than the linkage of standard residues
-///   adjacent in one chain, such as disulfides and ligand attachments.
+///   adjacent in one chain, such as disulfides and ligand attachments, and
+///   linkage stretched beyond bonding distance in some geometry.
 ///
 /// Bonds within standard residues the dictionary covers, polymer
-/// linkage, and bonds within water are derived by readers and not listed.
+/// linkage within bonding distance, and bonds within water are derived by
+/// readers and not listed. Readers take a listing within one residue for a
+/// covalent bond, and one between a metal and a non-metal of different
+/// residues for coordination.
 ///
 /// Metal coordination between residues is no bond of the structure: an
 /// interpretation report keeps it
@@ -81,7 +88,8 @@ pub fn parse_reader(
 /// with a [`PdbWriteErrorKind`](crate::pdb::PdbWriteErrorKind) when PDB cannot hold the content, and
 /// `Inconsistent` for an empty structure set or a report count that
 /// does not match the structures. Identifiers
-/// that do not fit their columns fail: chain identifiers longer
+/// that do not fit their columns fail, and the columns hold printable ASCII
+/// only: chain identifiers longer
 /// than one character (unless [`PdbChainIdPolicy::SegmentId`](crate::pdb::PdbChainIdPolicy::SegmentId) writes one
 /// of up to four as a segment identifier), residue names longer than three, atom names longer
 /// than four, insertion codes longer than one, residue numbers outside
@@ -97,9 +105,9 @@ pub fn parse_reader(
 /// use kekule::pdb;
 ///
 /// let text = "\
-/// HETATM    1  O   HOH A   1       0.000   0.000   0.000  1.00  0.00           O
-/// HETATM    2  H1  HOH A   1       0.960   0.000   0.000  1.00  0.00           H
-/// HETATM    3  H2  HOH A   1      -0.240   0.930   0.000  1.00  0.00           H
+/// HETATM    1  O   HOH A   1       0.000   0.000   0.000  1.00  0.00           O0
+/// HETATM    2  H1  HOH A   1       0.960   0.000   0.000  1.00  0.00           H0
+/// HETATM    3  H2  HOH A   1      -0.240   0.930   0.000  1.00  0.00           H0
 /// END
 /// ";
 /// let structure = pdb::parse_str(text, Default::default())?

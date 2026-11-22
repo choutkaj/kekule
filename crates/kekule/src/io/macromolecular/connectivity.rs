@@ -839,9 +839,9 @@ impl<'r> Resolver<'r, '_> {
     /// coordination, which is dative whatever its stated order. A stated
     /// `pdbx_metal_coordination_flag` decides. Otherwise the flag comes from
     /// the component's template, or one of its variants, when it lists the
-    /// bond, as charges do; without one, a bond between a metal and a
-    /// non-metal is coordination, as for PDB `LINK` and `CONECT` records. A
-    /// source and its PDB rendering then give the same bonds.
+    /// bond, as charges do. Without one, the bond is covalent with its stated
+    /// order, as a PDB `CONECT` record within one residue is. A source and its
+    /// PDB rendering then give the same bonds.
     fn is_coordination(
         &self,
         bond: &ComponentBond,
@@ -863,7 +863,7 @@ impl<'r> Resolver<'r, '_> {
                 .chain(variants.iter().copied())
                 .find_map(|component| template_coordination(component, bond, elements))
         });
-        templated.unwrap_or_else(|| raw::is_metal(elements[0]) != raw::is_metal(elements[1]))
+        templated.unwrap_or(false)
     }
 
     /// Bonds every pair of a residue's atoms within covalent bonding
