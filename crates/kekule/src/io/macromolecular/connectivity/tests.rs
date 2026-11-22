@@ -534,59 +534,6 @@ fn without(rows: &str, atoms: &[&str]) -> String {
 }
 
 #[test]
-fn unstated_coordination_in_a_component_table_follows_template_then_elements() {
-    // wwPDB entry files list `_chem_comp_bond` without the coordination
-    // flag; the SF4 template flags its Fe-S bonds, so they are dative as
-    // a PDB reading of the same structure makes them.
-    let table = |flag_column: bool, rows: &str| {
-        let mut text = String::from(
-                "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n",
-            );
-        if flag_column {
-            text.push_str("_chem_comp_bond.pdbx_metal_coordination_flag\n");
-        }
-        text.push_str(rows);
-        text
-    };
-    let sf4 = "FE FE1 SF4 A 1 40.988 0.074 22.637
-             S S2 SF4 A 1 43.144 0.781 22.394";
-    let unstated = interpret(&block(sf4, &table(false, "SF4 FE1 S2 sing\n")));
-    assert_eq!(
-        bonds(&unstated)
-            .iter()
-            .map(|(_, _, order, evidence)| (*order, evidence.clone()))
-            .collect::<Vec<_>>(),
-        [(BondOrder::Dative, BondEvidence::ComponentTable)]
-    );
-    // A template atom of another element does not lend its flag: two
-    // non-metals named like the cluster's atoms keep their single bond.
-    let renamed = interpret(&block(
-        "C FE1 SF4 A 1 40.988 0.074 22.637
-             S S2 SF4 A 1 41.900 0.781 22.394",
-        &table(false, "SF4 FE1 S2 sing\n"),
-    ));
-    assert_eq!(bonds(&renamed)[0].2, BondOrder::Single);
-    // A stated flag wins over the template.
-    let stated = interpret(&block(sf4, &table(true, "SF4 FE1 S2 sing N\n")));
-    assert_eq!(bonds(&stated)[0].2, BondOrder::Single);
-    // Without a template, a metal and a non-metal are coordinated, as for
-    // PDB `LINK` and `CONECT`; other pairs keep their stated order.
-    let unknown = interpret(&block(
-        "FE FE XFC A 1 0.000 0.000 0.000
-             CL CL1 XFC A 1 2.200 0.000 0.000
-             C C1 XFC A 1 -1.900 0.000 0.000
-             O O1 XFC A 1 -3.050 0.000 0.000",
-        &table(false, "XFC FE CL1 sing\nXFC C1 O1 doub\n"),
-    ));
-    let orders = bonds(&unknown)
-        .into_iter()
-        .map(|(a, b, order, _)| (a, b, order))
-        .collect::<Vec<_>>();
-    assert!(orders.contains(&("FE".to_owned(), "CL1".to_owned(), BondOrder::Dative)));
-    assert!(orders.contains(&("C1".to_owned(), "O1".to_owned(), BondOrder::Double)));
-}
-
-#[test]
 fn templates_supply_bonds_and_metal_coordination_is_dative() {
     // The SF4 template flags every Fe-S bond as metal coordination;
     // its sulfides carry -2 and its iron charges are unknown.

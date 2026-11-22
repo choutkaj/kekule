@@ -556,6 +556,7 @@ pub(super) fn build_molecule(
                 order: connection.order,
                 order_source: connection.order_source,
                 evidence: source,
+                unstated_metal_bond: connection.unstated_metal_bond,
             };
             // One bond per pair: a stated order outranks the others, and two
             // stated orders must agree.

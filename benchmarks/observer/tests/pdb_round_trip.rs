@@ -170,10 +170,10 @@ fn assert_same_structure(reread: StructureView<'_>, source: StructureView<'_>, l
 fn is_representability_limit(issue: &PdbWriteErrorKind) -> bool {
     matches!(
         issue,
-        PdbWriteErrorKind::ChainIdTooLong { .. }
-            | PdbWriteErrorKind::ResidueNameTooLong { .. }
+        PdbWriteErrorKind::InvalidChainId { .. }
+            | PdbWriteErrorKind::InvalidResidueName { .. }
             | PdbWriteErrorKind::InvalidAtomName { .. }
-            | PdbWriteErrorKind::InsertionCodeTooLong { .. }
+            | PdbWriteErrorKind::InvalidInsertionCode { .. }
             | PdbWriteErrorKind::InvalidResidueNumber { .. }
             | PdbWriteErrorKind::TooManyAtoms { .. }
             | PdbWriteErrorKind::CoordinateOutOfRange { .. }

@@ -69,6 +69,10 @@ const BOND_SOURCES_SINCE: u32 = 9;
 /// The template order code of an aromatic or delocalized template bond in
 /// a `BondOrderDiffersFromTemplate` issue.
 const AROMATIC_TEMPLATE_ORDER: u8 = 255;
+/// The first format version with the `ElementsFromTemplates`,
+/// `UnsignedCharges`, `HexadecimalNumbers`, and `NumbersRestart`
+/// interpretation issues.
+const PDB_NUMBERING_SINCE: u32 = 9;
 
 /// Default [`NativeReadOptions::max_input_bytes`]: 64 GiB.
 pub const DEFAULT_NATIVE_MAX_INPUT_BYTES: usize = 64 << 30;

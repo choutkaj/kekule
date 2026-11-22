@@ -611,13 +611,68 @@ pub(crate) fn is_metal_donor<L: SlotLiveness>(
         }
     }
     let valence = explicit_valence(mol, atom_id);
+    metal_valence > 0 && donates_to_metals(atom, valence - metal_valence, metal_valence)
+}
+
+/// Whether a non-metal donates to metals when its other bonds give it the
+/// valence `other` and its bonds to metals add `metal`: `other + metal` is
+/// not a valence its element and charge allow, but some allowed valence lies
+/// from `other` up to, and not including, `other + metal`. This one rule
+/// decides metal donors ([`is_metal_donor`]) and untyped metal bonds
+/// ([`metal_bond_reading`]).
+pub(crate) fn donates_to_metals(atom: &Atom, other: usize, metal: usize) -> bool {
     let Some(allowed) = allowed_valences(atom) else {
         return false;
     };
     let allowed = || allowed.iter().map(|value| usize::from(*value));
-    metal_valence > 0
-        && !allowed().any(|value| value == valence)
-        && allowed().any(|value| value < valence && value + metal_valence >= valence)
+    !allowed().any(|value| value == other + metal)
+        && allowed().any(|value| (other..other + metal).contains(&value))
+}
+
+/// How a reader takes a single bond between a metal and a non-metal of one
+/// residue whose source states no type, as PDB `CONECT` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetalBondReading {
+    Covalent,
+    Dative,
+    /// The source cannot tell: the bond is read as covalent and reported.
+    Unstated,
+}
+
+/// The reading of an untyped metal bond from its non-metal `donor`.
+/// `other` is the donor's valence from its other bonds, those of
+/// `undecided` untyped metal bonds of the residue left out, and `hydrogens`
+/// whether the residue has explicit hydrogens.
+///
+/// The bond is dative when the donor donates to the metal
+/// ([`donates_to_metals`]), as an ammine nitrogen or a phosphine does. It is
+/// covalent when the bond leaves the donor at an allowed valence, as for a
+/// chloride or a phosphonate phosphorus. A residue without hydrogens, a
+/// donor of several untyped metal bonds, such as a bridging chloride, and a
+/// donor that neither reading satisfies, such as a carbene carbon, are
+/// unstated.
+pub(crate) fn metal_bond_reading(
+    donor: &Atom,
+    other: usize,
+    undecided: usize,
+    hydrogens: bool,
+) -> MetalBondReading {
+    if !hydrogens || undecided != 1 {
+        return MetalBondReading::Unstated;
+    }
+    if donates_to_metals(donor, other, 1) {
+        return MetalBondReading::Dative;
+    }
+    let covalent = allowed_valences(donor).is_some_and(|valences| {
+        valences
+            .iter()
+            .any(|&allowed| usize::from(allowed) == other + 1)
+    });
+    if covalent {
+        MetalBondReading::Covalent
+    } else {
+        MetalBondReading::Unstated
+    }
 }
 
 fn valid_charge<L: SlotLiveness>(

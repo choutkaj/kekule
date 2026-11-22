@@ -11,8 +11,8 @@ pub use crate::io::{
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
-    PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
-    SourceResidueId, SourceResiduePosition, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport, StructureSetInterpretOptions,
-    StructureSetInterpretation,
+    NumberField, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
+    SequenceSource, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };

@@ -125,6 +125,7 @@ pub(super) fn infer_disulfides(
             order_source: OrderSource::Stated,
             evidence: BondEvidence::Disulfide,
             within_residue: false,
+            unstated_metal_bond: false,
         });
         report
             .issues

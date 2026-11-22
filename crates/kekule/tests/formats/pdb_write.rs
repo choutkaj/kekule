@@ -149,7 +149,7 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
     let error = pdb::write(&reread, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "PROA"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "PROA"
     ));
     assert!(error.message().contains("does not fit PDB's chain columns"));
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
@@ -209,7 +209,7 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
     let error = pdb::write(&structure, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "SOL1"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "SOL1"
     ));
 
     // PDB writes the solvent chains as segments, which read back as chains.
@@ -277,7 +277,7 @@ fn chain_ids_longer_than_a_segment_fail_under_the_segment_policy() {
     let error = pdb::write(&renamed, options).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "SOLVENT"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "SOLVENT"
     ));
 }
 
@@ -304,7 +304,7 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
     let lines = written.lines().collect::<Vec<_>>();
     assert_eq!(
         lines[0],
-        "HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C"
+        "HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C0"
     );
     assert_eq!(
         lines[3],
@@ -324,8 +324,8 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
 #[test]
 fn large_residue_numbers_use_hybrid_36() {
     let text = "\
-HETATM    1  O   HOH A9999       0.000   0.000   0.000  1.00  0.00           O
-HETATM    2  O   HOH AA000       3.000   0.000   0.000  1.00  0.00           O
+HETATM    1  O   HOH A9999       0.000   0.000   0.000  1.00  0.00           O0
+HETATM    2  O   HOH AA000       3.000   0.000   0.000  1.00  0.00           O0
 END
 ";
     let structure = interpret(text);
@@ -378,14 +378,14 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "AB"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "AB"
     ));
     let error = pdb::write(&structure(&cif("A", "LONG")), Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ResidueNameTooLong { name, .. } if name == "LONG"
+        PdbWriteErrorKind::InvalidResidueName { name, .. } if name == "LONG"
     ));
     // Omitting chemistry does not relax identifiers.
     let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
@@ -490,10 +490,10 @@ fn structure_sets_write_one_model_per_geometry() {
     assert_eq!(
         written,
         "MODEL        1\n\
-         HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C\n\
+         HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C0\n\
          ENDMDL\n\
          MODEL        2\n\
-         HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C\n\
+         HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C0\n\
          ENDMDL\n\
          END\n"
     );
@@ -559,7 +559,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
             .filter(|line| line.starts_with("HETATM"))
             .collect::<Vec<_>>(),
         [0.0, 1.0, 2.0].map(|x| format!(
-            "HETATM    1  C1  MOL     1    {x:>8.3}   0.000   0.000                       C"
+            "HETATM    1  C1  MOL     1    {x:>8.3}   0.000   0.000                       C0"
         ))
     );
     // The models read back as an unordered set of the geometries' positions.

@@ -160,6 +160,7 @@ pub(super) fn write_block_end(
     model: &PreparedModel,
 ) -> Result<(), FormatError> {
     writer.write_all(b"#\n").map_err(mmcif_io)?;
+    write_component_tables(writer, model)?;
     let mut stated = model
         .connections
         .iter()
@@ -229,6 +230,67 @@ pub(super) fn write_block_end(
         writer.write_all(b"#\n").map_err(mmcif_io)?;
     }
     Ok(())
+}
+
+/// The `_chem_comp` and `_chem_comp_bond` rows of components no template
+/// covers. Metal coordination, the only dative bond a table holds, is a
+/// single bond with the coordination flag.
+fn write_component_tables(
+    writer: &mut impl Write,
+    model: &PreparedModel,
+) -> Result<(), FormatError> {
+    if model.component_tables.is_empty() {
+        return Ok(());
+    }
+    write_loop_header(writer, &["_chem_comp.id", "_chem_comp.type"])?;
+    for table in &model.component_tables {
+        write_row(
+            writer,
+            vec![
+                cif_value(&table.id, "_chem_comp.id")?,
+                if table.polymer { "?" } else { "non-polymer" }.to_owned(),
+            ],
+        )?;
+    }
+    writer.write_all(b"#\n").map_err(mmcif_io)?;
+    write_loop_header(
+        writer,
+        &[
+            "_chem_comp_bond.comp_id",
+            "_chem_comp_bond.atom_id_1",
+            "_chem_comp_bond.atom_id_2",
+            "_chem_comp_bond.value_order",
+            "_chem_comp_bond.pdbx_aromatic_flag",
+            "_chem_comp_bond.pdbx_metal_coordination_flag",
+        ],
+    )?;
+    for table in &model.component_tables {
+        for bond in &table.bonds {
+            let dative = bond.order == BondOrder::Dative;
+            write_row(
+                writer,
+                vec![
+                    cif_value(&table.id, "_chem_comp_bond.comp_id")?,
+                    cif_value(&bond.atoms[0], "_chem_comp_bond.atom_id_1")?,
+                    cif_value(&bond.atoms[1], "_chem_comp_bond.atom_id_2")?,
+                    if dative {
+                        "sing"
+                    } else {
+                        bond_order_code(bond.order)
+                    }
+                    .to_owned(),
+                    match bond.aromatic {
+                        Some(true) => "Y",
+                        Some(false) => "N",
+                        None => "?",
+                    }
+                    .to_owned(),
+                    if dative { "Y" } else { "N" }.to_owned(),
+                ],
+            )?;
+        }
+    }
+    writer.write_all(b"#\n").map_err(mmcif_io)
 }
 
 fn write_loop_header(writer: &mut impl Write, tags: &[&str]) -> Result<(), FormatError> {

@@ -21,13 +21,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
 
+use crate::algorithms::{metal_bond_reading, MetalBondReading};
 use crate::diagnostics::{
     AtomField, Capitalized, CellReason, Count, DiagnosticKind, Format, FormatError,
     FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
 use crate::io::macromolecular::connectivity::{
-    is_coordination, standard_link, within_bonding_distance, PolymerLink, StandardLink,
+    is_coordination, link_valence, standard_link, within_bonding_distance, PolymerLink,
+    StandardLink,
 };
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
@@ -46,8 +48,8 @@ use crate::math::{PeriodicCell, PeriodicCellError, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
-    InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
-    Topology, TopologyAtomIndex,
+    ChainId, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass,
+    ResidueId, Topology, TopologyAtomIndex,
 };
 use crate::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -71,7 +73,7 @@ const MAX_RESIDUE_NUMBER: i64 = 2_436_111;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PdbChainIdPolicy {
-    /// Fail with [`PdbWriteErrorKind::ChainIdTooLong`].
+    /// Fail with [`PdbWriteErrorKind::InvalidChainId`].
     #[default]
     Fail,
     /// Write an identifier of up to four printable ASCII characters, such as
@@ -228,18 +230,18 @@ impl PdbWriteOptions {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PdbWriteErrorKind {
-    /// The chain identifier is longer than PDB's one column, and under
-    /// [`PdbChainIdPolicy::SegmentId`] than the four segment identifier
-    /// columns or not printable ASCII. [`PdbChainIdPolicy::SegmentId`]
-    /// writes identifiers of up to four printable characters.
-    ChainIdTooLong {
+    /// The chain identifier is not one printable ASCII character, and under
+    /// [`PdbChainIdPolicy::SegmentId`] not up to four, the segment
+    /// identifier columns.
+    InvalidChainId {
         /// An atom of the chain.
         atom: InstanceAtomId,
         /// The identifier.
         chain_id: String,
     },
-    /// The residue name is longer than PDB's three columns.
-    ResidueNameTooLong {
+    /// The residue name is longer than PDB's three columns or not printable
+    /// ASCII without whitespace.
+    InvalidResidueName {
         /// An atom of the residue.
         atom: InstanceAtomId,
         /// The name.
@@ -261,8 +263,8 @@ pub enum PdbWriteErrorKind {
         /// The name.
         name: String,
     },
-    /// The insertion code is longer than PDB's one column.
-    InsertionCodeTooLong {
+    /// The insertion code is not one printable ASCII character.
+    InvalidInsertionCode {
         /// An atom of the residue.
         atom: InstanceAtomId,
         /// The code.
@@ -324,10 +326,13 @@ pub enum PdbWriteErrorKind {
     UnsupportedStereo(MoleculeInstanceId),
     /// A bond `CONECT` cannot state, with [`PdbWriteOptions::chemistry`] set
     /// to fail. Readers take a pair listed once as single, twice as double,
-    /// and three times as triple, and a pair of a metal and a non-metal as
-    /// dative whatever its listing; zero-order and quadruple bonds, dative
-    /// bonds between other pairs, and other orders between a metal and a
-    /// non-metal have no listing.
+    /// and three times as triple, and a metal and a non-metal of different
+    /// residues as dative whatever their listing. Within one residue, a
+    /// metal bond reads as covalent or dative by its non-metal's other
+    /// bonds. Zero-order and quadruple bonds, dative bonds between other
+    /// pairs, metal bonds within one residue whose order that reading does
+    /// not give, and other orders between a metal and a non-metal of
+    /// different residues have no listing.
     UnsupportedBondOrder {
         /// The bond.
         bond: InstanceBondId,
@@ -385,13 +390,14 @@ impl PdbWriteErrorKind {
 impl fmt::Display for PdbWriteErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ChainIdTooLong { atom, chain_id } => write!(
+            Self::InvalidChainId { atom, chain_id } => write!(
                 f,
                 "Chain ID {chain_id:?} of {atom} does not fit PDB's chain columns."
             ),
-            Self::ResidueNameTooLong { atom, name } => write!(
+            Self::InvalidResidueName { atom, name } => write!(
                 f,
-                "Residue name {name:?} of {atom} is longer than PDB's three characters."
+                "Residue name {name:?} of {atom} does not fit PDB's three ASCII residue-name \
+                 columns."
             ),
             Self::InvalidAtomName { atom, name } => write!(
                 f,
@@ -402,9 +408,9 @@ impl fmt::Display for PdbWriteErrorKind {
                 "{} repeats atom name {name:?} in its residue.",
                 Capitalized(atom)
             ),
-            Self::InsertionCodeTooLong { atom, code } => write!(
+            Self::InvalidInsertionCode { atom, code } => write!(
                 f,
-                "Insertion code {code:?} of {atom} is longer than PDB's one character."
+                "Insertion code {code:?} of {atom} does not fit PDB's one ASCII column."
             ),
             Self::InvalidResidueNumber { atom, number } => match number {
                 Some(number) => write!(
@@ -783,6 +789,8 @@ enum ResidueKey {
 #[derive(Debug, Clone)]
 struct AtomResidue {
     key: ResidueKey,
+    /// The hierarchy chain, which a `TER` record ends.
+    chain: Option<ChainId>,
     polymer: bool,
     class: ResidueClass,
 }
@@ -847,20 +855,24 @@ fn aligned_name(name: &str, element: &str) -> String {
     }
 }
 
-/// Columns 79-80, such as `2+` or `1-`; blank for a neutral atom.
+/// Columns 79-80, such as `2+`, `1-`, or `0`. A neutral atom states its
+/// zero, so a reader keeps it neutral rather than giving it its template's
+/// charge.
 fn charge_field(charge: i8) -> String {
     match charge {
-        0 => String::new(),
+        0 => "0".to_owned(),
         charge if charge > 0 => format!("{charge}+"),
         charge => format!("{}-", -i16::from(charge)),
     }
 }
 
+/// The column of a one-character identifier: blank when empty, else its one
+/// printable ASCII character.
 fn single_character(text: &str) -> Option<char> {
     let mut characters = text.chars();
     match (characters.next(), characters.next()) {
         (None, _) => Some(' '),
-        (Some(character), None) => Some(character),
+        (Some(character), None) if character.is_ascii_graphic() => Some(character),
         _ => None,
     }
 }
@@ -955,14 +967,19 @@ impl Plan {
                     (' ', identity.chain_id.clone())
                 }
                 None => {
-                    return Err(fail(PdbWriteErrorKind::ChainIdTooLong {
+                    return Err(fail(PdbWriteErrorKind::InvalidChainId {
                         atom: atom_id,
                         chain_id: identity.chain_id,
                     }))
                 }
             };
-            if identity.residue_name.chars().count() > 3 {
-                return Err(fail(PdbWriteErrorKind::ResidueNameTooLong {
+            if identity.residue_name.len() > 3
+                || !identity
+                    .residue_name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_graphic())
+            {
+                return Err(fail(PdbWriteErrorKind::InvalidResidueName {
                     atom: atom_id,
                     name: identity.residue_name,
                 }));
@@ -979,7 +996,7 @@ impl Plan {
             }
             let insertion_code = single_character(identity.insertion_code.as_deref().unwrap_or(""))
                 .ok_or_else(|| {
-                    fail(PdbWriteErrorKind::InsertionCodeTooLong {
+                    fail(PdbWriteErrorKind::InvalidInsertionCode {
                         atom: atom_id,
                         code: identity.insertion_code.clone().unwrap_or_default(),
                     })
@@ -1041,12 +1058,40 @@ impl Plan {
         }
 
         // `TER` follows the last polymer atom of each chain and takes the
-        // next serial number.
+        // next serial number, so chains of polymer residues that share an
+        // identifier stay apart. A chain without polymer residues, such as
+        // retinal bonded to its lysine, ends with the polymer chain before
+        // it, as a reader joins it to that chain.
+        let polymer_chains = residues
+            .iter()
+            .filter(|residue| {
+                residue.polymer
+                    && matches!(
+                        residue.class,
+                        ResidueClass::AminoAcid
+                            | ResidueClass::DnaNucleotide
+                            | ResidueClass::RnaNucleotide
+                    )
+            })
+            .map(|residue| residue.chain)
+            .collect::<BTreeSet<_>>();
+        let mut last_polymer_chain = BTreeMap::new();
         let mut last_polymer_atom = BTreeMap::new();
-        for (index, (residue, record)) in residues.iter().zip(&records).enumerate() {
-            if residue.polymer {
-                last_polymer_atom.insert((record.chain, record.segment.as_str()), index);
+        for (index, (record, residue)) in records.iter().zip(&residues).enumerate() {
+            if !residue.polymer {
+                continue;
             }
+            let letter = (record.chain, record.segment.as_str());
+            let chain = if polymer_chains.contains(&residue.chain) {
+                last_polymer_chain.insert(letter, residue.chain);
+                residue.chain
+            } else {
+                last_polymer_chain
+                    .get(&letter)
+                    .copied()
+                    .unwrap_or(residue.chain)
+            };
+            last_polymer_atom.insert(chain, index);
         }
         let last_polymer_atom = last_polymer_atom.into_values().collect::<Vec<_>>();
         for &index in &last_polymer_atom {
@@ -1127,6 +1172,7 @@ impl Plan {
             return Identity {
                 residue: AtomResidue {
                     key: ResidueKey::Instance(instance.id()),
+                    chain: None,
                     polymer: false,
                     class: if water {
                         ResidueClass::Water
@@ -1147,6 +1193,7 @@ impl Plan {
         Identity {
             residue: AtomResidue {
                 key: ResidueKey::Hierarchy(residue.id()),
+                chain: Some(chain.id()),
                 polymer,
                 class: residue.class(),
             },
@@ -1203,6 +1250,11 @@ impl Plan {
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
         let mut unstated = 0;
         let mut coordination_bonds = 0;
+        let hydrogens = topology
+            .atoms()
+            .filter(|atom| atom.atom().element.atomic_number() == 1)
+            .map(|atom| &residues[atom.index().index()].key)
+            .collect::<BTreeSet<_>>();
         for bond in topology.bonds() {
             let [left, right] = bond.atoms().map(|atom| atom.index().index());
             let standard = !records[left].hetatm && !records[right].hetatm;
@@ -1220,30 +1272,59 @@ impl Plan {
             if derived {
                 continue;
             }
+            // Readers take a listing between a metal and a non-metal of
+            // different residues for coordination, and any other listing for
+            // a covalent bond.
             let elements = bond.atoms().map(|atom| atom.atom().element);
-            let coordination = is_metal(elements[0]) != is_metal(elements[1]);
-            if bond.order == BondOrder::Dative && coordination && !same_residue {
+            let metal_bond = is_metal(elements[0]) != is_metal(elements[1]);
+            let coordination = !same_residue && metal_bond;
+            if bond.order == BondOrder::Dative && coordination {
                 // Readers record this listing as coordination, not a bond.
                 coordination_bonds += 1;
             }
-            let listings = match (bond.order, coordination) {
-                (BondOrder::Dative, true) | (BondOrder::Single, false) => 1,
-                (BondOrder::Double, false) => 2,
-                (BondOrder::Triple, false) => 3,
-                // A template supplies bonds a listing would misstate, such
-                // as a heme's single iron-nitrogen bonds, which a listing
-                // would make dative.
+            // Within one residue, a listing between a metal and a non-metal
+            // states the bond only when a reader gives it this order.
+            let metal = (same_residue
+                && metal_bond
+                && matches!(bond.order, BondOrder::Single | BondOrder::Dative))
+            .then(|| {
+                let template = templates
+                    .get(&residues[left].key)
+                    .filter(|_| templated)
+                    .map(|template| template.component);
+                listed_metal_bond(
+                    topology,
+                    records,
+                    residues,
+                    template,
+                    &hydrogens,
+                    [left, right],
+                )
+            });
+            let listings = match (bond.order, coordination, metal) {
+                // A template supplies bonds a listing cannot state, such as
+                // a heme's dative iron-nitrogen bonds.
+                (BondOrder::Dative, _, Some(MetalListing::Template)) => continue,
+                (_, _, Some(MetalListing::Template)) => Some(1),
+                (order, _, Some(MetalListing::Reads(read))) => (read == order).then_some(1),
+                (_, _, Some(MetalListing::Unknown)) => None,
+                (BondOrder::Dative, true, None) | (BondOrder::Single, false, None) => Some(1),
+                (BondOrder::Double, false, None) => Some(2),
+                (BondOrder::Triple, false, None) => Some(3),
+                // A template supplies the residue's other bonds a listing
+                // cannot state.
                 _ if templated => continue,
-                (order, _) => {
-                    if strict {
-                        return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
-                            bond: bond.id(),
-                            order,
-                        }));
-                    }
-                    unstated += 1;
-                    continue;
+                (_, _, None) => None,
+            };
+            let Some(listings) = listings else {
+                if strict {
+                    return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
+                        bond: bond.id(),
+                        order: bond.order,
+                    }));
                 }
+                unstated += 1;
+                continue;
             };
             for _ in 0..listings {
                 conect.entry(left).or_default().push(right);
@@ -1483,6 +1564,98 @@ struct ConectPlan {
     /// Dative bonds between residues, listed as coordination that readers
     /// record rather than bond.
     coordination_bonds: usize,
+}
+
+/// What a reader makes of a `CONECT` listing between a metal and a
+/// non-metal of one residue.
+enum MetalListing {
+    /// The residue's template lists the bond, and its order wins.
+    Template,
+    /// The listing reads as this order ([`metal_bond_reading`]).
+    Reads(BondOrder),
+    /// The donor's template bonds are aromatic, which the reader localizes
+    /// before it decides.
+    Unknown,
+}
+
+/// What a reader makes of the listing of the bond between `atoms`, a metal
+/// and a non-metal of one residue whose reader template is `template`, with
+/// `hydrogens` the residues that have explicit hydrogens.
+fn listed_metal_bond(
+    topology: &Topology,
+    records: &[AtomRecord],
+    residues: &[AtomResidue],
+    template: Option<&Component>,
+    hydrogens: &BTreeSet<&ResidueKey>,
+    atoms: [usize; 2],
+) -> MetalListing {
+    let atom = |index: usize| {
+        topology
+            .atom_at(TopologyAtomIndex::from_index(index))
+            .expect("records follow dense atoms")
+    };
+    let named = |index: usize| {
+        template
+            .and_then(|template| template.atom(records[index].name.trim()))
+            .map(|(named, _)| named)
+    };
+    let template_lists = |left: usize, right: usize| {
+        let (Some(template), Some(left), Some(right)) = (template, named(left), named(right))
+        else {
+            return false;
+        };
+        template.bonds().iter().any(|bond| {
+            let [a, b] = bond.atoms();
+            (a, b) == (left, right) || (a, b) == (right, left)
+        })
+    };
+    let [left, right] = atoms;
+    if template_lists(left, right) {
+        return MetalListing::Template;
+    }
+    let donor = if is_metal(atom(left).atom().element) {
+        right
+    } else {
+        left
+    };
+    if let (Some(template), Some(named)) = (template, named(donor)) {
+        if template.bonds().iter().any(|bond| {
+            bond.atoms().contains(&named)
+                && !bond.metal_coordination()
+                && matches!(
+                    bond.order(),
+                    ComponentBondOrder::Aromatic | ComponentBondOrder::Delocalized
+                )
+        }) {
+            return MetalListing::Unknown;
+        }
+    }
+    let (mut other, mut undecided) = (0, 0);
+    for bond in atom(donor).bonds() {
+        let partner = bond
+            .atoms()
+            .map(|atom| atom.index().index())
+            .into_iter()
+            .find(|&index| index != donor)
+            .expect("a bond joins two atoms");
+        let order = bond.bond().order;
+        if residues[partner].key == residues[donor].key
+            && is_metal(atom(partner).atom().element)
+            && matches!(order, BondOrder::Single | BondOrder::Dative)
+            && !template_lists(donor, partner)
+        {
+            undecided += 1;
+        } else {
+            other += link_valence(order);
+        }
+    }
+    let hydrogens = hydrogens.contains(&residues[donor].key);
+    MetalListing::Reads(
+        match metal_bond_reading(atom(donor).atom(), other, undecided, hydrogens) {
+            MetalBondReading::Dative => BondOrder::Dative,
+            MetalBondReading::Covalent | MetalBondReading::Unstated => BondOrder::Single,
+        },
+    )
 }
 
 /// The template a reader applies to each residue without templates from the
