@@ -132,8 +132,8 @@ pub mod edit {
     pub use super::editor::{
         DenseCorrespondence, EditAtomId, EditAtomSite, EditAtomSiteId, EditBond, EditBondId,
         EditChain, EditChainId, EditCorrespondence, EditMolecule, EditProperties,
-        EditPropertiesMut, EditPropertyTable, EditResidue, EditResidueId, TopologyEditError,
-        TopologyEditor,
+        EditPropertiesMut, EditPropertyTable, EditResidue, EditResidueId, PrunedStereo,
+        TopologyEditError, TopologyEditor,
     };
 }
 

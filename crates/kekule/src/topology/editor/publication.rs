@@ -576,7 +576,8 @@ impl TopologyEditor {
         }
         // Publish atoms in slot order: survivors keep their source dense
         // order, and added atoms follow in creation order. Touched atoms are
-        // in slot order too.
+        // in slot order too. Added atoms then join their residues; see
+        // `Self::residue_order`.
         staged.touched.sort_unstable_by_key(|&(slot, _, _)| slot);
         let atom_count = self.atoms.len();
         let mut order = Vec::with_capacity(atom_count);
@@ -603,6 +604,24 @@ impl TopologyEditor {
             atom_sources.push(None);
             order.push(target);
             atom_slots.push(slot);
+        }
+        if let Some(moved) = self.residue_order() {
+            let mut position = vec![usize::MAX; atom_slots.iter().max().map_or(0, |&s| s + 1)];
+            for (index, &slot) in atom_slots.iter().enumerate() {
+                position[slot] = index;
+            }
+            let positions = moved
+                .iter()
+                .map(|(_, loc)| position[loc.slot])
+                .collect::<Vec<_>>();
+            order = positions.iter().map(|&p| order[p]).collect();
+            atom_slots = positions.iter().map(|&p| atom_slots[p]).collect();
+            atom_sources = positions.iter().map(|&p| atom_sources[p]).collect();
+            for (published, source) in atom_sources.iter().enumerate() {
+                if let Some(source) = source {
+                    atom_published[source.index()] = Some(TopologyAtomIndex::from_index(published));
+                }
+            }
         }
         let slot_counts = |slots: fn(&Molecule) -> usize| {
             staged
@@ -681,6 +700,10 @@ impl TopologyEditor {
         atoms: (&[Option<TopologyAtomIndex>], &[usize], &[InstanceAtomId]),
     ) -> PublishedHierarchy {
         let (atom_published, atom_slots, order) = atoms;
+        let mut dense_of_slot = vec![usize::MAX; atom_slots.iter().max().map_or(0, |&s| s + 1)];
+        for (dense, &slot) in atom_slots.iter().enumerate() {
+            dense_of_slot[slot] = dense;
+        }
         let hierarchy = &self.hierarchy;
         let source_hierarchy = source.map(Topology::hierarchy);
         let mut labels =
@@ -812,11 +835,8 @@ impl TopologyEditor {
                     site_slots.extend(range);
                 }
                 Run::Stored(_, site) => {
-                    // Published atoms are in slot order.
                     let atom_slot = self.atom_location(site.atom).expect("live site atom").slot;
-                    let dense = atom_slots
-                        .binary_search(&atom_slot)
-                        .expect("site atoms are published");
+                    let dense = dense_of_slot[atom_slot];
                     site_residues.push(ResidueId::new(residue_of(site.residue)));
                     site_atoms.push(order[dense]);
                     site_dense.push(TopologyAtomIndex::from_index(dense));

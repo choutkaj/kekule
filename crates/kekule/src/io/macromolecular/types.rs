@@ -1040,6 +1040,53 @@ impl CoordinationProvenance {
     }
 }
 
+/// The source identity of one atom site, by which a report's records find
+/// their atoms in an edited structure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SiteIdentity<'a> {
+    label_asym_id: Option<&'a str>,
+    auth_asym_id: Option<&'a str>,
+    label_seq_id: Option<i32>,
+    author_seq_id: Option<&'a str>,
+    insertion_code: Option<&'a str>,
+    component: &'a str,
+    label_atom_id: Option<&'a str>,
+    auth_atom_id: Option<&'a str>,
+    type_symbol: Option<&'a str>,
+}
+
+impl<'a> SiteIdentity<'a> {
+    fn of_source(atom: &'a AtomProvenance) -> Self {
+        Self {
+            label_asym_id: atom.label_asym_id.as_deref(),
+            auth_asym_id: atom.auth_asym_id.as_deref(),
+            label_seq_id: atom.label_sequence_id,
+            author_seq_id: atom.author_sequence_id.as_deref(),
+            insertion_code: atom.insertion_code.as_deref(),
+            component: &atom.component_id,
+            label_atom_id: atom.label_atom_name.as_deref(),
+            auth_atom_id: atom.auth_atom_name.as_deref(),
+            type_symbol: Some(&atom.type_symbol),
+        }
+    }
+
+    fn of_site(site: crate::topology::AtomSiteView<'a>) -> Self {
+        let metadata = site.metadata();
+        let residue = site.residue();
+        Self {
+            label_asym_id: metadata.label_asym_id(),
+            auth_asym_id: metadata.auth_asym_id(),
+            label_seq_id: residue.label_seq_id(),
+            author_seq_id: residue.author_seq_id(),
+            insertion_code: residue.insertion_code(),
+            component: residue.name(),
+            label_atom_id: metadata.label_atom_id(),
+            auth_atom_id: metadata.auth_atom_id(),
+            type_symbol: metadata.type_symbol(),
+        }
+    }
+}
+
 /// The coordination records of a report that match a topology; see
 /// [`StructureInterpretationReport::coordination_in`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1412,44 +1459,56 @@ impl StructureInterpretationReport {
         &self.coordination
     }
 
-    /// The coordination records that still match `topology`, as writers
-    /// state them again. A record matches when each partner is a topology
-    /// atom whose atom site keeps the atom names, type symbol, and component
-    /// the report recorded for it; a structure edited since it was read can
-    /// hold other atoms under the recorded IDs, or none.
+    /// The coordination records that still match `topology`, bound to its
+    /// atoms, as writers state them again. Each partner is found by the source
+    /// identity the report recorded for it: chain identifiers, residue
+    /// numbers, insertion code and component, atom names and type symbol. A
+    /// structure edited since it was read numbers its atoms anew, so the
+    /// recorded atom IDs do not name them. A record whose partner no atom site
+    /// or several carry does not match.
     pub(crate) fn coordination_in(&self, topology: &Topology) -> CoordinationMatch {
         let partners = self
             .coordination
             .iter()
             .flat_map(|record| record.atoms)
             .collect::<HashSet<_>>();
-        let sources = self
+        // The atoms carrying each partner's identity: none, one, or several.
+        let mut found = HashMap::<SiteIdentity<'_>, Option<Option<InstanceAtomId>>>::new();
+        let identities = self
             .instances
             .iter()
             .flat_map(|instance| &instance.atoms)
             .filter(|atom| partners.contains(&atom.atom))
-            .map(|atom| (atom.atom, atom))
+            .map(|atom| {
+                let identity = SiteIdentity::of_source(atom);
+                found.insert(identity, None);
+                (atom.atom, identity)
+            })
             .collect::<HashMap<_, _>>();
-        let matches = |atom: InstanceAtomId| {
-            let (Some(source), Some(site)) = (sources.get(&atom), topology.atom_site_of(atom))
-            else {
-                return false;
-            };
-            let metadata = site.metadata();
-            metadata.label_atom_id() == source.label_atom_name.as_deref()
-                && metadata.auth_atom_id() == source.auth_atom_name.as_deref()
-                && metadata.type_symbol() == Some(source.type_symbol.as_str())
-                && site.residue().name() == source.component_id
-        };
-        let (records, unmatched): (Vec<_>, Vec<_>) = self
-            .coordination
-            .iter()
-            .map(|record| record.atoms)
-            .partition(|atoms| atoms.iter().all(|&atom| matches(atom)));
-        CoordinationMatch {
-            records,
-            unmatched: unmatched.len(),
+        for site in topology.atom_sites() {
+            if let Some(entry) = found.get_mut(&SiteIdentity::of_site(site)) {
+                let atom = site.atom().id();
+                *entry = match entry {
+                    None => Some(Some(atom)),
+                    Some(_) => Some(None),
+                };
+            }
         }
+        let bound = |atom: InstanceAtomId| {
+            identities
+                .get(&atom)
+                .and_then(|identity| found[identity])
+                .flatten()
+        };
+        let mut records = Vec::new();
+        let mut unmatched = 0;
+        for record in &self.coordination {
+            match record.atoms.map(bound) {
+                [Some(a), Some(b)] => records.push([a, b]),
+                _ => unmatched += 1,
+            }
+        }
+        CoordinationMatch { records, unmatched }
     }
 
     /// Decisions for the selected source coordinate model only. The source

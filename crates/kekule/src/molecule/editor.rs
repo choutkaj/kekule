@@ -73,6 +73,8 @@ pub struct MoleculeEditor {
     properties: MoleculeProperties,
     /// Stereo elements that structural edits removed, in removal order.
     pruned_stereo: Vec<StereoElementId>,
+    /// The removed elements of [`Self::pruned_stereo`], in the same order.
+    pruned_values: Vec<StereoElement>,
 }
 
 impl Deref for MoleculeEditor {
@@ -90,6 +92,7 @@ impl Default for MoleculeEditor {
             perception: Perception::default(),
             properties: MoleculeProperties::new(0, 0),
             pruned_stereo: Vec::new(),
+            pruned_values: Vec::new(),
         }
     }
 }
@@ -108,6 +111,7 @@ impl Molecule {
             perception: self.perception,
             properties: self.properties,
             pruned_stereo: Vec::new(),
+            pruned_values: Vec::new(),
         }
     }
 }
@@ -434,6 +438,75 @@ impl MoleculeEditor {
         Ok(bond)
     }
 
+    /// [`Self::add_bond`] where a single bond to an endpoint with exactly one
+    /// implicit hydrogen takes that hydrogen's place in the endpoint's
+    /// stereo, as an atom attached in a hydrogen's place does, rather than
+    /// pruning it.
+    pub(crate) fn add_bond_replacing_implicit_hydrogens(
+        &mut self,
+        a: AtomId,
+        b: AtomId,
+        order: BondOrder,
+    ) -> Result<BondId, MoleculeError> {
+        let mut replacements = Vec::new();
+        if order == BondOrder::Single {
+            for (atom, other) in [(a, b), (b, a)] {
+                replacements.extend(self.implicit_carrier_replacements(atom, other)?);
+            }
+        }
+        let bond = self.add_bond_unpruned(a, b, order)?;
+        for (id, element) in replacements {
+            self.set_stereo_element_unchecked(id, element);
+        }
+        self.prune_invalid_stereo_at([a, b], bond);
+        Ok(bond)
+    }
+
+    /// The stereo elements of `atom` with its implicit-hydrogen carrier
+    /// replaced by `other`, when `atom` has exactly one implicit hydrogen.
+    fn implicit_carrier_replacements(
+        &self,
+        atom: AtomId,
+        other: AtomId,
+    ) -> Result<Vec<(StereoElementId, StereoElement)>, MoleculeError> {
+        let value = self.graph.require_atom(atom)?;
+        let implicit = match value.hydrogens {
+            ImplicitHydrogens::Fixed(count) => count,
+            ImplicitHydrogens::Inferred => {
+                crate::algorithms::rdkit_inferred_hydrogen_count(&self.graph, atom, value)
+            }
+        };
+        if implicit != 1 {
+            return Ok(Vec::new());
+        }
+        Ok(self
+            .graph
+            .stereo_elements()
+            .filter_map(|(id, element)| {
+                let mut element = element.clone();
+                let mut changed = false;
+                let mut swap = |owner: AtomId, carrier: &mut StereoCarrier| {
+                    if owner == atom && *carrier == StereoCarrier::ImplicitHydrogen && !changed {
+                        *carrier = StereoCarrier::Atom(other);
+                        changed = true;
+                    }
+                };
+                match &mut element.kind {
+                    StereoElementKind::Tetrahedral(stereo) => {
+                        let center = stereo.center;
+                        stereo.carriers.iter_mut().for_each(|c| swap(center, c));
+                    }
+                    StereoElementKind::DoubleBond(stereo) => {
+                        swap(stereo.left, &mut stereo.left_carrier);
+                        swap(stereo.right, &mut stereo.right_carrier);
+                    }
+                    StereoElementKind::Axis(_) => {}
+                }
+                changed.then_some((id, element))
+            })
+            .collect())
+    }
+
     /// [`Self::add_bond`] leaving existing stereo as it is, for transforms
     /// that rewrite the carriers of the new bond's endpoints themselves.
     pub(crate) fn add_bond_unpruned(
@@ -491,7 +564,15 @@ impl MoleculeEditor {
     /// Returns [`Self::pruned_stereo_elements`] and clears the record, so a
     /// caller can check one edit at a time.
     pub fn take_pruned_stereo_elements(&mut self) -> Vec<StereoElementId> {
+        self.pruned_values.clear();
         std::mem::take(&mut self.pruned_stereo)
+    }
+
+    /// The elements [`Self::take_pruned_stereo_elements`] would return, as
+    /// they were before their removal, clearing the record.
+    pub(crate) fn take_pruned_stereo(&mut self) -> Vec<StereoElement> {
+        self.pruned_stereo.clear();
+        std::mem::take(&mut self.pruned_values)
     }
 
     /// Replaces represented atom state while retaining its ID and properties.
@@ -542,7 +623,8 @@ impl MoleculeEditor {
             })
             .collect::<Vec<_>>();
         for &element in &invalid {
-            self.remove_stereo_element(element)?;
+            let removed = self.remove_stereo_element(element)?;
+            self.pruned_values.push(removed);
         }
         self.pruned_stereo.extend(invalid);
         self.chemistry_changed();

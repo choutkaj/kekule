@@ -270,7 +270,7 @@ impl TopologyEditor {
                 .incident_bonds(hydrogen)?
                 .map(|bond| self.bond_location(bond).map(|loc| loc.slot))
                 .collect::<Result<Vec<_>, _>>()?;
-            self.delete_atom(hydrogen)?;
+            self.remove_atom(hydrogen)?;
             dead = Some((atom_slot, bond_slots));
         }
         Ok(AttachedInInstance { atom, bond, dead })
@@ -465,7 +465,7 @@ impl TopologyEditor {
                 for bond in self.incident_bonds(handle)?.collect::<Vec<_>>() {
                     dead_bonds.push(self.bond_location(bond)?.slot);
                 }
-                self.delete_atom(handle)?;
+                self.remove_atom(handle)?;
             }
             let adjustments = assign_collapsed_hydrogen_counts(
                 self.draft_mut(group),

@@ -107,10 +107,12 @@ references alone, since hydrogen transforms change a carrier and its
 declaration in separate steps. An edit that invalidates stereo — changing a
 focus order, adding a bond to a focus, deleting a carrier bond — prunes the
 affected stereo and group memberships locally, and the editor reports every
-pruned element. Enhanced stereo groups belong to a connected molecule:
-splitting a correlated group across components is rejected at publication,
-while absolute memberships may split. Formats that cannot encode a relationship
-fail explicitly.
+pruned element. A carrier that can follow a topology edit does: deleting an
+atom's only hydrogen hands its place to an implicit one, and a single bond that
+takes an atom's only implicit hydrogen takes its place. Enhanced stereo groups
+belong to a connected molecule: splitting a correlated group across components
+is rejected at publication, while absolute memberships may split. Formats that
+cannot encode a relationship fail explicitly.
 
 `Perception` is reconstructible state derived from the exact represented graph
 under an explicit model or policy: valence, rings, aromaticity, conjugation,
@@ -138,10 +140,14 @@ attached hydrogens represented without graph atoms; total counts also include
 explicit hydrogen neighbors. An atom's implicit count is either fixed or wholly
 inferred, never a mix. Fixed counts remain known without perception, and
 perception never overwrites them; inferred counts are unknown after chemical
-edits until perception is recomputed. Explicit/implicit conversion preserves
-composition and stereo. CIP assignment is transactional, respects represented
-stereo, and reports unsupported or exhausted ranking rather than treating
-unfinished work as a tie.
+edits until perception is recomputed. Topology and structure edits keep fixed
+counts whole: an atom gains a hydrogen for each unit of bond valence a
+deletion, a lower order, or a subset cut takes from it, and gives one up for
+each unit it gains, down to none. `perception::valence::open_valences` names
+fixed atoms still short of their valence. Explicit/implicit conversion
+preserves composition and stereo. CIP assignment is transactional, respects
+represented stereo, and reports unsupported or exhausted ranking rather than
+treating unfinished work as a tie.
 
 Perception runs once per reusable definition and publishes atomically: a
 definition whose installed default perception is unchanged since perception
@@ -256,14 +262,15 @@ edits retain the exact shared topology.
 
 Append-oriented construction preserves existing IDs and dense order. General
 structural edits keep surviving atoms in source dense order and append new
-atoms in creation order, while repartitioned molecules receive deterministic
-new definitions and instances. Hierarchy is filtered and empty nodes are
-pruned; its partition is independent of molecule splits and merges. Per-entity
-annotations follow the operation's explicit correspondence: an editor maps
-surviving handles to published identities and, densely, source atom and bond
-indices, residues, and chains to the published ones and back. Generic owner
-annotations are conservatively cleared when their owner changes; no-op edits
-preserve them.
+atoms in creation order, except that an added atom placed in a residue that
+holds earlier atoms follows the last of them, so residues stay contiguous,
+while repartitioned molecules receive deterministic new definitions and
+instances. Hierarchy is filtered and empty nodes are pruned; its partition is
+independent of molecule splits and merges. Per-entity annotations follow the
+operation's explicit correspondence: an editor maps surviving handles to
+published identities and, densely, source atom and bond indices, residues, and
+chains to the published ones and back. Generic owner annotations are
+conservatively cleared when their owner changes; no-op edits preserve them.
 
 Appending a complete structure imports its definitions, perception,
 classification, hierarchy, coordinates, and entity properties into the draft
@@ -910,8 +917,10 @@ covalent link to another residue takes the place of as many of an atom's
 hydrogens as its order, as a disulfide replaces cysteine's `HG`, so it
 charges no atom.
 Metal coordination between residues is not a bond: the
-report keeps it as connection metadata, while coordination within one residue
-is a dative bond, so a metal complex that is one component stays one molecule.
+report keeps it as connection metadata, which writers state again for the
+atoms that still carry its partners' source identity, while coordination
+within one residue is a dative bond, so a metal complex that is one component
+stays one molecule.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral

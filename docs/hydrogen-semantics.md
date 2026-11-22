@@ -34,11 +34,17 @@ valence field or V3000 `VAL`). The V2000 hydrogen-count field and V3000
 declarations: a nonzero value is unsupported content, rejected by default or
 reported and omitted on request.
 
-Chemical edits invalidate inferred counts and keep fixed ones. After
-reperception, an inferred count can change with bond order or charge. A fixed
-count that conflicts with an edit produces a valence error under strict
-perception, rather than silently removing hydrogens. Property-only edits do not
-invalidate chemistry.
+Chemical edits invalidate inferred counts. After reperception, an inferred
+count can change with bond order or charge. Topology and structure edits keep a
+fixed count whole: an atom gains a hydrogen for each unit of bond valence a
+deletion, a lower order, or a subset cut takes from it, and gives one up for
+each unit a new bond or a higher order adds, down to none. A deleted explicit
+hydrogen of a fixed atom stays as an implicit one. A fixed count that a gain
+cannot cover produces a valence error under strict perception, rather than
+silently removing hydrogens. A molecule draft (`MoleculeEditor`) edits the
+graph as stated and keeps counts as they are;
+`perception::valence::open_valences` names fixed atoms short of their valence.
+Property-only edits do not invalidate chemistry.
 
 `Perception::inferred_hydrogens` and `ValencePerception::inferred_hydrogens`
 expose the valence model's raw assignments, and `PerceptionBuilder::with_valence`

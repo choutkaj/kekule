@@ -1,7 +1,8 @@
 //! Shared connected-component publication for subsets and structural editors.
 use super::TopologyBuilder;
 use crate::molecule::{
-    AtomId, BondId, Graph, MoleculeEditor, MoleculeError, MoleculePublicationError, SlotLiveness,
+    AtomId, BondId, Graph, ImplicitHydrogens, MoleculeEditor, MoleculeError,
+    MoleculePublicationError, SlotLiveness,
 };
 use crate::properties::{MoleculeProperties, PropertyError};
 use crate::stereo::{StereoCarrier, StereoElement, StereoElementKind, StereoGroup};
@@ -14,6 +15,12 @@ pub(super) struct ComponentDefinition {
 }
 
 /// Fails with the caller's own error, which wraps each cause.
+///
+/// A selected atom with a fixed implicit-hydrogen count gains a hydrogen for
+/// each unit of bond valence it loses to unselected neighbors, as deleting
+/// those neighbors in an editor gives it, and a stereo carrier that is a cut
+/// hydrogen becomes the implicit hydrogen that replaces it when that is the
+/// atom's only one.
 pub(super) fn build_component_definitions<E, L: SlotLiveness>(
     source_molecule: &Graph<L>,
     source_properties: &MoleculeProperties,
@@ -51,7 +58,17 @@ where
         component.sort_unstable();
         let mut editor = MoleculeEditor::new();
         for &atom in &component {
-            let target_atom = editor.add_atom(source_molecule.require_atom(atom)?.clone())?;
+            let mut value = source_molecule.require_atom(atom)?.clone();
+            if let ImplicitHydrogens::Fixed(count) = value.hydrogens {
+                let cut = cut_valence(source_molecule, selected_local, atom)?;
+                if cut > 0 {
+                    let total = usize::from(count) + cut;
+                    let total = u8::try_from(total)
+                        .map_err(|_| MoleculeError::HydrogenCountOverflow { atom, count: total })?;
+                    value.hydrogens = ImplicitHydrogens::Fixed(total);
+                }
+            }
+            let target_atom = editor.add_atom(value)?;
             local_atoms.insert(atom, (components.len(), target_atom));
         }
         components.push(ComponentDraft {
@@ -75,12 +92,32 @@ where
         local_bonds.insert(source_bond, (component, target_bond));
     }
     let mut local_stereo = BTreeMap::new();
+    // A cut hydrogen of an atom whose capped count is exactly one is that
+    // implicit hydrogen.
+    let capped_hydrogen = |focus: AtomId, carrier: AtomId| {
+        !selected_local.contains(&carrier)
+            && source_molecule
+                .atom(carrier)
+                .is_some_and(|atom| atom.element.atomic_number() == 1)
+            && local_atoms.get(&focus).is_some_and(|&(component, target)| {
+                components[component]
+                    .editor
+                    .graph()
+                    .atom(target)
+                    .is_some_and(|atom| atom.hydrogens == ImplicitHydrogens::Fixed(1))
+            })
+    };
+    let mut remapped = Vec::new();
     for (source_element, element) in source_molecule.stereo_elements() {
-        if let Some((component, element)) = remap_subset_stereo(element, &local_atoms, &local_bonds)
+        if let Some(remapped_element) =
+            remap_subset_stereo(element, &local_atoms, &local_bonds, &capped_hydrogen)
         {
-            let target_element = components[component].editor.add_stereo_element(element)?;
-            local_stereo.insert(source_element, (component, target_element));
+            remapped.push((source_element, remapped_element));
         }
+    }
+    for (source_element, (component, element)) in remapped {
+        let target_element = components[component].editor.add_stereo_element(element)?;
+        local_stereo.insert(source_element, (component, target_element));
     }
     for (group_id, group) in source_molecule.stereo_groups() {
         let mut members_by_component = BTreeMap::<_, Vec<_>>::new();
@@ -151,12 +188,28 @@ struct ComponentDraft {
     source_bonds: Vec<BondId>,
 }
 
+/// The bond valence `atom` loses to neighbors outside `selected`.
+fn cut_valence<L: SlotLiveness>(
+    molecule: &Graph<L>,
+    selected: &BTreeSet<AtomId>,
+    atom: AtomId,
+) -> Result<usize, MoleculeError> {
+    Ok(molecule
+        .require_incident_bonds(atom)?
+        .filter(|(_, bond)| !selected.contains(&bond.other_atom(atom)))
+        .map(|(_, bond)| usize::from(bond.order.valence()))
+        .sum())
+}
+
 // Retain an assertion only when all its represented references survive in the
-// same component, matching atom/bond deletion's stereo-pruning semantics.
+// same component, matching atom/bond deletion's stereo-pruning semantics: a
+// cut hydrogen carrier survives as the implicit hydrogen `capped_hydrogen`
+// says replaces it.
 fn remap_subset_stereo(
     element: &StereoElement,
     atoms: &BTreeMap<AtomId, (usize, AtomId)>,
     bonds: &BTreeMap<BondId, (usize, BondId)>,
+    capped_hydrogen: &dyn Fn(AtomId, AtomId) -> bool,
 ) -> Option<(usize, StereoElement)> {
     let component = match &element.kind {
         StereoElementKind::Tetrahedral(stereo) => atoms.get(&stereo.center)?.0,
@@ -173,29 +226,36 @@ fn remap_subset_stereo(
             .get(&source)
             .and_then(|&(owner, target)| (owner == component).then_some(target))
     };
-    let carrier = |source| match source {
+    let carrier = |focus: AtomId, source| match source {
+        StereoCarrier::Atom(source) if capped_hydrogen(focus, source) => {
+            Some(StereoCarrier::ImplicitHydrogen)
+        }
         StereoCarrier::Atom(source) => atom(source).map(StereoCarrier::Atom),
         other => Some(other),
     };
     let mut kind = element.kind.clone();
     match &mut kind {
         StereoElementKind::Tetrahedral(stereo) => {
-            stereo.center = atom(stereo.center)?;
+            let center = stereo.center;
+            stereo.center = atom(center)?;
             for value in &mut stereo.carriers {
-                *value = carrier(*value)?;
+                *value = carrier(center, *value)?;
             }
         }
         StereoElementKind::DoubleBond(stereo) => {
             stereo.bond = bond(stereo.bond)?;
+            stereo.left_carrier = carrier(stereo.left, stereo.left_carrier)?;
+            stereo.right_carrier = carrier(stereo.right, stereo.right_carrier)?;
             stereo.left = atom(stereo.left)?;
             stereo.right = atom(stereo.right)?;
-            stereo.left_carrier = carrier(stereo.left_carrier)?;
-            stereo.right_carrier = carrier(stereo.right_carrier)?;
         }
         StereoElementKind::Axis(stereo) => {
             stereo.axis = bond(stereo.axis)?;
             for value in &mut stereo.carriers {
-                *value = carrier(*value)?;
+                *value = match *value {
+                    StereoCarrier::Atom(source) => StereoCarrier::Atom(atom(source)?),
+                    other => other,
+                };
             }
         }
     }

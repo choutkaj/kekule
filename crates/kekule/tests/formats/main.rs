@@ -5,11 +5,13 @@
 mod support;
 
 mod assemblies;
+mod assembly_bonds;
 mod cancellation;
 mod canonical_smiles;
 mod components;
 mod disulfides;
 mod documents;
+mod edited_structures;
 mod export;
 mod mmcif;
 mod mmcif_write;

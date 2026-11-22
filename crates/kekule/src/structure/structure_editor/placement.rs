@@ -475,7 +475,8 @@ impl StructureEditor {
         let handles = atoms.iter().copied().collect::<BTreeMap<_, _>>();
         for (_, bond) in molecule.bonds() {
             if let (Some(a), Some(b)) = (handles.get(&bond.a()), handles.get(&bond.b())) {
-                self.topology.add_bond(*a, *b, bond.order)?;
+                // The fragment's counts already describe its own bonds.
+                self.topology.connect(*a, *b, bond.order)?;
             }
         }
         self.sync_slots(revision);

@@ -451,7 +451,53 @@ impl TopologyEditor {
             residues: self.hierarchy.residues.block(),
         }
     }
-    /// Replaces a chain's label and author identifiers.
+    /// The live atom locations in publication order, when it differs from
+    /// handle order, which is slot order: an added atom placed in a residue
+    /// that holds atoms before it follows the last of them, in creation
+    /// order, so the residue stays contiguous.
+    pub(super) fn residue_order(&self) -> Option<Vec<(EditAtomId, Location<AtomId>)>> {
+        if self.hierarchy.added_atom_sites.is_empty() {
+            return None;
+        }
+        let atoms = self.atom_locations().collect::<Vec<_>>();
+        let block = self.atoms.block();
+        // Each atom that stays in place, with the added atoms that follow it.
+        let mut following = vec![Vec::<usize>::new(); atoms.len()];
+        let mut stays = vec![true; atoms.len()];
+        let mut last = std::collections::HashMap::<EditResidueId, usize>::new();
+        let mut moved = false;
+        for (position, &(atom, _)) in atoms.iter().enumerate() {
+            let Some(site) = self.site_of_atom(atom) else {
+                continue;
+            };
+            let residue = self.require_atom_site(site).expect("live site").residue;
+            match last.get(&residue) {
+                Some(&anchor) if block.source(atom).is_none() => {
+                    let behind = following[anchor].last().copied().unwrap_or(anchor);
+                    moved |= behind + 1 != position;
+                    following[anchor].push(position);
+                    stays[position] = false;
+                }
+                _ => {
+                    last.insert(residue, position);
+                }
+            }
+        }
+        if !moved {
+            return None;
+        }
+        let mut order = Vec::with_capacity(atoms.len());
+        for (position, &atom) in atoms.iter().enumerate() {
+            if stays[position] {
+                order.push(atom);
+                order.extend(following[position].iter().map(|&behind| atoms[behind]));
+            }
+        }
+        Some(order)
+    }
+    /// Replaces a chain's label and author identifiers. Its sites that named
+    /// the old identifiers take the new ones, so writers name the chain as it
+    /// is now.
     ///
     /// # Errors
     ///
@@ -467,10 +513,42 @@ impl TopologyEditor {
         if chain.label == label && chain.author == author {
             return Ok(());
         }
+        let new = EditChain {
+            label,
+            author,
+            slot: chain.slot,
+        };
+        for residue in self.chain_residues(id) {
+            for atom in self.residue_atom_list(residue) {
+                if let Some(site) = self.site_of_atom(atom) {
+                    self.retarget_site_chain(site, &chain, &new)?;
+                }
+            }
+        }
         let chain = self.chain_mut(id);
-        chain.label = label;
-        chain.author = author;
+        chain.label = new.label;
+        chain.author = new.author;
         self.changed();
+        Ok(())
+    }
+    /// Gives a site's chain identifiers that name `old` those of `new`.
+    fn retarget_site_chain(
+        &mut self,
+        id: EditAtomSiteId,
+        old: &EditChain,
+        new: &EditChain,
+    ) -> Result<(), TopologyEditError> {
+        let site = self.require_atom_site(id)?;
+        let mut metadata = (*site.metadata).clone();
+        if metadata.label_asym_id.as_deref() == Some(old.label.as_str()) {
+            metadata.label_asym_id = Some(new.label.clone());
+        }
+        if metadata.auth_asym_id.is_some() && metadata.auth_asym_id == old.author {
+            metadata.auth_asym_id = new.author.clone();
+        }
+        if metadata != *site.metadata {
+            self.site_mut(id).metadata = SharedRow::new(metadata);
+        }
         Ok(())
     }
     /// Replaces a residue's label and author component identifiers, invalidating
@@ -558,7 +636,8 @@ impl TopologyEditor {
         self.changed();
         Ok(())
     }
-    /// Moves an atom site to another residue.
+    /// Moves an atom site to another residue. A site moved to another chain
+    /// takes its identifiers where it named those of the chain it left.
     ///
     /// # Errors
     ///
@@ -574,6 +653,12 @@ impl TopologyEditor {
         let previous = site.residue;
         if previous == residue {
             return Ok(());
+        }
+        let from = self.require_residue(previous)?.chain;
+        let to = self.require_residue(residue)?.chain;
+        if from != to {
+            let (from, to) = (self.require_chain(from)?, self.require_chain(to)?);
+            self.retarget_site_chain(id, &from, &to)?;
         }
         self.site_mut(id).residue = residue;
         let atom = site.atom;

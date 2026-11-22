@@ -324,7 +324,9 @@ impl MoleculeEditor {
 
     fn remove_pruned_stereo(&mut self, removed: Vec<StereoElementId>) {
         for &id in &removed {
-            self.graph.take_stereo_element(id);
+            if let Some(element) = self.graph.take_stereo_element(id) {
+                self.pruned_values.push(element);
+            }
         }
         self.invalidate_cip();
         self.pruned_stereo.extend(removed);

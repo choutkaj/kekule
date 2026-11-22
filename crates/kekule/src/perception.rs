@@ -57,7 +57,8 @@ pub use crate::molecule::perception::{
 /// reached.
 pub mod valence {
     pub use crate::algorithms::{
-        perceive_valence, represented_valence, ValenceError, ValenceOptions, ValenceViolation,
+        open_valences, perceive_valence, represented_valence, OpenValence, ValenceError,
+        ValenceOptions, ValenceViolation,
     };
     pub use crate::molecule::perception::{ValenceModel, ValencePerception, ValenceValidation};
 }

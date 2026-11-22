@@ -8,19 +8,27 @@
 //! incompletely, whose operators are not rotations, or that would take the
 //! source's operator uses past 100,000 is left out of the report with an
 //! issue.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
 use crate::diagnostics::{Cancellation, Cancelled, FormatError};
-use crate::math::{Matrix3, Vector3};
+use crate::math::{Matrix3, Point3, Vector3};
+use crate::molecule::{BondOrder, Element};
 use crate::parallel::Run;
 use crate::structure::{Structure, StructureEditError, StructureEditor, StructureError};
-use crate::topology::{AtomSelection, ChainId, SelectionError, Topology};
+use crate::topology::edit::EditAtomId;
+use crate::topology::{
+    AtomSelection, ChainId, InstanceAtomId, InstanceBondId, SelectionError, Topology,
+};
 use crate::units::{Quantity, ANGSTROM, CANONICAL_LENGTH_UNIT};
 
 use super::super::MmcifBlock;
 use super::atom_site::optional;
+use super::connectivity::{
+    covalent_bonding_radius, within_bonding_distance, COVALENT_BOND_TOLERANCE_ANGSTROM,
+};
+use super::disulfides::CYSTEINES;
 use super::types::{AssemblyOmissionReason, StructureInterpretIssue};
 use crate::io::mmcif::category::MmcifCategory;
 use crate::io::pdb::document::PdbBiomolecule;
@@ -150,9 +158,19 @@ impl Assembly {
     /// and author alike, on its chains and atom sites, as wwPDB assembly files
     /// name copies: chain `A` under operator `2` becomes `A-2`, under the
     /// product of `12` and `60` `A-12-60`.
-    /// Atoms come in generator, operation and source dense order. A generator's
-    /// chains that are bonded to chains it does not list lose those bonds. The
-    /// structure has no cell, since copies are not a lattice's content.
+    /// Atoms come in generator, operation and source dense order.
+    ///
+    /// A bond between chains of two generators joins their copies under each
+    /// operation both generators apply. A copy whose chain is bonded to a
+    /// chain no copy under its operation holds loses the bond, and its atom
+    /// with a fixed hydrogen count takes a hydrogen in its place, as a
+    /// subset does; [`AssemblyReport::cut_bonds`] lists these. Cysteine `SG`
+    /// atoms of different copies within bonding distance form disulfides,
+    /// as reading forms them within the asymmetric unit: when neither carries
+    /// a hydrogen atom or a bond to another residue, nearest pairs first;
+    /// [`AssemblyReport::created_bonds`] lists them. Other links a source
+    /// states to a symmetry mate stay import issues. The structure has no
+    /// cell, since copies are not a lattice's content.
     ///
     /// # Errors
     ///
@@ -160,7 +178,7 @@ impl Assembly {
     /// [`AssemblyError::RepeatedCopy`] when two copies of one chain would take
     /// the same identifiers, and the structure errors of taking the chains
     /// and publishing the copies.
-    pub fn to_structure(&self, structure: &Structure) -> Result<Structure, AssemblyError> {
+    pub fn to_structure(&self, structure: &Structure) -> Result<AssemblyStructure, AssemblyError> {
         self.to_structure_with(structure, Run::default())
     }
 
@@ -174,17 +192,22 @@ impl Assembly {
         &self,
         structure: &Structure,
         run: Run<'_>,
-    ) -> Result<Structure, AssemblyError> {
+    ) -> Result<AssemblyStructure, AssemblyError> {
         let cancellation = run.cancellation();
         let cancelled = |source| AssemblyError::Cancelled {
             assembly: self.id.clone(),
             source,
         };
+        let edit = |source| AssemblyError::Edit {
+            assembly: self.id.clone(),
+            source,
+        };
         let topology = structure.shared_topology();
+        let links = ChainLinks::of(&topology);
         let mut editor = StructureEditor::new();
         let mut copies = HashSet::<(ChainId, String)>::new();
-        let mut copied = false;
-        for generator in &self.generators {
+        let mut placed = Vec::<PlacedCopy>::new();
+        for (generator_index, generator) in self.generators.iter().enumerate() {
             Cancellation::poll(cancellation).map_err(cancelled)?;
             let listed = generator
                 .chains
@@ -208,7 +231,8 @@ impl Assembly {
             if selection.is_empty() {
                 continue;
             }
-            let part = if selection.len() == structure.atom_count() {
+            let whole = selection.len() == structure.atom_count();
+            let part = if whole {
                 structure.clone()
             } else {
                 structure
@@ -218,7 +242,21 @@ impl Assembly {
                         source,
                     })?
             };
-            for operation in &generator.operations {
+            // The atoms each copy is tracked by: the ends of bonds that leave
+            // the generator's chains, and sulfurs that can form disulfides.
+            let listed_ids = chains.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+            let tracked = links.tracked(&listed_ids);
+            let in_part = if whole {
+                tracked.iter().map(|&atom| (atom, atom)).collect()
+            } else {
+                let tracked = tracked.iter().copied().collect::<HashSet<_>>();
+                selection
+                    .atom_ids()
+                    .zip(part.topology().atom_ids().iter().copied())
+                    .filter(|(atom, _)| tracked.contains(atom))
+                    .collect::<HashMap<_, _>>()
+            };
+            for (operation_index, operation) in generator.operations.iter().enumerate() {
                 Cancellation::poll(cancellation).map_err(cancelled)?;
                 let suffix = (!operation.is_identity()).then(|| operation.name());
                 for (chain, label) in &chains {
@@ -230,7 +268,7 @@ impl Assembly {
                         });
                     }
                 }
-                editor
+                let mapping = editor
                     .append_moved_copy(
                         &part,
                         operation.rotation,
@@ -242,23 +280,308 @@ impl Assembly {
                             )
                         },
                     )
-                    .map_err(|source| AssemblyError::Edit {
-                        assembly: self.id.clone(),
-                        source,
-                    })?;
-                copied = true;
+                    .map_err(edit)?;
+                placed.push(PlacedCopy {
+                    generator: generator_index,
+                    operation: operation_index,
+                    chains: listed_ids.clone(),
+                    atoms: in_part
+                        .iter()
+                        .map(|(&atom, part_atom)| (atom, mapping.atoms[part_atom]))
+                        .collect(),
+                });
             }
         }
-        if !copied {
+        if placed.is_empty() {
             return Err(AssemblyError::NoAtoms {
                 assembly: self.id.clone(),
             });
         }
         Cancellation::poll(cancellation).map_err(cancelled)?;
-        editor.finish().map_err(|source| AssemblyError::Edit {
-            assembly: self.id.clone(),
-            source,
+        let cut_bonds = self
+            .join_copies(&links, &placed, &mut editor)
+            .map_err(edit)?;
+        Cancellation::poll(cancellation).map_err(cancelled)?;
+        let disulfides = bond_disulfides(&links, &placed, &mut editor).map_err(edit)?;
+        let (structure, correspondence) = editor.finish_with_correspondence().map_err(edit)?;
+        let created_bonds = disulfides
+            .into_iter()
+            .map(|atoms| AssemblyBond {
+                atoms: atoms.map(|atom| {
+                    correspondence
+                        .atom(atom)
+                        .expect("bonded atoms are published")
+                        .0
+                }),
+            })
+            .collect();
+        Ok(AssemblyStructure {
+            structure,
+            report: AssemblyReport {
+                cut_bonds,
+                created_bonds,
+            },
         })
+    }
+
+    /// Bonds each copy to the copy under the same operation that holds the
+    /// partner of a bond leaving its chains, and returns the bonds no copy
+    /// holds a partner for.
+    fn join_copies(
+        &self,
+        links: &ChainLinks,
+        placed: &[PlacedCopy],
+        editor: &mut StructureEditor,
+    ) -> Result<Vec<AssemblyCut>, StructureEditError> {
+        let mut cut = Vec::new();
+        for copy in placed {
+            let operation = &self.generators[copy.generator].operations[copy.operation];
+            for link in &links.bonds {
+                let (near, far) = match link.chains.map(|chain| copy.chains.contains(&chain)) {
+                    [true, false] => (0, 1),
+                    [false, true] => (1, 0),
+                    _ => continue,
+                };
+                let partner = placed.iter().find(|other| {
+                    other.chains.contains(&link.chains[far])
+                        && self.generators[other.generator].operations[other.operation]
+                            == *operation
+                });
+                match partner {
+                    // Each bond is made once, from the copy of its first atom.
+                    Some(other) if near == 0 => {
+                        editor.add_bond(
+                            copy.atoms[&link.atoms[0]],
+                            other.atoms[&link.atoms[1]],
+                            link.order,
+                        )?;
+                    }
+                    Some(_) => {}
+                    None => cut.push(AssemblyCut {
+                        bond: link.bond,
+                        operation: operation.name(),
+                    }),
+                }
+            }
+        }
+        Ok(cut)
+    }
+}
+
+/// One copy an assembly placed, with the draft handles of its tracked atoms.
+struct PlacedCopy {
+    generator: usize,
+    operation: usize,
+    chains: HashSet<ChainId>,
+    atoms: HashMap<InstanceAtomId, EditAtomId>,
+}
+
+/// A bond of the source between two chains.
+struct ChainLink {
+    bond: InstanceBondId,
+    atoms: [InstanceAtomId; 2],
+    chains: [ChainId; 2],
+    order: BondOrder,
+}
+
+/// What building copies needs of the source's bonds: those between chains,
+/// and the cysteine sulfurs free to form a disulfide.
+struct ChainLinks {
+    bonds: Vec<ChainLink>,
+    sulfurs: Vec<(InstanceAtomId, ChainId)>,
+}
+
+impl ChainLinks {
+    fn of(topology: &Topology) -> Self {
+        let chain = |atom: crate::topology::AtomView<'_>| atom.chain().map(|chain| chain.id());
+        let bonds = topology
+            .bonds()
+            .filter_map(|bond| {
+                let atoms = bond.atoms();
+                let [Some(left), Some(right)] = atoms.map(chain) else {
+                    return None;
+                };
+                (left != right).then(|| ChainLink {
+                    bond: bond.id(),
+                    atoms: atoms.map(|atom| atom.id()),
+                    chains: [left, right],
+                    order: bond.bond().order(),
+                })
+            })
+            .collect();
+        let sulfur = Element::from_symbol("S").expect("sulfur");
+        let sulfurs = topology
+            .atoms()
+            .filter(|atom| atom.atom().element == sulfur)
+            .filter_map(|atom| {
+                let site = atom.atom_site()?;
+                let residue = site.residue();
+                let cysteine = CYSTEINES
+                    .iter()
+                    .any(|name| residue.name().eq_ignore_ascii_case(name));
+                let named = site
+                    .metadata()
+                    .label_atom_id()
+                    .or(site.metadata().auth_atom_id());
+                let free = atom.neighbors().all(|neighbor| {
+                    neighbor.atom().element.atomic_number() != 1
+                        && neighbor.residue().map(|other| other.id()) == Some(residue.id())
+                });
+                (cysteine && named == Some("SG") && free).then(|| (atom.id(), residue.chain().id()))
+            })
+            .collect();
+        Self { bonds, sulfurs }
+    }
+
+    /// The atoms of `chains` a copy of them is tracked by.
+    fn tracked(&self, chains: &HashSet<ChainId>) -> Vec<InstanceAtomId> {
+        let mut atoms = self
+            .bonds
+            .iter()
+            .flat_map(|link| link.atoms.into_iter().zip(link.chains))
+            .chain(self.sulfurs.iter().copied())
+            .filter(|(_, chain)| chains.contains(chain))
+            .map(|(atom, _)| atom)
+            .collect::<Vec<_>>();
+        atoms.sort_unstable();
+        atoms.dedup();
+        atoms
+    }
+}
+
+/// Bonds the free cysteine sulfurs of different copies that lie within
+/// bonding distance, nearest pairs first, each sulfur once, and returns them.
+fn bond_disulfides(
+    links: &ChainLinks,
+    placed: &[PlacedCopy],
+    editor: &mut StructureEditor,
+) -> Result<Vec<[EditAtomId; 2]>, StructureEditError> {
+    let sulfur = Element::from_symbol("S").expect("sulfur");
+    let mut sulfurs = Vec::<(usize, EditAtomId, Point3)>::new();
+    for (index, copy) in placed.iter().enumerate() {
+        for (atom, _) in &links.sulfurs {
+            let Some(&handle) = copy.atoms.get(atom) else {
+                continue;
+            };
+            let point = editor
+                .position(handle)
+                .expect("copied atoms are live")
+                .value_in(ANGSTROM)
+                .expect("positions are lengths");
+            sulfurs.push((index, handle, point));
+        }
+    }
+    // Sorted along x, each sulfur meets only those within bonding reach on x.
+    let reach = 2.0 * covalent_bonding_radius(sulfur).0 + COVALENT_BOND_TOLERANCE_ANGSTROM;
+    sulfurs.sort_by(|a, b| a.2.x.total_cmp(&b.2.x).then(a.1.cmp(&b.1)));
+    let mut pairs = Vec::new();
+    for (index, &(left_copy, left, left_point)) in sulfurs.iter().enumerate() {
+        for &(right_copy, right, right_point) in &sulfurs[index + 1..] {
+            if right_point.x - left_point.x > reach {
+                break;
+            }
+            if left_copy != right_copy
+                && within_bonding_distance((sulfur, left_point), (sulfur, right_point))
+            {
+                pairs.push((
+                    (left_point - right_point).norm(),
+                    left.min(right),
+                    left.max(right),
+                ));
+            }
+        }
+    }
+    // Ties fall to copy order, so the result does not depend on the sweep.
+    pairs.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    let mut bonded = HashSet::new();
+    let mut created = Vec::new();
+    for (_, left, right) in pairs {
+        if bonded.contains(&left) || bonded.contains(&right) {
+            continue;
+        }
+        bonded.extend([left, right]);
+        editor.add_bond(left, right, BondOrder::Single)?;
+        created.push([left, right]);
+    }
+    Ok(created)
+}
+
+/// An assembly built from a structure, with the bonds the build changed.
+#[derive(Debug, Clone)]
+pub struct AssemblyStructure {
+    structure: Structure,
+    report: AssemblyReport,
+}
+
+impl AssemblyStructure {
+    /// The assembly.
+    pub fn structure(&self) -> &Structure {
+        &self.structure
+    }
+
+    /// Takes the assembly.
+    pub fn into_structure(self) -> Structure {
+        self.structure
+    }
+
+    /// The bonds the build cut and created.
+    pub fn report(&self) -> &AssemblyReport {
+        &self.report
+    }
+}
+
+/// The bonds building an assembly cut and created; see
+/// [`Assembly::to_structure`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AssemblyReport {
+    cut_bonds: Vec<AssemblyCut>,
+    created_bonds: Vec<AssemblyBond>,
+}
+
+impl AssemblyReport {
+    /// The source bonds a copy lost because no copy under its operation
+    /// holds the partner, in copy order. Its atom with a fixed hydrogen count
+    /// took a hydrogen in the bond's place.
+    pub fn cut_bonds(&self) -> &[AssemblyCut] {
+        &self.cut_bonds
+    }
+
+    /// The disulfides formed between copies, nearest first.
+    pub fn created_bonds(&self) -> &[AssemblyBond] {
+        &self.created_bonds
+    }
+}
+
+/// A source bond one copy of an assembly lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssemblyCut {
+    bond: InstanceBondId,
+    operation: String,
+}
+
+impl AssemblyCut {
+    /// The bond in the source structure.
+    pub const fn bond(&self) -> InstanceBondId {
+        self.bond
+    }
+
+    /// The name of the operation that placed the copy; see
+    /// [`AssemblyOperation::name`].
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+}
+
+/// A bond building an assembly created between copies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AssemblyBond {
+    atoms: [InstanceAtomId; 2],
+}
+
+impl AssemblyBond {
+    /// The bonded atoms in the assembly.
+    pub const fn atoms(&self) -> [InstanceAtomId; 2] {
+        self.atoms
     }
 }
 

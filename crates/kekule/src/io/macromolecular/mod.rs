@@ -35,7 +35,10 @@ pub use altloc::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
     AltLocSelectionReason, SourceResidueId, SourceResiduePosition,
 };
-pub use assemblies::{Assembly, AssemblyError, AssemblyGenerator, AssemblyOperation};
+pub use assemblies::{
+    Assembly, AssemblyBond, AssemblyCut, AssemblyError, AssemblyGenerator, AssemblyOperation,
+    AssemblyReport, AssemblyStructure,
+};
 pub(crate) use mmcif::{
     alternate_location_inventory, interpret_mmcif, interpret_mmcif_block,
     interpret_mmcif_conformations, interpret_mmcif_conformations_block,
