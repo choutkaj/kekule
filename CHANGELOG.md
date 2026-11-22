@@ -729,10 +729,11 @@ the main branch migrates by the table under "From the SampleSet API".
     count is zero (`ProtonationFromHydrogens`).
   - A hydrogen that fills an absent template atom's place, as `HO5'` at a
     5' end without phosphate, is no positive charge.
-  - A hydrogen and a deuterium within 0.6 Å of each other whose
-    occupancies sum to at most one are alternates of one site: the larger
-    occupancy stays, the deuterium on a tie, and the other is reported
-    (`AlternateLocationOmitted`).
+  - A hydrogen and a deuterium within 0.6 Å of each other are alternates
+    of one site when their alternate locations differ or their occupancies
+    sum to at most one. The selected location holds the site; otherwise
+    the larger occupancy stays, the deuterium on a tie. The other is
+    reported (`AlternateLocationOmitted`).
   - An acid oxygen the template already charges keeps that charge without
     its hydrogen, as heme's carboxylates. Without hydrogens a polymer
     residue takes the variant that charges the fewest atoms, so a

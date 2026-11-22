@@ -156,6 +156,9 @@ fn candidate_rows<'a>(
     Ok(selected)
 }
 
+/// The atoms of the residue that the selected rows leave out. A hydrogen
+/// whose site a selected deuterium holds, or the reverse, is not missing
+/// (see [`share_hydrogen_site`]).
 fn missing_atoms(residue: &Residue<'_>, selected: &[&AtomRow]) -> Vec<String> {
     let Some(first) = selected.first() else {
         return Vec::new();
@@ -164,10 +167,25 @@ fn missing_atoms(residue: &Residue<'_>, selected: &[&AtomRow]) -> Vec<String> {
         .iter()
         .map(|row| row.atom_name.as_str())
         .collect::<BTreeSet<_>>();
+    let held = |row: &AtomRow| {
+        let deuterium = row.isotope == Some(2);
+        row.element.atomic_number() == 1
+            && selected.iter().any(|other| {
+                other.element.atomic_number() == 1
+                    && (other.isotope == Some(2)) != deuterium
+                    && if deuterium {
+                        share_hydrogen_site(hydrogen_site(row), hydrogen_site(other))
+                    } else {
+                        share_hydrogen_site(hydrogen_site(other), hydrogen_site(row))
+                    }
+            })
+    };
     residue
         .rows
         .iter()
-        .filter(|row| row.comp_id == first.comp_id && !present.contains(row.atom_name.as_str()))
+        .filter(|row| {
+            row.comp_id == first.comp_id && !present.contains(row.atom_name.as_str()) && !held(row)
+        })
         .map(|row| row.atom_name.clone())
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -439,10 +457,7 @@ pub(in crate::io::macromolecular) fn select_alt_locations(
     Ok(selected)
 }
 
-/// The selected rows that alternate with another selected row at one
-/// hydrogen site: of a deuterium and a hydrogen of one residue that share a
-/// site (see [`share_hydrogen_site`]), the one with the smaller occupancy,
-/// the hydrogen on a tie. Each is reported as an omitted alternate.
+/// The hydrogen site of a row of a hydrogen or deuterium.
 fn hydrogen_site(row: &AtomRow) -> HydrogenSite<'_> {
     (
         row.isotope == Some(2),
@@ -452,6 +467,10 @@ fn hydrogen_site(row: &AtomRow) -> HydrogenSite<'_> {
     )
 }
 
+/// The selected rows that alternate with another selected row at one
+/// hydrogen site: of a deuterium and a hydrogen of one residue that share a
+/// site (see [`share_hydrogen_site`]), the one with the smaller occupancy,
+/// the hydrogen on a tie. Each is reported as an omitted alternate.
 fn shared_hydrogen_sites(
     residues: &[Residue<'_>],
     selected: &[&AtomRow],

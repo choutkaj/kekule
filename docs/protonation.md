@@ -62,10 +62,12 @@ ties go to the template, then the variants in order.
 Hydrogens with zero occupancy, in a residue whose heavy atoms have
 occupancy, are not read (`ZeroOccupancyHydrogens`). A source whose
 occupancies are all zero states none and keeps its hydrogens. A hydrogen and
-a deuterium within 0.6 Å of each other whose occupancies sum to at most one
-are alternates of one site, as in neutron structures. The one with the
-larger occupancy stays, the deuterium on a tie, and the other is reported
-as an omitted alternate location (`AlternateLocationOmitted`).
+a deuterium within 0.6 Å of each other are alternates of one site, as in
+neutron structures, when their alternate locations differ or their
+occupancies sum to at most one. At different alternate locations, the
+selected location holds the site. Otherwise the one with the larger
+occupancy stays, the deuterium on a tie. The other is reported as an
+omitted alternate location (`AlternateLocationOmitted`).
 
 Hydrogens no template names bond by name where convention places them, with
 `BondEvidence::HydrogenName`: `H1`-`H3`, `HT1`-`HT3`, and `HN1`-`HN3` on a

@@ -1182,6 +1182,63 @@ fn a_hydrogen_and_a_deuterium_sharing_a_site_are_alternates() {
 }
 
 #[test]
+fn a_hydrogen_and_a_deuterium_at_other_alternate_locations_are_one_site() {
+    // A neutron structure's lysine: HZ1 at alternate location A and DZ1 at
+    // B, half each, 0.3 Å apart. Either location holds the site, so the
+    // residue reads with one of them, and NZ keeps three hydrogens.
+    let mut rows = sites("LYS");
+    let hz1 = rows.iter().position(|site| site.name == "HZ1").unwrap();
+    rows[hz1].occupancy = Some(0.5);
+    let mut deuterium = Site {
+        element: "D".to_owned(),
+        name: "DZ1".to_owned(),
+        ..rows[hz1].clone()
+    };
+    deuterium.point[0] += 0.3;
+    rows.push(deuterium);
+    let last = rows.len();
+    let text = block(&rows, "")
+        .lines()
+        .map(|line| {
+            if line == "_atom_site.pdbx_formal_charge" {
+                return format!("{line}\n_atom_site.label_alt_id");
+            }
+            let Some(serial) = line
+                .strip_prefix("ATOM ")
+                .and_then(|rest| rest.split_whitespace().next())
+                .and_then(|serial| serial.parse::<usize>().ok())
+            else {
+                return line.to_owned();
+            };
+            let alt = match serial {
+                serial if serial == hz1 + 1 => "A",
+                serial if serial == last => "B",
+                _ => ".",
+            };
+            format!("{line} {alt}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let result = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(charges(&result), charged(&[("A", "NZ", 1)]));
+    assert_eq!(state_at(&result, "A", 1, "NZ"), (1, 3));
+    let omitted = issues(&result)
+        .into_iter()
+        .filter_map(|issue| match issue {
+            Issue::AlternateLocationOmitted {
+                atom_name, alt_id, ..
+            } => Some((atom_name, alt_id)),
+            Issue::AlternateLocationIncomplete { .. } => panic!("{issue:?}"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(omitted, [("DZ1".to_owned(), Some("B".to_owned()))]);
+}
+
+#[test]
 fn writers_take_the_component_library_readers_use() {
     // A component that only the caller's library has, without OXT: its C
     // keeps no hydrogen, which only that library's readers fix again.
