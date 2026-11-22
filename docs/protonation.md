@@ -206,7 +206,8 @@ heme or of iron-sulfur clusters, is read as zero and reported
 (`TemplateChargeUnknown`).
 
 A residue without a template takes stated charges, then the charges of the
-block's own `_chem_comp_atom` table, then the charges its bonds imply
+block's own `_chem_comp_atom` table, then those of the complete Chemical
+Component Dictionary, then the charges its bonds imply
 (`ChargesFromBonds`). An atom with more bonds than its neutral valence takes
 the charge that makes its valence valid, +1 before -1, and an onium centre
 takes +1 rather than a hydrogen. One singly bonded terminal chalcogen or
@@ -214,3 +215,38 @@ boron neighbour of either takes -1 with it, as the oxygen of DMSO drawn with
 a single bond and one oxygen of a nitro group. A residue of one
 atom, or one holding a metal, that nothing gives charges is reported
 (`TemplateMissing`).
+
+The dictionary's charges (`components::DictionaryCharges`, from the
+dictionary's entries modified up to 2026-11-13) cover every component with
+a charged atom or one whose charge it states as unknown. They apply to a
+residue whose component neither the caller's library nor the bundle holds:
+
+- Atoms match by name and element. A residue with a heavy atom the entry
+  does not name takes none of its charges, and is reported
+  (`DictionaryAtomsUnmatched`). Atoms the residue lacks need no match.
+- An atom takes its dictionary charge when the source states no charge for
+  it and no model hydrogen bonds it. So tris without hydrogens is the
+  ammonium, and with two hydrogens on its nitrogen it is the amine. A
+  stated 0 counts, unlike in a templated residue without hydrogens, so a
+  written neutral amine reads back as one: writers check the charges
+  readers derive only for templated residues.
+- A charge the atom's bonds cannot hold does not apply, as -1 on a chloride
+  that distances bond to gold. The atom's charge follows from its bonds.
+- An unknown charge, such as that of many metals, is read as 0
+  (`TemplateChargeUnknown`).
+- The charges applied, and those that do not fit, are reported
+  (`ChargesFromDictionary`).
+
+The table holds charges only: bonds still come from the file or from
+distances. A component the dictionary states as neutral has no entry, and
+reads as before.
+
+The dictionary states each component's state, so its charges are stated
+states. As in a templated residue, only the acid hydroxyls it leaves neutral
+take their pH 7 state: in a residue without hydrogens whose bonds state
+their orders, a carboxylic, phosphoric, phosphonic, or sulfonic acid
+hydroxyl at 0 takes -1, and the residue counts in `ProtonationAssumed`.
+Betaine, a cation with a carboxylic acid in the dictionary, reads as the
+zwitterion. Without stated orders, as when distances give the bonds, a
+hydroxyl and a carbonyl oxygen look alike, and acids keep the dictionary's
+state.

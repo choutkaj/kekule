@@ -10,7 +10,8 @@
 //! Structures that molecular-mechanics tools write use force-field residue and
 //! atom names; [`ComponentLibrary::amber`](crate::components::ComponentLibrary::amber)
 //! and [`ComponentLibrary::charmm`](crate::components::ComponentLibrary::charmm)
-//! define them.
+//! define them. [`DictionaryCharges`] holds the formal charges of the complete
+//! dictionary, which readers give residues of components without a template.
 //!
 //! ```
 //! use kekule::components::ComponentLibrary;
@@ -23,5 +24,6 @@
 //! ```
 
 pub use crate::io::{
-    Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary, ComponentLinking,
+    Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary,
+    ComponentLinking, DictionaryAtomCharge, DictionaryCharges,
 };

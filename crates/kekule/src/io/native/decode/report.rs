@@ -3,8 +3,8 @@
 use std::io::Read;
 
 use super::super::{
-    AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DISULFIDE_SINCE, PDB_NUMBERING_SINCE,
-    PROTONATION_SINCE,
+    AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DICTIONARY_CHARGES_SINCE, DISULFIDE_SINCE,
+    PDB_NUMBERING_SINCE, PROTONATION_SINCE,
 };
 use super::{bond_order, Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
@@ -897,6 +897,17 @@ impl<R: Read> Decoder<'_, R> {
             },
             48 if self.version >= PROTONATION_SINCE => Issue::SequenceNotPlaced {
                 chain_id: self.str()?,
+            },
+            49 if self.version >= DICTIONARY_CHARGES_SINCE => Issue::ChargesFromDictionary {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                charged_atoms: self.charged_atoms()?,
+                unheld: self.charged_atoms()?,
+            },
+            50 if self.version >= DICTIONARY_CHARGES_SINCE => Issue::DictionaryAtomsUnmatched {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: self.str_list()?,
             },
             other => {
                 return Err(

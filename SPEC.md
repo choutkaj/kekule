@@ -954,7 +954,12 @@ bond within one residue only when this reading gives its order back.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral
-histidine tautomers; callers supply more as context. A residue whose atoms
+histidine tautomers; callers supply more as context. It also bundles the
+formal charges of every dictionary component with a charged or unknown atom
+charge (`components::DictionaryCharges`). A residue of a component without a
+template takes them by atom name and element, where neither the source nor a
+bonded hydrogen states a charge, and is reported; a residue with atoms the
+entry does not name takes none. A residue whose atoms
 do not fit its template otherwise takes, when one names all its heavy atoms,
 the dictionary template under CHARMM atom names, as for isoleucine's `CD`,
 with the dictionary's hydrogens and charges; else the AMBER, else the

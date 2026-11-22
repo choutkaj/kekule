@@ -658,8 +658,11 @@ pub enum StructureInterpretIssue {
     },
     /// Residues without hydrogens on their heteroatoms took an assumed
     /// protonation. Strong acids take their state at pH 7 in every residue
-    /// a dictionary template covers: carboxylic, phosphoric, phosphonic,
-    /// and sulfonic acids and sulfates are deprotonated. Residues of polymer
+    /// a dictionary template covers, and in residues with stated bond orders
+    /// that take charges from the Chemical Component Dictionary
+    /// ([`Self::ChargesFromDictionary`]): carboxylic, phosphoric,
+    /// phosphonic, and sulfonic acids and sulfates are deprotonated. An acid
+    /// oxygen the template or dictionary charges keeps that charge. Residues of polymer
     /// templates, in a chain or alone, also take the ammonium of a true N
     /// terminus and their least charged variant, as neutral histidine with
     /// its hydrogen on `NE2`. Other ligands keep the template's state
@@ -788,6 +791,35 @@ pub enum StructureInterpretIssue {
         residue: SourceResidueId,
         /// Its component ID.
         component_id: String,
+    },
+    /// A residue of a component without a template took the formal charges
+    /// that the complete Chemical Component Dictionary states for its atoms
+    /// ([`DictionaryCharges`](crate::components::DictionaryCharges)), where
+    /// neither the source nor a bonded hydrogen states one. A charge that
+    /// the atom's bonds cannot hold, as -1 on a chloride bonded to a metal,
+    /// does not apply: the atom's charge follows from its bonds.
+    ChargesFromDictionary {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The charged atoms, by atom name, with their formal charge in e.
+        charged_atoms: Vec<(String, i8)>,
+        /// The atoms whose bonds cannot hold their dictionary charge, by
+        /// atom name, with that charge in e.
+        unheld: Vec<(String, i8)>,
+    },
+    /// A residue of a component without a template has atoms that the
+    /// Chemical Component Dictionary's entry of that component does not name
+    /// with their element, so it takes none of the dictionary's charges.
+    /// Its charges follow from its bonds.
+    DictionaryAtomsUnmatched {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atoms the entry does not name, by atom name.
+        atoms: Vec<String>,
     },
     /// Heavy atoms of a residue's template that the residue lacks, other
     /// than atoms that leave when it links. Their bonded atoms take
@@ -1389,6 +1421,54 @@ impl fmt::Display for StructureInterpretIssue {
                 "{} (component {component_id:?}) has no template, and the source states no \
                  charges for it. Its atoms are read as neutral.",
                 Capitalized(residue)
+            ),
+            Self::ChargesFromDictionary {
+                residue,
+                component_id,
+                charged_atoms,
+                unheld,
+            } => {
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) has no template.",
+                    Capitalized(residue)
+                )?;
+                if !charged_atoms.is_empty() {
+                    let (atoms, verb) = if charged_atoms.len() == 1 {
+                        ("Atom", "takes its charge")
+                    } else {
+                        ("Atoms", "take their charges")
+                    };
+                    write!(
+                        formatter,
+                        " {atoms} {} {verb} from the Chemical Component Dictionary.",
+                        listed(&Charged::all(charged_atoms))
+                    )?;
+                }
+                if !unheld.is_empty() {
+                    let (atoms, verb) = if unheld.len() == 1 {
+                        ("Atom", "keeps the charge of its bonds")
+                    } else {
+                        ("Atoms", "keep the charges of their bonds")
+                    };
+                    write!(
+                        formatter,
+                        " {atoms} {} {verb}, which cannot hold the dictionary's.",
+                        listed(&Charged::all(unheld))
+                    )?;
+                }
+                Ok(())
+            }
+            Self::DictionaryAtomsUnmatched {
+                residue,
+                component_id,
+                atoms,
+            } => write!(
+                formatter,
+                "The Chemical Component Dictionary entry of component {component_id:?} does not \
+                 name {} {} of {residue}. It gives the residue no charges.",
+                if atoms.len() == 1 { "atom" } else { "atoms" },
+                listed(&Quoted::all(atoms))
             ),
             Self::AtomsMissing {
                 residue,

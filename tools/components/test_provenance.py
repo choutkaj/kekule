@@ -47,5 +47,20 @@ class DictionaryCodeProvenance(unittest.TestCase):
             self.assertIn(identifier, identifiers)
 
 
+
+class DictionaryChargeProvenance(unittest.TestCase):
+    def setUp(self):
+        self.lock = json.loads((HERE / "charges.lock.json").read_text(encoding="utf-8"))
+
+    def test_shipped_table_matches_its_lock(self):
+        path = ROOT / self.lock["output"]
+        self.assertEqual(digest(path), self.lock["output_sha256"])
+
+    def test_table_states_the_locked_release(self):
+        table = (ROOT / self.lock["output"]).read_text(encoding="utf-8")
+        release = f"# Release: entries modified up to {self.lock['latest_modified']}."
+        self.assertIn(release, table.splitlines())
+
+
 if __name__ == "__main__":
     unittest.main()
