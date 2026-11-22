@@ -45,15 +45,18 @@ pub fn parse_reader(
 /// [`MmcifWriteOptions::block_name`], numbered when there are several,
 /// unless [`MmcifBlockSource::with_block_name`] names them.
 ///
-/// As the PDB's own files do, a block states as `_struct_conn` rows only
-/// the bonds its reader cannot derive. A residue whose bundled component
-/// template, or the protonation variant its hydrogens select, gives it
-/// exactly its bonds is left to the template, and the peptide or
-/// phosphodiester link between residues adjacent in sequence is left to
-/// polymer linkage when it lies within bonding distance in the written
-/// coordinates. Every other bond is stated: links between residues,
-/// dative bonds, and all bonds of a residue without such a template,
-/// such as a ligand or a structure read from XYZ. Reading the block back
+/// As the PDB's own files do, a block states only the bonds its reader
+/// cannot derive. A residue whose bundled component template, or the
+/// protonation variant its hydrogens select, gives it exactly its bonds is
+/// left to the template, and the peptide or phosphodiester link between
+/// residues adjacent in sequence is left to polymer linkage when it lies
+/// within bonding distance in the written coordinates. The bonds of a
+/// component without such a template, such as a ligand or a structure read
+/// from XYZ, are `_chem_comp_bond` rows, with aromatic and
+/// metal-coordination flags, when all its residues bond alike. Every other
+/// bond is a `_struct_conn` row: links between residues, dative bonds
+/// between residues or without a metal, and the bonds of components whose
+/// residues differ. Reading the block back
 /// gives every bond with its order, though bonds may come back in another
 /// order within a molecule. Each partner is selected by label and author
 /// sequence numbers, so that waters of one asym are told apart.

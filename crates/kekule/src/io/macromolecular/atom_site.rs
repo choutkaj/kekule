@@ -2,6 +2,7 @@
 //! atom rows, the source-neutral input of interpretation.
 use super::types::{poll_every, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
+use crate::topology::{is_ion, is_water};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::math::Point3;
@@ -422,29 +423,6 @@ pub(super) fn read_atom_rows(
         });
     }
     Ok(rows)
-}
-
-/// Water residue names of the PDB and of molecular dynamics force fields and
-/// programs.
-pub(super) fn is_water(comp_id: &str) -> bool {
-    [
-        "HOH", "WAT", "DOD", "SOL", "TIP", "TIP3", "TIP4", "TIP5", "T3P", "T4P", "T5P", "SPC",
-        "H2O", "HHO", "OHH",
-    ]
-    .iter()
-    .any(|water| comp_id.eq_ignore_ascii_case(water))
-}
-
-/// Monatomic ion residue names of the PDB and of molecular dynamics force
-/// fields, which `ATOM` records may carry but which are never polymer.
-pub(super) fn is_ion(comp_id: &str) -> bool {
-    [
-        "LI", "NA", "K", "RB", "CS", "MG", "CA", "SR", "BA", "MN", "FE", "FE2", "CO", "NI", "CU",
-        "CU1", "ZN", "CD", "HG", "F", "CL", "BR", "IOD", "Li+", "Na+", "K+", "Rb+", "Cs+", "F-",
-        "Cl-", "Br-", "I-", "MG2", "CA2", "ZN2", "LIT", "SOD", "POT", "RUB", "CES", "CAL", "CLA",
-        "BAR", "CAD",
-    ]
-    .contains(&comp_id)
 }
 
 fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {

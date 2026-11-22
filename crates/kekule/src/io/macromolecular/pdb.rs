@@ -14,10 +14,10 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use crate::molecule::{BondOrder, Element};
 
 use super::super::element_symbol::parse_structure_element_symbol;
-use super::super::{PdbAtom, PdbAtomKind, PdbDocument, PdbPartner};
+use super::super::{PdbAtom, PdbAtomKind, PdbConect, PdbDocument, PdbPartner};
 use super::altloc::inventory;
 use super::assemblies::read_pdb_assemblies;
-use super::atom_site::{is_ion, is_water, AtomRow};
+use super::atom_site::AtomRow;
 use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
@@ -31,6 +31,7 @@ use super::types::{
 };
 use super::{interpret_source, stated_cell, AltLocResidue, StructureSource};
 use crate::components::ComponentLibrary;
+use crate::topology::{is_ion, is_water};
 
 pub(crate) fn interpret_pdb(
     document: &PdbDocument,
@@ -497,26 +498,27 @@ fn name_element(atom: &PdbAtom, conventional: bool) -> Result<Element, FormatErr
     }
 }
 
-/// Whether the entry aligns atom names by the PDB convention: some name
-/// starts in column 14, and no name shorter than four characters starts in
-/// column 13 unless its first two letters are an element symbol, as `C1`
-/// written there would not be.
+/// Whether the entry aligns atom names by the PDB element convention: some
+/// name shorter than four characters starts in column 13 with a two-letter
+/// element symbol, as `FE` does, and none starts there without one, as `C1`
+/// would. Writers that pad every short name into column 14 show no such
+/// name.
 fn follows_name_alignment(atoms: &[PdbAtom]) -> bool {
-    let mut aligned = false;
+    let mut evidence = false;
     for atom in atoms {
-        match atom.name_field().as_bytes().first() {
-            Some(b' ') => aligned = true,
-            Some(first)
-                if first.is_ascii_alphabetic()
-                    && atom.name().len() < 4
-                    && two_letter_symbol(atom.name()).is_none() =>
-            {
+        let starts_in_13 = atom
+            .name_field()
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphabetic);
+        if starts_in_13 && atom.name().len() < 4 {
+            if two_letter_symbol(atom.name()).is_none() {
                 return false;
             }
-            _ => {}
+            evidence = true;
         }
     }
-    aligned
+    evidence
 }
 
 /// An element symbol without a mass number.
@@ -537,13 +539,14 @@ fn two_letter_symbol(text: &str) -> Option<Element> {
 
 /// The element a PDB atom name implies by convention, for an atom no
 /// template names. A one-atom residue named for its element, such as `CA`,
-/// is that element. A name starting in column 14, or with a digit, as in
-/// `1HG1`, has a one-letter symbol in column 14. A four-character name
-/// starting with `H` is a hydrogen. A shorter name starting in column 13 has
-/// a two-letter symbol there in an entry that follows the
-/// [alignment convention](follows_name_alignment). Otherwise, and for other
-/// four-character names, a name whose first letter and first two letters
-/// are both element symbols is ambiguous.
+/// is that element. A name starting with a digit, as in `1HG1`, has a
+/// one-letter symbol in column 14. A four-character name starting with `H`
+/// is a hydrogen. In an entry that follows the
+/// [alignment convention](follows_name_alignment), a name starting in
+/// column 14 has a one-letter symbol and a shorter name starting in column
+/// 13 a two-letter one. Otherwise, and for other four-character names, a
+/// name whose first letter and first two letters are both element symbols
+/// is ambiguous, as ` CL1` is in an entry that pads every name.
 fn element_from_atom_name(name_field: &str, residue_name: &str, conventional: bool) -> NameElement {
     let name = name_field.trim();
     if name.eq_ignore_ascii_case(residue_name) {
@@ -557,8 +560,11 @@ fn element_from_atom_name(name_field: &str, residue_name: &str, conventional: bo
     let one = element_symbol(&name_field[start..=start]);
     let two = two_letter_symbol(&name_field[start..]);
     let four = start == 0 && name.len() == 4;
+    let digit_led = name_field[..start].bytes().any(|byte| byte != b' ');
     match (one, two) {
-        // Column 14 holds a one-letter symbol.
+        // A digit in column 13 leaves column 14 a one-letter symbol.
+        (Some(one), _) if digit_led => NameElement::Element(one),
+        (Some(one), Some(two)) if start > 0 && !conventional => NameElement::Ambiguous([one, two]),
         (Some(one), _) if start > 0 => NameElement::Element(one),
         _ if four && name_field.as_bytes()[0].eq_ignore_ascii_case(&b'H') => {
             NameElement::Element(Element::from_atomic_number(1).expect("hydrogen"))
@@ -581,6 +587,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             order: DeclaredOrder::Stated(BondOrder::Single),
             partners: [partner(left, Some("SG")), partner(right, Some("SG"))],
             connectivity_only: false,
+            model: None,
         })));
     }
     // LINK records state no bond type; a link between a metal and a
@@ -594,11 +601,19 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             order: DeclaredOrder::ByElements(BondOrder::Single),
             partners: [partner(left, None), partner(right, None)],
             connectivity_only: false,
+            model: None,
         })));
     }
     // Each bond is usually listed from both atoms. Listing a partner twice or
     // three times states a double or triple bond, by convention. Files that
-    // repeat the records in every model state each bond once per model.
+    // repeat the records in every model state each model's bonds; others
+    // state them once for all models.
+    let models = document
+        .conect_records()
+        .iter()
+        .map(PdbConect::model)
+        .collect::<BTreeSet<_>>();
+    let per_model = models.len() > 1;
     let mut listed = BTreeMap::<(Option<u32>, (u32, u32)), ([u8; 2], usize)>::new();
     for record in document.conect_records() {
         let serial = record.serial();
@@ -611,15 +626,17 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
                     format!("CONECT record bonds atom {serial} to itself"),
                 ));
             }
+            let model = record.model().filter(|_| per_model);
             let (counts, _) = listed
-                .entry((record.model(), (serial.min(bonded), serial.max(bonded))))
+                .entry((model, (serial.min(bonded), serial.max(bonded))))
                 .or_insert(([0, 0], line));
             let direction = usize::from(serial > bonded);
             counts[direction] = counts[direction].saturating_add(1);
         }
     }
-    let mut bonds = BTreeMap::<(u32, u32), (BondOrder, usize)>::new();
-    for ((_, (left, right)), (counts, line)) in listed {
+    let mut listed = listed.into_iter().collect::<Vec<_>>();
+    listed.sort_by_key(|&((model, pair), (_, line))| (line, model, pair));
+    for ((model, (left, right)), (counts, line)) in listed {
         let order = match counts[0].max(counts[1]) {
             1 => BondOrder::Single,
             2 => BondOrder::Double,
@@ -635,26 +652,6 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
                 ))
             }
         };
-        match bonds.get_mut(&(left, right)) {
-            None => {
-                bonds.insert((left, right), (order, line));
-            }
-            Some((first, first_line)) if *first == order => *first_line = (*first_line).min(line),
-            Some(_) => {
-                return Err(structure_error(
-                    DiagnosticKind::Inconsistent,
-                    Some(line),
-                    format!(
-                        "The CONECT records of two models list the bond between atoms {left} \
-                         and {right} a different number of times."
-                    ),
-                ))
-            }
-        }
-    }
-    let mut listed = bonds.into_iter().collect::<Vec<_>>();
-    listed.sort_by_key(|&(pair, (_, line))| (line, pair));
-    for ((left, right), (order, line)) in listed {
         records.push(ConnectionRecord::Bond(Box::new(DeclaredBond {
             connection_id: None,
             connection_type: "CONECT".to_owned(),
@@ -662,6 +659,7 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             order: DeclaredOrder::ByElements(order),
             partners: [serial_partner(left), serial_partner(right)],
             connectivity_only: true,
+            model: model.map(|model| model_id(Some(model))),
         })));
     }
     Ok(records)

@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide bond evidence (`7`) and no issue kinds 20 to 25. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide bond evidence (`7`) and no issue kinds 20 to 26. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -511,6 +511,7 @@ fields as `u8` (`0` atom serial numbers, `1` residue numbers).
 | 10 | `AlternateLocationOccupancyTie` | 23 | `UnsignedCharges` |
 | 11 | `ConnectivityCandidatesInferred` | 24 | `HexadecimalNumbers` |
 | 12 | `ResidueBondsInferred` | 25 | `NumbersRestart` |
+| | | 26 | `MetalBondsUnstated` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

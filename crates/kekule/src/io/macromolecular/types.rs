@@ -332,6 +332,18 @@ pub enum StructureInterpretIssue {
         /// back.
         source_line: usize,
     },
+    /// A residue without hydrogens has single bonds between a metal and a
+    /// non-metal whose source states no type, such as PDB `CONECT` records,
+    /// and no template decides them. Without hydrogens the file cannot tell
+    /// covalent from dative bonds, so they were read as covalent. A residue
+    /// with hydrogens takes dative bonds to non-metals whose other bonds
+    /// already fill their valence.
+    MetalBondsUnstated {
+        /// The residue.
+        residue: SourceResidueId,
+        /// The number of such bonds.
+        bonds: usize,
+    },
     /// Connection records of a non-covalent type, such as the hydrogen bonds
     /// a file lists, were not interpreted as bonds. Each such type is
     /// reported once.
@@ -585,6 +597,14 @@ impl fmt::Display for StructureInterpretIssue {
                 formatter,
                 "{} from line {source_line} are hexadecimal.",
                 Capitalized(field)
+            ),
+            Self::MetalBondsUnstated { residue, bonds } => write!(
+                formatter,
+                "{} has {} whose source does not say if covalent or dative. {} read as \
+                 covalent.",
+                Capitalized(residue),
+                counted(*bonds, "metal bond", "metal bonds"),
+                if *bonds == 1 { "It is" } else { "They are" }
             ),
             Self::NumbersRestart { field, source_line } => write!(
                 formatter,

@@ -6,7 +6,7 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::algorithms::{rdkit_valence_violation, ValenceViolation};
+use crate::algorithms::{allowed_valences, rdkit_valence_violation, ValenceViolation};
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
@@ -51,6 +51,9 @@ pub(crate) struct ListedBond {
     pub(crate) atoms: [AtomId; 2],
     pub(crate) order: BondOrder,
     pub(crate) evidence: raw::BondEvidence,
+    /// A single bond between a metal and a non-metal that the record states
+    /// without a type; see [`Resolver::decide_metal_bonds`].
+    pub(crate) unstated_metal_bond: bool,
 }
 
 pub(crate) fn record_evidence(
@@ -84,6 +87,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
         issues,
         model_id,
         cancellation,
+        unstated_metal_bonds: Vec::new(),
     };
     let residues = residue_atoms(atoms, cancellation)?;
     resolver.resolve(residues, listed)?;
@@ -495,6 +499,16 @@ pub(crate) fn covalent_bonding_radius(element: Element) -> (f64, bool) {
     }
 }
 
+/// Whether the two residue sites are a metal and a non-metal.
+fn metal_bond(residue: &ResidueAtoms, atoms: [AtomId; 2]) -> bool {
+    let [left, right] = atoms.map(|atom| {
+        residue
+            .site(atom)
+            .is_some_and(|site| raw::is_metal(site.element))
+    });
+    left != right
+}
+
 /// Whether two atoms lie within covalent bonding distance: the sum of their
 /// covalent radii plus a tolerance, and not implausibly close.
 pub(crate) fn within_bonding_distance(
@@ -550,6 +564,9 @@ struct Resolver<'r, 'g> {
     issues: &'g mut Vec<raw::StructureInterpretIssue>,
     model_id: &'r str,
     cancellation: Option<&'r Cancellation>,
+    /// Single bonds between a metal and a non-metal of one residue whose
+    /// source states no type; see [`Self::decide_metal_bonds`].
+    unstated_metal_bonds: Vec<[AtomId; 2]>,
 }
 
 impl<'r> Resolver<'r, '_> {
@@ -603,10 +620,18 @@ impl<'r> Resolver<'r, '_> {
                         continue;
                     };
                     let order =
-                        if self.is_coordination(bond, residue, template.as_ref(), [left, right]) {
-                            SourceBondOrder::Localized(BondOrder::Dative)
-                        } else {
-                            bond.order
+                        match self.is_coordination(bond, residue, template.as_ref(), [left, right])
+                        {
+                            Some(true) => SourceBondOrder::Localized(BondOrder::Dative),
+                            Some(false) => bond.order,
+                            None => {
+                                if bond.order == SourceBondOrder::Localized(BondOrder::Single)
+                                    && metal_bond(residue, [left, right])
+                                {
+                                    self.unstated_metal_bonds.push([left, right]);
+                                }
+                                bond.order
+                            }
                         };
                     self.add_bond(left, right, order, raw::BondEvidence::ComponentTable)?;
                 }
@@ -683,6 +708,7 @@ impl<'r> Resolver<'r, '_> {
         self.apply_polymer_links(&residues)?;
         raw::poll(self.cancellation)?;
         self.attach_stray_hydrogens(&residues, stray_hydrogens)?;
+        self.decide_metal_bonds(&residues)?;
         for residue in &templated {
             raw::poll(self.cancellation)?;
             self.assign_template_charges(residue, &residues[&residue.key])?;
@@ -798,6 +824,92 @@ impl<'r> Resolver<'r, '_> {
                 SourceBondOrder::Localized(bond.order),
                 bond.evidence.clone(),
             )?;
+            if bond.unstated_metal_bond {
+                self.unstated_metal_bonds.push([left, right]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Decides whether each single bond between a metal and a non-metal of
+    /// one residue, which its source states without a type, is covalent or
+    /// dative. In a residue with explicit hydrogens, the bond is dative when
+    /// the non-metal's other bonds already reach its lowest allowed valence,
+    /// as the nitrogen of an ammine or a pyridine does (an aromatic bond
+    /// counting one and a half), and covalent
+    /// otherwise, as a chloride's is. Without hydrogens the file cannot tell:
+    /// the bonds stay covalent, and the report says so for each residue.
+    fn decide_metal_bonds(
+        &mut self,
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    ) -> Result<(), FormatError> {
+        let bonds = std::mem::take(&mut self.unstated_metal_bonds);
+        let mut by_residue = BTreeMap::<&ResidueKey, Vec<[AtomId; 2]>>::new();
+        for pair in bonds {
+            if let Some(residue) = residues
+                .values()
+                .find(|residue| residue.site(pair[0]).is_some())
+            {
+                by_residue.entry(&residue.key).or_default().push(pair);
+            }
+        }
+        for (key, pairs) in by_residue {
+            raw::poll(self.cancellation)?;
+            let residue = &residues[key];
+            if !residue.sites.iter().any(|site| is_hydrogen(site.element)) {
+                self.issues
+                    .push(raw::StructureInterpretIssue::MetalBondsUnstated {
+                        residue: key.id(self.model_id),
+                        bonds: pairs.len(),
+                    });
+                continue;
+            }
+            for [left, right] in pairs {
+                let non_metal = if raw::is_metal(
+                    residue
+                        .site(left)
+                        .expect("unstated metal bonds join residue sites")
+                        .element,
+                ) {
+                    right
+                } else {
+                    left
+                };
+                let metal = if non_metal == left { right } else { left };
+                // In half units: an aromatic bond awaiting localization gives
+                // one and a half.
+                let other = self
+                    .graph
+                    .require_incident_bonds(non_metal)
+                    .map_err(interpret_error)?
+                    .filter(|(_, bond)| bond.other_atom(non_metal) != metal)
+                    .map(|(id, bond)| {
+                        if self.source_aromatic_bonds.contains(&id) {
+                            3
+                        } else {
+                            2 * link_valence(bond.order())
+                        }
+                    })
+                    .sum::<usize>();
+                let atom = self
+                    .graph
+                    .require_atom(non_metal)
+                    .map_err(interpret_error)?
+                    .clone();
+                let satisfied = allowed_valences(&atom)
+                    .and_then(|valences| valences.first())
+                    .is_some_and(|&lowest| other >= 2 * usize::from(lowest));
+                if satisfied {
+                    let bond = self
+                        .graph
+                        .require_bond_between(left, right)
+                        .map_err(interpret_error)?
+                        .expect("an unstated metal bond was added");
+                    self.graph
+                        .set_bond_order(bond, BondOrder::Dative)
+                        .map_err(interpret_error)?;
+                }
+            }
         }
         Ok(())
     }
@@ -839,18 +951,19 @@ impl<'r> Resolver<'r, '_> {
     /// coordination, which is dative whatever its stated order. A stated
     /// `pdbx_metal_coordination_flag` decides. Otherwise the flag comes from
     /// the component's template, or one of its variants, when it lists the
-    /// bond, as charges do. Without one, the bond is covalent with its stated
-    /// order, as a PDB `CONECT` record within one residue is. A source and its
-    /// PDB rendering then give the same bonds.
+    /// bond, as charges do. Without one, `None`: the bond has its stated
+    /// order, and [`Self::decide_metal_bonds`] decides a single bond between
+    /// a metal and a non-metal, as for a PDB `CONECT` record within one
+    /// residue. A source and its PDB rendering then give the same bonds.
     fn is_coordination(
         &self,
         bond: &ComponentBond,
         residue: &ResidueAtoms,
         template: Option<&(&Component, Vec<&Component>)>,
         atoms: [AtomId; 2],
-    ) -> bool {
-        if let Some(stated) = bond.coordination {
-            return stated;
+    ) -> Option<bool> {
+        if bond.coordination.is_some() {
+            return bond.coordination;
         }
         let elements = atoms.map(|atom| {
             residue
@@ -863,7 +976,7 @@ impl<'r> Resolver<'r, '_> {
                 .chain(variants.iter().copied())
                 .find_map(|component| template_coordination(component, bond, elements))
         });
-        templated.unwrap_or(false)
+        templated
     }
 
     /// Bonds every pair of a residue's atoms within covalent bonding

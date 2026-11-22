@@ -571,6 +571,11 @@ impl<W: Write> Encoder<'_, W> {
                 self.u8(number_field_code(*field))?;
                 self.usize(*source_line)
             }
+            Issue::MetalBondsUnstated { residue, bonds } => {
+                self.u8(26)?;
+                self.residue(residue)?;
+                self.usize(*bonds)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,

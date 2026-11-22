@@ -233,7 +233,8 @@ pub(super) fn write_block_end(
 }
 
 /// The `_chem_comp` and `_chem_comp_bond` rows of components no template
-/// covers. Metal coordination is a single bond with the coordination flag.
+/// covers. Metal coordination, the only dative bond a table holds, is a
+/// single bond with the coordination flag.
 fn write_component_tables(
     writer: &mut impl Write,
     model: &PreparedModel,

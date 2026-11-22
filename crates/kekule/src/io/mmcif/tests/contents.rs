@@ -2310,17 +2310,16 @@ fn mmcif_writer_rejects_unsupported_chemistry_and_topology_rejects_invalid_hiera
     .map(|(text, _)| text)
     .unwrap();
     let document = mmcif::parse_str(&written, Default::default()).unwrap();
-    // The bond is within one component no template covers, so its table
-    // flags it.
-    let table = document.blocks()[0]
+    // The dative bond joins two carbons, which a coordination flag would
+    // misstate, so a `metalc` row states it rather than a component table.
+    let block = &document.blocks()[0];
+    assert!(block
         .loop_with_tag("_chem_comp_bond.pdbx_metal_coordination_flag")
-        .unwrap();
+        .is_none());
+    let table = block.loop_with_tag("_struct_conn.conn_type_id").unwrap();
     assert_eq!(
-        table
-            .value(0, "_chem_comp_bond.pdbx_metal_coordination_flag")
-            .unwrap()
-            .text(),
-        "Y"
+        table.value(0, "_struct_conn.conn_type_id").unwrap().text(),
+        "metalc"
     );
     let reread = document.interpret(Default::default()).unwrap();
     let molecule = reread

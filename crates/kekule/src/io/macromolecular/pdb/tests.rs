@@ -51,5 +51,11 @@ fn names_that_read_as_two_elements_are_ambiguous() {
         element_from_atom_name("CA12", "LIG", true),
         ambiguous("C", "Ca")
     );
-    assert_eq!(element_from_atom_name(" CL ", "LIG", false), element("C"));
+    // Writers that pad every name into column 14 leave ` CL1` either.
+    assert_eq!(
+        element_from_atom_name(" CL1", "LIG", false),
+        ambiguous("C", "Cl")
+    );
+    assert_eq!(element_from_atom_name(" C1 ", "LIG", false), element("C"));
+    assert_eq!(element_from_atom_name("1HG1", "LIG", false), element("H"));
 }

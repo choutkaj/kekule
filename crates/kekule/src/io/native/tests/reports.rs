@@ -266,6 +266,10 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             field: NumberField::ResidueNumber,
             source_line: 12,
         },
+        Issue::MetalBondsUnstated {
+            residue: label(7),
+            bonds: 4,
+        },
         Issue::ChargesFromBonds {
             residue: label(5),
             component_id: "XYZ".into(),

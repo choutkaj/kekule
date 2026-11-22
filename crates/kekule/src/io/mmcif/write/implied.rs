@@ -11,6 +11,7 @@ use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
     hydrogen_differences, link_valence, template_bond_order, within_bonding_distance, PolymerLink,
 };
+use crate::io::macromolecular::is_metal;
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
 use std::collections::{BTreeMap, BTreeSet};
@@ -89,7 +90,8 @@ pub(super) fn mark_implied(
     }
 
     let library = ComponentLibrary::bundled();
-    let mut untemplated = BTreeMap::<&str, Vec<usize>>::new();
+    // The reader keys component tables by upper-case identifier.
+    let mut untemplated = BTreeMap::<String, Vec<usize>>::new();
     let mut templated = BTreeSet::new();
     for (residue, members) in residues.iter().enumerate() {
         let id = &rows[members[0]].label_comp_id;
@@ -99,10 +101,13 @@ pub(super) fn mark_implied(
                 .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
             ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
         }) else {
-            untemplated.entry(id).or_default().push(residue);
+            untemplated
+                .entry(id.to_ascii_uppercase())
+                .or_default()
+                .push(residue);
             continue;
         };
-        templated.insert(id.as_str());
+        templated.insert(id.to_ascii_uppercase());
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
         if !rebuilt_by_template(component, members, rows, elements, connections, &neighbours) {
             continue;
@@ -117,7 +122,7 @@ pub(super) fn mark_implied(
     let mut tables = Vec::new();
     for (id, of_component) in untemplated {
         // A template covers some residues of the component.
-        if templated.contains(id) {
+        if templated.contains(&id) {
             continue;
         }
         let Some(table) = component_table(
@@ -125,6 +130,7 @@ pub(super) fn mark_implied(
             &residues,
             &residue_of,
             rows,
+            elements,
             connections,
             &neighbours,
         ) else {
@@ -140,7 +146,7 @@ pub(super) fn mark_implied(
             }
         }
         tables.push(ComponentTable {
-            id: id.to_owned(),
+            id: rows[residues[of_component[0]][0]].label_comp_id.clone(),
             polymer: of_component
                 .iter()
                 .any(|&residue| polymer(&rows[residues[residue][0]])),
@@ -215,14 +221,16 @@ pub(super) fn mark_implied(
 
 /// The `_chem_comp_bond` rows that give every residue of one component its
 /// bonds, or `None` when no table can: residues that bond two names
-/// differently, or one that leaves unbonded two names another bonds, or
-/// alternate locations, which repeat names. A component without internal
-/// bonds needs no table.
+/// differently, or one that leaves unbonded two names another bonds,
+/// alternate locations, which repeat names, or a dative bond without a
+/// metal, which the coordination flag cannot state. A component without
+/// internal bonds needs no table.
 fn component_table(
     of_component: &[usize],
     residues: &[Vec<usize>],
     residue_of: &[usize],
     rows: &[AtomRow],
+    elements: &[Element],
     connections: &[ConnectionRow],
     neighbours: &[Vec<(usize, usize)>],
 ) -> Option<Vec<ComponentTableBond>> {
@@ -243,6 +251,12 @@ fn component_table(
                 ];
                 pair.sort_unstable();
                 let connection = &connections[connection];
+                if connection.order == BondOrder::Dative
+                    && !is_metal(elements[row])
+                    && !is_metal(elements[other])
+                {
+                    return None;
+                }
                 let bond = (connection.order, connection.aromatic);
                 if *table.entry(pair).or_insert(bond) != bond {
                     return None;

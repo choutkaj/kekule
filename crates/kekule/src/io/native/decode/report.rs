@@ -747,6 +747,10 @@ impl<R: Read> Decoder<'_, R> {
                 field: self.number_field()?,
                 source_line: self.usize()?,
             },
+            26 if self.version >= PDB_NUMBERING_SINCE => Issue::MetalBondsUnstated {
+                residue: self.residue()?,
+                bonds: self.usize()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))

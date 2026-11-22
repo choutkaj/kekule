@@ -37,6 +37,9 @@ pub(super) struct DeclaredBond {
     /// a bond within one residue supplements the residue's template rather
     /// than replacing it, and a bond an earlier record declares is skipped.
     pub(super) connectivity_only: bool,
+    /// The coordinate model whose own records state the bond, as files that
+    /// repeat `CONECT` records in every model do; `None` for every model.
+    pub(super) model: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +47,9 @@ pub(super) enum DeclaredOrder {
     /// The order the record states.
     Stated(BondOrder),
     /// A record without a bond type: a bond between a metal and a non-metal
-    /// of different residues is coordination, and dative; any other bond,
-    /// such as one within a metal complex's residue, has this order.
+    /// of different residues is coordination, and dative; any other bond has
+    /// this order, and connectivity decides whether a single one between a
+    /// metal and a non-metal of one residue is dative.
     ByElements(BondOrder),
 }
 
@@ -66,6 +70,9 @@ pub(super) struct DeclaredConnection {
     /// A connectivity-only bond within one residue; see
     /// [`DeclaredBond::connectivity_only`].
     pub(super) supplements_template: bool,
+    /// A single bond between a metal and a non-metal of one residue that the
+    /// record states without a type, covalent or dative.
+    pub(super) unstated_metal_bond: bool,
 }
 
 /// Metal coordination a record states between atoms of different residues:
@@ -128,6 +135,13 @@ pub(super) fn resolve_connections(
             }
             ConnectionRecord::Bond(bond) => bond,
         };
+        if bond
+            .model
+            .as_deref()
+            .is_some_and(|model| model != selected_model)
+        {
+            continue;
+        }
         let mut resolve = |partner: u8| {
             let resolution = match &bond.partners[usize::from(partner - 1)] {
                 Ok(selector) => resolve_partner(
@@ -181,6 +195,10 @@ pub(super) fn resolve_connections(
             continue;
         }
         let supplements_template = bond.connectivity_only && same_residue;
+        let unstated_metal_bond = same_residue
+            && matches!(bond.order, DeclaredOrder::ByElements(_))
+            && order == BondOrder::Single
+            && is_metal(left.element) != is_metal(right.element);
         if !supplements_template {
             union.union(&left.instance_key, &right.instance_key);
         }
@@ -193,6 +211,7 @@ pub(super) fn resolve_connections(
                 connection_type: bond.connection_type.clone(),
             },
             supplements_template,
+            unstated_metal_bond,
         });
     }
     Ok(resolved)

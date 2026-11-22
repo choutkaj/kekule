@@ -554,6 +554,7 @@ pub(super) fn build_molecule(
                 atoms: [left, right],
                 order: connection.order,
                 evidence: source,
+                unstated_metal_bond: connection.unstated_metal_bond,
             });
             continue;
         }

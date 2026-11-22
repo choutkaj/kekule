@@ -54,7 +54,8 @@ pub fn parse_reader(
 /// hybrid-36. Coordinates are written to 0.001 Å, occupancies and B
 /// factors to 0.01, and absent occupancies and B factors are blank. Every
 /// atom states its formal charge, `0` when neutral, so a reader keeps it
-/// rather than taking a template's. A representable periodic cell is a
+/// rather than taking a template's. The `0` states neutrality against
+/// templates that charge the atom, such as lysine `NZ`. A representable periodic cell is a
 /// `CRYST1` record in space group P 1.
 ///
 /// `CONECT` lists every bond a reader could not derive, each from both

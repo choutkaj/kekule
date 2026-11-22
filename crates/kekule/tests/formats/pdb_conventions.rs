@@ -8,11 +8,12 @@ use std::sync::Arc;
 use kekule::components::ComponentLibrary;
 use kekule::diagnostics::DiagnosticKind;
 use kekule::macromolecular::{
-    ConnectivityOptions, EntityKind, NumberField, StructureInterpretIssue,
+    ConnectivityOptions, EntityKind, ModelSelection, NumberField, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
 use kekule::molecule::BondOrder;
 use kekule::structure::Structure;
+use kekule::topology::ResidueClass;
 use kekule::{mmcif, pdb};
 
 /// One `ATOM` or `HETATM` record in the 80 fixed columns: `name` fills
@@ -221,7 +222,7 @@ const CISPLATIN: [(&str, &str, [f64; 3], &str); 5] = [
 ];
 
 #[test]
-fn stated_metal_bonds_within_one_residue_are_covalent() {
+fn metal_bonds_of_a_residue_without_hydrogens_are_covalent_and_reported() {
     let mut lines = CISPLATIN
         .map(|(serial, name, position, element)| {
             record(
@@ -250,6 +251,19 @@ fn stated_metal_bonds_within_one_residue_are_covalent() {
         .map(|atom| atom.implicit_hydrogens())
         .collect::<Vec<_>>();
     assert_eq!(hydrogens[3..], [Some(0), Some(0)]);
+    // Without hydrogens the file cannot tell dative from covalent bonds.
+    let unstated = read
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| {
+            matches!(
+                issue,
+                StructureInterpretIssue::MetalBondsUnstated { bonds: 4, .. }
+            )
+        })
+        .count();
+    assert_eq!(unstated, 1, "{:?}", read.report().issues());
 
     // An mmCIF component table without coordination flags agrees.
     let cif = "data_x
@@ -283,6 +297,60 @@ HETATM 5 CL CL2 CPT A 1 . 0.000 -2.300 0.000 1
 ";
     let read = read_mmcif(cif);
     assert_eq!(bonds(read.structure()), bonds(structure));
+}
+
+#[test]
+fn explicit_hydrogens_tell_dative_metal_bonds_from_covalent_ones() {
+    // Cisplatin with its ammine hydrogens: CONECT lists only the platinum
+    // bonds, and each hydrogen attaches to its nearest nitrogen.
+    let hydrogens = [
+        ("6", "H11 ", [2.390, 0.940, 0.000], "H"),
+        ("7", "H12 ", [2.390, -0.470, 0.820], "H"),
+        ("8", "H13 ", [2.390, -0.470, -0.820], "H"),
+        ("9", "H21 ", [0.940, 2.390, 0.000], "H"),
+        ("10", "H22 ", [-0.470, 2.390, 0.820], "H"),
+        ("11", "H23 ", [-0.470, 2.390, -0.820], "H"),
+    ];
+    let mut lines = CISPLATIN
+        .iter()
+        .chain(&hydrogens)
+        .map(|&(serial, name, position, element)| {
+            record(
+                "HETATM", serial, name, "CPT", 'A', "1", position, element, "",
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.push("CONECT    1    2    3    4    5".to_owned());
+    let read = read(&entry(&lines));
+    let structure = read.structure();
+    let metal_bonds = bonds(structure)
+        .into_iter()
+        .filter(|&(left, _, _)| left == 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        metal_bonds,
+        [
+            (0, 1, BondOrder::Dative),
+            (0, 2, BondOrder::Dative),
+            (0, 3, BondOrder::Single),
+            (0, 4, BondOrder::Single),
+        ]
+    );
+    assert!(charges(structure).iter().all(|&charge| charge == 0));
+    let mut perceived = structure.clone();
+    perceived.perceive().unwrap();
+    let implicit = perceived
+        .topology()
+        .atoms()
+        .take(5)
+        .map(|atom| atom.implicit_hydrogens())
+        .collect::<Vec<_>>();
+    assert_eq!(implicit, [Some(0); 5]);
+    assert!(!read
+        .report()
+        .issues()
+        .iter()
+        .any(|issue| matches!(issue, StructureInterpretIssue::MetalBondsUnstated { .. })));
 }
 
 /// Ethene as residue `ETH`, in two models, each with its own CONECT
@@ -325,8 +393,7 @@ fn conect_multiplicity_counts_within_one_model() {
         pdb::parse_str(text, Default::default())
             .unwrap()
             .interpret(
-                StructureInterpretOptions::default()
-                    .with_model_selection(kekule::macromolecular::ModelSelection::First),
+                StructureInterpretOptions::default().with_model_selection(ModelSelection::First),
             )
             .unwrap()
     };
@@ -501,6 +568,23 @@ fn molecular_dynamics_water_and_ions_are_never_polymer() {
             vec![EntityKind::Water],
             vec![EntityKind::NonPolymer],
             vec![EntityKind::NonPolymer],
+        ]
+    );
+    // Classification agrees with reading.
+    let classes = read
+        .structure()
+        .topology()
+        .residues()
+        .map(|residue| residue.class())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        classes,
+        [
+            ResidueClass::Water,
+            ResidueClass::Water,
+            ResidueClass::Water,
+            ResidueClass::Ion,
+            ResidueClass::Ion,
         ]
     );
 }
@@ -812,7 +896,7 @@ fn reports_name_how_atoms_and_numbers_were_read() {
 }
 
 #[test]
-fn models_whose_conect_records_disagree_fail() {
+fn each_model_takes_its_own_conect_records() {
     let mut text = ethene_models(&["CONECT    1    2    2", "CONECT    2    1    1"]);
     // The second model lists the bond once.
     for (twice, once) in [
@@ -822,12 +906,197 @@ fn models_whose_conect_records_disagree_fail() {
         let at = text.rfind(twice).unwrap();
         text.replace_range(at..at + twice.len(), once);
     }
+    let model = |selection| {
+        pdb::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(StructureInterpretOptions::default().with_model_selection(selection))
+            .unwrap()
+            .into_structure()
+    };
+    assert_eq!(
+        bonds(&model(ModelSelection::First)),
+        [(0, 1, BondOrder::Double)]
+    );
+    assert_eq!(
+        bonds(&model(ModelSelection::Select("2".to_owned()))),
+        [(0, 1, BondOrder::Single)]
+    );
+}
+
+#[test]
+fn padded_names_without_element_columns_are_ambiguous() {
+    // GROMACS starts every short name in column 14, so ` CL1` may be carbon
+    // or chlorine.
+    let text = entry(&[
+        record(
+            "HETATM",
+            "1",
+            " C1 ",
+            "LIG",
+            'A',
+            "1",
+            [0.0, 0.0, 0.0],
+            "",
+            "",
+        ),
+        record(
+            "HETATM",
+            "2",
+            " CL1",
+            "LIG",
+            'A',
+            "1",
+            [1.75, 0.0, 0.0],
+            "",
+            "",
+        ),
+    ]);
     let error = pdb::parse_str(&text, Default::default())
         .unwrap()
-        .interpret(
-            StructureInterpretOptions::default()
-                .with_model_selection(kekule::macromolecular::ModelSelection::First),
-        )
+        .interpret(Default::default())
         .unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent, "{error}");
+    assert_eq!(error.kind(), DiagnosticKind::InvalidValue);
+    assert!(error.to_string().contains("\"CL1\""), "{error}");
+}
+
+#[test]
+fn component_tables_group_identifiers_regardless_of_case() {
+    // `LIG` and `lig` are one component to a reader, but bond differently.
+    let atom = |serial: &str, name: &str, residue: &str, sequence: &str, x: f64| {
+        record(
+            "HETATM",
+            serial,
+            name,
+            residue,
+            'A',
+            sequence,
+            [x, 0.0, 0.0],
+            "C",
+            "",
+        )
+    };
+    let structure = read(&entry(&[
+        atom("1", " C1 ", "LIG", "1", 0.0),
+        atom("2", " C2 ", "LIG", "1", 1.33),
+        atom("3", " C1 ", "lig", "2", 10.0),
+        atom("4", " C2 ", "lig", "2", 11.54),
+        "CONECT    1    2    2".to_owned(),
+        "CONECT    2    1    1".to_owned(),
+        "CONECT    3    4".to_owned(),
+        "CONECT    4    3".to_owned(),
+    ]))
+    .into_structure();
+    assert_eq!(
+        bonds(&structure),
+        [(0, 1, BondOrder::Double), (2, 3, BondOrder::Single)]
+    );
+    let (written, _) = mmcif::write([&structure], Default::default()).unwrap();
+    assert!(!written.contains("_chem_comp_bond."), "{written}");
+    let reread = read_mmcif(&written).into_structure();
+    assert_eq!(bonds(&reread), bonds(&structure));
+}
+
+#[test]
+fn dative_bonds_without_a_metal_stay_struct_conn_rows() {
+    // Ammonia borane: the N-B bond is dative, but neither end is a metal,
+    // so a coordination flag would misstate it.
+    let cif = "data_x
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.auth_seq_id
+_atom_site.pdbx_PDB_model_num
+HETATM 1 N N1 NBH A 1 . 0.000 0.000 0.000 1 1
+HETATM 2 B B1 NBH A 1 . 1.660 0.000 0.000 1 1
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_comp_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_auth_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_comp_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_auth_seq_id
+metalc1 metalc A NBH N1 1 A NBH B1 1
+";
+    let structure = read_mmcif(cif).into_structure();
+    assert_eq!(bonds(&structure), [(0, 1, BondOrder::Dative)]);
+    let (written, _) = mmcif::write([&structure], Default::default()).unwrap();
+    assert!(!written.contains("_chem_comp_bond."), "{written}");
+    assert!(written.contains("metalc"), "{written}");
+    let reread = read_mmcif(&written).into_structure();
+    assert_eq!(bonds(&reread), bonds(&structure));
+}
+
+#[test]
+fn aromatic_nitrogens_bond_metals_datively() {
+    // Platinum with a chloride and a pyridine, as an mmCIF table without
+    // coordination flags states them.
+    let cif = "data_x
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+PYP PT1 N1 SING
+PYP PT1 CL1 SING
+PYP N1 C2 AROM
+PYP C2 C3 AROM
+PYP C3 C4 AROM
+PYP C4 C5 AROM
+PYP C5 C6 AROM
+PYP C6 N1 AROM
+PYP C2 H2 SING
+PYP C3 H3 SING
+PYP C4 H4 SING
+PYP C5 H5 SING
+PYP C6 H6 SING
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+_atom_site.pdbx_PDB_model_num
+HETATM 1 PT PT1 PYP A 1 . 0.000 0.000 0.000 1
+HETATM 2 CL CL1 PYP A 1 . -2.300 0.000 0.000 1
+HETATM 3 N N1 PYP A 1 . 2.010 0.000 0.000 1
+HETATM 4 C C2 PYP A 1 . 2.705 1.204 0.000 1
+HETATM 5 C C3 PYP A 1 . 4.095 1.204 0.000 1
+HETATM 6 C C4 PYP A 1 . 4.790 0.000 0.000 1
+HETATM 7 C C5 PYP A 1 . 4.095 -1.204 0.000 1
+HETATM 8 C C6 PYP A 1 . 2.705 -1.204 0.000 1
+HETATM 9 H H2 PYP A 1 . 2.165 2.139 0.000 1
+HETATM 10 H H3 PYP A 1 . 4.635 2.139 0.000 1
+HETATM 11 H H4 PYP A 1 . 5.870 0.000 0.000 1
+HETATM 12 H H5 PYP A 1 . 4.635 -2.139 0.000 1
+HETATM 13 H H6 PYP A 1 . 2.165 -2.139 0.000 1
+";
+    let read = read_mmcif(cif);
+    let metal_bonds = bonds(read.structure())
+        .into_iter()
+        .filter(|&(left, _, _)| left == 0)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        metal_bonds,
+        [(0, 1, BondOrder::Single), (0, 2, BondOrder::Dative)]
+    );
+    assert!(charges(read.structure()).iter().all(|&charge| charge == 0));
 }

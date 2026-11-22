@@ -917,9 +917,11 @@ Metal coordination between residues is not a bond: the
 report keeps it as connection metadata, while coordination within one residue
 is a dative bond, so a metal complex that is one component stays one molecule.
 A record that states a bond without its type, such as PDB `CONECT`, states
-coordination only between a metal and a non-metal of different residues;
-within one residue it states a covalent bond, and only a source or template
-flag makes such a bond coordination.
+coordination between a metal and a non-metal of different residues. Within
+one residue a source or template flag decides; without one, explicit
+hydrogens do: the bond is dative when the non-metal's other bonds fill its
+valence, as an ammine's do, and covalent otherwise, as a chloride's is. A
+residue without hydrogens keeps such bonds covalent, and the report says so.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral

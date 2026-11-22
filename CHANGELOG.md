@@ -598,14 +598,28 @@ the main branch migrates by the table under "From the SampleSet API".
   printable ASCII.
 - **Breaking:** The PDB writer states every formal charge, `0` for a neutral
   atom, so a neutral lysine `NZ` no longer reads back as +1 from its
-  template.
-- **Breaking:** A `CONECT`, `LINK`, or `_chem_comp_bond` bond between a metal
-  and a non-metal of one residue is covalent with its stated order unless the
-  source or the residue's template flags coordination; between residues it
-  stays coordination. Cisplatin's chlorides no longer read with a hydrogen.
+  template. The `0` states neutrality against such templates.
+- **Breaking:** A PDB atom name starting in column 14 reads a one-letter
+  element only in an entry that follows the alignment convention, where some
+  short name starts in column 13 with a two-letter element. In an entry that
+  pads every name, as GROMACS writes, ` CL1` without an element column is
+  ambiguous and fails rather than reading as carbon.
+- **Breaking:** `CONECT` records repeated in every model state each model's
+  bonds: the interpreted model takes its own, and other models' records no
+  longer conflict with them.
+- **Breaking:** A `CONECT` or `_chem_comp_bond` single bond between a metal
+  and a non-metal of one residue is dative only when the source or the
+  residue's template flags coordination, or, in a residue with explicit
+  hydrogens, when the non-metal's other bonds fill its valence. Cisplatin
+  reads with covalent chlorides and dative ammines. A residue without
+  hydrogens keeps such bonds covalent and reports them
+  (`StructureInterpretIssue::MetalBondsUnstated`). Between residues such a
+  bond stays coordination.
 - The mmCIF writer states the bonds of components no template covers as
   `_chem_comp` and `_chem_comp_bond` rows, with aromatic and
-  metal-coordination flags, in place of `_struct_conn` rows.
+  metal-coordination flags, in place of `_struct_conn` rows. Components are
+  grouped by upper-case identifier, as readers key them, and a dative bond
+  without a metal stays a `_struct_conn` `metalc` row.
 - PDB interpretation reports atoms whose element came from a template
   (`StructureInterpretIssue::ElementsFromTemplates`), unsigned charges
   (`UnsignedCharges`), VMD hexadecimal numbering (`HexadecimalNumbers`),
