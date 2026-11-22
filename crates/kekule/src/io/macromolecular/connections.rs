@@ -9,6 +9,7 @@ use crate::diagnostics::{Cancellation, FormatError};
 use crate::molecule::BondOrder;
 
 use super::atom_site::AtomRow;
+use super::connectivity::OrderSource;
 use super::types::{
     poll, BondEvidence, ConnectionResolutionReason, StructureInterpretIssue,
     StructureInterpretationReport,
@@ -34,9 +35,8 @@ pub(super) struct DeclaredBond {
     pub(super) line: Option<usize>,
     pub(super) order: DeclaredOrder,
     pub(super) partners: [PartnerSpec; 2],
-    /// Whether the record lists connectivity only, as PDB `CONECT` does. Such
-    /// a bond within one residue supplements the residue's template rather
-    /// than replacing it, and a bond an earlier record declares is skipped.
+    /// Whether the record lists connectivity only, as PDB `CONECT` does: a
+    /// bond an earlier record declares is skipped.
     pub(super) connectivity_only: bool,
 }
 
@@ -44,9 +44,14 @@ pub(super) struct DeclaredBond {
 pub(super) enum DeclaredOrder {
     /// The order the record states.
     Stated(BondOrder),
-    /// A record without a bond type: a bond between a metal and a non-metal
-    /// is coordination, and dative; any other bond has this order.
-    ByElements(BondOrder),
+    /// A record without a bond type, as PDB `LINK` and `CONECT` records are:
+    /// a bond between a metal and a non-metal is coordination, and dative;
+    /// any other bond has the order a listing convention gives, as `CONECT`
+    /// records list a double bond twice, or is single of unknown order.
+    ByElements(Option<BondOrder>),
+    /// A covalent record that states no order, as an mmCIF `_struct_conn`
+    /// row without `pdbx_value_order`: single, of unknown order.
+    Unstated,
 }
 
 /// The selector of one partner, or why the record cannot identify it.
@@ -60,12 +65,14 @@ pub(super) struct DeclaredConnection {
     /// The instance of the left atom; both atoms end up in one instance.
     pub(super) instance_key: String,
     pub(super) order: BondOrder,
+    /// How the record gives the order.
+    pub(super) order_source: OrderSource,
     /// What states the bond: a connection record, or a disulfide no record
     /// states.
     pub(super) evidence: BondEvidence,
-    /// A connectivity-only bond within one residue; see
-    /// [`DeclaredBond::connectivity_only`].
-    pub(super) supplements_template: bool,
+    /// Whether both atoms lie in one residue, whose template the bond is
+    /// checked against.
+    pub(super) within_residue: bool,
 }
 
 /// Metal coordination a record states between atoms of different residues:
@@ -156,12 +163,15 @@ pub(super) fn resolve_connections(
         if !declared.insert(pair) && bond.connectivity_only {
             continue;
         }
-        let order = match bond.order {
-            DeclaredOrder::Stated(order) => order,
+        let (order, order_source) = match bond.order {
+            DeclaredOrder::Stated(order) => (order, OrderSource::Stated),
             DeclaredOrder::ByElements(_) if is_metal(left.element) != is_metal(right.element) => {
-                BondOrder::Dative
+                (BondOrder::Dative, OrderSource::Convention)
             }
-            DeclaredOrder::ByElements(order) => order,
+            DeclaredOrder::ByElements(Some(order)) => (order, OrderSource::Convention),
+            DeclaredOrder::ByElements(None) | DeclaredOrder::Unstated => {
+                (BondOrder::Single, OrderSource::Unstated)
+            }
         };
         let same_residue = left.asym_id == right.asym_id
             && left.residue_key == right.residue_key
@@ -178,19 +188,19 @@ pub(super) fn resolve_connections(
             });
             continue;
         }
-        let supplements_template = bond.connectivity_only && same_residue;
-        if !supplements_template {
+        if !same_residue {
             union.union(&left.instance_key, &right.instance_key);
         }
         resolved.bonds.push(DeclaredConnection {
             rows: [left.row_index, right.row_index],
             instance_key: left.instance_key.clone(),
             order,
+            order_source,
             evidence: BondEvidence::Connection {
                 connection_id: bond.connection_id.clone(),
                 connection_type: bond.connection_type.clone(),
             },
-            supplements_template,
+            within_residue: same_residue,
         });
     }
     Ok(resolved)

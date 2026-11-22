@@ -167,13 +167,20 @@ pub(super) fn prepare_model(
                 .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    mark_implied(
+    let missing = mark_implied(
         &atoms,
         &elements,
         &mut connections,
         &atom_indexes,
         options.coordinate_precision,
     );
+    if let Some(&[left, right]) = missing.first() {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::DictionaryBondMissing {
+                atoms: [atoms[left].atom, atoms[right].atom],
+            }));
+        }
+    }
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
@@ -231,6 +238,9 @@ pub(super) fn prepare_model(
             },
             WriteOmission::CoordinationBonds {
                 bonds: coordination_bonds,
+            },
+            WriteOmission::DictionaryBonds {
+                residues: missing.len(),
             },
         ],
     })

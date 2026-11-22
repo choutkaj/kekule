@@ -633,6 +633,45 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
+- A double or triple bond the source states between aromatic atoms is their
+  pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
+  and 4 read as benzene, not as a ring of six double bonds or a cumulene.
+  At an atom with no valence for a further pi bond, such as the charged
+  carbon of a phenyl cation or anion or a neutral boron, the stated bond is
+  that pi bond and the atom takes no hydrogen.
+- An aromatic O, S, Se, or Te with a +1 charge and no hydrogen count takes
+  no hydrogen, as pyridine nitrogen does, so V2000 pyrylium,
+  thiopyrylium, and 1,3-dithiolium interpret.
+- Every SMILES writer brackets an aromatic atom whose hydrogens a reader
+  would not infer, as the `[pH]` of 1H-phosphole, instead of only aromatic
+  nitrogen.
+- A wedge that marks no stereocenter or axis is dropped and reported
+  (`MolfileInterpretIssue::StrayWedge`), and so is a directional mark
+  without a partner across a double bond that can have E/Z
+  (`SmilesInterpretationReport::unpaired_directional_bonds`), instead of
+  failing interpretation.
+- A wedge that marks stereo kekule cannot represent is dropped and reported
+  with the reason (`MolfileInterpretIssue::UnrepresentableStereo`,
+  `UnrepresentableStereoReason`): its atom has a zero-order or dative bond
+  or more than four neighbors, or ends several candidate axes.
+- Molfile wedges, hashes, and wavy marks on aromatic (type 4) bonds are
+  read, and an atropisomer wedge on a ring bond means the same whichever
+  Kekulé structure localization picks.
+- A Molfile flat drawing whose chiral flag is unset keeps its drawn
+  configurations absolute and reports them
+  (`MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag`). 3D records,
+  whose coordinates specify configurations, never have this issue.
+- XYZ interpretation states that bond orders and charges are unknown
+  (`XyzInterpretIssue::BondOrdersAndChargesUnknown`) and reports atoms with
+  more single bonds than their largest valence
+  (`XyzInterpretIssue::ValenceExceeded`). Two non-metal atoms beyond the
+  radii sum plus 0.3 Å bond only within their valences
+  (`XyzInterpretIssue::LongContactNotBonded`), so the bridgeheads of
+  bicyclo[1.1.1]pentane stay unbonded, and a metal and a carbon bond only
+  within the sum plus 0.2 Å, so a chelating carboxylate's carbon stays
+  unbonded to its sodium or potassium. A metal and a carbon up to 0.45 Å
+  beyond the sum, as Li and C in methyllithium's tetramer, are reported
+  unbonded (`XyzInterpretIssue::LongContactNotBonded`).
 - A neutral atom whose bonds imply a charge, in a Molfile or a residue
   without template charges, takes it instead of hydrogens
   (`MolfileInterpretIssue::ChargeFromBonds`,
@@ -652,18 +691,19 @@ the main branch migrates by the table under "From the SampleSet API".
   and keeps its charge: a phosphine on palladium, a sulfide bridging three
   iron atoms, or DMSO on ruthenium through sulfur or oxygen
   (`MolfileInterpretIssue::MetalDonor`, `StructureInterpretIssue::MetalDonors`,
-  native issue kind 23).
+  native issue kind 30).
 - PDB and mmCIF interpretation leaves an onium centre without such a
   neighbor neutral in a residue whose bonds have no stated order, from atom
-  distances or `CONECT` or `LINK` records, and reports the hydrogens it took
-  (`StructureInterpretIssue::BondOrdersUnstated`, native issue kind 24).
+  distances or from records without orders, and reports the hydrogens it
+  took (`neutral_centres` of `StructureInterpretIssue::ResidueBondsInferred`
+  and `ResidueBondOrdersUnstated`).
 - Valence perception infers no hydrogens on alkali, alkaline-earth, and
   p-block metals, polonium included, so a lone Na, Mg, or Al is no longer
   NaH, MgH2, or AlH3 and `StructureEditor::add_hydrogens` adds none. Molfile
   and PDB or mmCIF interpretation report one whose valence its element does
   not allow, unbonded or under-bonded, as tin with three carbons
   (`MolfileInterpretIssue::MetalValenceIncomplete`,
-  `StructureInterpretIssue::MetalValenceIncomplete`, native issue kind 22).
+  `StructureInterpretIssue::MetalValenceIncomplete`, native issue kind 29).
 - A hydrogen atom joined only by zero-order or dative bonds, as a hydride on
   iron, infers no hydrogen of its own, so it is FeH, not FeH2.
 - Molfile writers state the valence of every atom whose inferred count a
@@ -691,6 +731,44 @@ the main branch migrates by the table under "From the SampleSet API".
   names all its heavy atoms, so AMBER `CYX` reads without
   `ComponentLibrary::amber` (`StructureInterpretIssue::ForceFieldTemplate`).
   The PDB and mmCIF writers leave out the bonds such a template gives.
+- A dictionary residue under CHARMM atom names, such as an isoleucine with
+  `CD` or a C-terminal residue with `OT1` and `OT2`, reads without
+  `ComponentLibrary::charmm`, with the dictionary template under those
+  names and so its hydrogens and charges. `ForceFieldTemplate` reports it.
+- PDB `CONECT` records state bond orders only in a bonded group of atoms
+  that lists some bond more than once. A residue without a template that
+  takes its bonds from records without orders, such as a ligand in a wwPDB
+  file, is reported (`StructureInterpretIssue::ResidueBondOrdersUnstated`)
+  instead of reading as silently saturated. mmCIF `_struct_conn` rows
+  without `pdbx_value_order` state no order either.
+- A connection record within a residue no longer turns its template off: a
+  `LINK` within a sulfate no longer reads it as neutral S(OH)4. Records are
+  checked against the template; a bond it lacks is kept
+  (`BondNotInTemplate`) and so is a stated order it does not give
+  (`BondOrderDiffersFromTemplate`). Records without an order take the
+  template's. Stated orders outrank hydrogens: a residue takes only a
+  protonation variant that gives every stated order. When none gives them
+  with the residue's hydrogens, its charges follow from both
+  (`StatedOrdersDisagreeWithHydrogens`). A residue whose atoms fit no
+  template takes
+  the bonds records state when they bond each of its heavy atoms
+  (`ResidueFitsNoTemplate`).
+- Polymer links follow one rule whatever `_entity_poly.nstd_linkage` says:
+  a standard link is made unless a connection record bonds one of its atoms
+  to another residue (`PolymerLinkSkipped`), so a cyclic peptide keeps its
+  peptide bonds. Adjacent residues with linking atoms but without the pair
+  a link joins, and no other bond, are reported (`LinkingAtomMissing`)
+  instead of silently unlinked. The mmCIF and PDB writers leave out a link
+  only when a reader rebuilds it by this same rule, so an N-methylated
+  backbone keeps its peptide bonds when written. The PDB writer also lists
+  other bonds between adjacent residues, which it used to leave out.
+- A PDB `HETATM` residue in a chain without `TER` records takes a polymer
+  position only when its template is a polymer one or one of its linking
+  atoms (`N`, `C`, `P`, `O3'`) lies within bonding distance of a
+  neighbour's. A ligand listed inside such a chain no longer breaks the
+  peptide bond around it, and capping groups and 5'-terminal nucleotide
+  triphosphates before the `ATOM` records join the chain. In a chain a
+  `TER` record ends, a `HETATM` residue with a linking atom stays polymer.
 - Solvation moves each placed water by a fixed shift of at most 0.0005 nm
   per axis. Copies of one seed water no longer sit at one distance, such as
   exactly 0.9 nm in a 3.9 nm cube, where hundreds of pairs fell on a common

@@ -534,6 +534,7 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                         residue,
                         component_id,
                         bonds,
+                        ..
                     } => Some((residue.clone(), component_id.clone(), *bonds)),
                     _ => None,
                 })

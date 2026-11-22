@@ -26,6 +26,9 @@ use crate::diagnostics::{
     FormatErrorDetail, GeometryField,
 };
 use crate::io::element_symbol::structure_element_symbol;
+use crate::io::macromolecular::connectivity::{
+    is_coordination, standard_link, within_bonding_distance, PolymerLink, StandardLink,
+};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
@@ -34,6 +37,7 @@ use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Carries, Omissions, StatePolicies,
 };
+use crate::io::DefaultTemplate;
 use crate::io::{
     Component, ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission,
     WriteReport,
@@ -640,7 +644,11 @@ pub(crate) fn write_pdb_to<'a>(
             structures: views.iter().filter(|view| view.cell().is_some()).count(),
         });
     }
-    let plan = Plan::new(views[0].topology(), &options, &mut omissions)?;
+    let positions = views
+        .iter()
+        .map(|view| written_positions(*view))
+        .collect::<Vec<_>>();
+    let plan = Plan::new(views[0].topology(), &positions, &options, &mut omissions)?;
     let links = match source.reports {
         Some(reports) if reports.len() != views.len() => {
             return Err(fail(PdbWriteErrorKind::ReportCountMismatch(
@@ -858,8 +866,11 @@ fn single_character(text: &str) -> Option<char> {
 }
 
 impl Plan {
+    /// `positions` are each structure's coordinates as written, by dense
+    /// index.
     fn new(
         topology: &Topology,
+        positions: &[Vec<Option<Point3>>],
         options: &PdbWriteOptions,
         omissions: &mut Omissions,
     ) -> Result<Self, FormatError> {
@@ -1061,7 +1072,7 @@ impl Plan {
             listings: conect,
             unstated,
             coordination_bonds,
-        } = Self::conect(topology, &records, &residues, &templates, strict)?;
+        } = Self::conect(topology, positions, &records, &residues, &templates, strict)?;
         omissions.record(WriteOmission::ChainIds {
             chains: segments.len(),
         });
@@ -1161,17 +1172,34 @@ impl Plan {
     }
 
     /// `CONECT` lists every bond a reader cannot derive: all but bonds
-    /// within one standard residue that a default template covers, linkage
-    /// between standard residues adjacent in one polymer chain, and bonds
-    /// within water.
+    /// within one standard residue that a default template covers, the
+    /// standard links between standard residues adjacent in one polymer
+    /// chain that a reader rebuilds in every structure, and bonds within
+    /// water.
     fn conect(
         topology: &Topology,
+        positions: &[Vec<Option<Point3>>],
         records: &[AtomRecord],
         residues: &[AtomResidue],
-        templates: &BTreeMap<&ResidueKey, &Component>,
+        templates: &BTreeMap<&ResidueKey, DefaultTemplate>,
         strict: bool,
     ) -> Result<ConectPlan, FormatError> {
         let chain_positions = residue_chain_positions(topology);
+        let mut named = BTreeMap::<&ResidueKey, BTreeMap<&str, usize>>::new();
+        for (index, (record, residue)) in records.iter().zip(residues).enumerate() {
+            named
+                .entry(&residue.key)
+                .or_default()
+                .insert(record.name.trim(), index);
+        }
+        let links = LinkContext {
+            topology,
+            positions,
+            records,
+            residues,
+            chain_positions: &chain_positions,
+            named: &named,
+        };
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
         let mut unstated = 0;
         let mut coordination_bonds = 0;
@@ -1185,7 +1213,9 @@ impl Plan {
             let derived = if same_residue {
                 residues[left].class == ResidueClass::Water || (standard && templated)
             } else {
-                standard && adjacent(&chain_positions, &residues[left].key, &residues[right].key)
+                standard
+                    && adjacent(&chain_positions, &residues[left].key, &residues[right].key)
+                    && links.rebuilds(left, right)
             };
             if derived {
                 continue;
@@ -1456,13 +1486,14 @@ struct ConectPlan {
 }
 
 /// The template a reader applies to each residue without templates from the
-/// caller: the bundled one of its name, else the force-field template of its
-/// name that names all its heavy atoms.
+/// caller (see `ComponentLibrary::default_template`), when its atoms fit
+/// one. A reader takes the bonds of a residue that fits none from its
+/// `CONECT` records, so all of them are listed.
 fn residue_templates<'r>(
     topology: &Topology,
     records: &'r [AtomRecord],
     residues: &'r [AtomResidue],
-) -> BTreeMap<&'r ResidueKey, &'static Component> {
+) -> BTreeMap<&'r ResidueKey, DefaultTemplate> {
     let mut members = BTreeMap::<&ResidueKey, Vec<usize>>::new();
     for (index, residue) in residues.iter().enumerate() {
         members.entry(&residue.key).or_default().push(index);
@@ -1478,13 +1509,11 @@ fn residue_templates<'r>(
         .into_iter()
         .filter_map(|(key, atoms)| {
             let id = &records[atoms[0]].residue_name;
-            let template = ComponentLibrary::bundled().get(id).or_else(|| {
-                let atoms = atoms
-                    .iter()
-                    .map(|&index| (records[index].name.trim(), element(index)));
-                ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
-            })?;
-            Some((key, template))
+            let atoms = atoms
+                .iter()
+                .map(|&index| (records[index].name.trim(), element(index)));
+            let template = ComponentLibrary::default_template(id, atoms)?;
+            template.fits.then_some((key, template))
         })
         .collect()
 }
@@ -1493,7 +1522,7 @@ fn check_dictionary_bonds(
     topology: &Topology,
     records: &[AtomRecord],
     residues: &[AtomResidue],
-    templates: &BTreeMap<&ResidueKey, &Component>,
+    templates: &BTreeMap<&ResidueKey, DefaultTemplate>,
     strict: bool,
 ) -> Result<usize, FormatError> {
     let mut conflicting = 0;
@@ -1504,7 +1533,6 @@ fn check_dictionary_bonds(
             .or_default()
             .insert(record.name.trim(), index);
     }
-    let library = ComponentLibrary::bundled();
     for (key, atoms) in &named {
         let Some(&first) = atoms.values().next() else {
             continue;
@@ -1513,13 +1541,16 @@ fn check_dictionary_bonds(
         if residues[first].class == ResidueClass::Water {
             continue;
         }
-        let Some(&template) = templates.get(key) else {
+        let Some(template) = templates.get(key) else {
             continue;
         };
-        let Some((left, right, order)) = template_conflict(topology, template, atoms) else {
+        let Some((left, right, order)) = template_conflict(topology, template.component, atoms)
+        else {
             continue;
         };
-        if library
+        // The template's own library holds the variants a reader chooses.
+        if template
+            .library
             .variants(residue_name)
             .any(|variant| template_conflict(topology, variant, atoms).is_none())
         {
@@ -1592,6 +1623,102 @@ fn residue_chain_positions(topology: &Topology) -> BTreeMap<ResidueId, (usize, u
         }
     }
     positions
+}
+
+/// What a reader needs to decide whether it rebuilds a standard polymer
+/// link between adjacent residues.
+struct LinkContext<'a> {
+    topology: &'a Topology,
+    positions: &'a [Vec<Option<Point3>>],
+    records: &'a [AtomRecord],
+    residues: &'a [AtomResidue],
+    chain_positions: &'a BTreeMap<ResidueId, (usize, usize)>,
+    named: &'a BTreeMap<&'a ResidueKey, BTreeMap<&'a str, usize>>,
+}
+
+impl LinkContext<'_> {
+    /// Whether a reader rebuilds the bond between dense atoms `a` and `b`
+    /// of adjacent residues as their standard polymer link, by the reader's
+    /// own rule, in every structure written.
+    fn rebuilds(&self, a: usize, b: usize) -> bool {
+        let position = |atom: usize| match &self.residues[atom].key {
+            ResidueKey::Hierarchy(id) => self.chain_positions.get(id).map(|&(_, at)| at),
+            ResidueKey::Instance(_) => None,
+        };
+        let (Some(at_a), Some(at_b)) = (position(a), position(b)) else {
+            return false;
+        };
+        let (earlier, later) = if at_a < at_b { (a, b) } else { (b, a) };
+        let library = ComponentLibrary::bundled();
+        let linking = |atom: usize| {
+            library.get(&self.records[atom].residue_name).map_or(
+                crate::components::ComponentLinking::None,
+                Component::linking,
+            )
+        };
+        let Some(link) = PolymerLink::undeclared(linking(earlier), linking(later)) else {
+            return false;
+        };
+        let named = |atom: usize| {
+            let names = &self.named[&self.residues[atom].key];
+            move |name: &str| names.get(name).copied()
+        };
+        let element = |atom: usize| {
+            self.topology
+                .atom_at(TopologyAtomIndex::from_index(atom))
+                .expect("records follow dense atoms")
+                .atom()
+                .element
+        };
+        let outcome = standard_link(
+            link,
+            named(earlier),
+            named(later),
+            |atom: usize, partner: usize| {
+                let bonded = self
+                    .topology
+                    .atom_at(TopologyAtomIndex::from_index(atom))
+                    .expect("records follow dense atoms")
+                    .bonds()
+                    .any(|bond| {
+                        let [x, y] = bond.atoms().map(|end| end.index().index());
+                        let other = if x == atom { y } else { x };
+                        other != partner
+                            && self.residues[other].key != self.residues[atom].key
+                            && !is_coordination(bond.order, [element(atom), element(other)])
+                    });
+                Ok::<_, std::convert::Infallible>(bonded)
+            },
+            |left, right| {
+                self.positions.iter().all(|positions| {
+                    matches!(
+                        (positions[left], positions[right]),
+                        (Some(l), Some(r))
+                            if within_bonding_distance((element(left), l), (element(right), r))
+                    )
+                })
+            },
+        );
+        matches!(outcome, Ok(StandardLink::Linked(pair)) if pair == [earlier, later])
+    }
+}
+
+/// Each atom's position in ångström as written, to three decimal places,
+/// or `None` when it has none in that unit.
+fn written_positions(view: StructureView<'_>) -> Vec<Option<Point3>> {
+    let positions = view.positions();
+    (0..positions.len())
+        .map(|index| {
+            let position = positions.get(index)?;
+            position.value_in(ANGSTROM).ok().map(|position| {
+                Point3::new(
+                    rounded(position.x, 3),
+                    rounded(position.y, 3),
+                    rounded(position.z, 3),
+                )
+            })
+        })
+        .collect()
 }
 
 fn adjacent(

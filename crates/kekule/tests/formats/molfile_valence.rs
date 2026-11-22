@@ -13,6 +13,9 @@ fn v2000(atoms: &[(&str, i8)], bonds: &[(usize, usize)]) -> String {
     v2000_orders(atoms, &bonds)
 }
 
+/// Bonds between one-based atom numbers, with a Molfile bond type each.
+type TypedBonds<'a> = &'a [(usize, usize, u8)];
+
 /// [`v2000`] with a Molfile bond type for each bond.
 fn v2000_orders(atoms: &[(&str, i8)], bonds: &[(usize, usize, u8)]) -> String {
     let mut text = format!(
@@ -196,7 +199,7 @@ fn metal_donors_take_no_charge_or_hydrogen() {
     // sulfide bridging three iron atoms (a corner of an Fe4S4 cubane), a
     // methanethiolate and a dimethylphosphide bridging two, and DMSO bound
     // to ruthenium through sulfur.
-    let cases: [(&[&str], &[(usize, usize, u8)]); 7] = [
+    let cases: [(&[&str], TypedBonds); 7] = [
         (
             &["P", "C", "C", "C", "Pd"],
             &[(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1)],
@@ -296,7 +299,7 @@ fn chalcogens_bound_to_metals_take_the_opposite_charge() {
 fn over_bonded_atoms_take_charges_with_their_partners() {
     // Trimethylamine-borane, THF-borane, trimethylamine N-oxide, and
     // nitromethane drawn with one single N-O bond, each without charges.
-    let cases: [(&[&str], &[(usize, usize, u8)], usize, usize); 4] = [
+    let cases: [(&[&str], TypedBonds, usize, usize); 4] = [
         (
             &["N", "C", "C", "C", "B"],
             &[(1, 2, 1), (1, 3, 1), (1, 4, 1), (1, 5, 1)],

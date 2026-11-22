@@ -413,7 +413,7 @@ fn canonical_smiles_atom_representation(
         inferred_hydrogens,
         matches!(atom_style, CanonicalAtomStyle::StoredKekule),
     )?;
-    if smiles_atom_requires_brackets(&payload, aromatic, inferred_hydrogens) {
+    if smiles_atom_requires_brackets(&payload) {
         if atom.hydrogens.is_inferred() && perceived_hydrogens.is_none() {
             return Err(SMILES_WRITE.missing_perception(format!(
                 "{} has no hydrogen perception. Perceive the molecule first.",
@@ -540,7 +540,7 @@ fn canonical_smiles_atom_for_sort(
         .expect("canonical atom sort should be encodable")
 }
 
-fn canonical_smiles_can_use_organic_form(
+pub(super) fn canonical_smiles_can_use_organic_form(
     mol: &Molecule,
     atom_id: AtomId,
     atom: &Atom,

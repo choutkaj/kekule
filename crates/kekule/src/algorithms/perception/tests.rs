@@ -172,25 +172,25 @@ fn failed_source_stereo_normalization_is_transactional() {
     let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+    let bond = mol.add_bond(a, b, BondOrder::Double).expect("bond");
     let source_stereo = [SourceStereoBondMark {
         bond,
         from: a,
-        kind: SourceStereoBondMarkKind::WedgeEither,
+        kind: SourceStereoBondMarkKind::DoubleBondEither,
     }];
     let mut molecule = mol;
     let before = molecule.clone();
 
     let error = molecule
         .canonicalize_fixture_with_source_stereo(&source_stereo)
-        .expect_err("unassembled stereo mark should fail normalization");
+        .expect_err("unsupported stereo mark should fail normalization");
 
     assert!(matches!(
         error,
         NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
-            if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
+            if issues.contains(&SourceStereoNormalizationIssue::UnsupportedSourceBondMark {
             bond,
-            kind: SourceStereoBondMarkKind::WedgeEither,
+            kind: SourceStereoBondMarkKind::DoubleBondEither,
         })
     ));
     assert_eq!(molecule, before);

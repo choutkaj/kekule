@@ -8,7 +8,7 @@ use crate::molecule::{BondOrder, Element};
 use super::atom_site::AtomRow;
 use super::connections::{DeclaredConnection, DeclaredCoordination, InstanceUnion};
 use super::connectivity::{
-    covalent_bonding_radius, within_bonding_distance, COVALENT_BOND_TOLERANCE_ANGSTROM,
+    covalent_bonding_radius, within_bonding_distance, OrderSource, COVALENT_BOND_TOLERANCE_ANGSTROM,
 };
 use super::{
     poll, poll_every, BondEvidence, SourceResidueId, StructureInterpretIssue,
@@ -122,8 +122,9 @@ pub(super) fn infer_disulfides(
             rows: [left.row_index, right.row_index],
             instance_key: left.instance_key.clone(),
             order: BondOrder::Single,
+            order_source: OrderSource::Stated,
             evidence: BondEvidence::Disulfide,
-            supplements_template: false,
+            within_residue: false,
         });
         report
             .issues

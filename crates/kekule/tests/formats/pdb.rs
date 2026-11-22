@@ -1869,9 +1869,34 @@ fn force_field_libraries_interpret_their_residue_names() {
         })
         .collect::<Vec<_>>();
     assert_eq!(attached, [("HT1", "N"), ("HT2", "N"), ("HT3", "N")]);
-    // Without the library, CHARMM chloride meets the dictionary's chlorophyll a.
-    let error = document.interpret(Default::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    // Without the library, each residue fits no dictionary template of its
+    // name, such as chlorophyll a for CHARMM chloride, and reads with the
+    // CHARMM one, which the report names.
+    let untemplated = document.interpret(Default::default()).unwrap();
+    assert_eq!(untemplated.topology().bond_count(), 23);
+    assert_eq!(charges(&untemplated), charges(&templated));
+    let force_field = untemplated
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ForceFieldTemplate {
+                component_id,
+                force_field,
+                ..
+            } => Some((component_id.as_str(), force_field.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        force_field,
+        [
+            ("ILE", "CHARMM"),
+            ("TIP3", "CHARMM"),
+            ("SOD", "CHARMM"),
+            ("CLA", "CHARMM")
+        ]
+    );
 }
 
 #[test]
@@ -2310,12 +2335,14 @@ fn residues_with_unstated_bond_orders_keep_onium_centres_neutral() {
                 StructureInterpretIssue::ChargesFromBonds { charged_atoms, .. } => {
                     charges.extend(charged_atoms.iter().cloned());
                 }
-                StructureInterpretIssue::BondOrdersUnstated {
-                    hydrogens: atoms, ..
-                } => {
-                    hydrogens.extend(atoms.iter().cloned());
+                StructureInterpretIssue::ResidueBondsInferred {
+                    neutral_centres, ..
+                } if !neutral_centres.is_empty() => {
+                    hydrogens.extend(neutral_centres.iter().cloned());
                     assert!(
-                        issue.to_string().contains("\"S\" took 1 hydrogen."),
+                        issue.to_string().ends_with(
+                            "Its onium centres took no charge. Atom \"S\" took 1 hydrogen."
+                        ),
                         "{issue}"
                     );
                 }

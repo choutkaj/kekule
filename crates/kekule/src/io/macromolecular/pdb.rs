@@ -6,7 +6,14 @@
 //! other residues or a `TER` record names a new residue, as when numbering
 //! wraps around or a segment restarts it. Without entity records, a chain's
 //! polymer is read from its `TER` records, and its residues' order gives
-//! polymer adjacency.
+//! polymer adjacency. A residue of `HETATM` records in a run a `TER` record
+//! ends is polymer when its template is a polymer one or it has a linking
+//! atom (`N`, `C`, `P`, `O3'`, or `O3*`). Without `TER`, it is polymer when
+//! its template is a polymer one or one of its linking atoms lies within
+//! bonding distance of one of a neighbour's, as for a capping group or a
+//! 5'-terminal nucleotide triphosphate, so a ligand listed between two
+//! residues does not separate them. Such residues bonded to the first or last
+//! `ATOM` residue extend the polymer.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::types::{poll, poll_every, structure_error};
@@ -22,7 +29,7 @@ use super::connections::{
     AuthorConnectionSelector, ConnectionPartnerSelector, ConnectionRecord, DeclaredBond,
     DeclaredOrder, PartnerSpec,
 };
-use super::connectivity::ConnectivityCatalog;
+use super::connectivity::{within_bonding_distance, ConnectivityCatalog};
 use super::structure_set::{interpret_conformations, interpret_models};
 use super::types::{
     ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureInterpretIssue,
@@ -30,6 +37,8 @@ use super::types::{
     StructureSetInterpretation,
 };
 use super::{interpret_source, stated_cell, AltLocResidue, StructureSource};
+use crate::components::{ComponentLibrary, ComponentLinking};
+use crate::math::Point3;
 
 pub(crate) fn interpret_pdb(
     document: &PdbDocument,
@@ -82,7 +91,7 @@ pub(crate) fn interpret_pdb_conformations(
 pub(crate) fn pdb_alternate_locations(
     document: &PdbDocument,
 ) -> Result<Vec<AltLocResidue>, FormatError> {
-    inventory(&read_rows(document, None)?.0)
+    inventory(&read_rows(document, None, None)?.0)
 }
 
 fn pdb_source(
@@ -98,7 +107,11 @@ fn pdb_source(
             "A PDB entry declares no entity types. Turn off strict entity metadata.",
         ));
     }
-    let (rows, inferred) = read_rows(document, cancellation)?;
+    let (rows, inferred) = read_rows(
+        document,
+        connectivity.components().map(|library| library.as_ref()),
+        cancellation,
+    )?;
     poll(cancellation)?;
     let mut polymer_order = BTreeMap::new();
     for row in rows.iter().filter(|row| row.polymer_position.is_some()) {
@@ -178,7 +191,30 @@ struct Residue {
     repeat: usize,
     atom_record: bool,
     water: bool,
+    /// Whether its template is a polymer one.
+    polymer_template: bool,
+    /// Its atoms that a polymer link joins to the residue before it (`N`,
+    /// `P`) and to the one after it (`C`, `O3'`).
+    heads: Vec<(Element, Point3)>,
+    tails: Vec<(Element, Point3)>,
     polymer_position: Option<i32>,
+}
+
+impl Residue {
+    /// Whether it has an atom a polymer link joins.
+    fn has_linking_atom(&self) -> bool {
+        !self.heads.is_empty() || !self.tails.is_empty()
+    }
+
+    /// Whether a linking atom of this residue lies within bonding distance
+    /// of one of `next`'s.
+    fn links_to(&self, next: &Self) -> bool {
+        self.tails.iter().any(|&tail| {
+            next.heads
+                .iter()
+                .any(|&head| within_bonding_distance(tail, head))
+        })
+    }
 }
 
 /// The residues of each chain since its last `TER` record, within one model.
@@ -190,8 +226,11 @@ struct ChainRuns {
 
 impl ChainRuns {
     /// Ends a chain's run. A run a `TER` record ends is polymer; otherwise its
-    /// polymer spans its `ATOM` records. Water is never polymer, and neither
-    /// is a single residue.
+    /// polymer spans its `ATOM` records and the residues bonded to their
+    /// ends. Water is never polymer, nor a single residue, nor a residue of
+    /// `HETATM` records without a polymer template and, in a run a `TER`
+    /// record ends, without linking atoms, or otherwise without a link to a
+    /// neighbour.
     fn close(&mut self, asym_id: &str, terminated: bool, residues: &mut [Residue]) {
         let Some(run) = self.open.remove(asym_id) else {
             return;
@@ -206,14 +245,36 @@ impl ChainRuns {
                 .iter()
                 .rposition(|&residue| residues[residue].atom_record);
             match (first, last) {
-                (Some(first), Some(last)) => &run[first..=last],
+                (Some(mut first), Some(mut last)) => {
+                    while first > 0 && residues[run[first - 1]].links_to(&residues[run[first]]) {
+                        first -= 1;
+                    }
+                    while last + 1 < run.len()
+                        && residues[run[last]].links_to(&residues[run[last + 1]])
+                    {
+                        last += 1;
+                    }
+                    &run[first..=last]
+                }
                 _ => &[],
             }
         };
         let polymer = span
             .iter()
-            .copied()
-            .filter(|&residue| !residues[residue].water)
+            .enumerate()
+            .filter(|&(index, &residue)| {
+                let residue = &residues[residue];
+                let linked = if terminated {
+                    residue.has_linking_atom()
+                } else {
+                    (index > 0 && residues[span[index - 1]].links_to(residue))
+                        || span
+                            .get(index + 1)
+                            .is_some_and(|&next| residue.links_to(&residues[next]))
+                };
+                !residue.water && (residue.atom_record || residue.polymer_template || linked)
+            })
+            .map(|(_, &residue)| residue)
             .collect::<Vec<_>>();
         if polymer.len() < 2 {
             return;
@@ -239,6 +300,7 @@ impl ChainRuns {
 /// inferred from the atom name.
 fn read_rows(
     document: &PdbDocument,
+    components: Option<&ComponentLibrary>,
     cancellation: Option<&Cancellation>,
 ) -> Result<(Vec<AtomRow>, Vec<usize>), FormatError> {
     let atoms = document.atoms();
@@ -288,6 +350,9 @@ fn read_rows(
                     repeat: *repeat,
                     atom_record: false,
                     water: is_water(atom.residue_name()),
+                    polymer_template: polymer_template(atom.residue_name(), components),
+                    heads: Vec::new(),
+                    tails: Vec::new(),
                     polymer_position: None,
                 });
                 *repeat += 1;
@@ -300,6 +365,16 @@ fn read_rows(
             }
         };
         residues[residue].atom_record |= atom.kind() == PdbAtomKind::Atom;
+        if let Some((head, atomic_number)) = linking_role(atom.name()) {
+            let element = Element::from_atomic_number(atomic_number).expect("linking element");
+            let residue = &mut residues[residue];
+            let ends = if head {
+                &mut residue.heads
+            } else {
+                &mut residue.tails
+            };
+            ends.push((element, atom.position()));
+        }
         residue_of.push(residue);
         if terminated.contains(&index) {
             let chain = residues[residue].asym_id.clone();
@@ -396,6 +471,33 @@ fn read_rows(
     Ok((rows, inferred))
 }
 
+/// Whether the template of a residue named `name` is a polymer one: the
+/// caller's library first, then the bundled one.
+fn polymer_template(name: &str, components: Option<&ComponentLibrary>) -> bool {
+    components
+        .and_then(|library| library.get(name))
+        .or_else(|| ComponentLibrary::bundled().get(name))
+        .is_some_and(|template| {
+            matches!(
+                template.linking(),
+                ComponentLinking::Peptide | ComponentLinking::Nucleotide
+            )
+        })
+}
+
+/// Whether an atom of this name is a polymer link's head (`N`, `P`), which
+/// joins the residue before, or its tail (`C`, `O3'`), which joins the one
+/// after, with its atomic number.
+fn linking_role(name: &str) -> Option<(bool, u8)> {
+    match name {
+        "N" => Some((true, 7)),
+        "P" => Some((true, 15)),
+        "C" => Some((false, 6)),
+        "O3'" | "O3*" => Some((false, 8)),
+        _ => None,
+    }
+}
+
 /// The element a PDB atom name implies by convention: two-letter symbols
 /// start in column 13, one-letter symbols in column 14, and four-character
 /// hydrogen names fill columns 13-16. A one-atom residue named for its
@@ -446,13 +548,14 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             connection_id: None,
             connection_type: "LINK".to_owned(),
             line: Some(record.location().line()),
-            order: DeclaredOrder::ByElements(BondOrder::Single),
+            order: DeclaredOrder::ByElements(None),
             partners: [partner(left, None), partner(right, None)],
             connectivity_only: false,
         })));
     }
     // Each bond is usually listed from both atoms. Listing a partner twice or
-    // three times states a double or triple bond, by convention.
+    // three times states a double or triple bond, by convention, as Maestro
+    // and Kekule write.
     let mut listed = BTreeMap::<(u32, u32), ([u8; 2], usize)>::new();
     for record in document.conect_records() {
         let serial = record.serial();
@@ -472,13 +575,25 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
             counts[direction] = counts[direction].saturating_add(1);
         }
     }
+    // Atoms the records bond, directly or through others, that list no pair
+    // twice, as wwPDB files do, state no orders. Groups are counted apart, so
+    // that a molecule a program appends with orders leaves the others alone.
+    let mut groups = ConectGroups::of(listed.keys().copied());
+    let mut stating = BTreeSet::new();
+    for (&(left, _), (counts, _)) in &listed {
+        if counts.iter().any(|&count| count > 1) {
+            stating.insert(groups.root(left));
+        }
+    }
     let mut listed = listed.into_iter().collect::<Vec<_>>();
     listed.sort_by_key(|&(pair, (_, line))| (line, pair));
     for ((left, right), (counts, line)) in listed {
+        let states_orders = stating.contains(&groups.root(left));
         let order = match counts[0].max(counts[1]) {
-            1 => BondOrder::Single,
-            2 => BondOrder::Double,
-            3 => BondOrder::Triple,
+            _ if !states_orders => None,
+            1 => Some(BondOrder::Single),
+            2 => Some(BondOrder::Double),
+            3 => Some(BondOrder::Triple),
             count => {
                 return Err(structure_error(
                     DiagnosticKind::InvalidValue,
@@ -499,6 +614,47 @@ fn connection_records(document: &PdbDocument) -> Result<Vec<ConnectionRecord>, F
         })));
     }
     Ok(records)
+}
+
+/// The groups of atoms `CONECT` records bond to each other, directly or
+/// through others, by atom serial.
+struct ConectGroups {
+    parent: BTreeMap<u32, u32>,
+}
+
+impl ConectGroups {
+    fn of(pairs: impl IntoIterator<Item = (u32, u32)>) -> Self {
+        let mut groups = Self {
+            parent: BTreeMap::new(),
+        };
+        for (left, right) in pairs {
+            let (left, right) = (groups.root(left), groups.root(right));
+            if left != right {
+                groups.parent.insert(left.max(right), left.min(right));
+            }
+        }
+        groups
+    }
+
+    /// The serial that stands for the group of `serial`.
+    fn root(&mut self, serial: u32) -> u32 {
+        let mut root = serial;
+        while let Some(&parent) = self.parent.get(&root) {
+            root = parent;
+        }
+        // Later lookups go straight to the root.
+        let mut current = serial;
+        while let Some(parent) = self.parent.insert(current, root) {
+            if parent == root {
+                break;
+            }
+            current = parent;
+        }
+        if current == root {
+            self.parent.remove(&root);
+        }
+        root
+    }
 }
 
 fn partner(partner: &PdbPartner, atom_name: Option<&str>) -> PartnerSpec {
