@@ -823,6 +823,13 @@ the main branch migrates by the table under "From the SampleSet API".
     charges are reported (`TemplateMissing`).
   - Force-field templates name their force field (`Component::force_field`)
     and keep the protonation their residue names state.
+- The mmCIF writer keeps a chain without an author ID one author chain. All
+  its asyms take the chain's asym ID as `auth_asym_id`, so the ions of a
+  simulation's segment `ION1` read back under `ION1`, not each under its own
+  name. Where another chain states that name, the chain takes it with a
+  serial, `ION1-2`, so two chains never read back as one; so does a molecule
+  outside the hierarchy. Asyms of one component are one non-polymer entity,
+  and all waters one water entity, instead of an entity per asym.
 - A double or triple bond the source states between aromatic atoms is their
   pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
   and 4 read as benzene, not as a ring of six double bonds or a cumulene.

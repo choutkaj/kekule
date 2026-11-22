@@ -823,19 +823,32 @@ impl MmcifEntityClassifications {
 /// lacks a template bond cannot be written as it is (see
 /// [`MmcifWriteErrorKind::DictionaryBondMissing`]).
 ///
-/// Every hierarchy chain is a structural instance of its own, even when
-/// chains share a label, as the copies
+/// Every entity instance is a structural instance (asym) of its own: each
+/// polymer molecule of a chain, each non-polymer residue, and a chain's
+/// waters together. A chain the source names as one asym stays one.
+/// Asyms of one chemical component are instances of one non-polymer entity,
+/// and all waters are one water entity; each polymer and branched asym is an
+/// entity of its own.
+///
+/// Every hierarchy chain has asyms of its own, even when chains share a
+/// label, as the copies
 /// [`StructureEditor::append_structure`](crate::structure::StructureEditor::append_structure)
-/// appends do. The first chain with a label keeps it as `label_asym_id`; each
+/// appends do. The first chain with a label keeps it as its asym ID; each
 /// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
-/// on, skipping IDs another chain or asym uses. A chain without a label
-/// takes the first of `A`, `B`, and so on that no chain or asym uses.
-/// `auth_asym_id` keeps the author chain name, which falls back to the
-/// written asym ID. Reading the block
-/// back gives the same chains, residues, atoms, and bonds, in the same order
-/// and under the same author names, with the written asym IDs as their
-/// labels. The hierarchy itself keeps labels as appended, since a label
-/// names a source's instance, not one of the combined structure's.
+/// on. A chain without a label takes the first of `A`, `B`, and so on that no
+/// chain or asym uses. A chain's first asym takes the chain's asym ID, and
+/// each later one the ID with a serial, `A_2`, `A_3`, and so on, skipping IDs
+/// another chain or asym uses.
+///
+/// `auth_asym_id` keeps the author chain name. All asyms of a chain without
+/// one take the chain's asym ID, or that ID with a serial, `A-2`, `A-3`, and
+/// so on, where another chain states it, so chains never share a name they
+/// did not share. Reading the block back gives one chain per asym, with the
+/// written asym IDs as labels, and the same residues, atoms, and bonds in the
+/// same order. The chains under one author name hold the residues of the
+/// source chains under that name. The hierarchy itself keeps labels as
+/// appended, since a label names a source's instance, not one of the
+/// combined structure's.
 #[derive(Debug, Clone, Copy)]
 pub struct MmcifBlockSource<'a> {
     content: BlockContent<'a>,
@@ -881,9 +894,9 @@ impl<'a> MmcifBlockSource<'a> {
     /// Overrides derived entity kinds for the listed molecule instances;
     /// omitted instances keep canonical classification.
     ///
-    /// One mmCIF entity is assigned to each populated hierarchy chain (and one
-    /// to each hierarchy-free instance), so instances touched by the same chain
-    /// must have the same classification.
+    /// Each asym has one entity kind, so the molecules of one residue, and
+    /// the residues of a chain the source names as one asym, must have the
+    /// same classification.
     #[must_use]
     pub fn with_classifications(mut self, classifications: &'a MmcifEntityClassifications) -> Self {
         self.entities = EntitySemantics::Classifications(classifications);

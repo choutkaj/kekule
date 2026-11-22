@@ -5,8 +5,8 @@ use crate::diagnostics::{AtomField, FormatError};
 use crate::io::macromolecular::{EntityKind, StructureInterpretationReport};
 use crate::structure::StructureView;
 use crate::topology::{
-    ChainView, InstanceAtomId, MoleculeClass, MoleculeInstance, MoleculeInstanceId, ResidueClass,
-    ResidueView, Topology,
+    AtomSiteView, ChainView, InstanceAtomId, MoleculeClass, MoleculeInstance, MoleculeInstanceId,
+    ResidueClass, ResidueView, Topology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +70,9 @@ pub(super) struct AtomEntityAssignment {
     pub(super) entity_id: String,
     pub(super) asym_id: String,
     pub(super) kind: AssignedEntityKind,
+    /// The `auth_asym_id` of an atom whose site and chain state none; see
+    /// [`AuthorIds`].
+    pub(super) author_asym_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +140,7 @@ pub(super) fn entity_plan_from_report(
 /// written asym uses. A chain without a label, as a PDB chain with a blank
 /// chain column, takes the first of `A` to `Z`, `AA`, `AB`, and so on that no
 /// chain label or other written asym uses. Author chain identifiers are
-/// written as they are.
+/// written as they are; [`AuthorIds`] names chains without one.
 struct AsymIds {
     reserved: BTreeSet<String>,
     named: BTreeSet<String>,
@@ -179,6 +182,85 @@ impl AsymIds {
     }
 }
 
+/// The author chain ID an atom site states, or else its chain: none where
+/// both are absent or empty.
+pub(super) fn stated_author_id<'h>(
+    site: AtomSiteView<'h>,
+    chain: ChainView<'h>,
+) -> Option<&'h str> {
+    site.metadata()
+        .auth_asym_id()
+        .filter(|id| !id.is_empty())
+        .or_else(|| chain.author_id().filter(|id| !id.is_empty()))
+}
+
+/// The author chain IDs of chains that state none, and of molecules outside
+/// the hierarchy. mmCIF readers group asyms into author chains by
+/// `auth_asym_id`, so all asyms of one chain take one: the chain's own asym
+/// ID, that of its first asym. Where a chain states that ID as its author
+/// ID, or another chain already takes it, the chain takes the ID with a
+/// serial, `A-2`, `A-3`, and so on, that none takes, so that chains stay
+/// apart.
+struct AuthorIds {
+    taken: BTreeSet<String>,
+}
+
+impl AuthorIds {
+    fn new(structure: StructureView<'_>) -> Self {
+        let taken = structure
+            .topology()
+            .atom_sites()
+            .filter_map(|site| stated_author_id(site, site.residue().chain()))
+            .map(str::to_owned)
+            .collect();
+        Self { taken }
+    }
+
+    /// The author ID of the chain written as asym `asym_id` whose sites
+    /// state none.
+    fn fallback(&mut self, asym_id: &str) -> String {
+        if self.taken.insert(asym_id.to_owned()) {
+            return asym_id.to_owned();
+        }
+        (2usize..)
+            .map(|serial| format!("{asym_id}-{serial}"))
+            .find(|candidate| self.taken.insert(candidate.clone()))
+            .expect("serials are unbounded")
+    }
+
+    /// The author ID of the sites of `chain`, written as asym `asym_id`, that
+    /// state none; `asym_id` itself, unclaimed, when every site states one.
+    fn chain(&mut self, chain: ChainView<'_>, asym_id: &str) -> String {
+        let unstated = chain
+            .residues()
+            .flat_map(|residue| residue.atom_sites())
+            .any(|site| stated_author_id(site, chain).is_none());
+        if unstated {
+            self.fallback(asym_id)
+        } else {
+            asym_id.to_owned()
+        }
+    }
+}
+
+/// What makes asyms instances of one entity: one chemical component, or
+/// water. Each polymer and branched asym is an entity of its own.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum EntityKey {
+    NonPolymer(Vec<String>),
+    Water,
+}
+
+impl EntityKey {
+    fn of(segment: &ChainSegment) -> Option<Self> {
+        match segment.kind {
+            AssignedEntityKind::NonPolymer => Some(Self::NonPolymer(segment.components.clone())),
+            AssignedEntityKind::Water => Some(Self::Water),
+            AssignedEntityKind::Polymer | AssignedEntityKind::Branched => None,
+        }
+    }
+}
+
 /// The `number`th letter ID, from 1: `A` to `Z`, then `AA`, `AB`, and so on.
 fn letters(mut number: usize) -> String {
     let mut id = Vec::new();
@@ -196,9 +278,26 @@ pub(super) fn generic_entity_plan(
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<EntityPlan, FormatError> {
     let mut asym_ids = AsymIds::new(structure);
-    let mut entities = Vec::new();
+    let mut author_ids = AuthorIds::new(structure);
+    let mut entities = Vec::<EntityRow>::new();
+    let mut grouped = BTreeMap::<EntityKey, String>::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
+    // The entity of an asym: its group's, or a new one.
+    let mut entity_of = |kind: AssignedEntityKind, key: Option<EntityKey>| {
+        if let Some(entity_id) = key.as_ref().and_then(|key| grouped.get(key)) {
+            return entity_id.clone();
+        }
+        let entity_id = (entities.len() + 1).to_string();
+        entities.push(EntityRow {
+            id: entity_id.clone(),
+            kind,
+        });
+        if let Some(key) = key {
+            grouped.insert(key, entity_id.clone());
+        }
+        entity_id
+    };
 
     for chain in structure.topology().chains() {
         let segments = chain_segments(chain, |residue, sites| {
@@ -233,17 +332,14 @@ pub(super) fn generic_entity_plan(
             Ok((kind, None))
         })?;
         let label = asym_ids.chain(chain.label_id());
+        let author = author_ids.chain(chain, &label);
         for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
-            let entity_id = (entities.len() + 1).to_string();
-            entities.push(EntityRow {
-                id: entity_id.clone(),
-                kind: segment.kind,
-            });
+            let entity_id = entity_of(segment.kind, EntityKey::of(&segment));
             asyms.push(AsymRow {
                 id: asym_id.clone(),
                 entity_id: entity_id.clone(),
             });
-            assign_sites(&mut atoms, &segment, &entity_id, &asym_id)?;
+            assign_sites(&mut atoms, &segment, &entity_id, &asym_id, &author)?;
         }
     }
 
@@ -281,11 +377,13 @@ pub(super) fn generic_entity_plan(
         }
         asym_ids.reserved.insert(candidate.clone());
         let kind = entity_kind(molecule, classifications)?;
-        let entity_id = (entities.len() + 1).to_string();
-        entities.push(EntityRow {
-            id: entity_id.clone(),
+        // Molecules outside the hierarchy are written as the generic
+        // component `MOL`, which names no chemistry, so only water groups.
+        let entity_id = entity_of(
             kind,
-        });
+            (kind == AssignedEntityKind::Water).then_some(EntityKey::Water),
+        );
+        let author = author_ids.fallback(&candidate);
         asyms.push(AsymRow {
             id: candidate.clone(),
             entity_id: entity_id.clone(),
@@ -297,6 +395,7 @@ pub(super) fn generic_entity_plan(
                     entity_id: entity_id.clone(),
                     asym_id: candidate.clone(),
                     kind,
+                    author_asym_id: author.clone(),
                 },
             );
         }
@@ -317,6 +416,7 @@ fn report_entity_plan(
     report: &StructureInterpretationReport,
 ) -> Result<EntityPlan, FormatError> {
     let mut asym_ids = AsymIds::new(structure);
+    let mut author_ids = AuthorIds::new(structure);
     let mut seen_instances = BTreeSet::new();
     let mut provenance = BTreeMap::new();
     let mut reserved_entity_ids = BTreeSet::new();
@@ -353,6 +453,8 @@ fn report_entity_plan(
     let mut sequences = BTreeMap::new();
     let mut entities = Vec::new();
     let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
+    // Generated entities by what their asyms share.
+    let mut grouped = BTreeMap::<EntityKey, String>::new();
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
     let mut generated_serial = 1usize;
@@ -407,6 +509,7 @@ fn report_entity_plan(
             Ok((kind, source_entity_ids.into_iter().next()))
         })?;
         let label = asym_ids.chain(chain.label_id());
+        let author = author_ids.chain(chain, &label);
         // The report's sequence of the polymer on this chain.
         let sequence = report
             .polymer_entities()
@@ -425,16 +528,23 @@ fn report_entity_plan(
                     .collect::<BTreeMap<_, _>>()
             });
         for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
+            let key = EntityKey::of(&segment);
             let entity_id = if let Some(entity_id) = &segment.source_entity_id {
                 entity_id.clone()
+            } else if let Some(entity_id) = key.as_ref().and_then(|key| grouped.get(key)) {
+                entity_id.clone()
             } else {
-                loop {
+                let entity_id = loop {
                     let candidate = format!("K{generated_serial}");
                     generated_serial += 1;
                     if reserved_entity_ids.insert(candidate.clone()) {
                         break candidate;
                     }
+                };
+                if let Some(key) = key {
+                    grouped.insert(key, entity_id.clone());
                 }
+                entity_id
             };
             if let Some(existing) = entity_kinds.get(&entity_id) {
                 if *existing != segment.kind {
@@ -461,7 +571,7 @@ fn report_entity_plan(
                     .entry(entity_id.clone())
                     .or_insert_with(|| sequence.clone());
             }
-            assign_sites(&mut atoms, &segment, &entity_id, &asym_id)?;
+            assign_sites(&mut atoms, &segment, &entity_id, &asym_id, &author)?;
         }
     }
 
@@ -495,6 +605,9 @@ struct ChainSegment {
     source_entity_id: Option<String>,
     /// The molecule of a polymer segment of a chain without a source asym.
     molecule: Option<MoleculeInstanceId>,
+    /// The components of the segment's residues, in residue order, as the
+    /// rows name them.
+    components: Vec<String>,
     sites: Vec<InstanceAtomId>,
 }
 
@@ -529,6 +642,7 @@ fn chain_segments<'h>(
             continue;
         }
         let (kind, source_entity_id) = classify(residue, &sites)?;
+        let component = residue.label_comp_id().unwrap_or(residue.name()).to_owned();
         let molecule =
             (!source_asym && kind == AssignedEntityKind::Polymer).then(|| sites[0].instance());
         let shared = (source_asym || kind != AssignedEntityKind::NonPolymer)
@@ -541,11 +655,15 @@ fn chain_segments<'h>(
             })
             .flatten();
         match shared {
-            Some(segment) => segment.sites.extend(sites),
+            Some(segment) => {
+                segment.components.push(component);
+                segment.sites.extend(sites);
+            }
             None => segments.push(ChainSegment {
                 kind,
                 source_entity_id,
                 molecule,
+                components: vec![component],
                 sites,
             }),
         }
@@ -606,6 +724,7 @@ fn assign_sites(
     segment: &ChainSegment,
     entity_id: &str,
     asym_id: &str,
+    author_asym_id: &str,
 ) -> Result<(), FormatError> {
     for &atom in &segment.sites {
         if atoms
@@ -615,6 +734,7 @@ fn assign_sites(
                     entity_id: entity_id.to_owned(),
                     asym_id: asym_id.to_owned(),
                     kind: segment.kind,
+                    author_asym_id: author_asym_id.to_owned(),
                 },
             )
             .is_some()

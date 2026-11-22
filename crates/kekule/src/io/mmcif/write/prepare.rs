@@ -1,5 +1,7 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
-use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
+use super::entities::{
+    stated_author_id, AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow,
+};
 use super::implied::{mark_implied, residue_key, ComponentTable, ReadBlock};
 use super::one_based_serial;
 use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
@@ -485,15 +487,10 @@ fn collect_macro_rows(
                 .author_comp_id()
                 .map(str::to_owned)
                 .unwrap_or(label_comp_id),
-            // A blank author chain, as a PDB chain column states, takes the
-            // written asym ID.
-            auth_asym_id: site
-                .metadata()
-                .auth_asym_id
-                .clone()
-                .or_else(|| chain.author_id().map(str::to_owned))
-                .filter(|id| !id.is_empty())
-                .unwrap_or_else(|| assignment.asym_id.clone()),
+            // A blank author chain, as a PDB chain column states, takes one
+            // name for all asyms of the chain.
+            auth_asym_id: stated_author_id(site, chain)
+                .map_or_else(|| assignment.author_asym_id.clone(), str::to_owned),
             auth_atom_id: site
                 .metadata()
                 .auth_atom_id
@@ -552,7 +549,7 @@ fn collect_small_rows(
             formal_charge: atom.formal_charge,
             auth_seq_id: None,
             auth_comp_id: component_id.to_owned(),
-            auth_asym_id: assignment.asym_id.clone(),
+            auth_asym_id: assignment.author_asym_id.clone(),
             auth_atom_id: atom_name,
         });
     }
