@@ -2484,23 +2484,14 @@ fn mmcif_writer_entity_types_follow_inference_reports_and_explicit_classes() {
 }
 
 #[test]
-fn mmcif_writer_does_not_infer_multi_residue_carbohydrate_entity_semantics() {
+fn mmcif_writer_writes_multi_residue_carbohydrates_as_branched_entities() {
+    // PDBx writes every oligosaccharide as a branched entity, linear or not.
     let linear = carbohydrate_structure(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
     let graph_branched =
         carbohydrate_structure(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
     for structure in [&linear, &graph_branched] {
-        let molecule = structure.topology().instances().next().unwrap().id();
-        assert_eq!(
-            mmcif_issue(
-                mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)
-            ),
-            Some(
-                MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
-                    molecule,
-                    classification: MoleculeClass::Carbohydrate,
-                }
-            )
-        );
+        let (written, _) = mmcif::write([structure], MmcifWriteOptions::default()).unwrap();
+        assert_eq!(written_entity_types(&written), ["branched"]);
     }
 }
 
@@ -2513,15 +2504,8 @@ fn mmcif_writer_preserves_source_branched_carbohydrate_semantics() {
     let molecule = structure.topology().instances().next().unwrap();
     assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
     assert_eq!(molecule.residues().count(), 3);
-    assert!(matches!(
-        mmcif_issue(mmcif::write([structure], MmcifWriteOptions::default()).map(|(text, _)| text)),
-        Some(
-            MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
-                classification: MoleculeClass::Carbohydrate,
-                ..
-            }
-        )
-    ));
+    let (written, _) = mmcif::write([structure], MmcifWriteOptions::default()).unwrap();
+    assert_eq!(written_entity_types(&written), ["branched"]);
 
     let written = mmcif::write(
         [mmcif::MmcifBlockSource::structure(structure)
@@ -2619,9 +2603,11 @@ fn mmcif_writer_rejects_conflicting_missing_duplicate_and_unknown_classification
 
 #[test]
 fn mmcif_writer_partial_overrides_still_validate_shared_asymmetry_semantics() {
+    // Asym A holds the glycine and a ligand. A lone amino acid would stay a
+    // polymer residue.
     let input = MIXED.replace(
         "ATOM 2 C CA GLY A 1 1 1.0 0.0 0.0 1",
-        "ATOM 2 C CA GLY A 1 3 9.0 0.0 0.0 1",
+        "HETATM 2 C C1 LIG A 1 3 9.0 0.0 0.0 1",
     );
     let interpreted = (parse(&input)).interpret(Default::default()).unwrap();
     let structure = interpreted.structure();

@@ -76,6 +76,10 @@ Hydrogens no template names bond by name where convention places them, with
 peptide's `N`; `HO5'` and `H5T` on a nucleotide's `O5'`, `H3T` and `HO3*` on
 its `O3'`. A hydrogen a variant names bonds as the variant does. Other
 hydrogens bond to the nearest heavy atom (`HydrogenAttachedByDistance`).
+A hydrogen that ends with more than one bond, as when its name places it on
+one atom and a record bonds it to another, is reported
+(`HydrogenWithSeveralBonds`). Hydrogens that placement adds take these names
+only where they bond as named.
 
 ## Residues without hydrogens
 

@@ -4,9 +4,9 @@
 use kekule::macromolecular::StructureInterpretation;
 use kekule::math::Point3;
 use kekule::mmcif::{self, MmcifWriteOptions};
-use kekule::molecule::{Atom, AtomId, Element, MoleculeEditor};
+use kekule::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use kekule::pdb;
-use kekule::structure::{Positions, Structure, StructureBuilder};
+use kekule::structure::{Positions, Structure, StructureBuilder, StructureEditor};
 use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
 use kekule::units::{Quantity, ANGSTROM};
 
@@ -363,4 +363,305 @@ fn a_site_without_an_author_id_takes_the_one_its_chain_states() {
         [("A".to_owned(), water)],
         "{text}"
     );
+}
+
+fn mmcif_fixture(name: &str) -> StructureInterpretation {
+    let path = format!("{}/tests/fixtures/mmcif/{name}", env!("CARGO_MANIFEST_DIR"));
+    mmcif::parse_str(&std::fs::read_to_string(path).unwrap(), Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+/// Adds residue `component` of one atom `name`, of `element` with `charge`,
+/// to the chain labelled `chain`, a new one of author chain `A` where none
+/// is, at `position` Å, numbered `sequence`.
+fn add_ion(
+    editor: &mut StructureEditor,
+    chain: &str,
+    (component, name, element, charge): (&str, &str, &str, i8),
+    sequence: &str,
+    position: [f64; 3],
+) {
+    let mut ion = MoleculeEditor::new();
+    ion.add_atom(Atom::new(Element::from_symbol(element).unwrap()).with_formal_charge(charge))
+        .unwrap();
+    let [x, y, z] = position;
+    let positions = Positions::new(Quantity::new(vec![Point3::new(x, y, z)], ANGSTROM)).unwrap();
+    let molecule = editor
+        .add_molecule(ion.finish().unwrap(), &positions)
+        .unwrap();
+    let atom = molecule.atoms()[&AtomId::new(0)];
+    let found = editor
+        .topology()
+        .chains()
+        .find(|(_, candidate)| candidate.label_id() == chain)
+        .map(|(id, _)| id);
+    let chain = found.unwrap_or_else(|| editor.add_chain(chain, Some("A".to_owned())).unwrap());
+    let residue = editor
+        .add_residue(chain, component, None, Some(sequence.to_owned()), None)
+        .unwrap();
+    editor
+        .add_atom_site(
+            residue,
+            atom,
+            AtomSiteMetadata::default().with_label_atom_id(Some(name.to_owned())),
+        )
+        .unwrap();
+}
+
+/// The block written from `structure`, with `report` followed from `source`
+/// when given.
+fn write_edit(
+    source: &StructureInterpretation,
+    editor: StructureEditor,
+    with_report: bool,
+) -> String {
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed =
+        source
+            .report()
+            .follow_edit(source.topology(), edited.topology(), &correspondence);
+    let block = if with_report {
+        mmcif::MmcifBlockSource::structure(&edited).with_reports(std::slice::from_ref(&followed))
+    } else {
+        mmcif::MmcifBlockSource::structure(&edited)
+    };
+    let (text, _) = mmcif::write([block], MmcifWriteOptions::default()).unwrap();
+    text
+}
+
+/// The asym and entity of each atom-site row of component `component`.
+fn component_rows(text: &str, component: &str) -> Vec<(String, String)> {
+    let document = mmcif::parse_str(text, Default::default()).unwrap();
+    let table = document.blocks()[0].loop_with_tag("_atom_site.id").unwrap();
+    (0..table.row_count())
+        .filter(|&row| table.value(row, "_atom_site.label_comp_id").unwrap().text() == component)
+        .map(|row| {
+            ["_atom_site.label_asym_id", "_atom_site.label_entity_id"]
+                .map(|tag| table.value(row, tag).unwrap().text().to_owned())
+                .into()
+        })
+        .collect()
+}
+
+#[test]
+fn one_component_name_of_other_chemistry_is_another_entity() {
+    // Ligand LIG is a carbon in chains A and B and a nitrogen in chain C.
+    let ligand = |chain, element| Site {
+        chain,
+        name: if element == "C" { "C1" } else { "N1" },
+        element,
+        residue: "LIG",
+        ..ion("NA", "", 1, [0.0, 0.0, 0.0])
+    };
+    let source = read(&[
+        Site {
+            position: [0.0, 0.0, 0.0],
+            ..ligand('A', "C")
+        },
+        Site {
+            position: [10.0, 0.0, 0.0],
+            ..ligand('B', "C")
+        },
+        Site {
+            position: [20.0, 0.0, 0.0],
+            ..ligand('C', "N")
+        },
+    ]);
+    for written in [
+        mmcif::write([&source], MmcifWriteOptions::default()),
+        mmcif::write([source.structure()], MmcifWriteOptions::default()),
+    ] {
+        let (text, _) = written.unwrap();
+        let entities = asym_entities(&text);
+        assert_eq!(entities[0].1, entities[1].1, "{text}");
+        assert_ne!(entities[0].1, entities[2].1, "{text}");
+    }
+}
+
+#[test]
+fn an_ion_added_to_a_ligand_chain_is_an_instance_of_its_own() {
+    // Rubredoxin's iron is asym B of entity 2.
+    let source = mmcif_fixture("1IRO.cif");
+    for with_report in [true, false] {
+        let mut editor = source.structure().to_editor();
+        add_ion(
+            &mut editor,
+            "B",
+            ("NA", "NA", "Na", 1),
+            "200",
+            [30.0, 0.0, 0.0],
+        );
+        let text = write_edit(&source, editor, with_report);
+        let [(iron_asym, iron_entity)] = component_rows(&text, "FE").try_into().unwrap();
+        let [(sodium_asym, sodium_entity)] = component_rows(&text, "NA").try_into().unwrap();
+        assert_eq!(iron_asym, "B");
+        assert_ne!(sodium_asym, iron_asym, "{text}");
+        assert_ne!(sodium_entity, iron_entity, "{text}");
+    }
+}
+
+#[test]
+fn a_ligand_added_to_a_polymer_chain_is_an_instance_of_its_own() {
+    let source = mmcif_fixture("1IRO.cif");
+    for with_report in [true, false] {
+        let mut editor = source.structure().to_editor();
+        add_ion(
+            &mut editor,
+            "A",
+            ("NA", "NA", "Na", 1),
+            "200",
+            [30.0, 0.0, 0.0],
+        );
+        let text = write_edit(&source, editor, with_report);
+        let [(sodium_asym, _)] = component_rows(&text, "NA").try_into().unwrap();
+        assert_ne!(sodium_asym, "A", "{text}");
+        let reread = read_back(&text);
+        let chain = reread
+            .topology()
+            .chains()
+            .find(|chain| chain.label_id() == sodium_asym)
+            .unwrap();
+        assert_eq!(chain.author_id(), Some("A"));
+    }
+}
+
+#[test]
+fn added_instances_of_source_entities_join_them() {
+    // KRas: magnesium is entity 2 and water entity 5. A new chain Z holds
+    // another magnesium and water, and a water lies outside the hierarchy.
+    let source = mmcif_fixture("6OIM.cif");
+    let mut editor = source.structure().to_editor();
+    add_ion(
+        &mut editor,
+        "Z",
+        ("MG", "MG", "Mg", 2),
+        "300",
+        [60.0, 0.0, 0.0],
+    );
+    add_ion(
+        &mut editor,
+        "Z",
+        ("HOH", "O", "O", 0),
+        "900",
+        [70.0, 0.0, 0.0],
+    );
+    let mut water = MoleculeEditor::new();
+    let oxygen = water
+        .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+        .unwrap();
+    for _ in 0..2 {
+        let hydrogen = water
+            .add_atom(Atom::new(Element::from_symbol("H").unwrap()))
+            .unwrap();
+        water.add_bond(oxygen, hydrogen, BondOrder::Single).unwrap();
+    }
+    let points = [[80.0, 0.0, 0.0], [80.96, 0.0, 0.0], [79.76, 0.93, 0.0]]
+        .map(|[x, y, z]| Point3::new(x, y, z));
+    let positions = Positions::new(Quantity::new(points.to_vec(), ANGSTROM)).unwrap();
+    editor
+        .add_molecule(water.finish().unwrap(), &positions)
+        .unwrap();
+    let text = write_edit(&source, editor, true);
+    let entities = |component| {
+        component_rows(&text, component)
+            .into_iter()
+            .map(|(_, entity)| entity)
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(entities("MG"), ["2".to_owned()].into(), "{text}");
+    assert_eq!(entities("HOH"), ["5".to_owned()].into(), "{text}");
+    assert_eq!(component_rows(&text, "HOH").len(), 207 + 1 + 3);
+}
+
+/// A curated benchmark entry.
+fn curated(name: &str) -> StructureInterpretation {
+    use std::io::Read;
+    let path = format!(
+        "{}/../../benchmarks/datasets/bio/curated/pdb/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(path).unwrap())
+        .read_to_string(&mut text)
+        .unwrap();
+    mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+/// The `_entity.type` of each entity of a written block.
+fn entity_types(text: &str) -> Vec<String> {
+    let document = mmcif::parse_str(text, Default::default()).unwrap();
+    let table = document.blocks()[0].loop_with_tag("_entity.id").unwrap();
+    (0..table.row_count())
+        .map(|row| table.value(row, "_entity.type").unwrap().text().to_owned())
+        .collect()
+}
+
+#[test]
+fn entries_write_without_their_reports() {
+    // 7LPM ends its chain with a leucine a break leaves alone; 7X9L holds
+    // a sucrose, a branched entity of two saccharide residues.
+    for (name, types) in [
+        (
+            "pdb_00007lpm_xyz_v1-3.cif.gz",
+            &["polymer", "non-polymer", "non-polymer", "water"][..],
+        ),
+        (
+            "pdb_00007x9l_xyz_v1-1.cif.gz",
+            &[
+                "polymer",
+                "branched",
+                "non-polymer",
+                "non-polymer",
+                "non-polymer",
+                "non-polymer",
+                "water",
+            ],
+        ),
+    ] {
+        let source = curated(name);
+        let (text, report) =
+            mmcif::write([source.structure()], MmcifWriteOptions::default()).unwrap();
+        assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+        assert_eq!(entity_types(&text), types, "{name}");
+        let reread = read_back(&text);
+        assert_eq!(reread.atom_count(), source.structure().atom_count());
+        assert_eq!(
+            reread.topology().bonds().count(),
+            source.structure().topology().bonds().count()
+        );
+    }
+}
+
+#[test]
+fn waters_whose_numbers_wrap_are_written_as_two_asyms() {
+    // Chain W numbers its third water 1 again.
+    let water = |sequence, x| Site {
+        chain: 'W',
+        ..ion("HOH", "", sequence, [x, 0.0, 0.0])
+    };
+    let source = read(&[water(1, 0.0), water(2, 5.0), water(1, 10.0)]);
+    for written in [
+        mmcif::write([&source], MmcifWriteOptions::default()),
+        mmcif::write([source.structure()], MmcifWriteOptions::default()),
+    ] {
+        let (text, _) = written.unwrap();
+        let asyms = asym_entities(&text);
+        assert_eq!(asyms.len(), 2, "{text}");
+        assert_eq!(asyms[0].1, asyms[1].1);
+        let residues = |sequences: &[&str]| {
+            sequences
+                .iter()
+                .map(|sequence| ("HOH".to_owned(), (*sequence).to_owned()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            author_chains(&read_back(&text)),
+            [("W".to_owned(), residues(&["1", "2", "1"]))]
+        );
+    }
 }

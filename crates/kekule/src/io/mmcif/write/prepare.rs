@@ -13,8 +13,11 @@ use crate::io::macromolecular::connectivity::{dictionary_template, link_sides};
 use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
+use crate::structure::placement::ResidueNames;
 use crate::structure::StructureView;
-use crate::topology::{InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId};
+use crate::topology::{
+    AtomSiteView, InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId,
+};
 use crate::units::ANGSTROM;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -116,6 +119,8 @@ pub(super) fn prepare_model(
 
     let mut atoms = Vec::new();
     let mut omitted = OmittedChemistry::default();
+    let library = options.components().map(|library| &**library);
+    let names = unnamed_site_names(structure, library);
     for (id, molecule) in structure.topology().instance_records() {
         let definition = structure
             .topology()
@@ -129,7 +134,14 @@ pub(super) fn prepare_model(
                 .atom_site_of(molecule.qualify_atom(atom))
                 .is_some()
         }) {
-            collect_macro_rows(structure, molecule, definition, &assignments, &mut atoms)?;
+            collect_macro_rows(
+                structure,
+                molecule,
+                definition,
+                &assignments,
+                &names,
+                &mut atoms,
+            )?;
         } else {
             collect_small_rows(structure, molecule, definition, &assignments, &mut atoms)?;
         }
@@ -143,7 +155,6 @@ pub(super) fn prepare_model(
             .atom_index(row.atom)
             .expect("prepared atom-site row references a topology atom")
     });
-    let library = options.components().map(|library| &**library);
     number_unsequenced_polymers(&mut atoms, &entities, &asyms, structure, library);
 
     let atom_indexes = atoms
@@ -411,6 +422,7 @@ fn collect_macro_rows(
     molecule: &MoleculeInstance,
     definition: &MoleculeDefinition,
     assignments: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
+    names: &BTreeMap<InstanceAtomId, String>,
     rows: &mut Vec<AtomRow>,
 ) -> Result<(), FormatError> {
     for (atom_id, atom) in definition.molecule().atoms() {
@@ -452,8 +464,9 @@ fn collect_macro_rows(
             .label_atom_id
             .as_ref()
             .or(site.metadata().auth_atom_id.as_ref())
+            .or_else(|| names.get(&qualified))
             .cloned()
-            .unwrap_or_else(|| generated_atom_name(atom.element.symbol(), atom_id));
+            .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomSite(qualified)))?;
         let label_comp_id = residue.label_comp_id().unwrap_or(residue.name()).to_owned();
         rows.push(AtomRow {
             atom: qualified,
@@ -573,6 +586,54 @@ fn water_atom_name(molecule: &crate::molecule::Molecule, atom: AtomId) -> String
 fn type_symbol(atom: &Atom) -> &'static str {
     structure_element_symbol(atom.element, atom.isotope.map(std::num::NonZero::get))
         .unwrap_or_else(|| atom.element.symbol())
+}
+
+/// Names for the atom sites that state no atom name: the element symbol
+/// and the atom's 1-based number, else a name by residue as placement
+/// names new atoms (see [`ResidueNames`]). Never a name the residue's other
+/// atoms take or its component's template places elsewhere, so that
+/// readers do not bond the atom where the name says.
+fn unnamed_site_names(
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
+) -> BTreeMap<InstanceAtomId, String> {
+    let stated = |site: AtomSiteView<'_>| {
+        site.metadata()
+            .label_atom_id
+            .clone()
+            .or_else(|| site.metadata().auth_atom_id.clone())
+    };
+    let mut names = BTreeMap::new();
+    for residue in structure.topology().residues() {
+        if residue.atom_sites().all(|site| stated(site).is_some()) {
+            continue;
+        }
+        let mut residue_names = ResidueNames::new(
+            dictionary_template(library, residue.label_comp_id().unwrap_or(residue.name())),
+            residue.atom_sites().filter_map(stated),
+        );
+        for site in residue.atom_sites().filter(|site| stated(*site).is_none()) {
+            let atom = site.atom();
+            // The first heavy neighbor in the residue.
+            let parent = atom
+                .neighbors()
+                .filter(|neighbor| neighbor.atom().element.atomic_number() != 1)
+                .find_map(|neighbor| {
+                    let site = structure.topology().atom_site_of(neighbor.id())?;
+                    (site.residue().id() == residue.id())
+                        .then(|| stated(site).or_else(|| names.get(&neighbor.id()).cloned()))
+                        .flatten()
+                });
+            let generated = generated_atom_name(atom.atom().element.symbol(), atom.id().atom());
+            let name = if residue_names.claim(&generated) {
+                generated
+            } else {
+                residue_names.allocate(atom.atom().element, parent.as_deref())
+            };
+            names.insert(atom.id(), name);
+        }
+    }
+    names
 }
 
 fn generated_atom_name(symbol: &str, atom: AtomId) -> String {

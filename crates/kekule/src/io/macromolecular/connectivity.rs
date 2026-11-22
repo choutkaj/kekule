@@ -755,19 +755,11 @@ fn template_coordination(
 /// `HT1`-`HT3` (CHARMM), and `HN1`-`HN3` on a peptide's `N`; `HO5'` and
 /// `H5T` (AMBER) on a nucleotide's `O5'`, and `H3T` on its `O3'`.
 fn terminal_hydrogen_anchors(linking: ComponentLinking, name: &str) -> &'static [&'static str] {
-    match linking {
-        ComponentLinking::Peptide
-            if matches!(
-                name,
-                "H1" | "H2" | "H3" | "HT1" | "HT2" | "HT3" | "HN1" | "HN2" | "HN3"
-            ) =>
-        {
-            &["N"]
-        }
-        ComponentLinking::Nucleotide if matches!(name, "HO5'" | "HO5*" | "H5T") => &["O5'", "O5*"],
-        ComponentLinking::Nucleotide if matches!(name, "HO3*" | "H3T") => &["O3'", "O3*"],
-        _ => &[],
-    }
+    linking
+        .terminal_hydrogens()
+        .iter()
+        .find(|(hydrogen, _)| *hydrogen == name)
+        .map_or(&[], |(_, anchors)| anchors)
 }
 
 /// The protonation state readers give a residue of `template` and its
@@ -1266,6 +1258,7 @@ impl<'r> Resolver<'r, '_> {
         }
         raw::poll(self.cancellation)?;
         self.report_fragmented_residues(&residues);
+        self.report_hydrogens_with_several_bonds(&residues)?;
         Ok(())
     }
 
@@ -2862,6 +2855,35 @@ impl<'r> Resolver<'r, '_> {
                     variant: variant.variant().map(str::to_owned),
                 },
             );
+        }
+        Ok(())
+    }
+
+    /// Reports each hydrogen that has more than one bond.
+    fn report_hydrogens_with_several_bonds(
+        &mut self,
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    ) -> Result<(), FormatError> {
+        for residue in residues.values() {
+            for site in residue
+                .sites
+                .iter()
+                .filter(|site| is_hydrogen(site.element))
+            {
+                let bonds = self
+                    .graph
+                    .require_incident_bonds(site.atom)
+                    .map_err(interpret_error)?
+                    .count();
+                if bonds > 1 {
+                    self.issues
+                        .push(raw::StructureInterpretIssue::HydrogenWithSeveralBonds {
+                            residue: residue.key.id(self.model_id),
+                            atom_name: site.name.clone(),
+                            bonds,
+                        });
+                }
+            }
         }
         Ok(())
     }

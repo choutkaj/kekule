@@ -4,7 +4,7 @@ use std::io::Read;
 
 use super::super::{
     AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DICTIONARY_CHARGES_SINCE, DISULFIDE_SINCE,
-    PDB_NUMBERING_SINCE, PROTONATION_SINCE,
+    PDB_NUMBERING_SINCE, PROTONATION_SINCE, SEVERAL_BONDS_SINCE,
 };
 use super::{bond_order, Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
@@ -908,6 +908,11 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 atoms: self.str_list()?,
+            },
+            51 if self.version >= SEVERAL_BONDS_SINCE => Issue::HydrogenWithSeveralBonds {
+                residue: self.residue()?,
+                atom_name: self.str()?,
+                bonds: self.usize()?,
             },
             other => {
                 return Err(

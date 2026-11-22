@@ -53,6 +53,39 @@ impl ComponentLinking {
             Self::None
         }
     }
+
+    /// The hydrogen names readers bond to a terminal atom by convention,
+    /// each with the names of that atom: `H1` to `H3` of an N terminus on
+    /// `N`, and the hydrogens of nucleotide 5' and 3' ends. Templates name
+    /// other terminal hydrogens themselves.
+    pub(crate) const fn terminal_hydrogens(
+        self,
+    ) -> &'static [(&'static str, &'static [&'static str])] {
+        const N: &[&str] = &["N"];
+        const O5: &[&str] = &["O5'", "O5*"];
+        const O3: &[&str] = &["O3'", "O3*"];
+        match self {
+            Self::Peptide => &[
+                ("H1", N),
+                ("H2", N),
+                ("H3", N),
+                ("HT1", N),
+                ("HT2", N),
+                ("HT3", N),
+                ("HN1", N),
+                ("HN2", N),
+                ("HN3", N),
+            ],
+            Self::Nucleotide => &[
+                ("HO5'", O5),
+                ("HO5*", O5),
+                ("H5T", O5),
+                ("HO3*", O3),
+                ("H3T", O3),
+            ],
+            Self::Saccharide | Self::None => &[],
+        }
+    }
 }
 
 /// One named atom of a component.
@@ -251,6 +284,17 @@ impl Component {
                 Some((index, atom)) => atom.element() == element && matched.insert(index),
                 None => element.atomic_number() == 1,
             })
+    }
+
+    /// Whether a bond joins the atoms named `left` and `right`.
+    pub(crate) fn bonds_named(&self, left: &str, right: &str) -> bool {
+        let (Some((left, _)), Some((right, _))) = (self.atom(left), self.atom(right)) else {
+            return false;
+        };
+        self.bonds.iter().any(|bond| {
+            let [a, b] = bond.atoms();
+            (a, b) == (left, right) || (a, b) == (right, left)
+        })
     }
 
     /// Finds an atom by its name or alternate name.

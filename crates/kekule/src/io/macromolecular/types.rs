@@ -562,6 +562,17 @@ pub enum StructureInterpretIssue {
         /// The atom name of the heavy atom it was bonded to.
         heavy_atom_name: String,
     },
+    /// A hydrogen has more than one bond: its name places it on one atom
+    /// while a record or its distance bonds it to another, as when a
+    /// writer names a new hydrogen after a template atom.
+    HydrogenWithSeveralBonds {
+        /// The residue.
+        residue: SourceResidueId,
+        /// The hydrogen's atom name.
+        atom_name: String,
+        /// Its bonds.
+        bonds: usize,
+    },
     /// Two cysteines whose `SG` atoms lie within bonding distance, without
     /// hydrogens or a record linking them, were bonded as a disulfide.
     DisulfideInferred {
@@ -1176,6 +1187,14 @@ impl fmt::Display for StructureInterpretIssue {
                 formatter,
                 "Hydrogen {atom_name:?} of {residue} has no stated bond. It is bonded to \
                  {heavy_atom_name:?}, the nearest heavy atom."
+            ),
+            Self::HydrogenWithSeveralBonds {
+                residue,
+                atom_name,
+                bonds,
+            } => write!(
+                formatter,
+                "Hydrogen {atom_name:?} of {residue} has {bonds} bonds. A hydrogen has one."
             ),
             Self::DisulfideInferred {
                 residues: [left, right],

@@ -848,6 +848,16 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.str_list(atoms)
             }
+            Issue::HydrogenWithSeveralBonds {
+                residue,
+                atom_name,
+                bonds,
+            } => {
+                self.u8(51)?;
+                self.residue(residue)?;
+                self.str(atom_name)?;
+                self.usize(*bonds)
+            }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
                 self.residue(residue)?;

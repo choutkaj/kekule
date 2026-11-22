@@ -322,6 +322,9 @@ the main branch migrates by the table under "From the SampleSet API".
   hold does not apply. Without hydrogens and with stated bond orders, the
   neutral acid hydroxyls of such a residue take their pH 7 state, as in a
   templated one (`ProtonationAssumed`).
+- PDB and mmCIF readers report a hydrogen with more than one bond
+  (`StructureInterpretIssue::HydrogenWithSeveralBonds`), as when its name
+  places it on one atom and a record bonds it to another.
 - `MolfileInterpretIssue`, `XyzInterpretIssue`, and
   `UnrepresentableStereoReason` implement `Display` with sentences for
   users. Molfile issues name atoms and bonds by source line, and XYZ
@@ -830,9 +833,32 @@ the main branch migrates by the table under "From the SampleSet API".
   simulation's segment `ION1` read back under `ION1`, not each under its own
   name. Where another chain states that name, the chain takes it with a
   serial, `ION1-2`, so two chains never read back as one; so does a molecule
-  outside the hierarchy. Asyms of one component are one non-polymer entity,
-  and all waters one water entity, instead of an entity per asym. A site
-  without an author ID takes the one the rest of its chain states.
+  outside the hierarchy. Asyms of one component and chemistry (atoms,
+  charges, hydrogens, and bonds) are one non-polymer entity, and all waters
+  one water entity, instead of an entity per asym; a component name of two
+  chemistries is two entities. A site without an author ID takes the one
+  the rest of its chain states.
+- Hydrogens that placement adds (`add_hydrogens`, `attach_atom`,
+  `attach_fragment`) take the name the residue's template gives a hydrogen
+  on their atom (`HA` on `CA`, `HB2` and `HB3` on `CB`), or a free terminal
+  name readers bond to it. No new atom takes a name the template places on
+  another atom: a hydrogen on `CA` was `H2`, which readers bond to the
+  peptide `N`, so the written hydrogen read back with two bonds and the `N`
+  charged. Hydrogens added to rubredoxin, adenylate kinase, and KRas now
+  read back from mmCIF with their bonds, charges, and hydrogen counts.
+  `next_atom_name` and the mmCIF writer's names for unnamed sites skip
+  template names too.
+- The mmCIF writer gives a residue an edit added to a chain an asym of its
+  own, as an instance of its kind: a sodium added to rubredoxin's iron asym
+  is no longer written as part of the iron's asym and entity, and a ligand
+  added to a protein chain read from mmCIF no longer fails. With the source
+  report, an added residue or water of a source entity's component and
+  chemistry is an instance of that entity, also outside the hierarchy.
+- The mmCIF writer writes structures it failed on without their reports:
+  a residue of an amino acid that a chain break leaves alone stays in its
+  polymer asym (7LPM), a saccharide of several residues is a branched
+  entity (7X9L), and waters whose author numbers repeat in a chain take a
+  second asym rather than failing with `DuplicateAtomIdentity`.
 - The mmCIF writer writes a structure an edit added atoms to with its
   followed report (`follow_edit`, `follow_append`), instead of failing. Atoms
   without provenance, such as added hydrogens, join their residues' rows, and

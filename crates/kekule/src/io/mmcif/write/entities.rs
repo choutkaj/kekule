@@ -10,7 +10,7 @@ use crate::topology::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum AssignedEntityKind {
     Polymer,
     Branched,
@@ -251,18 +251,18 @@ impl AuthorIds {
     }
 }
 
-/// What makes asyms instances of one entity: one chemical component, or
-/// water. Each polymer and branched asym is an entity of its own.
+/// What makes asyms instances of one entity: components of one chemistry,
+/// or water. Each polymer and branched asym is an entity of its own.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum EntityKey {
-    NonPolymer(Vec<String>),
+    NonPolymer(Vec<ResidueChemistry>),
     Water,
 }
 
 impl EntityKey {
     fn of(segment: &ChainSegment) -> Option<Self> {
         match segment.kind {
-            AssignedEntityKind::NonPolymer => Some(Self::NonPolymer(segment.components.clone())),
+            AssignedEntityKind::NonPolymer => Some(Self::NonPolymer(segment.chemistry.clone())),
             AssignedEntityKind::Water => Some(Self::Water),
             AssignedEntityKind::Polymer | AssignedEntityKind::Branched => None,
         }
@@ -337,7 +337,16 @@ pub(super) fn generic_entity_plan(
                     ));
                 }
             };
-            Ok((kind, None))
+            let canonical = sites.iter().all(|atom| {
+                classifications
+                    .get(&atom.instance())
+                    .is_some_and(|molecule| molecule.canonical)
+            });
+            Ok(ResidueKind {
+                kind,
+                source_entity_id: None,
+                canonical,
+            })
         })?;
         let label = asym_ids.chain(chain.label_id());
         let author = author_ids.chain(chain, &label);
@@ -424,11 +433,100 @@ fn report_entity_plan(
         }
     }
 
+    let mut chains = Vec::new();
+    for chain in structure.topology().chains() {
+        let segments = chain_segments(chain, |residue, sites| {
+            let source_atoms = sites
+                .iter()
+                .filter_map(|atom| provenance.get(atom).copied())
+                .collect::<Vec<_>>();
+            // Atoms an edit added have no provenance. A residue of such
+            // atoms alone takes the kind the structure gives it, as without
+            // a report; another takes its source atoms' kind and entity.
+            if source_atoms.is_empty() {
+                return Ok(ResidueKind {
+                    kind: canonical_residue_kind(structure, chain, residue, sites)?,
+                    source_entity_id: None,
+                    canonical: true,
+                });
+            }
+            for atom in &source_atoms {
+                if atom.asym_id() != chain.label_id() {
+                    return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
+                        atom: atom.atom(),
+                        field: AtomField::SourceAsymId,
+                    }));
+                }
+            }
+            let source_entity_ids = source_atoms
+                .iter()
+                .filter_map(|atom| atom.entity_id().map(str::to_owned))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            if source_entity_ids.len() > 1 {
+                return Err(fail(MmcifWriteErrorKind::ConflictingAsymEntityIds {
+                    asym_id: chain.label_id().to_owned(),
+                    entity_ids: source_entity_ids,
+                }));
+            }
+            let source_kinds = source_atoms
+                .iter()
+                .map(|atom| atom.entity_kind.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let kind = match source_kinds.as_slice() {
+                [kind] => entity_kind_from_source(source_atoms[0].atom().instance(), kind)?,
+                _ => {
+                    return Err(fail(
+                        MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
+                            asym_id: chain.label_id().to_owned(),
+                            classifications: source_kinds,
+                        },
+                    ));
+                }
+            };
+            Ok(ResidueKind {
+                kind,
+                source_entity_id: source_entity_ids.into_iter().next(),
+                canonical: false,
+            })
+        })?;
+        let label = asym_ids.chain(chain.label_id());
+        let author = author_ids.chain(chain, &label);
+        // The report's sequence of the polymer on this chain.
+        let sequence = report
+            .polymer_entities()
+            .iter()
+            .find(|entity| {
+                entity
+                    .instances()
+                    .iter()
+                    .any(|instance| instance.chain() == Some(chain.id()))
+            })
+            .map(|entity| {
+                entity
+                    .monomers()
+                    .iter()
+                    .map(|monomer| (monomer.number(), monomer.component_id().to_owned()))
+                    .collect::<BTreeMap<_, _>>()
+            });
+        let segments = segment_asym_ids(&label, segments, &mut asym_ids.reserved);
+        chains.push((author, sequence, segments));
+    }
+
+    // Entities by what their asyms share: a source entity takes the asyms an
+    // edit added of its chemistry.
+    let mut grouped = BTreeMap::<EntityKey, String>::new();
+    for (_, segment) in chains.iter().flat_map(|(_, _, segments)| segments) {
+        if let (Some(entity_id), Some(key)) = (&segment.source_entity_id, EntityKey::of(segment)) {
+            grouped.entry(key).or_insert_with(|| entity_id.clone());
+        }
+    }
     let mut sequences = BTreeMap::new();
     let mut entities = Vec::new();
     let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
-    // Generated entities by what their asyms share.
-    let mut grouped = BTreeMap::<EntityKey, String>::new();
     let mut generated_serial = 1usize;
     // The entity of an asym: its source entity, its group's, or a new one.
     let mut entity_of = |kind: AssignedEntityKind,
@@ -472,80 +570,8 @@ fn report_entity_plan(
     };
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
-    for chain in structure.topology().chains() {
-        let segments = chain_segments(chain, |residue, sites| {
-            let source_atoms = sites
-                .iter()
-                .filter_map(|atom| provenance.get(atom).copied())
-                .collect::<Vec<_>>();
-            // Atoms an edit added have no provenance. A residue of such
-            // atoms alone takes the kind the structure gives it, as without
-            // a report; another takes its source atoms' kind and entity.
-            if source_atoms.is_empty() {
-                return Ok((
-                    canonical_residue_kind(structure, chain, residue, sites)?,
-                    None,
-                ));
-            }
-            for atom in &source_atoms {
-                if atom.asym_id() != chain.label_id() {
-                    return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
-                        atom: atom.atom(),
-                        field: AtomField::SourceAsymId,
-                    }));
-                }
-            }
-            let source_entity_ids = source_atoms
-                .iter()
-                .filter_map(|atom| atom.entity_id().map(str::to_owned))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            if source_entity_ids.len() > 1 {
-                return Err(fail(MmcifWriteErrorKind::ConflictingAsymEntityIds {
-                    asym_id: chain.label_id().to_owned(),
-                    entity_ids: source_entity_ids,
-                }));
-            }
-            let source_kinds = source_atoms
-                .iter()
-                .map(|atom| atom.entity_kind.clone())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>();
-            let kind = match source_kinds.as_slice() {
-                [kind] => entity_kind_from_source(source_atoms[0].atom().instance(), kind)?,
-                _ => {
-                    return Err(fail(
-                        MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
-                            asym_id: chain.label_id().to_owned(),
-                            classifications: source_kinds,
-                        },
-                    ));
-                }
-            };
-            Ok((kind, source_entity_ids.into_iter().next()))
-        })?;
-        let label = asym_ids.chain(chain.label_id());
-        let author = author_ids.chain(chain, &label);
-        // The report's sequence of the polymer on this chain.
-        let sequence = report
-            .polymer_entities()
-            .iter()
-            .find(|entity| {
-                entity
-                    .instances()
-                    .iter()
-                    .any(|instance| instance.chain() == Some(chain.id()))
-            })
-            .map(|entity| {
-                entity
-                    .monomers()
-                    .iter()
-                    .map(|monomer| (monomer.number(), monomer.component_id().to_owned()))
-                    .collect::<BTreeMap<_, _>>()
-            });
-        for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
+    for (author, sequence, segments) in chains {
+        for (asym_id, segment) in segments {
             let entity_id = entity_of(
                 segment.kind,
                 segment.source_entity_id.as_ref(),
@@ -614,36 +640,141 @@ fn report_entity_plan(
 struct ChainSegment {
     kind: AssignedEntityKind,
     source_entity_id: Option<String>,
-    /// The molecule of a polymer segment of a chain without a source asym.
-    molecule: Option<MoleculeInstanceId>,
-    /// The components of the segment's residues, in residue order, as the
-    /// rows name them.
-    components: Vec<String>,
+    /// The molecules its atoms lie in.
+    molecules: BTreeSet<MoleculeInstanceId>,
+    /// The chemistry of its non-polymer residues, in residue order.
+    chemistry: Vec<ResidueChemistry>,
+    /// Its residues' author numbers and insertion codes, which identify
+    /// residues that have no label number.
+    author_keys: BTreeSet<(Option<String>, Option<String>)>,
     sites: Vec<InstanceAtomId>,
 }
 
-/// Splits a chain into label asyms, one per entity instance, in residue
-/// order. mmCIF gives every entity instance an asym of its own, while a
-/// hierarchy chain without a source `label_asym_id` may be a PDB author chain
-/// holding a polymer, ligands, and water together. Residues of one entity
-/// kind and source entity share an asym, except that every non-polymer
-/// residue is an instance of its own and each polymer molecule is one, so
-/// that the sequence of one molecule does not continue into the next. A
-/// chain the source names as one asym stays one, so residues it would split
-/// are conflicting classifications.
+impl ChainSegment {
+    fn new(entry: ResidueEntry) -> Self {
+        let mut segment = Self {
+            kind: entry.kind,
+            source_entity_id: entry.source_entity_id.clone(),
+            molecules: BTreeSet::new(),
+            chemistry: Vec::new(),
+            author_keys: BTreeSet::new(),
+            sites: Vec::new(),
+        };
+        segment.push(entry);
+        segment
+    }
+
+    fn push(&mut self, entry: ResidueEntry) {
+        self.molecules
+            .extend(entry.sites.iter().map(|atom| atom.instance()));
+        self.chemistry.extend(entry.chemistry);
+        self.author_keys.insert(entry.author_key);
+        self.sites.extend(entry.sites);
+    }
+}
+
+/// A component and its atoms' chemistry, which decides whether two
+/// non-polymer residues are instances of one entity.
+type ResidueChemistry = (String, Vec<AtomChemistry>);
+
+/// An atom's name, atomic number, mass number, charge, and hydrogens, and
+/// the names of its bonded atoms in the residue with the bond orders, or
+/// the residue's other atoms when it states no name.
+type AtomChemistry = (
+    String,
+    u8,
+    Option<u16>,
+    i8,
+    Option<usize>,
+    Vec<(String, String)>,
+);
+
+/// The chemistry of a residue's atoms, by name.
+fn residue_chemistry(residue: ResidueView<'_>) -> ResidueChemistry {
+    let name = |site: AtomSiteView<'_>| {
+        site.metadata()
+            .label_atom_id()
+            .or(site.metadata().auth_atom_id())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let mut atoms = residue
+        .atom_sites()
+        .map(|site| {
+            let atom = site.atom();
+            let mut bonds = atom
+                .bonds()
+                .map(|bond| {
+                    let [left, right] = bond.atoms();
+                    let other = if left.id() == atom.id() { right } else { left };
+                    let other = other
+                        .atom_site()
+                        .filter(|other| other.residue().id() == residue.id())
+                        .map_or_else(|| other.atom().element.symbol().to_owned(), name);
+                    (other, format!("{:?}", bond.bond().order))
+                })
+                .collect::<Vec<_>>();
+            bonds.sort();
+            (
+                name(site),
+                atom.atom().element.atomic_number(),
+                atom.atom().isotope.map(std::num::NonZero::get),
+                atom.atom().formal_charge,
+                atom.total_hydrogens(),
+                bonds,
+            )
+        })
+        .collect::<Vec<_>>();
+    atoms.sort();
+    (
+        residue.label_comp_id().unwrap_or(residue.name()).to_owned(),
+        atoms,
+    )
+}
+
+/// A residue's entity kind and source entity.
+struct ResidueKind {
+    kind: AssignedEntityKind,
+    source_entity_id: Option<String>,
+    /// Whether canonical classification gave the kind, rather than the
+    /// caller or the source.
+    canonical: bool,
+}
+
+/// One residue's entity kind and atoms, before it joins a segment.
+struct ResidueEntry {
+    kind: AssignedEntityKind,
+    source_entity_id: Option<String>,
+    class: ResidueClass,
+    /// Whether canonical classification gave the kind, rather than the
+    /// caller or the source.
+    canonical: bool,
+    chemistry: Option<ResidueChemistry>,
+    author_key: (Option<String>, Option<String>),
+    sites: Vec<InstanceAtomId>,
+}
+
+/// Splits a chain into label asyms, one per entity instance, with the asym
+/// the source names first. mmCIF gives every entity instance an asym of its
+/// own, while a hierarchy chain may be a PDB author chain holding a polymer,
+/// ligands, and water together, or an asym an edit added residues to.
+///
+/// The residues whose sites state a `label_asym_id` are the source's asym,
+/// which stays one; residues of other kinds or source entities in it are
+/// conflicting classifications, except that a residue of a polymer's
+/// residue class that canonical classification makes no polymer, as one
+/// a chain break leaves alone, is a polymer residue. Of the other
+/// residues, each non-polymer residue is an instance of its own; a polymer
+/// or branched residue joins the asym of its molecule, so that the
+/// sequence of one molecule does not continue into the next; and water
+/// joins the chain's water asym, or the next one, so that no two waters of
+/// an asym share an author number.
 fn chain_segments<'h>(
     chain: ChainView<'h>,
-    mut classify: impl FnMut(
-        ResidueView<'h>,
-        &[InstanceAtomId],
-    ) -> Result<(AssignedEntityKind, Option<String>), FormatError>,
+    mut classify: impl FnMut(ResidueView<'h>, &[InstanceAtomId]) -> Result<ResidueKind, FormatError>,
 ) -> Result<Vec<ChainSegment>, FormatError> {
-    let mut segments = Vec::<ChainSegment>::new();
-    let source_asym = chain.residues().any(|residue| {
-        residue
-            .atom_sites()
-            .any(|site| site.metadata().label_asym_id.is_some())
-    });
+    let mut sourced = Vec::new();
+    let mut added = Vec::new();
     for residue in chain.residues() {
         let sites = residue
             .atom_sites()
@@ -652,62 +783,114 @@ fn chain_segments<'h>(
         if sites.is_empty() {
             continue;
         }
-        let (kind, source_entity_id) = classify(residue, &sites)?;
-        let component = residue.label_comp_id().unwrap_or(residue.name()).to_owned();
-        let molecule =
-            (!source_asym && kind == AssignedEntityKind::Polymer).then(|| sites[0].instance());
-        let shared = (source_asym || kind != AssignedEntityKind::NonPolymer)
-            .then(|| {
-                segments.iter_mut().find(|segment| {
-                    segment.kind == kind
-                        && (segment.source_entity_id == source_entity_id
-                            || source_asym
-                                && (segment.source_entity_id.is_none()
-                                    || source_entity_id.is_none()))
-                        && segment.molecule == molecule
-                })
-            })
-            .flatten();
-        match shared {
-            Some(segment) => {
-                if segment.source_entity_id.is_none() {
-                    segment.source_entity_id = source_entity_id;
-                }
-                segment.components.push(component);
-                segment.sites.extend(sites);
-            }
-            None => segments.push(ChainSegment {
-                kind,
-                source_entity_id,
-                molecule,
-                components: vec![component],
-                sites,
-            }),
+        let ResidueKind {
+            kind,
+            source_entity_id,
+            canonical,
+        } = classify(residue, &sites)?;
+        let entry = ResidueEntry {
+            kind,
+            source_entity_id,
+            class: residue.class(),
+            canonical,
+            chemistry: (kind == AssignedEntityKind::NonPolymer).then(|| residue_chemistry(residue)),
+            author_key: (
+                residue.author_seq_id().map(str::to_owned),
+                residue.insertion_code().map(str::to_owned),
+            ),
+            sites,
+        };
+        if residue
+            .atom_sites()
+            .any(|site| site.metadata().label_asym_id.is_some())
+        {
+            sourced.push(entry);
+        } else {
+            added.push(entry);
         }
     }
-    if source_asym && segments.len() > 1 {
-        let classifications = segments
-            .iter()
-            .map(|segment| segment.kind.as_source())
-            .collect::<BTreeSet<_>>();
-        return Err(if classifications.len() > 1 {
-            fail(MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
-                asym_id: chain.label_id().to_owned(),
-                classifications: classifications.into_iter().collect(),
-            })
-        } else {
-            fail(MmcifWriteErrorKind::ConflictingAsymEntityIds {
-                asym_id: chain.label_id().to_owned(),
-                entity_ids: segments
-                    .iter()
-                    .filter_map(|segment| segment.source_entity_id.clone())
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect(),
-            })
-        });
+    let mut segments = source_segment(chain, sourced)?
+        .into_iter()
+        .collect::<Vec<_>>();
+    for entry in added {
+        let shared = match entry.kind {
+            AssignedEntityKind::NonPolymer => None,
+            AssignedEntityKind::Water => segments.iter_mut().find(|segment| {
+                segment.kind == AssignedEntityKind::Water
+                    && !segment.author_keys.contains(&entry.author_key)
+            }),
+            AssignedEntityKind::Polymer | AssignedEntityKind::Branched => {
+                segments.iter_mut().find(|segment| {
+                    segment.kind == entry.kind
+                        && segment.molecules.contains(&entry.sites[0].instance())
+                })
+            }
+        };
+        match shared {
+            Some(segment) => segment.push(entry),
+            None => segments.push(ChainSegment::new(entry)),
+        }
     }
     Ok(segments)
+}
+
+/// The segment of the residues of a chain whose sites state a
+/// `label_asym_id`: the source's asym.
+fn source_segment(
+    chain: ChainView<'_>,
+    entries: Vec<ResidueEntry>,
+) -> Result<Option<ChainSegment>, FormatError> {
+    let kinds = entries
+        .iter()
+        .map(|entry| entry.kind)
+        .collect::<BTreeSet<_>>();
+    let polymer_class = |class: ResidueClass| {
+        matches!(
+            class,
+            ResidueClass::AminoAcid | ResidueClass::DnaNucleotide | ResidueClass::RnaNucleotide
+        )
+    };
+    let kind = match kinds.iter().copied().collect::<Vec<_>>().as_slice() {
+        [] => return Ok(None),
+        [kind] => *kind,
+        [AssignedEntityKind::Polymer, AssignedEntityKind::NonPolymer]
+            if entries.iter().all(|entry| {
+                entry.kind == AssignedEntityKind::Polymer
+                    || entry.canonical && polymer_class(entry.class)
+            }) =>
+        {
+            AssignedEntityKind::Polymer
+        }
+        _ => {
+            return Err(fail(
+                MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
+                    asym_id: chain.label_id().to_owned(),
+                    classifications: kinds
+                        .into_iter()
+                        .map(AssignedEntityKind::as_source)
+                        .collect(),
+                },
+            ));
+        }
+    };
+    let entity_ids = entries
+        .iter()
+        .filter_map(|entry| entry.source_entity_id.clone())
+        .collect::<BTreeSet<_>>();
+    if entity_ids.len() > 1 {
+        return Err(fail(MmcifWriteErrorKind::ConflictingAsymEntityIds {
+            asym_id: chain.label_id().to_owned(),
+            entity_ids: entity_ids.into_iter().collect(),
+        }));
+    }
+    let mut entries = entries.into_iter();
+    let mut segment = ChainSegment::new(entries.next().expect("one entry per kind"));
+    segment.kind = kind;
+    segment.source_entity_id = entity_ids.into_iter().next();
+    for entry in entries {
+        segment.push(entry);
+    }
+    Ok(Some(segment))
 }
 
 /// Pairs each segment with its label asym ID. The first keeps the chain's
@@ -989,6 +1172,8 @@ fn canonical_entity_kind(
     }
 }
 
+/// A saccharide of one residue is a non-polymer entity, and one of several
+/// residues a branched entity.
 fn carbohydrate_entity_kind(
     topology: &Topology,
     molecule: MoleculeInstanceId,
@@ -996,20 +1181,10 @@ fn carbohydrate_entity_kind(
     let view = topology
         .instance(molecule)
         .ok_or_else(|| invalid_molecule(molecule))?;
-    let mut residues = view.residues();
-    if residues
-        .next()
-        .is_some_and(|residue| residue.class() == ResidueClass::Carbohydrate)
-        && residues.next().is_none()
-    {
-        return Ok(AssignedEntityKind::NonPolymer);
-    }
-    Err(fail(
-        MmcifWriteErrorKind::UnresolvedCanonicalEntityClassification {
-            molecule,
-            classification: MoleculeClass::Carbohydrate,
-        },
-    ))
+    Ok(match view.residues().count() {
+        0 | 1 => AssignedEntityKind::NonPolymer,
+        _ => AssignedEntityKind::Branched,
+    })
 }
 
 fn invalid_molecule(molecule: MoleculeInstanceId) -> FormatError {

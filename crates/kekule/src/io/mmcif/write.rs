@@ -817,11 +817,20 @@ impl MmcifEntityClassifications {
 /// [`MmcifWriteErrorKind::DictionaryBondMissing`]).
 ///
 /// Every entity instance is a structural instance (asym) of its own: each
-/// polymer molecule of a chain, each non-polymer residue, and a chain's
-/// waters together. A chain the source names as one asym stays one.
-/// Asyms of one chemical component are instances of one non-polymer entity,
+/// polymer or branched molecule of a chain, each non-polymer residue, and a
+/// chain's waters together, split where author numbers repeat. The residues
+/// whose sites state a `label_asym_id` stay the one asym the source names;
+/// a residue an edit added to its chain is an instance by the same rules,
+/// joining that asym only as part of its molecule or water. A residue of a
+/// polymer residue class that a chain break leaves alone stays in its
+/// source's polymer asym. Asyms of one component and chemistry (atoms,
+/// charges, hydrogens, and bonds) are instances of one non-polymer entity,
 /// and all waters are one water entity; each polymer and branched asym is an
-/// entity of its own.
+/// entity of its own. A saccharide of several residues is branched.
+///
+/// Coordination between residues is no bond of the structure: the
+/// interpretation report holds it, and [`Self::with_reports`] writes it as
+/// `metalc` rows. A structure written without its report has none.
 ///
 /// Every hierarchy chain has asyms of its own, even when chains share a
 /// label, as the copies
@@ -905,7 +914,8 @@ impl<'a> MmcifBlockSource<'a> {
     /// copying author identifiers into the required label fields. Atoms
     /// without provenance, such as those an edit added, join their residues;
     /// a residue or molecule of such atoms alone is written as without a
-    /// report.
+    /// report, as an instance of the source entity of its component and
+    /// chemistry, or of the source's water entity, where there is one.
     #[must_use]
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.entities = EntitySemantics::Reports(reports);
