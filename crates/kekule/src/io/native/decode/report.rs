@@ -2,8 +2,8 @@
 
 use std::io::Read;
 
-use super::super::DISULFIDE_SINCE;
-use super::{Decoder, Result};
+use super::super::{AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DISULFIDE_SINCE};
+use super::{bond_order, Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
@@ -733,12 +733,61 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 force_field: self.str()?,
             },
+            22 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueBondOrdersUnstated {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                bonds: self.usize()?,
+            },
+            23 if self.version >= BOND_SOURCES_SINCE => Issue::BondNotInTemplate {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: [self.str()?, self.str()?],
+            },
+            24 if self.version >= BOND_SOURCES_SINCE => {
+                let residue = self.residue()?;
+                let component_id = self.str()?;
+                let atoms = [self.str()?, self.str()?];
+                let code = self.u8()?;
+                let order = self.known_bond_order(code)?;
+                let template_order = match self.u8()? {
+                    AROMATIC_TEMPLATE_ORDER => None,
+                    code => Some(self.known_bond_order(code)?),
+                };
+                Issue::BondOrderDiffersFromTemplate {
+                    residue,
+                    component_id,
+                    atoms,
+                    order,
+                    template_order,
+                }
+            }
+            25 if self.version >= BOND_SOURCES_SINCE => Issue::PolymerLinkSkipped {
+                residue: self.residue()?,
+                next: self.residue()?,
+            },
+            26 if self.version >= BOND_SOURCES_SINCE => Issue::LinkingAtomMissing {
+                residue: self.residue()?,
+                next: self.residue()?,
+            },
+            27 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueFitsNoTemplate {
+                residue: self.residue()?,
+                component_id: self.str()?,
+            },
+            28 if self.version >= BOND_SOURCES_SINCE => Issue::StatedOrdersDisagreeWithHydrogens {
+                residue: self.residue()?,
+                component_id: self.str()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))
                 )
             }
         })
+    }
+
+    fn known_bond_order(&self, code: u8) -> Result<crate::molecule::BondOrder> {
+        bond_order(code)
+            .ok_or_else(|| self.invalid(format!("The bond order code {code} is unknown.")))
     }
 
     fn sequence_source(&mut self) -> Result<SequenceSource> {

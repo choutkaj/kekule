@@ -8,7 +8,8 @@
 use super::prepare::{AtomRow, ConnectionRow, Implied};
 use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
-    hydrogen_differences, link_valence, template_bond_order, within_bonding_distance, PolymerLink,
+    hydrogen_differences, is_coordination, link_valence, standard_link, template_bond_order,
+    within_bonding_distance, PolymerLink, StandardLink,
 };
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
@@ -37,14 +38,17 @@ pub(super) fn residue_key(row: &AtomRow) -> ResidueKey<'_> {
 
 /// Marks each connection the reader derives, given the rows' elements in
 /// row order and coordinates written to `precision` decimal places.
-/// Connections reference rows through `row_of`.
+/// Connections reference rows through `row_of`. Returns, for each residue
+/// whose template the reader applies but whose atoms lack one of its bonds
+/// between heavy atoms, the rows of the first such pair: the reader adds
+/// the bond, so no `_struct_conn` row can keep it out.
 pub(super) fn mark_implied(
     rows: &[AtomRow],
     elements: &[Element],
     connections: &mut [ConnectionRow],
     row_of: &BTreeMap<crate::topology::InstanceAtomId, usize>,
     precision: usize,
-) {
+) -> Vec<[usize; 2]> {
     let mut residues = BTreeMap::<ResidueKey<'_>, Vec<usize>>::new();
     for (index, row) in rows.iter().enumerate() {
         residues.entry(residue_key(row)).or_default().push(index);
@@ -67,18 +71,30 @@ pub(super) fn mark_implied(
     }
 
     let library = ComponentLibrary::bundled();
+    let mut missing = Vec::new();
     for members in &residues {
         let id = &rows[members[0]].label_comp_id;
-        let Some(component) = library.get(id).or_else(|| {
-            let atoms = members
-                .iter()
-                .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
-            ComponentLibrary::force_field_template(id, atoms).map(|(component, _)| component)
-        }) else {
+        let atoms = members
+            .iter()
+            .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
+        let Some(template) = ComponentLibrary::default_template(id, atoms) else {
             continue;
         };
+        let component = template.component;
+        let variants = template.library.variants(component.id());
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
-        if !rebuilt_by_template(component, members, rows, elements, connections, &neighbours) {
+        if !rebuilt_by_template(
+            component,
+            variants,
+            members,
+            rows,
+            elements,
+            connections,
+            &neighbours,
+        ) {
+            if template.fits {
+                missing.extend(missing_template_bond(component, members, rows, &neighbours));
+            }
             continue;
         }
         for &row in members {
@@ -139,17 +155,69 @@ pub(super) fn mark_implied(
                     .find(|&row| rows[row].label_atom_id == name)
             }
         };
-        let linked = PolymerLink::undeclared(linking(left_row), linking(right_row))
-            .and_then(|link| link.atoms(named(residue_of[left]), named(residue_of[right])));
-        if linked == Some((left, right))
-            && within_bonding_distance(
-                (elements[left], written(left_row.position, precision)),
-                (elements[right], written(right_row.position, precision)),
+        let connections_ref = &*connections;
+        let residue_of = &residue_of;
+        // The reader's own rule: a linking atom bonded to another residue
+        // keeps the link out, and the block states the bond.
+        let outcome = PolymerLink::undeclared(linking(left_row), linking(right_row)).map(|link| {
+            standard_link(
+                link,
+                named(residue_of[left]),
+                named(residue_of[right]),
+                |atom: usize, partner: usize| {
+                    Ok::<_, std::convert::Infallible>(neighbours[atom].iter().any(
+                        |&(other, connection)| {
+                            other != partner
+                                && residue_of[other] != residue_of[atom]
+                                && !is_coordination(
+                                    connections_ref[connection].order,
+                                    [elements[atom], elements[other]],
+                                )
+                        },
+                    ))
+                },
+                |earlier, later| {
+                    within_bonding_distance(
+                        (
+                            elements[earlier],
+                            written(rows[earlier].position, precision),
+                        ),
+                        (elements[later], written(rows[later].position, precision)),
+                    )
+                },
             )
-        {
-            connections[index].implied = Some(Implied::PolymerLink);
+        });
+        if let Some(Ok(StandardLink::Linked(pair))) = outcome {
+            if pair == [left, right] {
+                connections[index].implied = Some(Implied::PolymerLink);
+            }
         }
     }
+    missing
+}
+
+/// The rows of the first bond between two heavy atoms of `component`, whose
+/// atoms the residue fits, that the residue lacks.
+fn missing_template_bond(
+    component: &Component,
+    members: &[usize],
+    rows: &[AtomRow],
+    neighbours: &[Vec<(usize, usize)>],
+) -> Option<[usize; 2]> {
+    let row_of = |name: &str| {
+        members
+            .iter()
+            .copied()
+            .find(|&row| rows[row].label_atom_id == name)
+    };
+    component.bonds().iter().find_map(|bond| {
+        let [a, b] = bond.atoms().map(|atom| &component.atoms()[atom]);
+        if a.element().atomic_number() == 1 || b.element().atomic_number() == 1 {
+            return None;
+        }
+        let (left, right) = (row_of(a.name())?, row_of(b.name())?);
+        (!neighbours[left].iter().any(|&(other, _)| other == right)).then_some([left, right])
+    })
 }
 
 /// Whether reading the residue with its template gives it exactly its
@@ -157,8 +225,9 @@ pub(super) fn mark_implied(
 /// bonds are the template's among those atoms with their localized orders,
 /// after the protonation variant the reader chooses for its hydrogens, if
 /// any, replaces them.
-fn rebuilt_by_template(
-    component: &Component,
+fn rebuilt_by_template<'c>(
+    component: &'c Component,
+    variants: impl Iterator<Item = &'c Component>,
     members: &[usize],
     rows: &[AtomRow],
     elements: &[Element],
@@ -200,9 +269,7 @@ fn rebuilt_by_template(
     // As the reader does: the first candidate whose hydrogens match exactly,
     // else the first the hydrogens do not contradict.
     let mut evaluated = Vec::new();
-    for candidate in
-        std::iter::once(component).chain(ComponentLibrary::bundled().variants(component.id()))
-    {
+    for candidate in std::iter::once(component).chain(variants) {
         let differences = hydrogen_differences(candidate, &named, has_hydrogens, hydrogen, |row| {
             let present = neighbours[row]
                 .iter()

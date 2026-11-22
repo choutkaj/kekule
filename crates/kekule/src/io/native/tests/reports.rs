@@ -252,6 +252,46 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             component_id: "CYX".into(),
             force_field: "AMBER".into(),
         },
+        Issue::ResidueBondOrdersUnstated {
+            residue: label(401),
+            component_id: "LIG".into(),
+            bonds: 6,
+        },
+        Issue::BondNotInTemplate {
+            residue: label(301),
+            component_id: "SO4".into(),
+            atoms: ["O1".into(), "O2".into()],
+        },
+        Issue::BondOrderDiffersFromTemplate {
+            residue: label(1),
+            component_id: "GLY".into(),
+            atoms: ["C".into(), "O".into()],
+            order: crate::molecule::BondOrder::Single,
+            template_order: Some(crate::molecule::BondOrder::Double),
+        },
+        Issue::BondOrderDiffersFromTemplate {
+            residue: label(2),
+            component_id: "PHX".into(),
+            atoms: ["C1".into(), "C2".into()],
+            order: crate::molecule::BondOrder::Triple,
+            template_order: None,
+        },
+        Issue::PolymerLinkSkipped {
+            residue: label(1),
+            next: label(2),
+        },
+        Issue::LinkingAtomMissing {
+            residue: label(12),
+            next: label(13),
+        },
+        Issue::ResidueFitsNoTemplate {
+            residue: label(1),
+            component_id: "GLY".into(),
+        },
+        Issue::StatedOrdersDisagreeWithHydrogens {
+            residue: label(4),
+            component_id: "HIS".into(),
+        },
         Issue::ChargesFromBonds {
             residue: label(5),
             component_id: "XYZ".into(),
