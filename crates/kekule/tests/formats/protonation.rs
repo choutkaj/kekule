@@ -1547,6 +1547,75 @@ fn a_three_prime_gap_round_trips() {
 }
 
 #[test]
+fn a_chain_break_inside_a_sequenced_chain_round_trips_through_pdb() {
+    // Alanines 1 and 2 of a sequence of two, both modelled but 10 Å apart:
+    // the sequence opens the C of the first and the N of the second.
+    let mut rows = without(heavy(sites("ALA")), &["OXT"]);
+    rows.extend(heavy(residue_sites("ALA", "A", 2, [10.0, 0.0, 0.0])));
+    let source = read_sequenced(&rows, &["ALA", "ALA"]);
+    let open = [
+        link_missing("A", 1, "ALA", "C"),
+        link_missing("A", 2, "ALA", "N"),
+    ];
+    assert_eq!(links_missing(&source), open);
+    assert_eq!(state_at(&source, "A", 2, "N"), (0, 1));
+    // Only `SEQRES` tells a PDB reader that the chain continues.
+    let (text, _) = kekule::pdb::write(&source, Default::default()).unwrap();
+    assert!(
+        text.starts_with(
+            "SEQRES   1 A    2  ALA ALA
+"
+        ),
+        "{text}"
+    );
+    let reread = read_pdb(&text);
+    assert_eq!(links_missing(&reread), open);
+    assert_eq!(state_at(&reread, "A", 1, "C"), (0, 0));
+    assert_eq!(state_at(&reread, "A", 2, "N"), (0, 1));
+    assert_eq!(
+        kekule::pdb::write(&reread, Default::default()).unwrap().0,
+        text
+    );
+}
+
+#[test]
+fn a_sequenced_heterogen_a_reader_cannot_place_follows_the_ter() {
+    // Ethylene glycol takes place 3 of the sequence. Its `HETATM` records
+    // have no linking atom and no polymer template, so a PDB reader takes
+    // it as no polymer residue: the `TER` comes before it.
+    let mut rows = without(heavy(sites("ALA")), &["OXT"]);
+    let carbon = point(&rows, "C");
+    let next = heavy(residue_sites("ALA", "A", 2, [0.0; 3]));
+    let nitrogen = point(&next, "N");
+    let shift = [0, 1, 2].map(|axis| carbon[axis] - nitrogen[axis] + [1.33, 0.0, 0.0][axis]);
+    rows.extend(heavy(residue_sites("ALA", "A", 2, shift)));
+    rows.extend(heavy(residue_sites("EDO", "A", 3, [0.0, 10.0, 0.0])));
+    let source = read_sequenced(&rows, &["ALA", "ALA", "EDO"]);
+    let (text, _) = kekule::pdb::write(&source, Default::default()).unwrap();
+    let ter = text
+        .lines()
+        .position(|line| line.starts_with("TER"))
+        .unwrap();
+    let glycol = text
+        .lines()
+        .position(|line| line.contains(" EDO "))
+        .unwrap();
+    assert!(ter < glycol, "{text}");
+    assert!(
+        text.starts_with(
+            "SEQRES   1 A    3  ALA ALA EDO
+"
+        ),
+        "{text}"
+    );
+    let reread = read_pdb(&text);
+    assert_eq!(
+        kekule::pdb::write(&reread, Default::default()).unwrap().0,
+        text
+    );
+}
+
+#[test]
 fn a_metal_bound_amine_keeps_its_hydrogens() {
     // A38's N6 coordinates a magnesium in 1EHZ. An amine with a neutral
     // template does not give its hydrogen to the metal.

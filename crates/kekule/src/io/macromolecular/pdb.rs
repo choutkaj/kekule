@@ -693,7 +693,7 @@ fn read_rows(
 
 /// Whether the template of a residue named `name` is a polymer one: the
 /// caller's library first, then the bundled one.
-fn polymer_template(name: &str, components: Option<&ComponentLibrary>) -> bool {
+pub(crate) fn polymer_template(name: &str, components: Option<&ComponentLibrary>) -> bool {
     components
         .and_then(|library| library.get(name))
         .or_else(|| ComponentLibrary::bundled().get(name))
@@ -708,7 +708,7 @@ fn polymer_template(name: &str, components: Option<&ComponentLibrary>) -> bool {
 /// Whether an atom of this name is a polymer link's head (`N`, `P`), which
 /// joins the residue before, or its tail (`C`, `O3'`), which joins the one
 /// after, with its atomic number.
-fn linking_role(name: &str) -> Option<(bool, u8)> {
+pub(crate) fn linking_role(name: &str) -> Option<(bool, u8)> {
     match name {
         "N" => Some((true, 7)),
         "P" => Some((true, 15)),

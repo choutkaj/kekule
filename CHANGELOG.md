@@ -701,13 +701,16 @@ the main branch migrates by the table under "From the SampleSet API".
   - The mmCIF writer writes `_entity_poly_seq`, and each polymer molecule
     of a chain without a source asym is an asym of its own. The PDB writer
     writes `SEQRES` for a chain whose sequence has residues the model
-    lacks, with the residues' names where known and `UNK` elsewhere. PDB
+    lacks or that a chain break opens inside, with the residues' names
+    where known and `UNK` elsewhere. PDB
     `SEQRES` chains are polymer entities of the report
     (`StructureInterpretationReport::polymer_entities`).
   - The PDB writer writes `TER` after the last polymer residue of each
     hierarchy chain holding amino acids or nucleotides, so polymer chains
     that share a letter stay apart. A ligand bonded to the polymer, such as
-    retinal, follows the `TER` and reads as no polymer residue. Another
+    retinal, follows the `TER` and reads as no polymer residue, as does a
+    sequenced `HETATM` residue without a polymer template or linking atom,
+    which readers cannot place. Another
     chain with the letter continues the chain before it. Sequenced residues
     are `ATOM` records, also one a chain break leaves a molecule of its own.
   - PDB polymer residues take label sequence numbers, their places in the

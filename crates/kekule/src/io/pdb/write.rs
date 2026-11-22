@@ -1,8 +1,8 @@
 //! PDB writing of structures and structure sets.
 //!
 //! A written entry holds these records, in this order:
-//! - `SEQRES` for chains whose sequence has residues the structure lacks,
-//!   with the residues' names where the source's entity gives them and
+//! - `SEQRES` for chains whose sequence has residues the structure lacks
+//!   or that a chain break opens inside, with the residues' names where the source's entity gives them and
 //!   `UNK` elsewhere;
 //! - `LINK` for the metal coordination of interpretation reports, when the
 //!   source has them ([`PdbSource::with_reports`]);
@@ -23,6 +23,7 @@ use crate::fixed_u32_id::FixedId;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io::Write;
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::algorithms::{metal_bond_reading, MetalBondReading};
@@ -36,7 +37,7 @@ use crate::io::macromolecular::connectivity::{
     standard_link, within_bonding_distance, AtomEvidence, PolymerLink, Protonation,
     ResidueEvidence, ResidueTemplate, StandardLink,
 };
-use crate::io::macromolecular::pdb::{segment_starts, Segment};
+use crate::io::macromolecular::pdb::{linking_role, polymer_template, segment_starts, Segment};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
@@ -930,7 +931,6 @@ impl<'o> Plan<'o> {
         topology: &Topology,
         positions: &[Vec<Option<Point3>>],
         options: &'o PdbWriteOptions,
-
         omissions: &mut Omissions,
     ) -> Result<Self, FormatError> {
         let strict = options.chemistry == UnrepresentablePolicy::Fail;
@@ -1100,7 +1100,8 @@ impl<'o> Plan<'o> {
 
         // `TER` follows the last polymer residue of each chain and takes the
         // next serial number.
-        let last_polymer_atom = polymer_ends(topology, &records, &residues);
+        let library = options.components().map(|library| &**library);
+        let last_polymer_atom = polymer_ends(topology, &records, &residues, library);
         for &index in &last_polymer_atom {
             records[index].ter = true;
         }
@@ -1117,7 +1118,6 @@ impl<'o> Plan<'o> {
             }
         }
 
-        let library = options.components().map(|library| &**library);
         let templates = residue_templates(library, topology, &records, &residues);
         let templated = templated_residues(&records, &residues, &templates);
         let ConectPlan {
@@ -1562,9 +1562,10 @@ impl<'o> Plan<'o> {
 }
 
 /// The last record of each chain's polymer. A residue of a polymer
-/// molecule is the polymer's when it has a place in its sequence, is a
-/// standard residue, or links through its `N` or `P` to the `C` or `O3'` of
-/// the polymer residue before it, as a C-terminal `NH2` or `NME` cap does.
+/// molecule is the polymer's when it is a standard residue, links through
+/// its `N` or `P` to the `C` or `O3'` of the polymer residue before it, as a
+/// C-terminal `NH2` or `NME` cap does, or has a place in its sequence and a
+/// polymer template or linking atom, which readers need to place it.
 /// Ligands bonded to the polymer, such as retinal to its lysine, follow the
 /// `TER`. Each hierarchy chain holding amino acids or nucleotides ends in a
 /// `TER` of its own, so chains that share an identifier stay apart. Another
@@ -1574,6 +1575,7 @@ fn polymer_ends(
     topology: &Topology,
     records: &[AtomRecord],
     residues: &[AtomResidue],
+    library: Option<&ComponentLibrary>,
 ) -> Vec<usize> {
     let bonded = |a: usize, b: usize| {
         topology
@@ -1628,13 +1630,33 @@ fn polymer_ends(
                 .into_iter()
                 .any(|head| previous.iter().any(|&tail| bonded(head, tail)))
         };
-        if residue.polymer && (residue.place.is_some() || !records[start].hetatm || linked()) {
+        if residue.polymer
+            && (!records[start].hetatm
+                || linked()
+                || (residue.place.is_some() && reader_polymer(records, start..end, library)))
+        {
             ends.insert(chain, end - 1);
             tails.insert(chain, named(&["C", "O3'", "O3*"]));
         }
         start = end;
     }
     ends.into_values().collect()
+}
+
+/// Whether readers take the residue of `records[range]` as a polymer
+/// residue before a `TER`: an `ATOM` residue, or a `HETATM` one with a
+/// polymer template or a linking atom.
+fn reader_polymer(
+    records: &[AtomRecord],
+    range: Range<usize>,
+    library: Option<&ComponentLibrary>,
+) -> bool {
+    let first = &records[range.start];
+    !first.hetatm
+        || polymer_template(&first.residue_name, library)
+        || records[range]
+            .iter()
+            .any(|record| linking_role(record.name.trim()).is_some())
 }
 
 /// The `CONECT` listings of an entry and the bonds they do not carry as
@@ -1916,9 +1938,9 @@ impl<'o> Plan<'o> {
     ///
     /// Only `SEQRES` records say which residues a chain's polymer lacks.
     /// A chain gets them when its residues' places in their sequence
-    /// (`label_seq_id`) leave residues out, or when its first or last
-    /// polymer residue bonds to a residue the structure lacks, so that its
-    /// linking atom has the fixed hydrogens of a gap. They name the
+    /// (`label_seq_id`) leave residues out, or when a residue's linking
+    /// atom has the fixed hydrogens of a gap: at the chain's first or last
+    /// polymer residue, or at a chain break inside it. They name the
     /// modelled residues, the residues `report`'s sequence names elsewhere,
     /// and `UNK` where none is known, or wherever names a reader could
     /// align elsewhere.
@@ -1941,8 +1963,8 @@ impl<'o> Plan<'o> {
                 .expect("records follow dense atoms")
         };
         let hydrogen = |index: usize| atom(index).atom().element.atomic_number() == 1;
-        // Readers number the residues of each chain up to its `TER` in
-        // record order, water aside; a chain of one residue is no polymer.
+        // Readers number the polymer residues of each chain up to its `TER`
+        // in record order; a chain of one residue is no polymer.
         let ends = self
             .records
             .iter()
@@ -1962,6 +1984,15 @@ impl<'o> Plan<'o> {
             if chain.last().map(|&(key, _)| key) != Some(&residue.key) {
                 chain.push((&residue.key, index));
             }
+        }
+        let library = options.components().map(|library| &**library);
+        for residues in chains.values_mut() {
+            residues.retain(|&(key, start)| {
+                let end = (start..self.records.len())
+                    .find(|&index| self.residues[index].key != *key)
+                    .unwrap_or(self.records.len());
+                reader_polymer(&self.records, start..end, library)
+            });
         }
         chains.retain(|_, residues| residues.len() > 1);
         let in_chain = chains
@@ -2042,22 +2073,25 @@ impl<'o> Plan<'o> {
         // structure does, and one that finds none does not.
         let opens = |templated: usize, side: usize| {
             let residue = &self.templated[templated];
-            let open = |ends: [bool; 2]| {
-                let state = read(templated, ends);
-                link_sides(residue.component.linking())[side]
-                    .iter()
-                    .any(|name| {
-                        let fixed = residue.atoms.get(*name).is_some_and(|&index| {
-                            matches!(atom(index).atom().hydrogens, ImplicitHydrogens::Fixed(_))
-                        });
-                        fixed
-                            && state.as_ref().is_some_and(|state| {
-                                state
-                                    .atoms
-                                    .iter()
-                                    .any(|atom| atom.name == *name && atom.fixed)
-                            })
+            let fixed = link_sides(residue.component.linking())[side]
+                .iter()
+                .copied()
+                .filter(|name| {
+                    residue.atoms.get(*name).is_some_and(|&index| {
+                        matches!(atom(index).atom().hydrogens, ImplicitHydrogens::Fixed(_))
                     })
+                })
+                .collect::<Vec<_>>();
+            if fixed.is_empty() {
+                return false;
+            }
+            let open = |ends: [bool; 2]| {
+                read(templated, ends).is_some_and(|state| {
+                    state
+                        .atoms
+                        .iter()
+                        .any(|atom| atom.fixed && fixed.contains(&atom.name.as_str()))
+                })
             };
             let mut padded = [false; 2];
             padded[side] = true;
@@ -2096,9 +2130,15 @@ impl<'o> Plan<'o> {
             {
                 length += 1;
             }
+            // A chain break inside the chain opens its linking atoms only
+            // where the reader knows the sequence.
             let gapped = places[0] > 1
                 || length > last
-                || places.windows(2).any(|pair| pair[1] != pair[0] + 1);
+                || places.windows(2).any(|pair| pair[1] != pair[0] + 1)
+                || (1..residues.len()).any(|at| {
+                    edge(at - 1).is_some_and(|templated| opens(templated, 1))
+                        || edge(at).is_some_and(|templated| opens(templated, 0))
+                });
             if !gapped {
                 continue;
             }

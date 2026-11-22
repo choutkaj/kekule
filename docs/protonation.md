@@ -119,12 +119,14 @@ in the sequence as its label sequence number, and each such chain is a
 polymer entity of the report, whose monomers are the `SEQRES` names.
 
 The PDB writer writes `SEQRES` for a chain whose sequence has residues the
-model lacks, with the residues' names where the report's entity gives them
-and `UNK` elsewhere. It writes sequenced residues as `ATOM` records, also
-one a chain break leaves a molecule of its own. Each hierarchy chain
-holding amino acids or nucleotides ends with `TER` after its last polymer
-residue, so ligands bonded to the chain, such as retinal, are no part of
-it. The mmCIF writer writes `_entity_poly_seq`, and numbers a chain without
+model lacks or that a chain break opens inside, with the residues' names
+where the report's entity gives them and `UNK` elsewhere. It writes
+sequenced residues as `ATOM` records, also one a chain break leaves a
+molecule of its own. Each hierarchy chain holding amino acids or
+nucleotides ends with `TER` after its last polymer residue, so ligands
+bonded to the chain, such as retinal, are no part of it. A sequenced
+`HETATM` residue without a polymer template or a linking atom also follows
+the `TER`, since readers cannot place it. The mmCIF writer writes `_entity_poly_seq`, and numbers a chain without
 sequence numbers from 2 when its first linking atom is at a gap.
 
 ## Atoms the residue lacks
