@@ -76,18 +76,24 @@ pub(super) fn mark_implied(
         let atoms = members
             .iter()
             .map(|&row| (rows[row].label_atom_id.as_str(), elements[row]));
-        let Some((component, _)) = ComponentLibrary::default_template(id, atoms) else {
+        let Some(template) = ComponentLibrary::default_template(id, atoms) else {
             continue;
         };
+        let component = template.component;
+        let variants = template.library.variants(component.id());
         let internal = |&(other, _): &(usize, usize)| residue_of[other] == residue_of[members[0]];
-        if !rebuilt_by_template(component, members, rows, elements, connections, &neighbours) {
-            missing.extend(missing_template_bond(
-                component,
-                members,
-                rows,
-                elements,
-                &neighbours,
-            ));
+        if !rebuilt_by_template(
+            component,
+            variants,
+            members,
+            rows,
+            elements,
+            connections,
+            &neighbours,
+        ) {
+            if template.fits {
+                missing.extend(missing_template_bond(component, members, rows, &neighbours));
+            }
             continue;
         }
         for &row in members {
@@ -162,23 +168,14 @@ pub(super) fn mark_implied(
     missing
 }
 
-/// The rows of the first bond between two heavy atoms of `component` that
-/// the residue lacks, when its atoms fit the component, as the reader
-/// requires to apply it.
+/// The rows of the first bond between two heavy atoms of `component`, whose
+/// atoms the residue fits, that the residue lacks.
 fn missing_template_bond(
     component: &Component,
     members: &[usize],
     rows: &[AtomRow],
-    elements: &[Element],
     neighbours: &[Vec<(usize, usize)>],
 ) -> Option<[usize; 2]> {
-    if !component.fits(
-        members
-            .iter()
-            .map(|&row| (rows[row].label_atom_id.as_str(), elements[row])),
-    ) {
-        return None;
-    }
     let row_of = |name: &str| {
         members
             .iter()
@@ -200,8 +197,9 @@ fn missing_template_bond(
 /// bonds are the template's among those atoms with their localized orders,
 /// after the protonation variant the reader chooses for its hydrogens, if
 /// any, replaces them.
-fn rebuilt_by_template(
-    component: &Component,
+fn rebuilt_by_template<'c>(
+    component: &'c Component,
+    variants: impl Iterator<Item = &'c Component>,
     members: &[usize],
     rows: &[AtomRow],
     elements: &[Element],
@@ -243,9 +241,7 @@ fn rebuilt_by_template(
     // As the reader does: the first candidate whose hydrogens match exactly,
     // else the first the hydrogens do not contradict.
     let mut evaluated = Vec::new();
-    for candidate in
-        std::iter::once(component).chain(ComponentLibrary::bundled().variants(component.id()))
-    {
+    for candidate in std::iter::once(component).chain(variants) {
         let differences = hydrogen_differences(candidate, &named, has_hydrogens, hydrogen, |row| {
             let present = neighbours[row]
                 .iter()

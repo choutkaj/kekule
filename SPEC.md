@@ -906,15 +906,18 @@ which is on by default and reported: bonds within residues nothing else
 covers, and disulfides between cysteine `SG` atoms within bonding distance
 that carry no hydrogen and no stated link. Explicit bonds outrank the levels
 below them, and close contacts no evidence bonds are counted, never bonded.
-A template always applies to a residue it covers, and records within the
-residue are checked against it: a bond it lacks and an order a record
-states that it does not give are kept and reported. A record that states
-no order, such as a PDB `LINK`, or `CONECT` in a file that lists no bond
-twice, never asserts single bonds: a residue without a template that
-takes its bonds from such records is reported. A standard polymer link is
-made unless a record bonds one of its atoms to another residue, and a
-missing linking atom is reported. A
-covalent link to another residue takes the place of as many of an atom's
+A template always applies to a residue whose atoms fit it, and records
+within the residue are checked against it, or against the protonation
+variant the residue takes: a bond it lacks and an order a record states
+that it does not give are kept and reported. A residue whose atoms fit no
+template takes the bonds records state, and is reported; without records,
+it fails to read. Records that state no order, such as PDB `LINK` records
+and `CONECT` records in a bonded group that lists no bond twice, give
+single bonds. A residue without a template that takes its bonds from them
+is reported; such a bond between residues is not. A standard polymer link
+is made unless a record bonds one of its atoms to another residue, and a
+missing linking atom is reported when both residues have linking atoms and
+no bond joins them. A covalent link to another residue takes the place of as many of an atom's
 hydrogens as its order, as a disulfide replaces cysteine's `HG`, so it
 charges no atom.
 Metal coordination between residues is not a bond: the
@@ -923,12 +926,13 @@ is a dative bond, so a metal complex that is one component stays one molecule.
 Hydrogen bonds, salt bridges, and links to symmetry mates are never bonds.
 Kekule bundles Chemical Component Dictionary templates for standard residues,
 water, common ions, cofactors, and crystallization additives, plus the neutral
-histidine tautomers; callers supply more as context. A residue whose name
-neither defines, or whose atoms do not fit the bundled template, takes the
-AMBER, else the CHARMM, template of that name when the template names all
-its heavy atoms, as AMBER `CYX` names a cysteine in a disulfide and CHARMM
-names isoleucine's `CD1` `CD`, and the report says so. Writers state the
-bonds a reader cannot derive by these same rules. See
+histidine tautomers; callers supply more as context. A residue whose atoms
+do not fit its template otherwise takes, when one names all its heavy atoms,
+the dictionary template under CHARMM atom names, as for isoleucine's `CD`,
+with the dictionary's hydrogens and charges; else the AMBER, else the
+CHARMM, template of that name, as AMBER `CYX` names a cysteine in a
+disulfide. The report says so. Writers state the bonds a reader cannot
+derive by these same rules. See
 [macromolecular connectivity](crates/kekule/src/io/macromolecular/connectivity.rs)
 and [structure interpretation](crates/kekule/src/io/macromolecular/mod.rs).
 

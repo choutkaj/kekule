@@ -602,6 +602,14 @@ impl<W: Write> Encoder<'_, W> {
                 self.residue(residue)?;
                 self.residue(next)
             }
+            Issue::ResidueFitsNoTemplate {
+                residue,
+                component_id,
+            } => {
+                self.u8(27)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,

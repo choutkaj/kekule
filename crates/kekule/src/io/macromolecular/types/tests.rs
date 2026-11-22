@@ -200,7 +200,14 @@ fn issues_read_as_sentences() {
                 component_id: "LIG".into(),
                 bonds: 1,
             },
-            r#"Residue 401 of chain "A" in model "1" (component "LIG") has no template or bond table, and its bond records state no orders. Its 1 bond between heavy atoms is read as single."#,
+            r#"Residue 401 of chain "A" in model "1" (component "LIG") is bonded by records that state no orders, and no template gives them. Its 1 bond between heavy atoms is read as single."#,
+        ),
+        (
+            Issue::ResidueFitsNoTemplate {
+                residue: residue(1),
+                component_id: "GLY".into(),
+            },
+            r#"Residue 1 of chain "A" in model "1" (component "GLY") fits no template of its name. Its bonds are read from its connection records."#,
         ),
         (
             Issue::BondNotInTemplate {

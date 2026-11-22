@@ -159,6 +159,26 @@ impl PolymerLink {
     }
 }
 
+/// Whether a template bond gives a stated order: aromatic template bonds
+/// accept either localized order, and coordination is dative.
+fn gives_order(bond: &TemplateBond, order: BondOrder) -> bool {
+    match SourceBondOrder::of_template(bond) {
+        SourceBondOrder::Localized(template) => template == order,
+        SourceBondOrder::Aromatic => matches!(order, BondOrder::Single | BondOrder::Double),
+    }
+}
+
+/// The atoms polymer links join: peptide `N` and `C`, nucleotide `P` and
+/// `O3'`, also written `O3*`.
+const LINKING_ATOMS: [&str; 5] = ["N", "C", "P", "O3'", "O3*"];
+
+/// Whether a residue has an atom a polymer link joins.
+fn has_linking_atom(residue: &ResidueAtoms) -> bool {
+    LINKING_ATOMS
+        .iter()
+        .any(|name| residue.atoms.contains_key(*name))
+}
+
 /// The bond a template gives its two atoms, or `None` for an aromatic or
 /// delocalized bond, whose order localization chooses.
 pub(crate) const fn template_bond_order(bond: &TemplateBond) -> Option<BondOrder> {
@@ -376,17 +396,11 @@ impl ConnectivityCatalog {
             .sites
             .iter()
             .map(|site| (site.name.as_str(), site.element));
-        let (component, force_field) = ComponentLibrary::default_template(&component_id, atoms)?;
-        let variants = match force_field {
-            Some(_) => Vec::new(),
-            None => ComponentLibrary::bundled()
-                .variants(&component_id)
-                .collect(),
-        };
+        let template = ComponentLibrary::default_template(&component_id, atoms)?;
         Some(ResidueTemplate {
-            component,
-            variants,
-            force_field,
+            component: template.component,
+            variants: template.library.variants(&component_id).collect(),
+            force_field: template.force_field,
         })
     }
 
@@ -477,6 +491,18 @@ struct TemplatedResidue<'c> {
     component: &'c Component,
     variants: Vec<&'c Component>,
     matched: BTreeMap<usize, AtomId>,
+    /// Template bonds whose order a record states, checked against the
+    /// template or variant the residue takes.
+    stated: Vec<StatedBond>,
+}
+
+/// A template bond whose order a connection record states.
+struct StatedBond {
+    atoms: [AtomId; 2],
+    /// The template atom indices.
+    template_atoms: [usize; 2],
+    names: [String; 2],
+    order: BondOrder,
 }
 
 fn residue_atoms<'a>(
@@ -683,25 +709,42 @@ impl<'r> Resolver<'r, '_> {
                             component: template.component,
                             variants: template.variants,
                             matched,
+                            stated: Vec::new(),
                         });
                     }
                 }
             } else if let Some(template) = template {
                 let component = template.component;
-                let (matched, strays) =
-                    match_template(residue, component, true)?.expect("strict matches fail loudly");
-                self.add_checked_listed_bonds(residue, component, &matched, &listed)?;
-                self.add_template_bonds(component, &matched)?;
-                // Listed bonds of atoms the template does not name, such as
-                // hydrogens, follow its own.
-                self.add_listed_bonds(&listed)?;
-                stray_hydrogens.extend(strays.into_iter().map(|atom| (residue.key.clone(), atom)));
-                templated.push(TemplatedResidue {
-                    key: residue.key.clone(),
-                    component,
-                    variants: template.variants,
-                    matched,
-                });
+                // A residue whose atoms fit no template is read as its
+                // records bond it, as writers state every bond of one; one
+                // without records fails.
+                if let Some((matched, strays)) =
+                    match_template(residue, component, listed.is_empty())?
+                {
+                    let stated =
+                        self.add_checked_listed_bonds(residue, component, &matched, &listed)?;
+                    self.add_template_bonds(component, &matched)?;
+                    // Listed bonds of atoms the template does not name, such
+                    // as hydrogens, follow its own.
+                    self.add_listed_bonds(&listed)?;
+                    stray_hydrogens
+                        .extend(strays.into_iter().map(|atom| (residue.key.clone(), atom)));
+                    templated.push(TemplatedResidue {
+                        key: residue.key.clone(),
+                        component,
+                        variants: template.variants,
+                        matched,
+                        stated,
+                    });
+                } else {
+                    self.issues
+                        .push(raw::StructureInterpretIssue::ResidueFitsNoTemplate {
+                            residue: residue.key.id(self.model_id),
+                            component_id: residue.key.component_id.clone(),
+                        });
+                    self.add_untemplated_listed_bonds(residue, &listed)?;
+                    stray_hydrogens.extend(hydrogens());
+                }
             } else if !listed.is_empty() {
                 // The source lists this residue's bonds; inference would only
                 // guess at them. Hydrogens the listing leaves out are strays.
@@ -809,23 +852,24 @@ impl<'r> Resolver<'r, '_> {
         Ok(())
     }
 
-    /// Checks the bonds records state within a templated residue against its
-    /// template, before the template's bonds are added. A bond between two
-    /// template atoms that the template lacks is added and reported, and so
-    /// is a stated order that the template does not give; the template gives
-    /// the others their orders. Aromatic template bonds accept either
-    /// localized order, and coordination is dative.
+    /// Adds the bonds records state within a templated residue before the
+    /// template's bonds. A bond between two template atoms that the template
+    /// lacks is added and reported. A stated order that the template does not
+    /// give is added too, and the stated template bonds are returned, to be
+    /// checked against the template or variant the residue takes. The
+    /// template gives the other bonds their orders.
     fn add_checked_listed_bonds(
         &mut self,
         residue: &ResidueAtoms,
         component: &Component,
         matched: &BTreeMap<usize, AtomId>,
         listed: &[&ListedBond],
-    ) -> Result<(), FormatError> {
+    ) -> Result<Vec<StatedBond>, FormatError> {
         let index_of = matched
             .iter()
             .map(|(&index, &atom)| (atom, index))
             .collect::<BTreeMap<_, _>>();
+        let mut stated = Vec::new();
         for bond in listed {
             let [left, right] = bond.atoms;
             let (Some(&a), Some(&b)) = (index_of.get(&left), index_of.get(&right)) else {
@@ -850,45 +894,70 @@ impl<'r> Resolver<'r, '_> {
                     .name
                     .clone()
             });
-            let issue = match template_bond {
-                None => raw::StructureInterpretIssue::BondNotInTemplate {
-                    residue: residue.key.id(self.model_id),
-                    component_id: residue.key.component_id.clone(),
-                    atoms: names,
-                },
-                Some(template_bond) => {
-                    let agrees = match SourceBondOrder::of_template(template_bond) {
-                        SourceBondOrder::Localized(order) => order == bond.order,
-                        SourceBondOrder::Aromatic => {
-                            matches!(bond.order, BondOrder::Single | BondOrder::Double)
-                        }
-                    };
-                    if agrees || bond.order_source != OrderSource::Stated {
-                        continue;
-                    }
-                    raw::StructureInterpretIssue::BondOrderDiffersFromTemplate {
+            match template_bond {
+                None => self
+                    .issues
+                    .push(raw::StructureInterpretIssue::BondNotInTemplate {
                         residue: residue.key.id(self.model_id),
                         component_id: residue.key.component_id.clone(),
                         atoms: names,
+                    }),
+                Some(_) if bond.order_source != OrderSource::Stated => continue,
+                Some(template_bond) => {
+                    let agrees = gives_order(template_bond, bond.order);
+                    stated.push(StatedBond {
+                        atoms: [left, right],
+                        template_atoms: [a, b],
+                        names,
                         order: bond.order,
-                        template_order: template_bond_order(template_bond),
+                    });
+                    if agrees {
+                        continue;
                     }
                 }
-            };
+            }
             self.add_bond(
                 left,
                 right,
                 SourceBondOrder::Localized(bond.order),
                 bond.evidence.clone(),
             )?;
-            self.issues.push(issue);
         }
-        Ok(())
+        Ok(stated)
     }
 
-    /// Adds the listed bonds of a residue without template or bond table,
-    /// and reports the residue when records state no order for some of its
-    /// bonds between heavy atoms.
+    /// Reports each stated order of a templated residue that `candidate`,
+    /// the template or variant it takes, does not give.
+    fn report_stated_orders(&mut self, templated: &TemplatedResidue<'_>, candidate: &Component) {
+        for bond in &templated.stated {
+            let [a, b] = bond
+                .template_atoms
+                .map(|index| candidate.atom(templated.component.atoms()[index].name()));
+            let (Some((a, _)), Some((b, _))) = (a, b) else {
+                continue;
+            };
+            let Some(template_bond) = candidate.bonds().iter().find(|candidate| {
+                let [x, y] = candidate.atoms();
+                (x, y) == (a, b) || (x, y) == (b, a)
+            }) else {
+                continue;
+            };
+            if !gives_order(template_bond, bond.order) {
+                self.issues
+                    .push(raw::StructureInterpretIssue::BondOrderDiffersFromTemplate {
+                        residue: templated.key.id(self.model_id),
+                        component_id: templated.key.component_id.clone(),
+                        atoms: bond.names.clone(),
+                        order: bond.order,
+                        template_order: template_bond_order(template_bond),
+                    });
+            }
+        }
+    }
+
+    /// Adds the listed bonds of a residue that no template or bond table
+    /// covers, and reports the residue when records state no order for some
+    /// of its bonds between heavy atoms.
     fn add_untemplated_listed_bonds(
         &mut self,
         residue: &ResidueAtoms,
@@ -1126,10 +1195,13 @@ impl<'r> Resolver<'r, '_> {
     /// polymer type comes from `_entity_poly`, or from the residues'
     /// templates when the source does not describe the entity. A link one of
     /// whose atoms a connection record bonds to an atom of another residue,
-    /// as in an isopeptide, is not made, and neither is one whose atoms are
-    /// missing; the report names both. Entities whose `_entity_poly` states
-    /// a nonstandard linkage take the same rule: the flag does not say which
-    /// links differ.
+    /// as in an isopeptide, is not made, and the report names it. Neither is
+    /// one whose atoms are missing; the report names it when each residue
+    /// has a linking atom and no bond joins them, so that models without
+    /// backbone atoms, such as CA-only or coarse-grained ones, and runs of
+    /// waters and ions are not reported. Entities whose `_entity_poly`
+    /// states a nonstandard linkage take the same rule: the flag does not
+    /// say which links differ.
     fn apply_polymer_links(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
@@ -1178,11 +1250,16 @@ impl<'r> Resolver<'r, '_> {
                 let Some((&left_atom, &right_atom)) =
                     link.atoms(|name| left.atoms.get(name), |name| right.atoms.get(name))
                 else {
-                    self.issues
-                        .push(raw::StructureInterpretIssue::LinkingAtomMissing {
-                            residue: left.key.id(self.model_id),
-                            next: right.key.id(self.model_id),
-                        });
+                    if has_linking_atom(left)
+                        && has_linking_atom(right)
+                        && !self.residues_bonded(left, right)?
+                    {
+                        self.issues
+                            .push(raw::StructureInterpretIssue::LinkingAtomMissing {
+                                residue: left.key.id(self.model_id),
+                                next: right.key.id(self.model_id),
+                            });
+                    }
                     continue;
                 };
                 if self.bonded_elsewhere(left_atom, left, right_atom)?
@@ -1221,6 +1298,25 @@ impl<'r> Resolver<'r, '_> {
             }
         }
         Ok(())
+    }
+
+    /// Whether a bond joins an atom of `left` to one of `right`.
+    fn residues_bonded(
+        &self,
+        left: &ResidueAtoms,
+        right: &ResidueAtoms,
+    ) -> Result<bool, FormatError> {
+        for site in &left.sites {
+            if self
+                .graph
+                .require_neighbors(site.atom)
+                .map_err(interpret_error)?
+                .any(|neighbor| right.site(neighbor).is_some())
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether a bond joins `atom` of `residue` to an atom of another residue
@@ -1352,8 +1448,14 @@ impl<'r> Resolver<'r, '_> {
                 charged_atoms.push((site.name.clone(), value));
             }
         }
+        self.report_stated_orders(templated, candidate);
         if candidate.variant().is_some() {
-            self.apply_variant_bonds(candidate, &named)?;
+            let stated = templated
+                .stated
+                .iter()
+                .map(|bond| bond.atoms)
+                .collect::<Vec<_>>();
+            self.apply_variant_bonds(candidate, &named, &stated)?;
         }
         if candidate.variant().is_some() || !charged_atoms.is_empty() {
             self.issues
@@ -1427,11 +1529,13 @@ impl<'r> Resolver<'r, '_> {
             .sum())
     }
 
-    /// Replaces template bond orders with a variant's.
+    /// Replaces template bond orders with a variant's, except the orders
+    /// records state between the `stated` atom pairs.
     fn apply_variant_bonds(
         &mut self,
         variant: &Component,
         named: &[(&str, AtomId)],
+        stated: &[[AtomId; 2]],
     ) -> Result<(), FormatError> {
         let atom_of = |index: usize| {
             let name = variant.atoms()[index].name();
@@ -1445,6 +1549,9 @@ impl<'r> Resolver<'r, '_> {
             let (Some(left), Some(right)) = (atom_of(a), atom_of(b)) else {
                 continue;
             };
+            if stated.contains(&[left, right]) || stated.contains(&[right, left]) {
+                continue;
+            }
             let Some(existing) = self
                 .graph
                 .require_bond_between(left, right)

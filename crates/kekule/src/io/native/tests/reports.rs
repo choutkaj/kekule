@@ -284,6 +284,10 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             residue: label(12),
             next: label(13),
         },
+        Issue::ResidueFitsNoTemplate {
+            residue: label(1),
+            component_id: "GLY".into(),
+        },
         Issue::ChargesFromBonds {
             residue: label(5),
             component_id: "XYZ".into(),

@@ -38,22 +38,25 @@ pub enum ModelSelection {
 /// its component when present, otherwise from a component template: the
 /// caller's [`components`](Self::components) first, then
 /// [`ComponentLibrary::bundled`] when the residue's atoms fit it, then the
-/// [`ComponentLibrary::amber`] or [`ComponentLibrary::charmm`] template of
-/// its name that names all its heavy atoms, such as AMBER `CYX` or a CHARMM
-/// isoleucine with `CD`. A residue that none covers takes the bonds
-/// connection records list within it, and otherwise has its bonds inferred
-/// from covalent radii when
+/// bundled template under CHARMM atom names, such as an isoleucine with `CD`,
+/// then the [`ComponentLibrary::amber`] or [`ComponentLibrary::charmm`]
+/// template of its name, such as AMBER `CYX`: the first that names all its
+/// heavy atoms. A residue that none covers takes the bonds connection
+/// records list within it, and otherwise has its bonds inferred from
+/// covalent radii when
 /// [`infer_bonds_from_distance`](Self::infer_bonds_from_distance) is set, and
 /// fails otherwise. Listed bonds keep the orders their records state; PDB
-/// `CONECT` records state orders only in a file that lists some bond more
-/// than once, and the report names residues whose bond orders no record
-/// states.
+/// `CONECT` records state orders only in a bonded group of atoms that lists
+/// some bond more than once, and the report names residues whose bond orders
+/// no record states.
 ///
-/// A template always applies to a residue it covers. Connection records
-/// within the residue are checked against it: a bond the template lacks is
-/// kept, and an order a record states is kept, and the report names both.
-/// A heavy atom whose name its residue's template does not list is an error,
-/// never a silently separate molecule.
+/// A template always applies to a residue whose atoms fit it. Connection
+/// records within the residue are checked against it, or against the
+/// protonation variant the residue takes: a bond the template lacks is kept,
+/// and an order a record states is kept, and the report names both. A
+/// residue with a heavy atom that its template does not list, or lists with
+/// another element, takes the bonds its records state, and the report names
+/// it; without records, it is an error, never a silently separate molecule.
 ///
 /// Formal charges come from the source when stated, otherwise from the
 /// template, also when the source's own bond table supplies the bonds.
@@ -403,9 +406,11 @@ pub enum StructureInterpretIssue {
         candidate_count: usize,
     },
     /// A residue whose atoms fit no dictionary template, or whose name none
-    /// defines, was read with the force-field template of that name, which
-    /// names all its heavy atoms, as AMBER `CYX` names a cysteine in a
-    /// disulfide and CHARMM names isoleucine's `CD1` `CD`.
+    /// defines, was read with a force-field template of that name, which
+    /// names all its heavy atoms: the dictionary template under CHARMM atom
+    /// names, with the dictionary's hydrogens and charges, as for
+    /// isoleucine's `CD`, else the AMBER or CHARMM template, as AMBER `CYX`
+    /// names a cysteine in a disulfide.
     ForceFieldTemplate {
         /// The residue.
         residue: SourceResidueId,
@@ -425,9 +430,9 @@ pub enum StructureInterpretIssue {
         /// The number of inferred bonds.
         bonds: usize,
     },
-    /// A residue without template or bond table took its bonds from
+    /// A residue that no template or bond table covers took its bonds from
     /// connection records that state no bond orders, such as PDB `CONECT`
-    /// records in a file that lists no bond twice, or `LINK` records. Its
+    /// records in a group that lists no bond twice, or `LINK` records. Its
     /// bonds are single whatever its chemistry, as for
     /// [`Self::ResidueBondsInferred`].
     ResidueBondOrdersUnstated {
@@ -438,6 +443,17 @@ pub enum StructureInterpretIssue {
         /// The number of its bonds between heavy atoms without a stated
         /// order.
         bonds: usize,
+    },
+    /// The atoms of a residue, by name and element, fit no template of its
+    /// name, and connection records bond it. It takes the bonds and orders
+    /// they state, as a residue without a template does, and its template
+    /// gives it neither bonds nor charges. A residue without such records
+    /// fails to read.
+    ResidueFitsNoTemplate {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
     },
     /// A connection record bonds two atoms of a residue that its template
     /// does not bond. The bond is kept, with the record's order.
@@ -752,11 +768,20 @@ impl fmt::Display for StructureInterpretIssue {
                 bonds,
             } => write!(
                 formatter,
-                "{} (component {component_id:?}) has no template or bond table, and its bond \
-                 records state no orders. Its {} between heavy atoms {} read as single.",
+                "{} (component {component_id:?}) is bonded by records that state no orders, and \
+                 no template gives them. Its {} between heavy atoms {} read as single.",
                 Capitalized(residue),
                 counted(*bonds, "bond", "bonds"),
                 if *bonds == 1 { "is" } else { "are" }
+            ),
+            Self::ResidueFitsNoTemplate {
+                residue,
+                component_id,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) fits no template of its name. Its bonds are \
+                 read from its connection records.",
+                Capitalized(residue)
             ),
             Self::BondNotInTemplate {
                 residue,

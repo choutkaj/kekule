@@ -199,8 +199,8 @@ fn conect_records_without_repeats_state_no_bond_orders() {
     );
     assert_eq!(
         read.report().issues()[0].to_string(),
-        "Author residue \"1\" of chain \"A\" in model \"1\" (component \"LIG\") has no \
-         template or bond table, and its bond records state no orders. Its 6 bonds between \
+        "Author residue \"1\" of chain \"A\" in model \"1\" (component \"LIG\") is bonded \
+         by records that state no orders, and no template gives them. Its 6 bonds between \
          heavy atoms are read as single."
     );
 
@@ -470,6 +470,11 @@ fn only_polymer_residues_take_positions_along_a_pdb_chain() {
     let read = read_pdb(&lines);
     assert_eq!(polymer_links(&read), [("C".to_owned(), "N".to_owned())]);
     assert_eq!(read.topology().instance_count(), 2);
+    // So is one with an atom named like a linking atom, far from the chain.
+    lines[4] = atom("HETATM", 20, " N  ", "LIG", 900, [20.0, 0.0, 0.0], "N");
+    let read = read_pdb(&lines);
+    assert_eq!(polymer_links(&read), [("C".to_owned(), "N".to_owned())]);
+    assert_eq!(read.topology().instance_count(), 2);
 
     // A modified residue in HETATM records is: its template is a peptide's.
     let mut lines = glycine_records(3);
@@ -585,5 +590,399 @@ fn mmcif_writing_fails_on_residues_that_lack_a_template_bond() {
     assert_eq!(
         report.omissions(),
         [WriteOmission::DictionaryBonds { residues: 1 }]
+    );
+}
+
+#[test]
+fn residues_bonded_to_a_chain_through_linking_atoms_are_part_of_it() {
+    use kekule::components::ComponentLibrary;
+    use kekule::macromolecular::{ConnectivityOptions, StructureInterpretOptions};
+    use std::sync::Arc;
+
+    // A 5'-terminal GTP before the ATOM records of an RNA chain, without
+    // TER records. The dictionary's GTP is no polymer residue, but its O3'
+    // lies within bonding distance of the next residue's P.
+    let lines = [
+        ("HETATM", " C3'", "GTP", 1, [0.000, 0.000, 0.0], "C"),
+        ("HETATM", " O3'", "GTP", 1, [1.430, 0.000, 0.0], "O"),
+        ("ATOM", " P  ", "G", 2, [3.030, 0.000, 0.0], "P"),
+        ("ATOM", " OP1", "G", 2, [3.530, 1.400, 0.0], "O"),
+        ("ATOM", " OP2", "G", 2, [3.530, -1.400, 0.0], "O"),
+        ("ATOM", " O5'", "G", 2, [4.530, 0.500, 0.9], "O"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(
+        |(index, (record, name, residue, sequence, position, element))| {
+            atom(
+                record,
+                index + 1,
+                name,
+                residue,
+                sequence,
+                position,
+                element,
+            )
+        },
+    )
+    .collect::<Vec<_>>();
+    let read = read_pdb(&lines);
+    assert_eq!(polymer_links(&read), [("O3'".to_owned(), "P".to_owned())]);
+    assert_eq!(read.topology().instance_count(), 1);
+
+    // An alanine between OpenMM's AMBER caps, ACE and NME, as HETATM
+    // records. AMBER's ACE derives from acetate, no polymer residue.
+    let lines = [
+        ("HETATM", " CH3", "ACE", 1, [-1.500, 0.000, 0.0], "C"),
+        ("HETATM", " C  ", "ACE", 1, [0.000, 0.000, 0.0], "C"),
+        ("HETATM", " O  ", "ACE", 1, [0.600, 1.040, 0.0], "O"),
+        ("ATOM", " N  ", "ALA", 2, [1.330, 0.000, 0.0], "N"),
+        ("ATOM", " CA ", "ALA", 2, [2.790, 0.000, 0.0], "C"),
+        ("ATOM", " C  ", "ALA", 2, [3.600, 1.200, 0.0], "C"),
+        ("ATOM", " O  ", "ALA", 2, [3.000, 2.240, 0.0], "O"),
+        ("ATOM", " CB ", "ALA", 2, [3.300, -1.400, 0.0], "C"),
+        ("HETATM", " N  ", "NME", 3, [4.930, 1.200, 0.0], "N"),
+        ("HETATM", " C  ", "NME", 3, [5.700, 2.400, 0.0], "C"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(
+        |(index, (record, name, residue, sequence, position, element))| {
+            atom(
+                record,
+                index + 1,
+                name,
+                residue,
+                sequence,
+                position,
+                element,
+            )
+        },
+    )
+    .collect::<Vec<_>>();
+    let text = lines.join("\n") + "\nEND\n";
+    let options = StructureInterpretOptions::default().with_connectivity(
+        ConnectivityOptions::default().with_components(Some(Arc::new(ComponentLibrary::amber()))),
+    );
+    let read = pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(options)
+        .unwrap();
+    assert_eq!(
+        polymer_links(&read),
+        [
+            ("C".to_owned(), "N".to_owned()),
+            ("C".to_owned(), "N".to_owned())
+        ]
+    );
+    assert_eq!(read.topology().instance_count(), 1);
+}
+
+#[test]
+fn residues_without_backbone_atoms_report_no_missing_links() {
+    // Ions in ATOM records of one chain, as a GROMACS box writes them, and
+    // a CA-only model: neither has linking atoms to miss.
+    let ions = (1..=3)
+        .map(|index| {
+            let x = 5.0 * f64::from(index);
+            atom(
+                "ATOM",
+                index as usize,
+                "NA  ",
+                "NA",
+                index,
+                [x, 0.0, 0.0],
+                "NA",
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(issues(&read_pdb(&ions)), []);
+    let trace = (1..=3)
+        .map(|index| {
+            let x = 3.8 * f64::from(index);
+            atom(
+                "ATOM",
+                index as usize,
+                " CA ",
+                "ALA",
+                index,
+                [x, 0.0, 0.0],
+                "C",
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(issues(&read_pdb(&trace)), []);
+
+    // A record bonds residue 1, which lacks its carbonyl, to residue 2.
+    let read = read_mmcif(&polypeptide(
+        "no",
+        &[&glycines()[..2], &glycines()[4..]].concat(),
+        &struct_conn(&["c1 covale CA 1 N 2 sing"]),
+    ));
+    assert!(orders(&read).contains(&pair("CA", "N", BondOrder::Single)));
+    assert_eq!(issues(&read), []);
+}
+
+#[test]
+fn conect_orders_are_decided_per_bonded_group() {
+    // An RCSB ligand without repeats and a docked one appended with its
+    // double bonds listed twice.
+    let ring = [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (1, 6)];
+    let docked = benzene()
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            let x = line[30..38].trim().parse::<f64>().unwrap() + 20.0;
+            let y = line[38..46].trim().parse::<f64>().unwrap();
+            atom(
+                "HETATM",
+                index + 7,
+                &line[12..16],
+                "LIG",
+                2,
+                [x, y, 0.0],
+                "C",
+            )
+        })
+        .collect::<Vec<_>>();
+    let bonds = ring
+        .iter()
+        .map(|&(left, right)| (left, right, 1))
+        .chain(ring.iter().map(|&(left, right)| {
+            (
+                left + 6,
+                right + 6,
+                1 + usize::from(left % 2 == 1 && right == left + 1),
+            )
+        }))
+        .collect::<Vec<_>>();
+    let read = read_pdb(&[benzene(), docked, conect(&bonds)].concat());
+    let double = orders(&read)
+        .iter()
+        .filter(|(_, _, order)| *order == BondOrder::Double)
+        .count();
+    assert_eq!(double, 3);
+    assert_eq!(
+        issues(&read),
+        [StructureInterpretIssue::ResidueBondOrdersUnstated {
+            residue: author(1),
+            component_id: "LIG".to_owned(),
+            bonds: 6,
+        }]
+    );
+}
+
+/// Glycine `N`, `CA`, `C`, and `O` with an extra `CB`, as a modelled
+/// mutation leaves it.
+fn glycine_with_cb() -> Vec<String> {
+    [
+        (" N  ", [0.000, 0.000, 0.0], "N"),
+        (" CA ", [1.458, 0.000, 0.0], "C"),
+        (" C  ", [2.009, 1.420, 0.0], "C"),
+        (" O  ", [1.251, 2.390, 0.0], "O"),
+        (" CB ", [1.988, -0.774, -1.205], "C"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, position, element))| {
+        atom("ATOM", index + 1, name, "GLY", 1, position, element)
+    })
+    .collect()
+}
+
+#[test]
+fn residues_fitting_no_template_take_the_bonds_records_state() {
+    // CONECT records bond a glycine with a CB its template lacks.
+    let listed = conect(&[(1, 2, 1), (2, 3, 1), (3, 4, 2), (2, 5, 1)]);
+    let read = read_pdb(&[glycine_with_cb(), listed].concat());
+    assert_eq!(
+        orders(&read),
+        [
+            pair("C", "CA", BondOrder::Single),
+            pair("C", "O", BondOrder::Double),
+            pair("CA", "CB", BondOrder::Single),
+            pair("CA", "N", BondOrder::Single),
+        ]
+    );
+    assert_eq!(
+        issues(&read),
+        [StructureInterpretIssue::ResidueFitsNoTemplate {
+            residue: author(1),
+            component_id: "GLY".to_owned(),
+        }]
+    );
+    assert_eq!(
+        read.report().issues()[0].to_string(),
+        "Author residue \"1\" of chain \"A\" in model \"1\" (component \"GLY\") fits no \
+         template of its name. Its bonds are read from its connection records."
+    );
+    // Written to PDB, it lists every bond, and reads back the same.
+    let (text, _) = pdb::write(&read, Default::default()).unwrap();
+    let reread = pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(orders(&reread), orders(&read));
+    // Without records it still fails to read.
+    let text = glycine_with_cb().join("\n") + "\nEND\n";
+    assert!(pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .is_err());
+}
+
+#[test]
+fn mmcif_writing_round_trips_residues_fitting_no_template() {
+    // The block's own table bonds a glycine with a CB and a sulfur for its
+    // oxygen; a written block states their bonds for the reader.
+    let atoms = [
+        ("N", "GLY", 1, [0.000, 0.000, 0.0], "N"),
+        ("CA", "GLY", 1, [1.458, 0.000, 0.0], "C"),
+        ("C", "GLY", 1, [2.009, 1.420, 0.0], "C"),
+        ("O", "GLY", 1, [1.251, 2.390, 0.0], "O"),
+        ("CB", "GLY", 1, [1.988, -0.774, -1.205], "C"),
+        ("N", "GLY", 2, [3.332, 1.536, 0.0], "N"),
+        ("CA", "GLY", 2, [3.988, 2.836, 0.0], "C"),
+        ("C", "GLY", 2, [5.488, 2.736, 0.0], "C"),
+        ("O", "GLY", 2, [6.100, 1.680, 0.0], "S"),
+    ];
+    let table = "loop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n\
+                 _chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\nGLY N CA sing\n\
+                 GLY CA C sing\nGLY C O doub\nGLY CA CB sing\n";
+    let read = read_mmcif(&polypeptide("no", &atoms, table));
+    let (text, _) = mmcif::write([&read], Default::default()).unwrap();
+    let reread = read_mmcif(&text);
+    assert_eq!(orders(&reread), orders(&read));
+    assert_eq!(
+        issues(&reread),
+        [
+            StructureInterpretIssue::ResidueFitsNoTemplate {
+                residue: label(1),
+                component_id: "GLY".to_owned(),
+            },
+            StructureInterpretIssue::ResidueFitsNoTemplate {
+                residue: label(2),
+                component_id: "GLY".to_owned(),
+            },
+        ]
+    );
+}
+
+/// The atoms of the bundled histidine variant `variant` on a grid, and its
+/// bonds between heavy atoms as `_struct_conn` rows, each with `order` or,
+/// without one, the variant's.
+fn histidine(variant: &str, order: Option<&str>) -> String {
+    use kekule::components::{ComponentBondOrder, ComponentLibrary};
+
+    let library = ComponentLibrary::bundled();
+    let template = library
+        .variants("HIS")
+        .find(|candidate| candidate.variant() == Some(variant))
+        .unwrap();
+    let atoms = template
+        .atoms()
+        .iter()
+        .filter(|atom| atom.name() != "HXT" && atom.name() != "OXT")
+        .enumerate()
+        .map(|(index, atom)| {
+            let position = [3.0 * (index % 5) as f64, 3.0 * (index / 5) as f64, 0.0];
+            (atom.name(), "HIS", 1, position, atom.element().symbol())
+        })
+        .collect::<Vec<_>>();
+    let rows = template
+        .bonds()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, bond)| {
+            let [a, b] = bond.atoms().map(|atom| &template.atoms()[atom]);
+            let heavy =
+                |atom: &kekule::components::ComponentAtom| atom.element().atomic_number() > 1;
+            let ring = ["CG", "ND1", "CE1", "NE2", "CD2"];
+            (heavy(a) && heavy(b) && ring.contains(&a.name()) && ring.contains(&b.name())).then(
+                || {
+                    let stated = order.unwrap_or(match bond.order() {
+                        ComponentBondOrder::Double => "doub",
+                        _ => "sing",
+                    });
+                    format!("c{index} covale {} 1 {} 1 {stated}", a.name(), b.name())
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let rows = rows.iter().map(String::as_str).collect::<Vec<_>>();
+    polypeptide("no", &atoms, &struct_conn(&rows))
+}
+
+#[test]
+fn stated_orders_are_checked_against_the_variant_a_residue_takes() {
+    let ring_orders = |read: &StructureInterpretation| {
+        orders(read)
+            .into_iter()
+            .filter(|(a, b, _)| {
+                let ring = ["CG", "ND1", "CE1", "NE2", "CD2"];
+                ring.contains(&a.as_str()) && ring.contains(&b.as_str())
+            })
+            .collect::<Vec<_>>()
+    };
+    let differs = |read: &StructureInterpretation| {
+        issues(read)
+            .into_iter()
+            .filter(|issue| {
+                matches!(
+                    issue,
+                    StructureInterpretIssue::BondOrderDiffersFromTemplate { .. }
+                )
+            })
+            .count()
+    };
+    // Rows that state the ND1-protonated ring of a residue with HD1.
+    let read = read_mmcif(&histidine("ND1-protonated", None));
+    let doubles = ring_orders(&read)
+        .iter()
+        .filter(|(_, _, order)| *order == BondOrder::Double)
+        .count();
+    assert_eq!(doubles, 2);
+    assert_eq!(differs(&read), 0);
+
+    // Rows that state every ring bond single keep them, and report the
+    // two the variant makes double.
+    let read = read_mmcif(&histidine("ND1-protonated", Some("sing")));
+    assert!(ring_orders(&read)
+        .iter()
+        .all(|(_, _, order)| *order == BondOrder::Single));
+    assert_eq!(differs(&read), 2);
+}
+
+#[test]
+fn charmm_named_residues_keep_dictionary_charges() {
+    // A C-terminal aspartate without hydrogens, as CHARMM names it. CHARMM's
+    // own ASP is an anion; the dictionary's, which internal residues take,
+    // is neutral.
+    let lines = [
+        (" N  ", [0.000, 0.000, 0.0], "N"),
+        (" CA ", [1.458, 0.000, 0.0], "C"),
+        (" C  ", [2.009, 1.420, 0.0], "C"),
+        (" OT1", [1.251, 2.390, 0.0], "O"),
+        (" OT2", [3.250, 1.600, 0.0], "O"),
+        (" CB ", [1.988, -0.774, -1.205], "C"),
+        (" CG ", [3.497, -0.774, -1.205], "C"),
+        (" OD1", [4.100, 0.250, -1.300], "O"),
+        (" OD2", [4.100, -1.850, -1.100], "O"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (name, position, element))| {
+        atom("ATOM", index + 1, name, "ASP", 1, position, element)
+    })
+    .collect::<Vec<_>>();
+    let read = read_pdb(&lines);
+    assert_eq!(charges(&read), []);
+    assert_eq!(
+        issues(&read),
+        [StructureInterpretIssue::ForceFieldTemplate {
+            residue: author(1),
+            component_id: "ASP".to_owned(),
+            force_field: "CHARMM".to_owned(),
+        }]
     );
 }

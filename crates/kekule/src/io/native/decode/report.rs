@@ -769,6 +769,10 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 next: self.residue()?,
             },
+            27 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueFitsNoTemplate {
+                residue: self.residue()?,
+                component_id: self.str()?,
+            },
             other => {
                 return Err(
                     self.invalid(format!("The interpretation issue kind {other} is unknown."))
