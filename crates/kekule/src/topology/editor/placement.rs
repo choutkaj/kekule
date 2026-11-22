@@ -220,6 +220,18 @@ impl TopologyEditor {
         let replaced_local = replaced
             .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
             .transpose()?;
+        // The parent's count follows the new bond and the bond to the
+        // hydrogen it replaces, as edits make it follow.
+        let mut changes = super::ValenceChanges::default();
+        changes.change(parent, None, Some(order));
+        if let Some(hydrogen) = replaced {
+            let bond = self
+                .bond_between(parent, hydrogen)?
+                .ok_or(TopologyEditError::InvalidAtom(hydrogen))?;
+            let bond = self.require_bond(bond)?.order;
+            changes.change(parent, Some(bond), None);
+        }
+        let counts = self.fixed_counts_after(&changes)?;
         let draft = self.draft_mut(loc.group);
         let local = draft.add_atom(atom)?;
         let bond = if order == BondOrder::Single {
@@ -263,6 +275,7 @@ impl TopologyEditor {
             draft.add_bond(loc.local, local, order)?
         };
         let (atom, bond) = self.register_bonded_atom(loc.group, local, bond, parent);
+        self.record_pruned(loc.group);
         let mut dead = None;
         if let Some(hydrogen) = replaced {
             let atom_slot = self.atom_location(hydrogen)?.slot;
@@ -270,9 +283,10 @@ impl TopologyEditor {
                 .incident_bonds(hydrogen)?
                 .map(|bond| self.bond_location(bond).map(|loc| loc.slot))
                 .collect::<Result<Vec<_>, _>>()?;
-            self.delete_atom(hydrogen)?;
+            self.remove_atom(hydrogen)?;
             dead = Some((atom_slot, bond_slots));
         }
+        self.set_fixed_counts(counts)?;
         Ok(AttachedInInstance { atom, bond, dead })
     }
 
@@ -465,7 +479,7 @@ impl TopologyEditor {
                 for bond in self.incident_bonds(handle)?.collect::<Vec<_>>() {
                     dead_bonds.push(self.bond_location(bond)?.slot);
                 }
-                self.delete_atom(handle)?;
+                self.remove_atom(handle)?;
             }
             let adjustments = assign_collapsed_hydrogen_counts(
                 self.draft_mut(group),

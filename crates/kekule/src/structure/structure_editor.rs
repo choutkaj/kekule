@@ -280,8 +280,9 @@ impl StructureEditor {
     ) -> Result<EditBond, StructureEditError> {
         self.structural(|t| t.replace_bond(id, replacement))
     }
-    /// Copies positions in live atom-handle order, which is the dense atom order
-    /// of the structure this draft publishes.
+    /// Copies positions in live atom-handle order, the order of
+    /// [`TopologyEditor::atom_ids`]. Publication keeps it, except that an
+    /// added atom joins its residue's atoms.
     pub fn positions(&self) -> Positions {
         self.slots
             .positions

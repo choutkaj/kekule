@@ -14,7 +14,7 @@ use crate::diagnostics::{
 };
 use crate::molecule::{BondOrder, Molecule};
 use crate::structure::{Structure, StructureSet};
-use crate::topology::{InstanceAtomId, MoleculeInstanceId, Topology};
+use crate::topology::{InstanceAtomId, MoleculeInstanceId, ResidueId, Topology};
 
 /// Which coordinate model of a source one interpretation reads.
 ///
@@ -1848,6 +1848,136 @@ impl CoordinationProvenance {
     }
 }
 
+/// The identifiers of one residue, which several residues of a chain may
+/// share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ResidueIdentity<'a> {
+    chain: &'a str,
+    label_seq_id: Option<i32>,
+    author_seq_id: Option<&'a str>,
+    insertion_code: Option<&'a str>,
+    component: &'a str,
+}
+
+impl<'a> ResidueIdentity<'a> {
+    fn of_source(atom: &'a AtomProvenance) -> Self {
+        Self {
+            chain: &atom.asym_id,
+            label_seq_id: atom.label_sequence_id,
+            author_seq_id: atom.author_sequence_id.as_deref(),
+            insertion_code: atom.insertion_code.as_deref(),
+            component: &atom.component_id,
+        }
+    }
+
+    fn of_residue(residue: crate::topology::ResidueView<'a>) -> Self {
+        Self {
+            chain: residue.chain().label_id(),
+            label_seq_id: residue.label_seq_id(),
+            author_seq_id: residue.author_seq_id(),
+            insertion_code: residue.insertion_code(),
+            component: residue.name(),
+        }
+    }
+}
+
+/// The identity of one atom site, by which a report's records find their
+/// atoms in a structure: its residue's identifiers and occurrence among the
+/// residues that share them, and its own labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SiteIdentity<'a> {
+    residue: ResidueIdentity<'a>,
+    occurrence: usize,
+    label_asym_id: Option<&'a str>,
+    auth_asym_id: Option<&'a str>,
+    label_atom_id: Option<&'a str>,
+    auth_atom_id: Option<&'a str>,
+    type_symbol: Option<&'a str>,
+}
+
+impl<'a> SiteIdentity<'a> {
+    fn of_source(atom: &'a AtomProvenance, occurrence: usize) -> Self {
+        Self {
+            residue: ResidueIdentity::of_source(atom),
+            occurrence,
+            label_asym_id: atom.label_asym_id.as_deref(),
+            auth_asym_id: atom.auth_asym_id.as_deref(),
+            label_atom_id: atom.label_atom_name.as_deref(),
+            auth_atom_id: atom.auth_atom_name.as_deref(),
+            type_symbol: Some(&atom.type_symbol),
+        }
+    }
+
+    fn of_site(site: crate::topology::AtomSiteView<'a>, occurrence: usize) -> Self {
+        let metadata = site.metadata();
+        Self {
+            residue: ResidueIdentity::of_residue(site.residue()),
+            occurrence,
+            label_asym_id: metadata.label_asym_id(),
+            auth_asym_id: metadata.auth_asym_id(),
+            label_atom_id: metadata.label_atom_id(),
+            auth_atom_id: metadata.auth_atom_id(),
+            type_symbol: metadata.type_symbol(),
+        }
+    }
+}
+
+/// A source residue: its identifiers, residue key, and source occurrence.
+type SourceResidue<'a> = (ResidueIdentity<'a>, &'a str, Option<usize>);
+
+fn source_residue(atom: &AtomProvenance) -> SourceResidue<'_> {
+    (
+        ResidueIdentity::of_source(atom),
+        &atom.residue_key,
+        atom.occurrence,
+    )
+}
+
+/// The occurrence of each source residue among the residues with its
+/// identifiers, by source order.
+fn source_occurrences<'a>(
+    atoms: impl Iterator<Item = &'a AtomProvenance>,
+) -> HashMap<SourceResidue<'a>, usize> {
+    let mut first = HashMap::<SourceResidue<'_>, usize>::new();
+    for atom in atoms {
+        let order = first
+            .entry(source_residue(atom))
+            .or_insert(atom.source_order);
+        *order = (*order).min(atom.source_order);
+    }
+    let mut shared = HashMap::<ResidueIdentity<'_>, Vec<(usize, SourceResidue<'_>)>>::new();
+    for (&residue, &order) in &first {
+        shared.entry(residue.0).or_default().push((order, residue));
+    }
+    shared
+        .into_values()
+        .flat_map(|mut residues| {
+            residues.sort_unstable_by_key(|&(order, _)| order);
+            residues
+                .into_iter()
+                .enumerate()
+                .map(|(occurrence, (_, residue))| (residue, occurrence))
+        })
+        .collect()
+}
+
+/// The occurrence of each residue of `topology` among the residues of its
+/// chain with its identifiers, in chain order.
+fn residue_occurrences(topology: &Topology) -> HashMap<ResidueId, usize> {
+    let mut seen = HashMap::<ResidueIdentity<'_>, usize>::new();
+    let mut occurrences = HashMap::new();
+    for chain in topology.chains() {
+        for residue in chain.residues() {
+            let count = seen
+                .entry(ResidueIdentity::of_residue(residue))
+                .or_default();
+            occurrences.insert(residue.id(), *count);
+            *count += 1;
+        }
+    }
+    occurrences
+}
+
 /// The coordination records of a report that match a topology; see
 /// [`StructureInterpretationReport::coordination_in`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2214,50 +2344,77 @@ impl StructureInterpretationReport {
         &self.instances
     }
 
+    /// Counts the macromolecule, small-molecule, and solvent instances.
+    pub(crate) fn count_instances(&mut self) {
+        self.macromolecules = self
+            .instances
+            .iter()
+            .filter(|instance| instance.entity_kinds().iter().any(EntityKind::is_macro))
+            .count();
+        self.small_molecules = self.instances.len() - self.macromolecules;
+        self.solvent_molecules = self
+            .instances
+            .iter()
+            .filter(|instance| instance.entity_kinds().contains(&EntityKind::Water))
+            .count();
+    }
+
     /// Metal coordination the source states between residues, in record
     /// order; see [`CoordinationProvenance`].
     pub fn coordination(&self) -> &[CoordinationProvenance] {
         &self.coordination
     }
 
-    /// The coordination records that still match `topology`, as writers
-    /// state them again. A record matches when each partner is a topology
-    /// atom whose atom site keeps the atom names, type symbol, and component
-    /// the report recorded for it; a structure edited since it was read can
-    /// hold other atoms under the recorded IDs, or none.
+    /// The coordination records that still match `topology`, bound to its
+    /// atoms, as writers state them again. Each partner is found by the
+    /// identity the report records for it: chain, residue numbers, insertion
+    /// code, component, and occurrence among the chain's residues with those
+    /// identifiers, then atom names and type symbol. The atom with the
+    /// recorded ID is the partner while its site carries that identity;
+    /// otherwise the one atom site that carries it is. A structure edited
+    /// since it was read numbers its atoms anew, so a report should follow
+    /// the edit first; see [`Self::follow_edit`]. A record whose partner no
+    /// atom site carries, or several without the recorded ID, does not
+    /// match.
     pub(crate) fn coordination_in(&self, topology: &Topology) -> CoordinationMatch {
         let partners = self
             .coordination
             .iter()
             .flat_map(|record| record.atoms)
             .collect::<HashSet<_>>();
-        let sources = self
-            .instances
-            .iter()
-            .flat_map(|instance| &instance.atoms)
+        let source_atoms = || self.instances.iter().flat_map(|instance| &instance.atoms);
+        let occurrences = source_occurrences(source_atoms());
+        // The atoms carrying each partner's identity.
+        let mut found = HashMap::<SiteIdentity<'_>, Vec<InstanceAtomId>>::new();
+        let identities = source_atoms()
             .filter(|atom| partners.contains(&atom.atom))
-            .map(|atom| (atom.atom, atom))
+            .map(|atom| {
+                let identity = SiteIdentity::of_source(atom, occurrences[&source_residue(atom)]);
+                found.insert(identity, Vec::new());
+                (atom.atom, identity)
+            })
             .collect::<HashMap<_, _>>();
-        let matches = |atom: InstanceAtomId| {
-            let (Some(source), Some(site)) = (sources.get(&atom), topology.atom_site_of(atom))
-            else {
-                return false;
-            };
-            let metadata = site.metadata();
-            metadata.label_atom_id() == source.label_atom_name.as_deref()
-                && metadata.auth_atom_id() == source.auth_atom_name.as_deref()
-                && metadata.type_symbol() == Some(source.type_symbol.as_str())
-                && site.residue().name() == source.component_id
-        };
-        let (records, unmatched): (Vec<_>, Vec<_>) = self
-            .coordination
-            .iter()
-            .map(|record| record.atoms)
-            .partition(|atoms| atoms.iter().all(|&atom| matches(atom)));
-        CoordinationMatch {
-            records,
-            unmatched: unmatched.len(),
+        let residues = residue_occurrences(topology);
+        for site in topology.atom_sites() {
+            let identity = SiteIdentity::of_site(site, residues[&site.residue().id()]);
+            if let Some(atoms) = found.get_mut(&identity) {
+                atoms.push(site.atom().id());
+            }
         }
+        let bound = |atom: InstanceAtomId| match found[identities.get(&atom)?].as_slice() {
+            carriers if carriers.contains(&atom) => Some(atom),
+            [only] => Some(*only),
+            _ => None,
+        };
+        let mut records = Vec::new();
+        let mut unmatched = 0;
+        for record in &self.coordination {
+            match record.atoms.map(bound) {
+                [Some(a), Some(b)] => records.push([a, b]),
+                _ => unmatched += 1,
+            }
+        }
+        CoordinationMatch { records, unmatched }
     }
 
     /// Decisions for the selected source coordinate model only. The source

@@ -618,6 +618,26 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** `AtomSelection::contains_index` and
   `BondSelection::contains_index` are `contains_at`, like other methods that
   take a dense index.
+- **Breaking:** `Assembly::to_structure` returns an `AssemblyStructure`: the
+  structure and an `AssemblyReport` of the bonds the build cut
+  (`AssemblyCut`), the stereo copies lost to other generators' chains
+  (`AssemblyStereoLoss`), and the disulfides it formed between copies
+  (`AssemblyBond`).
+- **Breaking:** Topology and structure edits keep fixed hydrogen counts
+  whole. Deleting an atom or a bond, lowering an order, or cutting a subset
+  gives a fixed neighbor a hydrogen per unit of lost valence; adding a bond or
+  raising an order takes them back. Valence gained past the last hydrogen
+  and the largest allowed valence is owed and fails publication
+  (`TopologyEditError::HydrogenDeficit`). A gain takes
+  radical electrons before hydrogens. A loss fills an atom only up to the
+  smallest allowed valence it reaches, so a sulfoxide that loses its oxygen
+  is a sulfide. `delete_atoms` and `delete_bonds` settle once for the whole
+  set, as `Topology::subset` caps the survivors. A single bond to a metal
+  trades a hydrogen; a dative bond trades none. A metal's count never
+  changes. Counts past 255 fail with `HydrogenCountOverflow`.
+- Edited drafts publish an added atom placed in a residue that holds earlier
+  atoms after the last of them, so residues stay contiguous for the PDB
+  writer. The editor's per-atom APIs keep handle order.
 - **Breaking:** `PdbWriteErrorKind::ChainIdTooLong`, `ResidueNameTooLong`,
   and `InsertionCodeTooLong` are `InvalidChainId`, `InvalidResidueName`, and
   `InvalidInsertionCode`; the PDB writer refuses identifiers that are not
@@ -956,6 +976,26 @@ the main branch migrates by the table under "From the SampleSet API".
 - `xyz::write` omits and reports a structure set's own properties when
   `with_properties` omits them, as the PDB and mmCIF writers do, instead of
   always refusing them.
+- Deleting an atom's only explicit hydrogen keeps its stereo with an implicit
+  hydrogen, and a single bond to an atom with one implicit hydrogen takes the
+  hydrogen's place in its stereo, instead of pruning it.
+  `TopologyEditor::pruned_stereo` and `take_pruned_stereo` report what edits
+  pruned (`PrunedStereo`).
+- `perception::valence::open_valences` names fixed-count atoms short of their
+  valence (`OpenValence`).
+- An assembly keeps bonds between chains of different generators under one
+  operation, and forms disulfides between copies.
+- Renaming a chain, or moving an atom site to another chain, updates the
+  sites' chain identifiers, so writers name the chain as it is.
+  `StructureAppendReport::colliding_chains` lists appended chains whose
+  identifiers the draft already has.
+- Writers state a report's coordination for the atoms that carry its
+  partners' identity, chain and residue occurrence included, instead of the
+  atoms that took the recorded IDs after an edit, so segments that share
+  residue numbers keep it. `StructureInterpretationReport::follow_edit`
+  re-keys a report through an edit, and `follow_append` through an append.
+- Assembly disulfides skip sulfurs within bonding distance of a transition or
+  post-transition metal.
 - A PDB atom without an element symbol takes its element from the template
   of its residue and name, bundled or force-field, before its name, so
   CHARMM `SOD` is sodium and a heme's `NB` is nitrogen. A left-aligned name

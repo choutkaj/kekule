@@ -31,9 +31,10 @@ handle_rows! {
 /// `H` (`EditAtomId`, `EditBondId`, `EditChainId`, `EditResidueId`, or
 /// `EditAtomSiteId`).
 ///
-/// Columns read in live-handle order, which is the dense order of the
-/// published result. A deleted or foreign handle fails with the matching
-/// [`TopologyEditError`].
+/// Columns read in live-handle order, the order of
+/// [`TopologyEditor::atom_ids`] for atoms. Publication keeps it, except that
+/// an added atom joins its residue's atoms. A deleted or foreign handle fails
+/// with the matching [`TopologyEditError`].
 pub struct EditPropertyTable<'a, H: TableRow<Error = TopologyEditError>> {
     table: &'a RawPropertyTable,
     handles: &'a dyn HandleSlots,

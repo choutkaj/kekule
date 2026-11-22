@@ -22,7 +22,9 @@ impl StructureEditor {
     /// Editing one instance later copies its definition and leaves the others.
     /// Instances, atoms, bonds and hierarchy receive distinct editing identities. Chains are
     /// kept separate even when their labels coincide; labels and author identifiers
-    /// are preserved. All entity property columns at definition, topology and structure
+    /// are preserved; [`StructureAppendReport::colliding_chains`] lists the
+    /// appended chains whose identifiers a draft chain already has, which
+    /// writers would name as one chain. All entity property columns at definition, topology and structure
     /// scope are transferred, including occupancy, B factors and missing values.
     /// Incompatible property types or units reject the entire append.
     ///
@@ -81,6 +83,7 @@ impl StructureEditor {
                 .cloned()
                 .collect(),
             omitted_geometry_properties: source.properties().owner().keys().cloned().collect(),
+            colliding_chains: colliding_chains(&self.topology, source.topology()),
         };
         let mut staged = self.clone();
         let (mapping, _) = staged.append_unstaged(source, &|label, author| {
@@ -96,15 +99,15 @@ impl StructureEditor {
     /// the identifiers `chain_ids` gives them, as [`Self::append_structure`]
     /// appends but without its cell or staging. A failure leaves the draft
     /// part-way, so only an owner that discards a failed draft calls it; it
-    /// costs the copy, not the draft.
+    /// costs the copy, not the draft. Returns the handles of the copy.
     pub(crate) fn append_moved_copy(
         &mut self,
         source: &Structure,
         rotation: Matrix3,
         translation: Vector3,
         chain_ids: &ChainIds<'_>,
-    ) -> Result<(), StructureEditError> {
-        let (_, atom_rows) = self.append_unstaged(source.as_structure_view(), chain_ids)?;
+    ) -> Result<AppendMapping, StructureEditError> {
+        let (mapping, atom_rows) = self.append_unstaged(source.as_structure_view(), chain_ids)?;
         let moved = atom_rows
             .iter()
             .copied()
@@ -122,7 +125,7 @@ impl StructureEditor {
             })
             .collect::<Vec<_>>();
         self.slots.positions.set_canonical_batch(&moved)?;
-        Ok(())
+        Ok(mapping)
     }
 
     /// The append both entry points share, in place: the source's topology,
@@ -175,6 +178,29 @@ impl StructureEditor {
     }
 }
 
+/// The chains of `source` whose label or author identifier a chain of
+/// `draft` has.
+fn colliding_chains(draft: &TopologyEditor, source: &Topology) -> Vec<ChainId> {
+    let mut labels = std::collections::HashSet::new();
+    let mut authors = std::collections::HashSet::new();
+    for (_, chain) in draft.chains() {
+        labels.insert(chain.label_id().to_owned());
+        if let Some(author) = chain.author_id() {
+            authors.insert(author.to_owned());
+        }
+    }
+    source
+        .chains()
+        .filter(|chain| {
+            labels.contains(chain.label_id())
+                || chain
+                    .author_id()
+                    .is_some_and(|author| authors.contains(author))
+        })
+        .map(|chain| chain.id())
+        .collect()
+}
+
 fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
     if left.periodic_axes() != right.periodic_axes() {
         return false;
@@ -194,7 +220,8 @@ fn compatible_cells(left: PeriodicCell, right: PeriodicCell) -> bool {
     })
 }
 
-/// Owner annotations excluded by one successful append, in property-key order.
+/// Owner annotations excluded by one successful append, in property-key order,
+/// and appended chains whose identifiers collide with the draft's.
 /// Entity properties are transferred under [`StructureEditor::append_structure`]'s contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureAppendReport {
@@ -202,6 +229,7 @@ pub struct StructureAppendReport {
     pub(crate) cleared_geometry_properties: Vec<PropertyKey>,
     pub(crate) omitted_topology_properties: Vec<PropertyKey>,
     pub(crate) omitted_geometry_properties: Vec<PropertyKey>,
+    pub(crate) colliding_chains: Vec<ChainId>,
 }
 
 impl StructureAppendReport {
@@ -223,6 +251,14 @@ impl StructureAppendReport {
     /// Source geometry owner keys that do not describe the combined structure.
     pub fn omitted_geometry_properties(&self) -> &[PropertyKey] {
         &self.omitted_geometry_properties
+    }
+
+    /// Source chains, in source order, whose label or author identifier a
+    /// chain of the draft already had. They stay separate chains in the
+    /// draft, but a file names them as one, so a caller renames them with
+    /// [`StructureEditor::set_chain_identifiers`] before writing.
+    pub fn colliding_chains(&self) -> &[ChainId] {
+        &self.colliding_chains
     }
 }
 

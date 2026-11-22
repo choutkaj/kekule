@@ -5,7 +5,7 @@ use crate::algorithms::{
 };
 use crate::diagnostics::{LimitExceeded, Resource};
 use crate::math::{Point3, Vector3};
-use crate::molecule::{Atom, AtomId, BondOrder, Element, ImplicitHydrogens};
+use crate::molecule::{Atom, AtomId, BondOrder, Element};
 use crate::structure::placement::{
     fragment_names, free_sites, ideal_bond_length, name_prefix, next_free_number, perceive_domains,
     unit, AtomDomains, AtomShape, AttachedAtom, AttachedFragment, AttachmentSite, DomainInput,
@@ -232,7 +232,7 @@ impl StructureEditor {
     /// position nearest a direction. The new atom takes the replaced
     /// hydrogen's place in the parent's represented stereo, as a single bond
     /// takes an implicit hydrogen's; a fixed implicit count on the parent
-    /// drops by the valence the bond takes from it. The atom joins the
+    /// follows the bond as [`Self::add_bond`] makes it follow. The atom joins the
     /// parent's residue under the next free name. Its own hydrogens are not
     /// added; [`Self::add_hydrogens`] completes them. Closing a ring is a
     /// plain [`Self::add_bond`].
@@ -260,7 +260,7 @@ impl StructureEditor {
         self.slots
             .try_reserve_atoms(1)
             .map_err(super::StructureEditError::from)?;
-        let attached = self.attach_first(parent, parent_atom, atom, order, replaced, revision)?;
+        let attached = self.attach_first(parent, atom, order, replaced, revision)?;
         self.place_row(attached.atom, center + direction * length);
         self.join_residue_of(parent, attached.atom, &mut NameAllocator::default())?;
         Ok(AttachedAtom {
@@ -452,14 +452,7 @@ impl StructureEditor {
         self.slots
             .try_reserve_atoms(kept.len())
             .map_err(super::StructureEditError::from)?;
-        let first = self.attach_first(
-            parent,
-            parent_atom,
-            attachment_atom,
-            order,
-            replaced,
-            revision,
-        )?;
+        let first = self.attach_first(parent, attachment_atom, order, replaced, revision)?;
         let mut atoms = Vec::with_capacity(kept.len());
         for (local, point) in &kept {
             let id = if *local == attachment {
@@ -475,7 +468,8 @@ impl StructureEditor {
         let handles = atoms.iter().copied().collect::<BTreeMap<_, _>>();
         for (_, bond) in molecule.bonds() {
             if let (Some(a), Some(b)) = (handles.get(&bond.a()), handles.get(&bond.b())) {
-                self.topology.add_bond(*a, *b, bond.order)?;
+                // The fragment's counts already describe its own bonds.
+                self.topology.connect(*a, *b, bond.order)?;
             }
         }
         self.sync_slots(revision);
@@ -604,19 +598,17 @@ impl StructureEditor {
         }
     }
 
-    /// Bonds `atom` to `parent` in its instance, replacing `replaced`, and
-    /// consumes a fixed implicit count on the parent by the valence the bond
-    /// takes from it. Its position is the caller's.
+    /// Bonds `atom` to `parent` in its instance, replacing `replaced`; the
+    /// parent's fixed count follows the bonds as edits make it. Its position
+    /// is the caller's.
     fn attach_first(
         &mut self,
         parent: EditAtomId,
-        parent_atom: Atom,
         atom: Atom,
         order: BondOrder,
         replaced: Option<EditAtomId>,
         revision: u64,
     ) -> Result<crate::topology::AttachedInInstance, PlacementError> {
-        let taken = bond_valence_of(order).saturating_sub(usize::from(replaced.is_some()));
         let attached = self
             .topology
             .attach_in_instance(parent, atom, order, replaced)?;
@@ -624,15 +616,6 @@ impl StructureEditor {
         if let Some((atom_slot, bond_slots)) = &attached.dead {
             self.slots.clear_atom_rows(&[*atom_slot]);
             self.slots.clear_bond_rows(bond_slots);
-        }
-        if let ImplicitHydrogens::Fixed(count) = parent_atom.hydrogens {
-            if taken > 0 && count > 0 {
-                let mut updated = parent_atom;
-                updated.hydrogens = ImplicitHydrogens::Fixed(
-                    count.saturating_sub(u8::try_from(taken).unwrap_or(u8::MAX)),
-                );
-                self.topology.replace_atom(parent, updated)?;
-            }
         }
         Ok(attached)
     }

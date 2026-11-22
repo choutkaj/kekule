@@ -102,7 +102,19 @@ impl Topology {
     /// correspondence to translate source identities into target identities.
     /// Instances selecting the same atoms from a shared definition reuse the
     /// reconstructed definitions. Complete molecules and residues retain their
-    /// classifications; changed entities are reclassified. The selection may
+    /// classifications; changed entities are reclassified.
+    ///
+    /// A cut caps the selected atom with hydrogens: a fixed implicit-hydrogen
+    /// count gains one per unit of bond valence the cut takes, as
+    /// [`TopologyEditor::delete_bond`](crate::topology::edit::TopologyEditor::delete_bond)
+    /// gives it, and as
+    /// [`TopologyEditor::delete_atoms`](crate::topology::edit::TopologyEditor::delete_atoms)
+    /// of the other atoms leaves it: never at a metal, and only up to the
+    /// smallest valence the atom allows at or above what remains. Inferred
+    /// counts follow on perception. Stereo
+    /// elements that name an atom outside the selection are dropped, unless
+    /// the cut atom is a protium carrier that capping replaces with the
+    /// center's one implicit hydrogen. The selection may
     /// come from any snapshot sharing this layout; the subset and its
     /// correspondence always use the `source` snapshot, which they retain.
     pub fn subset(

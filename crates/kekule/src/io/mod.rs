@@ -33,8 +33,9 @@ pub(crate) use coordinate_source::AtomPositionSource;
 pub(crate) use macromolecular::is_metal;
 pub use macromolecular::{
     AltLocDecision, AltLocPolicy, AltLocPreference, AltLocResidue, AltLocSelection,
-    AltLocSelectionReason, Assembly, AssemblyError, AssemblyGenerator, AssemblyOmissionReason,
-    AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
+    AltLocSelectionReason, Assembly, AssemblyBond, AssemblyCut, AssemblyError, AssemblyGenerator,
+    AssemblyOmissionReason, AssemblyOperation, AssemblyReport, AssemblyStereoLoss,
+    AssemblyStructure, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
     NumberField, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,

@@ -57,11 +57,29 @@ donor: it keeps its charge and takes no hydrogens. The Molfile writers declare
 a valence wherever this reader or the default-valence rule of other readers
 would infer a different count, and write dative bonds toward their metal end.
 
-Chemical edits invalidate inferred counts and keep fixed ones. After
-reperception, an inferred count can change with bond order or charge. A fixed
-count that conflicts with an edit produces a valence error under strict
-perception, rather than silently removing hydrogens. Property-only edits do not
-invalidate chemistry.
+Chemical edits invalidate inferred counts. After reperception, an inferred
+count can change with bond order or charge. Topology and structure edits keep a
+fixed count whole: an atom gains a hydrogen for each unit of bond valence a
+deletion, a lower order, or a subset cut takes from it, and gives one up for
+each unit a new bond or a higher order adds. A deleted explicit hydrogen of a
+fixed atom stays as an implicit one. A gain takes a declared radical electron
+first, then a hydrogen, then fills open valence; past the largest allowed
+valence it is owed: later losses pay it back first, and publication fails with
+`TopologyEditError::HydrogenDeficit` while any is owed, rather than silently
+dropping valence. A loss fills the atom only up to the smallest valence its
+element and charge allow at or above what remains with its hydrogens and
+radical electrons: deleting a hydrogen of an atom declared a radical leaves
+the radical, and a sulfoxide that loses its oxygen is a sulfide. Batch
+deletions settle once for the whole set, as a subset of the survivors caps
+them. Every bond counts with its order's valence, so a single bond to a metal
+trades a hydrogen, as for a chloride or a methyl cut from its metal; draw
+coordination that trades none, as an ammine's, as a dative bond. A metal's
+count never changes.
+To remove a hydrogen for good, as for hydroxide from water, delete it and set
+the atom's charge and count with `TopologyEditor::replace_atom`. A molecule draft (`MoleculeEditor`) edits the
+graph as stated and keeps counts as they are;
+`perception::valence::open_valences` names fixed atoms short of their valence.
+Property-only edits do not invalidate chemistry.
 
 `Perception::inferred_hydrogens` and `ValencePerception::inferred_hydrogens`
 expose the valence model's raw assignments, and `PerceptionBuilder::with_valence`

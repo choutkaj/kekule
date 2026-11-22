@@ -6,6 +6,7 @@ mod support;
 
 mod aromatic_sources;
 mod assemblies;
+mod assembly_bonds;
 mod bond_sources;
 mod cancellation;
 mod canonical_smiles;
@@ -13,6 +14,7 @@ mod components;
 mod dictionary_charges;
 mod disulfides;
 mod documents;
+mod edited_structures;
 mod export;
 mod issue_texts;
 mod mmcif;
