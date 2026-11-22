@@ -176,7 +176,8 @@ pub(super) fn charmm() -> ComponentLibrary {
         // OT1 and OT2 for the carboxyl oxygens. Proline has no amide
         // hydrogen; its N-terminal patch names the ammonium hydrogens HN1 and
         // HN2. Terminal hydrogens HT1-HT3 name different atoms in different
-        // patches, so they attach by distance.
+        // patches, so templates leave them out; readers bond them to a
+        // nearby N by name, else by distance.
         let amide = if id == "PRO" { "HN1" } else { "HN" };
         from.clone()
             .renamed(&[*renames, &[("H", amide), ("OXT", "OT2")]].concat())
@@ -320,6 +321,7 @@ impl ComponentLibrary {
         for component in self.components() {
             let mut component = component.clone();
             component.name = format!("{} ({force_field} {})", component.name, component.id);
+            component.force_field = Some(force_field.to_owned());
             library.insert(component);
         }
         library

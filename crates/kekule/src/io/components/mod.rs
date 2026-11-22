@@ -172,6 +172,7 @@ pub struct Component {
     pub(crate) variant: Option<String>,
     pub(crate) one_letter_code: Option<String>,
     pub(crate) parents: Vec<String>,
+    pub(crate) force_field: Option<String>,
     pub(crate) atoms: Vec<ComponentAtom>,
     pub(crate) bonds: Vec<ComponentBond>,
 }
@@ -206,6 +207,13 @@ impl Component {
     /// phosphothreonine; empty for a standard component.
     pub fn parent_ids(&self) -> &[String] {
         &self.parents
+    }
+
+    /// The force field whose residue this template is, such as `AMBER`;
+    /// `None` for a dictionary template. A force-field residue name states
+    /// its protonation.
+    pub fn force_field(&self) -> Option<&str> {
+        self.force_field.as_deref()
     }
 
     /// The polymer linkage implied by [`Self::kind`].
@@ -306,8 +314,11 @@ impl ComponentLibrary {
 
     /// The templates Kekule bundles: standard amino acids and nucleotides,
     /// water, common ions, cofactors, and crystallization additives, taken
-    /// unmodified from the Chemical Component Dictionary, plus the neutral
-    /// histidine tautomers derived from `HIS`.
+    /// unmodified from the Chemical Component Dictionary, plus protonation
+    /// variants derived from them: the neutral histidine tautomers
+    /// `NE2-protonated` and `ND1-protonated` of `HIS`, and the acids
+    /// protonated on their other oxygen, `OD1-protonated` of `ASP` and
+    /// `OE1-protonated` of `GLU`.
     pub fn bundled() -> &'static Self {
         static BUNDLED: OnceLock<ComponentLibrary> = OnceLock::new();
         BUNDLED.get_or_init(bundled::library)
@@ -350,8 +361,9 @@ impl ComponentLibrary {
     /// ND1-protonated, NE2-protonated, and doubly protonated histidines; `ASP`
     /// and `GLU` are anions, `ASPP` and `GLUP` the acids; `LSN` is neutral
     /// lysine and `CYM` a thiolate. `TIP3` is water, and `SOD`, `POT`, `CAL`,
-    /// `CLA`, `ZN2`, and `CD2` ions. Terminal hydrogens `HT1`-`HT3`, which name
-    /// different atoms in different terminal patches, attach by distance.
+    /// `CLA`, `ZN2`, and `CD2` ions. Terminal hydrogens `HT1`-`HT3` name
+    /// different atoms in different terminal patches, so no template names
+    /// them: readers bond them to a nearby `N` by name, else by distance.
     /// Atoms that capping patches add to a terminal residue, such as `CAY` or
     /// `NT`, have no template and fail interpretation; supply templates for
     /// them. Nucleic acids keep dictionary names.

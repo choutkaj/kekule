@@ -48,7 +48,45 @@ pub(super) fn library() -> ComponentLibrary {
             .insert_variant(variant)
             .expect("histidine variants name HIS");
     }
+    for (id, carbon, oxygens, hydrogen) in [
+        ("ASP", "CG", ["OD1", "OD2"], ["HD2", "HD1"]),
+        ("GLU", "CD", ["OE1", "OE2"], ["HE2", "HE1"]),
+    ] {
+        let acid = library
+            .get(id)
+            .expect("acidic amino acids are bundled")
+            .clone();
+        library
+            .insert_variant(acid_on_other_oxygen(&acid, carbon, oxygens, hydrogen))
+            .expect("acid variants name their component");
+    }
     library
+}
+
+/// The carboxylic acid protonated on its other oxygen: aspartic acid on
+/// `OD1`, with the hydrogen named `HD1`, and glutamic acid on `OE1` with
+/// `HE1`. The dictionary protonates `OD2` and `OE2`.
+fn acid_on_other_oxygen(
+    acid: &Component,
+    carbon: &str,
+    [carbonyl, hydroxyl]: [&str; 2],
+    [hydrogen, renamed]: [&str; 2],
+) -> Component {
+    let mut variant = acid.clone();
+    variant.rename_atoms(&[(hydrogen, renamed)]);
+    let (moved, _) = variant.atom(renamed).expect("template atom exists");
+    let (from, _) = variant.atom(hydroxyl).expect("template atom exists");
+    let (to, _) = variant.atom(carbonyl).expect("template atom exists");
+    let bond = variant
+        .bonds
+        .iter_mut()
+        .find(|bond| bond.atoms == [from, moved] || bond.atoms == [moved, from])
+        .expect("template bond exists");
+    bond.atoms = [to, moved];
+    variant.set_bond_order(carbon, carbonyl, ComponentBondOrder::Single);
+    variant.set_bond_order(carbon, hydroxyl, ComponentBondOrder::Double);
+    variant.variant = Some(format!("{carbonyl}-protonated"));
+    variant
 }
 
 /// The neutral histidine tautomers. The dictionary defines only the
