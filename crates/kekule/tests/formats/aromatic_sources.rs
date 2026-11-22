@@ -116,3 +116,24 @@ fn aromatic_positive_chalcogens_take_no_hydrogen() {
         canonical(smiles_molecule("[nH+]1ccccc1"))
     );
 }
+
+#[test]
+fn a_stated_double_bond_fills_a_charged_carbon_or_a_neutral_boron() {
+    // These atoms have no valence left for a further pi bond, so the stated
+    // double bond is their pi bond and they take no hydrogen.
+    for (atom, kekule_form) in [
+        (("C", 1), "[C+]1=CC=CC=C1"),
+        (("C", -1), "[C-]1=CC=CC=C1"),
+        (("B", 0), "B1=CC=CC=C1"),
+    ] {
+        let mut atoms = vec![atom];
+        atoms.extend([("C", 0); 5]);
+        let molecule = molfile_molecule(&v2000_ring(&atoms, &[2, 4, 4, 4, 4, 4]));
+        assert_eq!(double_bonds(&molecule), 3, "{atom:?}");
+        assert_eq!(
+            canonical(molecule),
+            canonical(smiles_molecule(kekule_form)),
+            "{atom:?}"
+        );
+    }
+}

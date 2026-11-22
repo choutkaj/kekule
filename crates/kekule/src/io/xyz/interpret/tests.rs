@@ -24,17 +24,16 @@ fn brute(
 ) -> Result<Contacts, (LimitExceeded, usize)> {
     let radius = |atom: usize| covalent_bonding_radius(elements[atom]).0;
     let mut contacts = vec![0; points.len()];
-    let (mut bonds, mut long, mut close) = (Vec::new(), Vec::new(), Vec::new());
+    let mut contact_set = ContactSet::default();
     for left in 0..points.len() {
         for right in left + 1..points.len() {
             let (point, other) = (points[left], points[right]);
             let distance_squared = (point.x - other.x).powi(2)
                 + (point.y - other.y).powi(2)
                 + (point.z - other.z).powi(2);
-            let (tolerance, valence_bound) = pair_tolerance(elements[left], elements[right]);
             let radii = radius(left) + radius(right);
-            let cutoff = radii + tolerance;
-            if distance_squared > cutoff * cutoff {
+            let reach = radii + LONG_BOND_TOLERANCE_ANGSTROM;
+            if distance_squared > reach * reach {
                 continue;
             }
             for atom in [left, right] {
@@ -46,32 +45,10 @@ fn brute(
                     ));
                 }
             }
-            let atoms = [dense_index(left), dense_index(right)];
-            let distance = distance_squared.sqrt();
-            if distance_squared <= MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2) {
-                close.push((atoms, distance));
-                continue;
-            }
-            let order = if is_metal(elements[left]) != is_metal(elements[right]) {
-                BondOrder::Dative
-            } else {
-                BondOrder::Single
-            };
-            let bond = XyzInferredBond {
-                atoms,
-                order,
-                distance,
-                cutoff,
-            };
-            let firm = radii + FIRM_BOND_TOLERANCE_ANGSTROM;
-            if valence_bound && distance_squared > firm * firm {
-                long.push(bond);
-            } else {
-                bonds.push(bond);
-            }
+            contact_set.add(elements, [left, right], distance_squared, radii);
         }
     }
-    Ok(resolve_contacts(elements, bonds, long, close))
+    Ok(resolve_contacts(elements, contact_set))
 }
 
 /// The grid finds the contacts every pair gives, and with a low limit

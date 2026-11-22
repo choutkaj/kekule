@@ -897,10 +897,10 @@ fn reverse_bond_endpoint_storage_except(molecule: &Molecule, excluded: &[BondId]
 fn coordinate_tetrahedron(v3000: bool, points: &[[f64; 3]], mark: u8) -> String {
     let symbols = ["C", "F", "Cl", "Br", "I"];
     let mut source = if v3000 {
-        format!("coordinate stereo\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 1\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1)
+        format!("coordinate stereo\nkekule\n\n  0  0  0     0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS {} {} 0 0 0\nM  V30 BEGIN ATOM\n", points.len(), points.len() - 1)
     } else {
         format!(
-            "coordinate stereo\nkekule\n\n{:3}{:3}  0  0  1  0            999 V2000\n",
+            "coordinate stereo\nkekule\n\n{:3}{:3}  0  0  0  0            999 V2000\n",
             points.len(),
             points.len() - 1
         )

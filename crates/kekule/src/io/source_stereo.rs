@@ -10,7 +10,7 @@ use crate::molecule::*;
 
 use super::normalization::{
     NormalizationReport, NormalizationWarning, SourceStereoNormalizationError,
-    SourceStereoNormalizationIssue,
+    SourceStereoNormalizationIssue, UnrepresentableStereoReason,
 };
 use super::AtomPositionSource;
 use crate::diagnostics::FormatError;
@@ -62,6 +62,7 @@ pub(crate) fn normalize_source_stereo(
     let mut warnings = Vec::new();
     let mut issues = Vec::new();
     let mut used_marks = Vec::<BondId>::new();
+    let mut several_axes = BTreeSet::<BondId>::new();
     let axis_elements = assemble_atropisomeric_axes(
         molecule,
         geometry,
@@ -69,6 +70,7 @@ pub(crate) fn normalize_source_stereo(
         source_marks,
         &mut warnings,
         &mut used_marks,
+        &mut several_axes,
     );
     let mut planned_elements = assemble_tetrahedral_wedges(
         molecule,
@@ -95,7 +97,14 @@ pub(crate) fn normalize_source_stereo(
         &mut issues,
         &mut used_marks,
     ));
-    report_unassembled_source_marks(source_marks, &used_marks, &mut issues, &mut warnings);
+    report_unassembled_source_marks(
+        molecule,
+        source_marks,
+        &used_marks,
+        &several_axes,
+        &mut issues,
+        &mut warnings,
+    );
     if !issues.is_empty() {
         return Err(SourceStereoNormalizationError { issues });
     }
@@ -468,6 +477,10 @@ fn source_validation_error(error: StereoValidationError) -> SourceStereoNormaliz
     }
 }
 
+/// Wedge assembly ignores the order of the marked bond. Parsers reject a
+/// wedge on a stated multiple bond, and the order of a source-aromatic bond
+/// is an arbitrary choice of localization, so a wedge on one means the same
+/// whichever order it got.
 fn assemble_tetrahedral_wedges<L: SlotLiveness>(
     molecule: &Graph<L>,
     geometry: Option<&dyn AtomPositionSource>,
@@ -489,9 +502,6 @@ fn assemble_tetrahedral_wedges<L: SlotLiveness>(
         let Some(bond) = molecule.bond(mark.bond) else {
             continue;
         };
-        if bond.order != BondOrder::Single {
-            continue;
-        }
         marks.push(TetrahedralWedgeMark {
             center: mark.from,
             carrier: bond.other_atom(mark.from),
@@ -828,6 +838,7 @@ fn assemble_atropisomeric_axes<L: SlotLiveness>(
     source_marks: &[SourceStereoBondMark],
     warnings: &mut Vec<NormalizationWarning>,
     used_marks: &mut Vec<BondId>,
+    several_axes: &mut BTreeSet<BondId>,
 ) -> Vec<StereoElement> {
     let mut axis_elements = BTreeMap::<BondId, Vec<StereoElement>>::new();
     for mark in source_marks_in_bond_order(source_marks) {
@@ -843,6 +854,9 @@ fn assemble_atropisomeric_axes<L: SlotLiveness>(
         }
 
         let candidates = atropisomeric_axis_candidates(molecule, geometry, ring_membership, mark);
+        if candidates.len() > 1 {
+            several_axes.insert(mark.bond);
+        }
         if candidates.len() != 1 {
             continue;
         }
@@ -883,9 +897,6 @@ fn atropisomeric_axis_candidates<L: SlotLiveness>(
     let Some(marked_bond) = molecule.bond(mark.bond) else {
         return Vec::new();
     };
-    if marked_bond.order != BondOrder::Single {
-        return Vec::new();
-    }
     let near = mark.from;
     let marked_carrier = marked_bond.other_atom(mark.from);
     let mut candidates = molecule
@@ -1366,11 +1377,15 @@ fn redundant_endpoint_directional_marks<L: SlotLiveness>(
 }
 
 /// Drops, with a warning, a directional mark without a partner across a
-/// double bond and a wedge that marks no stereo center or axis, as RDKit
-/// ignores them; other unassembled marks are errors.
-fn report_unassembled_source_marks(
+/// double bond, a wedge that marks no stereo center or axis, as RDKit
+/// ignores them, and a wedge that marks stereo kekule cannot represent;
+/// other unassembled marks are errors. `several_axes` names the wedges next
+/// to more than one candidate axis.
+fn report_unassembled_source_marks<L: SlotLiveness>(
+    molecule: &Graph<L>,
     source_marks: &[SourceStereoBondMark],
     used_marks: &[BondId],
+    several_axes: &BTreeSet<BondId>,
     issues: &mut Vec<SourceStereoNormalizationIssue>,
     warnings: &mut Vec<NormalizationWarning>,
 ) {
@@ -1387,7 +1402,16 @@ fn report_unassembled_source_marks(
             | SourceStereoBondMarkKind::WedgeDown
             | SourceStereoBondMarkKind::WedgeEither => {
                 if !used_marks.contains(&mark.bond) {
-                    warnings.push(NormalizationWarning::StrayWedge { bond: mark.bond });
+                    warnings.push(
+                        match unrepresentable_wedge_stereo(molecule, mark, several_axes) {
+                            Some(reason) => NormalizationWarning::UnrepresentableWedgeStereo {
+                                atom: mark.from,
+                                bond: mark.bond,
+                                reason,
+                            },
+                            None => NormalizationWarning::StrayWedge { bond: mark.bond },
+                        },
+                    );
                 }
             }
             SourceStereoBondMarkKind::DoubleBondEither
@@ -1401,6 +1425,27 @@ fn report_unassembled_source_marks(
             }
         }
     }
+}
+
+/// Why the stereo an unassembled wedge marks cannot be represented, or
+/// `None` when its atom cannot be stereogenic.
+fn unrepresentable_wedge_stereo<L: SlotLiveness>(
+    molecule: &Graph<L>,
+    mark: &SourceStereoBondMark,
+    several_axes: &BTreeSet<BondId>,
+) -> Option<UnrepresentableStereoReason> {
+    if several_axes.contains(&mark.bond) {
+        return Some(UnrepresentableStereoReason::SeveralCandidateAxes);
+    }
+    let atom = molecule.atom(mark.from)?;
+    let mut neighbors = usize::from(atom.hydrogens.represented_count());
+    for (_, bond) in molecule.incident_bonds(mark.from)? {
+        if matches!(bond.order, BondOrder::Zero | BondOrder::Dative) {
+            return Some(UnrepresentableStereoReason::ZeroOrDativeBond);
+        }
+        neighbors += 1;
+    }
+    (neighbors > 4).then_some(UnrepresentableStereoReason::MoreThanFourNeighbors)
 }
 
 #[derive(Clone, Copy)]

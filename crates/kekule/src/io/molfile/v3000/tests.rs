@@ -263,7 +263,7 @@ fn v3000_atom_cfg_yields_to_contradicting_3d_coordinates() {
     // order) runs counterclockwise, which CTfile defines as even parity
     // (CFG=2), and Br -> Cl -> F runs clockwise, so the coordinates are (R).
     let source = |cfg: u8| {
-        format!("parity\n  kekule            3D\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 5 4 0 0 1\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG={cfg}\nM  V30 2 F 0.6 0.6 0.6 0\nM  V30 3 Cl 0.6 -0.6 -0.6 0\nM  V30 4 Br -0.6 0.6 -0.6 0\nM  V30 5 H -0.6 -0.6 0.6 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 2 1 1 3\nM  V30 3 1 1 4\nM  V30 4 1 1 5\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n")
+        format!("parity\n  kekule            3D\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 5 4 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0 CFG={cfg}\nM  V30 2 F 0.6 0.6 0.6 0\nM  V30 3 Cl 0.6 -0.6 -0.6 0\nM  V30 4 Br -0.6 0.6 -0.6 0\nM  V30 5 H -0.6 -0.6 0.6 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 1 1 2\nM  V30 2 1 1 3\nM  V30 3 1 1 4\nM  V30 4 1 1 5\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n")
     };
     let contradiction = molfile::MolfileInterpretIssue::AtomParityContradictsCoordinates {
         center: AtomId::new(0),

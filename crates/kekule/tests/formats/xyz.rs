@@ -810,5 +810,32 @@ fn alkali_metals_do_not_bond_the_carbon_of_a_chelating_carboxylate() {
             [(index(1), BondOrder::Dative), (index(2), BondOrder::Dative)],
             "{metal}"
         );
+        assert!(
+            interpretation
+                .report()
+                .issues()
+                .iter()
+                .any(|issue| matches!(
+                    issue,
+                    XyzInterpretIssue::LongContactNotBonded { atoms, .. }
+                        if *atoms == [index(0), index(7)]
+                )),
+            "{metal}"
+        );
     }
+}
+
+#[test]
+fn long_metal_carbon_contacts_are_reported_unbonded() {
+    // The Li-C distance of methyllithium's tetramer.
+    let interpretation = interpret("2\n\nLi 0 0 0\nC 0 0 2.28\n", Default::default());
+    let report = interpretation.report();
+    assert!(report.inferred_bonds().is_empty());
+    let [XyzInterpretIssue::BondOrdersAndChargesUnknown, XyzInterpretIssue::LongContactNotBonded { atoms, distance }] =
+        report.issues()
+    else {
+        panic!("{:?}", report.issues());
+    };
+    assert_eq!(*atoms, [index(0), index(1)]);
+    assert!((distance.value_in(ANGSTROM).unwrap() - 2.28).abs() < 1e-9);
 }

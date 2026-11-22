@@ -54,9 +54,33 @@ pub(crate) enum NormalizationWarning {
     /// axis, as one drawn from a methyl, methylene, or trigonal atom does.
     /// The mark is dropped.
     StrayWedge { bond: BondId },
+    /// The wedge, hash, or wavy mark on `bond` marks stereo at `atom` that
+    /// kekule cannot represent. The mark is dropped, and the stereo is lost.
+    UnrepresentableWedgeStereo {
+        atom: AtomId,
+        bond: BondId,
+        reason: UnrepresentableStereoReason,
+    },
     /// The directional mark on this bond has no partner across a double bond
     /// that can have E/Z. The mark is dropped.
     UnpairedDirectionalBondMark { bond: BondId },
+}
+
+/// Why kekule cannot represent the stereo a wedge marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UnrepresentableStereoReason {
+    /// The atom has a zero-order or dative bond, as a phosphine bound to a
+    /// metal by a coordination bond does. A stereocenter's carriers are
+    /// joined by covalent bonds.
+    ZeroOrDativeBond,
+    /// The atom has more than four neighbors, as an octahedral or
+    /// trigonal-bipyramidal center does. Kekule represents tetrahedral
+    /// centers only.
+    MoreThanFourNeighbors,
+    /// The marked atom is the endpoint of more than one bond that could be
+    /// the atropisomeric axis the wedge marks.
+    SeveralCandidateAxes,
 }
 
 /// One concrete source-stereo normalization issue.
@@ -317,8 +341,12 @@ fn try_localize_aromatic_component_with_limit(
         };
         let explicit_valence =
             baseline_bond_valence.saturating_add(usize::from(atom.hydrogens.represented_count()));
-        let inferred_hydrogens =
-            source_aromatic_inferred_hydrogens(atom, explicit_valence, stated_multiple_bond);
+        let inferred_hydrogens = source_aromatic_inferred_hydrogens(
+            atom,
+            explicit_valence,
+            stated_multiple_bond,
+            target_valence,
+        );
         let occupied_valence = explicit_valence
             .saturating_add(inferred_hydrogens)
             .saturating_add(usize::from(
@@ -483,14 +511,17 @@ fn represented_bond_valence(order: BondOrder) -> usize {
 
 /// The hydrogens of a source-aromatic atom without a hydrogen declaration:
 /// those that complete its aromatic valence, which counts each aromatic bond
-/// once and keeps one unit for the atom's pi bond. A double or triple bond
-/// the source states is that pi bond, so `c1=cc=cc=c1` is benzene. A
-/// positive nitrogen with two ring bonds takes a hydrogen, as pyridinium
-/// does; a positive chalcogen takes none, as pyrylium's oxygen does.
+/// once. Where the atom's localization `target_valence` keeps one unit more
+/// for a pi bond, a double or triple bond the source states is that pi bond,
+/// so `c1=cc=cc=c1` is benzene. Otherwise the stated bond already fills the
+/// atom, as at the charged carbon of a phenyl cation or anion. A positive
+/// nitrogen with two ring bonds takes a hydrogen, as pyridinium does; a
+/// positive chalcogen takes none, as pyrylium's oxygen does.
 fn source_aromatic_inferred_hydrogens(
     atom: &Atom,
     explicit_valence: usize,
     stated_multiple_bond: bool,
+    target_valence: usize,
 ) -> usize {
     if !atom.hydrogens.is_inferred() {
         return 0;
@@ -501,7 +532,8 @@ fn source_aromatic_inferred_hydrogens(
         "N" | "O" | "S" | "Se" | "Te" => 2,
         _ => return 0,
     };
-    (target + usize::from(stated_multiple_bond)).saturating_sub(explicit_valence)
+    let stated_pi_bond = stated_multiple_bond && target_valence == target + 1;
+    (target + usize::from(stated_pi_bond)).saturating_sub(explicit_valence)
 }
 
 fn aromatic_localization_target_valence(

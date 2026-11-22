@@ -583,6 +583,15 @@ fn parse_v3000_bond(
         let cfg = value.parse::<u8>().map_err(|_| syntax())?;
         stereo = match (order, cfg) {
             (_, 0) => None,
+            (MolfileBondOrder::Single | MolfileBondOrder::Aromatic, 1) => {
+                Some(MolfileBondStereo::Up)
+            }
+            (MolfileBondOrder::Single | MolfileBondOrder::Aromatic, 2) => {
+                Some(MolfileBondStereo::Either)
+            }
+            (MolfileBondOrder::Single | MolfileBondOrder::Aromatic, 3) => {
+                Some(MolfileBondStereo::Down)
+            }
             (MolfileBondOrder::Aromatic, _) => {
                 return Err(lines.error(
                     row.index,
@@ -590,9 +599,6 @@ fn parse_v3000_bond(
                     format!("The CFG value {cfg} of aromatic bond {serial} is not supported."),
                 ))
             }
-            (MolfileBondOrder::Single, 1) => Some(MolfileBondStereo::Up),
-            (MolfileBondOrder::Single, 2) => Some(MolfileBondStereo::Either),
-            (MolfileBondOrder::Single, 3) => Some(MolfileBondStereo::Down),
             (MolfileBondOrder::Double, 2) => Some(MolfileBondStereo::Either),
             _ => {
                 return Err(lines.error(

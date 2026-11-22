@@ -274,12 +274,14 @@ pub enum XyzInterpretIssue {
         /// Their distance.
         distance: Quantity<f64>,
     },
-    /// Two non-metal atoms lie within
-    /// [`XyzInterpretationReport::long_bond_tolerance`] of bonding distance,
-    /// but beyond [`XyzInterpretationReport::bond_tolerance`], and a bond
-    /// would give one of them more bonds than its largest valence. They are
-    /// left unbonded, as the bridgehead carbons of bicyclo[1.1.1]pentane,
-    /// 1.85 Å apart, are.
+    /// Two atoms lie within
+    /// [`XyzInterpretationReport::long_bond_tolerance`] of bonding distance
+    /// and are left unbonded. Either they are a metal and a carbon beyond
+    /// [`XyzInterpretationReport::metal_carbon_bond_tolerance`], or they are
+    /// two non-metal atoms beyond
+    /// [`XyzInterpretationReport::bond_tolerance`] and a bond would give one
+    /// of them more bonds than its largest valence, as with the bridgehead
+    /// carbons of bicyclo[1.1.1]pentane, 1.85 Å apart.
     LongContactNotBonded {
         /// The atoms, lower index first.
         atoms: [TopologyAtomIndex; 2],
@@ -319,9 +321,11 @@ pub enum XyzInterpretIssue {
 /// atom other than carbon, and two non-metal atoms bond unless that gives
 /// one of them more bonds than its largest valence; such a long bond joins
 /// the nitrogens of dinitrogen tetroxide, 1.78 Å apart. A metal and a carbon
-/// bond only within the sum plus [`Self::metal_carbon_bond_tolerance`],
-/// which keeps the bonds of organometallics and leaves the carbon of a
-/// carboxylate that chelates the metal unbonded.
+/// bond only within the sum plus [`Self::metal_carbon_bond_tolerance`].
+/// That leaves the carbon of a carboxylate that chelates the metal
+/// unbonded, but also a long metal–carbon bond, such as Li–C in
+/// methyllithium's tetramer at 2.28 Å. Each such contact is reported as
+/// [`XyzInterpretIssue::LongContactNotBonded`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct XyzInterpretationReport {
     frame: usize,
@@ -889,16 +893,39 @@ fn components(atom_count: usize, bonds: &[XyzInferredBond]) -> Vec<Vec<usize>> {
     groups
 }
 
+/// How two atoms beyond their firm tolerance, but within the sum of their
+/// radii plus [`LONG_BOND_TOLERANCE_ANGSTROM`], bond.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LongContact {
+    /// They bond.
+    Bond,
+    /// They bond when both valences have room.
+    NeedsValence,
+    /// They stay unbonded, and the contact is reported.
+    NotBonded,
+}
+
 /// The distance added to the sum of the covalent radii of `left` and
-/// `right` within which they bond, and whether a bond beyond the firm
-/// tolerance needs room in both valences.
-fn pair_tolerance(left: Element, right: Element) -> (f64, bool) {
+/// `right` within which they always bond, and how they bond beyond it.
+fn pair_tolerance(left: Element, right: Element) -> (f64, LongContact) {
     let carbon = |element: Element| element.atomic_number() == 6;
     match (is_metal(left), is_metal(right)) {
-        (true, false) if carbon(right) => (METAL_CARBON_BOND_TOLERANCE_ANGSTROM, false),
-        (false, true) if carbon(left) => (METAL_CARBON_BOND_TOLERANCE_ANGSTROM, false),
-        (false, false) => (LONG_BOND_TOLERANCE_ANGSTROM, true),
-        _ => (LONG_BOND_TOLERANCE_ANGSTROM, false),
+        (true, false) if carbon(right) => {
+            (METAL_CARBON_BOND_TOLERANCE_ANGSTROM, LongContact::NotBonded)
+        }
+        (false, true) if carbon(left) => {
+            (METAL_CARBON_BOND_TOLERANCE_ANGSTROM, LongContact::NotBonded)
+        }
+        (false, false) => (FIRM_BOND_TOLERANCE_ANGSTROM, LongContact::NeedsValence),
+        _ => (FIRM_BOND_TOLERANCE_ANGSTROM, LongContact::Bond),
+    }
+}
+
+/// The cutoff within which two atoms whose radii sum to `radii` bond.
+fn bond_cutoff(radii: f64, tolerance: (f64, LongContact)) -> f64 {
+    match tolerance.1 {
+        LongContact::NotBonded => radii + tolerance.0,
+        LongContact::Bond | LongContact::NeedsValence => radii + LONG_BOND_TOLERANCE_ANGSTROM,
     }
 }
 
@@ -918,10 +945,10 @@ fn largest_valence(element: Element) -> Option<usize> {
         .map(usize::from)
 }
 
-/// Bonds and the contact issues of atoms within covalent bonding distance,
-/// found through a uniform grid so the work stays linear in the atom count:
-/// close contacts, long contacts left unbonded, and exceeded valences, each
-/// in atom order. Fails with the limit and the offending atom line when an
+/// Bonds and the contact issues of atoms within the sum of their radii plus
+/// [`LONG_BOND_TOLERANCE_ANGSTROM`], found through a uniform grid so the
+/// work stays linear in the atom count: close contacts, long contacts left
+/// unbonded, and exceeded valences, each in atom order. Fails with the limit and the offending atom line when an
 /// atom has more than `max_contacts` contacts.
 fn infer_contacts(
     elements: &[Element],
@@ -944,12 +971,8 @@ fn infer_contacts(
         points.len(),
     );
     let mut contacts = vec![0usize; points.len()];
-    // Bonds beyond the firm tolerance that need room in both valences.
-    let mut long = Vec::new();
-    let mut bonds = Vec::new();
-    let mut close = Vec::new();
+    let mut contact_set = ContactSet::default();
     let mut near = Vec::new();
-    let minimum_squared = MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2);
     for (left, point) in points.iter().enumerate() {
         near.clear();
         grid.for_each_near(point, |other, right| {
@@ -959,17 +982,14 @@ fn infer_contacts(
             let distance_squared = (point.x - other.x).powi(2)
                 + (point.y - other.y).powi(2)
                 + (point.z - other.z).powi(2);
-            let (tolerance, valence_bound) = pair_tolerance(elements[left], elements[right]);
             let radii = radius(left) + radius(right);
-            let cutoff = radii + tolerance;
-            if distance_squared <= cutoff * cutoff {
-                let firm = radii + FIRM_BOND_TOLERANCE_ANGSTROM;
-                let needs_valence = valence_bound && distance_squared > firm * firm;
-                near.push((right, distance_squared, cutoff, needs_valence));
+            let reach = radii + LONG_BOND_TOLERANCE_ANGSTROM;
+            if distance_squared <= reach * reach {
+                near.push((right, distance_squared, radii));
             }
         });
         near.sort_unstable_by_key(|&(right, ..)| right);
-        for &(right, distance_squared, cutoff, needs_valence) in &near {
+        for &(right, distance_squared, radii) in &near {
             for atom in [left, right] {
                 contacts[atom] += 1;
                 if contacts[atom] > max_contacts {
@@ -979,43 +999,80 @@ fn infer_contacts(
                     ));
                 }
             }
-            let atoms = [dense_index(left), dense_index(right)];
-            let distance = distance_squared.sqrt();
-            if distance_squared <= minimum_squared {
-                close.push((atoms, distance));
-                continue;
-            }
-            let order = if is_metal(elements[left]) != is_metal(elements[right]) {
-                BondOrder::Dative
-            } else {
-                BondOrder::Single
-            };
-            let bond = XyzInferredBond {
-                atoms,
-                order,
-                distance,
-                cutoff,
-            };
-            if needs_valence {
-                long.push(bond);
-            } else {
-                bonds.push(bond);
-            }
+            contact_set.add(elements, [left, right], distance_squared, radii);
         }
     }
-    Ok(resolve_contacts(elements, bonds, long, close))
+    Ok(resolve_contacts(elements, contact_set))
 }
 
-/// The bonds and contact issues of `firm` bonds, `long` bonds that need
-/// room in both valences, and `close` contacts. A long bond stays when both
-/// atoms keep within their largest valence with every firm and long bond
-/// they have, so no order decides.
+/// The contacts of atoms within the sum of their radii plus
+/// [`LONG_BOND_TOLERANCE_ANGSTROM`], sorted by how they bond.
+#[derive(Debug, Default)]
+struct ContactSet {
+    /// Bonds that need no valence.
+    bonds: Vec<XyzInferredBond>,
+    /// Long bonds that need room in both valences.
+    long: Vec<XyzInferredBond>,
+    /// Long contacts that never bond.
+    unbonded: Vec<([TopologyAtomIndex; 2], f64)>,
+    /// Contacts too close to bond.
+    close: Vec<([TopologyAtomIndex; 2], f64)>,
+}
+
+impl ContactSet {
+    /// Adds the contact of `pair`, lower atom first, whose radii sum to
+    /// `radii`.
+    fn add(&mut self, elements: &[Element], pair: [usize; 2], distance_squared: f64, radii: f64) {
+        let [left, right] = pair;
+        let atoms = [dense_index(left), dense_index(right)];
+        let distance = distance_squared.sqrt();
+        if distance_squared <= MIN_COVALENT_BOND_DISTANCE_ANGSTROM.powi(2) {
+            self.close.push((atoms, distance));
+            return;
+        }
+        let tolerance = pair_tolerance(elements[left], elements[right]);
+        let firm = radii + tolerance.0;
+        let rule = if distance_squared <= firm * firm {
+            LongContact::Bond
+        } else {
+            tolerance.1
+        };
+        if rule == LongContact::NotBonded {
+            self.unbonded.push((atoms, distance));
+            return;
+        }
+        let order = if is_metal(elements[left]) != is_metal(elements[right]) {
+            BondOrder::Dative
+        } else {
+            BondOrder::Single
+        };
+        let bond = XyzInferredBond {
+            atoms,
+            order,
+            distance,
+            cutoff: bond_cutoff(radii, tolerance),
+        };
+        if rule == LongContact::NeedsValence {
+            self.long.push(bond);
+        } else {
+            self.bonds.push(bond);
+        }
+    }
+}
+
+/// The bonds and contact issues of `contacts`. A long bond that needs
+/// valence stays when both atoms keep within their largest valence with
+/// every bond they have, so no order decides.
 fn resolve_contacts(
     elements: &[Element],
-    mut bonds: Vec<XyzInferredBond>,
-    long: Vec<XyzInferredBond>,
-    mut close: Vec<([TopologyAtomIndex; 2], f64)>,
+    contacts: ContactSet,
 ) -> (Vec<XyzInferredBond>, Vec<XyzInterpretIssue>) {
+    let ContactSet {
+        mut bonds,
+        long,
+        mut unbonded,
+        mut close,
+    } = contacts;
     let mut single_bonds = vec![0usize; elements.len()];
     for bond in bonds.iter().chain(&long) {
         if bond.order == BondOrder::Single {
@@ -1034,7 +1091,6 @@ fn resolve_contacts(
         })
     });
     bonds.extend(kept);
-    let mut unbonded = Vec::with_capacity(rejected.len());
     for bond in rejected {
         for atom in bond.atoms {
             single_bonds[atom.index()] -= 1;
