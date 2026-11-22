@@ -36,10 +36,10 @@ pub use macromolecular::{
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
-    PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
-    SourceResidueId, SourceResiduePosition, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport, StructureSetInterpretOptions,
-    StructureSetInterpretation,
+    NumberField, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
+    SequenceSource, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 pub(crate) use mmcif::{parse_mmcif_reader, parse_mmcif_str, write_mmcif, write_mmcif_to};
 pub use mmcif::{

@@ -351,6 +351,7 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
             order,
             partners,
             connectivity_only: false,
+            model: None,
         })));
     }
     records.extend(

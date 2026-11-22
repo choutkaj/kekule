@@ -116,12 +116,15 @@ residue-number offset where one fits every segment, else at its earliest
 run, with a lone first residue at its last place before the next segment
 and the last segment at its last run. Each polymer residue takes its place
 in the sequence as its label sequence number, and each such chain is a
-polymer entity of the report, whose monomers are the `SEQRES` names. The PDB writer writes
-`SEQRES` for a chain whose first or last polymer residue is at a gap, with
-an `UNK` residue past that end. It writes sequenced residues as `ATOM`
-records, also one a chain break leaves a molecule of its own, and ends each
-chain's polymer with `TER` after its last `ATOM` record, so ligands bonded
-to the chain are no part of it. The mmCIF writer numbers a chain without
+polymer entity of the report, whose monomers are the `SEQRES` names.
+
+The PDB writer writes `SEQRES` for a chain whose sequence has residues the
+model lacks, with the residues' names where the report's entity gives them
+and `UNK` elsewhere. It writes sequenced residues as `ATOM` records, also
+one a chain break leaves a molecule of its own. Each hierarchy chain
+holding amino acids or nucleotides ends with `TER` after its last polymer
+residue, so ligands bonded to the chain, such as retinal, are no part of
+it. The mmCIF writer writes `_entity_poly_seq`, and numbers a chain without
 sequence numbers from 2 when its first linking atom is at a gap.
 
 ## Atoms the residue lacks
@@ -162,7 +165,7 @@ with that charge:
 
 A stated 0 in a residue without hydrogens is no evidence, since files
 without charges write 0 for every atom. Nonzero stated charges stay
-evidence.
+evidence. The PDB writer states every charge, 0 included.
 
 A template charge the dictionary states as unknown, such as the iron of
 heme or of iron-sulfur clusters, is read as zero and reported

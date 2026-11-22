@@ -495,45 +495,37 @@ An issue is its kind, then its fields in declaration order, with lists as
 `list`, line lists as `count packed`, residues as `residue`, entity kinds as
 `u8` (`str` follows `4`), charges as `i8`, partners and valences as
 `u8`, bond orders as the `order` of a bond, with `255` for an aromatic
-template bond, and neutral onium centres as a `list` of an atom name `str`
-and its hydrogens `u8`. `ProtonationAssumed` lists its components as `list`
-of `str` and `usize`.
+template bond, neutral onium centres as a `list` of an atom name `str`
+and its hydrogens `u8`, and number fields as `u8` (`0` atom serial
+numbers, `1` residue numbers). `ProtonationAssumed` lists its components
+as `list` of `str` and `usize`.
 
 | Kind | Issue | Kind | Issue |
 | --- | --- | --- | --- |
-| 0 | `EntityTypeInferred` | 10 | `AlternateLocationOccupancyTie` |
-| 1 | `ElementsInferredFromAtomNames` | 11 | `ConnectivityCandidatesInferred` |
-| 2 | `ConnectionsIgnored` | 12 | `ResidueBondsInferred` |
-| 3 | `ConnectionUnresolved` | 13 | `HydrogenAttachedByDistance` |
-| 4 | `ConnectionAmbiguous` | 14 | `ChainBreak` |
-| 5 | `CoordinateModelIgnored` | 15 | `ChargesFromBonds` |
-| 6 | `AlternateLocationOmitted` | 16 | `ProtonationFromHydrogens` |
-| 7 | `AlternateLocationIncomplete` | 17 | `ResidueFragmented` |
-| 8 | `AlternateLocationOccupancyMissing` | 18 | `CellOmitted` |
-| 9 | `AlternateLocationCombinationRejected` | 19 | `AssemblyOmitted` |
-| | | 20 | `DisulfideInferred` |
-| | | 21 | `ForceFieldTemplate` |
-| | | 22 | `ResidueBondOrdersUnstated` |
-| | | 23 | `BondNotInTemplate` |
-| | | 24 | `BondOrderDiffersFromTemplate` |
-| | | 25 | `PolymerLinkSkipped` |
-| | | 26 | `LinkingAtomMissing` |
-| | | 27 | `ResidueFitsNoTemplate` |
-| | | 28 | `StatedOrdersDisagreeWithHydrogens` |
-| | | 29 | `MetalValenceIncomplete` |
-| | | 30 | `MetalDonors` |
-| | | 36 | `ProtonationAssumed` |
-| | | 37 | `HydrogensMissing` |
-| | | 38 | `ZeroOccupancyHydrogens` |
-| | | 39 | `HydrogenReplacedByCoordination` |
-| | | 40 | `StatedChargeKept` |
-| | | 41 | `StatedChargeRejected` |
-| | | 42 | `TemplateChargeUnknown` |
-| | | 43 | `TemplateMissing` |
-| | | 44 | `AtomsMissing` |
-| | | 45 | `TerminalAtomMissing` |
-| | | 46 | `PolymerLinkMissing` |
-| | | 47 | `StatedChargeResonance` |
+| 0 | `EntityTypeInferred` | 24 | `BondOrderDiffersFromTemplate` |
+| 1 | `ElementsInferredFromAtomNames` | 25 | `PolymerLinkSkipped` |
+| 2 | `ConnectionsIgnored` | 26 | `LinkingAtomMissing` |
+| 3 | `ConnectionUnresolved` | 27 | `ResidueFitsNoTemplate` |
+| 4 | `ConnectionAmbiguous` | 28 | `StatedOrdersDisagreeWithHydrogens` |
+| 5 | `CoordinateModelIgnored` | 29 | `MetalValenceIncomplete` |
+| 6 | `AlternateLocationOmitted` | 30 | `MetalDonors` |
+| 7 | `AlternateLocationIncomplete` | 31 | `ElementsFromTemplates` |
+| 8 | `AlternateLocationOccupancyMissing` | 32 | `UnsignedCharges` |
+| 9 | `AlternateLocationCombinationRejected` | 33 | `HexadecimalNumbers` |
+| 10 | `AlternateLocationOccupancyTie` | 34 | `NumbersRestart` |
+| 11 | `ConnectivityCandidatesInferred` | 35 | `MetalBondsUnstated` |
+| 12 | `ResidueBondsInferred` | 36 | `ProtonationAssumed` |
+| 13 | `HydrogenAttachedByDistance` | 37 | `HydrogensMissing` |
+| 14 | `ChainBreak` | 38 | `ZeroOccupancyHydrogens` |
+| 15 | `ChargesFromBonds` | 39 | `HydrogenReplacedByCoordination` |
+| 16 | `ProtonationFromHydrogens` | 40 | `StatedChargeKept` |
+| 17 | `ResidueFragmented` | 41 | `StatedChargeRejected` |
+| 18 | `CellOmitted` | 42 | `TemplateChargeUnknown` |
+| 19 | `AssemblyOmitted` | 43 | `TemplateMissing` |
+| 20 | `DisulfideInferred` | 44 | `AtomsMissing` |
+| 21 | `ForceFieldTemplate` | 45 | `TerminalAtomMissing` |
+| 22 | `ResidueBondOrdersUnstated` | 46 | `PolymerLinkMissing` |
+| 23 | `BondNotInTemplate` | 47 | `StatedChargeResonance` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

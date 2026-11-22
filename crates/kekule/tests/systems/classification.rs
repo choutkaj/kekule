@@ -495,11 +495,12 @@ fn readme_combined_structure_workflow_needs_no_mmcif_classification_sidecar() {
     );
     let mut output = Vec::new();
     kekule::mmcif::write_to(&mut output, [&combined], Default::default()).unwrap();
-    assert_eq!(
-        String::from_utf8(output)
-            .unwrap()
-            .matches(" non-polymer")
-            .count(),
-        2
-    );
+    // Two non-polymer entities, whose `MOL` component shares one table.
+    let output = String::from_utf8(output).unwrap();
+    let entities = output
+        .lines()
+        .filter(|line| line.starts_with(|first: char| first.is_ascii_digit()))
+        .filter(|line| line.ends_with(" non-polymer"))
+        .count();
+    assert_eq!(entities, 2, "{output}");
 }

@@ -26,5 +26,5 @@ fn names_and_charges_follow_the_column_conventions() {
     assert_eq!(aligned_name("HG21", "H"), "HG21");
     assert_eq!(charge_field(-2), "2-");
     assert_eq!(charge_field(1), "1+");
-    assert_eq!(charge_field(0), "");
+    assert_eq!(charge_field(0), "0");
 }

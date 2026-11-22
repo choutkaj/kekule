@@ -20,6 +20,7 @@ mod molfile_valence;
 mod native;
 mod native_versions;
 mod pdb;
+mod pdb_conventions;
 mod pdb_write;
 mod protonation;
 mod residue_charges;

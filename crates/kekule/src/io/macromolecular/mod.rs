@@ -53,9 +53,9 @@ pub(in crate::io) use types::{poll, poll_every, structure_error};
 pub use types::{
     AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
-    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, StructureInterpretIssue,
-    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
-    StructureSetInterpretOptions, StructureSetInterpretation,
+    EntityKind, EntityMetadataPolicy, InstanceProvenance, ModelSelection, NumberField,
+    StructureInterpretIssue, StructureInterpretOptions, StructureInterpretation,
+    StructureInterpretationReport, StructureSetInterpretOptions, StructureSetInterpretation,
 };
 
 /// The cell PDB records for structures without a crystal lattice, such as

@@ -2,6 +2,7 @@
 //! atom rows, the source-neutral input of interpretation.
 use super::types::{poll_every, structure_error};
 use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
+use crate::topology::{is_ion, is_water};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::math::Point3;
@@ -386,7 +387,7 @@ pub(super) fn read_atom_rows(
         } else {
             format!("small:{asym_id}:{residue_key}")
         };
-        let formal_charge = optional_i8(table, row, fields.formal_charge)?;
+        let formal_charge = optional_charge(table, row, fields.formal_charge)?;
         let point = optional_point(table, row, fields.cartn)?;
         rows.push(AtomRow {
             line: type_value.line(),
@@ -424,15 +425,11 @@ pub(super) fn read_atom_rows(
     Ok(rows)
 }
 
-pub(super) fn is_water(comp_id: &str) -> bool {
-    ["HOH", "WAT", "DOD"]
-        .iter()
-        .any(|water| comp_id.eq_ignore_ascii_case(water))
-}
-
 fn infer_entity_kind(group_pdb: Option<&str>, comp_id: &str) -> EntityKind {
     if is_water(comp_id) {
         EntityKind::Water
+    } else if is_ion(comp_id) {
+        EntityKind::NonPolymer
     } else if group_pdb.is_some_and(|group| group.eq_ignore_ascii_case("ATOM")) {
         EntityKind::Polymer
     } else {
@@ -480,7 +477,16 @@ fn optional_f64(
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
-            let parsed = value.parse::<f64>().map_err(|_| {
+            // A standard uncertainty may follow in parentheses, as in
+            // `12.345(3)`.
+            let number = value
+                .strip_suffix(')')
+                .and_then(|rest| rest.split_once('('))
+                .filter(|(_, uncertainty)| {
+                    !uncertainty.is_empty() && uncertainty.bytes().all(|byte| byte.is_ascii_digit())
+                })
+                .map_or(value, |(number, _)| number);
+            let parsed = number.parse::<f64>().map_err(|_| {
                 row_error(
                     table,
                     row,
@@ -521,7 +527,8 @@ pub(super) fn optional_i32(
         .transpose()
 }
 
-fn optional_i8(
+/// A formal charge, signed before or after its digits, as in `-1` or `1-`.
+fn optional_charge(
     table: &MmcifCategory<'_>,
     row: usize,
     key: impl FieldKey,
@@ -529,7 +536,12 @@ fn optional_i8(
     let tag = key.tag();
     optional(table, row, key)
         .map(|value| {
-            value.parse::<i8>().map_err(|_| {
+            let signed = match value.as_bytes().last() {
+                Some(b'+') if value.len() > 1 => format!("+{}", &value[..value.len() - 1]),
+                Some(b'-') if value.len() > 1 => format!("-{}", &value[..value.len() - 1]),
+                _ => value.to_owned(),
+            };
+            signed.parse::<i8>().map_err(|_| {
                 row_error(
                     table,
                     row,

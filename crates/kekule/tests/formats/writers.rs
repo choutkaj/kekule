@@ -1678,7 +1678,7 @@ fn mmcif_distinguishes_independent_structures_from_a_structure_set() {
     .map(|(text, _)| text)
     .unwrap();
     // One block: both geometries' atoms under their model numbers, and the
-    // shared C-O bond once.
+    // shared C-O bond once, in the component's table.
     assert_eq!(set_text.matches("data_").count(), 1, "{set_text}");
     assert_eq!(
         set_text
@@ -1695,10 +1695,11 @@ fn mmcif_distinguishes_independent_structures_from_a_structure_set() {
     assert_eq!(
         set_text
             .lines()
-            .filter(|line| line.starts_with("conn"))
+            .filter(|line| line.starts_with("MOL "))
             .collect::<Vec<_>>(),
-        ["conn1 covale M1 MOL . C1 M1 MOL . O2 . . . . sing"]
+        ["MOL non-polymer", "MOL C1 O2 sing ? N"]
     );
+    assert!(!set_text.contains("_struct_conn."), "{set_text}");
     let set_document = mmcif::parse_str(&set_text, Default::default()).unwrap();
     assert_eq!(set_document.blocks().len(), 1);
     let parsed = set_document
@@ -2593,10 +2594,10 @@ fn structure_sets_write_their_order_or_fail_on_it() {
         assert_eq!(
             text,
             "MODEL        1\n\
-             HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C\n\
+             HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C0\n\
              ENDMDL\n\
              MODEL        2\n\
-             HETATM    1  C1  MOL     1       2.000   0.000   0.000                       C\n\
+             HETATM    1  C1  MOL     1       2.000   0.000   0.000                       C0\n\
              ENDMDL\n\
              END\n"
         );

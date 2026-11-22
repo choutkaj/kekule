@@ -3,7 +3,8 @@
 use std::io::Read;
 
 use super::super::{
-    AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DISULFIDE_SINCE, PROTONATION_SINCE,
+    AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DISULFIDE_SINCE, PDB_NUMBERING_SINCE,
+    PROTONATION_SINCE,
 };
 use super::{bond_order, Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
@@ -11,8 +12,8 @@ use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
     AssemblyOperation, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, CoordinationProvenance, EntityKind,
-    EntityMonomer, InstanceProvenance, PolymerEntity, PolymerEntityInstance, PolymerType,
-    SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
+    EntityMonomer, InstanceProvenance, NumberField, PolymerEntity, PolymerEntityInstance,
+    PolymerType, SequencePosition, SequenceSource, SourceResidueId, SourceResiduePosition,
     StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::math::{Matrix3, Vector3};
@@ -810,6 +811,24 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 atom_names: self.str_list()?,
             },
+            31 if self.version >= PDB_NUMBERING_SINCE => Issue::ElementsFromTemplates {
+                source_lines: self.usizes()?,
+            },
+            32 if self.version >= PDB_NUMBERING_SINCE => Issue::UnsignedCharges {
+                source_lines: self.usizes()?,
+            },
+            33 if self.version >= PDB_NUMBERING_SINCE => Issue::HexadecimalNumbers {
+                field: self.number_field()?,
+                source_line: self.usize()?,
+            },
+            34 if self.version >= PDB_NUMBERING_SINCE => Issue::NumbersRestart {
+                field: self.number_field()?,
+                source_line: self.usize()?,
+            },
+            35 if self.version >= PDB_NUMBERING_SINCE => Issue::MetalBondsUnstated {
+                residue: self.residue()?,
+                bonds: self.usize()?,
+            },
             36 if self.version >= PROTONATION_SINCE => {
                 let count = self.items()?;
                 let mut components = Vec::with_capacity(count.min(super::CHUNK_BYTES));
@@ -882,6 +901,14 @@ impl<R: Read> Decoder<'_, R> {
                 )
             }
         })
+    }
+
+    fn number_field(&mut self) -> Result<NumberField> {
+        match self.u8()? {
+            0 => Ok(NumberField::AtomSerial),
+            1 => Ok(NumberField::ResidueNumber),
+            other => Err(self.invalid(format!("The number field {other} is unknown."))),
+        }
     }
 
     fn known_bond_order(&self, code: u8) -> Result<crate::molecule::BondOrder> {

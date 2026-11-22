@@ -1,15 +1,16 @@
 //! PDB writing of structures and structure sets.
 //!
 //! A written entry holds these records, in this order:
-//! - `SEQRES` for chains whose first or last polymer residue bonds to a
-//!   residue the structure lacks, with an `UNK` residue past that end;
+//! - `SEQRES` for chains whose sequence has residues the structure lacks,
+//!   with the residues' names where the source's entity gives them and
+//!   `UNK` elsewhere;
 //! - `LINK` for the metal coordination of interpretation reports, when the
 //!   source has them ([`PdbSource::with_reports`]);
 //! - `CRYST1` for a representable cell;
 //! - `MODEL` and `ENDMDL` around each geometry of a structure set, none
 //!   for a single structure;
-//! - `ATOM` and `HETATM` in dense atom order, with a `TER` after each
-//!   chain's last `ATOM` record;
+//! - `ATOM` and `HETATM` in dense atom order, with a `TER` after the last
+//!   polymer residue of each chain holding amino acids or nucleotides;
 //! - `CONECT` for the bonds a reader cannot derive from the Chemical
 //!   Component Dictionary;
 //! - `END`.
@@ -24,6 +25,7 @@ use std::fmt;
 use std::io::Write;
 use std::sync::Arc;
 
+use crate::algorithms::{metal_bond_reading, MetalBondReading};
 use crate::diagnostics::{
     AtomField, Capitalized, CellReason, Count, DiagnosticKind, Format, FormatError,
     FormatErrorDetail, GeometryField,
@@ -43,13 +45,16 @@ use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
     unrepresentable_state, Carries, Omissions, StatePolicies,
 };
-use crate::io::{Component, ComponentLibrary, UnrepresentablePolicy, WriteOmission, WriteReport};
+use crate::io::{
+    Component, ComponentBondOrder, ComponentLibrary, UnrepresentablePolicy, WriteOmission,
+    WriteReport,
+};
 use crate::math::{PeriodicCell, PeriodicCellError, Point3};
 use crate::molecule::{BondOrder, ImplicitHydrogens};
 use crate::structure::{AsStructureView, GeometryView, Structure, StructureSet, StructureView};
 use crate::topology::{
-    InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass, ResidueId,
-    Topology, TopologyAtomIndex,
+    ChainId, InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeInstanceId, ResidueClass,
+    ResidueId, Topology, TopologyAtomIndex,
 };
 use crate::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -73,7 +78,7 @@ const MAX_RESIDUE_NUMBER: i64 = 2_436_111;
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PdbChainIdPolicy {
-    /// Fail with [`PdbWriteErrorKind::ChainIdTooLong`].
+    /// Fail with [`PdbWriteErrorKind::InvalidChainId`].
     #[default]
     Fail,
     /// Write an identifier of up to four printable ASCII characters, such as
@@ -252,18 +257,18 @@ impl PdbWriteOptions {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PdbWriteErrorKind {
-    /// The chain identifier is longer than PDB's one column, and under
-    /// [`PdbChainIdPolicy::SegmentId`] than the four segment identifier
-    /// columns or not printable ASCII. [`PdbChainIdPolicy::SegmentId`]
-    /// writes identifiers of up to four printable characters.
-    ChainIdTooLong {
+    /// The chain identifier is not one printable ASCII character, and under
+    /// [`PdbChainIdPolicy::SegmentId`] not up to four, the segment
+    /// identifier columns.
+    InvalidChainId {
         /// An atom of the chain.
         atom: InstanceAtomId,
         /// The identifier.
         chain_id: String,
     },
-    /// The residue name is longer than PDB's three columns.
-    ResidueNameTooLong {
+    /// The residue name is longer than PDB's three columns or not printable
+    /// ASCII without whitespace.
+    InvalidResidueName {
         /// An atom of the residue.
         atom: InstanceAtomId,
         /// The name.
@@ -285,8 +290,8 @@ pub enum PdbWriteErrorKind {
         /// The name.
         name: String,
     },
-    /// The insertion code is longer than PDB's one column.
-    InsertionCodeTooLong {
+    /// The insertion code is not one printable ASCII character.
+    InvalidInsertionCode {
         /// An atom of the residue.
         atom: InstanceAtomId,
         /// The code.
@@ -348,10 +353,13 @@ pub enum PdbWriteErrorKind {
     UnsupportedStereo(MoleculeInstanceId),
     /// A bond `CONECT` cannot state, with [`PdbWriteOptions::chemistry`] set
     /// to fail. Readers take a pair listed once as single, twice as double,
-    /// and three times as triple, and a pair of a metal and a non-metal as
-    /// dative whatever its listing; zero-order and quadruple bonds, dative
-    /// bonds between other pairs, and other orders between a metal and a
-    /// non-metal have no listing.
+    /// and three times as triple, and a metal and a non-metal of different
+    /// residues as dative whatever their listing. Within one residue, a
+    /// metal bond reads as covalent or dative by its non-metal's other
+    /// bonds. Zero-order and quadruple bonds, dative bonds between other
+    /// pairs, metal bonds within one residue whose order that reading does
+    /// not give, and other orders between a metal and a non-metal of
+    /// different residues have no listing.
     UnsupportedBondOrder {
         /// The bond.
         bond: InstanceBondId,
@@ -409,13 +417,14 @@ impl PdbWriteErrorKind {
 impl fmt::Display for PdbWriteErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ChainIdTooLong { atom, chain_id } => write!(
+            Self::InvalidChainId { atom, chain_id } => write!(
                 f,
                 "Chain ID {chain_id:?} of {atom} does not fit PDB's chain columns."
             ),
-            Self::ResidueNameTooLong { atom, name } => write!(
+            Self::InvalidResidueName { atom, name } => write!(
                 f,
-                "Residue name {name:?} of {atom} is longer than PDB's three characters."
+                "Residue name {name:?} of {atom} does not fit PDB's three ASCII residue-name \
+                 columns."
             ),
             Self::InvalidAtomName { atom, name } => write!(
                 f,
@@ -426,9 +435,9 @@ impl fmt::Display for PdbWriteErrorKind {
                 "{} repeats atom name {name:?} in its residue.",
                 Capitalized(atom)
             ),
-            Self::InsertionCodeTooLong { atom, code } => write!(
+            Self::InvalidInsertionCode { atom, code } => write!(
                 f,
-                "Insertion code {code:?} of {atom} is longer than PDB's one character."
+                "Insertion code {code:?} of {atom} does not fit PDB's one ASCII column."
             ),
             Self::InvalidResidueNumber { atom, number } => match number {
                 Some(number) => write!(
@@ -817,6 +826,8 @@ enum ResidueKey {
 #[derive(Debug, Clone)]
 struct AtomResidue {
     key: ResidueKey,
+    /// The hierarchy chain, which a `TER` record ends.
+    chain: Option<ChainId>,
     polymer: bool,
     class: ResidueClass,
     /// The residue's place in its polymer's sequence, `label_seq_id`.
@@ -891,20 +902,23 @@ fn aligned_name(name: &str, element: &str) -> String {
     }
 }
 
-/// Columns 79-80, such as `2+` or `1-`; blank for a neutral atom.
+/// Columns 79-80, such as `2+`, `1-`, or `0`. A neutral atom states its
+/// zero, which readers take as evidence in residues with hydrogens.
 fn charge_field(charge: i8) -> String {
     match charge {
-        0 => String::new(),
+        0 => "0".to_owned(),
         charge if charge > 0 => format!("{charge}+"),
         charge => format!("{}-", -i16::from(charge)),
     }
 }
 
+/// The column of a one-character identifier: blank when empty, else its one
+/// printable ASCII character.
 fn single_character(text: &str) -> Option<char> {
     let mut characters = text.chars();
     match (characters.next(), characters.next()) {
         (None, _) => Some(' '),
-        (Some(character), None) => Some(character),
+        (Some(character), None) if character.is_ascii_graphic() => Some(character),
         _ => None,
     }
 }
@@ -994,14 +1008,19 @@ impl<'o> Plan<'o> {
                     (' ', identity.chain_id.clone())
                 }
                 None => {
-                    return Err(fail(PdbWriteErrorKind::ChainIdTooLong {
+                    return Err(fail(PdbWriteErrorKind::InvalidChainId {
                         atom: atom_id,
                         chain_id: identity.chain_id,
                     }))
                 }
             };
-            if identity.residue_name.chars().count() > 3 {
-                return Err(fail(PdbWriteErrorKind::ResidueNameTooLong {
+            if identity.residue_name.len() > 3
+                || !identity
+                    .residue_name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_graphic())
+            {
+                return Err(fail(PdbWriteErrorKind::InvalidResidueName {
                     atom: atom_id,
                     name: identity.residue_name,
                 }));
@@ -1018,7 +1037,7 @@ impl<'o> Plan<'o> {
             }
             let insertion_code = single_character(identity.insertion_code.as_deref().unwrap_or(""))
                 .ok_or_else(|| {
-                    fail(PdbWriteErrorKind::InsertionCodeTooLong {
+                    fail(PdbWriteErrorKind::InvalidInsertionCode {
                         atom: atom_id,
                         code: identity.insertion_code.clone().unwrap_or_default(),
                     })
@@ -1080,8 +1099,7 @@ impl<'o> Plan<'o> {
         }
 
         // `TER` follows the last polymer residue of each chain and takes the
-        // next serial number, so ligands bonded to the polymer, written
-        // after it, read as no part of it.
+        // next serial number.
         let last_polymer_atom = polymer_ends(topology, &records, &residues);
         for &index in &last_polymer_atom {
             records[index].ter = true;
@@ -1163,6 +1181,7 @@ impl<'o> Plan<'o> {
             return Identity {
                 residue: AtomResidue {
                     key: ResidueKey::Instance(instance.id()),
+                    chain: None,
                     polymer: false,
                     class: if water {
                         ResidueClass::Water
@@ -1187,6 +1206,7 @@ impl<'o> Plan<'o> {
         Identity {
             residue: AtomResidue {
                 key: ResidueKey::Hierarchy(residue.id()),
+                chain: Some(chain.id()),
                 polymer,
                 class: residue.class(),
                 place: residue.label_seq_id(),
@@ -1245,6 +1265,11 @@ impl<'o> Plan<'o> {
         let mut conect = BTreeMap::<usize, Vec<usize>>::new();
         let mut unstated = 0;
         let mut coordination_bonds = 0;
+        let hydrogens = topology
+            .atoms()
+            .filter(|atom| atom.atom().element.atomic_number() == 1)
+            .map(|atom| &residues[atom.index().index()].key)
+            .collect::<BTreeSet<_>>();
         for bond in topology.bonds() {
             let [left, right] = bond.atoms().map(|atom| atom.index().index());
             let standard = !records[left].hetatm && !records[right].hetatm;
@@ -1262,30 +1287,59 @@ impl<'o> Plan<'o> {
             if derived {
                 continue;
             }
+            // Readers take a listing between a metal and a non-metal of
+            // different residues for coordination, and any other listing for
+            // a covalent bond.
             let elements = bond.atoms().map(|atom| atom.atom().element);
-            let coordination = is_metal(elements[0]) != is_metal(elements[1]);
-            if bond.order == BondOrder::Dative && coordination && !same_residue {
+            let metal_bond = is_metal(elements[0]) != is_metal(elements[1]);
+            let coordination = !same_residue && metal_bond;
+            if bond.order == BondOrder::Dative && coordination {
                 // Readers record this listing as coordination, not a bond.
                 coordination_bonds += 1;
             }
-            let listings = match (bond.order, coordination) {
-                (BondOrder::Dative, true) | (BondOrder::Single, false) => 1,
-                (BondOrder::Double, false) => 2,
-                (BondOrder::Triple, false) => 3,
-                // A template supplies bonds a listing would misstate, such
-                // as a heme's single iron-nitrogen bonds, which a listing
-                // would make dative.
+            // Within one residue, a listing between a metal and a non-metal
+            // states the bond only when a reader gives it this order.
+            let metal = (same_residue
+                && metal_bond
+                && matches!(bond.order, BondOrder::Single | BondOrder::Dative))
+            .then(|| {
+                let template = templates
+                    .get(&residues[left].key)
+                    .filter(|_| templated)
+                    .map(|template| template.component);
+                listed_metal_bond(
+                    topology,
+                    records,
+                    residues,
+                    template,
+                    &hydrogens,
+                    [left, right],
+                )
+            });
+            let listings = match (bond.order, coordination, metal) {
+                // A template supplies bonds a listing cannot state, such as
+                // a heme's dative iron-nitrogen bonds.
+                (BondOrder::Dative, _, Some(MetalListing::Template)) => continue,
+                (_, _, Some(MetalListing::Template)) => Some(1),
+                (order, _, Some(MetalListing::Reads(read))) => (read == order).then_some(1),
+                (_, _, Some(MetalListing::Unknown)) => None,
+                (BondOrder::Dative, true, None) | (BondOrder::Single, false, None) => Some(1),
+                (BondOrder::Double, false, None) => Some(2),
+                (BondOrder::Triple, false, None) => Some(3),
+                // A template supplies the residue's other bonds a listing
+                // cannot state.
                 _ if templated => continue,
-                (order, _) => {
-                    if strict {
-                        return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
-                            bond: bond.id(),
-                            order,
-                        }));
-                    }
-                    unstated += 1;
-                    continue;
+                (_, _, None) => None,
+            };
+            let Some(listings) = listings else {
+                if strict {
+                    return Err(fail(PdbWriteErrorKind::UnsupportedBondOrder {
+                        bond: bond.id(),
+                        order: bond.order,
+                    }));
                 }
+                unstated += 1;
+                continue;
             };
             for _ in 0..listings {
                 conect.entry(left).or_default().push(right);
@@ -1507,18 +1561,15 @@ impl<'o> Plan<'o> {
     }
 }
 
-/// Counts, or with `strict` fails on, residues the bundled dictionary covers
-/// with bonds between named
-/// heavy atoms that neither its template nor any of its protonation variants,
-/// one of which a reader selects, would give it: a missing bond or a different
-/// order (an extra bond is listed instead). Coordination is dative, aromatic
-/// and delocalized template bonds accept either localized order, and
-/// hydrogens, whose names variants change, are not compared.
-/// The last record of each chain's polymer, by chain and segment. A residue
-/// is the polymer's when it has a place in its sequence, is a standard
-/// residue, or links through its `N` or `P` to the `C` or `O3'` of the
-/// polymer residue before it, as a C-terminal `NH2` cap, a selenomethionine,
-/// or an AMBER `HIE` does.
+/// The last record of each chain's polymer. A residue of a polymer
+/// molecule is the polymer's when it has a place in its sequence, is a
+/// standard residue, or links through its `N` or `P` to the `C` or `O3'` of
+/// the polymer residue before it, as a C-terminal `NH2` or `NME` cap does.
+/// Ligands bonded to the polymer, such as retinal to its lysine, follow the
+/// `TER`. Each hierarchy chain holding amino acids or nucleotides ends in a
+/// `TER` of its own, so chains that share an identifier stay apart. Another
+/// chain continues the chain before it with its identifier, as a reader
+/// joins it to that chain, and has no `TER` without one.
 fn polymer_ends(
     topology: &Topology,
     records: &[AtomRecord],
@@ -1531,17 +1582,41 @@ fn polymer_ends(
             .bonds()
             .any(|bond| bond.atoms().iter().any(|atom| atom.index().index() == b))
     };
+    let polymer_chains = residues
+        .iter()
+        .filter(|residue| {
+            residue.polymer
+                && matches!(
+                    residue.class,
+                    ResidueClass::AminoAcid
+                        | ResidueClass::DnaNucleotide
+                        | ResidueClass::RnaNucleotide
+                )
+        })
+        .map(|residue| residue.chain)
+        .collect::<BTreeSet<_>>();
+    // By identifier, the last chain holding amino acids or nucleotides.
+    let mut last_polymer_chain = BTreeMap::new();
     let mut ends = BTreeMap::new();
     // By chain: the linking atoms that end its polymer so far.
-    let mut tails = BTreeMap::<(char, &str), Vec<usize>>::new();
+    let mut tails = BTreeMap::<Option<ChainId>, Vec<usize>>::new();
     let mut start = 0;
     while start < records.len() {
         let key = &residues[start].key;
         let end = (start..records.len())
             .find(|&index| residues[index].key != *key)
             .unwrap_or(records.len());
-        let chain = (records[start].chain, records[start].segment.as_str());
         let residue = &residues[start];
+        let letter = (records[start].chain, records[start].segment.as_str());
+        let chain = if polymer_chains.contains(&residue.chain) {
+            last_polymer_chain.insert(letter, residue.chain);
+            residue.chain
+        } else if let Some(&chain) = last_polymer_chain.get(&letter) {
+            chain
+        } else {
+            start = end;
+            continue;
+        };
         let named = |names: &[&str]| {
             (start..end)
                 .filter(|&index| names.contains(&records[index].name.trim()))
@@ -1553,9 +1628,7 @@ fn polymer_ends(
                 .into_iter()
                 .any(|head| previous.iter().any(|&tail| bonded(head, tail)))
         };
-        if residue.class != ResidueClass::Water
-            && (residue.place.is_some() || !records[start].hetatm || linked())
-        {
+        if residue.polymer && (residue.place.is_some() || !records[start].hetatm || linked()) {
             ends.insert(chain, end - 1);
             tails.insert(chain, named(&["C", "O3'", "O3*"]));
         }
@@ -1575,6 +1648,98 @@ struct ConectPlan {
     /// Dative bonds between residues, listed as coordination that readers
     /// record rather than bond.
     coordination_bonds: usize,
+}
+
+/// What a reader makes of a `CONECT` listing between a metal and a
+/// non-metal of one residue.
+enum MetalListing {
+    /// The residue's template lists the bond, and its order wins.
+    Template,
+    /// The listing reads as this order ([`metal_bond_reading`]).
+    Reads(BondOrder),
+    /// The donor's template bonds are aromatic, which the reader localizes
+    /// before it decides.
+    Unknown,
+}
+
+/// What a reader makes of the listing of the bond between `atoms`, a metal
+/// and a non-metal of one residue whose reader template is `template`, with
+/// `hydrogens` the residues that have explicit hydrogens.
+fn listed_metal_bond(
+    topology: &Topology,
+    records: &[AtomRecord],
+    residues: &[AtomResidue],
+    template: Option<&Component>,
+    hydrogens: &BTreeSet<&ResidueKey>,
+    atoms: [usize; 2],
+) -> MetalListing {
+    let atom = |index: usize| {
+        topology
+            .atom_at(TopologyAtomIndex::from_index(index))
+            .expect("records follow dense atoms")
+    };
+    let named = |index: usize| {
+        template
+            .and_then(|template| template.atom(records[index].name.trim()))
+            .map(|(named, _)| named)
+    };
+    let template_lists = |left: usize, right: usize| {
+        let (Some(template), Some(left), Some(right)) = (template, named(left), named(right))
+        else {
+            return false;
+        };
+        template.bonds().iter().any(|bond| {
+            let [a, b] = bond.atoms();
+            (a, b) == (left, right) || (a, b) == (right, left)
+        })
+    };
+    let [left, right] = atoms;
+    if template_lists(left, right) {
+        return MetalListing::Template;
+    }
+    let donor = if is_metal(atom(left).atom().element) {
+        right
+    } else {
+        left
+    };
+    if let (Some(template), Some(named)) = (template, named(donor)) {
+        if template.bonds().iter().any(|bond| {
+            bond.atoms().contains(&named)
+                && !bond.metal_coordination()
+                && matches!(
+                    bond.order(),
+                    ComponentBondOrder::Aromatic | ComponentBondOrder::Delocalized
+                )
+        }) {
+            return MetalListing::Unknown;
+        }
+    }
+    let (mut other, mut undecided) = (0, 0);
+    for bond in atom(donor).bonds() {
+        let partner = bond
+            .atoms()
+            .map(|atom| atom.index().index())
+            .into_iter()
+            .find(|&index| index != donor)
+            .expect("a bond joins two atoms");
+        let order = bond.bond().order;
+        if residues[partner].key == residues[donor].key
+            && is_metal(atom(partner).atom().element)
+            && matches!(order, BondOrder::Single | BondOrder::Dative)
+            && !template_lists(donor, partner)
+        {
+            undecided += 1;
+        } else {
+            other += link_valence(order);
+        }
+    }
+    let hydrogens = hydrogens.contains(&residues[donor].key);
+    MetalListing::Reads(
+        match metal_bond_reading(atom(donor).atom(), other, undecided, hydrogens) {
+            MetalBondReading::Dative => BondOrder::Dative,
+            MetalBondReading::Covalent | MetalBondReading::Unstated => BondOrder::Single,
+        },
+    )
 }
 
 /// The template a reader applies to each residue (see
@@ -1737,12 +1902,6 @@ fn seqres_names(
         .map(|sequence| sequence.into_iter().map(str::to_owned).collect())
 }
 
-/// The charge readers take as stated for an atom record: its charge
-/// columns, blank for a neutral atom.
-fn stated_charge(charge: i8) -> Option<i8> {
-    (charge != 0).then_some(charge)
-}
-
 impl<'o> Plan<'o> {
     /// Mirrors the readers' protonation states for the templated residues,
     /// given the coordination the entry states as `LINK` records (`links`,
@@ -1826,7 +1985,8 @@ impl<'o> Plan<'o> {
                     }
                     let mut evidence = AtomEvidence {
                         coordination: coordinated.get(&index).copied().unwrap_or(0),
-                        stated: stated_charge(atom(index).atom().formal_charge),
+                        // Every record states its charge.
+                        stated: Some(atom(index).atom().formal_charge),
                         ..AtomEvidence::default()
                     };
                     let mut sites = Vec::new();

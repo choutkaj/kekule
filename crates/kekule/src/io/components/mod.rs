@@ -409,9 +409,6 @@ impl ComponentLibrary {
         id: &str,
         atoms: impl IntoIterator<Item = (&'a str, Element)> + Clone,
     ) -> Option<DefaultTemplate> {
-        static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
-        static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
-        static CHARMM_DICTIONARY: OnceLock<ComponentLibrary> = OnceLock::new();
         let fitting = |library: &'static ComponentLibrary, force_field| {
             let component = library.get(id)?;
             component.fits(atoms.clone()).then_some(DefaultTemplate {
@@ -422,15 +419,11 @@ impl ComponentLibrary {
             })
         };
         let bundled = Self::bundled();
+        let [dictionary, amber, charmm] = Self::force_fields();
         fitting(bundled, None)
-            .or_else(|| {
-                fitting(
-                    CHARMM_DICTIONARY.get_or_init(force_field::charmm_dictionary),
-                    Some("CHARMM"),
-                )
-            })
-            .or_else(|| fitting(AMBER.get_or_init(force_field::amber), Some("AMBER")))
-            .or_else(|| fitting(CHARMM.get_or_init(force_field::charmm), Some("CHARMM")))
+            .or_else(|| fitting(dictionary.0, Some(dictionary.1)))
+            .or_else(|| fitting(amber.0, Some(amber.1)))
+            .or_else(|| fitting(charmm.0, Some(charmm.1)))
             .or_else(|| {
                 Some(DefaultTemplate {
                     library: bundled,
@@ -439,6 +432,34 @@ impl ComponentLibrary {
                     fits: false,
                 })
             })
+    }
+
+    /// The force-field libraries in the order readers consult them after the
+    /// bundled one: the dictionary under CHARMM names, AMBER, and CHARMM.
+    fn force_fields() -> [(&'static Self, &'static str); 3] {
+        static AMBER: OnceLock<ComponentLibrary> = OnceLock::new();
+        static CHARMM: OnceLock<ComponentLibrary> = OnceLock::new();
+        static CHARMM_DICTIONARY: OnceLock<ComponentLibrary> = OnceLock::new();
+        [
+            (
+                CHARMM_DICTIONARY.get_or_init(force_field::charmm_dictionary),
+                "CHARMM",
+            ),
+            (AMBER.get_or_init(force_field::amber), "AMBER"),
+            (CHARMM.get_or_init(force_field::charmm), "CHARMM"),
+        ]
+    }
+
+    /// The element of the atom named `atom` in the first template of a
+    /// residue named `id` that names it: the caller's library, the bundled
+    /// one, then the force-field ones, as a reader without element symbols
+    /// takes it.
+    pub(crate) fn template_element(caller: Option<&Self>, id: &str, atom: &str) -> Option<Element> {
+        caller
+            .into_iter()
+            .chain([Self::bundled()])
+            .chain(Self::force_fields().map(|(library, _)| library))
+            .find_map(|library| Some(library.get(id)?.atom(atom)?.1.element()))
     }
 
     /// Reads every data block that defines component atoms, such as a CCD
