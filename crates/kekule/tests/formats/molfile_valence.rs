@@ -165,6 +165,7 @@ fn single_bonds_to_terminal_chalcogens_separate_charges() {
                 atom,
                 acceptor: source_atom(&interpretation, chalcogen).0,
                 location,
+                acceptor_location: source_atom(&interpretation, chalcogen).1,
             }],
             "{text}"
         );
@@ -188,6 +189,7 @@ fn donor_bonds_to_boron_separate_charges() {
                 atom,
                 acceptor: source_atom(&interpretation, carbons + 1).0,
                 location,
+                acceptor_location: source_atom(&interpretation, carbons + 1).1,
             }]
         );
     }
@@ -284,6 +286,7 @@ fn chalcogens_bound_to_metals_take_the_opposite_charge() {
                     atom: centre,
                     acceptor,
                     location,
+                    acceptor_location: oxygen_line,
                 },
                 Issue::MetalDonor {
                     atom: acceptor,
@@ -353,6 +356,7 @@ fn over_bonded_atoms_take_charges_with_their_partners() {
                 atom,
                 acceptor: source_atom(&interpretation, partner).0,
                 location,
+                acceptor_location: source_atom(&interpretation, partner).1,
             }],
             "{symbols:?}"
         );

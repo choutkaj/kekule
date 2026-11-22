@@ -17,7 +17,7 @@ use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::molfile::interpret::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_double_bonds,
     molfile_coordinate_tetrahedra, molfile_coordinates_are_flat,
-    molfile_stereo_group_members_at_atom, MolfileInterpretIssue,
+    molfile_stereo_group_members_at_atom,
 };
 use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::MolfileVersion;
@@ -347,26 +347,19 @@ fn stereo_projections(
     // makes no assertion, so writing a conformation cannot invent chemistry.
     let staged;
     let molecule = if let Some(geometry) = geometry {
-        let mut warnings = Vec::new();
-        let inferred =
-            molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings).map_err(|error| {
+        let inferred = molfile_coordinate_tetrahedra(molecule, geometry)
+            .map_err(|error| {
                 MOLFILE_WRITE
                     .invalid_structure("Cannot perceive stereo from the 3D coordinates.")
                     .with_source(error)
+            })?
+            .map_err(|valence| {
+                MOLFILE_WRITE
+                    .unsupported(
+                        "Cannot check that the 3D coordinates keep the stereo of the molecule.",
+                    )
+                    .with_source(valence)
             })?;
-        if !warnings.is_empty() {
-            let error = MOLFILE_WRITE.unsupported(
-                "Cannot check that the 3D coordinates keep the stereo of the molecule.",
-            );
-            let valence = warnings.into_iter().find_map(|warning| match warning {
-                MolfileInterpretIssue::CoordinateStereoValenceUnsupported { error } => Some(error),
-                _ => None,
-            });
-            return Err(match valence {
-                Some(cause) => error.with_source(cause),
-                None => error,
-            });
-        }
         if inferred.is_empty() {
             molecule
         } else {

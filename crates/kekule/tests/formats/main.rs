@@ -13,6 +13,7 @@ mod components;
 mod disulfides;
 mod documents;
 mod export;
+mod issue_texts;
 mod mmcif;
 mod mmcif_write;
 mod molfile_stereo;
