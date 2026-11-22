@@ -1216,7 +1216,7 @@ impl fmt::Display for StructureInterpretIssue {
                 bonds,
             } => write!(
                 formatter,
-                "Hydrogen {atom_name:?} of {residue} has {bonds} bonds. A hydrogen has one."
+                "Hydrogen {atom_name:?} of {residue} has {bonds} bonds."
             ),
             Self::DisulfideInferred {
                 residues: [left, right],
