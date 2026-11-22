@@ -51,12 +51,14 @@ pub enum ModelSelection {
 /// no record states.
 ///
 /// A template always applies to a residue whose atoms fit it. Connection
-/// records within the residue are checked against it, or against the
-/// protonation variant the residue takes: a bond the template lacks is kept,
-/// and an order a record states is kept, and the report names both. A
-/// residue with a heavy atom that its template does not list, or lists with
-/// another element, takes the bonds its records state, and the report names
-/// it; without records, it is an error, never a silently separate molecule.
+/// records within the residue are checked against it: a bond the template
+/// lacks is kept, and an order a record states is kept, and the report
+/// names both. Stated orders outrank hydrogens: a residue takes only a
+/// protonation variant that gives every stated order, and without one its
+/// charges follow from valence. A residue with a heavy atom that its
+/// template does not list, or lists with another element, takes the bonds
+/// its records state when they bond each of its heavy atoms, and the report
+/// names it; otherwise it is an error, never a silently separate molecule.
 ///
 /// Formal charges come from the source when stated, otherwise from the
 /// template, also when the source's own bond table supplies the bonds.
@@ -434,7 +436,8 @@ pub enum StructureInterpretIssue {
     /// connection records that state no bond orders, such as PDB `CONECT`
     /// records in a group that lists no bond twice, or `LINK` records. Its
     /// bonds are single whatever its chemistry, as for
-    /// [`Self::ResidueBondsInferred`].
+    /// [`Self::ResidueBondsInferred`]. A PDB ligand with only single bonds
+    /// is reported too: `CONECT` records cannot state a single bond.
     ResidueBondOrdersUnstated {
         /// The residue.
         residue: SourceResidueId,
@@ -445,10 +448,10 @@ pub enum StructureInterpretIssue {
         bonds: usize,
     },
     /// The atoms of a residue, by name and element, fit no template of its
-    /// name, and connection records bond it. It takes the bonds and orders
-    /// they state, as a residue without a template does, and its template
-    /// gives it neither bonds nor charges. A residue without such records
-    /// fails to read.
+    /// name, and connection records bond each of its heavy atoms. It takes
+    /// the bonds and orders they state, as a residue without a template
+    /// does, and its template gives it neither bonds nor charges. A residue
+    /// whose records leave a heavy atom out fails to read.
     ResidueFitsNoTemplate {
         /// The residue.
         residue: SourceResidueId,

@@ -8,7 +8,8 @@
 use super::prepare::{AtomRow, ConnectionRow, Implied};
 use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
-    hydrogen_differences, link_valence, template_bond_order, within_bonding_distance, PolymerLink,
+    hydrogen_differences, is_coordination, link_valence, standard_link, template_bond_order,
+    within_bonding_distance, PolymerLink, StandardLink,
 };
 use crate::math::Point3;
 use crate::molecule::{BondOrder, Element};
@@ -154,15 +155,42 @@ pub(super) fn mark_implied(
                     .find(|&row| rows[row].label_atom_id == name)
             }
         };
-        let linked = PolymerLink::undeclared(linking(left_row), linking(right_row))
-            .and_then(|link| link.atoms(named(residue_of[left]), named(residue_of[right])));
-        if linked == Some((left, right))
-            && within_bonding_distance(
-                (elements[left], written(left_row.position, precision)),
-                (elements[right], written(right_row.position, precision)),
+        let connections_ref = &*connections;
+        let residue_of = &residue_of;
+        // The reader's own rule: a linking atom bonded to another residue
+        // keeps the link out, and the block states the bond.
+        let outcome = PolymerLink::undeclared(linking(left_row), linking(right_row)).map(|link| {
+            standard_link(
+                link,
+                named(residue_of[left]),
+                named(residue_of[right]),
+                |atom: usize, partner: usize| {
+                    Ok::<_, std::convert::Infallible>(neighbours[atom].iter().any(
+                        |&(other, connection)| {
+                            other != partner
+                                && residue_of[other] != residue_of[atom]
+                                && !is_coordination(
+                                    connections_ref[connection].order,
+                                    [elements[atom], elements[other]],
+                                )
+                        },
+                    ))
+                },
+                |earlier, later| {
+                    within_bonding_distance(
+                        (
+                            elements[earlier],
+                            written(rows[earlier].position, precision),
+                        ),
+                        (elements[later], written(rows[later].position, precision)),
+                    )
+                },
             )
-        {
-            connections[index].implied = Some(Implied::PolymerLink);
+        });
+        if let Some(Ok(StandardLink::Linked(pair))) = outcome {
+            if pair == [left, right] {
+                connections[index].implied = Some(Implied::PolymerLink);
+            }
         }
     }
     missing

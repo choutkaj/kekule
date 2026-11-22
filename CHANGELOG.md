@@ -685,23 +685,30 @@ the main branch migrates by the table under "From the SampleSet API".
   without `pdbx_value_order` state no order either.
 - A connection record within a residue no longer turns its template off: a
   `LINK` within a sulfate no longer reads it as neutral S(OH)4. Records are
-  checked against the template, or the protonation variant the residue
-  takes; a bond it lacks is kept (`BondNotInTemplate`) and so is a stated
-  order it does not give (`BondOrderDiffersFromTemplate`). Records without
-  an order take the template's. A residue whose atoms fit no template takes
-  the bonds records state (`ResidueFitsNoTemplate`).
+  checked against the template; a bond it lacks is kept
+  (`BondNotInTemplate`) and so is a stated order it does not give
+  (`BondOrderDiffersFromTemplate`). Records without an order take the
+  template's. Stated orders outrank hydrogens: a residue takes only a
+  protonation variant that gives every stated order, and without one its
+  charges follow from valence. A residue whose atoms fit no template takes
+  the bonds records state when they bond each of its heavy atoms
+  (`ResidueFitsNoTemplate`).
 - Polymer links follow one rule whatever `_entity_poly.nstd_linkage` says:
   a standard link is made unless a connection record bonds one of its atoms
   to another residue (`PolymerLinkSkipped`), so a cyclic peptide keeps its
   peptide bonds. Adjacent residues with linking atoms but without the pair
   a link joins, and no other bond, are reported (`LinkingAtomMissing`)
-  instead of silently unlinked.
-- A PDB `HETATM` residue in a chain takes a polymer position only when its
-  template is a polymer one or one of its linking atoms (`N`, `C`, `P`,
-  `O3'`) lies within bonding distance of a neighbour's. A ligand listed
-  inside a chain no longer breaks the peptide bond around it, and capping
-  groups and 5'-terminal nucleotide triphosphates before the `ATOM` records
-  join the chain.
+  instead of silently unlinked. The mmCIF and PDB writers leave out a link
+  only when a reader rebuilds it by this same rule, so an N-methylated
+  backbone keeps its peptide bonds when written. The PDB writer also lists
+  other bonds between adjacent residues, which it used to leave out.
+- A PDB `HETATM` residue in a chain without `TER` records takes a polymer
+  position only when its template is a polymer one or one of its linking
+  atoms (`N`, `C`, `P`, `O3'`) lies within bonding distance of a
+  neighbour's. A ligand listed inside such a chain no longer breaks the
+  peptide bond around it, and capping groups and 5'-terminal nucleotide
+  triphosphates before the `ATOM` records join the chain. In a chain a
+  `TER` record ends, a `HETATM` residue with a linking atom stays polymer.
 - Solvation moves each placed water by a fixed shift of at most 0.0005 nm
   per axis. Copies of one seed water no longer sit at one distance, such as
   exactly 0.9 nm in a 3.9 nm cube, where hundreds of pairs fell on a common

@@ -907,11 +907,13 @@ covers, and disulfides between cysteine `SG` atoms within bonding distance
 that carry no hydrogen and no stated link. Explicit bonds outrank the levels
 below them, and close contacts no evidence bonds are counted, never bonded.
 A template always applies to a residue whose atoms fit it, and records
-within the residue are checked against it, or against the protonation
-variant the residue takes: a bond it lacks and an order a record states
-that it does not give are kept and reported. A residue whose atoms fit no
-template takes the bonds records state, and is reported; without records,
-it fails to read. Records that state no order, such as PDB `LINK` records
+within the residue are checked against it: a bond it lacks and an order a
+record states that it does not give are kept and reported. Stated orders
+outrank hydrogens: a residue takes only a protonation variant that gives
+every stated order, and without one its charges follow from valence. A
+residue whose atoms fit no template takes the bonds records state when
+they bond each of its heavy atoms, and is reported; otherwise it fails to
+read. Records that state no order, such as PDB `LINK` records
 and `CONECT` records in a bonded group that lists no bond twice, give
 single bonds. A residue without a template that takes its bonds from them
 is reported; such a bond between residues is not. A standard polymer link

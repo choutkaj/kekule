@@ -159,6 +159,81 @@ impl PolymerLink {
     }
 }
 
+/// What a reader makes of the standard link between two residues adjacent
+/// along a chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StandardLink<A> {
+    /// The earlier and the later residue's linking atoms are bonded.
+    Linked([A; 2]),
+    /// A residue lacks the linking atom.
+    Missing,
+    /// A bond joins a linking atom to an atom of another residue than its
+    /// partner, as in an isopeptide or an N-methylated backbone.
+    Skipped,
+    /// The linking atoms are beyond bonding distance: a chain break.
+    TooFar,
+}
+
+/// The reader's rule for the standard `link` between two residues adjacent
+/// along a chain, which readers and writers share, so that a writer leaves
+/// out exactly the links a reader rebuilds. `left` and `right` find the
+/// earlier and the later residue's atoms by name. `bonded_elsewhere` tells
+/// whether a bond joins an atom to one of another residue than its partner,
+/// coordination aside, and `within_distance` whether two atoms lie within
+/// bonding distance.
+pub(crate) fn standard_link<A: Copy, E>(
+    link: PolymerLink,
+    left: impl Fn(&str) -> Option<A>,
+    right: impl Fn(&str) -> Option<A>,
+    mut bonded_elsewhere: impl FnMut(A, A) -> Result<bool, E>,
+    within_distance: impl FnOnce(A, A) -> bool,
+) -> Result<StandardLink<A>, E> {
+    let Some((left, right)) = link.atoms(left, right) else {
+        return Ok(StandardLink::Missing);
+    };
+    if bonded_elsewhere(left, right)? || bonded_elsewhere(right, left)? {
+        return Ok(StandardLink::Skipped);
+    }
+    Ok(if within_distance(left, right) {
+        StandardLink::Linked([left, right])
+    } else {
+        StandardLink::TooFar
+    })
+}
+
+/// Whether a bond between residues is coordination, which readers record
+/// as connection metadata rather than bond: dative, between a metal and a
+/// non-metal.
+pub(crate) fn is_coordination(order: BondOrder, elements: [Element; 2]) -> bool {
+    order == BondOrder::Dative && raw::is_metal(elements[0]) != raw::is_metal(elements[1])
+}
+
+/// The bond of `candidate`, a template or one of its variants, between the
+/// atoms of a stated bond of a residue read with `template`.
+fn candidate_bond<'c>(
+    template: &Component,
+    candidate: &'c Component,
+    bond: &StatedBond,
+) -> Option<&'c TemplateBond> {
+    let [a, b] = bond
+        .template_atoms
+        .map(|index| candidate.atom(template.atoms()[index].name()));
+    let (Some((a, _)), Some((b, _))) = (a, b) else {
+        return None;
+    };
+    candidate.bonds().iter().find(|candidate| {
+        let [x, y] = candidate.atoms();
+        (x, y) == (a, b) || (x, y) == (b, a)
+    })
+}
+
+/// Whether `candidate`, a template or one of its variants, gives a stated
+/// bond its order.
+fn candidate_gives(template: &Component, candidate: &Component, bond: &StatedBond) -> bool {
+    candidate_bond(template, candidate, bond)
+        .is_some_and(|template_bond| gives_order(template_bond, bond.order))
+}
+
 /// Whether a template bond gives a stated order: aromatic template bonds
 /// accept either localized order, and coordination is dative.
 fn gives_order(bond: &TemplateBond, order: BondOrder) -> bool {
@@ -716,11 +791,15 @@ impl<'r> Resolver<'r, '_> {
             } else if let Some(template) = template {
                 let component = template.component;
                 // A residue whose atoms fit no template is read as its
-                // records bond it, as writers state every bond of one; one
-                // without records fails.
-                if let Some((matched, strays)) =
-                    match_template(residue, component, listed.is_empty())?
-                {
+                // records bond it when they bond every heavy atom, as
+                // writers state every bond of one; otherwise it fails.
+                let complete = !listed.is_empty()
+                    && residue
+                        .sites
+                        .iter()
+                        .filter(|site| !is_hydrogen(site.element))
+                        .all(|site| listed.iter().any(|bond| bond.atoms.contains(&site.atom)));
+                if let Some((matched, strays)) = match_template(residue, component, !complete)? {
                     let stated =
                         self.add_checked_listed_bonds(residue, component, &matched, &listed)?;
                     self.add_template_bonds(component, &matched)?;
@@ -927,19 +1006,10 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Reports each stated order of a templated residue that `candidate`,
-    /// the template or variant it takes, does not give.
+    /// its template or a variant, does not give.
     fn report_stated_orders(&mut self, templated: &TemplatedResidue<'_>, candidate: &Component) {
         for bond in &templated.stated {
-            let [a, b] = bond
-                .template_atoms
-                .map(|index| candidate.atom(templated.component.atoms()[index].name()));
-            let (Some((a, _)), Some((b, _))) = (a, b) else {
-                continue;
-            };
-            let Some(template_bond) = candidate.bonds().iter().find(|candidate| {
-                let [x, y] = candidate.atoms();
-                (x, y) == (a, b) || (x, y) == (b, a)
-            }) else {
+            let Some(template_bond) = candidate_bond(templated.component, candidate, bond) else {
                 continue;
             };
             if !gives_order(template_bond, bond.order) {
@@ -1247,54 +1317,63 @@ impl<'r> Resolver<'r, '_> {
                 let Some(link) = link else {
                     continue;
                 };
-                let Some((&left_atom, &right_atom)) =
-                    link.atoms(|name| left.atoms.get(name), |name| right.atoms.get(name))
-                else {
-                    if has_linking_atom(left)
-                        && has_linking_atom(right)
-                        && !self.residues_bonded(left, right)?
-                    {
-                        self.issues
-                            .push(raw::StructureInterpretIssue::LinkingAtomMissing {
-                                residue: left.key.id(self.model_id),
-                                next: right.key.id(self.model_id),
-                            });
-                    }
-                    continue;
+                let site = |atom| {
+                    left.site(atom)
+                        .or_else(|| right.site(atom))
+                        .expect("linking atom is a residue site")
                 };
-                if self.bonded_elsewhere(left_atom, left, right_atom)?
-                    || self.bonded_elsewhere(right_atom, right, left_atom)?
-                {
-                    self.issues
-                        .push(raw::StructureInterpretIssue::PolymerLinkSkipped {
+                let outcome = standard_link(
+                    link,
+                    |name| left.atoms.get(name).copied(),
+                    |name| right.atoms.get(name).copied(),
+                    |atom, partner| {
+                        let residue = if left.site(atom).is_some() {
+                            left
+                        } else {
+                            right
+                        };
+                        self.bonded_elsewhere(atom, residue, partner)
+                    },
+                    |left_atom, right_atom| {
+                        let (left_site, right_site) = (site(left_atom), site(right_atom));
+                        within_bonding_distance(
+                            (left_site.element, left_site.point),
+                            (right_site.element, right_site.point),
+                        )
+                    },
+                )?;
+                let issue = match outcome {
+                    StandardLink::Linked([left_atom, right_atom]) => {
+                        self.add_bond(
+                            left_atom,
+                            right_atom,
+                            SourceBondOrder::Localized(BondOrder::Single),
+                            raw::BondEvidence::PolymerLink,
+                        )?;
+                        continue;
+                    }
+                    StandardLink::Missing => {
+                        if !has_linking_atom(left)
+                            || !has_linking_atom(right)
+                            || self.residues_bonded(left, right)?
+                        {
+                            continue;
+                        }
+                        raw::StructureInterpretIssue::LinkingAtomMissing {
                             residue: left.key.id(self.model_id),
                             next: right.key.id(self.model_id),
-                        });
-                    continue;
-                }
-                let (left_site, right_site) = (
-                    left.site(left_atom)
-                        .expect("linking atom is a residue site"),
-                    right
-                        .site(right_atom)
-                        .expect("linking atom is a residue site"),
-                );
-                if within_bonding_distance(
-                    (left_site.element, left_site.point),
-                    (right_site.element, right_site.point),
-                ) {
-                    self.add_bond(
-                        left_atom,
-                        right_atom,
-                        SourceBondOrder::Localized(BondOrder::Single),
-                        raw::BondEvidence::PolymerLink,
-                    )?;
-                } else {
-                    self.issues.push(raw::StructureInterpretIssue::ChainBreak {
+                        }
+                    }
+                    StandardLink::Skipped => raw::StructureInterpretIssue::PolymerLinkSkipped {
                         residue: left.key.id(self.model_id),
                         next: right.key.id(self.model_id),
-                    });
-                }
+                    },
+                    StandardLink::TooFar => raw::StructureInterpretIssue::ChainBreak {
+                        residue: left.key.id(self.model_id),
+                        next: right.key.id(self.model_id),
+                    },
+                };
+                self.issues.push(issue);
             }
         }
         Ok(())
@@ -1392,8 +1471,11 @@ impl<'r> Resolver<'r, '_> {
         Ok(())
     }
 
-    /// Sets formal charges of a templated residue. Stated charges win. Without
-    /// model hydrogens, the template's charges apply. With them, the template
+    /// Sets formal charges of a templated residue. Stated charges win, and
+    /// only the template or a variant that gives every stated bond order is
+    /// a candidate; without one, charges follow from valence, as for a
+    /// residue without a template. Without model hydrogens, the template's
+    /// charges apply. With them, the template
     /// or protonation variant matching the hydrogens on every heteroatom is
     /// preferred; otherwise one whose differences lie on heteroatoms with only
     /// single bonds, each added or removed hydrogen changing the charge by one.
@@ -1409,8 +1491,16 @@ impl<'r> Resolver<'r, '_> {
             .map(|(&index, &atom)| (templated.component.atoms()[index].name(), atom))
             .collect::<Vec<_>>();
         let has_hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
-        let candidates =
-            std::iter::once(templated.component).chain(templated.variants.iter().copied());
+        // Stated orders outrank hydrogens: only a template or variant that
+        // gives every stated order is a candidate.
+        let candidates = std::iter::once(templated.component)
+            .chain(templated.variants.iter().copied())
+            .filter(|candidate| {
+                templated
+                    .stated
+                    .iter()
+                    .all(|bond| candidate_gives(templated.component, candidate, bond))
+            });
         let mut evaluated = Vec::new();
         for candidate in candidates {
             if let Some(charges) =
@@ -1418,6 +1508,12 @@ impl<'r> Resolver<'r, '_> {
             {
                 evaluated.push((candidate, charges));
             }
+        }
+        if evaluated.is_empty() && !templated.stated.is_empty() {
+            // No candidate fits both the stated orders and the hydrogens:
+            // the stated orders stay, and charges follow from valence.
+            self.report_stated_orders(templated, templated.component);
+            return self.assign_implied_charges(residue);
         }
         let chosen = evaluated
             .iter()

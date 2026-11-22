@@ -6,13 +6,14 @@
 //! other residues or a `TER` record names a new residue, as when numbering
 //! wraps around or a segment restarts it. Without entity records, a chain's
 //! polymer is read from its `TER` records, and its residues' order gives
-//! polymer adjacency. A residue of `HETATM` records in it is polymer only
-//! when its template is a polymer one or one of its linking atoms (`N`, `C`,
-//! `P`, `O3'`, or `O3*`) lies within bonding distance of one of a
-//! neighbour's, as for a capping group or a 5'-terminal nucleotide
-//! triphosphate. A ligand listed between two residues then does not separate
-//! them. Such residues bonded to the first or last `ATOM` residue of a chain
-//! without `TER` records extend its polymer.
+//! polymer adjacency. A residue of `HETATM` records in a run a `TER` record
+//! ends is polymer when its template is a polymer one or it has a linking
+//! atom (`N`, `C`, `P`, `O3'`, or `O3*`). Without `TER`, it is polymer when
+//! its template is a polymer one or one of its linking atoms lies within
+//! bonding distance of one of a neighbour's, as for a capping group or a
+//! 5'-terminal nucleotide triphosphate, so a ligand listed between two
+//! residues does not separate them. Such residues bonded to the first or last
+//! `ATOM` residue extend the polymer.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::types::{poll, poll_every, structure_error};
@@ -200,6 +201,11 @@ struct Residue {
 }
 
 impl Residue {
+    /// Whether it has an atom a polymer link joins.
+    fn has_linking_atom(&self) -> bool {
+        !self.heads.is_empty() || !self.tails.is_empty()
+    }
+
     /// Whether a linking atom of this residue lies within bonding distance
     /// of one of `next`'s.
     fn links_to(&self, next: &Self) -> bool {
@@ -221,9 +227,10 @@ struct ChainRuns {
 impl ChainRuns {
     /// Ends a chain's run. A run a `TER` record ends is polymer; otherwise its
     /// polymer spans its `ATOM` records and the residues bonded to their
-    /// ends. Water is never polymer, nor is a residue of `HETATM` records
-    /// with neither a polymer template nor a link to a neighbour, nor a
-    /// single residue.
+    /// ends. Water is never polymer, nor a single residue, nor a residue of
+    /// `HETATM` records without a polymer template and, in a run a `TER`
+    /// record ends, without linking atoms, or otherwise without a link to a
+    /// neighbour.
     fn close(&mut self, asym_id: &str, terminated: bool, residues: &mut [Residue]) {
         let Some(run) = self.open.remove(asym_id) else {
             return;
@@ -257,10 +264,14 @@ impl ChainRuns {
             .enumerate()
             .filter(|&(index, &residue)| {
                 let residue = &residues[residue];
-                let linked = (index > 0 && residues[span[index - 1]].links_to(residue))
-                    || span
-                        .get(index + 1)
-                        .is_some_and(|&next| residue.links_to(&residues[next]));
+                let linked = if terminated {
+                    residue.has_linking_atom()
+                } else {
+                    (index > 0 && residues[span[index - 1]].links_to(residue))
+                        || span
+                            .get(index + 1)
+                            .is_some_and(|&next| residue.links_to(&residues[next]))
+                };
                 !residue.water && (residue.atom_record || residue.polymer_template || linked)
             })
             .map(|(_, &residue)| residue)
