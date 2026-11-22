@@ -1328,9 +1328,9 @@ fn smiles_atom_with_chirality(
     force_hydrogen: bool,
 ) -> String {
     let bracket_hydrogens = if force_hydrogen {
-        smiles_atom_bracket_hydrogens(atom, aromatic, inferred_hydrogens).max(1)
+        atom.hydrogens.represented_count().max(1)
     } else {
-        smiles_atom_bracket_hydrogens(atom, aromatic, inferred_hydrogens)
+        atom.hydrogens.represented_count()
     };
     let organic =
         bracket_hydrogens == 0 && chirality.is_none() && smiles_atom_is_organic_subset(atom);
@@ -1426,6 +1426,23 @@ fn smiles_atom_with_style_and_chirality(
             chirality,
             force_hydrogen,
         )
+    } else if aromatic
+        && atom.hydrogens.is_inferred()
+        && inferred_hydrogens > 0
+        && !super::canonical::canonical_smiles_can_use_organic_form(
+            mol,
+            atom_id,
+            atom,
+            true,
+            inferred_hydrogens,
+            false,
+        )?
+    {
+        // A reader would infer other hydrogens on the organic form, as it
+        // infers none on the `p` of 1H-phosphole, so the count is written.
+        let mut normalized = atom.clone();
+        normalized.hydrogens = ImplicitHydrogens::Fixed(inferred_hydrogens);
+        smiles_atom_with_chirality(&normalized, true, 0, chirality, force_hydrogen)
     } else {
         smiles_atom_with_chirality(
             atom,
@@ -1474,18 +1491,6 @@ pub(super) fn validate_smiles_bracket_radical(
     Ok(())
 }
 
-fn smiles_atom_bracket_hydrogens(atom: &Atom, aromatic: bool, inferred_hydrogens: u8) -> u8 {
-    if atom.element.symbol() == "N"
-        && aromatic
-        && atom.hydrogens.represented_count() == 0
-        && inferred_hydrogens == 1
-    {
-        1
-    } else {
-        atom.hydrogens.represented_count()
-    }
-}
-
 fn smiles_atom_is_organic_subset(atom: &Atom) -> bool {
     atom.isotope.is_none()
         && atom.radical.is_none()
@@ -1498,11 +1503,6 @@ fn smiles_atom_is_organic_subset(atom: &Atom) -> bool {
         )
 }
 
-pub(super) fn smiles_atom_requires_brackets(
-    atom: &Atom,
-    aromatic: bool,
-    inferred_hydrogens: u8,
-) -> bool {
+pub(super) fn smiles_atom_requires_brackets(atom: &Atom) -> bool {
     !smiles_atom_is_organic_subset(atom)
-        || smiles_atom_bracket_hydrogens(atom, aromatic, inferred_hydrogens) > 0
 }
