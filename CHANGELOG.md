@@ -719,6 +719,8 @@ the main branch migrates by the table under "From the SampleSet API".
   `StructureSetError::NonFiniteLogWeight`.
 - **Breaking:** `DcdWriter::finalize`; `finish` and `TrajectoryWriter::flush`
   write the frame count.
+- **Breaking:** `MmcifWriteErrorKind::MissingAtomProvenance`; the mmCIF
+  writer writes atoms without provenance as it does without a report.
 
 ### Fixed
 
@@ -829,7 +831,14 @@ the main branch migrates by the table under "From the SampleSet API".
   name. Where another chain states that name, the chain takes it with a
   serial, `ION1-2`, so two chains never read back as one; so does a molecule
   outside the hierarchy. Asyms of one component are one non-polymer entity,
-  and all waters one water entity, instead of an entity per asym.
+  and all waters one water entity, instead of an entity per asym. A site
+  without an author ID takes the one the rest of its chain states.
+- The mmCIF writer writes a structure an edit added atoms to with its
+  followed report (`follow_edit`, `follow_append`), instead of failing. Atoms
+  without provenance, such as added hydrogens, join their residues' rows, and
+  a residue or molecule of such atoms alone is written as without a report.
+  The report's coordination and entities still apply, so hydrogens added to
+  rubredoxin keep its four `metalc` rows.
 - A double or triple bond the source states between aromatic atoms is their
   pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
   and 4 read as benzene, not as a ring of six double bonds or a cumulene.

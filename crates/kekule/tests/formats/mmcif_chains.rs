@@ -2,10 +2,13 @@
 //! the instances of one chemical component into one entity.
 
 use kekule::macromolecular::StructureInterpretation;
+use kekule::math::Point3;
 use kekule::mmcif::{self, MmcifWriteOptions};
-use kekule::molecule::{Atom, Element, MoleculeEditor};
+use kekule::molecule::{Atom, AtomId, Element, MoleculeEditor};
 use kekule::pdb;
-use kekule::structure::{Positions, Structure};
+use kekule::structure::{Positions, Structure, StructureBuilder};
+use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
+use kekule::units::{Quantity, ANGSTROM};
 
 /// A coordinate record of atom `name` of residue `residue` `sequence`, with
 /// chain column `chain` and segment `segment`, at `position` Å.
@@ -313,6 +316,51 @@ fn a_molecule_outside_the_hierarchy_takes_a_name_no_chain_states() {
             ("B".to_owned(), Some("M2".to_owned())),
             ("M2".to_owned(), Some("M2-2".to_owned())),
         ],
+        "{text}"
+    );
+}
+
+#[test]
+fn a_site_without_an_author_id_takes_the_one_its_chain_states() {
+    // Two waters of chain A, one stating author chain A, one stating none.
+    let mut builder = StructureBuilder::new();
+    let chain = builder
+        .topology_mut()
+        .hierarchy_mut()
+        .add_chain("A", None)
+        .unwrap();
+    for (sequence, author) in [(1, Some("A".to_owned())), (2, None)] {
+        let mut water = MoleculeEditor::new();
+        water
+            .add_atom(Atom::new(Element::from_symbol("O").unwrap()))
+            .unwrap();
+        let position = Point3::new(5.0 * f64::from(sequence), 0.0, 0.0);
+        let positions = Positions::new(Quantity::new(vec![position], ANGSTROM)).unwrap();
+        let instance = builder
+            .add_molecule(water.finish().unwrap(), &positions)
+            .unwrap();
+        let hierarchy = builder.topology_mut().hierarchy_mut();
+        let residue = hierarchy
+            .add_residue(chain, "HOH", None, Some(sequence.to_string()), None)
+            .unwrap();
+        hierarchy
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, AtomId::new(0)),
+                AtomSiteMetadata::default()
+                    .with_label_atom_id(Some("O".to_owned()))
+                    .with_auth_asym_id(author),
+            )
+            .unwrap();
+    }
+    let structure = builder.build().unwrap();
+    let (text, _) = mmcif::write([&structure], MmcifWriteOptions::default()).unwrap();
+    let water = [("HOH", "1"), ("HOH", "2")]
+        .map(|(name, sequence)| (name.to_owned(), sequence.to_owned()))
+        .to_vec();
+    assert_eq!(
+        author_chains(&read_back(&text)),
+        [("A".to_owned(), water)],
         "{text}"
     );
 }

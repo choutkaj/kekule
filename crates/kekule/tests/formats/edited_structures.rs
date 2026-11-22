@@ -292,3 +292,114 @@ fn a_report_follows_its_structure_through_an_append() {
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 2, "{written}");
 }
+
+/// Each residue by author chain, component, and author sequence number,
+/// with its element symbols in atom-site order.
+fn residue_atoms(
+    structure: &kekule::structure::Structure,
+) -> Vec<(String, String, String, Vec<String>)> {
+    let mut residues = structure
+        .topology()
+        .chains()
+        .flat_map(|chain| {
+            let author = chain.author_id().unwrap_or(chain.label_id()).to_owned();
+            chain.residues().map(move |residue| {
+                (
+                    author.clone(),
+                    residue.name().to_owned(),
+                    residue.author_seq_id().unwrap_or_default().to_owned(),
+                    residue
+                        .atom_sites()
+                        .map(|site| site.atom().atom().element().symbol().to_owned())
+                        .collect::<Vec<_>>(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    residues.sort();
+    residues
+}
+
+#[test]
+fn a_followed_report_writes_mmcif_with_added_hydrogens() {
+    // Rubredoxin's iron is coordinated by four cysteines; its waters have
+    // no hydrogens.
+    let source = pdb::parse_str(include_str!("../fixtures/pdb/1IRO.pdb"), Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(source.report().coordination().len(), 4);
+    let mut editor = source.structure().to_editor();
+    let atoms = editor.topology().atom_ids().collect::<Vec<_>>();
+    let added = editor
+        .add_hydrogens(atoms, AddHydrogensOptions::default())
+        .unwrap();
+    assert!(added.added_count() > 0);
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed =
+        source
+            .report()
+            .follow_edit(source.topology(), edited.topology(), &correspondence);
+
+    let (written, report) =
+        mmcif::write(
+            [mmcif::MmcifBlockSource::structure(&edited)
+                .with_reports(std::slice::from_ref(&followed))],
+            Default::default(),
+        )
+        .unwrap();
+    assert!(report.omissions().is_empty(), "{:?}", report.omissions());
+    assert_eq!(written.matches(" metalc ").count(), 4, "{written}");
+    let reread = mmcif::parse_str(&written, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(reread.report().coordination().len(), 4);
+    assert_eq!(residue_atoms(reread.structure()), residue_atoms(&edited));
+}
+
+#[test]
+fn a_followed_report_writes_mmcif_with_a_molecule_added_outside_the_hierarchy() {
+    let source = read(&zinc_entry());
+    let mut editor = source.structure().to_editor();
+    let mut sodium = kekule::molecule::MoleculeEditor::new();
+    sodium
+        .add_atom(
+            kekule::molecule::Atom::new(kekule::molecule::Element::from_symbol("Na").unwrap())
+                .with_formal_charge(1),
+        )
+        .unwrap();
+    editor
+        .add_molecule(
+            sodium.finish().unwrap(),
+            &kekule::structure::Positions::zeros(1),
+        )
+        .unwrap();
+    let (edited, correspondence) = editor.finish_with_correspondence().unwrap();
+    let followed =
+        source
+            .report()
+            .follow_edit(source.topology(), edited.topology(), &correspondence);
+    let (written, _) =
+        mmcif::write(
+            [mmcif::MmcifBlockSource::structure(&edited)
+                .with_reports(std::slice::from_ref(&followed))],
+            Default::default(),
+        )
+        .unwrap();
+    // The zincs keep their coordination; the sodium is an asym of its own.
+    assert_eq!(written.matches(" metalc ").count(), 2, "{written}");
+    let reread = mmcif::parse_str(&written, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    assert_eq!(reread.report().coordination().len(), 2);
+    assert_eq!(reread.structure().atom_count(), edited.atom_count());
+    let chains = reread
+        .structure()
+        .topology()
+        .chains()
+        .map(|chain| chain.label_id().to_owned())
+        .collect::<Vec<_>>();
+    assert!(chains.last().unwrap().starts_with('M'), "{written}");
+}

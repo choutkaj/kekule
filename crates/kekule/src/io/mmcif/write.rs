@@ -332,8 +332,6 @@ pub enum MmcifWriteErrorKind {
     },
     /// An atom duplicates another atom's identity within one residue.
     DuplicateAtomIdentity(InstanceAtomId),
-    /// Interpretation reports carry no atom-level provenance for this atom.
-    MissingAtomProvenance(InstanceAtomId),
     /// Interpretation reports carry atom-level provenance for this atom twice.
     DuplicateAtomProvenance(InstanceAtomId),
     /// Interpretation reports carry provenance for an atom the structure does
@@ -485,7 +483,6 @@ impl MmcifWriteErrorKind {
             | Self::DuplicateAtomSite(_)
             | Self::InconsistentAtomSite { .. }
             | Self::DuplicateAtomIdentity(_)
-            | Self::MissingAtomProvenance(_)
             | Self::DuplicateAtomProvenance(_)
             | Self::EmptyStructureSet
             | Self::ReportCountMismatch(_)
@@ -584,10 +581,6 @@ impl fmt::Display for MmcifWriteErrorKind {
                 f,
                 "{} repeats the identity of another atom of its residue.",
                 Capitalized(atom)
-            ),
-            Self::MissingAtomProvenance(atom) => write!(
-                f,
-                "The interpretation reports have no source record of {atom}."
             ),
             Self::DuplicateAtomProvenance(atom) => write!(
                 f,
@@ -909,7 +902,10 @@ impl<'a> MmcifBlockSource<'a> {
     /// Atom-level provenance keeps one source entity and structural asymmetry
     /// consistent even when it spans several molecule instances; conflicting
     /// source identity is rejected. An auth-only source is normalized by
-    /// copying author identifiers into the required label fields.
+    /// copying author identifiers into the required label fields. Atoms
+    /// without provenance, such as those an edit added, join their residues;
+    /// a residue or molecule of such atoms alone is written as without a
+    /// report.
     #[must_use]
     pub fn with_reports(mut self, reports: &'a [StructureInterpretationReport]) -> Self {
         self.entities = EntitySemantics::Reports(reports);

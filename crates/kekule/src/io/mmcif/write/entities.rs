@@ -5,8 +5,8 @@ use crate::diagnostics::{AtomField, FormatError};
 use crate::io::macromolecular::{EntityKind, StructureInterpretationReport};
 use crate::structure::StructureView;
 use crate::topology::{
-    AtomSiteView, ChainView, InstanceAtomId, MoleculeClass, MoleculeInstance, MoleculeInstanceId,
-    ResidueClass, ResidueView, Topology,
+    AtomSiteView, ChainView, InstanceAtomId, MoleculeClass, MoleculeInstanceId, ResidueClass,
+    ResidueView, Topology,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -196,9 +196,10 @@ pub(super) fn stated_author_id<'h>(
 
 /// The author chain IDs of chains that state none, and of molecules outside
 /// the hierarchy. mmCIF readers group asyms into author chains by
-/// `auth_asym_id`, so all asyms of one chain take one: the chain's own asym
-/// ID, that of its first asym. Where a chain states that ID as its author
-/// ID, or another chain already takes it, the chain takes the ID with a
+/// `auth_asym_id`, so all asyms of one chain take one. A chain whose other
+/// sites state one name takes it; otherwise the chain takes its own asym
+/// ID, that of its first asym. Where another chain states that ID as its
+/// author ID, or already takes it, the chain takes the ID with a
 /// serial, `A-2`, `A-3`, and so on, that none takes, so that chains stay
 /// apart.
 struct AuthorIds {
@@ -229,16 +230,23 @@ impl AuthorIds {
     }
 
     /// The author ID of the sites of `chain`, written as asym `asym_id`, that
-    /// state none; `asym_id` itself, unclaimed, when every site states one.
+    /// state none: the one its other sites state, else a fallback; `asym_id`
+    /// itself, unclaimed, when every site states one.
     fn chain(&mut self, chain: ChainView<'_>, asym_id: &str) -> String {
-        let unstated = chain
-            .residues()
-            .flat_map(|residue| residue.atom_sites())
-            .any(|site| stated_author_id(site, chain).is_none());
-        if unstated {
-            self.fallback(asym_id)
-        } else {
-            asym_id.to_owned()
+        let mut unstated = false;
+        let mut stated = BTreeSet::new();
+        for site in chain.residues().flat_map(|residue| residue.atom_sites()) {
+            match stated_author_id(site, chain) {
+                Some(author) => {
+                    stated.insert(author);
+                }
+                None => unstated = true,
+            }
+        }
+        match (unstated, stated.first()) {
+            (false, _) => asym_id.to_owned(),
+            (true, Some(&author)) if stated.len() == 1 => author.to_owned(),
+            (true, _) => self.fallback(asym_id),
         }
     }
 }
@@ -343,62 +351,28 @@ pub(super) fn generic_entity_plan(
         }
     }
 
-    for (id, molecule) in structure.topology().instance_records() {
-        let definition = structure
-            .topology()
-            .instance(id)
-            .expect("listed instances are topology molecules")
-            .definition();
-        let qualified_atoms = definition
-            .molecule()
-            .atoms()
-            .map(|(atom, _)| molecule.qualify_atom(atom))
-            .collect::<Vec<_>>();
-        let assigned = qualified_atoms
-            .iter()
-            .filter(|atom| atoms.contains_key(atom))
-            .count();
-        if assigned != 0 {
-            if assigned != qualified_atoms.len() {
-                let missing = qualified_atoms
-                    .into_iter()
-                    .find(|atom| !atoms.contains_key(atom))
-                    .expect("partially assigned molecule has a missing atom site");
-                return Err(fail(MmcifWriteErrorKind::MissingAtomSite(missing)));
-            }
-            continue;
-        }
-        let base = format!("M{}", one_based_serial(id.raw()));
-        let mut candidate = base.clone();
-        let mut suffix = 2usize;
-        while asym_ids.reserved.contains(&candidate) {
-            candidate = format!("{base}_{suffix}");
-            suffix += 1;
-        }
-        asym_ids.reserved.insert(candidate.clone());
-        let kind = entity_kind(molecule, classifications)?;
+    for (id, molecule_atoms) in unplaced_molecules(structure, &atoms)? {
+        let asym_id = molecule_asym_id(id, &mut asym_ids.reserved);
+        let kind = entity_kind(id, classifications)?;
         // Molecules outside the hierarchy are written as the generic
         // component `MOL`, which names no chemistry, so only water groups.
         let entity_id = entity_of(
             kind,
             (kind == AssignedEntityKind::Water).then_some(EntityKey::Water),
         );
-        let author = author_ids.fallback(&candidate);
+        let author = author_ids.fallback(&asym_id);
         asyms.push(AsymRow {
-            id: candidate.clone(),
+            id: asym_id.clone(),
             entity_id: entity_id.clone(),
         });
-        for atom in qualified_atoms {
-            atoms.insert(
-                atom,
-                AtomEntityAssignment {
-                    entity_id: entity_id.clone(),
-                    asym_id: candidate.clone(),
-                    kind,
-                    author_asym_id: author.clone(),
-                },
-            );
-        }
+        assign_atoms(
+            &mut atoms,
+            molecule_atoms,
+            &entity_id,
+            &asym_id,
+            kind,
+            &author,
+        );
     }
 
     Ok(EntityPlan {
@@ -455,20 +429,64 @@ fn report_entity_plan(
     let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
     // Generated entities by what their asyms share.
     let mut grouped = BTreeMap::<EntityKey, String>::new();
+    let mut generated_serial = 1usize;
+    // The entity of an asym: its source entity, its group's, or a new one.
+    let mut entity_of = |kind: AssignedEntityKind,
+                         source_entity_id: Option<&String>,
+                         key: Option<EntityKey>|
+     -> Result<String, FormatError> {
+        let entity_id = if let Some(entity_id) = source_entity_id {
+            entity_id.clone()
+        } else if let Some(entity_id) = key.as_ref().and_then(|key| grouped.get(key)) {
+            entity_id.clone()
+        } else {
+            let entity_id = loop {
+                let candidate = format!("K{generated_serial}");
+                generated_serial += 1;
+                if reserved_entity_ids.insert(candidate.clone()) {
+                    break candidate;
+                }
+            };
+            if let Some(key) = key {
+                grouped.insert(key, entity_id.clone());
+            }
+            entity_id
+        };
+        if let Some(existing) = entity_kinds.get(&entity_id) {
+            if *existing != kind {
+                return Err(fail(
+                    MmcifWriteErrorKind::ConflictingSourceEntityClassifications {
+                        entity_id,
+                        classifications: vec![existing.as_source(), kind.as_source()],
+                    },
+                ));
+            }
+        } else {
+            entity_kinds.insert(entity_id.clone(), kind);
+            entities.push(EntityRow {
+                id: entity_id.clone(),
+                kind,
+            });
+        }
+        Ok(entity_id)
+    };
     let mut asyms = Vec::new();
     let mut atoms = BTreeMap::new();
-    let mut generated_serial = 1usize;
     for chain in structure.topology().chains() {
-        let segments = chain_segments(chain, |_, sites| {
+        let segments = chain_segments(chain, |residue, sites| {
             let source_atoms = sites
                 .iter()
-                .map(|atom| {
-                    provenance
-                        .get(atom)
-                        .copied()
-                        .ok_or_else(|| fail(MmcifWriteErrorKind::MissingAtomProvenance(*atom)))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                .filter_map(|atom| provenance.get(atom).copied())
+                .collect::<Vec<_>>();
+            // Atoms an edit added have no provenance. A residue of such
+            // atoms alone takes the kind the structure gives it, as without
+            // a report; another takes its source atoms' kind and entity.
+            if source_atoms.is_empty() {
+                return Ok((
+                    canonical_residue_kind(structure, chain, residue, sites)?,
+                    None,
+                ));
+            }
             for atom in &source_atoms {
                 if atom.asym_id() != chain.label_id() {
                     return Err(fail(MmcifWriteErrorKind::InconsistentAtomSite {
@@ -528,40 +546,11 @@ fn report_entity_plan(
                     .collect::<BTreeMap<_, _>>()
             });
         for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
-            let key = EntityKey::of(&segment);
-            let entity_id = if let Some(entity_id) = &segment.source_entity_id {
-                entity_id.clone()
-            } else if let Some(entity_id) = key.as_ref().and_then(|key| grouped.get(key)) {
-                entity_id.clone()
-            } else {
-                let entity_id = loop {
-                    let candidate = format!("K{generated_serial}");
-                    generated_serial += 1;
-                    if reserved_entity_ids.insert(candidate.clone()) {
-                        break candidate;
-                    }
-                };
-                if let Some(key) = key {
-                    grouped.insert(key, entity_id.clone());
-                }
-                entity_id
-            };
-            if let Some(existing) = entity_kinds.get(&entity_id) {
-                if *existing != segment.kind {
-                    return Err(fail(
-                        MmcifWriteErrorKind::ConflictingSourceEntityClassifications {
-                            entity_id,
-                            classifications: vec![existing.as_source(), segment.kind.as_source()],
-                        },
-                    ));
-                }
-            } else {
-                entity_kinds.insert(entity_id.clone(), segment.kind);
-                entities.push(EntityRow {
-                    id: entity_id.clone(),
-                    kind: segment.kind,
-                });
-            }
+            let entity_id = entity_of(
+                segment.kind,
+                segment.source_entity_id.as_ref(),
+                EntityKey::of(&segment),
+            )?;
             asyms.push(AsymRow {
                 id: asym_id.clone(),
                 entity_id: entity_id.clone(),
@@ -575,10 +564,32 @@ fn report_entity_plan(
         }
     }
 
-    for atom in structure.topology().atom_ids() {
-        if !atoms.contains_key(atom) {
-            return Err(fail(MmcifWriteErrorKind::MissingAtomProvenance(*atom)));
+    // Molecules an edit added outside the hierarchy are written as without
+    // a report.
+    for (id, molecule_atoms) in unplaced_molecules(structure, &atoms)? {
+        if let Some(&atom) = molecule_atoms
+            .iter()
+            .find(|atom| provenance.contains_key(atom))
+        {
+            return Err(fail(MmcifWriteErrorKind::MissingAtomSite(atom)));
         }
+        let asym_id = molecule_asym_id(id, &mut asym_ids.reserved);
+        let kind = canonical_entity_kind(structure.topology(), id)?;
+        let key = (kind == AssignedEntityKind::Water).then_some(EntityKey::Water);
+        let entity_id = entity_of(kind, None, key)?;
+        let author = author_ids.fallback(&asym_id);
+        asyms.push(AsymRow {
+            id: asym_id.clone(),
+            entity_id: entity_id.clone(),
+        });
+        assign_atoms(
+            &mut atoms,
+            molecule_atoms,
+            &entity_id,
+            &asym_id,
+            kind,
+            &author,
+        );
     }
     for atom in provenance.keys() {
         if !atoms.contains_key(atom) {
@@ -649,13 +660,19 @@ fn chain_segments<'h>(
             .then(|| {
                 segments.iter_mut().find(|segment| {
                     segment.kind == kind
-                        && segment.source_entity_id == source_entity_id
+                        && (segment.source_entity_id == source_entity_id
+                            || source_asym
+                                && (segment.source_entity_id.is_none()
+                                    || source_entity_id.is_none()))
                         && segment.molecule == molecule
                 })
             })
             .flatten();
         match shared {
             Some(segment) => {
+                if segment.source_entity_id.is_none() {
+                    segment.source_entity_id = source_entity_id;
+                }
                 segment.components.push(component);
                 segment.sites.extend(sites);
             }
@@ -745,6 +762,105 @@ fn assign_sites(
     Ok(())
 }
 
+/// Assigns every atom of a molecule outside the hierarchy.
+fn assign_atoms(
+    atoms: &mut BTreeMap<InstanceAtomId, AtomEntityAssignment>,
+    molecule_atoms: Vec<InstanceAtomId>,
+    entity_id: &str,
+    asym_id: &str,
+    kind: AssignedEntityKind,
+    author_asym_id: &str,
+) {
+    for atom in molecule_atoms {
+        atoms.insert(
+            atom,
+            AtomEntityAssignment {
+                entity_id: entity_id.to_owned(),
+                asym_id: asym_id.to_owned(),
+                kind,
+                author_asym_id: author_asym_id.to_owned(),
+            },
+        );
+    }
+}
+
+/// The molecules none of whose atoms the chains assign, with their atoms:
+/// molecules outside the hierarchy. A molecule the chains assign in part
+/// fails with the first atom without an atom site.
+fn unplaced_molecules(
+    structure: StructureView<'_>,
+    atoms: &BTreeMap<InstanceAtomId, AtomEntityAssignment>,
+) -> Result<Vec<(MoleculeInstanceId, Vec<InstanceAtomId>)>, FormatError> {
+    let mut unplaced = Vec::new();
+    for (id, molecule) in structure.topology().instance_records() {
+        let molecule_atoms = structure
+            .topology()
+            .instance(id)
+            .expect("listed instances are topology molecules")
+            .definition()
+            .molecule()
+            .atoms()
+            .map(|(atom, _)| molecule.qualify_atom(atom))
+            .collect::<Vec<_>>();
+        let assigned = molecule_atoms
+            .iter()
+            .filter(|atom| atoms.contains_key(atom))
+            .count();
+        if assigned == 0 {
+            unplaced.push((id, molecule_atoms));
+        } else if assigned != molecule_atoms.len() {
+            let missing = molecule_atoms
+                .into_iter()
+                .find(|atom| !atoms.contains_key(atom))
+                .expect("partially assigned molecule has a missing atom site");
+            return Err(fail(MmcifWriteErrorKind::MissingAtomSite(missing)));
+        }
+    }
+    Ok(unplaced)
+}
+
+/// The asym ID of a molecule outside the hierarchy: `M` and its 1-based
+/// instance number, with a serial where a chain or asym uses that.
+fn molecule_asym_id(id: MoleculeInstanceId, reserved: &mut BTreeSet<String>) -> String {
+    let base = format!("M{}", one_based_serial(id.raw()));
+    let mut candidate = base.clone();
+    let mut suffix = 2usize;
+    while reserved.contains(&candidate) {
+        candidate = format!("{base}_{suffix}");
+        suffix += 1;
+    }
+    reserved.insert(candidate.clone());
+    candidate
+}
+
+/// The entity kind of a residue from its molecules' canonical classes, as a
+/// write without a report gives it.
+fn canonical_residue_kind(
+    structure: StructureView<'_>,
+    chain: ChainView<'_>,
+    residue: ResidueView<'_>,
+    sites: &[InstanceAtomId],
+) -> Result<AssignedEntityKind, FormatError> {
+    let kinds = sites
+        .iter()
+        .map(|atom| {
+            canonical_entity_kind(structure.topology(), atom.instance())
+                .map(|kind| residue_entity_kind(kind, residue.class()).as_source())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?
+        .into_iter()
+        .collect::<Vec<_>>();
+    match kinds.as_slice() {
+        [kind] => entity_kind_from_source(sites[0].instance(), kind),
+        _ => Err(fail(
+            MmcifWriteErrorKind::ConflictingAsymEntityClassifications {
+                asym_id: chain.label_id().to_owned(),
+                classifications: kinds,
+            },
+        )),
+    }
+}
+
 /// The entity kind of one residue of a molecule of `molecule_kind`. Water,
 /// ions, and saccharides bonded to a polymer, such as a coordinated metal or
 /// an N-linked glycan, are entities of their own rather than polymer
@@ -764,17 +880,13 @@ fn residue_entity_kind(
 }
 
 fn entity_kind(
-    molecule: &MoleculeInstance,
+    molecule: MoleculeInstanceId,
     classifications: &BTreeMap<MoleculeInstanceId, MoleculeEntityKind>,
 ) -> Result<AssignedEntityKind, FormatError> {
     classifications
-        .get(&molecule.id())
+        .get(&molecule)
         .map(|classification| classification.kind)
-        .ok_or_else(|| {
-            fail(MmcifWriteErrorKind::MissingEntityClassification(
-                molecule.id(),
-            ))
-        })
+        .ok_or_else(|| fail(MmcifWriteErrorKind::MissingEntityClassification(molecule)))
 }
 
 fn entity_kind_from_source(
