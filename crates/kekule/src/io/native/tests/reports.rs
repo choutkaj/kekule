@@ -428,6 +428,73 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             }
         });
     }
+    let [first, second, third, fourth] = residues.clone();
+    issues.extend([
+        Issue::ProtonationAssumed {
+            components: vec![("ALA".into(), 3), ("HIS".into(), 1)],
+        },
+        Issue::HydrogensMissing {
+            residue: first.clone(),
+            component_id: "LYS".into(),
+            atoms: strings(&["NZ"]),
+        },
+        Issue::ZeroOccupancyHydrogens {
+            residue: second.clone(),
+            atoms: strings(&["H", "HA"]),
+        },
+        Issue::HydrogenReplacedByCoordination {
+            residue: third.clone(),
+            component_id: "CYS".into(),
+            atoms: strings(&["SG"]),
+        },
+        Issue::StatedChargeKept {
+            residue: fourth.clone(),
+            component_id: "ARG".into(),
+            atom_name: "NH2".into(),
+            stated: 1,
+            derived: 0,
+        },
+        Issue::StatedChargeRejected {
+            residue: first.clone(),
+            component_id: "GLU".into(),
+            atom_name: "OE1".into(),
+            stated: -2,
+            kept: -1,
+        },
+        Issue::StatedChargeResonance {
+            residue: second.clone(),
+            component_id: "ARG".into(),
+            charged_atoms: vec![("NH1".into(), 1), ("OXT".into(), -1)],
+        },
+        Issue::PolymerLinkMissing {
+            residue: third.clone(),
+            component_id: "GLY".into(),
+            atom_name: "N".into(),
+        },
+        Issue::SequenceNotPlaced {
+            chain_id: "B".into(),
+        },
+        Issue::TemplateChargeUnknown {
+            residue: fourth.clone(),
+            component_id: "UNL".into(),
+            atoms: strings(&["N1", "O2"]),
+        },
+        Issue::TemplateMissing {
+            residue: first,
+            component_id: "XYZ".into(),
+        },
+        Issue::AtomsMissing {
+            residue: second,
+            component_id: "TRP".into(),
+            atoms: strings(&["CZ2", "CH2"]),
+        },
+        Issue::TerminalAtomMissing {
+            residue: third,
+            component_id: "SER".into(),
+            atom_name: "OXT".into(),
+            anchor: "C".into(),
+        },
+    ]);
     let alternate_locations = [
         AltLocSelectionReason::HighestOccupancy,
         AltLocSelectionReason::ExactSelection,
@@ -849,9 +916,135 @@ fn interpreted_structure_sets_need_one_report_per_geometry() {
     assert!(native::write(&interpretation, NativeWriteOptions::default()).is_err());
 }
 
+/// Every issue kind, in declaration order.
+const ISSUE_KINDS: [&str; 49] = [
+    "EntityTypeInferred",
+    "ElementsInferredFromAtomNames",
+    "ElementsFromTemplates",
+    "UnsignedCharges",
+    "HexadecimalNumbers",
+    "NumbersRestart",
+    "MetalBondsUnstated",
+    "ConnectionsIgnored",
+    "ConnectionUnresolved",
+    "ConnectionAmbiguous",
+    "CoordinateModelIgnored",
+    "AlternateLocationOmitted",
+    "AlternateLocationIncomplete",
+    "AlternateLocationOccupancyMissing",
+    "AlternateLocationCombinationRejected",
+    "AlternateLocationOccupancyTie",
+    "ConnectivityCandidatesInferred",
+    "ForceFieldTemplate",
+    "ResidueBondsInferred",
+    "ResidueBondOrdersUnstated",
+    "ResidueFitsNoTemplate",
+    "StatedOrdersDisagreeWithHydrogens",
+    "BondNotInTemplate",
+    "BondOrderDiffersFromTemplate",
+    "HydrogenAttachedByDistance",
+    "DisulfideInferred",
+    "ChainBreak",
+    "PolymerLinkSkipped",
+    "LinkingAtomMissing",
+    "ChargesFromBonds",
+    "MetalValenceIncomplete",
+    "MetalDonors",
+    "ProtonationFromHydrogens",
+    "ProtonationAssumed",
+    "HydrogensMissing",
+    "ZeroOccupancyHydrogens",
+    "HydrogenReplacedByCoordination",
+    "StatedChargeKept",
+    "StatedChargeRejected",
+    "StatedChargeResonance",
+    "PolymerLinkMissing",
+    "SequenceNotPlaced",
+    "TemplateChargeUnknown",
+    "TemplateMissing",
+    "AtomsMissing",
+    "TerminalAtomMissing",
+    "ResidueFragmented",
+    "CellOmitted",
+    "AssemblyOmitted",
+];
+
+/// The kind of an issue. The match has no catch-all, so a new kind fails to
+/// compile here until it is listed and added to [`report`].
+fn issue_kind(issue: &StructureInterpretIssue) -> &'static str {
+    use StructureInterpretIssue as Issue;
+    match issue {
+        Issue::EntityTypeInferred { .. } => "EntityTypeInferred",
+        Issue::ElementsInferredFromAtomNames { .. } => "ElementsInferredFromAtomNames",
+        Issue::ElementsFromTemplates { .. } => "ElementsFromTemplates",
+        Issue::UnsignedCharges { .. } => "UnsignedCharges",
+        Issue::HexadecimalNumbers { .. } => "HexadecimalNumbers",
+        Issue::NumbersRestart { .. } => "NumbersRestart",
+        Issue::MetalBondsUnstated { .. } => "MetalBondsUnstated",
+        Issue::ConnectionsIgnored { .. } => "ConnectionsIgnored",
+        Issue::ConnectionUnresolved { .. } => "ConnectionUnresolved",
+        Issue::ConnectionAmbiguous { .. } => "ConnectionAmbiguous",
+        Issue::CoordinateModelIgnored { .. } => "CoordinateModelIgnored",
+        Issue::AlternateLocationOmitted { .. } => "AlternateLocationOmitted",
+        Issue::AlternateLocationIncomplete { .. } => "AlternateLocationIncomplete",
+        Issue::AlternateLocationOccupancyMissing { .. } => "AlternateLocationOccupancyMissing",
+        Issue::AlternateLocationCombinationRejected { .. } => {
+            "AlternateLocationCombinationRejected"
+        }
+        Issue::AlternateLocationOccupancyTie { .. } => "AlternateLocationOccupancyTie",
+        Issue::ConnectivityCandidatesInferred { .. } => "ConnectivityCandidatesInferred",
+        Issue::ForceFieldTemplate { .. } => "ForceFieldTemplate",
+        Issue::ResidueBondsInferred { .. } => "ResidueBondsInferred",
+        Issue::ResidueBondOrdersUnstated { .. } => "ResidueBondOrdersUnstated",
+        Issue::ResidueFitsNoTemplate { .. } => "ResidueFitsNoTemplate",
+        Issue::StatedOrdersDisagreeWithHydrogens { .. } => "StatedOrdersDisagreeWithHydrogens",
+        Issue::BondNotInTemplate { .. } => "BondNotInTemplate",
+        Issue::BondOrderDiffersFromTemplate { .. } => "BondOrderDiffersFromTemplate",
+        Issue::HydrogenAttachedByDistance { .. } => "HydrogenAttachedByDistance",
+        Issue::DisulfideInferred { .. } => "DisulfideInferred",
+        Issue::ChainBreak { .. } => "ChainBreak",
+        Issue::PolymerLinkSkipped { .. } => "PolymerLinkSkipped",
+        Issue::LinkingAtomMissing { .. } => "LinkingAtomMissing",
+        Issue::ChargesFromBonds { .. } => "ChargesFromBonds",
+        Issue::MetalValenceIncomplete { .. } => "MetalValenceIncomplete",
+        Issue::MetalDonors { .. } => "MetalDonors",
+        Issue::ProtonationFromHydrogens { .. } => "ProtonationFromHydrogens",
+        Issue::ProtonationAssumed { .. } => "ProtonationAssumed",
+        Issue::HydrogensMissing { .. } => "HydrogensMissing",
+        Issue::ZeroOccupancyHydrogens { .. } => "ZeroOccupancyHydrogens",
+        Issue::HydrogenReplacedByCoordination { .. } => "HydrogenReplacedByCoordination",
+        Issue::StatedChargeKept { .. } => "StatedChargeKept",
+        Issue::StatedChargeRejected { .. } => "StatedChargeRejected",
+        Issue::StatedChargeResonance { .. } => "StatedChargeResonance",
+        Issue::PolymerLinkMissing { .. } => "PolymerLinkMissing",
+        Issue::SequenceNotPlaced { .. } => "SequenceNotPlaced",
+        Issue::TemplateChargeUnknown { .. } => "TemplateChargeUnknown",
+        Issue::TemplateMissing { .. } => "TemplateMissing",
+        Issue::AtomsMissing { .. } => "AtomsMissing",
+        Issue::TerminalAtomMissing { .. } => "TerminalAtomMissing",
+        Issue::ResidueFragmented { .. } => "ResidueFragmented",
+        Issue::CellOmitted { .. } => "CellOmitted",
+        Issue::AssemblyOmitted { .. } => "AssemblyOmitted",
+    }
+}
+
+#[test]
+fn the_report_holds_every_issue_kind() {
+    let kinds = report(false)
+        .issues()
+        .iter()
+        .map(issue_kind)
+        .collect::<std::collections::BTreeSet<_>>();
+    let missing = ISSUE_KINDS
+        .into_iter()
+        .filter(|kind| !kinds.contains(kind))
+        .collect::<Vec<_>>();
+    assert!(missing.is_empty(), "{missing:?}");
+}
+
 #[test]
 fn issue_messages_have_no_double_spaces() {
-    // The report covers every issue kind, so a line continuation lost from a
+    // The report holds every issue kind, so a line continuation lost from a
     // message shows here.
     for foreign in [false, true] {
         for issue in report(foreign).issues() {

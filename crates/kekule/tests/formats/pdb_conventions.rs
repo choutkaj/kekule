@@ -12,6 +12,7 @@ use kekule::macromolecular::{
     ConnectivityOptions, EntityKind, ModelSelection, NumberField, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
+use kekule::mmcif::{MmcifWriteErrorKind, MmcifWriteOptions};
 use kekule::molecule::BondOrder;
 use kekule::pdb::{PdbWriteErrorKind, PdbWriteOptions};
 use kekule::structure::{Positions, Structure};
@@ -459,8 +460,8 @@ fn charge_columns_read_explicit_zeros_and_unsigned_digits() {
     assert_eq!(charged(""), None);
 }
 
-/// Lysine with its side-chain amine neutral, stated in mmCIF.
-const NEUTRAL_LYSINE: &str = "data_x
+/// Lysine without hydrogens, every charge stated 0 in mmCIF.
+const STATED_ZERO_LYSINE: &str = "data_x
 loop_
 _atom_site.group_PDB
 _atom_site.id
@@ -489,12 +490,77 @@ HETATM 9 N NZ LYS A 1 . 6.070 -2.270 -3.590 0 1 A 1
 ";
 
 #[test]
-fn neutral_atoms_of_templated_residues_round_trip_through_pdb() {
-    let structure = read_mmcif(NEUTRAL_LYSINE).into_structure();
-    assert!(charges(&structure).iter().all(|&charge| charge == 0));
+fn charges_of_templated_residues_round_trip_through_pdb() {
+    // A stated 0 in a residue without hydrogens is no evidence: NZ takes
+    // its template's +1.
+    let structure = read_mmcif(STATED_ZERO_LYSINE).into_structure();
+    assert_eq!(charges(&structure)[8], 1);
     let (written, _) = pdb::write(&structure, Default::default()).unwrap();
     let reread = read(&written).into_structure();
     assert_eq!(charges(&reread), charges(&structure));
+}
+
+#[test]
+fn charges_readers_derive_differently_are_not_written_silently() {
+    // A neutral lysine NZ without hydrogens: readers ignore its stated 0
+    // and give it the template's +1.
+    let source = read_mmcif(STATED_ZERO_LYSINE).into_structure();
+    let nz = source.topology().atom_ids()[8];
+    let mut editor = source.into_editor();
+    let handle = editor.topology().atom_handle(nz).unwrap();
+    let neutral = editor
+        .topology()
+        .atom(handle)
+        .unwrap()
+        .clone()
+        .with_formal_charge(0);
+    editor.replace_atom(handle, neutral).unwrap();
+    let structure = editor.finish().unwrap();
+    assert_eq!(charges(&structure)[8], 0);
+
+    let error = pdb::write(&structure, Default::default()).unwrap_err();
+    let Some(FormatErrorDetail::PdbWrite(kind)) = error.detail() else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        *kind,
+        PdbWriteErrorKind::ChargeNotReadBack {
+            atom: nz,
+            charge: 0,
+            read: 1
+        }
+    );
+    let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
+    let (_, report) = pdb::write(&structure, options).unwrap();
+    assert!(
+        report.omissions().contains(&WriteOmission::FormalCharges {
+            atoms: 1,
+            first: Some(nz)
+        }),
+        "{report:?}"
+    );
+
+    let error = mmcif::write([&structure], Default::default()).unwrap_err();
+    let Some(FormatErrorDetail::MmcifWrite(kind)) = error.detail() else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        *kind,
+        MmcifWriteErrorKind::ChargeNotReadBack {
+            atom: nz,
+            charge: 0,
+            read: 1
+        }
+    );
+    let options = MmcifWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
+    let (_, report) = mmcif::write([&structure], options).unwrap();
+    assert!(
+        report.omissions().contains(&WriteOmission::FormalCharges {
+            atoms: 1,
+            first: Some(nz)
+        }),
+        "{report:?}"
+    );
 }
 
 #[test]
@@ -1033,7 +1099,7 @@ fn pdb_writes_metal_bonds_a_reader_gives_back() {
     let topology = smiles::to_topology("[H][N]([H])([H])[Pt]Cl").unwrap();
     let structure = Structure::new(topology, Positions::zeros(6)).unwrap();
     let hydrogens = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let error = pdb::write(&structure, hydrogens).unwrap_err();
+    let error = pdb::write(&structure, hydrogens.clone()).unwrap_err();
     assert!(
         matches!(
             error.detail(),

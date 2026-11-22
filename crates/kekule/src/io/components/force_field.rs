@@ -173,8 +173,9 @@ fn charmm_amino_acid(id: &str, from: &Component) -> Component {
     // Backbone: HN for the amide hydrogen, and the terminal patches' OT1 and
     // OT2 for the carboxyl oxygens. Proline has no amide hydrogen; its
     // N-terminal patch names the ammonium hydrogens HN1 and HN2. Terminal
-    // hydrogens HT1-HT3 name different atoms in different patches, so they
-    // attach by distance.
+    // hydrogens HT1-HT3 name different atoms in different patches, so
+    // templates leave them out; readers bond them to a nearby N by name,
+    // else by distance.
     let amide = if id == "PRO" { "HN1" } else { "HN" };
     from.clone()
         .renamed(&[*renames, &[("H", amide), ("OXT", "OT2")]].concat())
@@ -340,10 +341,13 @@ impl ComponentLibrary {
         for component in self.components() {
             let mut component = component.clone();
             component.name = format!("{} ({force_field} {})", component.name, component.id);
+            component.force_field = Some(force_field.to_owned());
             library.insert(component.clone());
             for variant in self.variants(&component.id) {
+                let mut variant = variant.clone();
+                variant.force_field = Some(force_field.to_owned());
                 library
-                    .insert_variant(variant.clone())
+                    .insert_variant(variant)
                     .expect("a variant names its component");
             }
         }

@@ -10,7 +10,7 @@ pub(super) mod connectivity;
 mod disulfides;
 pub(crate) use connections::is_metal;
 mod mmcif;
-mod pdb;
+pub(super) mod pdb;
 mod sequences;
 mod structure_set;
 mod types;
@@ -49,7 +49,7 @@ pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
     SequenceSource,
 };
-pub(in crate::io) use types::{poll, poll_every, structure_error};
+pub(in crate::io) use types::{poll, poll_every, structure_error, Signed};
 pub use types::{
     AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
@@ -340,6 +340,65 @@ impl PreparedSource {
     }
 }
 
+/// Drops hydrogens whose occupancy is zero from residues whose heavy atoms
+/// have occupancy, as structures mark hydrogens they place but do not
+/// observe; they decide no protonation. A source whose occupancies are all
+/// zero states none, and keeps its hydrogens.
+fn omit_unobserved_hydrogens(
+    rows: &[AtomRow],
+    mut selected: Vec<(usize, usize)>,
+    model_id: &str,
+    report: &mut StructureInterpretationReport,
+) -> Vec<(usize, usize)> {
+    let residue = |row: &AtomRow| {
+        (
+            row.asym_id.clone(),
+            row.residue_key.clone(),
+            row.comp_id.clone(),
+        )
+    };
+    let hydrogen = |row: &AtomRow| row.element.atomic_number() == 1;
+    let observed = selected
+        .iter()
+        .map(|&(position, _)| &rows[position])
+        .filter(|row| !hydrogen(row) && row.occupancy.is_some_and(|occupancy| occupancy > 0.0))
+        .map(residue)
+        .collect::<HashSet<_>>();
+    let mut omitted = BTreeMap::<_, (SourceResidueId, Vec<String>)>::new();
+    selected.retain(|&(position, _)| {
+        let row = &rows[position];
+        let unobserved =
+            hydrogen(row) && row.occupancy == Some(0.0) && observed.contains(&residue(row));
+        if unobserved {
+            omitted
+                .entry(residue(row))
+                .or_insert_with(|| {
+                    (
+                        SourceResidueId::new(
+                            model_id,
+                            &row.asym_id,
+                            row.label_seq_id,
+                            row.auth_seq_id.as_deref(),
+                            row.insertion_code.as_deref(),
+                            row.occurrence,
+                            &row.comp_id,
+                        ),
+                        Vec::new(),
+                    )
+                })
+                .1
+                .push(row.atom_name.clone());
+        }
+        !unobserved
+    });
+    for (residue, atoms) in omitted.into_values() {
+        report
+            .issues
+            .push(StructureInterpretIssue::ZeroOccupancyHydrogens { residue, atoms });
+    }
+    selected
+}
+
 fn publish_structure(
     connections: &[ConnectionRecord],
     rows: ModelRows,
@@ -358,6 +417,7 @@ fn publish_structure(
         .as_deref()
         .expect("selected model is recorded")
         .to_owned();
+    let selected = omit_unobserved_hydrogens(&rows, selected, &selected_model, &mut report);
     let selected_rows = selected
         .iter()
         .map(|&(position, _)| &rows[position])
@@ -406,6 +466,12 @@ fn publish_structure(
             .or_default()
             .push(connection);
     }
+    let mut coordinated = HashMap::<String, usize>::new();
+    for record in &coordination {
+        for key in &record.atoms {
+            *coordinated.entry(key.clone()).or_default() += 1;
+        }
+    }
     let mut builder = StructureBuilder::new();
     let mut definitions = DefinitionReuse::new();
     let mut qualified_atom_data = Vec::new();
@@ -413,7 +479,7 @@ fn publish_structure(
         poll(cancellation)?;
         let declared = group_connections.remove(group.root()).unwrap_or_default();
         let mut built = build_molecule(group, &mut selected, &declared, cancellation)?;
-        built.complete_connectivity(catalog, &mut report, cancellation)?;
+        built.complete_connectivity(catalog, &coordinated, &mut report, cancellation)?;
         for built in built.publish_components(cancellation)? {
             let labels = built.provenance.atom_labels(built.molecule.atom_count());
             let definition = definitions

@@ -69,6 +69,9 @@ const BOND_SOURCES_SINCE: u32 = 9;
 /// The template order code of an aromatic or delocalized template bond in
 /// a `BondOrderDiffersFromTemplate` issue.
 const AROMATIC_TEMPLATE_ORDER: u8 = 255;
+/// The first format version with hydrogen-name bond evidence and the
+/// protonation interpretation issues.
+const PROTONATION_SINCE: u32 = 9;
 /// The first format version with the `ElementsFromTemplates`,
 /// `UnsignedCharges`, `HexadecimalNumbers`, and `NumbersRestart`
 /// interpretation issues.

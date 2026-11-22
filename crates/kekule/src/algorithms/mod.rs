@@ -61,10 +61,11 @@ pub use substructure::{
     TaggedQuery, TopologyQueryMatch, TupleMode, MAX_SUBSTRUCTURE_QUERY_ATOMS,
 };
 pub(crate) use valence::{
-    allowed_valences, explicit_valence, implied_charges, incomplete_metal_valence, is_metal,
-    is_metal_donor, metal_bond_reading, onium_hydrogens, rdkit_bracket_radical_electrons,
-    rdkit_charge_adjusted_default_valence, rdkit_default_valence, rdkit_inferred_hydrogen_count,
-    rdkit_reader_hydrogens, rdkit_valence_violation, ImpliedCharges, MetalBondReading,
+    allowed_valences, allowed_valences_with_charge, explicit_valence, implied_charges,
+    incomplete_metal_valence, is_metal, is_metal_donor, metal_bond_reading, onium_hydrogens,
+    rdkit_bracket_radical_electrons, rdkit_charge_adjusted_default_valence, rdkit_default_valence,
+    rdkit_inferred_hydrogen_count, rdkit_reader_hydrogens, rdkit_valence_violation, ImpliedCharges,
+    MetalBondReading,
 };
 pub use valence::{
     perceive_valence, represented_valence, ValenceError, ValenceOptions, ValenceViolation,

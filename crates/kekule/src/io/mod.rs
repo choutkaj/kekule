@@ -24,7 +24,7 @@ mod staged_coordinates;
 pub(crate) mod write_policy;
 pub(crate) mod xyz;
 
-pub(crate) use components::{dictionary_code, DefaultTemplate};
+pub(crate) use components::dictionary_code;
 pub use components::{
     Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary, ComponentLinking,
 };

@@ -233,6 +233,7 @@ impl BuiltMolecule {
     pub(super) fn complete_connectivity(
         &mut self,
         catalog: &super::connectivity::ConnectivityCatalog,
+        coordinated: &HashMap<String, usize>,
         report: &mut StructureInterpretationReport,
         cancellation: Option<&Cancellation>,
     ) -> Result<(), FormatError> {
@@ -243,6 +244,20 @@ impl BuiltMolecule {
             listed,
             ..
         } = self;
+        // Metal coordination records between residues, by the atoms they name.
+        let coordination = provenance
+            .atoms
+            .iter()
+            .filter_map(|atom| {
+                coordinated
+                    .get(&super::atom_site::atom_key(
+                        &atom.asym_id,
+                        &atom.residue_key,
+                        &atom.atom_name,
+                    ))
+                    .map(|&records| (atom.atom, records))
+            })
+            .collect::<BTreeMap<_, _>>();
         let atoms = provenance
             .atoms
             .iter()
@@ -261,12 +276,15 @@ impl BuiltMolecule {
                 point: atom.point,
                 line: atom.source_line,
                 stated_charge: atom.stated_charge,
+                occupancy: atom.occupancy,
+                alternate_location: atom.selected_alternate_location.as_deref(),
             });
         super::connectivity::complete_editor_connectivity(
             catalog,
             editor,
             atoms,
             listed,
+            &coordination,
             &provenance.coordinate_model_id,
             evidence,
             &mut report.issues,

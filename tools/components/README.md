@@ -32,9 +32,11 @@ The selection was fixed before use, by role rather than by observed frequency:
 - Crystallization additives: `SO4`, `PO4`, `GOL`, `EDO`, `ACT`, `PEG`, `DMS`,
   `MPD`.
 
-The dictionary defines histidine only as the imidazolium cation. Kekule derives
-its two neutral tautomers in code (`crates/kekule/src/io/components/bundled.rs`);
-they are not dictionary entries.
+The dictionary defines histidine only as the imidazolium cation, and aspartic
+and glutamic acids protonated on `OD2` and `OE2`. Kekule derives the two
+neutral histidine tautomers and the acids protonated on `OD1` and `OE1` in code
+(`crates/kekule/src/io/components/bundled.rs`); they are not dictionary
+entries.
 
 ## One-letter codes
 

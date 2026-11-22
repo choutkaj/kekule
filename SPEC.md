@@ -845,8 +845,12 @@ stay generic data trees.
 Interpretation takes a document, explicit options, and optional context —
 external resources a format needs but does not carry, such as component
 templates. It constructs represented chemistry, hierarchy, classification, and
-available geometry once into the richest canonical owner plus a report; it does
-not run general perception, standardization, tautomerization, or protonation.
+available geometry once into the richest canonical owner plus a report; it
+does not run general perception, standardization, or tautomerization.
+Macromolecular residues take the protonation their hydrogens, links, metal
+coordination, and stated charges support. Residues without hydrogens take
+the pH 7 state of their acid groups, and polymer residues that of a true N
+terminus. Each case is reported (see [protonation](docs/protonation.md)).
 Format convenience functions compose this pipeline without reimplementing it.
 
 mmCIF, PDB, and XYZ interpretation gives identical molecules one definition, so

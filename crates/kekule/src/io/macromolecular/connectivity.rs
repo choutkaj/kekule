@@ -22,6 +22,13 @@ use crate::io::macromolecular as raw;
 use crate::io::mmcif::category::MmcifCategory;
 use crate::io::MmcifBlock;
 
+mod protonation;
+pub(crate) use protonation::{AtomEvidence, Protonation, ResidueEvidence};
+
+/// The atoms of a nucleotide's 5' phosphate; a residue without them all is a
+/// 5'-hydroxyl terminus.
+const FIVE_PRIME_PHOSPHATE: [&str; 6] = ["P", "OP1", "OP2", "OP3", "O1P", "O2P"];
+
 /// One staged atom with the source fields connectivity resolution reads.
 pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) atom: AtomId,
@@ -40,6 +47,8 @@ pub(crate) struct StagedAtomProvenance<'a> {
     pub(crate) point: Point3,
     pub(crate) line: usize,
     pub(crate) stated_charge: Option<i8>,
+    pub(crate) occupancy: Option<f64>,
+    pub(crate) alternate_location: Option<&'a str>,
 }
 
 /// The evidence of each staged bond, keyed by its ordered atom pair. The first
@@ -92,6 +101,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
     editor: &mut MoleculeEditor,
     atoms: impl IntoIterator<Item = StagedAtomProvenance<'a>>,
     listed: &[ListedBond],
+    coordination: &BTreeMap<AtomId, usize>,
     model_id: &str,
     evidence: &mut BondEvidenceMap,
     issues: &mut Vec<raw::StructureInterpretIssue>,
@@ -104,6 +114,7 @@ pub(crate) fn complete_editor_connectivity<'a>(
         source_aromatic_bonds: &mut source_aromatic_bonds,
         evidence,
         issues,
+        coordination,
         model_id,
         cancellation,
         unstated_metal_bonds: Vec::new(),
@@ -234,13 +245,6 @@ fn candidate_bond<'c>(
     })
 }
 
-/// Whether `candidate`, a template or one of its variants, gives a stated
-/// bond its order.
-fn candidate_gives(template: &Component, candidate: &Component, bond: &StatedBond) -> bool {
-    candidate_bond(template, candidate, bond)
-        .is_some_and(|template_bond| gives_order(template_bond, bond.order))
-}
-
 /// Whether a template bond gives a stated order: aromatic template bonds
 /// accept either localized order, and coordination is dative.
 fn gives_order(bond: &TemplateBond, order: BondOrder) -> bool {
@@ -335,9 +339,18 @@ struct BranchLink {
 #[derive(Debug, Default)]
 pub(crate) struct ConnectivityCatalog {
     component_bonds: BTreeMap<String, Vec<ComponentBond>>,
+    /// The block's `_chem_comp_atom` charges by component and atom name;
+    /// `None` where the block states the charge as unknown.
+    component_charges: BTreeMap<String, BTreeMap<String, Option<i8>>>,
     polymer_types: BTreeMap<String, String>,
     branch_sites: Vec<BranchSchemeSite>,
     branch_links: Vec<BranchLink>,
+    /// The number of monomers of each polymer entity, by entity ID, as
+    /// `_entity_poly_seq` lists them.
+    entity_lengths: BTreeMap<String, i32>,
+    /// The number of monomers of each chain's sequence, by chain ID, as PDB
+    /// `SEQRES` records state it for chains whose residues they place.
+    chain_lengths: BTreeMap<String, i32>,
     components: Option<Arc<ComponentLibrary>>,
     infer_bonds_from_distance: bool,
 }
@@ -383,6 +396,32 @@ impl ConnectivityCatalog {
                     });
             }
         }
+        if let Some(table) = block.category("_chem_comp_atom")? {
+            let table = &table;
+            for row in 0..table.row_count() {
+                let comp_id = required(table, row, "_chem_comp_atom.comp_id")?;
+                let atom = required(table, row, "_chem_comp_atom.atom_id")?;
+                let Some(value) = table.value(row, "_chem_comp_atom.charge") else {
+                    continue;
+                };
+                let charge = match value.optional_text() {
+                    None => None,
+                    Some(text) => Some(text.parse::<i8>().map_err(|_| {
+                        row_error(
+                            table,
+                            row,
+                            DiagnosticKind::InvalidValue,
+                            format!("The component atom charge {text:?} is not a whole number."),
+                        )
+                    })?),
+                };
+                catalog
+                    .component_charges
+                    .entry(normalized(comp_id))
+                    .or_default()
+                    .insert(atom.to_owned(), charge);
+            }
+        }
         if let Some(table) = block.category("_entity_poly")? {
             let table = &table;
             for row in 0..table.row_count() {
@@ -391,6 +430,18 @@ impl ConnectivityCatalog {
                 catalog
                     .polymer_types
                     .insert(entity.to_owned(), kind.to_owned());
+            }
+        }
+        if let Some(table) = block.category("_entity_poly_seq")? {
+            let table = &table;
+            for row in 0..table.row_count() {
+                let entity = required(table, row, "_entity_poly_seq.entity_id")?;
+                let number = required_i32(table, row, "_entity_poly_seq.num")?;
+                let length = catalog
+                    .entity_lengths
+                    .entry(entity.to_owned())
+                    .or_insert(number);
+                *length = (*length).max(number);
             }
         }
         if let Some(table) = block.category("_pdbx_branch_scheme")? {
@@ -446,44 +497,31 @@ impl ConnectivityCatalog {
         Ok(catalog)
     }
 
+    /// States, by chain ID, the length of each chain's sequence, whose
+    /// places its residues' polymer positions are.
+    #[must_use]
+    pub(crate) fn with_chain_lengths(mut self, chain_lengths: BTreeMap<String, i32>) -> Self {
+        self.chain_lengths = chain_lengths;
+        self
+    }
+
     /// The template of a component and its protonation variants: the caller's
     /// library takes precedence over the bundled one.
     fn template(&self, component_id: &str) -> Option<(&Component, Vec<&Component>)> {
-        let library = match self.components.as_deref() {
-            Some(library) if library.get(component_id).is_some() => library,
-            _ => ComponentLibrary::bundled(),
-        };
-        let component = library.get(component_id)?;
-        Some((component, library.variants(component_id).collect()))
+        dictionary_template(self.components.as_deref(), component_id)
     }
 
-    /// The template a residue is read with: the caller's of its name, else
-    /// the default one for its atoms (see [`ComponentLibrary::default_template`]),
-    /// with the force field that names it, if any.
+    /// The template a residue is read with (see [`reader_template`]).
     fn residue_template(&self, residue: &ResidueAtoms) -> Option<ResidueTemplate<'_>> {
-        let component_id = normalized(&residue.key.component_id);
-        if let Some(library) = self
-            .components
-            .as_deref()
-            .filter(|library| library.get(&component_id).is_some())
-        {
-            let component = library.get(&component_id)?;
-            return Some(ResidueTemplate {
-                component,
-                variants: library.variants(&component_id).collect(),
-                force_field: None,
-            });
-        }
         let atoms = residue
             .sites
             .iter()
             .map(|site| (site.name.as_str(), site.element));
-        let template = ComponentLibrary::default_template(&component_id, atoms)?;
-        Some(ResidueTemplate {
-            component: template.component,
-            variants: template.library.variants(&component_id).collect(),
-            force_field: template.force_field,
-        })
+        reader_template(
+            self.components.as_deref(),
+            &normalized(&residue.key.component_id),
+            atoms,
+        )
     }
 
     /// Whether bonds no evidence states are inferred from distances.
@@ -543,6 +581,8 @@ struct ResidueSite {
     point: Point3,
     line: usize,
     stated_charge: Option<i8>,
+    occupancy: Option<f64>,
+    alternate_location: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -560,10 +600,13 @@ impl ResidueAtoms {
 
 /// The template a residue is read with, its protonation variants, and the
 /// force field that names it, if it is not a dictionary template.
-struct ResidueTemplate<'c> {
-    component: &'c Component,
-    variants: Vec<&'c Component>,
-    force_field: Option<&'static str>,
+pub(crate) struct ResidueTemplate<'c> {
+    pub(crate) component: &'c Component,
+    pub(crate) variants: Vec<&'c Component>,
+    pub(crate) force_field: Option<&'static str>,
+    /// Whether the residue's atoms [fit](Component::fits) the template. A
+    /// residue that fits none takes the bonds its records state.
+    pub(crate) fits: bool,
 }
 
 /// A residue whose bonds came from a template; `matched` maps template atom
@@ -628,6 +671,8 @@ fn residue_atoms<'a>(
             point: atom.point,
             line: atom.line,
             stated_charge: atom.stated_charge,
+            occupancy: atom.occupancy,
+            alternate_location: atom.alternate_location.map(str::to_owned),
         });
     }
     if let Some(residue) = current {
@@ -705,12 +750,251 @@ fn template_coordination(
         .map(TemplateBond::metal_coordination)
 }
 
-fn is_hydrogen(element: Element) -> bool {
-    element.atomic_number() == 1
+/// The atoms a terminal hydrogen's conventional name places it on, in order
+/// of preference, for hydrogens no template names: `H1`-`H3` (PDB),
+/// `HT1`-`HT3` (CHARMM), and `HN1`-`HN3` on a peptide's `N`; `HO5'` and
+/// `H5T` (AMBER) on a nucleotide's `O5'`, and `H3T` on its `O3'`.
+fn terminal_hydrogen_anchors(linking: ComponentLinking, name: &str) -> &'static [&'static str] {
+    match linking {
+        ComponentLinking::Peptide
+            if matches!(
+                name,
+                "H1" | "H2" | "H3" | "HT1" | "HT2" | "HT3" | "HN1" | "HN2" | "HN3"
+            ) =>
+        {
+            &["N"]
+        }
+        ComponentLinking::Nucleotide if matches!(name, "HO5'" | "HO5*" | "H5T") => &["O5'", "O5*"],
+        ComponentLinking::Nucleotide if matches!(name, "HO3*" | "H3T") => &["O3'", "O3*"],
+        _ => &[],
+    }
 }
 
-fn is_carbon(element: Element) -> bool {
-    element.atomic_number() == 6
+/// The protonation state readers give a residue of `template` and its
+/// protonation `variants` (see [`protonation`]). `ends` says whether the
+/// residue's sequence has residues before and after it: a linking atom
+/// without links on such a side bonds across a gap, unless the residue
+/// shows a true chain end there. A true end has more hydrogens on its
+/// linking atom than a link leaves, as `H1` to `H3` of an N terminus or
+/// `HO3'` of a 3' end, or a leaving heavy atom bonded to it, as `OXT`.
+/// Writers mirror readers with it.
+pub(crate) fn reader_protonation<'c>(
+    template: &'c Component,
+    variants: impl IntoIterator<Item = &'c Component>,
+    mut evidence: ResidueEvidence<'_>,
+    ends: [bool; 2],
+) -> Option<Protonation<'c>> {
+    let sides = link_sides(template.linking());
+    let present = evidence.heavy.keys().copied().collect::<BTreeSet<_>>();
+    for (name, atom) in &mut evidence.heavy {
+        let open = atom.links == 0
+            && sides
+                .iter()
+                .zip(ends)
+                .any(|(names, end)| end && names.contains(name));
+        atom.gap = open
+            && template
+                .atom(name)
+                .is_some_and(|(index, _)| !shows_end(template, index, atom, &present));
+    }
+    protonation::choose(std::iter::once(template).chain(variants), &evidence)
+}
+
+/// Whether the template's linking atom `index`, with `atom` its evidence,
+/// shows a true chain end: more hydrogens than a link leaves, as `H1` to
+/// `H3` of an N terminus or `HO3'` of a 3' end, or a leaving heavy atom
+/// bonded to it, as `OXT`.
+fn shows_end(
+    template: &Component,
+    index: usize,
+    atom: &protonation::AtomEvidence,
+    present: &BTreeSet<&str>,
+) -> bool {
+    atom.hydrogens > protonation::expected_hydrogens(template, index, 1)
+        || protonation::bonds_leaving_atom(template, index, present)
+}
+
+/// Whether a residue shows a true chain end before and after it: an
+/// unlinked linking atom on that side shows one (see [`reader_protonation`]).
+/// At a break between residues that no sequence places, either side's end
+/// ends both. Writers mirror readers with it.
+pub(crate) fn true_ends(template: &Component, evidence: &ResidueEvidence<'_>) -> [bool; 2] {
+    let present = evidence.heavy.keys().copied().collect::<BTreeSet<_>>();
+    link_sides(template.linking()).map(|names| {
+        names.iter().any(|name| {
+            evidence.heavy.get(name).is_some_and(|atom| {
+                atom.links == 0
+                    && template
+                        .atom(name)
+                        .is_some_and(|(index, _)| shows_end(template, index, atom, &present))
+            })
+        })
+    })
+}
+
+/// What readers make of the protonation of a templated residue.
+pub(crate) enum ReaderState<'c> {
+    /// No template or variant gives every bond order the source states:
+    /// the orders stay, and charges follow from the stated ones and from
+    /// valence.
+    OrdersExcludeAll,
+    /// The model's hydrogens fit no candidate, which readers reject.
+    Unfit,
+    /// The state readers give the residue. `disagrees` when a candidate
+    /// the stated orders exclude fits the hydrogens exactly: the chosen
+    /// one is then charged for the hydrogens it lacks.
+    Chosen {
+        state: Protonation<'c>,
+        disagrees: bool,
+    },
+}
+
+/// The state readers give a residue read with `template` and its
+/// `variants`, whose source states the orders `stated` of template bonds,
+/// by template atom names. Stated orders outrank hydrogens: only a
+/// candidate that gives every stated order is chosen
+/// ([`reader_protonation`]).
+pub(crate) fn reader_state<'c>(
+    template: &'c Component,
+    variants: &[&'c Component],
+    stated: &[([&str; 2], BondOrder)],
+    evidence: ResidueEvidence<'_>,
+    ends: [bool; 2],
+) -> ReaderState<'c> {
+    let gives = |candidate: &Component| {
+        stated.iter().all(|&([a, b], order)| {
+            let (Some((a, _)), Some((b, _))) = (candidate.atom(a), candidate.atom(b)) else {
+                return false;
+            };
+            candidate.bonds().iter().any(|bond| {
+                let [x, y] = bond.atoms();
+                ((x, y) == (a, b) || (x, y) == (b, a)) && gives_order(bond, order)
+            })
+        })
+    };
+    let (candidates, excluded): (Vec<&Component>, Vec<&Component>) = std::iter::once(template)
+        .chain(variants.iter().copied())
+        .partition(|candidate| gives(candidate));
+    let Some((&first, rest)) = candidates.split_first() else {
+        return ReaderState::OrdersExcludeAll;
+    };
+    let exact = |state: &Protonation<'_>| {
+        !state.without_evidence
+            && state
+                .atoms
+                .iter()
+                .all(|atom| atom.from_hydrogens == 0 && atom.missing == 0)
+    };
+    let excluded_exact = excluded.split_first().is_some_and(|(&first, rest)| {
+        reader_protonation(first, rest.iter().copied(), evidence.clone(), ends)
+            .is_some_and(|state| exact(&state))
+    });
+    let Some(mut state) = reader_protonation(first, rest.iter().copied(), evidence, ends) else {
+        return ReaderState::Unfit;
+    };
+    let disagrees = excluded_exact && !exact(&state);
+    if disagrees {
+        state.charge_lacking_hydrogens();
+    }
+    ReaderState::Chosen { state, disagrees }
+}
+
+/// The dictionary template of a component and its protonation variants:
+/// `library`, the caller's, takes precedence over the bundled one.
+pub(crate) fn dictionary_template<'l>(
+    library: Option<&'l ComponentLibrary>,
+    component_id: &str,
+) -> Option<(&'l Component, Vec<&'l Component>)> {
+    let library = match library {
+        Some(library) if library.get(component_id).is_some() => library,
+        _ => ComponentLibrary::bundled(),
+    };
+    let component = library.get(component_id)?;
+    Some((component, library.variants(component_id).collect()))
+}
+
+/// The template readers apply to a residue named `component_id` whose
+/// atoms, by name and element, are `atoms`: the caller's `library` template
+/// of that name, else the default one for its atoms (see
+/// [`ComponentLibrary::default_template`]).
+pub(crate) fn reader_template<'l, 'n>(
+    library: Option<&'l ComponentLibrary>,
+    component_id: &str,
+    atoms: impl IntoIterator<Item = (&'n str, Element)> + Clone,
+) -> Option<ResidueTemplate<'l>> {
+    if let Some((library, component)) =
+        library.and_then(|library| Some((library, library.get(component_id)?)))
+    {
+        return Some(ResidueTemplate {
+            component,
+            variants: library.variants(component_id).collect(),
+            force_field: None,
+            fits: component.fits(atoms),
+        });
+    }
+    let template = ComponentLibrary::default_template(component_id, atoms)?;
+    Some(ResidueTemplate {
+        component: template.component,
+        variants: template.library.variants(component_id).collect(),
+        force_field: template.force_field,
+        fits: template.fits,
+    })
+}
+
+/// The atoms that link a polymer residue of `linking` to the residues
+/// before and after it: a peptide's `N` and `C`, a nucleotide's `P` and
+/// `O3'`.
+pub(crate) const fn link_sides(linking: ComponentLinking) -> [&'static [&'static str]; 2] {
+    match linking {
+        ComponentLinking::Peptide => [&["N"], &["C"]],
+        ComponentLinking::Nucleotide => [&["P"], &["O3'", "O3*"]],
+        _ => [&[], &[]],
+    }
+}
+
+/// One hydrogen bonded to a heavy atom: whether it is deuterium, its
+/// occupancy, alternate location, and position, if known.
+pub(crate) type HydrogenSite<'a> = (bool, Option<f64>, Option<&'a str>, Option<Point3>);
+
+/// Whether a deuterium and a hydrogen are alternates of one exchangeable
+/// site, as neutron structures model it: within 0.6 Å of each other, with
+/// different alternate locations or occupancies that sum to at most one.
+pub(crate) fn share_hydrogen_site(deuterium: HydrogenSite<'_>, protium: HydrogenSite<'_>) -> bool {
+    const TOLERANCE: f64 = 0.05;
+    const SAME_SITE: f64 = 0.6;
+    let (_, occupancy, location, point) = deuterium;
+    let (_, other, other_location, other_point) = protium;
+    let alternate = matches!((location, other_location), (Some(a), Some(b)) if a != b);
+    let partial = occupancy.unwrap_or(1.0) + other.unwrap_or(1.0) <= 1.0 + TOLERANCE;
+    let near = matches!((point, other_point), (Some(a), Some(b))
+        if (a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2) <= SAME_SITE.powi(2));
+    near && (alternate || partial)
+}
+
+/// The hydrogen sites among the hydrogens bonded to one heavy atom: a
+/// deuterium and a hydrogen that share a site (see [`share_hydrogen_site`])
+/// count once. Readers keep one of them; writers count what a reader keeps.
+pub(crate) fn hydrogen_sites<'a>(hydrogens: impl IntoIterator<Item = HydrogenSite<'a>>) -> usize {
+    let (deuterium, protium): (Vec<_>, Vec<_>) = hydrogens
+        .into_iter()
+        .partition(|&(deuterium, ..)| deuterium);
+    let mut paired = vec![false; protium.len()];
+    let mut shared = 0;
+    for &site in &deuterium {
+        let partner = protium
+            .iter()
+            .enumerate()
+            .position(|(index, &other)| !paired[index] && share_hydrogen_site(site, other));
+        if let Some(index) = partner {
+            paired[index] = true;
+            shared += 1;
+        }
+    }
+    deuterium.len() + protium.len() - shared
+}
+
+fn is_hydrogen(element: Element) -> bool {
+    element.atomic_number() == 1
 }
 
 struct Resolver<'r, 'g> {
@@ -719,6 +1003,8 @@ struct Resolver<'r, 'g> {
     source_aromatic_bonds: &'g mut BTreeSet<crate::molecule::BondId>,
     evidence: &'g mut BondEvidenceMap,
     issues: &'g mut Vec<raw::StructureInterpretIssue>,
+    /// Metal coordination records between residues, counted per atom.
+    coordination: &'r BTreeMap<AtomId, usize>,
     model_id: &'r str,
     cancellation: Option<&'r Cancellation>,
     /// Single bonds between a metal and a non-metal of one residue whose
@@ -892,10 +1178,15 @@ impl<'r> Resolver<'r, '_> {
         raw::poll(self.cancellation)?;
         self.attach_stray_hydrogens(&residues, stray_hydrogens)?;
         self.decide_metal_bonds(&residues, &residue_of)?;
+        let (mut ends, unsequenced) = self.polymer_ends(&residues);
+        self.end_breaks(&templated, &residues, &unsequenced, &mut ends)?;
+        let mut assumed = BTreeMap::new();
         for residue in &templated {
             raw::poll(self.cancellation)?;
-            self.assign_template_charges(residue, &residues[&residue.key])?;
+            let ends = ends.get(&residue.key).copied().unwrap_or_default();
+            self.assign_template_charges(residue, &residues[&residue.key], ends, &mut assumed)?;
         }
+        self.report_assumed_protonation(assumed);
         let templated = templated
             .iter()
             .map(|residue| &residue.key)
@@ -911,8 +1202,133 @@ impl<'r> Resolver<'r, '_> {
         Ok(())
     }
 
-    /// Charges the atoms of a residue that no template gives charges, as
-    /// their bonds imply ([`implied_charges`]). A source can state bond
+    /// Whether each polymer residue, by key, has residues before and after
+    /// it in its chain's sequence: an entity's `_entity_poly_seq`, or the
+    /// `SEQRES` records that place a PDB chain's residues. Without one, a
+    /// modelled residue at the position next to it is one: in a PDB chain,
+    /// the residues of one run between `TER` records and changes of chain
+    /// or segment take consecutive positions. Entities whose polymer type
+    /// has no standard linkage have none. Also returns the residues no
+    /// sequence places.
+    fn polymer_ends(
+        &self,
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+    ) -> (BTreeMap<ResidueKey, [bool; 2]>, BTreeSet<ResidueKey>) {
+        let modelled = residues
+            .keys()
+            .filter_map(|key| {
+                Some((
+                    (key.asym_id.as_str(), key.entity_id.as_deref()),
+                    key.polymer_position?,
+                ))
+            })
+            .collect::<BTreeSet<_>>();
+        let mut ends = BTreeMap::new();
+        let mut unsequenced = BTreeSet::new();
+        for key in residues.keys() {
+            let Some(position) = key.polymer_position else {
+                continue;
+            };
+            let length = match key.entity_id.as_deref() {
+                Some(entity) => {
+                    let declared = self.catalog.polymer_types.get(entity);
+                    if declared.is_some_and(|kind| !is_polypeptide(kind) && !is_nucleic_acid(kind))
+                    {
+                        continue;
+                    }
+                    self.catalog.entity_lengths.get(entity)
+                }
+                None => self.catalog.chain_lengths.get(&key.asym_id),
+            };
+            if let Some(&length) = length {
+                ends.insert(key.clone(), [position > 1, position < length]);
+            } else {
+                let chain = (key.asym_id.as_str(), key.entity_id.as_deref());
+                ends.insert(
+                    key.clone(),
+                    [
+                        modelled.contains(&(chain, position - 1)),
+                        modelled.contains(&(chain, position + 1)),
+                    ],
+                );
+                unsequenced.insert(key.clone());
+            }
+        }
+        (ends, unsequenced)
+    }
+
+    /// Ends both residues at each break between modelled residues that no
+    /// sequence places where either shows a true end there (see
+    /// [`true_ends`]), as `OXT` before the break or `H1` to `H3` after it.
+    /// Otherwise the break is a gap.
+    fn end_breaks(
+        &self,
+        templated: &[TemplatedResidue<'_>],
+        residues: &BTreeMap<ResidueKey, ResidueAtoms>,
+        unsequenced: &BTreeSet<ResidueKey>,
+        ends: &mut BTreeMap<ResidueKey, [bool; 2]>,
+    ) -> Result<(), FormatError> {
+        let mut shown = BTreeMap::new();
+        for residue in templated {
+            let Some(position) = residue.key.polymer_position else {
+                continue;
+            };
+            if !unsequenced.contains(&residue.key) {
+                continue;
+            }
+            let evidence = self.residue_evidence(residue, &residues[&residue.key])?;
+            shown.insert(
+                (
+                    residue.key.asym_id.as_str(),
+                    residue.key.entity_id.as_deref(),
+                    position,
+                ),
+                (&residue.key, true_ends(residue.component, &evidence)),
+            );
+        }
+        for (&(asym, entity, position), &(key, own)) in &shown {
+            let Some(&(next_key, next)) = shown.get(&(asym, entity, position + 1)) else {
+                continue;
+            };
+            if own[1] || next[0] {
+                for (key, side) in [(key, 1), (next_key, 0)] {
+                    if let Some(end) = ends.get_mut(key) {
+                        end[side] = false;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds residues that took the usual pH 7 state to the structure's one
+    /// report of them.
+    fn report_assumed_protonation(&mut self, assumed: BTreeMap<String, usize>) {
+        if assumed.is_empty() {
+            return;
+        }
+        let existing = self.issues.iter_mut().find_map(|issue| match issue {
+            raw::StructureInterpretIssue::ProtonationAssumed { components } => Some(components),
+            _ => None,
+        });
+        let Some(components) = existing else {
+            self.issues
+                .push(raw::StructureInterpretIssue::ProtonationAssumed {
+                    components: assumed.into_iter().collect(),
+                });
+            return;
+        };
+        let mut merged = components.drain(..).collect::<BTreeMap<_, _>>();
+        for (component, residues) in assumed {
+            *merged.entry(component).or_default() += residues;
+        }
+        components.extend(merged);
+    }
+
+    /// Charges the atoms of a residue that no template gives charges. Stated
+    /// charges are kept, and the charges of the block's own component atom
+    /// table apply; a `?` there is reported. Otherwise charges follow from
+    /// bonds ([`implied_charges`]). A source can state bond
     /// orders but no charges, as the component tables of wwPDB entry files
     /// do. A neutral atom with more bonds than its valence allows, such as
     /// the methylated N7 of 7-methylguanosine, takes the charge that makes
@@ -930,6 +1346,18 @@ impl<'r> Resolver<'r, '_> {
     /// valence their element does not allow are reported.
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         let id = residue.key.id(self.model_id);
+        let block = self
+            .catalog
+            .component_charges
+            .get(&normalized(&residue.key.component_id));
+        let stated = residue
+            .sites
+            .iter()
+            .any(|site| site.stated_charge.is_some());
+        let template_missing = block.is_none()
+            && !stated
+            && (residue.sites.len() == 1
+                || residue.sites.iter().any(|site| raw::is_metal(site.element)));
         let unstated_orders = self.issues.iter().position(|issue| {
             matches!(
                 issue,
@@ -939,14 +1367,28 @@ impl<'r> Resolver<'r, '_> {
             )
         });
         let may_charge = |atom| {
-            residue
-                .site(atom)
-                .is_some_and(|site| site.stated_charge.is_none())
+            residue.site(atom).is_some_and(|site| {
+                site.stated_charge.is_none()
+                    && !block.is_some_and(|atoms| atoms.contains_key(&site.name))
+            })
         };
         let mut charged_atoms = Vec::new();
         let mut uncharged = Vec::new();
+        let mut unknown = Vec::new();
         for site in &residue.sites {
             if site.stated_charge.is_some() {
+                continue;
+            }
+            if let Some(charge) = block.and_then(|atoms| atoms.get(&site.name)) {
+                match charge {
+                    Some(charge) => {
+                        self.graph
+                            .require_atom_mut(site.atom)
+                            .map_err(interpret_error)?
+                            .formal_charge = *charge;
+                    }
+                    None => unknown.push(site.name.clone()),
+                }
                 continue;
             }
             let atom = self
@@ -974,6 +1416,7 @@ impl<'r> Resolver<'r, '_> {
             }
         }
         let component_id = &residue.key.component_id;
+        let mut incomplete = false;
         let mut donors = Vec::new();
         for site in &residue.sites {
             let atom = self
@@ -994,6 +1437,7 @@ impl<'r> Resolver<'r, '_> {
                 .require_atom(site.atom)
                 .map_err(interpret_error)?;
             if let Some(valence) = incomplete_metal_valence(self.graph, site.atom, atom) {
+                incomplete = true;
                 self.issues
                     .push(raw::StructureInterpretIssue::MetalValenceIncomplete {
                         residue: id.clone(),
@@ -1002,6 +1446,22 @@ impl<'r> Resolver<'r, '_> {
                         valence,
                     });
             }
+        }
+        // A metal whose valence is incomplete is reported as such.
+        if template_missing && !incomplete {
+            self.issues
+                .push(raw::StructureInterpretIssue::TemplateMissing {
+                    residue: id.clone(),
+                    component_id: component_id.clone(),
+                });
+        }
+        if !unknown.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::TemplateChargeUnknown {
+                    residue: id.clone(),
+                    component_id: component_id.clone(),
+                    atoms: unknown,
+                });
         }
         if !charged_atoms.is_empty() {
             self.issues
@@ -1672,7 +2132,11 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Bonds each unbonded hydrogen that its template or listed bonds do not
-    /// cover to the nearest heavy atom of its residue within bonding distance.
+    /// cover. A hydrogen that the template's variants name, or a terminal
+    /// hydrogen by convention (see [`terminal_hydrogen_anchors`]), bonds to
+    /// the atom its name places it on when that atom lies within bonding
+    /// distance; any other bonds to the nearest heavy atom of its residue
+    /// within bonding distance, which is reported.
     fn attach_stray_hydrogens(
         &mut self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
@@ -1692,6 +2156,15 @@ impl<'r> Resolver<'r, '_> {
                 .next()
                 .is_some()
             {
+                continue;
+            }
+            if let Some((anchor, evidence)) = self.named_anchor(residue, site) {
+                self.add_bond(
+                    hydrogen,
+                    anchor,
+                    SourceBondOrder::Localized(BondOrder::Single),
+                    evidence,
+                )?;
                 continue;
             }
             let distance = |other: &ResidueSite| {
@@ -1729,112 +2202,262 @@ impl<'r> Resolver<'r, '_> {
         Ok(())
     }
 
-    /// Sets formal charges of a templated residue. Stated charges win, and
-    /// only the template or a variant that gives every stated bond order is
-    /// a candidate; without one, charges follow from valence, as for a
-    /// residue without a template. Without model hydrogens, the template's
-    /// charges apply. With them, the template
-    /// or protonation variant matching the hydrogens on every heteroatom is
-    /// preferred; otherwise one whose differences lie on heteroatoms with only
-    /// single bonds, each added or removed hydrogen changing the charge by one.
-    /// Hydrogens absent from carbon are left to valence.
+    /// The atom a hydrogen's name places it on, with the evidence: the
+    /// atom that every variant naming the hydrogen bonds it to, or a
+    /// terminal hydrogen's atom. `None` when the name places it nowhere or
+    /// that atom is absent or beyond bonding distance.
+    fn named_anchor(
+        &self,
+        residue: &ResidueAtoms,
+        hydrogen: &ResidueSite,
+    ) -> Option<(AtomId, raw::BondEvidence)> {
+        let (component, variants) = self
+            .catalog
+            .template(&normalized(&residue.key.component_id))?;
+        let mut named = variants.iter().filter_map(|variant| {
+            let (index, atom) = variant.atom(&hydrogen.name)?;
+            if !is_hydrogen(atom.element()) {
+                return None;
+            }
+            let bond = variant
+                .bonds()
+                .iter()
+                .find(|bond| bond.atoms().contains(&index))?;
+            let [a, b] = bond.atoms();
+            let anchor = variant.atoms()[if a == index { b } else { a }].name();
+            Some((anchor, variant.variant()))
+        });
+        let (anchors, evidence) = match named.next() {
+            Some((anchor, variant)) => {
+                if named.any(|(other, _)| other != anchor) {
+                    return None;
+                }
+                (
+                    vec![anchor],
+                    raw::BondEvidence::Template {
+                        component_id: component.id().to_owned(),
+                        variant: variant.map(str::to_owned),
+                    },
+                )
+            }
+            None => (
+                terminal_hydrogen_anchors(component.linking(), &hydrogen.name).to_vec(),
+                raw::BondEvidence::HydrogenName,
+            ),
+        };
+        let anchor = anchors
+            .iter()
+            .find_map(|name| residue.atoms.get(*name))
+            .and_then(|&atom| residue.site(atom))?;
+        within_bonding_distance(
+            (hydrogen.element, hydrogen.point),
+            (anchor.element, anchor.point),
+        )
+        .then_some((anchor.atom, evidence))
+    }
+
+    /// Sets the formal charges and fixed hydrogens of a templated residue
+    /// from the protonation state its hydrogens, links, metal coordination,
+    /// and stated charges fit (see [`protonation`]), and reports what the
+    /// template alone does not give: missing atoms and hydrogens, unknown
+    /// template charges, stated charges kept, moved to a resonance form, or
+    /// rejected, links to residues the model lacks, and charges the
+    /// hydrogens or coordination change. `ends` says whether the residue
+    /// has residues before and after it in its polymer chain, and
+    /// `assumed` counts the residues, by component, that take an assumed
+    /// state for want of hydrogens.
     fn assign_template_charges(
         &mut self,
         templated: &TemplatedResidue<'_>,
         residue: &ResidueAtoms,
+        ends: [bool; 2],
+        assumed: &mut BTreeMap<String, usize>,
     ) -> Result<(), FormatError> {
+        let component = templated.component;
         let named = templated
             .matched
             .iter()
-            .map(|(&index, &atom)| (templated.component.atoms()[index].name(), atom))
+            .map(|(&index, &atom)| (component.atoms()[index].name(), atom))
             .collect::<Vec<_>>();
-        let has_hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
-        // Stated orders outrank hydrogens: only a template or variant that
-        // gives every stated order is a candidate.
-        let exact = |charges: &[TemplateCharge]| charges.iter().all(|charge| charge.delta == 0);
-        let mut evaluated = Vec::new();
-        let mut excluded_exact = false;
-        for candidate in
-            std::iter::once(templated.component).chain(templated.variants.iter().copied())
-        {
-            let Some(charges) =
-                self.candidate_charges(candidate, &named, residue, has_hydrogens)?
-            else {
-                continue;
-            };
-            if templated
-                .stated
-                .iter()
-                .all(|bond| candidate_gives(templated.component, candidate, bond))
-            {
-                evaluated.push((candidate, charges));
-            } else {
-                excluded_exact |= exact(&charges);
-            }
-        }
-        if evaluated.is_empty() && !templated.stated.is_empty() {
-            // No candidate fits both the stated orders and the hydrogens:
-            // the stated orders stay, and charges follow from valence. A
-            // residue without hydrogens has nothing they disagree with.
-            self.report_stated_orders(templated, templated.component);
-            if has_hydrogens {
-                self.report_disagreement(templated);
-            }
-            return self.assign_implied_charges(residue);
-        }
-        let chosen = evaluated
+        let evidence = self.residue_evidence(templated, residue)?;
+        let has_hydrogens = evidence.has_hydrogens;
+        let stated = templated
+            .stated
             .iter()
-            .find(|(_, charges)| exact(charges))
-            .or_else(|| evaluated.first())
-            .ok_or_else(|| {
-                raw::structure_error(
-                    DiagnosticKind::Inconsistent,
-                    residue.sites.first().map(|site| site.line),
-                    format!(
-                        "The hydrogens of a {:?} residue match neither its template nor a protonation variant.",
-                        templated.component.id()
-                    ),
+            .map(|bond| {
+                (
+                    bond.template_atoms
+                        .map(|index| component.atoms()[index].name()),
+                    bond.order,
                 )
-            })?;
-        let (candidate, charges) = chosen;
-        let mut charged_atoms = Vec::new();
-        for charge in charges {
-            let site = residue
-                .site(charge.atom)
-                .expect("charged atom is a residue site");
-            let value = site.stated_charge.unwrap_or(charge.value);
-            self.graph
-                .require_atom_mut(charge.atom)
-                .map_err(interpret_error)?
-                .formal_charge = value;
-            if charge.delta != 0 {
-                charged_atoms.push((site.name.clone(), value));
+            })
+            .collect::<Vec<_>>();
+        let (chosen, disagrees) = match reader_state(
+            component,
+            &templated.variants,
+            &stated,
+            evidence,
+            ends,
+        ) {
+            ReaderState::OrdersExcludeAll => {
+                // The stated orders stay, and charges follow from
+                // valence. A residue without hydrogens has nothing they
+                // disagree with.
+                self.report_stated_orders(templated, component);
+                if has_hydrogens {
+                    self.report_disagreement(templated);
+                }
+                return self.assign_implied_charges(residue);
             }
-        }
+            ReaderState::Unfit => {
+                return Err(raw::structure_error(
+                        DiagnosticKind::Inconsistent,
+                        residue.sites.first().map(|site| site.line),
+                        format!(
+                            "The hydrogens of a {:?} residue match neither its template nor a protonation variant.",
+                            component.id()
+                        ),
+                    ));
+            }
+            ReaderState::Chosen { state, disagrees } => (state, disagrees),
+        };
+        let candidate = chosen.candidate;
         self.report_stated_orders(templated, candidate);
-        if candidate.variant().is_some() {
+        if candidate.variant().is_some() || chosen.reorders() {
             let stated = templated
                 .stated
                 .iter()
                 .map(|bond| bond.atoms)
                 .collect::<Vec<_>>();
-            self.apply_variant_bonds(candidate, &named, &stated)?;
+            self.apply_state_bonds(&chosen, &named, &stated)?;
         }
-        // A candidate the stated orders exclude fits the hydrogens without
-        // charges, and the chosen one does not.
-        let disagree = excluded_exact && !exact(charges);
-        if candidate.variant().is_some() || !charged_atoms.is_empty() {
-            self.issues
-                .push(raw::StructureInterpretIssue::ProtonationFromHydrogens {
-                    residue: templated.key.id(self.model_id),
-                    component_id: templated.component.id().to_owned(),
-                    variant: candidate.variant().map(str::to_owned),
-                    charged_atoms,
-                });
-        }
-        if disagree {
+        // A candidate the stated orders exclude fits the hydrogens exactly:
+        // the model's hydrogens are all the residue has.
+        if disagrees {
             self.report_disagreement(templated);
         }
+        let atom_of = |name: &str| {
+            named
+                .iter()
+                .find(|(candidate, _)| *candidate == name)
+                .map(|&(_, atom)| atom)
+                .expect("states cover matched atoms")
+        };
+        let residue_id = templated.key.id(self.model_id);
+        let component_id = component.id().to_owned();
+        let (mut from_hydrogens, mut missing, mut coordinated, mut unknown, mut resonance) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for state in &chosen.atoms {
+            let atom = atom_of(&state.name);
+            let site = residue.site(atom).expect("matched atom is a residue site");
+            match state.stated {
+                Some(protonation::Stated::Kept { derived }) => {
+                    self.issues
+                        .push(raw::StructureInterpretIssue::StatedChargeKept {
+                            residue: residue_id.clone(),
+                            component_id: component_id.clone(),
+                            atom_name: site.name.clone(),
+                            stated: state.charge,
+                            derived,
+                        });
+                }
+                Some(protonation::Stated::Rejected { stated }) => {
+                    self.issues
+                        .push(raw::StructureInterpretIssue::StatedChargeRejected {
+                            residue: residue_id.clone(),
+                            component_id: component_id.clone(),
+                            atom_name: site.name.clone(),
+                            stated,
+                            kept: state.charge,
+                        });
+                }
+                Some(protonation::Stated::Resonance) => {
+                    resonance.push((site.name.clone(), state.charge));
+                }
+                None => {}
+            }
+            let explicit = self.hydrogen_neighbours(atom)?;
+            let mut graph_atom = self.graph.require_atom_mut(atom).map_err(interpret_error)?;
+            graph_atom.formal_charge = state.charge;
+            if state.fixed {
+                graph_atom.hydrogens = ImplicitHydrogens::Fixed(
+                    u8::try_from(state.hydrogens.saturating_sub(explicit)).unwrap_or(u8::MAX),
+                );
+            }
+            if state.from_hydrogens != 0 && state.charge != 0 {
+                from_hydrogens.push((site.name.clone(), state.charge));
+            }
+            if state.missing > 0 {
+                missing.push(site.name.clone());
+            }
+            if state.coordinated > 0 {
+                coordinated.push(site.name.clone());
+            }
+            if state.charge_unknown && site.stated_charge.is_none() {
+                unknown.push(site.name.clone());
+            }
+        }
+        let changed = chosen
+            .atoms
+            .iter()
+            .any(|state| state.from_hydrogens != 0 && state.stated.is_none());
+        if !chosen.without_evidence && (candidate.variant().is_some() || changed) {
+            self.issues
+                .push(raw::StructureInterpretIssue::ProtonationFromHydrogens {
+                    residue: residue_id.clone(),
+                    component_id: component_id.clone(),
+                    variant: candidate.variant().map(str::to_owned),
+                    charged_atoms: from_hydrogens,
+                });
+        }
+        if chosen.assumed {
+            *assumed.entry(component_id.clone()).or_default() += 1;
+        }
+        if !resonance.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::StatedChargeResonance {
+                    residue: residue_id.clone(),
+                    component_id: component_id.clone(),
+                    charged_atoms: resonance,
+                });
+        }
+        if !missing.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::HydrogensMissing {
+                    residue: residue_id.clone(),
+                    component_id: component_id.clone(),
+                    atoms: missing,
+                });
+        }
+        if !coordinated.is_empty() {
+            self.issues.push(
+                raw::StructureInterpretIssue::HydrogenReplacedByCoordination {
+                    residue: residue_id.clone(),
+                    component_id: component_id.clone(),
+                    atoms: coordinated,
+                },
+            );
+        }
+        if !unknown.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::TemplateChargeUnknown {
+                    residue: residue_id.clone(),
+                    component_id: component_id.clone(),
+                    atoms: unknown,
+                });
+        }
+        for state in chosen.atoms.iter().filter(|state| state.gap) {
+            let name = state.name.as_str();
+            {
+                self.issues
+                    .push(raw::StructureInterpretIssue::PolymerLinkMissing {
+                        residue: residue_id.clone(),
+                        component_id: component_id.clone(),
+                        atom_name: name.to_owned(),
+                    });
+            }
+        }
+        self.report_missing_atoms(templated, &chosen);
         Ok(())
     }
 
@@ -1849,52 +2472,141 @@ impl<'r> Resolver<'r, '_> {
         );
     }
 
-    /// The charges a candidate template gives the residue's atoms, or `None`
-    /// when the model's hydrogens contradict it.
-    fn candidate_charges(
+    /// Reports the template heavy atoms a residue lacks. A leaving atom
+    /// that nothing replaces, such as the `OXT` of a C terminus, leaves its
+    /// bonded atom without the hydrogen that valence would add, so the
+    /// residue does not become another molecule; one whose bonded atom
+    /// links across a gap is no terminal atom. A nucleotide without its
+    /// whole 5' phosphate is a 5'-hydroxyl terminus, not a residue with
+    /// missing atoms.
+    fn report_missing_atoms(&mut self, templated: &TemplatedResidue<'_>, chosen: &Protonation<'_>) {
+        let component = templated.component;
+        let state = |name: &str| chosen.atoms.iter().find(|state| state.name == name);
+        let has = |name: &str| state(name).is_some();
+        let five_prime_hydroxyl = component.linking() == ComponentLinking::Nucleotide
+            && component
+                .atom("P")
+                .is_some_and(|(_, atom)| !has(atom.name()));
+        let mut missing = Vec::new();
+        for (index, atom) in component.atoms().iter().enumerate() {
+            if is_hydrogen(atom.element()) || templated.matched.contains_key(&index) {
+                continue;
+            }
+            if five_prime_hydroxyl && FIVE_PRIME_PHOSPHATE.contains(&atom.name()) {
+                continue;
+            }
+            if !atom.leaving() {
+                missing.push(atom.name().to_owned());
+                continue;
+            }
+            for bond in component.bonds() {
+                let [a, b] = bond.atoms();
+                let anchor = match (a == index, b == index) {
+                    (true, _) => b,
+                    (_, true) => a,
+                    _ => continue,
+                };
+                let anchor_name = component.atoms()[anchor].name();
+                let Some(anchor_state) = state(anchor_name) else {
+                    continue;
+                };
+                if anchor_state.linked || anchor_state.gap {
+                    continue;
+                }
+                self.issues
+                    .push(raw::StructureInterpretIssue::TerminalAtomMissing {
+                        residue: templated.key.id(self.model_id),
+                        component_id: component.id().to_owned(),
+                        atom_name: atom.name().to_owned(),
+                        anchor: anchor_name.to_owned(),
+                    });
+            }
+        }
+        if !missing.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::AtomsMissing {
+                    residue: templated.key.id(self.model_id),
+                    component_id: component.id().to_owned(),
+                    atoms: missing,
+                });
+        }
+    }
+
+    /// What the model shows about a templated residue's matched heavy
+    /// atoms, with their stated charges.
+    fn residue_evidence<'c>(
         &self,
-        candidate: &Component,
-        named: &[(&str, AtomId)],
+        templated: &TemplatedResidue<'c>,
         residue: &ResidueAtoms,
-        has_hydrogens: bool,
-    ) -> Result<Option<Vec<TemplateCharge>>, FormatError> {
-        let differences = hydrogen_differences(
-            candidate,
-            named,
-            has_hydrogens,
-            |atom| is_hydrogen(residue.site(atom).expect("matched site").element),
-            |atom| {
-                let present = self
-                    .graph
-                    .require_neighbors(atom)
-                    .map_err(interpret_error)?
-                    .filter(|&neighbor| {
-                        self.graph
-                            .atom(neighbor)
-                            .is_some_and(|neighbor| is_hydrogen(neighbor.element))
-                    })
-                    .count();
-                Ok((present, self.links_outside(atom, residue)?))
-            },
-        )?;
-        let Some(differences) = differences else {
-            return Ok(None);
-        };
-        differences
-            .into_iter()
-            .map(|(atom, index, difference)| {
-                let base = candidate.atoms()[index].formal_charge().unwrap_or(0);
-                let delta = i8::try_from(difference).map_err(|_| {
-                    chemistry_error("A residue's hydrogen count differs from its template by more than a formal charge holds.")
-                })?;
-                Ok(TemplateCharge {
-                    atom,
-                    value: base.saturating_add(delta),
-                    delta,
-                })
+    ) -> Result<protonation::ResidueEvidence<'c>, FormatError> {
+        let component = templated.component;
+        let mut heavy = BTreeMap::new();
+        for (&index, &atom) in &templated.matched {
+            let site = residue.site(atom).expect("matched atom is a residue site");
+            if is_hydrogen(site.element) {
+                continue;
+            }
+            let mut evidence = self.atom_evidence(atom, residue)?;
+            evidence.stated = site.stated_charge;
+            heavy.insert(component.atoms()[index].name(), evidence);
+        }
+        Ok(protonation::ResidueEvidence {
+            heavy,
+            has_hydrogens: residue.sites.iter().any(|site| is_hydrogen(site.element)),
+            dictionary: component.force_field().is_none(),
+            polymer: templated.key.polymer_position.is_some(),
+        })
+    }
+
+    /// What the model shows about one matched heavy atom: its hydrogen
+    /// sites (see [`hydrogen_sites`]), links, and metal coordination.
+    fn atom_evidence(
+        &self,
+        atom: AtomId,
+        residue: &ResidueAtoms,
+    ) -> Result<protonation::AtomEvidence, FormatError> {
+        let mut hydrogens = Vec::new();
+        for neighbor in self
+            .graph
+            .require_neighbors(atom)
+            .map_err(interpret_error)?
+        {
+            let Some(staged) = self.graph.atom(neighbor) else {
+                continue;
+            };
+            if !is_hydrogen(staged.element) {
+                continue;
+            }
+            let Some(site) = residue.site(neighbor) else {
+                continue;
+            };
+            hydrogens.push((
+                staged.isotope.is_some_and(|isotope| isotope.get() == 2),
+                site.occupancy,
+                site.alternate_location.as_deref(),
+                Some(site.point),
+            ));
+        }
+        Ok(protonation::AtomEvidence {
+            hydrogens: hydrogen_sites(hydrogens),
+            links: self.links_outside(atom, residue)?,
+            coordination: self.coordination.get(&atom).copied().unwrap_or(0),
+            ..protonation::AtomEvidence::default()
+        })
+    }
+
+    /// The hydrogens bonded to an atom.
+    fn hydrogen_neighbours(&self, atom: AtomId) -> Result<usize, FormatError> {
+        Ok(self
+            .graph
+            .require_neighbors(atom)
+            .map_err(interpret_error)?
+            .filter(|&neighbor| {
+                self.graph
+                    .atom(neighbor)
+                    .is_some_and(|neighbor| is_hydrogen(neighbor.element))
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
+            .count())
     }
 
     /// The valence that bonds to atoms of other residues give a residue
@@ -1909,14 +2621,16 @@ impl<'r> Resolver<'r, '_> {
             .sum())
     }
 
-    /// Replaces template bond orders with a variant's, except the orders
-    /// records state between the `stated` atom pairs.
-    fn apply_variant_bonds(
+    /// Replaces template bond orders with those of the chosen state, a
+    /// variant's and the resonance forms stated charges give, except the
+    /// orders records state between the `stated` atom pairs.
+    fn apply_state_bonds(
         &mut self,
-        variant: &Component,
+        chosen: &protonation::Protonation<'_>,
         named: &[(&str, AtomId)],
         stated: &[[AtomId; 2]],
     ) -> Result<(), FormatError> {
+        let variant = chosen.candidate;
         let atom_of = |index: usize| {
             let name = variant.atoms()[index].name();
             named
@@ -1939,10 +2653,13 @@ impl<'r> Resolver<'r, '_> {
             else {
                 continue;
             };
+            let order = chosen
+                .bond_order(bond)
+                .unwrap_or_else(|| SourceBondOrder::of_template(bond).staged_order());
             self.graph
                 .require_bond_mut(existing)
                 .map_err(interpret_error)?
-                .set_order(SourceBondOrder::of_template(bond).staged_order());
+                .set_order(order);
             self.evidence.insert(
                 (left.min(right), left.max(right)),
                 raw::BondEvidence::Template {
@@ -2037,104 +2754,6 @@ fn match_template(
     Ok(Some((matched, strays)))
 }
 
-/// One residue atom, its template atom index, and how many hydrogens it has
-/// beyond the template's.
-pub(crate) type HydrogenDifference<A> = (A, usize, isize);
-
-/// How many hydrogens each named atom of a residue has beyond those
-/// `candidate` gives it: `(atom, template index, difference)`, or `None`
-/// when the model's hydrogens contradict the candidate. `named` pairs
-/// template atom names with residue atoms. Differences are counted only on
-/// heteroatoms of a residue with model hydrogens, and only where they can be
-/// charges: on an atom with only single template bonds, or by one on a ring
-/// nitrogen. `hydrogens` gives an atom's bonded hydrogens and the valence
-/// its bonds to other residues give it, which takes the place of hydrogens.
-pub(crate) fn hydrogen_differences<A: Copy, E>(
-    candidate: &Component,
-    named: &[(&str, A)],
-    has_hydrogens: bool,
-    is_hydrogen_atom: impl Fn(A) -> bool,
-    mut hydrogens: impl FnMut(A) -> Result<(usize, usize), E>,
-) -> Result<Option<Vec<HydrogenDifference<A>>>, E> {
-    let mut differences = Vec::new();
-    for &(name, atom) in named {
-        let Some((index, template_atom)) = candidate.atom(name) else {
-            // Variants only remove hydrogens; a model hydrogen the variant
-            // lacks shows up on its heavy atom below.
-            if is_hydrogen_atom(atom) {
-                continue;
-            }
-            return Ok(None);
-        };
-        let element = template_atom.element();
-        let mut difference = 0;
-        if has_hydrogens && !is_hydrogen(element) && !is_carbon(element) {
-            let (present, links) = hydrogens(atom)?;
-            let expected = expected_hydrogens(candidate, index, links);
-            if present != expected {
-                let only_single = candidate
-                    .bonds()
-                    .iter()
-                    .filter(|bond| bond.atoms().contains(&index))
-                    .all(|bond| {
-                        bond.order() == TemplateOrder::Single
-                            && !bond.aromatic()
-                            && !bond.metal_coordination()
-                    });
-                difference = present as isize - expected as isize;
-                // A ring nitrogen takes or loses one proton whatever its
-                // bond orders, as a protonated cytosine N3 or a
-                // deprotonated imidazole nitrogen does.
-                let ring_nitrogen = element.atomic_number() == 7
-                    && difference.abs() == 1
-                    && in_ring(candidate, index);
-                if !only_single && !ring_nitrogen {
-                    return Ok(None);
-                }
-            }
-        }
-        differences.push((atom, index, difference));
-    }
-    Ok(Some(differences))
-}
-
-/// A formal charge from a template, after hydrogen differences.
-struct TemplateCharge {
-    atom: AtomId,
-    value: i8,
-    delta: i8,
-}
-
-/// Whether a template atom lies on a ring: some neighbour reaches it again
-/// without the bond between them.
-fn in_ring(component: &Component, index: usize) -> bool {
-    let neighbours = |atom: usize| {
-        component.bonds().iter().filter_map(move |bond| {
-            let [a, b] = bond.atoms();
-            match (a == atom, b == atom) {
-                (true, _) => Some(b),
-                (_, true) => Some(a),
-                _ => None,
-            }
-        })
-    };
-    neighbours(index).any(|start| {
-        let mut seen = BTreeSet::from([index, start]);
-        let mut stack = vec![start];
-        while let Some(atom) = stack.pop() {
-            for next in neighbours(atom) {
-                if next == index && atom != start {
-                    return true;
-                }
-                if seen.insert(next) {
-                    stack.push(next);
-                }
-            }
-        }
-        false
-    })
-}
-
 /// The valence a bond to another residue gives an atom, which is the number
 /// of hydrogens it replaces: one for a single bond, two for a double bond.
 /// Zero-order and dative bonds replace none.
@@ -2145,34 +2764,6 @@ pub(crate) const fn link_valence(order: BondOrder) -> usize {
         BondOrder::Double => 2,
         BondOrder::Triple => 3,
         BondOrder::Quadruple => 4,
-    }
-}
-
-/// The hydrogens a template atom carries when bonds to other residues give
-/// it `links` valence. Each unit takes the place of one hydrogen, and an
-/// atom that links loses all its leaving hydrogens: a peptide bond replaces
-/// the amine's leaving `H2`, a disulfide replaces cysteine's `HG`, which the
-/// dictionary does not mark leaving, and a Schiff base's double bond
-/// replaces two of lysine's `NZ` hydrogens.
-fn expected_hydrogens(component: &Component, index: usize, links: usize) -> usize {
-    let (mut hydrogens, mut leaving) = (0, 0);
-    for bond in component.bonds() {
-        let [a, b] = bond.atoms();
-        let other = match (a == index, b == index) {
-            (true, _) => b,
-            (_, true) => a,
-            _ => continue,
-        };
-        let atom = &component.atoms()[other];
-        if is_hydrogen(atom.element()) {
-            hydrogens += 1;
-            leaving += usize::from(atom.leaving());
-        }
-    }
-    if links == 0 {
-        hydrogens
-    } else {
-        hydrogens.saturating_sub(leaving.max(links))
     }
 }
 

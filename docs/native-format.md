@@ -77,7 +77,7 @@ the newest are frozen. `NATIVE_FORMAT_OLDEST` rises only at a major release
 | Version | Layout |
 | --- | --- |
 | 9 | As specified here. |
-| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide bond evidence (`7`), no issue kinds 20 to 35, and no neutral onium centres in issue kind 12. |
+| 8 | As version 9, without `columns` and `sampling` in the set head, and with a distribution that stores `log_weights:opt [f64; sample_count]` in place of `weights` and `temperature:opt f64` in place of `target`. A set read from it moves each geometry's owner properties into its row of the columns and has no sampling record; log weights read as given log weights, none as equal weights, and a temperature as a canonical target. It has no disulfide (`7`) or hydrogen-name (`8`) bond evidence, no issue kinds 20 to 48, and no neutral onium centres in issue kind 12. |
 | 7 | As version 8, without the distribution record (kind 12). |
 
 Every readable version has files of every kind it has, in
@@ -454,7 +454,7 @@ molecule instance of its provenance; mode `1` holds full IDs.
 Entity kinds: `0` polymer, `1` branched, `2` non-polymer, `3` water, `4`
 another value, stored in `other`. Bond evidence: `0` component table, `1`
 template, `2` polymer link, `3` branch link, `4` connection, `5` distance,
-`6` hydrogen distance, `7` disulfide.
+`6` hydrogen distance, `7` disulfide, `8` hydrogen name.
 
 ```text
 coordination := a:u64 b:u64 connection_id:opt str connection_type:str
@@ -497,28 +497,36 @@ An issue is its kind, then its fields in declaration order, with lists as
 `u8`, bond orders as the `order` of a bond, with `255` for an aromatic
 template bond, neutral onium centres as a `list` of an atom name `str`
 and its hydrogens `u8`, and number fields as `u8` (`0` atom serial
-numbers, `1` residue numbers).
+numbers, `1` residue numbers). `ProtonationAssumed` lists its components
+as `list` of `str` and `usize`.
 
 | Kind | Issue | Kind | Issue |
 | --- | --- | --- | --- |
-| 0 | `EntityTypeInferred` | 18 | `CellOmitted` |
-| 1 | `ElementsInferredFromAtomNames` | 19 | `AssemblyOmitted` |
-| 2 | `ConnectionsIgnored` | 20 | `DisulfideInferred` |
-| 3 | `ConnectionUnresolved` | 21 | `ForceFieldTemplate` |
-| 4 | `ConnectionAmbiguous` | 22 | `ResidueBondOrdersUnstated` |
-| 5 | `CoordinateModelIgnored` | 23 | `BondNotInTemplate` |
-| 6 | `AlternateLocationOmitted` | 24 | `BondOrderDiffersFromTemplate` |
-| 7 | `AlternateLocationIncomplete` | 25 | `PolymerLinkSkipped` |
-| 8 | `AlternateLocationOccupancyMissing` | 26 | `LinkingAtomMissing` |
-| 9 | `AlternateLocationCombinationRejected` | 27 | `ResidueFitsNoTemplate` |
-| 10 | `AlternateLocationOccupancyTie` | 28 | `StatedOrdersDisagreeWithHydrogens` |
-| 11 | `ConnectivityCandidatesInferred` | 29 | `MetalValenceIncomplete` |
-| 12 | `ResidueBondsInferred` | 30 | `MetalDonors` |
-| 13 | `HydrogenAttachedByDistance` | 31 | `ElementsFromTemplates` |
-| 14 | `ChainBreak` | 32 | `UnsignedCharges` |
-| 15 | `ChargesFromBonds` | 33 | `HexadecimalNumbers` |
-| 16 | `ProtonationFromHydrogens` | 34 | `NumbersRestart` |
-| 17 | `ResidueFragmented` | 35 | `MetalBondsUnstated` |
+| 0 | `EntityTypeInferred` | 24 | `BondOrderDiffersFromTemplate` |
+| 1 | `ElementsInferredFromAtomNames` | 25 | `PolymerLinkSkipped` |
+| 2 | `ConnectionsIgnored` | 26 | `LinkingAtomMissing` |
+| 3 | `ConnectionUnresolved` | 27 | `ResidueFitsNoTemplate` |
+| 4 | `ConnectionAmbiguous` | 28 | `StatedOrdersDisagreeWithHydrogens` |
+| 5 | `CoordinateModelIgnored` | 29 | `MetalValenceIncomplete` |
+| 6 | `AlternateLocationOmitted` | 30 | `MetalDonors` |
+| 7 | `AlternateLocationIncomplete` | 31 | `ElementsFromTemplates` |
+| 8 | `AlternateLocationOccupancyMissing` | 32 | `UnsignedCharges` |
+| 9 | `AlternateLocationCombinationRejected` | 33 | `HexadecimalNumbers` |
+| 10 | `AlternateLocationOccupancyTie` | 34 | `NumbersRestart` |
+| 11 | `ConnectivityCandidatesInferred` | 35 | `MetalBondsUnstated` |
+| 12 | `ResidueBondsInferred` | 36 | `ProtonationAssumed` |
+| 13 | `HydrogenAttachedByDistance` | 37 | `HydrogensMissing` |
+| 14 | `ChainBreak` | 38 | `ZeroOccupancyHydrogens` |
+| 15 | `ChargesFromBonds` | 39 | `HydrogenReplacedByCoordination` |
+| 16 | `ProtonationFromHydrogens` | 40 | `StatedChargeKept` |
+| 17 | `ResidueFragmented` | 41 | `StatedChargeRejected` |
+| 18 | `CellOmitted` | 42 | `TemplateChargeUnknown` |
+| 19 | `AssemblyOmitted` | 43 | `TemplateMissing` |
+| 20 | `DisulfideInferred` | 44 | `AtomsMissing` |
+| 21 | `ForceFieldTemplate` | 45 | `TerminalAtomMissing` |
+| 22 | `ResidueBondOrdersUnstated` | 46 | `PolymerLinkMissing` |
+| 23 | `BondNotInTemplate` | 47 | `StatedChargeResonance` |
+|  |  | 48 | `SequenceNotPlaced` |
 
 Connection resolution reasons: `0` unsupported symmetry (`str`), `1` missing
 selector, `2` conflicting selector values (`u8`: `0` label alternate-location

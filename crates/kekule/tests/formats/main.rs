@@ -23,6 +23,7 @@ mod native_versions;
 mod pdb;
 mod pdb_conventions;
 mod pdb_write;
+mod protonation;
 mod residue_charges;
 mod sequences;
 mod smiles_stereo;
