@@ -1493,31 +1493,40 @@ impl<'r> Resolver<'r, '_> {
         let has_hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
         // Stated orders outrank hydrogens: only a template or variant that
         // gives every stated order is a candidate.
-        let candidates = std::iter::once(templated.component)
-            .chain(templated.variants.iter().copied())
-            .filter(|candidate| {
-                templated
-                    .stated
-                    .iter()
-                    .all(|bond| candidate_gives(templated.component, candidate, bond))
-            });
+        let exact = |charges: &[TemplateCharge]| charges.iter().all(|charge| charge.delta == 0);
         let mut evaluated = Vec::new();
-        for candidate in candidates {
-            if let Some(charges) =
+        let mut excluded_exact = false;
+        for candidate in
+            std::iter::once(templated.component).chain(templated.variants.iter().copied())
+        {
+            let Some(charges) =
                 self.candidate_charges(candidate, &named, residue, has_hydrogens)?
+            else {
+                continue;
+            };
+            if templated
+                .stated
+                .iter()
+                .all(|bond| candidate_gives(templated.component, candidate, bond))
             {
                 evaluated.push((candidate, charges));
+            } else {
+                excluded_exact |= exact(&charges);
             }
         }
         if evaluated.is_empty() && !templated.stated.is_empty() {
             // No candidate fits both the stated orders and the hydrogens:
-            // the stated orders stay, and charges follow from valence.
+            // the stated orders stay, and charges follow from valence. A
+            // residue without hydrogens has nothing they disagree with.
             self.report_stated_orders(templated, templated.component);
+            if has_hydrogens {
+                self.report_disagreement(templated);
+            }
             return self.assign_implied_charges(residue);
         }
         let chosen = evaluated
             .iter()
-            .find(|(_, charges)| charges.iter().all(|charge| charge.delta == 0))
+            .find(|(_, charges)| exact(charges))
             .or_else(|| evaluated.first())
             .ok_or_else(|| {
                 raw::structure_error(
@@ -1553,6 +1562,9 @@ impl<'r> Resolver<'r, '_> {
                 .collect::<Vec<_>>();
             self.apply_variant_bonds(candidate, &named, &stated)?;
         }
+        // A candidate the stated orders exclude fits the hydrogens without
+        // charges, and the chosen one does not.
+        let disagree = excluded_exact && !exact(charges);
         if candidate.variant().is_some() || !charged_atoms.is_empty() {
             self.issues
                 .push(raw::StructureInterpretIssue::ProtonationFromHydrogens {
@@ -1562,7 +1574,21 @@ impl<'r> Resolver<'r, '_> {
                     charged_atoms,
                 });
         }
+        if disagree {
+            self.report_disagreement(templated);
+        }
         Ok(())
+    }
+
+    /// Reports a residue whose stated bond orders no candidate gives with
+    /// its hydrogens.
+    fn report_disagreement(&mut self, templated: &TemplatedResidue<'_>) {
+        self.issues.push(
+            raw::StructureInterpretIssue::StatedOrdersDisagreeWithHydrogens {
+                residue: templated.key.id(self.model_id),
+                component_id: templated.component.id().to_owned(),
+            },
+        );
     }
 
     /// The charges a candidate template gives the residue's atoms, or `None`

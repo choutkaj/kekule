@@ -288,6 +288,10 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             residue: label(1),
             component_id: "GLY".into(),
         },
+        Issue::StatedOrdersDisagreeWithHydrogens {
+            residue: label(4),
+            component_id: "HIS".into(),
+        },
         Issue::ChargesFromBonds {
             residue: label(5),
             component_id: "XYZ".into(),

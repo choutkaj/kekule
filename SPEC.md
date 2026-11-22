@@ -910,8 +910,8 @@ A template always applies to a residue whose atoms fit it, and records
 within the residue are checked against it: a bond it lacks and an order a
 record states that it does not give are kept and reported. Stated orders
 outrank hydrogens: a residue takes only a protonation variant that gives
-every stated order, and without one its charges follow from valence. A
-residue whose atoms fit no template takes the bonds records state when
+every stated order. When none gives them with the residue's hydrogens, its
+charges follow from both, and it is reported. A residue whose atoms fit no template takes the bonds records state when
 they bond each of its heavy atoms, and is reported; otherwise it fails to
 read. Records that state no order, such as PDB `LINK` records
 and `CONECT` records in a bonded group that lists no bond twice, give

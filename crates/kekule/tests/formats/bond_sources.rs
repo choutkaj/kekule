@@ -969,6 +969,17 @@ fn stated_orders_are_checked_against_the_variant_a_residue_takes() {
             })
             .count()
     };
+    let disagreements = |read: &StructureInterpretation| {
+        issues(read)
+            .into_iter()
+            .filter(|issue| {
+                matches!(
+                    issue,
+                    StructureInterpretIssue::StatedOrdersDisagreeWithHydrogens { .. }
+                )
+            })
+            .collect::<Vec<_>>()
+    };
     // Rows that state the ND1-protonated ring of a residue with HD1.
     let read = read_mmcif(&histidine(
         "ND1-protonated",
@@ -980,9 +991,11 @@ fn stated_orders_are_checked_against_the_variant_a_residue_takes() {
         .count();
     assert_eq!(doubles, 2);
     assert_eq!(differs(&read), 0);
+    assert!(disagreements(&read).is_empty());
 
     // Rows that state every ring bond single keep them, and report the
-    // two the variant makes double.
+    // two the variant makes double. No variant gives them, so the report
+    // names the residue.
     let read = read_mmcif(&histidine(
         "ND1-protonated",
         &ring_rows("ND1-protonated", Some("sing")),
@@ -991,11 +1004,14 @@ fn stated_orders_are_checked_against_the_variant_a_residue_takes() {
         .iter()
         .all(|(_, _, order)| *order == BondOrder::Single));
     assert_eq!(differs(&read), 2);
+    assert_eq!(disagreements(&read).len(), 1);
     assert_valences(&read);
 
     // Stated orders outrank hydrogens. A double ND1=CE1 bond with HD1 and
     // without HE2 is the NE2-protonated ring with a protonated ND1 and a
-    // deprotonated NE2, alone or with the whole ring stated.
+    // deprotonated NE2, alone or with the whole ring stated. The report
+    // names the residue, since the ND1-protonated variant fits its hydrogens
+    // without charges.
     let single = vec!["c1 covale ND1 1 CE1 1 doub".to_owned()];
     for rows in [single, ring_rows("NE2-protonated", None)] {
         let read = read_mmcif(&histidine("ND1-protonated", &rows));
@@ -1007,6 +1023,12 @@ fn stated_orders_are_checked_against_the_variant_a_residue_takes() {
         );
         assert_eq!(differs(&read), 0);
         assert_valences(&read);
+        let disagreements = disagreements(&read);
+        assert_eq!(disagreements.len(), 1, "{disagreements:?}");
+        assert!(disagreements[0].to_string().ends_with(
+            "(component \"HIS\") has stated bond orders that disagree with its hydrogens. \
+             Its charges are derived from the stated orders and the hydrogens."
+        ));
     }
 }
 

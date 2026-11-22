@@ -689,8 +689,10 @@ the main branch migrates by the table under "From the SampleSet API".
   (`BondNotInTemplate`) and so is a stated order it does not give
   (`BondOrderDiffersFromTemplate`). Records without an order take the
   template's. Stated orders outrank hydrogens: a residue takes only a
-  protonation variant that gives every stated order, and without one its
-  charges follow from valence. A residue whose atoms fit no template takes
+  protonation variant that gives every stated order. When none gives them
+  with the residue's hydrogens, its charges follow from both
+  (`StatedOrdersDisagreeWithHydrogens`). A residue whose atoms fit no
+  template takes
   the bonds records state when they bond each of its heavy atoms
   (`ResidueFitsNoTemplate`).
 - Polymer links follow one rule whatever `_entity_poly.nstd_linkage` says:

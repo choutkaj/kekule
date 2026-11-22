@@ -54,8 +54,9 @@ pub enum ModelSelection {
 /// records within the residue are checked against it: a bond the template
 /// lacks is kept, and an order a record states is kept, and the report
 /// names both. Stated orders outrank hydrogens: a residue takes only a
-/// protonation variant that gives every stated order, and without one its
-/// charges follow from valence. A residue with a heavy atom that its
+/// protonation variant that gives every stated order. When none gives them
+/// with the residue's hydrogens, its charges follow from both, and the
+/// report names it. A residue with a heavy atom that its
 /// template does not list, or lists with another element, takes the bonds
 /// its records state when they bond each of its heavy atoms, and the report
 /// names it; otherwise it is an error, never a silently separate molecule.
@@ -458,6 +459,17 @@ pub enum StructureInterpretIssue {
         /// Its component ID.
         component_id: String,
     },
+    /// Connection records state bond orders within a residue that no
+    /// protonation variant gives together with the residue's hydrogens. The
+    /// stated orders are kept, and its charges follow from them and its
+    /// hydrogens. A histidine ring stated as NE2-protonated with a hydrogen
+    /// on ND1 reads as zwitterionic.
+    StatedOrdersDisagreeWithHydrogens {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+    },
     /// A connection record bonds two atoms of a residue that its template
     /// does not bond. The bond is kept, with the record's order.
     BondNotInTemplate {
@@ -784,6 +796,15 @@ impl fmt::Display for StructureInterpretIssue {
                 formatter,
                 "{} (component {component_id:?}) fits no template of its name. Its bonds are \
                  read from its connection records.",
+                Capitalized(residue)
+            ),
+            Self::StatedOrdersDisagreeWithHydrogens {
+                residue,
+                component_id,
+            } => write!(
+                formatter,
+                "{} (component {component_id:?}) has stated bond orders that disagree with its \
+                 hydrogens. Its charges are derived from the stated orders and the hydrogens.",
                 Capitalized(residue)
             ),
             Self::BondNotInTemplate {

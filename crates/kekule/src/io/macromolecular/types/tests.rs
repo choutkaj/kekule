@@ -210,6 +210,13 @@ fn issues_read_as_sentences() {
             r#"Residue 1 of chain "A" in model "1" (component "GLY") fits no template of its name. Its bonds are read from its connection records."#,
         ),
         (
+            Issue::StatedOrdersDisagreeWithHydrogens {
+                residue: residue(4),
+                component_id: "HIS".into(),
+            },
+            r#"Residue 4 of chain "A" in model "1" (component "HIS") has stated bond orders that disagree with its hydrogens. Its charges are derived from the stated orders and the hydrogens."#,
+        ),
+        (
             Issue::BondNotInTemplate {
                 residue: residue(301),
                 component_id: "SO4".into(),
