@@ -1207,8 +1207,8 @@ impl fmt::Display for StructureInterpretIssue {
                 anchor_name,
             } => write!(
                 formatter,
-                "Hydrogen {atom_name:?} of {residue} is too far from {anchor_name:?} for the \
-                 bond its template gives it. The bond is left out."
+                "Hydrogen {atom_name:?} of {residue} lies beyond bonding distance of \
+                 {anchor_name:?}. The bond between them is left out."
             ),
             Self::HydrogenWithSeveralBonds {
                 residue,
