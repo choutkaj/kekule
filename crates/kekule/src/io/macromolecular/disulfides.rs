@@ -18,7 +18,7 @@ use super::{
 /// The residue names of cysteines that can form a disulfide: the dictionary's
 /// and the AMBER name of a cysteine in one. A thiolate, such as AMBER `CYM`,
 /// is not one.
-const CYSTEINES: [&str; 2] = ["CYS", "CYX"];
+pub(super) const CYSTEINES: [&str; 2] = ["CYS", "CYX"];
 
 /// Bonds the `SG` atoms of two cysteines that lie within bonding distance,
 /// when no record bonds either atom to another residue and neither carries a

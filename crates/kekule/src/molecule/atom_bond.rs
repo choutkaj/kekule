@@ -299,6 +299,20 @@ pub enum BondOrder {
     Dative,
 }
 
+impl BondOrder {
+    /// The valence the bond contributes at each endpoint: its order, or zero
+    /// for a zero-order or dative bond.
+    pub const fn valence(self) -> u8 {
+        match self {
+            Self::Zero | Self::Dative => 0,
+            Self::Single => 1,
+            Self::Double => 2,
+            Self::Triple => 3,
+            Self::Quadruple => 4,
+        }
+    }
+}
+
 /// Writes the order as an adjective: `zero-order`, `single`, `double`,
 /// `triple`, `quadruple` or `dative`.
 impl std::fmt::Display for BondOrder {

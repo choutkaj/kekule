@@ -30,6 +30,24 @@ pub enum TopologyEditError {
     InvalidSourceAtomSite(AtomSiteId),
     /// The atom already has a hierarchy site.
     DuplicateAtomPlacement(EditAtomId),
+    /// An edit would raise an atom's fixed implicit-hydrogen count past 255,
+    /// the most an
+    /// [`ImplicitHydrogens::Fixed`](crate::molecule::ImplicitHydrogens::Fixed)
+    /// count holds.
+    HydrogenCountOverflow {
+        /// The atom.
+        atom: EditAtomId,
+        /// The count it would hold.
+        count: usize,
+    },
+    /// Bonds an edit added to an atom took it past its largest allowed
+    /// valence, with no hydrogen left to give up.
+    HydrogenDeficit {
+        /// The atom.
+        atom: EditAtomId,
+        /// The hydrogens it lacks.
+        missing: usize,
+    },
     /// A molecule edit failed; see the source.
     Molecule(Box<MoleculeError>),
     /// An edited molecule could not be published; see the source.
@@ -71,6 +89,17 @@ impl fmt::Display for TopologyEditError {
             Self::DuplicateAtomPlacement(id) => {
                 write!(f, "{} already has a hierarchy site.", Capitalized(id))
             }
+            Self::HydrogenCountOverflow { atom, count } => write!(
+                f,
+                "{} would have {count} implicit hydrogens. The most is 255.",
+                Capitalized(atom)
+            ),
+            Self::HydrogenDeficit { atom, missing } => write!(
+                f,
+                "{} has {missing} more bond valence than its hydrogens can give up. \
+                 Delete a hydrogen, or set its hydrogen count or charge.",
+                Capitalized(atom)
+            ),
             Self::Molecule(_) => f.write_str("Cannot edit the molecule."),
             Self::Publication(_) => f.write_str("Cannot publish the edited molecule."),
             Self::Topology(_) => f.write_str("Cannot publish the edited topology."),

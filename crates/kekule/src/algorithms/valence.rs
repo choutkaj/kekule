@@ -453,13 +453,18 @@ pub(crate) fn is_metal(element: Element) -> bool {
     )
 }
 
+/// Whether atoms of this element are alkali or alkaline-earth metals.
+pub(crate) const fn is_s_block_metal(atomic_number: u8) -> bool {
+    matches!(
+        atomic_number,
+        3 | 4 | 11 | 12 | 19 | 20 | 37 | 38 | 55 | 56 | 87 | 88
+    )
+}
+
 /// Whether atoms of this element are alkali, alkaline-earth, or p-block
 /// metals, on which [`ValenceModel::RdkitLike`] infers no hydrogens.
 pub(crate) const fn is_main_group_metal(atomic_number: u8) -> bool {
-    matches!(
-        atomic_number,
-        3 | 4 | 11..=13 | 19 | 20 | 31 | 37 | 38 | 49 | 50 | 55 | 56 | 81..=84 | 87 | 88
-    )
+    is_s_block_metal(atomic_number) || matches!(atomic_number, 13 | 31 | 49 | 50 | 81..=84)
 }
 
 /// The hydrogens RDKit's rule, which Molfile readers share, infers on an

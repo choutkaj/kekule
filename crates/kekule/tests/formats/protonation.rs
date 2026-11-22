@@ -2,12 +2,16 @@
 //! model has them, the usual pH 7 states where it has none, and every
 //! difference from the template or the source is reported.
 
+use kekule::hydrogens::AddHydrogensOptions;
 use kekule::macromolecular::{
     BondEvidence, SourceResidueId, SourceResiduePosition, StructureInterpretIssue as Issue,
     StructureInterpretation,
 };
 use kekule::mmcif;
 use kekule::molecule::BondOrder;
+use kekule::structure::Structure;
+use kekule::topology::{AtomSelection, AtomView};
+use std::collections::BTreeMap;
 
 /// One atom-site row.
 #[derive(Clone)]
@@ -2385,4 +2389,131 @@ fn a_chain_without_its_first_residues_keeps_its_places() {
     );
     let (written, _) = mmcif::write([&source], Default::default()).unwrap();
     assert_eq!(places(&read_mmcif(&written)), expected);
+}
+
+/// Each heavy atom's formal charge and total hydrogens after perception, by
+/// chain, residue number, and atom name.
+fn heavy_states(structure: &Structure) -> BTreeMap<(String, Option<i32>, String), (i8, usize)> {
+    let mut structure = structure.clone();
+    structure.perceive().unwrap();
+    structure
+        .topology()
+        .atoms()
+        .filter(|atom| atom.atom().element().atomic_number() != 1)
+        .map(|atom| {
+            let site = atom.atom_site().unwrap();
+            let residue = site.residue();
+            let key = (
+                residue.chain().label_id().to_owned(),
+                residue.label_seq_id(),
+                site.metadata().label_atom_id().unwrap().to_owned(),
+            );
+            let state = (atom.atom().formal_charge(), atom.total_hydrogens().unwrap());
+            (key, state)
+        })
+        .collect()
+}
+
+/// The state of atom `name` of residue `sequence` of chain `asym`.
+fn heavy_state(structure: &Structure, asym: &str, sequence: i32, name: &str) -> (i8, usize) {
+    heavy_states(structure)[&(asym.to_owned(), Some(sequence), name.to_owned())]
+}
+
+/// `structure` without the atoms `doomed` picks.
+fn deleting(structure: &Structure, doomed: impl Fn(AtomView<'_>) -> bool) -> Structure {
+    let mut editor = structure.to_editor();
+    let ids = editor.topology().atom_ids().collect::<Vec<_>>();
+    let atoms = structure
+        .topology()
+        .atoms()
+        .filter(|atom| doomed(*atom))
+        .map(|atom| ids[atom.index().index()])
+        .collect::<Vec<_>>();
+    editor.delete_atoms(atoms).unwrap();
+    editor.finish().unwrap()
+}
+
+fn in_residue(atom: AtomView<'_>, asym: &str, sequence: i32) -> bool {
+    atom.residue().is_some_and(|residue| {
+        residue.chain().label_id() == asym && residue.label_seq_id() == Some(sequence)
+    })
+}
+
+#[test]
+fn deleting_a_residue_beside_a_gap_caps_the_cut_and_keeps_the_open_end() {
+    // Alanines 2 and 3 of four: each has an open end at a gap and a peptide
+    // bond to the other.
+    let source = inner_alanines();
+    let source = source.structure();
+    assert_eq!(heavy_state(source, "A", 2, "C"), (0, 0));
+    assert_eq!(heavy_state(source, "A", 3, "N"), (0, 1));
+
+    let first = deleting(source, |atom| in_residue(atom, "A", 3));
+    assert_eq!(heavy_state(&first, "A", 2, "C"), (0, 1));
+    assert_eq!(heavy_state(&first, "A", 2, "N"), (0, 1));
+
+    let second = deleting(source, |atom| in_residue(atom, "A", 2));
+    assert_eq!(heavy_state(&second, "A", 3, "N"), (0, 2));
+    assert_eq!(heavy_state(&second, "A", 3, "C"), (0, 0));
+}
+
+#[test]
+fn stripping_hydrogens_from_a_read_protein_keeps_its_ph_7_states() {
+    let mut rows = Vec::new();
+    for (index, component) in ["ASP", "GLU", "HIS", "LYS", "ARG", "CYS", "TYR"]
+        .into_iter()
+        .enumerate()
+    {
+        let asym = ["A", "B", "C", "D", "E", "F", "G"][index];
+        let offset = [20.0 * index as f64, 0.0, 0.0];
+        rows.extend(heavy(residue_sites(component, asym, 1, offset)));
+    }
+    let heavy_read = read(&rows, "");
+    let expected = heavy_states(heavy_read.structure());
+    assert_eq!(
+        expected[&("D".to_owned(), Some(1), "NZ".to_owned())],
+        (1, 3)
+    );
+    assert_eq!(
+        expected[&("A".to_owned(), Some(1), "OD2".to_owned())],
+        (-1, 0)
+    );
+
+    // The pH 7 states with their hydrogens as atoms, written and read back.
+    let mut editor = heavy_read.structure().to_editor();
+    let atoms = editor.topology().atom_ids().collect::<Vec<_>>();
+    editor
+        .add_hydrogens(atoms, AddHydrogensOptions::default())
+        .unwrap();
+    let protonated = editor.finish().unwrap();
+    let (text, _) = mmcif::write([&protonated], Default::default()).unwrap();
+    let protein = mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let protein = protein.structure();
+    assert_eq!(heavy_states(protein), expected);
+
+    let hydrogen = |atom: AtomView<'_>| atom.atom().element().atomic_number() == 1;
+    let explicit = protein.topology().atoms().filter(|atom| hydrogen(*atom));
+    let total = expected.values().map(|&(_, count)| count).sum::<usize>();
+    assert_eq!(explicit.count(), total);
+    let stripped = deleting(protein, hydrogen);
+    assert_eq!(
+        stripped
+            .topology()
+            .atoms()
+            .filter(|atom| hydrogen(*atom))
+            .count(),
+        0
+    );
+    assert_eq!(heavy_states(&stripped), expected);
+
+    let heavy_atoms = protein
+        .topology()
+        .atoms()
+        .filter(|atom| !hydrogen(*atom))
+        .map(|atom| atom.id());
+    let selection = AtomSelection::from_atoms(protein.shared_topology(), heavy_atoms).unwrap();
+    assert_eq!(heavy_states(&protein.subset(&selection).unwrap()), expected);
 }

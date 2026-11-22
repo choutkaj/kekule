@@ -63,7 +63,7 @@ fn assert_copies_are_placed(
     tolerance: f64,
 ) {
     let structure = interpretation.structure();
-    let built = assembly.to_structure(structure).unwrap();
+    let built = assembly.to_structure(structure).unwrap().into_structure();
     let generator = &assembly.generators()[0];
     let operations = generator.operations();
     assert_eq!(
@@ -145,7 +145,8 @@ fn copies_keep_identity_chains_and_name_the_others_by_operation() {
     let structure = interpretation.structure();
     let built = interpretation.report().assemblies()[0]
         .to_structure(structure)
-        .unwrap();
+        .unwrap()
+        .into_structure();
     let source = chain_labels(structure);
     let labels = chain_labels(&built);
     assert_eq!(labels.len(), source.len() * 3);
@@ -180,7 +181,8 @@ fn written_assemblies_name_every_copy() {
     let interpretation = from_mmcif(INSULIN_RECEPTOR_KINASE_CIF);
     let built = interpretation.report().assemblies()[0]
         .to_structure(interpretation.structure())
-        .unwrap();
+        .unwrap()
+        .into_structure();
     let (text, _) = mmcif::write(
         [mmcif::MmcifBlockSource::structure(&built)],
         mmcif::MmcifWriteOptions::default(),
@@ -194,7 +196,8 @@ fn written_assemblies_name_every_copy() {
     let interpretation = from_pdb(INSULIN_RECEPTOR_KINASE_PDB);
     let built = interpretation.report().assemblies()[0]
         .to_structure(interpretation.structure())
-        .unwrap();
+        .unwrap()
+        .into_structure();
     let options = pdb::PdbWriteOptions::default().with_chain_ids(pdb::PdbChainIdPolicy::SegmentId);
     let (text, _) = pdb::write(&built, options).unwrap();
     let read = from_pdb(&text);
@@ -218,7 +221,7 @@ fn assemblies_pick_their_chains() {
     );
     let built = assemblies
         .iter()
-        .map(|assembly| assembly.to_structure(structure).unwrap())
+        .map(|assembly| assembly.to_structure(structure).unwrap().into_structure())
         .collect::<Vec<_>>();
     assert_eq!(
         built[0].atom_count() + built[1].atom_count(),
@@ -288,7 +291,10 @@ END
         .map(|generator| generator.chains().to_vec())
         .collect::<Vec<_>>();
     assert_eq!(chains, [["A"], ["B"]]);
-    let built = assembly.to_structure(interpretation.structure()).unwrap();
+    let built = assembly
+        .to_structure(interpretation.structure())
+        .unwrap()
+        .into_structure();
     let labels = chain_labels(&built)
         .into_iter()
         .map(|(label, _)| label)
@@ -374,7 +380,10 @@ fn products_place_one_copy_per_combination() {
         .map(|operation| operation.name())
         .collect::<Vec<_>>();
     assert_eq!(names, ["1-1", "1-T", "R-1", "R-T"]);
-    let built = assembly.to_structure(interpretation.structure()).unwrap();
+    let built = assembly
+        .to_structure(interpretation.structure())
+        .unwrap()
+        .into_structure();
     let labels = chain_labels(&built);
     assert_eq!(
         labels,

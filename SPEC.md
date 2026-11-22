@@ -107,10 +107,12 @@ references alone, since hydrogen transforms change a carrier and its
 declaration in separate steps. An edit that invalidates stereo — changing a
 focus order, adding a bond to a focus, deleting a carrier bond — prunes the
 affected stereo and group memberships locally, and the editor reports every
-pruned element. Enhanced stereo groups belong to a connected molecule:
-splitting a correlated group across components is rejected at publication,
-while absolute memberships may split. Formats that cannot encode a relationship
-fail explicitly.
+pruned element. A carrier that can follow a topology edit does: deleting an
+atom's only hydrogen hands its place to an implicit one, and a single bond that
+takes an atom's only implicit hydrogen takes its place. Enhanced stereo groups
+belong to a connected molecule: splitting a correlated group across components
+is rejected at publication, while absolute memberships may split. Formats that
+cannot encode a relationship fail explicitly.
 
 `Perception` is reconstructible state derived from the exact represented graph
 under an explicit model or policy: valence, rings, aromaticity, conjugation,
@@ -141,10 +143,25 @@ attached hydrogens represented without graph atoms; total counts also include
 explicit hydrogen neighbors. An atom's implicit count is either fixed or wholly
 inferred, never a mix. Fixed counts remain known without perception, and
 perception never overwrites them; inferred counts are unknown after chemical
-edits until perception is recomputed. Explicit/implicit conversion preserves
-composition and stereo. CIP assignment is transactional, respects represented
-stereo, and reports unsupported or exhausted ranking rather than treating
-unfinished work as a tie.
+edits until perception is recomputed. Topology and structure edits keep fixed
+counts whole: an atom gains a hydrogen for each unit of bond valence a
+deletion, a lower order, or a subset cut takes from it, and gives one up for
+each unit it gains. A gain takes a declared radical electron first, then a
+hydrogen, then fills open valence; past the largest allowed valence it is
+owed, later losses pay it back first, and publication fails while any is
+owed. A loss fills the atom only up to the smallest valence its element and
+charge allow at or above what remains with its hydrogens and radical
+electrons, so a sulfoxide that loses its oxygen is a sulfide. Batch
+deletions settle once for the whole set, as a subset of the survivors caps
+them. Every bond counts with its order's valence: a single bond to a metal
+trades a hydrogen, as for a chloride or a methyl cut from its metal, and
+coordination that trades none is a dative bond. A metal's count never
+changes.
+`perception::valence::open_valences` names fixed atoms still short of their
+valence. Explicit/implicit conversion
+preserves composition and stereo. CIP assignment is transactional, respects
+represented stereo, and reports unsupported or exhausted ranking rather than
+treating unfinished work as a tie.
 
 Perception runs once per reusable definition and publishes atomically: a
 definition whose installed default perception is unchanged since perception
@@ -259,14 +276,17 @@ edits retain the exact shared topology.
 
 Append-oriented construction preserves existing IDs and dense order. General
 structural edits keep surviving atoms in source dense order and append new
-atoms in creation order, while repartitioned molecules receive deterministic
-new definitions and instances. Hierarchy is filtered and empty nodes are
-pruned; its partition is independent of molecule splits and merges. Per-entity
-annotations follow the operation's explicit correspondence: an editor maps
-surviving handles to published identities and, densely, source atom and bond
-indices, residues, and chains to the published ones and back. Generic owner
-annotations are conservatively cleared when their owner changes; no-op edits
-preserve them.
+atoms in creation order, except that an added atom placed in a residue that
+holds earlier atoms follows the last of them, so residues stay contiguous.
+The editor's own per-atom APIs, `atom_ids` and position and property columns
+among them, keep handle order: surviving source atoms, then added atoms in
+creation order. Repartitioned molecules receive deterministic new definitions and
+instances. Hierarchy is filtered and empty nodes are pruned; its partition is
+independent of molecule splits and merges. Per-entity annotations follow the
+operation's explicit correspondence: an editor maps surviving handles to
+published identities and, densely, source atom and bond indices, residues, and
+chains to the published ones and back. Generic owner annotations are
+conservatively cleared when their owner changes; no-op edits preserve them.
 
 Appending a complete structure imports its definitions, perception,
 classification, hierarchy, coordinates, and entity properties into the draft
@@ -934,8 +954,15 @@ no bond joins them. A covalent link to another residue takes the place of as man
 hydrogens as its order, as a disulfide replaces cysteine's `HG`, so it
 charges no atom.
 Metal coordination between residues is not a bond: the
-report keeps it as connection metadata, while coordination within one residue
-is a dative bond, so a metal complex that is one component stays one molecule.
+report keeps it as connection metadata, which writers state again for the
+atoms that carry its partners' identity: chain, residue identifiers and
+occurrence among the chain's residues that share them, and atom names, with
+the recorded atom ID deciding between equals.
+`StructureInterpretationReport::follow_edit` re-keys a report through an
+edit's correspondence, so renamed chains and residues keep it, and
+`follow_append` re-keys an appended structure's report. Coordination
+within one residue is a dative bond, so a metal complex that is one component
+stays one molecule.
 A record that states a bond without its type, such as PDB `CONECT`, states
 coordination between a metal and a non-metal of different residues. Within
 one residue a source or template flag decides. Without one, explicit

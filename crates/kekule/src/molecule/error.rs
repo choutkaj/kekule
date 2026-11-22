@@ -35,6 +35,15 @@ pub enum MoleculeError {
     CapacityExceeded(CapacityExceeded),
     /// A property operation failed.
     Property(PropertyError),
+    /// An atom's fixed implicit-hydrogen count would pass 255, the most an
+    /// [`ImplicitHydrogens::Fixed`](super::ImplicitHydrogens::Fixed) count
+    /// holds.
+    HydrogenCountOverflow {
+        /// The atom.
+        atom: AtomId,
+        /// The count it would hold.
+        count: usize,
+    },
 }
 
 impl fmt::Display for MoleculeError {
@@ -51,6 +60,11 @@ impl fmt::Display for MoleculeError {
             }
             Self::CapacityExceeded(error) => error.fmt(f),
             Self::Property(_) => f.write_str("The molecule property is invalid."),
+            Self::HydrogenCountOverflow { atom, count } => write!(
+                f,
+                "{} would have {count} implicit hydrogens. The most is 255.",
+                Capitalized(atom)
+            ),
         }
     }
 }
