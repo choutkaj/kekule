@@ -1181,7 +1181,8 @@ impl fmt::Display for StructureInterpretIssue {
             ),
             Self::SequenceNotPlaced { chain_id } => write!(
                 formatter,
-                "The SEQRES sequence of chain {chain_id:?} does not fit its modelled residues.                  They keep their record order."
+                "The SEQRES sequence of chain {chain_id:?} does not fit its modelled residues. \
+                 They keep their record order."
             ),
             Self::StatedChargeResonance {
                 residue,
