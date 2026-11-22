@@ -67,8 +67,11 @@ pub(super) struct ReadBlock<'c> {
 impl<'c> ReadBlock<'c> {
     /// Mirrors the reader's templates and protonation states for the rows,
     /// their elements in row order, the connections, and the report's
-    /// metal coordination, which the block states as `metalc` rows.
-    /// `library` is the caller's component library, which readers prefer.
+    /// metal coordination, which the block states as `metalc` rows, with
+    /// coordinates written to `precision` decimal places and polymer
+    /// entities of `lengths` monomers, by entity ID. `library` is the
+    /// caller's component library, which readers prefer.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         library: Option<&'c ComponentLibrary>,
         rows: &[AtomRow],
@@ -76,6 +79,8 @@ impl<'c> ReadBlock<'c> {
         connections: &[ConnectionRow],
         coordination: &[[InstanceAtomId; 2]],
         row_of: &BTreeMap<InstanceAtomId, usize>,
+        precision: usize,
+        lengths: &BTreeMap<String, i32>,
     ) -> Self {
         let mut grouped = BTreeMap::<ResidueKey<'_>, Vec<usize>>::new();
         for (index, row) in rows.iter().enumerate() {
@@ -99,7 +104,7 @@ impl<'c> ReadBlock<'c> {
             neighbours[left].push((right, None));
             neighbours[right].push((left, None));
         }
-        let ends = chain_ends(rows, &grouped);
+        let ends = chain_ends(rows, &grouped, lengths);
         let hydrogen = |row: usize| elements[row].atomic_number() == 1;
         let residues = grouped
             .into_iter()
@@ -158,6 +163,7 @@ impl<'c> ReadBlock<'c> {
                                     rows[other].type_symbol == "D",
                                     rows[other].occupancy,
                                     rows[other].label_alt_id.as_deref(),
+                                    Some(written(rows[other].position, precision)),
                                 )),
                                 Some(connection) if !in_residue.contains(&other) => {
                                     evidence.links += link_valence(connections[connection].order);
@@ -195,19 +201,12 @@ impl<'c> ReadBlock<'c> {
     /// The fixed implicit hydrogen count a reader gives each row, by row
     /// index: atoms that bond across a gap or anchor a leaving atom their
     /// residue lacks, in residues it reads with their template.
-    pub(super) fn fixed_hydrogens(
-        &self,
-        elements: &[Element],
-        connections: &[ConnectionRow],
-    ) -> BTreeMap<usize, u8> {
+    pub(super) fn fixed_hydrogens(&self, elements: &[Element]) -> BTreeMap<usize, u8> {
         let mut fixed = BTreeMap::new();
         for residue in &self.residues {
             let (Some(matched), Some(state)) = (&residue.matched, &residue.state) else {
                 continue;
             };
-            if !self.rebuilt(residue, connections) {
-                continue;
-            }
             for atom in state.atoms.iter().filter(|atom| atom.fixed) {
                 let Some(&row) = matched.get(atom.name.as_str()) else {
                     continue;
@@ -263,33 +262,20 @@ impl<'c> ReadBlock<'c> {
     }
 }
 
-/// Whether each residue has residues before and after it in its polymer
-/// chain, as a reader of the block finds: rows of one asym and entity with
-/// a `label_seq_id` form a chain, and a position after the first or a
-/// modelled residue on that side counts. The block states no sequence
-/// beyond its last modelled residue.
-fn chain_ends(rows: &[AtomRow], residues: &[Vec<usize>]) -> Vec<[bool; 2]> {
-    let mut bounds = BTreeMap::<(&str, &str), (i32, i32)>::new();
-    for members in residues {
-        let row = &rows[members[0]];
-        if let Some(position) = row.label_seq_id {
-            let bound = bounds
-                .entry((&row.asym_id, &row.entity_id))
-                .or_insert((position, position));
-            *bound = (bound.0.min(position), bound.1.max(position));
-        }
-    }
+/// Whether each residue has residues before and after it in its entity's
+/// sequence of `lengths` monomers, by entity ID, as a reader of the block
+/// finds from `_entity_poly_seq`.
+fn chain_ends(
+    rows: &[AtomRow],
+    residues: &[Vec<usize>],
+    lengths: &BTreeMap<String, i32>,
+) -> Vec<[bool; 2]> {
     residues
         .iter()
         .map(|members| {
             let row = &rows[members[0]];
-            match (
-                row.label_seq_id,
-                bounds.get(&(&*row.asym_id, &*row.entity_id)),
-            ) {
-                (Some(position), Some(&(first, last))) => {
-                    [position > 1 || position > first, position < last]
-                }
+            match (row.label_seq_id, lengths.get(&row.entity_id)) {
+                (Some(position), Some(&length)) => [position > 1, position < length],
                 _ => [false, false],
             }
         })

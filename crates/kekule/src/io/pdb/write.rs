@@ -34,6 +34,7 @@ use crate::io::macromolecular::connectivity::{
     standard_link, within_bonding_distance, AtomEvidence, PolymerLink, Protonation,
     ResidueEvidence, ResidueTemplate, StandardLink,
 };
+use crate::io::macromolecular::pdb::{segment_starts, Segment};
 use crate::io::macromolecular::{
     is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
 };
@@ -686,6 +687,7 @@ pub(crate) fn write_pdb_to<'a>(
         views[0].topology(),
         views[0],
         &links,
+        source.reports.and_then(<[_]>::first),
         &options,
         &mut omissions,
     )?;
@@ -817,6 +819,8 @@ struct AtomResidue {
     key: ResidueKey,
     polymer: bool,
     class: ResidueClass,
+    /// The residue's place in its polymer's sequence, `label_seq_id`.
+    place: Option<i32>,
 }
 
 /// One atom's identity columns before validation.
@@ -1075,16 +1079,10 @@ impl<'o> Plan<'o> {
             }
         }
 
-        // `TER` follows the last `ATOM` record of each chain and takes the
+        // `TER` follows the last polymer residue of each chain and takes the
         // next serial number, so ligands bonded to the polymer, written
         // after it, read as no part of it.
-        let mut last_polymer_atom = BTreeMap::new();
-        for (index, record) in records.iter().enumerate() {
-            if !record.hetatm {
-                last_polymer_atom.insert((record.chain, record.segment.as_str()), index);
-            }
-        }
-        let last_polymer_atom = last_polymer_atom.into_values().collect::<Vec<_>>();
+        let last_polymer_atom = polymer_ends(topology, &records, &residues);
         for &index in &last_polymer_atom {
             records[index].ter = true;
         }
@@ -1171,6 +1169,7 @@ impl<'o> Plan<'o> {
                     } else {
                         ResidueClass::Other
                     },
+                    place: None,
                 },
                 name: generated_name(),
                 residue_name: if water { "HOH" } else { "MOL" }.to_owned(),
@@ -1190,6 +1189,7 @@ impl<'o> Plan<'o> {
                 key: ResidueKey::Hierarchy(residue.id()),
                 polymer,
                 class: residue.class(),
+                place: residue.label_seq_id(),
             },
             name: metadata
                 .auth_atom_id()
@@ -1514,6 +1514,56 @@ impl<'o> Plan<'o> {
 /// order (an extra bond is listed instead). Coordination is dative, aromatic
 /// and delocalized template bonds accept either localized order, and
 /// hydrogens, whose names variants change, are not compared.
+/// The last record of each chain's polymer, by chain and segment. A residue
+/// is the polymer's when it has a place in its sequence, is a standard
+/// residue, or links through its `N` or `P` to the `C` or `O3'` of the
+/// polymer residue before it, as a C-terminal `NH2` cap, a selenomethionine,
+/// or an AMBER `HIE` does.
+fn polymer_ends(
+    topology: &Topology,
+    records: &[AtomRecord],
+    residues: &[AtomResidue],
+) -> Vec<usize> {
+    let bonded = |a: usize, b: usize| {
+        topology
+            .atom_at(TopologyAtomIndex::from_index(a))
+            .expect("records follow dense atoms")
+            .bonds()
+            .any(|bond| bond.atoms().iter().any(|atom| atom.index().index() == b))
+    };
+    let mut ends = BTreeMap::new();
+    // By chain: the linking atoms that end its polymer so far.
+    let mut tails = BTreeMap::<(char, &str), Vec<usize>>::new();
+    let mut start = 0;
+    while start < records.len() {
+        let key = &residues[start].key;
+        let end = (start..records.len())
+            .find(|&index| residues[index].key != *key)
+            .unwrap_or(records.len());
+        let chain = (records[start].chain, records[start].segment.as_str());
+        let residue = &residues[start];
+        let named = |names: &[&str]| {
+            (start..end)
+                .filter(|&index| names.contains(&records[index].name.trim()))
+                .collect::<Vec<_>>()
+        };
+        let linked = || {
+            let previous = tails.get(&chain).map_or(&[][..], Vec::as_slice);
+            named(&["N", "P"])
+                .into_iter()
+                .any(|head| previous.iter().any(|&tail| bonded(head, tail)))
+        };
+        if residue.class != ResidueClass::Water
+            && (residue.place.is_some() || !records[start].hetatm || linked())
+        {
+            ends.insert(chain, end - 1);
+            tails.insert(chain, named(&["C", "O3'", "O3*"]));
+        }
+        start = end;
+    }
+    ends.into_values().collect()
+}
+
 /// The `CONECT` listings of an entry and the bonds they do not carry as
 /// bonds.
 struct ConectPlan {
@@ -1601,6 +1651,92 @@ fn templated_residues<'c>(
         .collect()
 }
 
+/// The residue names of the polymer sequence `report` gives the chain of a
+/// residue, by place.
+fn report_sequence<'r>(
+    topology: &Topology,
+    report: Option<&'r StructureInterpretationReport>,
+    residue: &ResidueKey,
+) -> Option<BTreeMap<i32, &'r str>> {
+    let ResidueKey::Hierarchy(residue) = residue else {
+        return None;
+    };
+    let chain = topology.hierarchy().residue_chain(*residue);
+    let entity = report?.polymer_entities().iter().find(|entity| {
+        entity
+            .instances()
+            .iter()
+            .any(|instance| instance.chain() == Some(chain))
+    })?;
+    Some(
+        entity
+            .monomers()
+            .iter()
+            .map(|monomer| (monomer.number(), monomer.component_id()))
+            .collect(),
+    )
+}
+
+/// The `SEQRES` names of a chain of `length` places whose modelled
+/// residues, named `names` and numbered `numbers`, take `places`: their
+/// own names there, `known` names elsewhere, and `UNK` where none is
+/// known. Where those names would let a reader align the residues
+/// elsewhere, every place without a modelled residue is `UNK`. `None` when
+/// a reader would not place the residues there even so.
+fn seqres_names(
+    names: &[&str],
+    places: &[i32],
+    numbers: &[Option<i32>],
+    length: i32,
+    known: &BTreeMap<i32, &str>,
+) -> Option<Vec<String>> {
+    // A reader's segments: runs of consecutive residue numbers.
+    let mut segments = Vec::<Segment<'_>>::new();
+    let mut starts = Vec::new();
+    for (index, (&name, &number)) in names.iter().zip(numbers).enumerate() {
+        let continues = index > 0
+            && match (numbers[index - 1], number) {
+                (Some(previous), Some(number)) => matches!(number - previous, 0 | 1),
+                _ => true,
+            };
+        match segments.last_mut() {
+            Some(segment) if continues => {
+                if places[index] != places[index - 1] + 1 {
+                    return None;
+                }
+                segment.names.push(name);
+            }
+            _ => {
+                segments.push(Segment {
+                    names: vec![name],
+                    number,
+                });
+                starts.push(usize::try_from(places[index] - 1).ok()?);
+            }
+        }
+    }
+    let modelled = places
+        .iter()
+        .copied()
+        .zip(names.iter().copied())
+        .collect::<BTreeMap<_, _>>();
+    let sequence = |with_known: bool| {
+        (1..=length)
+            .map(|place| {
+                modelled
+                    .get(&place)
+                    .or_else(|| with_known.then(|| known.get(&place)).flatten())
+                    .copied()
+                    .unwrap_or("UNK")
+            })
+            .collect::<Vec<_>>()
+    };
+    [sequence(true), sequence(false)]
+        .into_iter()
+        .find(|sequence| segment_starts(sequence, &segments).as_ref() == Some(&starts))
+        .map(|sequence| sequence.into_iter().map(str::to_owned).collect())
+}
+
 /// The charge readers take as stated for an atom record: its charge
 /// columns, blank for a neutral atom.
 fn stated_charge(charge: i8) -> Option<i8> {
@@ -1619,14 +1755,20 @@ impl<'o> Plan<'o> {
     ///   choose fail as [`PdbWriteErrorKind::DictionaryBondConflict`], or
     ///   are counted as [`WriteOmission::DictionaryBonds`].
     ///
-    /// A chain whose first or last polymer residue bonds to a residue the
-    /// structure lacks, so that its linking atom has the fixed hydrogens of
-    /// a gap, gets `SEQRES` records with an `UNK` residue on that side.
+    /// Only `SEQRES` records say which residues a chain's polymer lacks.
+    /// A chain gets them when its residues' places in their sequence
+    /// (`label_seq_id`) leave residues out, or when its first or last
+    /// polymer residue bonds to a residue the structure lacks, so that its
+    /// linking atom has the fixed hydrogens of a gap. They name the
+    /// modelled residues, the residues `report`'s sequence names elsewhere,
+    /// and `UNK` where none is known, or wherever names a reader could
+    /// align elsewhere.
     fn check_reader(
         &mut self,
         topology: &Topology,
         view: StructureView<'_>,
         links: &[[usize; 2]],
+        report: Option<&StructureInterpretationReport>,
         options: &PdbWriteOptions,
         omissions: &mut Omissions,
     ) -> Result<(), FormatError> {
@@ -1649,7 +1791,7 @@ impl<'o> Plan<'o> {
             .filter(|(_, record)| record.ter)
             .map(|(index, record)| ((record.chain, record.segment.as_str()), index))
             .collect::<BTreeMap<_, _>>();
-        let mut chains = BTreeMap::<(char, &str), Vec<&ResidueKey>>::new();
+        let mut chains = BTreeMap::<(char, &str), Vec<(&ResidueKey, usize)>>::new();
         for (index, (record, residue)) in self.records.iter().zip(&self.residues).enumerate() {
             let end = ends.get(&(record.chain, record.segment.as_str()));
             if residue.class == ResidueClass::Water || end.is_none_or(|&end| index > end) {
@@ -1658,117 +1800,169 @@ impl<'o> Plan<'o> {
             let chain = chains
                 .entry((record.chain, record.segment.as_str()))
                 .or_default();
-            if chain.last() != Some(&&residue.key) {
-                chain.push(&residue.key);
+            if chain.last().map(|&(key, _)| key) != Some(&residue.key) {
+                chain.push((&residue.key, index));
             }
         }
-        let mut place = BTreeMap::new();
-        for (&chain, keys) in &chains {
-            if keys.len() > 1 {
-                for (position, &key) in keys.iter().enumerate() {
-                    place.insert(key, (chain, position, keys.len()));
-                }
-            }
-        }
-        let mut pads = BTreeMap::<(char, &str), [bool; 2]>::new();
-        let mut states = Vec::with_capacity(self.templated.len());
-        for templated in &self.templated {
-            let members = templated.atoms.values().copied().collect::<BTreeSet<_>>();
-            let mut heavy = BTreeMap::new();
-            for (name, &index) in &templated.atoms {
-                let Some((_, template_atom)) = templated.component.atom(name) else {
-                    continue;
-                };
-                if hydrogen(index) {
-                    continue;
-                }
-                let mut evidence = AtomEvidence {
-                    coordination: coordinated.get(&index).copied().unwrap_or(0),
-                    stated: stated_charge(atom(index).atom().formal_charge),
-                    ..AtomEvidence::default()
-                };
-                let mut sites = Vec::new();
-                for bond in atom(index).bonds() {
-                    let Some(other) = bond
-                        .atoms()
-                        .into_iter()
-                        .map(|atom| atom.index().index())
-                        .find(|&other| other != index)
-                    else {
+        chains.retain(|_, residues| residues.len() > 1);
+        let in_chain = chains
+            .values()
+            .flatten()
+            .map(|&(key, _)| key)
+            .collect::<BTreeSet<_>>();
+        let positions = written_positions(view);
+        let evidences = self
+            .templated
+            .iter()
+            .map(|templated| {
+                let members = templated.atoms.values().copied().collect::<BTreeSet<_>>();
+                let mut heavy = BTreeMap::new();
+                for (name, &index) in &templated.atoms {
+                    let Some((_, template_atom)) = templated.component.atom(name) else {
                         continue;
                     };
-                    if hydrogen(other) {
-                        let isotope = atom(other).atom().isotope;
-                        sites.push((
-                            isotope.is_some_and(|isotope| isotope.get() == 2),
-                            view.occupancy(TopologyAtomIndex::from_index(other)),
-                            None,
-                        ));
-                    } else if !members.contains(&other) {
-                        evidence.links += link_valence(bond.bond().order);
+                    if hydrogen(index) {
+                        continue;
                     }
+                    let mut evidence = AtomEvidence {
+                        coordination: coordinated.get(&index).copied().unwrap_or(0),
+                        stated: stated_charge(atom(index).atom().formal_charge),
+                        ..AtomEvidence::default()
+                    };
+                    let mut sites = Vec::new();
+                    for bond in atom(index).bonds() {
+                        let Some(other) = bond
+                            .atoms()
+                            .into_iter()
+                            .map(|atom| atom.index().index())
+                            .find(|&other| other != index)
+                        else {
+                            continue;
+                        };
+                        if hydrogen(other) {
+                            let isotope = atom(other).atom().isotope;
+                            sites.push((
+                                isotope.is_some_and(|isotope| isotope.get() == 2),
+                                view.occupancy(TopologyAtomIndex::from_index(other)),
+                                None,
+                                positions[other],
+                            ));
+                        } else if !members.contains(&other) {
+                            evidence.links += link_valence(bond.bond().order);
+                        }
+                    }
+                    evidence.hydrogens = hydrogen_sites(sites);
+                    heavy.insert(template_atom.name(), evidence);
                 }
-                evidence.hydrogens = hydrogen_sites(sites);
-                heavy.insert(template_atom.name(), evidence);
+                ResidueEvidence {
+                    heavy,
+                    has_hydrogens: members.iter().any(|&index| hydrogen(index)),
+                    dictionary: templated.component.force_field().is_none(),
+                    polymer: in_chain.contains(&templated.key),
+                }
+            })
+            .collect::<Vec<_>>();
+        let read = |templated: usize, ends: [bool; 2]| {
+            let residue = &self.templated[templated];
+            reader_protonation(
+                residue.component,
+                residue.variants.iter().copied(),
+                evidences[templated].clone(),
+                ends,
+            )
+        };
+        let templated_of = self
+            .templated
+            .iter()
+            .enumerate()
+            .map(|(index, templated)| (&templated.key, index))
+            .collect::<BTreeMap<_, _>>();
+        // Whether a reader that finds residues on `side` of a templated
+        // residue fixes the hydrogens of its linking atom there, as the
+        // structure does, and one that finds none does not.
+        let opens = |templated: usize, side: usize| {
+            let residue = &self.templated[templated];
+            let open = |ends: [bool; 2]| {
+                let state = read(templated, ends);
+                link_sides(residue.component.linking())[side]
+                    .iter()
+                    .any(|name| {
+                        let fixed = residue.atoms.get(*name).is_some_and(|&index| {
+                            matches!(atom(index).atom().hydrogens, ImplicitHydrogens::Fixed(_))
+                        });
+                        fixed
+                            && state.as_ref().is_some_and(|state| {
+                                state
+                                    .atoms
+                                    .iter()
+                                    .any(|atom| atom.name == *name && atom.fixed)
+                            })
+                    })
+            };
+            let mut padded = [false; 2];
+            padded[side] = true;
+            !open([false; 2]) && open(padded)
+        };
+        let mut residue_ends = BTreeMap::<&ResidueKey, [bool; 2]>::new();
+        let mut seqres = Vec::new();
+        for (&chain, residues) in &chains {
+            if chain.0 == ' ' {
+                continue;
             }
-            let place = place.get(&templated.key).copied();
-            let evidence = ResidueEvidence {
-                heavy,
-                has_hydrogens: members.iter().any(|&index| hydrogen(index)),
-                dictionary: templated.component.force_field().is_none(),
-                polymer: place.is_some(),
-            };
-            let ends = place.map_or([false, false], |(_, position, length)| {
-                [position > 0, position + 1 < length]
-            });
-            let read = |ends| {
-                reader_protonation(
-                    templated.component,
-                    templated.variants.iter().copied(),
-                    evidence.clone(),
-                    ends,
-                )
-            };
-            let mut state = read(ends);
-            // A chain end whose linking atom has a gap's fixed hydrogens is
-            // a gap: `SEQRES` states residues past it.
-            if let Some((chain, position, length)) = place.filter(|&((chain, _), ..)| chain != ' ')
+            let names = residues
+                .iter()
+                .map(|&(_, index)| self.records[index].residue_name.as_str())
+                .collect::<Vec<_>>();
+            let labelled = residues
+                .iter()
+                .map(|&(_, index)| self.residues[index].place)
+                .collect::<Option<Vec<_>>>()
+                .filter(|places| places.windows(2).all(|pair| pair[0] < pair[1]));
+            let known = labelled
+                .as_ref()
+                .and_then(|_| report_sequence(topology, report, residues[0].0))
+                .unwrap_or_default();
+            let mut places = labelled.unwrap_or_else(|| (1..).take(residues.len()).collect());
+            let edge = |at: usize| templated_of.get(residues[at].0).copied();
+            if places[0] == 1 && edge(0).is_some_and(|templated| opens(templated, 0)) {
+                for place in &mut places {
+                    *place += 1;
+                }
+            }
+            let last = *places.last().expect("chains have residues");
+            let mut length = known.keys().copied().max().unwrap_or(last).max(last);
+            if length == last
+                && edge(residues.len() - 1).is_some_and(|templated| opens(templated, 1))
             {
-                let sides = link_sides(templated.component.linking());
-                for side in 0..2 {
-                    let end = if side == 0 {
-                        position == 0
-                    } else {
-                        position + 1 == length
-                    };
-                    let open = |state: &Option<Protonation<'_>>| {
-                        sides[side].iter().any(|name| {
-                            let fixed = templated.atoms.get(*name).is_some_and(|&index| {
-                                matches!(atom(index).atom().hydrogens, ImplicitHydrogens::Fixed(_))
-                            });
-                            fixed
-                                && state.as_ref().is_some_and(|state| {
-                                    state
-                                        .atoms
-                                        .iter()
-                                        .any(|atom| atom.name == *name && atom.fixed)
-                                })
-                        })
-                    };
-                    if !end || open(&state) {
-                        continue;
-                    }
-                    let mut padded = ends;
-                    padded[side] = true;
-                    let candidate = read(padded);
-                    if open(&candidate) {
-                        pads.entry(chain).or_default()[side] = true;
-                        state = candidate;
-                    }
-                }
+                length += 1;
             }
-            states.push(state);
+            let gapped = places[0] > 1
+                || length > last
+                || places.windows(2).any(|pair| pair[1] != pair[0] + 1);
+            if !gapped {
+                continue;
+            }
+            let numbers = residues
+                .iter()
+                .map(|&(_, index)| self.records[index].sequence.trim().parse::<i32>().ok())
+                .collect::<Vec<_>>();
+            let Some(sequence) = seqres_names(&names, &places, &numbers, length, &known) else {
+                continue;
+            };
+            for (&(key, _), &place) in residues.iter().zip(&places) {
+                residue_ends.insert(key, [place > 1, place < length]);
+            }
+            seqres.push((chain.0, sequence));
         }
+        let states = (0..self.templated.len())
+            .map(|templated| {
+                let key = &self.templated[templated].key;
+                read(
+                    templated,
+                    residue_ends.get(key).copied().unwrap_or_default(),
+                )
+            })
+            .collect::<Vec<_>>();
 
         // Fixed hydrogen counts have no PDB field; those a reader fixes
         // again are written as they are.
@@ -1847,31 +2041,11 @@ impl<'o> Plan<'o> {
             residues: conflicting,
         });
 
-        let mut seqres = Vec::new();
-        for (chain, [before, after]) in pads {
-            let keys = &chains[&chain];
-            let mut names = Vec::with_capacity(keys.len() + 2);
-            if before {
-                names.push("UNK".to_owned());
-            }
-            for key in keys {
-                let index = self
-                    .residues
-                    .iter()
-                    .position(|residue| &residue.key == *key)
-                    .expect("chains list record residues");
-                names.push(self.records[index].residue_name.clone());
-            }
-            if after {
-                names.push("UNK".to_owned());
-            }
-            seqres.push((chain.0, names));
-        }
         self.seqres = seqres;
         Ok(())
     }
 
-    /// `SEQRES` records for the chains [`Self::check_reader`] pads.
+    /// `SEQRES` records for the chains [`Self::check_reader`] sequences.
     fn write_seqres(&self, writer: &mut impl Write) -> std::io::Result<()> {
         for (chain, names) in &self.seqres {
             for (serial, line) in names.chunks(13).enumerate() {

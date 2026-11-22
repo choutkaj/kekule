@@ -643,11 +643,17 @@ the main branch migrates by the table under "From the SampleSet API".
     bases keep the template. **Breaking:** an X-ray protein's net charge
     changes.
   - An N terminus is an ammonium only at a chain's true start. A linking
-    `N`, `C`, `P` or `O3'` whose neighbour the chain lacks, by
-    `_entity_poly_seq`, `SEQRES`, or the modelled residues, keeps its bonded
-    hydrogen count (`PolymerLinkMissing`): an `N` after a gap is an amide.
-    The PDB writer writes `SEQRES` with `UNK` past such a chain end, and
-    the mmCIF writer numbers a chain from 2 after a leading gap.
+    `N`, `C`, `P` or `O3'` whose neighbour the sequence has but the model
+    lacks, by `_entity_poly_seq` or `SEQRES`, keeps its bonded hydrogen
+    count (`PolymerLinkMissing`): an `N` after a gap is an amide. Only a
+    sequence makes a gap, and the model's terminal atoms (`H1`-`H3`, `OXT`,
+    `HXT`, `H5T`, `H3T`, `HO5'`) end a chain whatever it says.
+  - The mmCIF writer writes `_entity_poly_seq`, and each polymer molecule
+    of a chain without a source asym is an asym of its own. The PDB writer
+    writes `SEQRES` for a chain whose sequence has residues the model
+    lacks, with the residues' names where known and `UNK` elsewhere. PDB
+    `SEQRES` chains are polymer entities of the report
+    (`StructureInterpretationReport::polymer_entities`).
   - The PDB writer writes `TER` after a chain's last `ATOM` record, so a
     ligand bonded to the protein and the heterogens written before it are
     no polymer residues on reading. Sequenced residues are `ATOM` records,
@@ -659,23 +665,29 @@ the main branch migrates by the table under "From the SampleSet API".
     (`HydrogensMissing`), not a negative charge. A stated charge or metal
     coordination deprotonates a phenol or a thiol.
   - A cationic nitrogen with its neutral count of hydrogens is the neutral
-    base, as lysine `NZ` with two hydrogens (`ProtonationFromHydrogens`).
+    base, as lysine `NZ` with two hydrogens, or one with none where that
+    count is zero (`ProtonationFromHydrogens`).
   - A hydrogen that fills an absent template atom's place, as `HO5'` at a
     5' end without phosphate, is no positive charge.
-  - A hydrogen and a deuterium sharing one site count once.
+  - A hydrogen and a deuterium sharing one site, within 0.3 Å, count once.
   - Terminal hydrogens `H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`, `HO5'`, `H5T`,
     `H3T` and `HO3*` bond by name (`BondEvidence::HydrogenName`).
-  - A stated charge holds whenever some hydrogen count holds it, and sets
-    that count (`StatedChargeKept`). One that another resonance form gives,
-    as `OD1` -1 of an aspartate, moves the double bond
-    (`StatedChargeResonance`). Only charges no hydrogen count holds are
-    replaced (`StatedChargeRejected`).
+  - A stated charge holds where the atom holds it at an allowed valence.
+    One that another resonance form gives, as `OD1` -1 of an aspartate or
+    `NE2` +1 of a histidine, moves the double bond, and a double bond
+    between a stated cation and anion becomes single
+    (`StatedChargeResonance`). In a residue without hydrogens a stated
+    charge sets the hydrogen count (`StatedChargeKept`); in one with
+    hydrogens no hydrogen is added for it. Other stated charges are
+    replaced (`StatedChargeRejected`). A stated 0 in a residue without
+    hydrogens is no evidence.
   - Unknown template charges, such as heme iron, are reported
     (`TemplateChargeUnknown`).
-  - Metal coordination to another residue replaces a hydrogen on thiols,
-    acids and nitrogens (`HydrogenReplacedByCoordination`): zinc-bound
-    cysteine is a thiolate. A carboxylate bound through either oxygen keeps
-    its template.
+  - Metal coordination to another residue replaces a hydrogen on acids,
+    thiols, aromatic ring nitrogens and cationic nitrogens
+    (`HydrogenReplacedByCoordination`): zinc-bound cysteine is a thiolate.
+    A carboxylate bound through either oxygen keeps its template, and an
+    amine with a neutral template keeps its hydrogens.
   - Hydrogens with zero occupancy in observed residues are not read
     (`ZeroOccupancyHydrogens`).
   - Aspartic and glutamic acids protonated on `OD1` or `OE1` read as the

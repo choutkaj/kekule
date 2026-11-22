@@ -781,14 +781,23 @@ fn metal_coordination_round_trips_as_link_records() {
         .map(str::trim_end)
         .collect::<Vec<_>>();
     assert_eq!(records(&written, "LINK"), deposited);
-    // They come before the coordinates.
-    assert!(written.starts_with("LINK"));
+    // They follow the `SEQRES` records, which state the residue 54 the
+    // model lacks, and come before the coordinates.
+    assert_eq!(
+        records(&written, "SEQRES"),
+        records(RUBREDOXIN, "SEQRES")
+            .into_iter()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+    );
+    assert!(written.find("LINK") < written.find("ATOM"));
+    assert!(written.find("SEQRES") < written.find("LINK"));
     let reread = interpretation(&written);
     assert_eq!(coordination(reread.report()), iron);
     // PDB -> interpretation -> PDB is a fixed point.
     assert_eq!(pdb::write(&reread, Default::default()).unwrap().0, written);
 
-    // Without reports the entry states no coordination, as before.
+    // Without reports the entry states no coordination and no sequence.
     let (bare, report) = pdb::write(source.structure(), Default::default()).unwrap();
     assert!(report.omissions().is_empty());
     assert!(records(&bare, "LINK").is_empty());
@@ -796,7 +805,7 @@ fn metal_coordination_round_trips_as_link_records() {
     assert_eq!(
         written
             .lines()
-            .filter(|line| !line.starts_with("LINK"))
+            .filter(|line| !line.starts_with("LINK") && !line.starts_with("SEQRES"))
             .collect::<Vec<_>>(),
         bare.lines().collect::<Vec<_>>()
     );
@@ -1092,7 +1101,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
         .collect::<Vec<_>>();
     assert_eq!(records(&written, "LINK"), source_links);
     assert_eq!(records(&written, "MODEL").len(), 2);
-    assert!(written.starts_with("LINK"));
+    assert!(written.find("LINK") < written.find("MODEL"));
     assert!(!report
         .omissions()
         .iter()

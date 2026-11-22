@@ -11,18 +11,28 @@
 //! cationic nitrogen with at least its neutral count of hydrogens is the
 //! neutral base. Elsewhere a lacking hydrogen is missing from the model, and
 //! the atom keeps its template charge. A metal coordinating a thiol, an
-//! acid, or a nitrogen takes the place of one hydrogen.
+//! acid, an aromatic ring nitrogen, or a cationic nitrogen takes the place
+//! of one hydrogen.
 //!
 //! Residues without hydrogens on their heteroatoms take the template's state
 //! with their strong acids deprotonated, as at pH 7, when a dictionary
 //! template applies. Polymer residues also take the ammonium of a true N
-//! terminus and their least charged variant, such as neutral histidine.
+//! terminus that no metal coordinates, and their least charged variant, such
+//! as neutral histidine.
 //!
-//! A stated charge is kept when the atom can hold it with some hydrogen
-//! count, which it then sets. One that a resonance form of the atom's group
-//! gives, such as `OD1` -1 of an aspartate, moves the double bond instead.
+//! A stated charge must fit an allowed valence of its atom. A resonance form
+//! that gives it comes first: the charge moves along alternating single and
+//! double bonds from an atom of the same sign, as `OD1` -1 of an aspartate
+//! or `NE2` +1 of a histidine, or a double bond between a stated cation and
+//! a stated anion becomes single, as in `[S+]([O-])` of DMSO. Otherwise the
+//! atom keeps the charge with the hydrogens it has, in a residue with
+//! hydrogens, or with the fewest that give an allowed valence, in one
+//! without. A charge no such count holds is rejected. Residues without
+//! hydrogens take a stated zero as no charge stated, since writers fill the
+//! field with zero.
 use std::collections::BTreeMap;
 
+use crate::algorithms::allowed_valences_with_charge;
 use crate::components::{Component, ComponentBond, ComponentBondOrder as TemplateOrder};
 use crate::molecule::{BondOrder, Element};
 
@@ -130,6 +140,22 @@ impl Protonation<'_> {
     pub(crate) fn reorders(&self) -> bool {
         !self.reordered.is_empty()
     }
+
+    /// Charges each atom by the hydrogens it lacks, as where stated bond
+    /// orders exclude the state the hydrogens fit: the model's hydrogens
+    /// are then all there are.
+    pub(crate) fn charge_lacking_hydrogens(&mut self) {
+        for atom in &mut self.atoms {
+            if atom.missing == 0 || atom.stated.is_some() {
+                continue;
+            }
+            let lacking = i8::try_from(atom.missing).unwrap_or(i8::MAX);
+            atom.charge = atom.charge.saturating_sub(lacking);
+            atom.from_hydrogens = atom.from_hydrogens.saturating_sub(lacking);
+            atom.hydrogens -= atom.missing;
+            atom.missing = 0;
+        }
+    }
 }
 
 /// How a heteroatom's hydrogens behave.
@@ -147,9 +173,19 @@ enum Role {
     Neutral,
 }
 
-impl Role {
-    const fn coordinates_in_place_of_hydrogen(self) -> bool {
-        matches!(self, Self::StrongAcid | Self::WeakAcid | Self::Base)
+/// Whether metal coordination takes the place of a hydrogen of a template
+/// heteroatom: an acid, a thiol, a nitrogen of an aromatic ring, whose
+/// variants move the hydrogen, or a cationic nitrogen. A neutral amine or
+/// amide keeps its hydrogens.
+fn coordinates_in_place_of_hydrogen(component: &Component, index: usize, role: Role) -> bool {
+    match role {
+        Role::StrongAcid | Role::WeakAcid => true,
+        Role::Base => {
+            let atom = &component.atoms()[index];
+            atom.formal_charge().is_some_and(|charge| charge > 0)
+                || (atom.aromatic() && in_ring(component, index))
+        }
+        Role::Neutral => false,
     }
 }
 
@@ -166,6 +202,13 @@ pub(crate) fn choose<'c>(
     let candidates = candidates.into_iter().collect::<Vec<_>>();
     let base = *candidates.first()?;
     let with_evidence = has_evidence(base, evidence);
+    let mut evidence = evidence.clone();
+    if !with_evidence {
+        for atom in evidence.heavy.values_mut() {
+            atom.stated = atom.stated.filter(|&charge| charge != 0);
+        }
+    }
+    let evidence = &evidence;
     let (candidate, mut atoms, mut reordered, assumed) = candidates
         .into_iter()
         .enumerate()
@@ -282,7 +325,7 @@ fn evaluate(
             continue;
         }
         let role = role(candidate, index);
-        let coordinates = role.coordinates_in_place_of_hydrogen();
+        let coordinates = coordinates_in_place_of_hydrogen(candidate, index, role);
         let mut charge = i32::from(base);
         let mut hydrogens = expected;
         if with_evidence {
@@ -317,9 +360,12 @@ fn evaluate(
                         hydrogens = present;
                     }
                     // A cationic nitrogen with at least its neutral count of
-                    // hydrogens is the neutral base; one with none of them
-                    // lacks them.
-                    Role::Base if base > 0 && present > 0 => {
+                    // hydrogens, none if that count is zero, is the neutral
+                    // base; one with none of several lacks them.
+                    Role::Base
+                        if base > 0
+                            && (present > 0 || lacking <= usize::from(base.unsigned_abs())) =>
+                    {
                         let released = lacking.min(usize::from(base.unsigned_abs()));
                         state.from_hydrogens = -i8::try_from(released).ok()?;
                         charge -= count(released);
@@ -337,7 +383,10 @@ fn evaluate(
                         hydrogens = 0;
                     }
                     Role::Base
-                        if evidence.polymer && links == 0 && is_free_amine(candidate, index) =>
+                        if evidence.polymer
+                            && links == 0
+                            && atom.coordination == 0
+                            && is_free_amine(candidate, index) =>
                     {
                         charge += 1;
                         hydrogens += 1;
@@ -419,7 +468,9 @@ fn resonance_partner(
         if bond.aromatic() || is_hydrogen(candidate.atoms()[centre].element()) {
             continue;
         }
-        let order = current_order(reordered, bond)?;
+        let Some(order) = current_order(reordered, bond) else {
+            continue;
+        };
         for (other, other_bond) in neighbours(candidate, centre) {
             if other == index
                 || other_bond.aromatic()
@@ -430,7 +481,9 @@ fn resonance_partner(
             let Some(partner) = state_of(other) else {
                 continue;
             };
-            let other_order = current_order(reordered, other_bond)?;
+            let Some(other_order) = current_order(reordered, other_bond) else {
+                continue;
+            };
             let swaps = matches!(
                 (order, other_order),
                 (BondOrder::Single, BondOrder::Double) | (BondOrder::Double, BondOrder::Single)
@@ -453,11 +506,13 @@ fn current_order(reordered: &[([usize; 2], BondOrder)], bond: &ComponentBond) ->
         .or_else(|| super::template_bond_order(bond))
 }
 
-/// Applies stated charges that differ from the chosen state: a resonance
-/// form that gives the charge moves the double bond; a charge some
-/// hydrogen count holds is kept with that count; any other is rejected.
-/// Resonance forms come first, so that a partner's stated zero does not
-/// fix its hydrogens before the form moves.
+/// Applies stated charges that differ from the chosen state. Resonance
+/// forms come first: a charge moves to the atom stated with it along
+/// alternating bonds, then a double bond between a stated cation and a
+/// stated anion becomes single. Each move must leave both atoms at an
+/// allowed valence with the hydrogens they hold. A charge the atom then
+/// holds at an allowed valence is kept, with the hydrogens it has where the
+/// residue's hydrogens decide; any other is rejected.
 fn apply_stated(
     candidate: &Component,
     evidence: &ResidueEvidence<'_>,
@@ -465,55 +520,23 @@ fn apply_stated(
     atoms: &mut [AtomState],
     reordered: &mut Vec<([usize; 2], BondOrder)>,
 ) {
-    let stated_of = |state: &AtomState| {
-        evidence
-            .heavy
-            .get(state.name.as_str())
-            .and_then(|atom| atom.stated)
+    let context = Context {
+        candidate,
+        evidence,
+        with_evidence,
     };
-    for position in 0..atoms.len() {
-        let Some(stated) = stated_of(&atoms[position]) else {
-            continue;
-        };
-        if stated == 0 || atoms[position].charge != 0 || atoms[position].stated.is_some() {
-            continue;
-        }
-        let Some((index, _)) = candidate.atom(&atoms[position].name) else {
-            continue;
-        };
-        let partner = resonance_partner(candidate, atoms, reordered, index, |other| {
-            other.charge == stated
-                && other.stated.is_none()
-                && stated_of(other).is_none_or(|charge| charge == 0)
-        });
-        if let Some((partner, pair)) = partner {
-            set_swapped(candidate, reordered, pair);
-            atoms[partner].charge = 0;
-            atoms[partner].stated = Some(Stated::Resonance);
-            atoms[position].charge = stated;
-            atoms[position].stated = Some(Stated::Resonance);
-        }
-    }
+    while move_charge(&context, atoms, reordered) {}
+    while separate_charges(&context, atoms, reordered) {}
     for state in atoms.iter_mut() {
-        let Some(atom) = evidence.heavy.get(state.name.as_str()) else {
-            continue;
-        };
-        let Some(stated) = atom.stated else {
+        let Some(stated) = context.stated(state) else {
             continue;
         };
         if stated == state.charge || state.stated.is_some() {
             continue;
         }
-        let Some((_, template_atom)) = candidate.atom(&state.name) else {
-            continue;
-        };
-        let held = stated_hydrogens(
-            template_atom.element(),
-            state.charge,
-            state.hydrogens,
-            stated,
-        )
-        .filter(|&hydrogens| !with_evidence || hydrogens >= atom.hydrogens);
+        let held = candidate
+            .atom(&state.name)
+            .and_then(|(index, _)| context.held(index, stated, reordered));
         match held {
             Some(hydrogens) => {
                 state.stated = Some(Stated::Kept {
@@ -522,15 +545,337 @@ fn apply_stated(
                 state.charge = stated;
                 state.hydrogens = hydrogens;
                 state.from_hydrogens = 0;
-                state.missing = if with_evidence {
-                    hydrogens - atom.hydrogens
-                } else {
-                    0
-                };
+                state.missing = 0;
             }
             None => state.stated = Some(Stated::Rejected { stated }),
         }
     }
+}
+
+/// What the stated charges of one residue apply to.
+struct Context<'a, 'c> {
+    candidate: &'c Component,
+    evidence: &'a ResidueEvidence<'a>,
+    with_evidence: bool,
+}
+
+impl Context<'_, '_> {
+    fn stated(&self, state: &AtomState) -> Option<i8> {
+        self.evidence
+            .heavy
+            .get(state.name.as_str())
+            .and_then(|atom| atom.stated)
+    }
+
+    /// The state of the template atom `index`, by position.
+    fn position(&self, atoms: &[AtomState], index: usize) -> Option<usize> {
+        let name = self.candidate.atoms()[index].name();
+        atoms.iter().position(|state| state.name == name)
+    }
+
+    /// The hydrogens the template atom `index` holds with `charge` and the bond orders `reordered` gives: those
+    /// the model has where the residue's hydrogens decide, else the fewest
+    /// that give an allowed valence. `None` when no allowed valence holds
+    /// it, or a bond of the atom has no localized order.
+    fn held(
+        &self,
+        index: usize,
+        charge: i8,
+        reordered: &[([usize; 2], BondOrder)],
+    ) -> Option<usize> {
+        let atom = &self.candidate.atoms()[index];
+        let evidence = self.evidence.heavy.get(atom.name())?;
+        let mut valence = effective_links(evidence);
+        for (other, bond) in neighbours(self.candidate, index) {
+            let other = &self.candidate.atoms()[other];
+            if is_hydrogen(other.element())
+                || bond.metal_coordination()
+                || !self.evidence.heavy.contains_key(other.name())
+            {
+                continue;
+            }
+            valence += match current_order(reordered, bond)? {
+                BondOrder::Single => 1,
+                BondOrder::Double => 2,
+                BondOrder::Triple => 3,
+                BondOrder::Quadruple => 4,
+                BondOrder::Zero | BondOrder::Dative => 0,
+            };
+        }
+        let allowed = allowed_valences_with_charge(atom.element().atomic_number(), charge)?;
+        // Metals hold any charge.
+        if allowed.is_empty() {
+            return Some(if self.with_evidence {
+                evidence.hydrogens
+            } else {
+                0
+            });
+        }
+        let allowed = allowed.iter().map(|&valence| usize::from(valence));
+        if self.with_evidence {
+            let open = open_valence(self.candidate, index, self.evidence);
+            let total = valence + evidence.hydrogens;
+            let mut allowed = allowed;
+            return allowed
+                .any(|allowed| total <= allowed && allowed <= total + open)
+                .then_some(evidence.hydrogens);
+        }
+        allowed
+            .filter(|&allowed| allowed >= valence)
+            .min()
+            .map(|allowed| allowed - valence)
+    }
+}
+
+/// Moves one unit of charge to an atom stated with it from an atom of the
+/// same sign along a path of alternating single and double bonds, the
+/// shortest first. Returns whether a charge moved.
+fn move_charge(
+    context: &Context<'_, '_>,
+    atoms: &mut [AtomState],
+    reordered: &mut Vec<([usize; 2], BondOrder)>,
+) -> bool {
+    let candidate = context.candidate;
+    for position in 0..atoms.len() {
+        let Some(stated) = context.stated(&atoms[position]) else {
+            continue;
+        };
+        let own = &atoms[position];
+        if own.stated.is_some() || stated == own.charge {
+            continue;
+        }
+        let delta: i8 = if stated > own.charge { 1 } else { -1 };
+        let Some((index, _)) = candidate.atom(&own.name) else {
+            continue;
+        };
+        for length in [2, 4, 6] {
+            let mut path = vec![index];
+            let found = find_path(context, atoms, reordered, &mut path, length, delta);
+            if let Some(partner) = found {
+                let bonds = path
+                    .windows(2)
+                    .map(|pair| [pair[0], pair[1]])
+                    .collect::<Vec<_>>();
+                let Some(swapped) = toggled(candidate, reordered, &bonds) else {
+                    continue;
+                };
+                *reordered = swapped;
+                let other = context
+                    .position(atoms, partner)
+                    .expect("paths end at matched atoms");
+                let own_hydrogens = context.held(index, atoms[position].charge + delta, reordered);
+                let partner_hydrogens =
+                    context.held(partner, atoms[other].charge - delta, reordered);
+                for (at, change, hydrogens) in [
+                    (position, delta, own_hydrogens),
+                    (other, -delta, partner_hydrogens),
+                ] {
+                    let state = &mut atoms[at];
+                    state.charge += change;
+                    state.hydrogens = hydrogens.unwrap_or(state.hydrogens);
+                    state.missing = 0;
+                    state.stated = Some(Stated::Resonance);
+                }
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Extends `path`, which starts at a template atom, to `length` bonds that
+/// alternate between single and double, ending at an atom that gives up
+/// `delta` of its charge: one of the same sign whose stated charge, if any,
+/// is its charge less `delta`. Both ends must then hold their charges at
+/// allowed valences with the hydrogens they had, or, where the residue's
+/// hydrogens decide, with the ones the model has. Returns that atom.
+fn find_path(
+    context: &Context<'_, '_>,
+    atoms: &[AtomState],
+    reordered: &[([usize; 2], BondOrder)],
+    path: &mut Vec<usize>,
+    length: usize,
+    delta: i8,
+) -> Option<usize> {
+    let candidate = context.candidate;
+    let last = *path.last()?;
+    let previous = path.len().checked_sub(2).map(|at| path[at]);
+    let previous_order = previous.and_then(|previous| {
+        let bond = bond_between(candidate, previous, last)?;
+        current_order(reordered, bond)
+    });
+    for (next, bond) in neighbours(candidate, last) {
+        let atom = &candidate.atoms()[next];
+        if path.contains(&next)
+            || is_hydrogen(atom.element())
+            || bond.metal_coordination()
+            || !context.evidence.heavy.contains_key(atom.name())
+        {
+            continue;
+        }
+        let Some(order) = current_order(reordered, bond) else {
+            continue;
+        };
+        let alternates = match previous_order {
+            None => matches!(order, BondOrder::Single | BondOrder::Double),
+            Some(BondOrder::Single) => order == BondOrder::Double,
+            Some(BondOrder::Double) => order == BondOrder::Single,
+            Some(_) => false,
+        };
+        if !alternates {
+            continue;
+        }
+        path.push(next);
+        if path.len() == length + 1 {
+            if ends_move(context, atoms, reordered, path, delta) {
+                return Some(next);
+            }
+        } else if let Some(found) = find_path(context, atoms, reordered, path, length, delta) {
+            return Some(found);
+        }
+        path.pop();
+    }
+    None
+}
+
+/// Whether swapping the bonds along `path` moves `delta` of charge from its
+/// last atom to its first, each then holding its charge.
+fn ends_move(
+    context: &Context<'_, '_>,
+    atoms: &[AtomState],
+    reordered: &[([usize; 2], BondOrder)],
+    path: &[usize],
+    delta: i8,
+) -> bool {
+    let (Some(&first), Some(&last)) = (path.first(), path.last()) else {
+        return false;
+    };
+    let (Some(own), Some(partner)) = (
+        context.position(atoms, first),
+        context.position(atoms, last),
+    ) else {
+        return false;
+    };
+    let partner_state = &atoms[partner];
+    let charge = partner_state.charge;
+    if charge.signum() != delta.signum()
+        || partner_state.stated.is_some()
+        || context
+            .stated(partner_state)
+            .is_some_and(|stated| stated != charge - delta)
+        || candidate_element(context, first) != candidate_element(context, last)
+    {
+        return false;
+    }
+    let bonds = path
+        .windows(2)
+        .map(|pair| [pair[0], pair[1]])
+        .collect::<Vec<_>>();
+    let Some(swapped) = toggled(context.candidate, reordered, &bonds) else {
+        return false;
+    };
+    let keeps = |at: usize, index: usize, change: i8| {
+        let state = &atoms[at];
+        context
+            .held(index, state.charge + change, &swapped)
+            .is_some_and(|hydrogens| context.with_evidence || hydrogens == state.hydrogens)
+    };
+    keeps(own, first, delta) && keeps(partner, last, -delta)
+}
+
+fn candidate_element(context: &Context<'_, '_>, index: usize) -> Element {
+    context.candidate.atoms()[index].element()
+}
+
+/// Makes a double bond between an atom stated more positive than its state
+/// and one stated more negative single, each taking one unit of charge, as
+/// the charge-separated sulfoxide of DMSO. Returns whether a bond changed.
+fn separate_charges(
+    context: &Context<'_, '_>,
+    atoms: &mut [AtomState],
+    reordered: &mut Vec<([usize; 2], BondOrder)>,
+) -> bool {
+    let candidate = context.candidate;
+    let wants = |state: &AtomState| {
+        if state
+            .stated
+            .is_some_and(|stated| stated != Stated::Resonance)
+        {
+            return 0;
+        }
+        context
+            .stated(state)
+            .map_or(0, |stated| (stated - state.charge).signum())
+    };
+    for bond in candidate.bonds() {
+        let [a, b] = bond.atoms();
+        let (Some(left), Some(right)) = (context.position(atoms, a), context.position(atoms, b))
+        else {
+            continue;
+        };
+        if current_order(reordered, bond) != Some(BondOrder::Double) {
+            continue;
+        }
+        let (cation, anion, cation_index, anion_index) =
+            match (wants(&atoms[left]), wants(&atoms[right])) {
+                (1, -1) => (left, right, a, b),
+                (-1, 1) => (right, left, b, a),
+                _ => continue,
+            };
+        let mut swapped = reordered.clone();
+        swapped.retain(|(atoms, _)| *atoms != [a, b] && *atoms != [b, a]);
+        swapped.push(([a, b], BondOrder::Single));
+        let held = |at: usize, index: usize, change: i8| {
+            let state = &atoms[at];
+            context
+                .held(index, state.charge + change, &swapped)
+                .filter(|&hydrogens| context.with_evidence || hydrogens == state.hydrogens)
+        };
+        let (Some(cation_hydrogens), Some(anion_hydrogens)) =
+            (held(cation, cation_index, 1), held(anion, anion_index, -1))
+        else {
+            continue;
+        };
+        *reordered = swapped;
+        for (at, change, hydrogens) in [(cation, 1, cation_hydrogens), (anion, -1, anion_hydrogens)]
+        {
+            let state = &mut atoms[at];
+            state.charge += change;
+            state.hydrogens = hydrogens;
+            state.missing = 0;
+            state.stated = Some(Stated::Resonance);
+        }
+        return true;
+    }
+    false
+}
+
+/// `reordered` with each of `bonds`, by template atoms, swapped between
+/// single and double; `None` when one is neither.
+fn toggled(
+    candidate: &Component,
+    reordered: &[([usize; 2], BondOrder)],
+    bonds: &[[usize; 2]],
+) -> Option<Vec<([usize; 2], BondOrder)>> {
+    let mut swapped = reordered.to_vec();
+    for &[a, b] in bonds {
+        let bond = bond_between(candidate, a, b)?;
+        let order = match current_order(reordered, bond)? {
+            BondOrder::Single => BondOrder::Double,
+            BondOrder::Double => BondOrder::Single,
+            _ => return None,
+        };
+        swapped.retain(|(atoms, _)| *atoms != [a, b] && *atoms != [b, a]);
+        swapped.push((bond.atoms(), order));
+    }
+    Some(swapped)
+}
+
+fn bond_between(candidate: &Component, a: usize, b: usize) -> Option<&ComponentBond> {
+    candidate.bonds().iter().find(|bond| {
+        let atoms = bond.atoms();
+        atoms == [a, b] || atoms == [b, a]
+    })
 }
 
 /// Records a resonance swap of two bonds to one centre, one single and one
@@ -559,23 +904,6 @@ fn set_swapped(
     reordered.push((pair[1], first));
 }
 
-/// The hydrogens a heteroatom or carbon holds with charge `stated` in place
-/// of `charge` with `hydrogens`, or `None` when no hydrogen count holds it.
-/// A proton adds one charge to N, O, S, Se, or Te; a carbon gains a charge
-/// either way by losing one. An atom without hydrogens, such as a metal,
-/// holds any charge.
-fn stated_hydrogens(element: Element, charge: i8, hydrogens: usize, stated: i8) -> Option<usize> {
-    let hydrogens = i32::try_from(hydrogens).ok()?;
-    let change = i32::from(stated) - i32::from(charge);
-    let held = match element.atomic_number() {
-        7 | 8 | 16 | 34 | 52 => hydrogens + change,
-        6 => hydrogens - change.abs(),
-        _ if hydrogens == 0 => 0,
-        _ => return None,
-    };
-    usize::try_from(held).ok()
-}
-
 fn count(value: usize) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
 }
@@ -593,6 +921,19 @@ fn is_free_amine(component: &Component, index: usize) -> bool {
             let other = &component.atoms()[other];
             is_hydrogen(other.element()) && other.leaving()
         })
+}
+
+/// Whether a template atom bonds to a leaving heavy atom that `present`
+/// names, as a C terminus's `C` to `OXT`.
+pub(crate) fn bonds_leaving_atom(
+    component: &Component,
+    index: usize,
+    present: &std::collections::BTreeSet<&str>,
+) -> bool {
+    neighbours(component, index).any(|(other, _)| {
+        let atom = &component.atoms()[other];
+        atom.leaving() && !is_hydrogen(atom.element()) && present.contains(atom.name())
+    })
 }
 
 /// Whether a template atom anchors a leaving heavy atom the residue lacks,

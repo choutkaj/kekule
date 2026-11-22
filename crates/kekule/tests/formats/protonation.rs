@@ -393,32 +393,38 @@ fn block_component_charges_apply_without_a_template() {
     );
     assert_eq!(hydrogens(&result, "A", "O2"), 0);
     // With bond orders alone, as wwPDB entry files state them, the
-    // nitrogen's four bonds give it +1 and its single-bonded oxygens -1,
-    // not hydrogens.
+    // nitrogen's four bonds give it +1 and one single-bonded oxygen -1
+    // beside it. Nothing states the other oxygen's charge, so it is the
+    // hydroxyl of nitric acid, and the charges are reported.
     let bonds_only = &tables[tables.find("loop_\n_chem_comp_bond").unwrap()..];
     let result = read(&nitrate, bonds_only);
-    assert_eq!(
-        charges(&result),
-        charged(&[("A", "N", 1), ("A", "O2", -1), ("A", "O3", -1)])
+    assert_eq!(charges(&result), charged(&[("A", "N", 1), ("A", "O2", -1)]));
+    assert_eq!(hydrogens(&result, "A", "O3"), 1);
+    assert!(
+        has_issue(&result, |issue| matches!(
+            issue,
+            Issue::ChargesFromBonds { .. }
+        )),
+        "{:?}",
+        issues(&result)
     );
-    assert_eq!(hydrogens(&result, "A", "O3"), 0);
 
     // A single atom without template or stated charge is reported.
-    let caesium = Site {
-        element: "CS".to_owned(),
-        name: "CS".to_owned(),
-        component: "CS".to_owned(),
+    let xenon = Site {
+        element: "XE".to_owned(),
+        name: "XE".to_owned(),
+        component: "XE".to_owned(),
         asym: "B".to_owned(),
         sequence: 1,
         point: [0.0; 3],
         occupancy: None,
         charge: None,
     };
-    let result = read(&[caesium], "");
+    let result = read(&[xenon], "");
     assert!(
         has_issue(&result, |issue| matches!(
             issue,
-            Issue::TemplateMissing { component_id, .. } if component_id == "CS"
+            Issue::TemplateMissing { component_id, .. } if component_id == "XE"
         )),
         "{:?}",
         issues(&result)
@@ -688,13 +694,34 @@ fn link_missing(asym: &str, sequence: i32, component: &str, atom: &str) -> Issue
     }
 }
 
+/// An `_entity_poly_seq` loop for entity `1`.
+fn entity_sequence(monomers: &[&str]) -> String {
+    let mut text =
+        "loop_\n_entity_poly_seq.entity_id\n_entity_poly_seq.num\n_entity_poly_seq.mon_id\n"
+            .to_owned();
+    for (number, monomer) in (1..).zip(monomers) {
+        text.push_str(&format!("1 {number} {monomer}\n"));
+    }
+    text
+}
+
+/// The rows as entity `1`, whose sequence is `monomers`.
+fn read_sequenced(rows: &[Site], monomers: &[&str]) -> StructureInterpretation {
+    let text = with_entity(&block(rows, &entity_sequence(monomers)));
+    mmcif::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
 #[test]
 fn a_residue_after_a_gap_is_an_open_amide() {
-    // Alanines 1 and 3 of one chain, without hydrogens: only the first is
-    // an N terminus.
+    // Alanines 1 and 3 of a sequence of three, without hydrogens: only the
+    // first is an N terminus.
     let mut rows = without(heavy(sites("ALA")), &["OXT"]);
     rows.extend(heavy(residue_sites("ALA", "A", 3, [10.0, 0.0, 0.0])));
-    let result = read(&rows, "");
+    let unsequenced = read(&rows, "");
+    let result = read_sequenced(&rows, &["ALA", "ALA", "ALA"]);
     assert_eq!(state_at(&result, "A", 1, "N"), (1, 3));
     assert_eq!(state_at(&result, "A", 3, "N"), (0, 1));
     assert_eq!(state_at(&result, "A", 1, "C"), (0, 0));
@@ -714,6 +741,13 @@ fn a_residue_after_a_gap_is_an_open_amide() {
             .any(|issue| matches!(issue, Issue::TerminalAtomMissing { .. })),
         "{found:?}"
     );
+    // Only a sequence says a polymer lacks residues: without one, residue
+    // 3 starts a chain of its own.
+    assert_eq!(state_at(&unsequenced, "A", 3, "N"), (1, 3));
+    assert!(!has_issue(&unsequenced, |issue| matches!(
+        issue,
+        Issue::PolymerLinkMissing { .. }
+    )));
 }
 
 /// Alanines 2 and 3 of an entity of four residues, without hydrogens or
@@ -761,30 +795,42 @@ fn a_sequence_that_continues_past_the_model_opens_its_ends() {
         "{found:?}"
     );
 
-    // mmCIF keeps the leading gap in `label_seq_id`; PDB states it with
-    // `SEQRES`, whose `UNK` residues readers align the chain against.
+    // mmCIF states the sequence in `_entity_poly_seq`, PDB in `SEQRES`.
     let (text, _) = mmcif::write([&result], Default::default()).unwrap();
+    assert!(
+        text.contains("1 1 MET\n1 2 ALA\n1 3 ALA\n1 4 GLY\n"),
+        "{text}"
+    );
     let reread = mmcif::parse_str(&text, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap();
     assert_eq!(state_at(&reread, "A", 2, "N"), (0, 1));
+    assert_eq!(state_at(&reread, "A", 3, "C"), (0, 0));
+    let links = reread
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| matches!(issue, Issue::PolymerLinkMissing { .. }))
+        .count();
+    assert_eq!(links, 2);
     let (text, _) = kekule::pdb::write(&result, Default::default()).unwrap();
     assert!(
-        text.starts_with("SEQRES   1 A    3  UNK ALA ALA\n"),
+        text.starts_with("SEQRES   1 A    4  MET ALA ALA GLY\n"),
         "{text}"
     );
     let reread = kekule::pdb::parse_str(&text, Default::default())
         .unwrap()
         .interpret(Default::default())
         .unwrap();
-    let nitrogen = reread
+    let links = reread
         .report()
         .issues()
         .iter()
-        .filter(|issue| matches!(issue, Issue::PolymerLinkMissing { atom_name, .. } if atom_name == "N"))
+        .filter(|issue| matches!(issue, Issue::PolymerLinkMissing { .. }))
         .count();
-    assert_eq!(nitrogen, 1);
+    assert_eq!(links, 2);
+    assert_eq!(state_at(&reread, "A", 3, "C"), (0, 0));
     assert_eq!(
         kekule::pdb::write(&reread, Default::default()).unwrap().0,
         text
@@ -873,15 +919,16 @@ fn a_cationic_nitrogen_with_its_neutral_hydrogens_is_the_neutral_base() {
 
 #[test]
 fn stated_charges_set_the_hydrogens_they_need() {
-    // A neutral aspartate without hydrogens: OD2 takes its hydrogen.
+    // A stated charge of 0 in a residue without hydrogens is no evidence:
+    // files without charges state 0 everywhere.
     let mut aspartate = heavy(sites("ASP"));
     state_charge(&mut aspartate, "OD2", 0);
     let result = read(&aspartate, "");
-    assert!(!charges(&result).contains(&("A".to_owned(), "OD2".to_owned(), -1)));
-    assert_eq!(hydrogens(&result, "A", "OD2"), 1);
-    assert!(has_issue(&result, |issue| matches!(
+    assert!(charges(&result).contains(&("A".to_owned(), "OD2".to_owned(), -1)));
+    assert_eq!(hydrogens(&result, "A", "OD2"), 0);
+    assert!(!has_issue(&result, |issue| matches!(
         issue,
-        Issue::StatedChargeKept { atom_name, stated: 0, derived: -1, .. } if atom_name == "OD2"
+        Issue::StatedChargeKept { .. } | Issue::StatedChargeRejected { .. }
     )));
     // A stated phenolate explains its absent hydrogen.
     let mut tyrosine = without(sites("TYR"), &["HH"]);
@@ -898,12 +945,28 @@ fn stated_charges_set_the_hydrogens_they_need() {
             derived: 0,
         }]
     );
-    // A stated neutral lysine NZ takes two hydrogens.
+    // A stated 0 on lysine NZ without hydrogens keeps the ammonium, while
+    // a stated nonzero charge stays evidence.
     let mut lysine = heavy(sites("LYS"));
     state_charge(&mut lysine, "NZ", 0);
-    let neutral = read(&lysine, "");
-    assert!(!charges(&neutral).contains(&("A".to_owned(), "NZ".to_owned(), 1)));
-    assert_eq!(hydrogens(&neutral, "A", "NZ"), 2);
+    let ammonium = read(&lysine, "");
+    assert!(charges(&ammonium).contains(&("A".to_owned(), "NZ".to_owned(), 1)));
+    assert_eq!(hydrogens(&ammonium, "A", "NZ"), 3);
+    let mut glutamate = heavy(sites("GLU"));
+    state_charge(&mut glutamate, "OE1", -1);
+    let anion = read(&glutamate, "");
+    assert!(charges(&anion).contains(&("A".to_owned(), "OE1".to_owned(), -1)));
+    assert_eq!(hydrogens(&anion, "A", "OE1"), 0);
+    // A stated +1 on a carboxylate oxygen is held as -OH2+ and reported.
+    let mut cation = heavy(sites("ASP"));
+    state_charge(&mut cation, "OD2", 1);
+    let kept = read(&cation, "");
+    assert!(charges(&kept).contains(&("A".to_owned(), "OD2".to_owned(), 1)));
+    assert_eq!(hydrogens(&kept, "A", "OD2"), 2);
+    assert!(has_issue(&kept, |issue| matches!(
+        issue,
+        Issue::StatedChargeKept { atom_name, stated: 1, derived: -1, .. } if atom_name == "OD2"
+    )));
     // No hydrogen count holds -2 on a hydroxyl oxygen.
     let mut serine = heavy(sites("SER"));
     state_charge(&mut serine, "OG", -2);
@@ -1071,4 +1134,556 @@ fn writers_take_the_component_library_readers_use() {
         kekule::pdb::PdbWriteOptions::default().with_components(Some(library)),
     )
     .unwrap();
+}
+
+/// Glycines 2 and 3 of chain A, peptide-bonded, at the template's ideal
+/// coordinates and with all their hydrogens, without the leaving atoms of
+/// the bond between them.
+fn glycine_pair() -> Vec<Site> {
+    let mut rows = without(residue_sites("GLY", "A", 2, [0.0; 3]), &["OXT", "HXT"]);
+    let carbon = point(&rows, "C");
+    let next = residue_sites("GLY", "A", 3, [0.0; 3]);
+    let nitrogen = point(&next, "N");
+    let shift = [0, 1, 2].map(|axis| carbon[axis] - nitrogen[axis] + [1.33, 0.0, 0.0][axis]);
+    rows.extend(without(residue_sites("GLY", "A", 3, shift), &["H2"]));
+    rows
+}
+
+#[test]
+fn explicit_terminal_atoms_end_a_chain_whatever_the_sequence_says() {
+    // Glycines 2 and 3 of a sequence of four: residue 2 has the three
+    // hydrogens of an N terminus and residue 3 an OXT, so the chain ends
+    // at both, though the sequence goes on.
+    let mut rows = glycine_pair();
+    rows.retain(|site| {
+        !(site.sequence == 2 && ["H", "H2"].contains(&site.name.as_str()))
+            && !(site.sequence == 3 && site.name == "HXT")
+    });
+    for name in ["H1", "H2", "H3"] {
+        // The first N and CA are residue 2's.
+        rows.push(hydrogen(&rows, name, "N", "CA"));
+    }
+    let result = read_sequenced(&rows, &["MET", "GLY", "GLY", "ALA"]);
+    assert_eq!(state_at(&result, "A", 2, "N"), (1, 3));
+    assert_eq!(state_at(&result, "A", 3, "OXT"), (-1, 0));
+    assert_eq!(state_at(&result, "A", 3, "C"), (0, 0));
+    assert!(
+        !has_issue(&result, |issue| matches!(
+            issue,
+            Issue::PolymerLinkMissing { .. }
+        )),
+        "{:?}",
+        issues(&result)
+    );
+    // Without the terminal hydrogens and OXT, only the sequence speaks.
+    let rows = without(heavy(glycine_pair()), &["OXT"]);
+    let open = read_sequenced(&rows, &["MET", "GLY", "GLY", "ALA"]);
+    assert_eq!(state_at(&open, "A", 2, "N"), (0, 1));
+    assert!(has_issue(&open, |issue| *issue == link_missing("A", 2, "GLY", "N")));
+}
+
+/// PDB `ATOM` records of the sites in chain `chain`, numbered by their
+/// sequence, with a `TER` after each listed sequence number.
+fn pdb_text(sites: &[Site], chain: char, ter_after: &[i32]) -> String {
+    let mut text = String::new();
+    for (index, site) in sites.iter().enumerate() {
+        let name = if site.name.len() < 4 {
+            format!(" {:<3}", site.name)
+        } else {
+            site.name.clone()
+        };
+        text.push_str(&format!(
+            "ATOM  {:>5} {name:<4} {:>3} {chain}{:>4}    {:>8.3}{:>8.3}{:>8.3}  1.00 20.00          {:>2}\n",
+            index + 1,
+            site.component,
+            site.sequence,
+            site.point[0],
+            site.point[1],
+            site.point[2],
+            site.element,
+        ));
+        let last = sites
+            .get(index + 1)
+            .is_none_or(|next| next.sequence != site.sequence);
+        if last && ter_after.contains(&site.sequence) {
+            text.push_str("TER\n");
+        }
+    }
+    text + "END\n"
+}
+
+#[test]
+fn modelled_residues_elsewhere_make_no_gap() {
+    // Two glycines of a chain without `SEQRES`, numbered 1 and 3: each is
+    // a whole molecule, with and without hydrogens, in one TER segment or
+    // two, in a chain with a letter or without.
+    for (chain, with_hydrogens) in [(' ', true), (' ', false), ('A', true), ('A', false)] {
+        for ter_after in [&[1, 3][..], &[3]] {
+            let mut rows = residue_sites("GLY", "A", 1, [0.0; 3]);
+            rows.extend(residue_sites("GLY", "A", 3, [12.0, 0.0, 0.0]));
+            rows.retain(|site| with_hydrogens || site.element != "H");
+            let text = pdb_text(&rows, chain, ter_after);
+            let result = kekule::pdb::parse_str(&text, Default::default())
+                .unwrap()
+                .interpret(Default::default())
+                .unwrap();
+            let found = result.report().issues().to_vec();
+            assert!(
+                !found
+                    .iter()
+                    .any(|issue| matches!(issue, Issue::PolymerLinkMissing { .. })),
+                "{with_hydrogens} {ter_after:?}: {found:?}"
+            );
+            // Each N is a terminal amine or ammonium, not an open amide.
+            let mut structure = result.structure().clone();
+            structure.perceive().unwrap();
+            let amines = result
+                .report()
+                .instances()
+                .iter()
+                .flat_map(|instance| instance.atoms())
+                .filter(|atom| atom.atom_name() == "N")
+                .map(|atom| {
+                    let atom = atom.atom();
+                    structure
+                        .topology()
+                        .instance(atom.instance())
+                        .unwrap()
+                        .molecule()
+                        .total_hydrogens(atom.atom())
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(amines.len(), 2);
+            assert!(
+                amines.iter().all(|&count| count >= 2),
+                "{with_hydrogens} {ter_after:?}: {amines:?}"
+            );
+            // mmCIF gives each molecule a sequence of its own.
+            if chain == ' ' {
+                continue;
+            }
+            let (written, _) = mmcif::write([&result], Default::default()).unwrap();
+            let reread = mmcif::parse_str(&written, Default::default())
+                .unwrap()
+                .interpret(Default::default())
+                .unwrap();
+            assert!(
+                !reread
+                    .report()
+                    .issues()
+                    .iter()
+                    .any(|issue| matches!(issue, Issue::PolymerLinkMissing { .. })),
+                "{written}"
+            );
+        }
+    }
+}
+
+/// The bond orders between `centre` and each of `partners` in chain `asym`.
+fn orders(
+    result: &StructureInterpretation,
+    asym: &str,
+    centre: &str,
+    partners: &[&str],
+) -> Vec<BondOrder> {
+    partners
+        .iter()
+        .map(|partner| bond(result, asym, centre, partner).0)
+        .collect()
+}
+
+#[test]
+fn stated_charges_hold_where_valence_allows_them() {
+    // Each input reads to a structure that perception accepts.
+    let perceives = |result: &StructureInterpretation| {
+        let mut structure = result.structure().clone();
+        structure
+            .perceive()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    };
+    // Histidine with HD1 and HE2 and +1 stated on NE2: the ring's double
+    // bond moves to CE1=NE2.
+    let mut histidine = sites("HIS");
+    state_charge(&mut histidine, "NE2", 1);
+    let result = read(&histidine, "");
+    assert_eq!(perceives(&result), Ok(()));
+    let found = charges(&result);
+    assert!(
+        found.contains(&("A".to_owned(), "NE2".to_owned(), 1)),
+        "{found:?}"
+    );
+    assert!(!found.iter().any(|(_, name, _)| name == "ND1"), "{found:?}");
+    assert_eq!(bond(&result, "A", "CE1", "NE2").0, BondOrder::Double);
+    assert_eq!(hydrogens(&result, "A", "NE2"), 1);
+    // Arginine with all its hydrogens and +1 stated on NE: CZ=NE.
+    let mut arginine = sites("ARG");
+    state_charge(&mut arginine, "NE", 1);
+    let result = read(&arginine, "");
+    assert_eq!(perceives(&result), Ok(()));
+    let found = charges(&result);
+    assert!(
+        found.contains(&("A".to_owned(), "NE".to_owned(), 1)),
+        "{found:?}"
+    );
+    assert!(
+        !found.iter().any(|(_, name, _)| name.starts_with("NH")),
+        "{found:?}"
+    );
+    assert_eq!(
+        orders(&result, "A", "CZ", &["NE", "NH1", "NH2"]),
+        [BondOrder::Double, BondOrder::Single, BondOrder::Single]
+    );
+    assert!(!has_issue(&result, |issue| matches!(
+        issue,
+        Issue::StatedChargeRejected { .. }
+    )));
+    // Charge-separated DMSO, phosphate, and sulfate: the S=O and P=O
+    // bonds become single between the stated charges.
+    let mut dmso = sites("DMS");
+    state_charge(&mut dmso, "S", 1);
+    state_charge(&mut dmso, "O", -1);
+    let result = read(&dmso, "");
+    assert_eq!(perceives(&result), Ok(()));
+    assert_eq!(charges(&result), charged(&[("A", "S", 1), ("A", "O", -1)]));
+    assert_eq!(bond(&result, "A", "S", "O").0, BondOrder::Single);
+    for (component, centre, charge) in [("PO4", "P", 1), ("SO4", "S", 2)] {
+        let mut rows = heavy(sites(component));
+        state_charge(&mut rows, centre, charge);
+        for oxygen in ["O1", "O2", "O3", "O4"] {
+            state_charge(&mut rows, oxygen, -1);
+        }
+        let result = read(&rows, "");
+        assert_eq!(perceives(&result), Ok(()), "{component}");
+        assert_eq!(
+            orders(&result, "A", centre, &["O1", "O2", "O3", "O4"]),
+            [BondOrder::Single; 4],
+            "{component}"
+        );
+        let mut expected = charged(&[
+            ("A", "O1", -1),
+            ("A", "O2", -1),
+            ("A", "O3", -1),
+            ("A", "O4", -1),
+            ("A", centre, charge),
+        ]);
+        expected.sort();
+        let mut found = charges(&result);
+        found.sort();
+        assert_eq!(found, expected, "{component}");
+        for oxygen in ["O1", "O2", "O3", "O4"] {
+            assert_eq!(hydrogens(&result, "A", oxygen), 0, "{component} {oxygen}");
+        }
+    }
+    // With explicit hydrogens, no implicit one is added for a stated
+    // charge: +1 on a serine's OG with its one hydrogen is rejected.
+    let mut serine = sites("SER");
+    state_charge(&mut serine, "OG", 1);
+    let result = read(&serine, "");
+    assert_eq!(perceives(&result), Ok(()));
+    assert_eq!(hydrogens(&result, "A", "OG"), 1);
+    assert!(has_issue(&result, |issue| matches!(
+        issue,
+        Issue::StatedChargeRejected { atom_name, stated: 1, kept: 0, .. } if atom_name == "OG"
+    )));
+}
+
+#[test]
+fn a_hydrogen_and_a_deuterium_at_separate_sites_both_count() {
+    // Lysine with DZ3 in place of HZ3: three sites on NZ, so it is the
+    // ammonium, not a neutral amine with a shared site.
+    let mut rows = sites("LYS");
+    let hz3 = rows.iter().position(|site| site.name == "HZ3").unwrap();
+    rows[hz3].element = "D".to_owned();
+    rows[hz3].name = "DZ3".to_owned();
+    let result = read(&rows, "");
+    assert_eq!(charges(&result), charged(&[("A", "NZ", 1)]));
+    assert_eq!(hydrogens(&result, "A", "NZ"), 3);
+}
+
+#[test]
+fn a_base_whose_neutral_form_has_no_hydrogen_there_is_neutral_without_it() {
+    // Histidine as a component of the caller's library, which has none of
+    // the bundle's tautomers: the imidazolium with +1 on ND1. Without HD1,
+    // ND1 is the neutral base, which has no hydrogen there.
+    let path = format!("{}/data/components/HIS.cif", env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(path)
+        .unwrap()
+        .replace("data_HIS", "data_XHS")
+        .replace("HIS ", "XHS ");
+    let library = std::sync::Arc::new(
+        kekule::components::ComponentLibrary::from_mmcif(
+            &mmcif::parse_str(&text, Default::default()).unwrap(),
+        )
+        .unwrap(),
+    );
+    let mut rows = without(sites("HIS"), &["HD1"]);
+    for row in &mut rows {
+        row.component = "XHS".to_owned();
+    }
+    let options = kekule::macromolecular::StructureInterpretOptions::default().with_connectivity(
+        kekule::macromolecular::ConnectivityOptions::default().with_components(Some(library)),
+    );
+    let result = mmcif::parse_str(&block(&rows, ""), Default::default())
+        .unwrap()
+        .interpret(options)
+        .unwrap();
+    assert_eq!(charges(&result), []);
+    assert_eq!(hydrogens(&result, "A", "ND1"), 0);
+    assert_eq!(hydrogens(&result, "A", "NE2"), 1);
+    assert!(!has_issue(&result, |issue| matches!(
+        issue,
+        Issue::HydrogensMissing { .. }
+    )));
+}
+
+#[test]
+fn a_lone_first_residue_takes_its_last_place_before_the_next_segment() {
+    // A His-tagged sequence whose modelled residues are a lone histidine
+    // numbered 1 and alanines numbered 20 to 21: no one numbering fits
+    // both, so the histidine takes the last histidine before the
+    // alanines, not the tag's first.
+    let sequence = [
+        "MET", "HIS", "HIS", "HIS", "HIS", "HIS", "HIS", "GLY", "HIS", "SER", "ALA", "ALA",
+    ];
+    let mut rows = heavy(residue_sites("HIS", "A", 1, [0.0; 3]));
+    rows.extend(heavy(residue_sites("ALA", "A", 20, [15.0, 0.0, 0.0])));
+    rows.extend(heavy(residue_sites("ALA", "A", 21, [30.0, 0.0, 0.0])));
+    let mut text = String::new();
+    for (index, chunk) in sequence.chunks(13).enumerate() {
+        text.push_str(&format!(
+            "SEQRES {:>3} A {:>4}  {}\n",
+            index + 1,
+            sequence.len(),
+            chunk.join(" ")
+        ));
+    }
+    text.push_str(&pdb_text(&rows, 'A', &[21]));
+    let result = kekule::pdb::parse_str(&text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let places = result
+        .report()
+        .instances()
+        .iter()
+        .flat_map(|instance| instance.atoms())
+        .filter(|atom| atom.atom_name() == "CA")
+        .map(|atom| (atom.component_id().to_owned(), atom.label_sequence_id()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        places,
+        [
+            ("HIS".to_owned(), Some(9)),
+            ("ALA".to_owned(), Some(11)),
+            ("ALA".to_owned(), Some(12)),
+        ]
+    );
+}
+
+const TRNA: &str = include_str!("../fixtures/mmcif/1EHZ.cif");
+const CRAMBIN: &str = include_str!("../fixtures/pdb/1CRN.pdb");
+
+fn read_pdb(text: &str) -> StructureInterpretation {
+    kekule::pdb::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+fn read_mmcif(text: &str) -> StructureInterpretation {
+    mmcif::parse_str(text, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+}
+
+fn links_missing(result: &StructureInterpretation) -> Vec<Issue> {
+    result
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| matches!(issue, Issue::PolymerLinkMissing { .. }))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_three_prime_gap_round_trips() {
+    // 1EHZ without A76, the last of its 76 nucleotides: C75's O3' links to
+    // the absent residue, so it keeps no hydrogen.
+    let text = TRNA
+        .lines()
+        .filter(|line| !(line.starts_with("ATOM") && line.contains(" A   A 1 76 ")))
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
+    let source = read_mmcif(&text);
+    let open = [link_missing("A", 75, "C", "O3'")];
+    assert_eq!(links_missing(&source), open);
+    assert_eq!(state_at(&source, "A", 75, "O3'"), (0, 0));
+    // mmCIF states the sequence, from which readers find the gap again.
+    let (text, _) = mmcif::write([&source], Default::default()).unwrap();
+    assert!(text.contains("_entity_poly_seq.mon_id"), "{text}");
+    let reread = read_mmcif(&text);
+    assert_eq!(links_missing(&reread), open);
+    assert_eq!(state_at(&reread, "A", 75, "O3'"), (0, 0));
+    // So does PDB, with `SEQRES`.
+    let (text, _) = kekule::pdb::write(&source, Default::default()).unwrap();
+    assert!(
+        text.starts_with("SEQRES   1 A   76    G   C   G   G"),
+        "{text}"
+    );
+    let reread = read_pdb(&text);
+    assert_eq!(links_missing(&reread), open);
+    assert_eq!(state_at(&reread, "A", 75, "O3'"), (0, 0));
+    assert_eq!(
+        kekule::pdb::write(&reread, Default::default()).unwrap().0,
+        text
+    );
+}
+
+#[test]
+fn a_metal_bound_amine_keeps_its_hydrogens() {
+    // A38's N6 coordinates a magnesium in 1EHZ. An amine with a neutral
+    // template does not give its hydrogen to the metal.
+    let source = read_mmcif(TRNA);
+    assert_eq!(state_at(&source, "A", 38, "N6"), (0, 2));
+    assert!(!source.report().issues().iter().any(|issue| matches!(
+        issue,
+        Issue::HydrogenReplacedByCoordination { atoms, residue: at, .. }
+            if atoms.contains(&"N6".to_owned()) && *at == residue("A", 38)
+    )));
+}
+
+/// Crambin with a C-terminal cap of `cap`'s atoms in place of OXT, before
+/// the chain's `TER`: each atom's name, element, and distance from the C.
+fn capped_crambin(cap: &str, atoms: &[(&str, &str, f64)]) -> String {
+    let carbon = [12.4, 5.982, 9.869];
+    let oxt = [12.703, 4.973, 10.746];
+    let direction = [0, 1, 2].map(|axis| oxt[axis] - carbon[axis]);
+    let length = direction
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    let mut cap_records = String::new();
+    for (index, &(name, element, distance)) in atoms.iter().enumerate() {
+        let point = [0, 1, 2].map(|axis| carbon[axis] + distance * direction[axis] / length);
+        cap_records.push_str(&format!(
+            "HETATM{:>5}  {name:<3} {cap} A  47    {:>8.3}{:>8.3}{:>8.3}  1.00  7.86          {element:>2}\n",
+            327 + index,
+            point[0],
+            point[1],
+            point[2],
+        ));
+    }
+    let mut text = String::new();
+    for line in CRAMBIN.lines() {
+        if line.starts_with("ATOM    327  OXT") {
+            continue;
+        }
+        if line.starts_with("TER ") {
+            text.push_str(&cap_records);
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
+}
+
+#[test]
+fn a_capped_chain_ends_after_its_cap() {
+    for (cap, atoms) in [
+        ("NH2", &[("N", "N", 1.33)][..]),
+        ("NME", &[("N", "N", 1.33), ("C", "C", 2.75)]),
+    ] {
+        let source = read_pdb(&capped_crambin(cap, atoms));
+        let carbon = source
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .find(|atom| {
+                atom.component_id() == "ASN"
+                    && atom.atom_name() == "C"
+                    && atom.author_sequence_id() == Some("46")
+            })
+            .unwrap()
+            .atom();
+        let molecule = source
+            .structure()
+            .topology()
+            .instance(carbon.instance())
+            .unwrap()
+            .molecule();
+        assert!(
+            molecule.neighbors(carbon.atom()).unwrap().any(|other| {
+                molecule.atom(other).unwrap().element() == kekule::molecule::Element::N
+            }),
+            "{cap}"
+        );
+        let (text, _) = kekule::pdb::write(&source, Default::default()).unwrap();
+        // `TER` follows the cap, which stays part of the chain.
+        let lines = text.lines().collect::<Vec<_>>();
+        let ter = lines
+            .iter()
+            .position(|line| line.starts_with("TER"))
+            .unwrap();
+        assert!(lines[ter - 1].contains(cap), "{cap}: {}", lines[ter - 1]);
+        let reread = read_pdb(&text);
+        assert_eq!(
+            kekule::pdb::write(&reread, Default::default()).unwrap().0,
+            text,
+            "{cap}"
+        );
+    }
+}
+
+#[test]
+fn a_chain_without_its_first_residues_keeps_its_places() {
+    // Crambin without residues 1 to 3: SEQRES places the rest at 4 to 46,
+    // in PDB and mmCIF alike.
+    let text = CRAMBIN
+        .lines()
+        .filter(|line| {
+            let record = line.get(..6).unwrap_or("");
+            let number = line
+                .get(22..26)
+                .and_then(|text| text.trim().parse::<i32>().ok());
+            !(matches!(record, "ATOM  " | "HETATM") && number.is_some_and(|number| number <= 3))
+                && !line.starts_with("SSBOND   1")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let places = |result: &StructureInterpretation| {
+        result
+            .report()
+            .instances()
+            .iter()
+            .flat_map(|instance| instance.atoms())
+            .filter(|atom| atom.atom_name() == "CA")
+            .map(|atom| atom.label_sequence_id())
+            .collect::<Vec<_>>()
+    };
+    let expected = (4..=46).map(Some).collect::<Vec<_>>();
+    let source = read_pdb(&text);
+    assert_eq!(places(&source), expected);
+    let (written, _) = kekule::pdb::write(&source, Default::default()).unwrap();
+    assert!(
+        written.starts_with("SEQRES   1 A   46  THR THR CYS CYS PRO SER"),
+        "{written}"
+    );
+    let reread = read_pdb(&written);
+    assert_eq!(places(&reread), expected);
+    assert_eq!(
+        kekule::pdb::write(&reread, Default::default()).unwrap().0,
+        written
+    );
+    let (written, _) = mmcif::write([&source], Default::default()).unwrap();
+    assert_eq!(places(&read_mmcif(&written)), expected);
 }

@@ -10,7 +10,7 @@ pub(super) mod connectivity;
 mod disulfides;
 pub(crate) use connections::is_metal;
 mod mmcif;
-mod pdb;
+pub(super) mod pdb;
 mod sequences;
 mod structure_set;
 mod types;

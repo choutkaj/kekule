@@ -87,6 +87,31 @@ _symmetry.space_group_name_H-M 'P 1'
     }
     writer.write_all(b"#\n").map_err(mmcif_io)?;
 
+    // Readers find the residues a polymer lacks from its sequence.
+    if !model.sequences.is_empty() {
+        write_loop_header(
+            writer,
+            &[
+                "_entity_poly_seq.entity_id",
+                "_entity_poly_seq.num",
+                "_entity_poly_seq.mon_id",
+            ],
+        )?;
+        for (entity, monomers) in &model.sequences {
+            for (number, monomer) in (1..).zip(monomers) {
+                write_row(
+                    writer,
+                    vec![
+                        cif_value(entity, "_entity_poly_seq.entity_id")?,
+                        format!("{number}"),
+                        cif_value(monomer, "_entity_poly_seq.mon_id")?,
+                    ],
+                )?;
+            }
+        }
+        writer.write_all(b"#\n").map_err(mmcif_io)?;
+    }
+
     const ATOM_TAGS: &[&str] = &[
         "_atom_site.group_PDB",
         "_atom_site.id",

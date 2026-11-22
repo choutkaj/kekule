@@ -505,9 +505,10 @@ fn mmcif_connectivity_matches_an_independent_reference() {
             assert_eq!(sizes.len(), molecules, "{case}");
             assert_eq!(&sizes[..largest.len()], largest.as_slice(), "{case}");
             // Without bond tables, AP5's bonds come from atom distances, so
-            // each of its five phosphorus atoms, with four single bonds,
-            // takes +1 with a terminal oxygen's -1 instead of a hydrogen.
-            let separated = if stripped && name == "1AKE" { 5 } else { 0 };
+            // the five phosphorus atoms of each of its two copies, with four
+            // single bonds, take +1 with a terminal oxygen's -1 instead of a
+            // hydrogen.
+            let separated = if stripped && name == "1AKE" { 10 } else { 0 };
             let signs = (
                 charges.iter().filter(|&&charge| charge == 1).count(),
                 charges.iter().filter(|&&charge| charge == -1).count(),

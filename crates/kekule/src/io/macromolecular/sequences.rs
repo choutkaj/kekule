@@ -1,6 +1,6 @@
 //! Polymer entity sequences an mmCIF block states: `_entity_poly`,
 //! `_entity_poly_seq`, and `_pdbx_poly_seq_scheme`, with the block's own
-//! `_chem_comp` codes.
+//! `_chem_comp` codes; and those of a PDB entry's `SEQRES` records.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -78,14 +78,16 @@ pub enum SequenceSource {
     Derived,
 }
 
-/// One polymer entity of an mmCIF block: its monomers, its canonical
-/// one-letter sequence, and its instances in the interpreted structure.
+/// One polymer entity of an mmCIF block or a PDB entry: its monomers, its
+/// canonical one-letter sequence, and its instances in the interpreted
+/// structure.
 ///
-/// Monomers come from `_entity_poly_seq`, which lists the whole polymer,
-/// residues the structure does not observe included. Without it, they are the
-/// residues the atom sites place on the entity, by `label_seq_id`. The
-/// canonical sequence is `_entity_poly.pdbx_seq_one_letter_code_can` without
-/// its line breaks, or else the monomers' codes joined.
+/// Monomers come from `_entity_poly_seq` or `SEQRES`, which list the whole
+/// polymer, residues the structure does not observe included. Without
+/// either, an mmCIF entity's are the residues the atom sites place on it,
+/// by `label_seq_id`. The canonical sequence is
+/// `_entity_poly.pdbx_seq_one_letter_code_can` without its line breaks, or
+/// else the monomers' codes joined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolymerEntity {
     pub(crate) id: String,
@@ -619,6 +621,56 @@ fn required_i32(table: &MmcifCategory<'_>, row: usize, field: Field) -> Result<i
             format!("The {} value {text:?} is not a whole number.", field.tag()),
         )
     })
+}
+
+/// One polymer entity for each chain of a PDB entry whose `SEQRES`
+/// sequence places its residues, by chain, with that chain as its one
+/// instance. Entity IDs number the chains from 1 in chain order.
+pub(super) fn sequence_entities(
+    sequences: &BTreeMap<String, Vec<String>>,
+    library: Option<&ComponentLibrary>,
+) -> Vec<PolymerEntity> {
+    let sources = CodeSources::new(None, library);
+    sequences
+        .iter()
+        .zip(1..)
+        .map(
+            |((chain, components), id): ((&String, &Vec<String>), usize)| {
+                let nucleic = components.iter().any(|component| {
+                    sources.linking(component) == Some(ComponentLinking::Nucleotide)
+                });
+                let unknown = if nucleic { "N" } else { "X" };
+                let monomers = (1..)
+                    .zip(components)
+                    .map(|(number, component)| EntityMonomer {
+                        number,
+                        component_id: component.clone(),
+                        alternatives: Vec::new(),
+                        code: sources
+                            .code(component, Some(unknown))
+                            .expect("an unknown is supplied"),
+                    })
+                    .collect::<Vec<_>>();
+                PolymerEntity {
+                    id: id.to_string(),
+                    polymer_type: None,
+                    sequence: monomers
+                        .iter()
+                        .map(|monomer| monomer.code.as_str())
+                        .collect(),
+                    monomers_source: SequenceSource::Stated,
+                    sequence_source: SequenceSource::Derived,
+                    instances: vec![PolymerEntityInstance {
+                        asym_id: chain.clone(),
+                        author_chain_id: Some(chain.clone()),
+                        chain: None,
+                        positions: vec![SequencePosition::default(); monomers.len()],
+                    }],
+                    monomers,
+                }
+            },
+        )
+        .collect()
 }
 
 /// Adds the structure's chains and residues to the entities' instances.

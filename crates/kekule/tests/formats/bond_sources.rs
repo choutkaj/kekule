@@ -131,13 +131,20 @@ fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
         .collect()
 }
 
-/// Report issues other than the entity kinds minimal sources omit.
+/// Report issues other than the entity kinds minimal sources omit and the
+/// pH 7 states their residues without hydrogens take.
 fn issues(result: &StructureInterpretation) -> Vec<StructureInterpretIssue> {
     result
         .report()
         .issues()
         .iter()
-        .filter(|issue| !matches!(issue, StructureInterpretIssue::EntityTypeInferred { .. }))
+        .filter(|issue| {
+            !matches!(
+                issue,
+                StructureInterpretIssue::EntityTypeInferred { .. }
+                    | StructureInterpretIssue::ProtonationAssumed { .. }
+            )
+        })
         .cloned()
         .collect()
 }
@@ -366,7 +373,15 @@ fn struct_conn_rows_within_a_residue_keep_its_template() {
             pair("CA", "N", BondOrder::Single),
         ]
     );
-    assert_eq!(issues(&read), []);
+    assert_eq!(
+        issues(&read),
+        [StructureInterpretIssue::TerminalAtomMissing {
+            residue: label(1),
+            component_id: "GLY".to_owned(),
+            atom_name: "OXT".to_owned(),
+            anchor: "C".to_owned(),
+        }]
+    );
 
     // A stated order the template does not give is kept and reported.
     let read = read_mmcif(&polypeptide(
@@ -484,12 +499,27 @@ fn nonstandard_linkage_keeps_the_standard_links_no_record_contradicts() {
             &struct_conn(&["c1 covale CG 1 N 2 sing"]),
         ));
         assert_eq!(polymer_links(&branched), []);
+        // The aspartate lacks OD2, and glycine, the chain's C terminus,
+        // its OXT.
         assert_eq!(
             issues(&branched),
-            [StructureInterpretIssue::PolymerLinkSkipped {
-                residue: label(1),
-                next: label(2),
-            }]
+            [
+                StructureInterpretIssue::PolymerLinkSkipped {
+                    residue: label(1),
+                    next: label(2),
+                },
+                StructureInterpretIssue::AtomsMissing {
+                    residue: label(1),
+                    component_id: "ASP".to_owned(),
+                    atoms: vec!["OD2".to_owned()],
+                },
+                StructureInterpretIssue::TerminalAtomMissing {
+                    residue: label(2),
+                    component_id: "GLY".to_owned(),
+                    atom_name: "OXT".to_owned(),
+                    anchor: "C".to_owned(),
+                },
+            ]
         );
     }
 }
@@ -570,10 +600,23 @@ fn absent_linking_atoms_break_the_chain() {
     assert_eq!(polymer_links(&read), []);
     assert_eq!(
         issues(&read),
-        [StructureInterpretIssue::LinkingAtomMissing {
-            residue: author(1),
-            next: author(2),
-        }]
+        [
+            StructureInterpretIssue::LinkingAtomMissing {
+                residue: author(1),
+                next: author(2),
+            },
+            StructureInterpretIssue::AtomsMissing {
+                residue: author(1),
+                component_id: "GLY".to_owned(),
+                atoms: vec!["C".to_owned(), "O".to_owned()],
+            },
+            StructureInterpretIssue::TerminalAtomMissing {
+                residue: author(2),
+                component_id: "GLY".to_owned(),
+                atom_name: "OXT".to_owned(),
+                anchor: "C".to_owned(),
+            },
+        ]
     );
     assert_eq!(
         read.report().issues()[0].to_string(),
@@ -770,7 +813,15 @@ fn residues_without_backbone_atoms_report_no_missing_links() {
             )
         })
         .collect::<Vec<_>>();
-    assert_eq!(issues(&read_pdb(&trace)), []);
+    // Each residue lacks the atoms of its template but CA.
+    let missing = (1..=3)
+        .map(|sequence| StructureInterpretIssue::AtomsMissing {
+            residue: author(sequence),
+            component_id: "ALA".to_owned(),
+            atoms: ["N", "C", "O", "CB"].map(str::to_owned).to_vec(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(issues(&read_pdb(&trace)), missing);
 
     // A record bonds residue 1, which lacks its carbonyl, to residue 2.
     let read = read_mmcif(&polypeptide(
@@ -779,7 +830,23 @@ fn residues_without_backbone_atoms_report_no_missing_links() {
         &struct_conn(&["c1 covale CA 1 N 2 sing"]),
     ));
     assert!(orders(&read).contains(&pair("CA", "N", BondOrder::Single)));
-    assert_eq!(issues(&read), []);
+    // Only the atoms it lacks are reported, no link.
+    assert_eq!(
+        issues(&read),
+        [
+            StructureInterpretIssue::AtomsMissing {
+                residue: label(1),
+                component_id: "GLY".to_owned(),
+                atoms: vec!["C".to_owned(), "O".to_owned()],
+            },
+            StructureInterpretIssue::TerminalAtomMissing {
+                residue: label(2),
+                component_id: "GLY".to_owned(),
+                atom_name: "OXT".to_owned(),
+                anchor: "C".to_owned(),
+            },
+        ]
+    );
 }
 
 #[test]

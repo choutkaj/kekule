@@ -65,6 +65,8 @@ pub(super) enum Implied {
 pub(super) struct PreparedModel {
     pub(super) entities: Vec<EntityRow>,
     pub(super) asyms: Vec<AsymRow>,
+    /// Each polymer entity's monomers, `_entity_poly_seq`, numbered from 1.
+    pub(super) sequences: Vec<(String, Vec<String>)>,
     pub(super) atoms: Vec<AtomRow>,
     pub(super) connections: Vec<ConnectionRow>,
     /// What the rows leave out, in report order: fixed implicit-hydrogen
@@ -99,6 +101,7 @@ pub(super) fn prepare_model(
         atoms: assignments,
         coordination,
         omitted_coordination,
+        sequences: known,
     } = plan;
 
     let mut atoms = Vec::new();
@@ -169,14 +172,38 @@ pub(super) fn prepare_model(
                 .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let block = ReadBlock::new(
-        library,
+    // A sequence continues past the last modelled residue where the report
+    // says so, or where its linking atom has a gap's fixed hydrogens.
+    let mut lengths = sequence_lengths(&atoms, &entities, &known);
+    let read_block = |lengths: &BTreeMap<String, i32>| {
+        ReadBlock::new(
+            library,
+            &atoms,
+            &elements,
+            &connections,
+            &coordination,
+            &atom_indexes,
+            options.coordinate_precision,
+            lengths,
+        )
+    };
+    let mut block = read_block(&lengths);
+    let open = open_after(
         &atoms,
-        &elements,
-        &connections,
-        &coordination,
-        &atom_indexes,
+        &block.fixed_hydrogens(&elements),
+        structure,
+        library,
+        &lengths,
     );
+    if !open.is_empty() {
+        for entity in &open {
+            if let Some(length) = lengths.get_mut(entity) {
+                *length += 1;
+            }
+        }
+        block = read_block(&lengths);
+    }
+    let sequences = entity_sequences(&atoms, &lengths, &known);
     let missing = mark_implied(
         &block,
         &atoms,
@@ -195,7 +222,7 @@ pub(super) fn prepare_model(
     }
     // Fixed hydrogen counts have no mmCIF item; those a reader fixes again
     // are written as they are.
-    let fixed = block.fixed_hydrogens(&elements, &connections);
+    let fixed = block.fixed_hydrogens(&elements);
     for (index, row) in atoms.iter().enumerate() {
         let hydrogens = structure
             .topology()
@@ -249,6 +276,7 @@ pub(super) fn prepare_model(
     Ok(PreparedModel {
         entities,
         asyms,
+        sequences,
         atoms,
         connections,
         omissions: vec![
@@ -662,6 +690,107 @@ fn opens_before(
                         .is_none_or(|candidate| candidate.residue != Some(residue))
                 })
         })
+}
+
+/// The number of monomers of each polymer entity's sequence, by entity ID:
+/// its last numbered residue's, or the report's last monomer's.
+fn sequence_lengths(
+    rows: &[AtomRow],
+    entities: &[EntityRow],
+    known: &BTreeMap<String, BTreeMap<i32, String>>,
+) -> BTreeMap<String, i32> {
+    let mut lengths = BTreeMap::new();
+    for entity in entities
+        .iter()
+        .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
+    {
+        let modelled = rows
+            .iter()
+            .filter(|row| row.entity_id == entity.id)
+            .filter_map(|row| row.label_seq_id)
+            .max();
+        let stated = known
+            .get(&entity.id)
+            .and_then(|monomers| monomers.keys().copied().max());
+        if let Some(length) = modelled.max(stated) {
+            lengths.insert(entity.id.clone(), length);
+        }
+    }
+    lengths
+}
+
+/// The polymer entities whose last monomer is modelled, and whose linking
+/// atom to the next, a peptide's `C` or a nucleotide's `O3'`, has fixed
+/// hydrogens that readers do not fix again (`fixed`, by row): their
+/// sequence continues past it.
+fn open_after(
+    rows: &[AtomRow],
+    fixed: &BTreeMap<usize, u8>,
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
+    lengths: &BTreeMap<String, i32>,
+) -> BTreeSet<String> {
+    let topology = structure.topology();
+    rows.iter()
+        .enumerate()
+        .filter(|(index, row)| {
+            if row.label_seq_id.is_none()
+                || row.label_seq_id != lengths.get(&row.entity_id).copied()
+            {
+                return false;
+            }
+            let Some((component, _)) = dictionary_template(library, &row.label_comp_id) else {
+                return false;
+            };
+            if !link_sides(component.linking())[1].contains(&row.label_atom_id.as_str()) {
+                return false;
+            }
+            topology.atom(row.atom).is_some_and(|atom| {
+                matches!(atom.atom().hydrogens, ImplicitHydrogens::Fixed(count)
+                    if fixed.get(index) != Some(&count))
+            })
+        })
+        .map(|(_, row)| row.entity_id.clone())
+        .collect()
+}
+
+/// Each polymer entity's monomers: the modelled residue at each number, the
+/// report's monomer where none is modelled, and `UNK` where neither is
+/// known.
+fn entity_sequences(
+    rows: &[AtomRow],
+    lengths: &BTreeMap<String, i32>,
+    known: &BTreeMap<String, BTreeMap<i32, String>>,
+) -> Vec<(String, Vec<String>)> {
+    let mut modelled = BTreeMap::<(&str, i32), &str>::new();
+    for row in rows {
+        if let Some(position) = row.label_seq_id {
+            modelled
+                .entry((&row.entity_id, position))
+                .or_insert(&row.label_comp_id);
+        }
+    }
+    lengths
+        .iter()
+        .map(|(entity, &length)| {
+            let monomers = (1..=length)
+                .map(|number| {
+                    modelled
+                        .get(&(entity.as_str(), number))
+                        .copied()
+                        .or_else(|| {
+                            known
+                                .get(entity)
+                                .and_then(|monomers| monomers.get(&number))
+                                .map(String::as_str)
+                        })
+                        .unwrap_or("UNK")
+                        .to_owned()
+                })
+                .collect();
+            (entity.clone(), monomers)
+        })
+        .collect()
 }
 
 fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {

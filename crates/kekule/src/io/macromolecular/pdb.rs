@@ -13,10 +13,9 @@
 //! bonding distance of one of a neighbour's, as for a capping group or a
 //! 5'-terminal nucleotide triphosphate, so a ligand listed between two
 //! residues does not separate them. Such residues bonded to the first or last
-//! `ATOM` residue extend the polymer. Polymer residues take label sequence
-//! numbers: their places in the chain's `SEQRES` sequence, or else their
-//! record order. `SEQRES` also says whether a chain's sequence continues past
-//! its first or last modelled residue.
+//! `ATOM` residue extend the polymer. The polymer residues of a chain whose
+//! `SEQRES` sequence places them take their places in it as label sequence
+//! numbers. Only such a sequence says which residues a polymer lacks.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::types::{poll, poll_every, structure_error};
@@ -33,6 +32,7 @@ use super::connections::{
     DeclaredOrder, PartnerSpec,
 };
 use super::connectivity::{within_bonding_distance, ConnectivityCatalog};
+use super::sequences::sequence_entities;
 use super::structure_set::{interpret_conformations, interpret_models};
 use super::types::{
     ConnectionResolutionReason, ConnectivityOptions, EntityKind, StructureInterpretIssue,
@@ -115,7 +115,13 @@ fn pdb_source(
         connectivity.components().map(|library| library.as_ref()),
         cancellation,
     )?;
-    let chain_ends = align_sequences(document, &mut rows);
+    let sequences = align_sequences(document, &mut rows);
+    let chain_lengths = sequences
+        .iter()
+        .filter_map(|(chain, monomers)| Some((chain.clone(), i32::try_from(monomers.len()).ok()?)))
+        .collect();
+    let polymer_entities =
+        sequence_entities(&sequences, connectivity.components().map(AsRef::as_ref));
     poll(cancellation)?;
     let mut polymer_order = BTreeMap::new();
     for row in rows.iter().filter(|row| row.polymer_position.is_some()) {
@@ -165,40 +171,42 @@ fn pdb_source(
         conformations: BTreeMap::new(),
         polymer_order,
         connections,
-        catalog: ConnectivityCatalog::new(connectivity).with_chain_ends(chain_ends),
+        catalog: ConnectivityCatalog::new(connectivity).with_chain_lengths(chain_lengths),
         cell,
         issues,
-        polymer_entities: Vec::new(),
+        polymer_entities,
         assemblies,
     })
 }
 
-/// Numbers polymer residues by their place in the sequence `SEQRES` states,
-/// and gives the label sequence number of each. Returns whether each
-/// chain's sequence has residues before and after its modelled polymer
-/// residues in the first model. The modelled residues form segments, split
-/// by `TER` records and by jumps in residue numbers, and each segment
-/// matches a run of the sequence's residue names: the first at its earliest
-/// place, later ones after it, and the last at its latest place. A chain
-/// whose residues match no such runs keeps its record-order numbers.
-fn align_sequences(document: &PdbDocument, rows: &mut [AtomRow]) -> BTreeMap<String, [bool; 2]> {
-    let (ends, places) = sequence_places(document, rows);
+/// Numbers the polymer residues of each chain whose `SEQRES` sequence
+/// places them by their places in it, which become their label sequence
+/// numbers. Returns, by chain, each such sequence's residue names. Other
+/// chains keep their record-order positions and have no label sequence
+/// numbers: without a sequence, nothing says which residues their polymer
+/// lacks.
+fn align_sequences(document: &PdbDocument, rows: &mut [AtomRow]) -> BTreeMap<String, Vec<String>> {
+    let (sequences, places) = sequence_places(document, rows);
     for row in rows.iter_mut() {
         if let (Some(position), Some(places)) = (row.polymer_position, places.get(&row.asym_id)) {
             row.polymer_position = places.get(&position).copied().or(Some(position));
+            row.label_seq_id = row.polymer_position;
         }
-        row.label_seq_id = row.polymer_position;
     }
-    ends
+    sequences
 }
 
-/// The ends of [`align_sequences`] and, by chain, each record-order
-/// position's place in the sequence.
+/// The sequences of [`align_sequences`] and, by chain, each
+/// record-order position's place in the sequence.
 type SequencePlaces = (
-    BTreeMap<String, [bool; 2]>,
+    BTreeMap<String, Vec<String>>,
     BTreeMap<String, BTreeMap<i32, i32>>,
 );
 
+/// The modelled residues of each chain form segments, split by `TER`
+/// records and by jumps in residue numbers, and each segment matches a run
+/// of the sequence's residue names (see [`segment_starts`]). A chain whose
+/// segments match no such runs keeps its record-order positions.
 fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
     let mut sequences = BTreeMap::<String, Vec<&str>>::new();
     for record in document.other_records() {
@@ -243,13 +251,13 @@ fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
             .or_default()
             .push((&row.comp_id, position, number));
     }
-    let mut ends = BTreeMap::new();
+    let mut aligned = BTreeMap::new();
     let mut places = BTreeMap::new();
     for (chain, residues) in chains {
         let Some(sequence) = sequences.get(chain) else {
             continue;
         };
-        let mut segments = Vec::<Vec<&str>>::new();
+        let mut segments = Vec::<Segment<'_>>::new();
         let mut positions = Vec::<Vec<i32>>::new();
         for (index, &(name, position, number)) in residues.iter().enumerate() {
             let continues = index > 0 && {
@@ -262,42 +270,24 @@ fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
             };
             match (segments.last_mut(), positions.last_mut()) {
                 (Some(segment), Some(held)) if continues => {
-                    segment.push(name);
+                    segment.names.push(name);
                     held.push(position);
                 }
                 _ => {
-                    segments.push(vec![name]);
+                    segments.push(Segment {
+                        names: vec![name],
+                        number,
+                    });
                     positions.push(vec![position]);
                 }
             }
         }
-        let fits = |segment: &[&str], start: usize| {
-            sequence.get(start..start + segment.len()) == Some(segment)
-        };
-        let mut from = 0;
-        let mut starts = Vec::with_capacity(segments.len());
-        for segment in &segments {
-            let Some(start) = (from..=sequence.len()).find(|&start| fits(segment, start)) else {
-                break;
-            };
-            starts.push(start);
-            from = start + segment.len();
-        }
-        let (Some(&first), Some(&earliest), Some(segment)) =
-            (starts.first(), starts.last(), segments.last())
-        else {
+        let Some(starts) = segment_starts(sequence, &segments) else {
             continue;
         };
-        if starts.len() < segments.len() {
-            continue;
-        }
-        let latest = (earliest..=sequence.len())
-            .rev()
-            .find(|&start| fits(segment, start))
-            .unwrap_or(earliest);
-        ends.insert(
+        aligned.insert(
             chain.to_owned(),
-            [first > 0, latest + segment.len() < sequence.len()],
+            sequence.iter().map(|&name| name.to_owned()).collect(),
         );
         let mut placed = BTreeMap::new();
         for (held, &start) in positions.iter().zip(&starts) {
@@ -310,7 +300,77 @@ fn sequence_places(document: &PdbDocument, rows: &[AtomRow]) -> SequencePlaces {
         }
         places.insert(chain.to_owned(), placed);
     }
-    (ends, places)
+    (aligned, places)
+}
+
+/// A run of modelled residues that follow each other in a chain: their
+/// names, and the residue number of the first.
+pub(crate) struct Segment<'a> {
+    pub(crate) names: Vec<&'a str>,
+    pub(crate) number: Option<i32>,
+}
+
+/// Where each segment starts in `sequence`, by zero-based index, or `None`
+/// when they do not all fit in order. Segments follow the residue numbers
+/// when one offset between number and place fits every segment, the
+/// smallest such offset. Otherwise the first segment takes its earliest
+/// place, a lone residue its latest before the second segment, later ones
+/// the earliest after the one before, and the last its latest.
+pub(crate) fn segment_starts(sequence: &[&str], segments: &[Segment<'_>]) -> Option<Vec<usize>> {
+    let fits = |segment: &Segment<'_>, start: usize| {
+        sequence.get(start..start + segment.names.len()) == Some(&segment.names[..])
+    };
+    let first = segments.first()?;
+    if let Some(numbers) = segments
+        .iter()
+        .map(|segment| segment.number)
+        .collect::<Option<Vec<_>>>()
+    {
+        for start in (0..sequence.len()).filter(|&start| fits(first, start)) {
+            let offset = i64::try_from(start).ok()? - i64::from(numbers[0]);
+            let mut end = 0;
+            let starts = segments
+                .iter()
+                .zip(&numbers)
+                .map(|(segment, &number)| {
+                    let start = usize::try_from(i64::from(number) + offset).ok()?;
+                    (start >= end && fits(segment, start)).then(|| {
+                        end = start + segment.names.len();
+                        start
+                    })
+                })
+                .collect::<Option<Vec<_>>>();
+            if starts.is_some() {
+                return starts;
+            }
+        }
+    }
+    let mut starts = Vec::with_capacity(segments.len());
+    let mut from = 0;
+    for segment in segments {
+        let start = (from..=sequence.len()).find(|&start| fits(segment, start))?;
+        starts.push(start);
+        from = start + segment.names.len();
+    }
+    let latest = |index: usize, limit: usize| {
+        (starts[index]..=limit.saturating_sub(segments[index].names.len()))
+            .rev()
+            .find(|&start| fits(&segments[index], start))
+    };
+    if segments.len() > 1 {
+        let last = segments.len() - 1;
+        let lone = (first.names.len() == 1)
+            .then(|| latest(0, starts[1]))
+            .flatten();
+        let end = latest(last, sequence.len());
+        if let Some(start) = lone {
+            starts[0] = start;
+        }
+        if let Some(start) = end {
+            starts[last] = start;
+        }
+    }
+    Some(starts)
 }
 
 fn model_id(model: Option<u32>) -> String {

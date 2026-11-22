@@ -2061,8 +2061,9 @@ impl StructureInterpretationReport {
     }
 
     /// The polymer entities the block states, in the block's order, with
-    /// their canonical sequences and the structure's residues at each position;
-    /// empty for PDB entries, which state no entities. Entities whose
+    /// their canonical sequences and the structure's residues at each position.
+    /// A PDB entry has one for each chain whose `SEQRES` sequence places its
+    /// residues. Entities whose
     /// monomers neither `_entity_poly_seq` nor the atom sites give are left
     /// out. [`crate::sequence`] gives the sequences of the chains of any
     /// topology.

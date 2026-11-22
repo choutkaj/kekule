@@ -83,6 +83,9 @@ pub(super) struct EntityPlan {
     /// The report's coordination records left out because they no longer
     /// match the structure.
     pub(super) omitted_coordination: usize,
+    /// The report's polymer sequences by entity ID: each monomer's
+    /// component by its number.
+    pub(super) sequences: BTreeMap<String, BTreeMap<i32, String>>,
 }
 
 pub(super) fn multi_model_entity_plan(
@@ -288,6 +291,7 @@ pub(super) fn generic_entity_plan(
         atoms,
         coordination: Vec::new(),
         omitted_coordination: 0,
+        sequences: BTreeMap::new(),
     })
 }
 
@@ -329,6 +333,7 @@ fn report_entity_plan(
         }
     }
 
+    let mut sequences = BTreeMap::new();
     let mut entities = Vec::new();
     let mut entity_kinds = BTreeMap::<String, AssignedEntityKind>::new();
     let mut asyms = Vec::new();
@@ -385,6 +390,23 @@ fn report_entity_plan(
             Ok((kind, source_entity_ids.into_iter().next()))
         })?;
         let label = asym_ids.chain(chain.label_id());
+        // The report's sequence of the polymer on this chain.
+        let sequence = report
+            .polymer_entities()
+            .iter()
+            .find(|entity| {
+                entity
+                    .instances()
+                    .iter()
+                    .any(|instance| instance.chain() == Some(chain.id()))
+            })
+            .map(|entity| {
+                entity
+                    .monomers()
+                    .iter()
+                    .map(|monomer| (monomer.number(), monomer.component_id().to_owned()))
+                    .collect::<BTreeMap<_, _>>()
+            });
         for (asym_id, segment) in segment_asym_ids(&label, segments, &mut asym_ids.reserved) {
             let entity_id = if let Some(entity_id) = &segment.source_entity_id {
                 entity_id.clone()
@@ -417,6 +439,11 @@ fn report_entity_plan(
                 id: asym_id.clone(),
                 entity_id: entity_id.clone(),
             });
+            if let (AssignedEntityKind::Polymer, Some(sequence)) = (segment.kind, &sequence) {
+                sequences
+                    .entry(entity_id.clone())
+                    .or_insert_with(|| sequence.clone());
+            }
             assign_sites(&mut atoms, &segment, &entity_id, &asym_id)?;
         }
     }
@@ -440,6 +467,7 @@ fn report_entity_plan(
         atoms,
         coordination: coordination.records,
         omitted_coordination: coordination.unmatched,
+        sequences,
     })
 }
 
@@ -448,6 +476,8 @@ fn report_entity_plan(
 struct ChainSegment {
     kind: AssignedEntityKind,
     source_entity_id: Option<String>,
+    /// The molecule of a polymer segment of a chain without a source asym.
+    molecule: Option<MoleculeInstanceId>,
     sites: Vec<InstanceAtomId>,
 }
 
@@ -456,8 +486,10 @@ struct ChainSegment {
 /// hierarchy chain without a source `label_asym_id` may be a PDB author chain
 /// holding a polymer, ligands, and water together. Residues of one entity
 /// kind and source entity share an asym, except that every non-polymer
-/// residue is an instance of its own. A chain the source names as one asym
-/// stays one, so residues it would split are conflicting classifications.
+/// residue is an instance of its own and each polymer molecule is one, so
+/// that the sequence of one molecule does not continue into the next. A
+/// chain the source names as one asym stays one, so residues it would split
+/// are conflicting classifications.
 fn chain_segments<'h>(
     chain: ChainView<'h>,
     mut classify: impl FnMut(
@@ -480,10 +512,14 @@ fn chain_segments<'h>(
             continue;
         }
         let (kind, source_entity_id) = classify(residue, &sites)?;
+        let molecule =
+            (!source_asym && kind == AssignedEntityKind::Polymer).then(|| sites[0].instance());
         let shared = (source_asym || kind != AssignedEntityKind::NonPolymer)
             .then(|| {
                 segments.iter_mut().find(|segment| {
-                    segment.kind == kind && segment.source_entity_id == source_entity_id
+                    segment.kind == kind
+                        && segment.source_entity_id == source_entity_id
+                        && segment.molecule == molecule
                 })
             })
             .flatten();
@@ -492,6 +528,7 @@ fn chain_segments<'h>(
             None => segments.push(ChainSegment {
                 kind,
                 source_entity_id,
+                molecule,
                 sites,
             }),
         }

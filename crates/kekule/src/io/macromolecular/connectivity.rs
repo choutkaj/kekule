@@ -350,9 +350,9 @@ pub(crate) struct ConnectivityCatalog {
     /// The number of monomers of each polymer entity, by entity ID, as
     /// `_entity_poly_seq` lists them.
     entity_lengths: BTreeMap<String, i32>,
-    /// Whether the sequence of a chain, by chain ID, has residues before and
-    /// after the modelled ones, as PDB `SEQRES` records state.
-    chain_ends: BTreeMap<String, [bool; 2]>,
+    /// The number of monomers of each chain's sequence, by chain ID, as PDB
+    /// `SEQRES` records state it for chains whose residues they place.
+    chain_lengths: BTreeMap<String, i32>,
     components: Option<Arc<ComponentLibrary>>,
     infer_bonds_from_distance: bool,
 }
@@ -499,11 +499,11 @@ impl ConnectivityCatalog {
         Ok(catalog)
     }
 
-    /// States, by chain ID, whether each chain's sequence has residues
-    /// before and after its modelled ones.
+    /// States, by chain ID, the length of each chain's sequence, whose
+    /// places its residues' polymer positions are.
     #[must_use]
-    pub(crate) fn with_chain_ends(mut self, chain_ends: BTreeMap<String, [bool; 2]>) -> Self {
-        self.chain_ends = chain_ends;
+    pub(crate) fn with_chain_lengths(mut self, chain_lengths: BTreeMap<String, i32>) -> Self {
+        self.chain_lengths = chain_lengths;
         self
     }
 
@@ -764,9 +764,12 @@ fn terminal_hydrogen_anchors(linking: ComponentLinking, name: &str) -> &'static 
 
 /// The protonation state readers give a residue of `template` and its
 /// protonation `variants` (see [`protonation`]). `ends` says whether the
-/// residue has residues before and after it in its polymer chain: a linking
-/// atom without links on such a side bonds across a gap. Writers mirror
-/// readers with it.
+/// residue's sequence has residues before and after it: a linking atom
+/// without links on such a side bonds across a gap, unless the residue
+/// shows a true chain end there. A true end has more hydrogens on its
+/// linking atom than a link leaves, as `H1` to `H3` of an N terminus or
+/// `HO3'` of a 3' end, or a leaving heavy atom bonded to it, as `OXT`.
+/// Writers mirror readers with it.
 pub(crate) fn reader_protonation<'c>(
     template: &'c Component,
     variants: impl IntoIterator<Item = &'c Component>,
@@ -774,12 +777,18 @@ pub(crate) fn reader_protonation<'c>(
     ends: [bool; 2],
 ) -> Option<Protonation<'c>> {
     let sides = link_sides(template.linking());
+    let present = evidence.heavy.keys().copied().collect::<BTreeSet<_>>();
     for (name, atom) in &mut evidence.heavy {
-        atom.gap = atom.links == 0
+        let open = atom.links == 0
             && sides
                 .iter()
                 .zip(ends)
                 .any(|(names, end)| end && names.contains(name));
+        atom.gap = open
+            && template.atom(name).is_some_and(|(index, _)| {
+                atom.hydrogens <= protonation::expected_hydrogens(template, index, 1)
+                    && !protonation::bonds_leaving_atom(template, index, &present)
+            });
     }
     protonation::choose(std::iter::once(template).chain(variants), &evidence)
 }
@@ -837,32 +846,33 @@ pub(crate) const fn link_sides(linking: ComponentLinking) -> [&'static [&'static
     }
 }
 
-/// The hydrogen sites among the hydrogens bonded to one heavy atom, given
-/// as whether each is deuterium, with its occupancy and alternate location.
-/// A hydrogen and a deuterium share one exchangeable site when their
-/// occupancies sum to at most one, or when they are alternate locations of
-/// each other, as in neutron structures.
-pub(crate) fn hydrogen_sites<'a>(
-    hydrogens: impl IntoIterator<Item = (bool, Option<f64>, Option<&'a str>)>,
-) -> usize {
+/// One hydrogen bonded to a heavy atom: whether it is deuterium, its
+/// occupancy, alternate location, and position, if known.
+pub(crate) type HydrogenSite<'a> = (bool, Option<f64>, Option<&'a str>, Option<Point3>);
+
+/// The hydrogen sites among the hydrogens bonded to one heavy atom. A
+/// hydrogen and a deuterium within 0.3 Å of each other share one
+/// exchangeable site when their occupancies sum to at most one, or when
+/// they are alternate locations of each other, as in neutron structures.
+pub(crate) fn hydrogen_sites<'a>(hydrogens: impl IntoIterator<Item = HydrogenSite<'a>>) -> usize {
     const TOLERANCE: f64 = 0.05;
+    const SAME_SITE: f64 = 0.3;
     let (deuterium, protium): (Vec<_>, Vec<_>) = hydrogens
         .into_iter()
-        .partition(|&(deuterium, _, _)| deuterium);
+        .partition(|&(deuterium, ..)| deuterium);
     let mut paired = vec![false; protium.len()];
     let mut shared = 0;
-    for &(_, occupancy, location) in &deuterium {
-        let partner =
-            protium
-                .iter()
-                .enumerate()
-                .position(|(index, &(_, other, other_location))| {
-                    let alternate =
-                        matches!((location, other_location), (Some(a), Some(b)) if a != b);
-                    let partial =
-                        occupancy.unwrap_or(1.0) + other.unwrap_or(1.0) <= 1.0 + TOLERANCE;
-                    !paired[index] && (alternate || partial)
-                });
+    for &(_, occupancy, location, point) in &deuterium {
+        let partner = protium.iter().enumerate().position(
+            |(index, &(_, other, other_location, other_point))| {
+                let alternate = matches!((location, other_location), (Some(a), Some(b)) if a != b);
+                let partial = occupancy.unwrap_or(1.0) + other.unwrap_or(1.0) <= 1.0 + TOLERANCE;
+                let near = matches!((point, other_point), (Some(a), Some(b))
+                    if (a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)
+                        <= SAME_SITE.powi(2));
+                !paired[index] && near && (alternate || partial)
+            },
+        );
         if let Some(index) = partner {
             paired[index] = true;
             shared += 1;
@@ -1055,50 +1065,32 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Whether each polymer residue, by key, has residues before and after
-    /// it in its chain, modelled or not: modelled residues at earlier or
-    /// later positions, a position after the first, or a sequence the source
-    /// states to continue past the modelled residues. Entities whose
-    /// polymer type has no standard linkage are left out.
+    /// it in its chain's sequence. Only a sequence says so: an entity's
+    /// `_entity_poly_seq`, or the `SEQRES` records that place a PDB chain's
+    /// residues. Residues of a chain without one have none, and neither do
+    /// entities whose polymer type has no standard linkage.
     fn polymer_ends(
         &self,
         residues: &BTreeMap<ResidueKey, ResidueAtoms>,
     ) -> BTreeMap<ResidueKey, [bool; 2]> {
-        let mut chains = BTreeMap::<(&str, Option<&str>), Vec<(&ResidueKey, i32)>>::new();
-        for key in residues.keys() {
-            if let Some(position) = key.polymer_position {
-                chains
-                    .entry((&key.asym_id, key.entity_id.as_deref()))
-                    .or_default()
-                    .push((key, position));
-            }
-        }
         let mut ends = BTreeMap::new();
-        for ((asym, entity), chain) in chains {
-            if let Some(entity) = entity {
-                let declared = self.catalog.polymer_types.get(entity);
-                if declared.is_some_and(|kind| !is_polypeptide(kind) && !is_nucleic_acid(kind)) {
-                    continue;
+        for key in residues.keys() {
+            let Some(position) = key.polymer_position else {
+                continue;
+            };
+            let length = match key.entity_id.as_deref() {
+                Some(entity) => {
+                    let declared = self.catalog.polymer_types.get(entity);
+                    if declared.is_some_and(|kind| !is_polypeptide(kind) && !is_nucleic_acid(kind))
+                    {
+                        continue;
+                    }
+                    self.catalog.entity_lengths.get(entity)
                 }
-            }
-            let first = chain.iter().map(|&(_, position)| position).min();
-            let last = chain.iter().map(|&(_, position)| position).max();
-            let length = entity.and_then(|entity| self.catalog.entity_lengths.get(entity));
-            let [before, after] = self
-                .catalog
-                .chain_ends
-                .get(asym)
-                .copied()
-                .unwrap_or_default();
-            for (key, position) in chain {
-                ends.insert(
-                    key.clone(),
-                    [
-                        before || position > 1 || Some(position) > first,
-                        after
-                            || length.is_some_and(|&length| position < length)
-                            || Some(position) < last,
-                    ],
-                );
+                None => self.catalog.chain_lengths.get(&key.asym_id),
+            };
+            if let Some(&length) = length {
+                ends.insert(key.clone(), [position > 1, position < length]);
             }
         }
         ends
@@ -1157,17 +1149,10 @@ impl<'r> Resolver<'r, '_> {
             .sites
             .iter()
             .any(|site| site.stated_charge.is_some());
-        if block.is_none()
+        let template_missing = block.is_none()
             && !stated
             && (residue.sites.len() == 1
-                || residue.sites.iter().any(|site| raw::is_metal(site.element)))
-        {
-            self.issues
-                .push(raw::StructureInterpretIssue::TemplateMissing {
-                    residue: id.clone(),
-                    component_id: residue.key.component_id.clone(),
-                });
-        }
+                || residue.sites.iter().any(|site| raw::is_metal(site.element)));
         let unstated_orders = self.issues.iter().position(|issue| {
             matches!(
                 issue,
@@ -1226,6 +1211,7 @@ impl<'r> Resolver<'r, '_> {
             }
         }
         let component_id = &residue.key.component_id;
+        let mut incomplete = false;
         let mut donors = Vec::new();
         for site in &residue.sites {
             let atom = self
@@ -1246,6 +1232,7 @@ impl<'r> Resolver<'r, '_> {
                 .require_atom(site.atom)
                 .map_err(interpret_error)?;
             if let Some(valence) = incomplete_metal_valence(self.graph, site.atom, atom) {
+                incomplete = true;
                 self.issues
                     .push(raw::StructureInterpretIssue::MetalValenceIncomplete {
                         residue: id.clone(),
@@ -1254,6 +1241,14 @@ impl<'r> Resolver<'r, '_> {
                         valence,
                     });
             }
+        }
+        // A metal whose valence is incomplete is reported as such.
+        if template_missing && !incomplete {
+            self.issues
+                .push(raw::StructureInterpretIssue::TemplateMissing {
+                    residue: id.clone(),
+                    component_id: component_id.clone(),
+                });
         }
         if !unknown.is_empty() {
             self.issues
@@ -1984,7 +1979,7 @@ impl<'r> Resolver<'r, '_> {
             reader_protonation(first, rest.iter().copied(), evidence.clone(), ends)
                 .is_some_and(|state| exact(&state))
         });
-        let chosen = reader_protonation(first, rest.iter().copied(), evidence, ends)
+        let mut chosen = reader_protonation(first, rest.iter().copied(), evidence, ends)
         .ok_or_else(|| {
             raw::structure_error(
                 DiagnosticKind::Inconsistent,
@@ -2005,7 +2000,10 @@ impl<'r> Resolver<'r, '_> {
                 .collect::<Vec<_>>();
             self.apply_state_bonds(&chosen, &named, &stated)?;
         }
+        // A candidate the stated orders exclude fits the hydrogens exactly:
+        // the model's hydrogens are all the residue has.
         if excluded_exact && !exact(&chosen) {
+            chosen.charge_lacking_hydrogens();
             self.report_disagreement(templated);
         }
         let atom_of = |name: &str| {
@@ -2223,11 +2221,14 @@ impl<'r> Resolver<'r, '_> {
             if !is_hydrogen(staged.element) {
                 continue;
             }
-            let site = residue.site(neighbor);
+            let Some(site) = residue.site(neighbor) else {
+                continue;
+            };
             hydrogens.push((
                 staged.isotope.is_some_and(|isotope| isotope.get() == 2),
-                site.and_then(|site| site.occupancy),
-                site.and_then(|site| site.alternate_location.as_deref()),
+                site.occupancy,
+                site.alternate_location.as_deref(),
+                Some(site.point),
             ));
         }
         Ok(protonation::AtomEvidence {
