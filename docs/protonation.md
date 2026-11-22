@@ -169,6 +169,12 @@ A stated 0 in a residue without hydrogens is no evidence, since files
 without charges write 0 for every atom. Nonzero stated charges stay
 evidence. The PDB writer states every charge, 0 included.
 
+Both writers compare each charge with the one their reader derives. A
+charge the reader would change, such as that of a neutral lysine `NZ`
+without hydrogens, fails to write under strict chemistry
+(`ChargeNotReadBack`). Otherwise it is written and reported
+(`WriteOmission::FormalCharges`).
+
 A template charge the dictionary states as unknown, such as the iron of
 heme or of iron-sulfur clusters, is read as zero and reported
 (`TemplateChargeUnknown`).

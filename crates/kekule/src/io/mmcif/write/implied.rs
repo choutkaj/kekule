@@ -10,8 +10,8 @@ use super::prepare::{AtomRow, ConnectionRow, Implied};
 use crate::components::{Component, ComponentLibrary};
 use crate::io::macromolecular::connectivity::{
     dictionary_template, hydrogen_sites, is_coordination, link_valence, reader_protonation,
-    reader_template, standard_link, within_bonding_distance, AtomEvidence, PolymerLink,
-    Protonation, ResidueEvidence, StandardLink,
+    reader_state, reader_template, standard_link, within_bonding_distance, AtomEvidence,
+    PolymerLink, Protonation, ReaderState, ResidueEvidence, StandardLink,
 };
 use crate::io::macromolecular::is_metal;
 use crate::math::Point3;
@@ -54,6 +54,9 @@ pub(super) struct ReadResidue<'c> {
     /// atom of its element, which the reader rejects.
     matched: Option<BTreeMap<&'c str, usize>>,
     state: Option<Protonation<'c>>,
+    /// What the state follows from: the template's variants, the
+    /// evidence, and the residue's chain ends.
+    inputs: Option<(Vec<&'c Component>, ResidueEvidence<'c>, [bool; 2])>,
 }
 
 /// The block's rows and connections as a reader sees them: residues,
@@ -125,6 +128,7 @@ impl<'c> ReadBlock<'c> {
                         fits: false,
                         matched: None,
                         state: None,
+                        inputs: None,
                     };
                 };
                 let (component, fits) = (template.component, template.fits);
@@ -148,6 +152,7 @@ impl<'c> ReadBlock<'c> {
                         fits,
                         matched,
                         state: None,
+                        inputs: None,
                     };
                 };
                 let in_residue = members.iter().copied().collect::<BTreeSet<_>>();
@@ -185,13 +190,19 @@ impl<'c> ReadBlock<'c> {
                     dictionary: component.force_field().is_none(),
                     polymer: rows[members[0]].label_seq_id.is_some(),
                 };
-                let state = reader_protonation(component, template.variants, evidence, ends);
+                let state = reader_protonation(
+                    component,
+                    template.variants.iter().copied(),
+                    evidence.clone(),
+                    ends,
+                );
                 ReadResidue {
                     members,
                     component: Some(component),
                     fits,
                     matched,
                     state,
+                    inputs: Some((template.variants, evidence, ends)),
                 }
             })
             .collect();
@@ -229,6 +240,83 @@ impl<'c> ReadBlock<'c> {
             }
         }
         fixed
+    }
+
+    /// The rows whose charge a reader derives differently, with that
+    /// charge, in row order: atoms of residues it reads with their template,
+    /// given the bond orders `connections` the block states
+    /// ([`reader_state`]).
+    pub(super) fn unread_charges(
+        &self,
+        rows: &[AtomRow],
+        connections: &[ConnectionRow],
+    ) -> BTreeMap<usize, i8> {
+        let mut unread = BTreeMap::new();
+        for (index, residue) in self.residues.iter().enumerate() {
+            let (Some(component), Some(matched), Some((variants, evidence, ends))) =
+                (residue.component, &residue.matched, &residue.inputs)
+            else {
+                continue;
+            };
+            let name_of = matched
+                .iter()
+                .map(|(&name, &row)| (row, name))
+                .collect::<BTreeMap<_, _>>();
+            let mut stated = Vec::new();
+            for &row in &residue.members {
+                for &(other, connection) in &self.neighbours[row] {
+                    let Some(connection) = connection else {
+                        continue;
+                    };
+                    if other <= row
+                        || self.residue_of[other] != index
+                        || connections[connection].implied.is_some()
+                    {
+                        continue;
+                    }
+                    let (Some(&a), Some(&b)) = (name_of.get(&row), name_of.get(&other)) else {
+                        continue;
+                    };
+                    let in_template =
+                        component
+                            .atom(a)
+                            .zip(component.atom(b))
+                            .is_some_and(|((a, _), (b, _))| {
+                                component.bonds().iter().any(|bond| {
+                                    let [x, y] = bond.atoms();
+                                    (x, y) == (a, b) || (x, y) == (b, a)
+                                })
+                            });
+                    if in_template {
+                        stated.push(([a, b], connections[connection].order));
+                    }
+                }
+            }
+            let chosen;
+            let state = if stated.is_empty() {
+                residue.state.as_ref()
+            } else {
+                chosen = reader_state(component, variants, &stated, evidence.clone(), *ends);
+                match &chosen {
+                    ReaderState::Chosen { state, .. } => Some(state),
+                    // Readers keep the stated charges, or reject the
+                    // residue.
+                    ReaderState::OrdersExcludeAll | ReaderState::Unfit => None,
+                }
+            };
+            let Some(state) = state else {
+                continue;
+            };
+            for atom in &state.atoms {
+                let Some(&row) = matched.get(atom.name.as_str()) else {
+                    continue;
+                };
+                if rows[row].formal_charge != atom.charge {
+                    unread.insert(row, atom.charge);
+                }
+            }
+        }
+        unread
     }
 
     /// Whether reading the residue with its template gives it exactly its

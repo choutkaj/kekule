@@ -39,7 +39,8 @@ use crate::io::macromolecular::connectivity::{
 };
 use crate::io::macromolecular::pdb::{linking_role, polymer_template, segment_starts, Segment};
 use crate::io::macromolecular::{
-    is_metal, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
+    is_metal, Signed, StructureInterpretation, StructureInterpretationReport,
+    StructureSetInterpretation,
 };
 use crate::io::mmcif::write::{bond_order_name, cell_values};
 use crate::io::write_policy::{
@@ -204,10 +205,11 @@ impl PdbWriteOptions {
     /// Other represented chemistry PDB cannot carry: isotopes other than
     /// deuterium and tritium, radicals, atom maps, represented stereo, bonds
     /// `CONECT` cannot state (see [`PdbWriteErrorKind::UnsupportedBondOrder`]),
-    /// and residue bonds that differ from the dictionary readers apply (see
-    /// [`PdbWriteErrorKind::DictionaryBondConflict`]). By default it fails to
-    /// write; [`UnrepresentablePolicy::Omit`] writes the records without it
-    /// and reports each kind left out. Fixed implicit-hydrogen counts have
+    /// residue bonds that differ from the dictionary readers apply (see
+    /// [`PdbWriteErrorKind::DictionaryBondConflict`]), and charges readers
+    /// derive differently (see [`PdbWriteErrorKind::ChargeNotReadBack`]). By
+    /// default it fails to write; [`UnrepresentablePolicy::Omit`] writes the
+    /// records without it and reports each kind left out. Fixed implicit-hydrogen counts have
     /// their own policy, [`Self::implicit_hydrogens`].
     pub const fn chemistry(&self) -> UnrepresentablePolicy {
         self.chemistry
@@ -386,6 +388,19 @@ pub enum PdbWriteErrorKind {
         /// The structure's bond order between them, if they are bonded.
         order: Option<BondOrder>,
     },
+    /// A reader gives the atom another charge than the structure's, with
+    /// [`PdbWriteOptions::chemistry`] set to fail. Readers derive the
+    /// charges of residues the dictionary covers, and ignore a stated 0 in
+    /// a residue without hydrogens: a neutral lysine `NZ` without
+    /// hydrogens reads as +1.
+    ChargeNotReadBack {
+        /// The atom.
+        atom: InstanceAtomId,
+        /// The structure's charge, in e.
+        charge: i8,
+        /// The charge a reader gives it, in e.
+        read: i8,
+    },
     /// The 1-based geometry `geometry` of a structure set has state PDB cannot
     /// carry, with [`PdbWriteOptions::geometry_metadata`] set to fail. A
     /// bare time order is reported for the first geometry.
@@ -490,6 +505,13 @@ impl fmt::Display for PdbWriteErrorKind {
                 bond_order_name(*order)
             ),
             Self::UnrepresentableCell { reason } => reason.fmt(f),
+            Self::ChargeNotReadBack { atom, charge, read } => write!(
+                f,
+                "{} has charge {}. A PDB reader gives it {}.",
+                Capitalized(atom),
+                Signed(*charge),
+                Signed(*read)
+            ),
             Self::DictionaryBondConflict { atoms, order } => match order {
                 Some(order) => write!(
                     f,
@@ -1934,7 +1956,10 @@ impl<'o> Plan<'o> {
     ///   [`UnrepresentablePolicy::Omit`];
     /// - residue bonds that differ from the template or variant readers
     ///   choose fail as [`PdbWriteErrorKind::DictionaryBondConflict`], or
-    ///   are counted as [`WriteOmission::DictionaryBonds`].
+    ///   are counted as [`WriteOmission::DictionaryBonds`];
+    /// - charges readers derive differently fail as
+    ///   [`PdbWriteErrorKind::ChargeNotReadBack`], or are counted as
+    ///   [`WriteOmission::FormalCharges`].
     ///
     /// Only `SEQRES` records say which residues a chain's polymer lacks.
     /// A chain gets them when its residues' places in their sequence
@@ -2240,6 +2265,39 @@ impl<'o> Plan<'o> {
         omissions.record(WriteOmission::DictionaryBonds {
             residues: conflicting,
         });
+
+        // Readers derive the charges of templated residues. One they derive
+        // differently, such as a stated 0 a residue without hydrogens
+        // ignores, has no record that states it.
+        let mut unread = BTreeMap::new();
+        for (templated, state) in self.templated.iter().zip(&states) {
+            let Some(state) = state else {
+                continue;
+            };
+            for atom_state in &state.atoms {
+                let Some(&index) = templated.atoms.get(&atom_state.name) else {
+                    continue;
+                };
+                let charge = atom(index).atom().formal_charge;
+                if charge != atom_state.charge {
+                    unread.insert(index, (charge, atom_state.charge));
+                }
+            }
+        }
+        if let Some((&index, &(charge, read))) = unread.first_key_value() {
+            let atom = self.records[index].atom;
+            if strict {
+                return Err(fail(PdbWriteErrorKind::ChargeNotReadBack {
+                    atom,
+                    charge,
+                    read,
+                }));
+            }
+            omissions.record(WriteOmission::FormalCharges {
+                atoms: unread.len(),
+                first: Some(atom),
+            });
+        }
 
         self.seqres = seqres;
         Ok(())

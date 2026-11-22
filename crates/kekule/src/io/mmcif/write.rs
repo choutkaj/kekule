@@ -6,7 +6,8 @@ use crate::diagnostics::{
 };
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::io::macromolecular::{
-    EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
+    EntityKind, Signed, StructureInterpretation, StructureInterpretationReport,
+    StructureSetInterpretation,
 };
 use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
@@ -195,12 +196,14 @@ impl MmcifWriteOptions {
     /// deuterium and tritium, radicals, atom maps, represented stereo, and
     /// zero-order bonds, which `_struct_conn` cannot state, and bonds a
     /// dictionary residue lacks, which a reader adds back
-    /// ([`MmcifWriteErrorKind::DictionaryBondMissing`]). By default it fails
-    /// to write; [`UnrepresentablePolicy::Omit`] writes the rows without it
-    /// and reports each kind left out ([`WriteOmission::Isotopes`],
-    /// [`WriteOmission::Radicals`], [`WriteOmission::AtomMaps`],
-    /// [`WriteOmission::Stereo`], [`WriteOmission::Bonds`], and
-    /// [`WriteOmission::DictionaryBonds`]). An omitted isotope is written as its
+    /// ([`MmcifWriteErrorKind::DictionaryBondMissing`]), and charges readers
+    /// derive differently ([`MmcifWriteErrorKind::ChargeNotReadBack`]). By
+    /// default it fails to write; [`UnrepresentablePolicy::Omit`] writes the
+    /// rows without it and reports each kind left out
+    /// ([`WriteOmission::Isotopes`], [`WriteOmission::Radicals`],
+    /// [`WriteOmission::AtomMaps`], [`WriteOmission::Stereo`],
+    /// [`WriteOmission::Bonds`], [`WriteOmission::DictionaryBonds`], and
+    /// [`WriteOmission::FormalCharges`]). An omitted isotope is written as its
     /// element. mmCIF readers read no stereo, but the coordinates still
     /// define it, and [`crate::stereo::coordinates`] infers it from them.
     /// Fixed implicit-hydrogen counts have their own policy,
@@ -372,6 +375,19 @@ pub enum MmcifWriteErrorKind {
         /// The two atoms.
         atoms: [InstanceAtomId; 2],
     },
+    /// A reader gives the atom another charge than the structure's, with
+    /// [`MmcifWriteOptions::chemistry`] set to fail. Readers derive the
+    /// charges of residues the dictionary covers, and ignore a stated 0 in
+    /// a residue without hydrogens: a neutral lysine `NZ` without
+    /// hydrogens reads as +1.
+    ChargeNotReadBack {
+        /// The atom.
+        atom: InstanceAtomId,
+        /// The structure's charge, in e.
+        charge: i8,
+        /// The charge a reader gives it, in e.
+        read: i8,
+    },
     /// A `_struct_conn` partner cannot select this atom unambiguously.
     AmbiguousConnectionSelector(InstanceAtomId),
     /// A text value cannot be written as a single mmCIF token, for example
@@ -454,6 +470,7 @@ impl MmcifWriteErrorKind {
             | Self::UnsupportedStereo(_)
             | Self::UnsupportedBondOrder { .. }
             | Self::DictionaryBondMissing { .. }
+            | Self::ChargeNotReadBack { .. }
             | Self::AmbiguousConnectionSelector(_)
             | Self::UnsupportedTextValue { .. }
             | Self::UnrepresentableGeometry { .. }
@@ -598,6 +615,13 @@ impl fmt::Display for MmcifWriteErrorKind {
                 f,
                 "The {} order of {bond} has no mmCIF representation.",
                 bond_order_name(*order)
+            ),
+            Self::ChargeNotReadBack { atom, charge, read } => write!(
+                f,
+                "{} has charge {}. An mmCIF reader gives it {}.",
+                Capitalized(atom),
+                Signed(*charge),
+                Signed(*read)
             ),
             Self::DictionaryBondMissing {
                 atoms: [left, right],

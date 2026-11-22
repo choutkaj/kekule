@@ -611,6 +611,11 @@ the main branch migrates by the table under "From the SampleSet API".
 - **Breaking:** The PDB writer states every formal charge, `0` for a neutral
   atom. In a residue with hydrogens, readers take the `0` as evidence
   against a charged template.
+- **Breaking:** The PDB and mmCIF writers compare each charge with the one
+  their reader derives. A charge a reader would change, such as that of a
+  neutral lysine `NZ` without hydrogens, fails under strict chemistry
+  (`ChargeNotReadBack`) and is otherwise reported as
+  `WriteOmission::FormalCharges`, which names the first such atom.
 - **Breaking:** A PDB atom name starting in column 14 reads a one-letter
   element only in an entry that follows the alignment convention, where some
   short name starts in column 13 with a two-letter element. In an entry that

@@ -887,6 +887,7 @@ fn write_one_frame(topology: Arc<Topology>) -> (String, WriteReport) {
 fn xyz_writer_reports_the_charges_isotopes_and_hydrogens_it_leaves_out() {
     // Acetate labeled with carbon-13.
     let topology = kekule::smiles::to_topology("[13CH3]C(=O)[O-]").unwrap();
+    let oxide = topology.atom_ids()[3];
     let (text, report) = write_one_frame(Arc::clone(&topology));
     // Before perception the carbonyl carbon and oxygen have unknown inferred
     // counts, which XYZ readers would fix at zero, as well as the methyl's
@@ -896,7 +897,10 @@ fn xyz_writer_reports_the_charges_isotopes_and_hydrogens_it_leaves_out() {
         [
             WriteOmission::Bonds { bonds: 3 },
             WriteOmission::ImplicitHydrogens { atoms: 3 },
-            WriteOmission::FormalCharges { atoms: 1 },
+            WriteOmission::FormalCharges {
+                atoms: 1,
+                first: Some(oxide),
+            },
             WriteOmission::Isotopes { atoms: 1 },
         ]
     );
@@ -919,7 +923,10 @@ O 0.0 0.0 0.0
         [
             WriteOmission::Bonds { bonds: 3 },
             WriteOmission::ImplicitHydrogens { atoms: 1 },
-            WriteOmission::FormalCharges { atoms: 1 },
+            WriteOmission::FormalCharges {
+                atoms: 1,
+                first: Some(oxide),
+            },
             WriteOmission::Isotopes { atoms: 1 },
         ]
     );
@@ -947,6 +954,7 @@ fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
         .interpret(Default::default())
         .unwrap();
     let topology = interpretation.structure().shared_topology();
+    let amine = topology.atom_ids()[0];
     let (_, report) = write_one_frame(Arc::clone(&topology));
     // Heavy atoms only: every implicit count is inferred and unperceived,
     // and the termini take their pH 7 charges.
@@ -955,7 +963,10 @@ fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
         [
             WriteOmission::Bonds { bonds: 9 },
             WriteOmission::ImplicitHydrogens { atoms: 10 },
-            WriteOmission::FormalCharges { atoms: 2 },
+            WriteOmission::FormalCharges {
+                atoms: 2,
+                first: Some(amine),
+            },
             WriteOmission::AtomSites { atoms: 10 },
         ]
     );
@@ -967,7 +978,10 @@ fn xyz_writer_reports_the_atom_sites_and_hydrogens_of_a_protein() {
         [
             WriteOmission::Bonds { bonds: 9 },
             WriteOmission::ImplicitHydrogens { atoms: 5 },
-            WriteOmission::FormalCharges { atoms: 2 },
+            WriteOmission::FormalCharges {
+                atoms: 2,
+                first: Some(amine),
+            },
             WriteOmission::AtomSites { atoms: 10 },
         ]
     );

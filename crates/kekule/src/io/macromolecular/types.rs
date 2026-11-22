@@ -1522,7 +1522,7 @@ impl fmt::Display for Charged<'_> {
 }
 
 /// A formal charge in e with its sign, such as `+1`; zero is `0`.
-struct Signed(i8);
+pub(in crate::io) struct Signed(pub(in crate::io) i8);
 
 impl fmt::Display for Signed {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {

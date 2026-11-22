@@ -12,6 +12,7 @@ use kekule::macromolecular::{
     ConnectivityOptions, EntityKind, ModelSelection, NumberField, StructureInterpretIssue,
     StructureInterpretOptions, StructureInterpretation,
 };
+use kekule::mmcif::{MmcifWriteErrorKind, MmcifWriteOptions};
 use kekule::molecule::BondOrder;
 use kekule::pdb::{PdbWriteErrorKind, PdbWriteOptions};
 use kekule::structure::{Positions, Structure};
@@ -497,6 +498,69 @@ fn charges_of_templated_residues_round_trip_through_pdb() {
     let (written, _) = pdb::write(&structure, Default::default()).unwrap();
     let reread = read(&written).into_structure();
     assert_eq!(charges(&reread), charges(&structure));
+}
+
+#[test]
+fn charges_readers_derive_differently_are_not_written_silently() {
+    // A neutral lysine NZ without hydrogens: readers ignore its stated 0
+    // and give it the template's +1.
+    let source = read_mmcif(STATED_ZERO_LYSINE).into_structure();
+    let nz = source.topology().atom_ids()[8];
+    let mut editor = source.into_editor();
+    let handle = editor.topology().atom_handle(nz).unwrap();
+    let neutral = editor
+        .topology()
+        .atom(handle)
+        .unwrap()
+        .clone()
+        .with_formal_charge(0);
+    editor.replace_atom(handle, neutral).unwrap();
+    let structure = editor.finish().unwrap();
+    assert_eq!(charges(&structure)[8], 0);
+
+    let error = pdb::write(&structure, Default::default()).unwrap_err();
+    let Some(FormatErrorDetail::PdbWrite(kind)) = error.detail() else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        *kind,
+        PdbWriteErrorKind::ChargeNotReadBack {
+            atom: nz,
+            charge: 0,
+            read: 1
+        }
+    );
+    let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
+    let (_, report) = pdb::write(&structure, options).unwrap();
+    assert!(
+        report.omissions().contains(&WriteOmission::FormalCharges {
+            atoms: 1,
+            first: Some(nz)
+        }),
+        "{report:?}"
+    );
+
+    let error = mmcif::write([&structure], Default::default()).unwrap_err();
+    let Some(FormatErrorDetail::MmcifWrite(kind)) = error.detail() else {
+        panic!("{error:?}");
+    };
+    assert_eq!(
+        *kind,
+        MmcifWriteErrorKind::ChargeNotReadBack {
+            atom: nz,
+            charge: 0,
+            read: 1
+        }
+    );
+    let options = MmcifWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
+    let (_, report) = mmcif::write([&structure], options).unwrap();
+    assert!(
+        report.omissions().contains(&WriteOmission::FormalCharges {
+            atoms: 1,
+            first: Some(nz)
+        }),
+        "{report:?}"
+    );
 }
 
 #[test]

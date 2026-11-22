@@ -1615,6 +1615,55 @@ fn a_sequenced_heterogen_a_reader_cannot_place_follows_the_ter() {
     );
 }
 
+/// Whether a write report lists charges readers do not give back.
+fn omits_charges(report: &kekule::diagnostics::WriteReport) -> bool {
+    report.omissions().iter().any(|omission| {
+        matches!(
+            omission,
+            kekule::diagnostics::WriteOmission::FormalCharges { .. }
+        )
+    })
+}
+
+#[test]
+fn written_charges_read_back_as_they_are() {
+    // Entries as RCSB writes them, without hydrogens.
+    for source in [read_pdb(CRAMBIN), read_mmcif(TRNA)] {
+        let (text, report) = kekule::pdb::write(&source, Default::default()).unwrap();
+        assert!(!omits_charges(&report), "{report:?}");
+        let (_, report) = mmcif::write([&source], Default::default()).unwrap();
+        assert!(!omits_charges(&report), "{report:?}");
+        assert_eq!(sorted_charges(&read_pdb(&text)), sorted_charges(&source));
+    }
+    // A model with every hydrogen, as Maestro writes it: lysine 1 charged
+    // with three hydrogens on NZ, lysine 2 neutral with two.
+    let mut rows = residue_sites("LYS", "A", 1, [0.0; 3]);
+    rows.extend(without(
+        residue_sites("LYS", "B", 1, [10.0, 0.0, 0.0]),
+        &["HZ3"],
+    ));
+    let source = read(&rows, "");
+    assert_eq!(state_at(&source, "A", 1, "NZ").0, 1);
+    assert_eq!(state_at(&source, "B", 1, "NZ").0, 0);
+    let (text, report) = kekule::pdb::write(&source, Default::default()).unwrap();
+    assert!(!omits_charges(&report), "{report:?}");
+    assert_eq!(sorted_charges(&read_pdb(&text)), sorted_charges(&source));
+    let (text, report) = mmcif::write([&source], Default::default()).unwrap();
+    assert!(!omits_charges(&report), "{report:?}");
+    assert_eq!(sorted_charges(&read_mmcif(&text)), sorted_charges(&source));
+}
+
+/// Nonzero formal charges as `(atom name, charge)`, sorted: PDB chains are
+/// not mmCIF asyms.
+fn sorted_charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
+    let mut charges = charges(result)
+        .into_iter()
+        .map(|(_, name, charge)| (name, charge))
+        .collect::<Vec<_>>();
+    charges.sort();
+    charges
+}
+
 #[test]
 fn a_metal_bound_amine_keeps_its_hydrogens() {
     // A38's N6 coordinates a magnesium in 1EHZ. An amine with a neutral

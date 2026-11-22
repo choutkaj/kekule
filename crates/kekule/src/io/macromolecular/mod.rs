@@ -49,7 +49,7 @@ pub use sequences::{
     EntityMonomer, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
     SequenceSource,
 };
-pub(in crate::io) use types::{poll, poll_every, structure_error};
+pub(in crate::io) use types::{poll, poll_every, structure_error, Signed};
 pub use types::{
     AssemblyOmissionReason, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,

@@ -259,6 +259,22 @@ pub(super) fn prepare_model(
         }
         omitted.hydrogens += 1;
     }
+    // Readers derive the charges of templated residues. One they derive
+    // differently, such as a stated 0 a residue without hydrogens ignores,
+    // has no row that states it.
+    let unread = block.unread_charges(&atoms, &connections);
+    let first_unread = unread
+        .first_key_value()
+        .map(|(&row, &read)| (atoms[row].atom, atoms[row].formal_charge, read));
+    if let Some((atom, charge, read)) = first_unread {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::ChargeNotReadBack {
+                atom,
+                charge,
+                read,
+            }));
+        }
+    }
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
@@ -324,6 +340,10 @@ pub(super) fn prepare_model(
             },
             WriteOmission::DictionaryBonds {
                 residues: missing.len(),
+            },
+            WriteOmission::FormalCharges {
+                atoms: unread.len(),
+                first: first_unread.map(|(atom, _, _)| atom),
             },
         ],
     })

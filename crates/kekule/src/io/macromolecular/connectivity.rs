@@ -245,13 +245,6 @@ fn candidate_bond<'c>(
     })
 }
 
-/// Whether `candidate`, a template or one of its variants, gives a stated
-/// bond its order.
-fn candidate_gives(template: &Component, candidate: &Component, bond: &StatedBond) -> bool {
-    candidate_bond(template, candidate, bond)
-        .is_some_and(|template_bond| gives_order(template_bond, bond.order))
-}
-
 /// Whether a template bond gives a stated order: aromatic template bonds
 /// accept either localized order, and coordination is dative.
 fn gives_order(bond: &TemplateBond, order: BondOrder) -> bool {
@@ -806,6 +799,73 @@ pub(crate) fn reader_protonation<'c>(
             });
     }
     protonation::choose(std::iter::once(template).chain(variants), &evidence)
+}
+
+/// What readers make of the protonation of a templated residue.
+pub(crate) enum ReaderState<'c> {
+    /// No template or variant gives every bond order the source states:
+    /// the orders stay, and charges follow from the stated ones and from
+    /// valence.
+    OrdersExcludeAll,
+    /// The model's hydrogens fit no candidate, which readers reject.
+    Unfit,
+    /// The state readers give the residue. `disagrees` when a candidate
+    /// the stated orders exclude fits the hydrogens exactly: the chosen
+    /// one is then charged for the hydrogens it lacks.
+    Chosen {
+        state: Protonation<'c>,
+        disagrees: bool,
+    },
+}
+
+/// The state readers give a residue read with `template` and its
+/// `variants`, whose source states the orders `stated` of template bonds,
+/// by template atom names. Stated orders outrank hydrogens: only a
+/// candidate that gives every stated order is chosen
+/// ([`reader_protonation`]).
+pub(crate) fn reader_state<'c>(
+    template: &'c Component,
+    variants: &[&'c Component],
+    stated: &[([&str; 2], BondOrder)],
+    evidence: ResidueEvidence<'_>,
+    ends: [bool; 2],
+) -> ReaderState<'c> {
+    let gives = |candidate: &Component| {
+        stated.iter().all(|&([a, b], order)| {
+            let (Some((a, _)), Some((b, _))) = (candidate.atom(a), candidate.atom(b)) else {
+                return false;
+            };
+            candidate.bonds().iter().any(|bond| {
+                let [x, y] = bond.atoms();
+                ((x, y) == (a, b) || (x, y) == (b, a)) && gives_order(bond, order)
+            })
+        })
+    };
+    let (candidates, excluded): (Vec<&Component>, Vec<&Component>) = std::iter::once(template)
+        .chain(variants.iter().copied())
+        .partition(|candidate| gives(candidate));
+    let Some((&first, rest)) = candidates.split_first() else {
+        return ReaderState::OrdersExcludeAll;
+    };
+    let exact = |state: &Protonation<'_>| {
+        !state.without_evidence
+            && state
+                .atoms
+                .iter()
+                .all(|atom| atom.from_hydrogens == 0 && atom.missing == 0)
+    };
+    let excluded_exact = excluded.split_first().is_some_and(|(&first, rest)| {
+        reader_protonation(first, rest.iter().copied(), evidence.clone(), ends)
+            .is_some_and(|state| exact(&state))
+    });
+    let Some(mut state) = reader_protonation(first, rest.iter().copied(), evidence, ends) else {
+        return ReaderState::Unfit;
+    };
+    let disagrees = excluded_exact && !exact(&state);
+    if disagrees {
+        state.charge_lacking_hydrogens();
+    }
+    ReaderState::Chosen { state, disagrees }
 }
 
 /// The dictionary template of a component and its protonation variants:
@@ -2131,48 +2191,46 @@ impl<'r> Resolver<'r, '_> {
             dictionary: component.force_field().is_none(),
             polymer: templated.key.polymer_position.is_some(),
         };
-        // Stated orders outrank hydrogens: only a template or variant that
-        // gives every stated order is a candidate.
-        let (candidates, excluded): (Vec<&Component>, Vec<&Component>) = std::iter::once(component)
-            .chain(templated.variants.iter().copied())
-            .partition(|candidate| {
-                templated
-                    .stated
-                    .iter()
-                    .all(|bond| candidate_gives(component, candidate, bond))
-            });
-        let Some((&first, rest)) = candidates.split_first() else {
-            // No candidate gives the stated orders: they stay, and charges
-            // follow from valence. A residue without hydrogens has nothing
-            // they disagree with.
-            self.report_stated_orders(templated, component);
-            if has_hydrogens {
-                self.report_disagreement(templated);
+        let stated = templated
+            .stated
+            .iter()
+            .map(|bond| {
+                (
+                    bond.template_atoms
+                        .map(|index| component.atoms()[index].name()),
+                    bond.order,
+                )
+            })
+            .collect::<Vec<_>>();
+        let (chosen, disagrees) = match reader_state(
+            component,
+            &templated.variants,
+            &stated,
+            evidence,
+            ends,
+        ) {
+            ReaderState::OrdersExcludeAll => {
+                // The stated orders stay, and charges follow from
+                // valence. A residue without hydrogens has nothing they
+                // disagree with.
+                self.report_stated_orders(templated, component);
+                if has_hydrogens {
+                    self.report_disagreement(templated);
+                }
+                return self.assign_implied_charges(residue);
             }
-            return self.assign_implied_charges(residue);
+            ReaderState::Unfit => {
+                return Err(raw::structure_error(
+                        DiagnosticKind::Inconsistent,
+                        residue.sites.first().map(|site| site.line),
+                        format!(
+                            "The hydrogens of a {:?} residue match neither its template nor a protonation variant.",
+                            component.id()
+                        ),
+                    ));
+            }
+            ReaderState::Chosen { state, disagrees } => (state, disagrees),
         };
-        let exact = |state: &Protonation<'_>| {
-            !state.without_evidence
-                && state
-                    .atoms
-                    .iter()
-                    .all(|atom| atom.from_hydrogens == 0 && atom.missing == 0)
-        };
-        let excluded_exact = excluded.split_first().is_some_and(|(&first, rest)| {
-            reader_protonation(first, rest.iter().copied(), evidence.clone(), ends)
-                .is_some_and(|state| exact(&state))
-        });
-        let mut chosen = reader_protonation(first, rest.iter().copied(), evidence, ends)
-        .ok_or_else(|| {
-            raw::structure_error(
-                DiagnosticKind::Inconsistent,
-                residue.sites.first().map(|site| site.line),
-                format!(
-                    "The hydrogens of a {:?} residue match neither its template nor a protonation variant.",
-                    component.id()
-                ),
-            )
-        })?;
         let candidate = chosen.candidate;
         self.report_stated_orders(templated, candidate);
         if candidate.variant().is_some() || chosen.reorders() {
@@ -2185,8 +2243,7 @@ impl<'r> Resolver<'r, '_> {
         }
         // A candidate the stated orders exclude fits the hydrogens exactly:
         // the model's hydrogens are all the residue has.
-        if excluded_exact && !exact(&chosen) {
-            chosen.charge_lacking_hydrogens();
+        if disagrees {
             self.report_disagreement(templated);
         }
         let atom_of = |name: &str| {
