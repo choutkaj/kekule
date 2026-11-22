@@ -2,7 +2,7 @@
 //! geometry, attaching atoms, and names.
 use kekule::hydrogens::{AddHydrogensOptions, AddHydrogensScope, RetainedHydrogenReason};
 use kekule::math::{Matrix3, Point3, RigidTransform, Vector3};
-use kekule::molecule::{Atom, BondOrder, Element, ImplicitHydrogens};
+use kekule::molecule::{Atom, AtomRadical, BondOrder, Element, ImplicitHydrogens};
 use kekule::properties::{PropertyKey, PropertyValue};
 use kekule::smiles;
 use kekule::structure::placement::{
@@ -289,6 +289,60 @@ fn hydrides_take_ideal_lengths_and_angles() {
         assert_eq!(structure.atom_count(), count + 1);
         let residue = structure.topology().residues().next().unwrap();
         assert_eq!(residue.name(), "UNL");
+    }
+}
+
+#[test]
+fn main_group_metals_take_no_hydrides() {
+    for symbol in [
+        "Li", "Na", "K", "Be", "Mg", "Ca", "Al", "Ga", "Sn", "Pb", "Bi",
+    ] {
+        let (editor, _, hydrogens) = completed(symbol, 0);
+        assert!(hydrogens.is_empty(), "{symbol}");
+        assert_eq!(editor.finish().unwrap().atom_count(), 1, "{symbol}");
+    }
+}
+
+#[test]
+fn carbenes_and_nitrenes_are_bent() {
+    // A singlet carbene's lone pair takes a site (H-C-H about 102°), and so
+    // does the in-plane electron of a triplet (about 134°): both place at
+    // the trigonal 120°, never linear. A methyl radical stays planar.
+    for (symbol, electrons, multiplicity, count, shape) in [
+        ("C", 2, Some(1), 2, AtomShape::TrigonalPlanar),
+        ("C", 2, Some(3), 2, AtomShape::TrigonalPlanar),
+        ("C", 2, None, 2, AtomShape::TrigonalPlanar),
+        ("C", 1, Some(2), 3, AtomShape::TrigonalPlanar),
+        ("N", 2, Some(1), 1, AtomShape::TrigonalPlanar),
+        ("Si", 2, Some(1), 2, AtomShape::TrigonalPlanar),
+    ] {
+        let radical = AtomRadical::new(electrons, multiplicity);
+        let mut editor = StructureEditor::new();
+        let atom = editor
+            .place_atom(
+                Atom::new(element(symbol)).with_radical(radical),
+                Quantity::new(Point3::origin(), NANOMETER),
+            )
+            .unwrap();
+        let report = editor
+            .add_hydrogens([atom], AddHydrogensOptions::default())
+            .unwrap();
+        let hydrogens = report.atoms()[0].hydrogens().to_vec();
+        assert_eq!(hydrogens.len(), count, "{symbol} {radical:?}");
+        assert_eq!(
+            editor.atom_domains(atom).unwrap().shape(),
+            Some(shape),
+            "{symbol} {radical:?}"
+        );
+        for (i, a) in hydrogens.iter().enumerate() {
+            for b in &hydrogens[i + 1..] {
+                let found = angle(&editor, *a, atom, *b);
+                assert!(
+                    (found - 120.0).abs() < 1e-6,
+                    "{symbol} {radical:?}: {found}"
+                );
+            }
+        }
     }
 }
 

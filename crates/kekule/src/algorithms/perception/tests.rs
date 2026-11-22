@@ -504,42 +504,6 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
 }
 
 #[test]
-fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
-    for (symbol, expected_inferred_hydrogens) in [
-        ("Li", 1),
-        ("Be", 2),
-        ("Na", 1),
-        ("Mg", 2),
-        ("K", 1),
-        ("Ca", 2),
-        ("Rb", 1),
-        ("Sr", 2),
-        ("Cs", 1),
-        ("Ba", 2),
-        ("Fr", 1),
-        ("Ra", 2),
-    ] {
-        let mut mol = crate::molecule::MoleculeEditor::new();
-        let atom_id = mol
-            .add_atom(element_atom(symbol))
-            .expect("atom identifier capacity");
-
-        let mut mol = mol.into_unchecked();
-        let report =
-            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
-
-        assert!(report.is_ok(), "neutral {symbol} should be supported");
-        assert_eq!(
-            mol.perception()
-                .valence()
-                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
-            Some(expected_inferred_hydrogens),
-            "neutral {symbol} implicit hydrogens"
-        );
-    }
-}
-
-#[test]
 fn valence_keeps_rdkit_hypervalent_anion_limits() {
     for (symbol, charge, accepted, rejected) in [
         ("P", -2, 3, 4),

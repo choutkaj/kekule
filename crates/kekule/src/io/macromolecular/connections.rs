@@ -4,8 +4,9 @@ use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
+pub(crate) use crate::algorithms::is_metal;
 use crate::diagnostics::{Cancellation, FormatError};
-use crate::molecule::{BondOrder, Element};
+use crate::molecule::BondOrder;
 
 use super::atom_site::AtomRow;
 use super::connectivity::OrderSource;
@@ -203,15 +204,6 @@ pub(super) fn resolve_connections(
         });
     }
     Ok(resolved)
-}
-
-/// Alkali, alkaline-earth, transition, post-transition, lanthanide, and
-/// actinide metals; metalloids are not metals.
-pub(crate) fn is_metal(element: Element) -> bool {
-    matches!(
-        element.atomic_number(),
-        3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=84 | 87..=116
-    )
 }
 
 fn report_connection_partner_resolution<'a>(

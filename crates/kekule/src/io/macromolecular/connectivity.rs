@@ -6,14 +6,16 @@ use crate::diagnostics::{Cancellation, DiagnosticKind, FormatError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::algorithms::{rdkit_valence_violation, ValenceViolation};
+use crate::algorithms::{
+    implied_charges, incomplete_metal_valence, is_metal_donor, onium_hydrogens, ImpliedCharges,
+};
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
     ComponentLibrary, ComponentLinking,
 };
 use crate::io::localize_source_aromatic_bonds;
 use crate::math::Point3;
-use crate::molecule::{AtomId, BondOrder, Element, MoleculeEditor};
+use crate::molecule::{AtomId, BondOrder, Element, ImplicitHydrogens, MoleculeEditor};
 
 use crate::io::macromolecular as raw;
 use crate::io::mmcif::category::MmcifCategory;
@@ -870,13 +872,39 @@ impl<'r> Resolver<'r, '_> {
     }
 
     /// Charges the atoms of a residue that no template gives charges, as
-    /// their bonds imply. A source can state bond orders but no charges, as
-    /// the component tables of wwPDB entry files do. A neutral atom with
-    /// more bonds than its valence allows, such as the methylated N7 of
-    /// 7-methylguanosine, then takes the charge of one that makes its
-    /// valence valid, +1 before -1. Stated charges are kept.
+    /// their bonds imply ([`implied_charges`]). A source can state bond
+    /// orders but no charges, as the component tables of wwPDB entry files
+    /// do. A neutral atom with more bonds than its valence allows, such as
+    /// the methylated N7 of 7-methylguanosine, takes the charge that makes
+    /// its valence valid, +1 before -1, and an onium centre, such as a sulfur
+    /// bonded to three carbons, takes +1 rather than a hydrogen. A singly
+    /// bonded chalcogen or boron neighbor of either takes -1 with its +1, as
+    /// the oxygen of DMSO drawn with a single bond. An onium centre without
+    /// such a neighbor stays neutral when some of the residue's bonds have
+    /// no stated order: they come from atom distances
+    /// ([`raw::StructureInterpretIssue::ResidueBondsInferred`]) or from
+    /// records without orders
+    /// ([`raw::StructureInterpretIssue::ResidueBondOrdersUnstated`]), which
+    /// then lists it. Metal donors ([`is_metal_donor`]) take no hydrogens. Stated
+    /// charges are kept. Alkali, alkaline-earth, and p-block metals at a
+    /// valence their element does not allow are reported.
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
+        let id = residue.key.id(self.model_id);
+        let unstated_orders = self.issues.iter().position(|issue| {
+            matches!(
+                issue,
+                raw::StructureInterpretIssue::ResidueBondsInferred { residue, .. }
+                    | raw::StructureInterpretIssue::ResidueBondOrdersUnstated { residue, .. }
+                    if *residue == id
+            )
+        });
+        let may_charge = |atom| {
+            residue
+                .site(atom)
+                .is_some_and(|site| site.stated_charge.is_none())
+        };
         let mut charged_atoms = Vec::new();
+        let mut uncharged = Vec::new();
         for site in &residue.sites {
             if site.stated_charge.is_some() {
                 continue;
@@ -884,37 +912,82 @@ impl<'r> Resolver<'r, '_> {
             let atom = self
                 .graph
                 .require_atom(site.atom)
-                .map_err(interpret_error)?
-                .clone();
-            if atom.formal_charge != 0
-                || !matches!(
-                    rdkit_valence_violation(self.graph, site.atom, &atom),
-                    Some(ValenceViolation::ValenceExceeded { .. })
-                )
-            {
-                continue;
+                .map_err(interpret_error)?;
+            let charges = match implied_charges(self.graph, site.atom, atom, may_charge) {
+                None => continue,
+                Some(ImpliedCharges::Onium) if unstated_orders.is_some() => {
+                    let hydrogens = onium_hydrogens(self.graph, site.atom, atom).unwrap_or(0);
+                    uncharged.push((site.name.clone(), hydrogens));
+                    continue;
+                }
+                Some(ImpliedCharges::Onium) => vec![(site.atom, 1)],
+                Some(ImpliedCharges::OverBonded(charge)) => vec![(site.atom, charge)],
+                Some(ImpliedCharges::Separated(partner)) => vec![(site.atom, 1), (partner, -1)],
+            };
+            for (atom, charge) in charges {
+                self.graph
+                    .require_atom_mut(atom)
+                    .map_err(interpret_error)?
+                    .formal_charge = charge;
+                let name = &residue.site(atom).expect("charged atoms are sites").name;
+                charged_atoms.push((name.clone(), charge));
             }
-            let valid = |charge: i8| {
-                let mut charged = atom.clone();
-                charged.formal_charge = charge;
-                rdkit_valence_violation(self.graph, site.atom, &charged).is_none()
-            };
-            let Some(charge) = [1, -1].into_iter().find(|&charge| valid(charge)) else {
-                continue;
-            };
-            self.graph
-                .require_atom_mut(site.atom)
-                .map_err(interpret_error)?
-                .formal_charge = charge;
-            charged_atoms.push((site.name.clone(), charge));
+        }
+        let component_id = &residue.key.component_id;
+        let mut donors = Vec::new();
+        for site in &residue.sites {
+            let atom = self
+                .graph
+                .require_atom(site.atom)
+                .map_err(interpret_error)?;
+            if is_metal_donor(self.graph, site.atom, atom) {
+                self.graph
+                    .require_atom_mut(site.atom)
+                    .map_err(interpret_error)?
+                    .hydrogens = ImplicitHydrogens::Fixed(0);
+                donors.push(site.name.clone());
+            }
+        }
+        for site in &residue.sites {
+            let atom = self
+                .graph
+                .require_atom(site.atom)
+                .map_err(interpret_error)?;
+            if let Some(valence) = incomplete_metal_valence(self.graph, site.atom, atom) {
+                self.issues
+                    .push(raw::StructureInterpretIssue::MetalValenceIncomplete {
+                        residue: id.clone(),
+                        component_id: component_id.clone(),
+                        atom_name: site.name.clone(),
+                        valence,
+                    });
+            }
         }
         if !charged_atoms.is_empty() {
             self.issues
                 .push(raw::StructureInterpretIssue::ChargesFromBonds {
-                    residue: residue.key.id(self.model_id),
-                    component_id: residue.key.component_id.clone(),
+                    residue: id.clone(),
+                    component_id: component_id.clone(),
                     charged_atoms,
                 });
+        }
+        if !donors.is_empty() {
+            self.issues.push(raw::StructureInterpretIssue::MetalDonors {
+                residue: id.clone(),
+                component_id: component_id.clone(),
+                atom_names: donors,
+            });
+        }
+        if let Some(index) = unstated_orders {
+            match &mut self.issues[index] {
+                raw::StructureInterpretIssue::ResidueBondsInferred {
+                    neutral_centres, ..
+                }
+                | raw::StructureInterpretIssue::ResidueBondOrdersUnstated {
+                    neutral_centres, ..
+                } => *neutral_centres = uncharged,
+                _ => unreachable!("the index finds an issue about unstated orders"),
+            }
         }
         Ok(())
     }
@@ -1065,6 +1138,7 @@ impl<'r> Resolver<'r, '_> {
                     residue: residue.key.id(self.model_id),
                     component_id: residue.key.component_id.clone(),
                     bonds: unstated,
+                    neutral_centres: Vec::new(),
                 });
         }
         Ok(())
@@ -1197,6 +1271,7 @@ impl<'r> Resolver<'r, '_> {
                 residue: residue.key.id(self.model_id),
                 component_id: residue.key.component_id.clone(),
                 bonds,
+                neutral_centres: Vec::new(),
             });
         Ok(())
     }

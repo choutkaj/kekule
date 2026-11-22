@@ -3,8 +3,9 @@
 //!
 //! Descriptor calculation never mutates or perceives the input; a descriptor
 //! that needs perception it cannot reuse computes it on a temporary copy.
-//! Callers select explicitly whether installed inferred-hydrogen state is part
-//! of the calculation.
+//! Formula and masses count every hydrogen: graph hydrogens, fixed counts,
+//! and inferred counts, which need installed valence perception. They fail
+//! rather than omit an inferred count that is not perceived.
 //!
 //! Average masses use CIAAW 2024 abridged standard atomic weights for unlabeled
 //! atoms. Monoisotopic masses use AME 2020 atomic masses for the most abundant
@@ -17,16 +18,17 @@
 //! # Example
 //!
 //! ```
-//! use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+//! use kekule::descriptors::{molecular_formula, MolecularDescriptorError};
 //!
 //! let mut ethanol = kekule::smiles::to_molecules("CCO")?.remove(0);
-//! // Stored counts omit the hydrogens SMILES leaves to inference.
-//! let stored = molecular_formula(&ethanol, HydrogenCountPolicy::StoredOnly)?;
-//! assert_eq!(stored.to_string(), "C2O");
+//! // SMILES leaves ethanol's hydrogens to inference.
+//! assert!(matches!(
+//!     molecular_formula(&ethanol),
+//!     Err(MolecularDescriptorError::UnknownHydrogenCount(_))
+//! ));
 //!
 //! ethanol.perceive()?;
-//! let formula = molecular_formula(&ethanol, HydrogenCountPolicy::IncludePerceived)?;
-//! assert_eq!(formula.to_string(), "C2H6O");
+//! assert_eq!(molecular_formula(&ethanol)?.to_string(), "C2H6O");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
@@ -68,18 +70,6 @@ use crate::molecule::{AtomId, Element, Molecule};
 use crate::units::{Quantity, DALTON};
 
 use data::{exact_isotope_mass, most_abundant_isotope, standard_atomic_weight};
-
-/// Selects which non-atom hydrogen counts contribute to a descriptor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum HydrogenCountPolicy {
-    /// Count explicit graph hydrogens and fixed implicit counts only.
-    /// Inferred counts are omitted, so this can describe a partial composition.
-    StoredOnly,
-    /// Count explicit hydrogens and the complete implicit hydrogen count.
-    /// Requires perception for atoms whose declarations enable inference.
-    IncludePerceived,
-}
 
 /// A stable, structured molecular formula.
 ///
@@ -177,7 +167,8 @@ impl fmt::Display for MolecularFormula {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MolecularDescriptorError {
-    /// Installed implicit-hydrogen state is absent for a live atom that permits it.
+    /// An atom's count is inferred and valence perception is not installed,
+    /// as before [`Molecule::perceive`] or after a chemical edit.
     UnknownHydrogenCount(UnknownHydrogenCount),
     /// No AME 2020 atomic mass is available for an asserted isotope label.
     UnknownIsotope {
@@ -250,20 +241,18 @@ impl fmt::Display for MolecularDescriptorError {
 
 impl Error for MolecularDescriptorError {}
 
-/// Constructs a structured molecular formula under an explicit hydrogen policy.
+/// Constructs the structured molecular formula, every hydrogen included.
 ///
 /// # Errors
 ///
-/// [`MolecularDescriptorError::UnknownHydrogenCount`] when
-/// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
-/// implicit-hydrogen state, and [`MolecularDescriptorError::CountOverflow`]
-/// when a count exceeds `u64`.
+/// [`MolecularDescriptorError::UnknownHydrogenCount`] for an inferred count
+/// without installed valence perception, and
+/// [`MolecularDescriptorError::CountOverflow`] when a count exceeds `u64`.
 pub fn molecular_formula(
     molecule: &Molecule,
-    hydrogen_policy: HydrogenCountPolicy,
 ) -> Result<MolecularFormula, MolecularDescriptorError> {
     let mut counts = BTreeMap::new();
-    visit_constituents(molecule, hydrogen_policy, |_, element, isotope, count| {
+    visit_constituents(molecule, |_, element, isotope, count| {
         add_count(&mut counts, element, isotope, count)
     })?;
 
@@ -284,40 +273,34 @@ pub fn molecular_formula(
     })
 }
 
-/// Calculates average molecular mass in daltons under an explicit hydrogen policy.
+/// Calculates the average molecular mass in daltons, every hydrogen included.
 ///
 /// # Errors
 ///
-/// [`MolecularDescriptorError::UnknownHydrogenCount`] when
-/// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
-/// implicit-hydrogen state, [`MolecularDescriptorError::UnknownIsotope`] for an
+/// [`MolecularDescriptorError::UnknownHydrogenCount`] for an inferred count
+/// without installed valence perception,
+/// [`MolecularDescriptorError::UnknownIsotope`] for an
 /// isotope label without an AME 2020 mass,
 /// [`MolecularDescriptorError::MissingStandardAtomicWeight`] for an
 /// unlabeled element without a standard atomic weight, and
 /// [`MolecularDescriptorError::MassOverflow`] when the mass is not finite.
-pub fn average_mass(
-    molecule: &Molecule,
-    hydrogen_policy: HydrogenCountPolicy,
-) -> Result<Quantity<f64>, MolecularDescriptorError> {
-    molecular_mass(molecule, hydrogen_policy, MassKind::Average)
+pub fn average_mass(molecule: &Molecule) -> Result<Quantity<f64>, MolecularDescriptorError> {
+    molecular_mass(molecule, MassKind::Average)
 }
 
-/// Calculates monoisotopic molecular mass in daltons under an explicit hydrogen policy.
+/// Calculates the monoisotopic molecular mass in daltons, every hydrogen included.
 ///
 /// # Errors
 ///
-/// [`MolecularDescriptorError::UnknownHydrogenCount`] when
-/// [`HydrogenCountPolicy::IncludePerceived`] meets an atom without installed
-/// implicit-hydrogen state, [`MolecularDescriptorError::UnknownIsotope`] for an
+/// [`MolecularDescriptorError::UnknownHydrogenCount`] for an inferred count
+/// without installed valence perception,
+/// [`MolecularDescriptorError::UnknownIsotope`] for an
 /// isotope label without an AME 2020 mass,
 /// [`MolecularDescriptorError::MissingNaturalIsotope`] for an
 /// unlabeled element without a naturally occurring isotope, and
 /// [`MolecularDescriptorError::MassOverflow`] when the mass is not finite.
-pub fn monoisotopic_mass(
-    molecule: &Molecule,
-    hydrogen_policy: HydrogenCountPolicy,
-) -> Result<Quantity<f64>, MolecularDescriptorError> {
-    molecular_mass(molecule, hydrogen_policy, MassKind::Monoisotopic)
+pub fn monoisotopic_mass(molecule: &Molecule) -> Result<Quantity<f64>, MolecularDescriptorError> {
+    molecular_mass(molecule, MassKind::Monoisotopic)
 }
 
 fn add_count(
@@ -357,7 +340,6 @@ fn hill_element_key(element: Element, contains_carbon: bool) -> (u8, &'static st
 
 fn visit_constituents(
     molecule: &Molecule,
-    hydrogen_policy: HydrogenCountPolicy,
     mut visit: impl FnMut(AtomId, Element, Option<u16>, u64) -> Result<(), MolecularDescriptorError>,
 ) -> Result<(), MolecularDescriptorError> {
     let graph = molecule;
@@ -369,12 +351,9 @@ fn visit_constituents(
             atom.isotope.map(std::num::NonZero::get),
             1,
         )?;
-        let implicit = match hydrogen_policy {
-            HydrogenCountPolicy::StoredOnly => usize::from(atom.hydrogens.represented_count()),
-            HydrogenCountPolicy::IncludePerceived => graph.implicit_hydrogens(atom_id).ok_or(
-                MolecularDescriptorError::UnknownHydrogenCount(UnknownHydrogenCount::new(atom_id)),
-            )?,
-        };
+        let implicit = graph.implicit_hydrogens(atom_id).ok_or(
+            MolecularDescriptorError::UnknownHydrogenCount(UnknownHydrogenCount::new(atom_id)),
+        )?;
         if implicit != 0 {
             // At most two u8 contributions, widened by the public count API.
             visit(atom_id, hydrogen, None, implicit as u64)?;
@@ -391,41 +370,35 @@ enum MassKind {
 
 fn molecular_mass(
     molecule: &Molecule,
-    hydrogen_policy: HydrogenCountPolicy,
     kind: MassKind,
 ) -> Result<Quantity<f64>, MolecularDescriptorError> {
     let mut mass = 0.0;
-    visit_constituents(
-        molecule,
-        hydrogen_policy,
-        |atom, element, isotope, count| {
-            let constituent_mass = match (kind, isotope) {
-                (_, Some(mass_number)) => exact_isotope_mass(element, mass_number).ok_or(
+    visit_constituents(molecule, |atom, element, isotope, count| {
+        let constituent_mass = match (kind, isotope) {
+            (_, Some(mass_number)) => exact_isotope_mass(element, mass_number).ok_or(
+                MolecularDescriptorError::UnknownIsotope {
+                    atom,
+                    element,
+                    mass_number,
+                },
+            )?,
+            (MassKind::Average, None) => standard_atomic_weight(element)
+                .ok_or(MolecularDescriptorError::MissingStandardAtomicWeight { atom, element })?,
+            (MassKind::Monoisotopic, None) => {
+                let mass_number = most_abundant_isotope(element)
+                    .ok_or(MolecularDescriptorError::MissingNaturalIsotope { atom, element })?;
+                exact_isotope_mass(element, mass_number).ok_or(
                     MolecularDescriptorError::UnknownIsotope {
                         atom,
                         element,
                         mass_number,
                     },
-                )?,
-                (MassKind::Average, None) => standard_atomic_weight(element).ok_or(
-                    MolecularDescriptorError::MissingStandardAtomicWeight { atom, element },
-                )?,
-                (MassKind::Monoisotopic, None) => {
-                    let mass_number = most_abundant_isotope(element)
-                        .ok_or(MolecularDescriptorError::MissingNaturalIsotope { atom, element })?;
-                    exact_isotope_mass(element, mass_number).ok_or(
-                        MolecularDescriptorError::UnknownIsotope {
-                            atom,
-                            element,
-                            mass_number,
-                        },
-                    )?
-                }
-            };
-            mass += constituent_mass * count as f64;
-            Ok(())
-        },
-    )?;
+                )?
+            }
+        };
+        mass += constituent_mass * count as f64;
+        Ok(())
+    })?;
     mass -= molecule.formal_charge() as f64 * data::ELECTRON_MASS_DA;
     if !mass.is_finite() {
         return Err(MolecularDescriptorError::MassOverflow);

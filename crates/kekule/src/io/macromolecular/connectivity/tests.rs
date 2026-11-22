@@ -947,6 +947,7 @@ fn residues_without_templates_infer_bonds_unless_disabled() {
             residue: residue("A", 1),
             component_id: "XYZ".to_owned(),
             bonds: 2,
+            neutral_centres: Vec::new(),
         }]
     );
 
@@ -1052,6 +1053,7 @@ fn untemplated_polymer_residues_link_by_their_neighbours_linkage_or_atom_names()
         residue: residue("A", sequence),
         component_id: component.to_owned(),
         bonds: 3,
+        neutral_centres: Vec::new(),
     };
     // Without _entity_poly, a residue without a template defers to its
     // templated neighbour, and two such residues link by atom names.

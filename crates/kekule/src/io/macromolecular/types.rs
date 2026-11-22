@@ -432,6 +432,10 @@ pub enum StructureInterpretIssue {
         component_id: String,
         /// The number of inferred bonds.
         bonds: usize,
+        /// Onium centres, by atom name, that took no charge because their
+        /// bond orders are unknown, with the hydrogens each took to its next
+        /// allowed valence. Each may instead carry a charge or a double bond.
+        neutral_centres: Vec<(String, u8)>,
     },
     /// A residue that no template or bond table covers took its bonds from
     /// connection records that state no bond orders, such as PDB `CONECT`
@@ -447,6 +451,10 @@ pub enum StructureInterpretIssue {
         /// The number of its bonds between heavy atoms without a stated
         /// order.
         bonds: usize,
+        /// Onium centres, by atom name, that took no charge because their
+        /// bond orders are unknown, with the hydrogens each took to its next
+        /// allowed valence. Each may instead carry a charge or a double bond.
+        neutral_centres: Vec<(String, u8)>,
     },
     /// The atoms of a residue, by name and element, fit no template of its
     /// name, and connection records bond each of its heavy atoms. It takes
@@ -540,8 +548,12 @@ pub enum StructureInterpretIssue {
         next: SourceResidueId,
     },
     /// A residue that no template gives charges had atoms with more bonds
-    /// than a neutral atom allows. Each took the formal charge its bonds
-    /// imply, as the methylated N7 of 7-methylguanosine takes +1.
+    /// than a neutral atom allows, or onium centres that a neutral atom
+    /// completes only with a hydrogen above its default valence. Each took
+    /// the formal charge its bonds imply, as the methylated N7 of
+    /// 7-methylguanosine and the sulfur of trimethylsulfonium take +1. A
+    /// singly bonded terminal chalcogen or boron neighbor of an onium centre
+    /// took -1, as the oxygen of DMSO drawn with a single bond.
     ChargesFromBonds {
         /// The residue.
         residue: SourceResidueId,
@@ -549,6 +561,35 @@ pub enum StructureInterpretIssue {
         component_id: String,
         /// The charged atoms, by atom name, with their formal charge in e.
         charged_atoms: Vec<(String, i8)>,
+    },
+    /// An alkali, alkaline-earth, or p-block metal atom that no template
+    /// gives a charge has a valence its element and charge do not allow, as
+    /// a tin atom with three bonds or an unbonded neutral sodium atom. It
+    /// takes no hydrides; the source likely omits a charge, a bond, or a
+    /// hydrogen. Supplying the component as context gives it its charge.
+    MetalValenceIncomplete {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The atom's name.
+        atom_name: String,
+        /// Its valence: bond orders and radical electrons.
+        valence: u8,
+    },
+    /// Non-metal atoms of a residue that no template gives charges bond
+    /// metals at a bond valence their element and charge do not allow, but
+    /// one they allow when some of those bonds are not counted, as the
+    /// phosphorus of a phosphine on palladium or a sulfide bridging three iron
+    /// atoms. Those bonds are donor bonds stated as covalent ones. The atoms
+    /// keep their charge and take no hydrogens.
+    MetalDonors {
+        /// The residue.
+        residue: SourceResidueId,
+        /// Its component ID.
+        component_id: String,
+        /// The donor atoms, by atom name.
+        atom_names: Vec<String>,
     },
     /// The structure's hydrogens differ from the reference template: a
     /// protonation variant was selected, or heteroatom charges were adjusted by
@@ -770,25 +811,33 @@ impl fmt::Display for StructureInterpretIssue {
                 residue,
                 component_id,
                 bonds,
-            } => write!(
-                formatter,
-                "{} (component {component_id:?}) has no template or bond table. Its bonds come \
-                 from atom distances: {}.",
-                Capitalized(residue),
-                counted(*bonds, "single bond", "single bonds")
-            ),
+                neutral_centres,
+            } => {
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) has no template or bond table. Its bonds \
+                     come from atom distances: {}.",
+                    Capitalized(residue),
+                    counted(*bonds, "single bond", "single bonds")
+                )?;
+                write_neutral_centres(formatter, neutral_centres)
+            }
             Self::ResidueBondOrdersUnstated {
                 residue,
                 component_id,
                 bonds,
-            } => write!(
-                formatter,
-                "{} (component {component_id:?}) is bonded by records that state no orders, and \
-                 no template gives them. Its {} between heavy atoms {} read as single.",
-                Capitalized(residue),
-                counted(*bonds, "bond", "bonds"),
-                if *bonds == 1 { "is" } else { "are" }
-            ),
+                neutral_centres,
+            } => {
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) is bonded by records that state no orders, \
+                     and no template gives them. Its {} between heavy atoms {} read as single.",
+                    Capitalized(residue),
+                    counted(*bonds, "bond", "bonds"),
+                    if *bonds == 1 { "is" } else { "are" }
+                )?;
+                write_neutral_centres(formatter, neutral_centres)
+            }
             Self::ResidueFitsNoTemplate {
                 residue,
                 component_id,
@@ -883,6 +932,34 @@ impl fmt::Display for StructureInterpretIssue {
                     listed(&Charged::all(charged_atoms))
                 )
             }
+            Self::MetalValenceIncomplete {
+                residue,
+                component_id,
+                atom_name,
+                valence,
+            } => write!(
+                formatter,
+                "Atom {atom_name:?} of {residue} (component {component_id:?}) is a metal atom \
+                 with valence {valence}, which its element does not allow. It takes no hydrogens."
+            ),
+            Self::MetalDonors {
+                residue,
+                component_id,
+                atom_names,
+            } => {
+                let (atoms, verb) = if atom_names.len() == 1 {
+                    ("Atom", "bonds metals as a donor and takes")
+                } else {
+                    ("Atoms", "bond metals as donors and take")
+                };
+                write!(
+                    formatter,
+                    "{} (component {component_id:?}) has no template charges. {atoms} {} {verb} \
+                     no hydrogens.",
+                    Capitalized(residue),
+                    listed(&Quoted::all(atom_names))
+                )
+            }
             Self::ProtonationFromHydrogens {
                 residue,
                 component_id,
@@ -970,6 +1047,32 @@ impl fmt::Display for FirstLine<'_> {
             [first, ..] => write!(formatter, " from line {first}"),
         }
     }
+}
+
+/// Appends the onium centres that took no charge, and their hydrogens, to an
+/// issue about unknown bond orders.
+fn write_neutral_centres(
+    formatter: &mut fmt::Formatter<'_>,
+    centres: &[(String, u8)],
+) -> fmt::Result {
+    if centres.is_empty() {
+        return Ok(());
+    }
+    let atoms = centres
+        .iter()
+        .map(|(name, count)| {
+            format!(
+                "{name:?} took {}",
+                counted(usize::from(*count), "hydrogen", "hydrogens")
+            )
+        })
+        .collect::<Vec<_>>();
+    let noun = if centres.len() == 1 { "Atom" } else { "Atoms" };
+    write!(
+        formatter,
+        " Its onium centres took no charge. {noun} {}.",
+        listed(&atoms)
+    )
 }
 
 /// Text from the input in double quotes.

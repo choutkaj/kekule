@@ -1,4 +1,4 @@
-use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+use kekule::descriptors::molecular_formula;
 use kekule::hydrogens::HydrogenTransformError;
 use kekule::perception::valence::{ValenceModel, ValenceValidation};
 use kekule::topology::{InstanceAtomId, TopologyBuilder};
@@ -39,7 +39,7 @@ fn counts_describe_representation_independently_of_how_implicit_h_were_specified
         );
         assert_eq!(molecule.implicit_hydrogens(c), Some(implicit), "{source}");
         assert_eq!(molecule.total_hydrogens(c), Some(4), "{source}");
-        let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
+        let formula = molecular_formula(&molecule).unwrap();
         assert_eq!(
             formula.count(kekule::molecule::Element::from_symbol("H").unwrap()),
             4
@@ -124,7 +124,7 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         let mut molecule = parse(source);
         molecule.perceive().unwrap();
         let c = carbon(&molecule);
-        let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
+        let formula = molecular_formula(&molecule).unwrap();
         let original_implicit = molecule.implicit_hydrogens(c).unwrap();
         assert_eq!(
             molecule
@@ -146,10 +146,7 @@ fn conversion_preserves_composition_and_reports_explicit_and_implicit_counts() {
         let c = report.correspondence().atom(c).unwrap();
         molecule.perceive().unwrap();
         assert_eq!(molecule.total_hydrogens(c), Some(4));
-        assert_eq!(
-            molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap(),
-            formula
-        );
+        assert_eq!(molecular_formula(&molecule).unwrap(), formula);
     }
 }
 
@@ -181,7 +178,7 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
     for source in ["[C]", "[CH3]", "[NH4+]", "c1cc[nH]c1", "F[C@H](Cl)Br"] {
         let mut molecule = parse(source);
         molecule.perceive().unwrap();
-        let formula = molecular_formula(&molecule, HydrogenCountPolicy::IncludePerceived).unwrap();
+        let formula = molecular_formula(&molecule).unwrap();
         let cip = stereo::cip::assign_cip_descriptors(&mut molecule, Default::default())
             .unwrap()
             .assigned()
@@ -204,7 +201,7 @@ fn stereo_and_smiles_round_trips_use_complete_implicit_counts() {
             let mut restored = parse(&text);
             restored.perceive().unwrap();
             assert_eq!(
-                molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
+                molecular_formula(&restored).unwrap(),
                 formula,
                 "{source} -> {text}"
             );
@@ -284,4 +281,86 @@ fn incomplete_perception_cannot_silently_drop_hydrogens_during_materialization()
     );
     assert_eq!(molecule.atom_count(), 2);
     assert_eq!(molecule.perception(), &before);
+}
+
+#[test]
+fn hydrogens_on_zero_order_and_dative_bonds_are_not_counted() {
+    // Valence counts neither bond, so neither do the hydrogen counts.
+    for order in [BondOrder::Zero, BondOrder::Dative, BondOrder::Single] {
+        let mut editor = kekule::molecule::MoleculeEditor::new();
+        let iron = editor
+            .add_atom(kekule::molecule::Atom::new(
+                kekule::molecule::Element::from_symbol("Fe").unwrap(),
+            ))
+            .unwrap();
+        let hydrogen = editor
+            .add_atom(kekule::molecule::Atom::new(
+                kekule::molecule::Element::from_symbol("H").unwrap(),
+            ))
+            .unwrap();
+        editor.add_bond(iron, hydrogen, order).unwrap();
+        let expected = usize::from(order == BondOrder::Single);
+        assert_eq!(editor.explicit_hydrogens(iron), Some(expected), "{order:?}");
+        let mut molecule = editor.finish().unwrap();
+        molecule.perceive().unwrap();
+        assert_eq!(
+            molecule.explicit_hydrogens(iron),
+            Some(expected),
+            "{order:?}"
+        );
+        assert_eq!(molecule.total_hydrogens(iron), Some(expected), "{order:?}");
+        // The hydride takes no hydrogen of its own either way.
+        assert_eq!(molecule.total_hydrogens(hydrogen), Some(0), "{order:?}");
+        assert_eq!(
+            molecular_formula(&molecule).unwrap().to_string(),
+            "FeH",
+            "{order:?}"
+        );
+    }
+}
+
+#[test]
+fn valence_infers_no_hydrides_on_main_group_metals() {
+    // RDKit gives a lone neutral Na one hydrogen and Mg two; a missing
+    // charge is far likelier than a hydride, so none is inferred.
+    for (symbol, expected_inferred_hydrogens) in [
+        ("Li", 0),
+        ("Be", 0),
+        ("Na", 0),
+        ("Mg", 0),
+        ("K", 0),
+        ("Ca", 0),
+        ("Rb", 0),
+        ("Sr", 0),
+        ("Cs", 0),
+        ("Ba", 0),
+        ("Fr", 0),
+        ("Ra", 0),
+        ("Al", 0),
+        ("Ga", 0),
+        ("In", 0),
+        ("Sn", 0),
+        ("Pb", 0),
+        ("Bi", 0),
+        ("Po", 0),
+        ("Te", 2),
+        ("B", 3),
+        ("Si", 4),
+    ] {
+        let mut editor = kekule::molecule::MoleculeEditor::new();
+        let atom = editor
+            .add_atom(kekule::molecule::Atom::new(
+                kekule::molecule::Element::from_symbol(symbol).unwrap(),
+            ))
+            .unwrap();
+        let mut molecule = editor.finish().unwrap();
+        molecule
+            .perceive()
+            .unwrap_or_else(|error| panic!("neutral {symbol} perceives: {error}"));
+        assert_eq!(
+            molecule.total_hydrogens(atom),
+            Some(expected_inferred_hydrogens),
+            "neutral {symbol} implicit hydrogens"
+        );
+    }
 }

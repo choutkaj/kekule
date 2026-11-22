@@ -438,7 +438,14 @@ fn omitted_tetrahedral_hydrogens_come_from_source_valence() {
             assert_eq!(molecule.stereo_elements().count(), 0);
             continue;
         }
-        let expected_carrier = if symbol == "P" {
+        // Neutral sulfur with three neighbors is a sulfonium drawn without
+        // its charge: it takes +1 and keeps its lone pair.
+        let charge = i8::from(symbol == "S");
+        assert_eq!(
+            molecule.atom(AtomId::new(0)).unwrap().formal_charge(),
+            charge
+        );
+        let expected_carrier = if symbol == "P" || symbol == "S" {
             StereoCarrier::ImplicitLonePair
         } else {
             assert_eq!(

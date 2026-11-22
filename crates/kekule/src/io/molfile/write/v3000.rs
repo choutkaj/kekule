@@ -6,6 +6,7 @@ use crate::io::SourceStereoBondMarkKind;
 use crate::molecule::{AtomRadical, BondOrder, ImplicitHydrogens};
 use crate::stereo::StereoGroupKind;
 
+use super::record::stated_inferred_hydrogens;
 use super::MolfileRecord;
 
 /// CTfile lines hold at most 80 characters.
@@ -47,20 +48,23 @@ pub(super) fn render(record: &MolfileRecord<'_>, title: &str) -> Result<String, 
         if let Some(radical) = atom.radical {
             line.push_str(&format!(" RAD={}", v3000_radical_code(radical)?));
         }
-        match atom.hydrogens {
-            ImplicitHydrogens::Inferred => {}
-            ImplicitHydrogens::Fixed(explicit) => {
-                // HCOUNT is a query constraint in CTfile, not a molecular
-                // hydrogen declaration. VAL preserves the fixed total valence
-                // without turning the emitted atom into a query atom.
-                let valence =
-                    explicit_valence(record_atom.molecule, record_atom.id) + usize::from(explicit);
-                // VAL=0 means unspecified, whereas -1 explicitly means zero.
-                if valence == 0 {
-                    line.push_str(" VAL=-1");
-                } else {
-                    line.push_str(&format!(" VAL={valence}"));
-                }
+        let stated = match atom.hydrogens {
+            ImplicitHydrogens::Inferred => {
+                stated_inferred_hydrogens(record_atom.molecule, record_atom.id, atom)
+            }
+            ImplicitHydrogens::Fixed(explicit) => Some(explicit),
+        };
+        if let Some(explicit) = stated {
+            // HCOUNT is a query constraint in CTfile, not a molecular
+            // hydrogen declaration. VAL preserves the fixed total valence
+            // without turning the emitted atom into a query atom.
+            let valence =
+                explicit_valence(record_atom.molecule, record_atom.id) + usize::from(explicit);
+            // VAL=0 means unspecified, whereas -1 explicitly means zero.
+            if valence == 0 {
+                line.push_str(" VAL=-1");
+            } else {
+                line.push_str(&format!(" VAL={valence}"));
             }
         }
         push_line(&mut out, &line);

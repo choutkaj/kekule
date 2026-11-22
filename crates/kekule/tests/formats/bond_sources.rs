@@ -196,6 +196,7 @@ fn conect_records_without_repeats_state_no_bond_orders() {
             residue: author(1),
             component_id: "LIG".to_owned(),
             bonds: 6,
+            neutral_centres: Vec::new(),
         }]
     );
     assert_eq!(
@@ -389,6 +390,63 @@ fn struct_conn_rows_within_a_residue_keep_its_template() {
         "A connection record states a single bond between atoms \"C\" and \"O\" of residue 1 \
          of chain \"A\" in model \"1\" (component \"GLY\"). Its template has a double bond."
     );
+}
+
+#[test]
+fn struct_conn_rows_without_orders_leave_onium_centres_neutral() {
+    // A sulfur bonded to three carbons is a sulfonium only when its bonds
+    // are known to be single.
+    let atoms = [
+        ("S", "XSM", 1, [0.0, 0.0, 0.0], "S"),
+        ("C1", "XSM", 1, [1.8, 0.0, 0.0], "C"),
+        ("C2", "XSM", 1, [-0.6, 1.7, 0.0], "C"),
+        ("C3", "XSM", 1, [-0.6, -0.85, 1.47], "C"),
+    ];
+    let rows = |order: &str| {
+        ["C1", "C2", "C3"]
+            .iter()
+            .enumerate()
+            .map(|(index, carbon)| format!("c{index} covale S 1 {carbon} 1 {order}"))
+            .collect::<Vec<_>>()
+    };
+    let read = |order: &str| {
+        let rows = rows(order);
+        let rows = rows.iter().map(String::as_str).collect::<Vec<_>>();
+        read_mmcif(&polypeptide("no", &atoms, &struct_conn(&rows)))
+    };
+    let unstated = read("?");
+    assert_eq!(charges(&unstated), []);
+    let issue = issues(&unstated)
+        .into_iter()
+        .find(|issue| {
+            matches!(
+                issue,
+                StructureInterpretIssue::ResidueBondOrdersUnstated { .. }
+            )
+        })
+        .expect("the residue's orders are unstated");
+    assert_eq!(
+        issue,
+        StructureInterpretIssue::ResidueBondOrdersUnstated {
+            residue: label(1),
+            component_id: "XSM".to_owned(),
+            bonds: 3,
+            neutral_centres: vec![("S".to_owned(), 1)],
+        }
+    );
+    assert_eq!(
+        issue.to_string(),
+        "Residue 1 of chain \"A\" in model \"1\" (component \"XSM\") is bonded by records \
+         that state no orders, and no template gives them. Its 3 bonds between heavy atoms are \
+         read as single. Its onium centres took no charge. Atom \"S\" took 1 hydrogen."
+    );
+
+    let stated = read("sing");
+    assert_eq!(charges(&stated), [("S".to_owned(), 1)]);
+    assert!(!issues(&stated).iter().any(|issue| matches!(
+        issue,
+        StructureInterpretIssue::ResidueBondOrdersUnstated { .. }
+    )));
 }
 
 #[test]
@@ -769,6 +827,7 @@ fn conect_orders_are_decided_per_bonded_group() {
             residue: author(1),
             component_id: "LIG".to_owned(),
             bonds: 6,
+            neutral_centres: Vec::new(),
         }]
     );
 }

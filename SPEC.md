@@ -126,7 +126,10 @@ properties is deliberate.
 `Perception` exposes only its sections, and each section owns its queries and
 records mandatory provenance: the model, plus the policy where results depend
 on it. Consumers reuse installed state only when its provenance matches what
-they would perceive themselves, rather than revalidating it.
+they would perceive themselves, rather than revalidating it. Perception that
+succeeds less completely than its model intends, such as a ring set of
+depth-first cycles, says so in `Perception::warnings`, derived from that
+provenance.
 
 Chemical edits invalidate dependent perception; property changes do not.
 Detached perception is checked against graph references and dimensions before

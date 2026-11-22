@@ -66,6 +66,17 @@ impl<W: Write> Encoder<'_, W> {
         Ok(())
     }
 
+    /// The onium centres an issue about unknown bond orders left neutral:
+    /// each atom name and the hydrogens it took.
+    fn neutral_centres(&mut self, centres: &[(String, u8)]) -> Result {
+        self.count(centres.len())?;
+        for (name, hydrogens) in centres {
+            self.str(name)?;
+            self.u8(*hydrogens)?;
+        }
+        Ok(())
+    }
+
     /// A string column through a table of its distinct values, in order of
     /// first appearance, and each row's index into it.
     fn dictionary<'s>(&mut self, values: impl Iterator<Item = Option<&'s str>>) -> Result {
@@ -515,11 +526,13 @@ impl<W: Write> Encoder<'_, W> {
                 residue,
                 component_id,
                 bonds,
+                neutral_centres,
             } => {
                 self.u8(12)?;
                 self.residue(residue)?;
                 self.str(component_id)?;
-                self.usize(*bonds)
+                self.usize(*bonds)?;
+                self.neutral_centres(neutral_centres)
             }
             Issue::HydrogenAttachedByDistance {
                 residue,
@@ -557,11 +570,13 @@ impl<W: Write> Encoder<'_, W> {
                 residue,
                 component_id,
                 bonds,
+                neutral_centres,
             } => {
                 self.u8(22)?;
                 self.residue(residue)?;
                 self.str(component_id)?;
-                self.usize(*bonds)
+                self.usize(*bonds)?;
+                self.neutral_centres(neutral_centres)
             }
             Issue::BondNotInTemplate {
                 residue,
@@ -617,6 +632,28 @@ impl<W: Write> Encoder<'_, W> {
                 self.u8(28)?;
                 self.residue(residue)?;
                 self.str(component_id)
+            }
+            Issue::MetalValenceIncomplete {
+                residue,
+                component_id,
+                atom_name,
+                valence,
+            } => {
+                self.u8(29)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.u8(*valence)
+            }
+            Issue::MetalDonors {
+                residue,
+                component_id,
+                atom_names,
+            } => {
+                self.u8(30)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atom_names)
             }
             Issue::ChargesFromBonds {
                 residue,

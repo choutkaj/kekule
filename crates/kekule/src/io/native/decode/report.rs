@@ -92,6 +92,17 @@ impl<R: Read> Decoder<'_, R> {
             .collect()
     }
 
+    /// The onium centres an issue about unknown bond orders left neutral:
+    /// each atom name and the hydrogens it took.
+    fn neutral_centres(&mut self) -> Result<Vec<(String, u8)>> {
+        let count = self.items()?;
+        let mut centres = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+        for _ in 0..count {
+            centres.push((self.str()?, self.u8()?));
+        }
+        Ok(centres)
+    }
+
     fn str_list(&mut self) -> Result<Vec<String>> {
         let count = self.items()?;
         let mut values = Vec::with_capacity(count.min(super::CHUNK_BYTES));
@@ -653,6 +664,11 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 bonds: self.usize()?,
+                neutral_centres: if self.version >= BOND_SOURCES_SINCE {
+                    self.neutral_centres()?
+                } else {
+                    Vec::new()
+                },
             },
             13 => Issue::HydrogenAttachedByDistance {
                 residue: self.residue()?,
@@ -737,6 +753,7 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 bonds: self.usize()?,
+                neutral_centres: self.neutral_centres()?,
             },
             23 if self.version >= BOND_SOURCES_SINCE => Issue::BondNotInTemplate {
                 residue: self.residue()?,
@@ -776,6 +793,17 @@ impl<R: Read> Decoder<'_, R> {
             28 if self.version >= BOND_SOURCES_SINCE => Issue::StatedOrdersDisagreeWithHydrogens {
                 residue: self.residue()?,
                 component_id: self.str()?,
+            },
+            29 if self.version >= BOND_SOURCES_SINCE => Issue::MetalValenceIncomplete {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+                valence: self.u8()?,
+            },
+            30 if self.version >= BOND_SOURCES_SINCE => Issue::MetalDonors {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_names: self.str_list()?,
             },
             other => {
                 return Err(
