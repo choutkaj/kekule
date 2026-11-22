@@ -204,11 +204,12 @@ fn onium_oxides_and_boranes_without_template_charges_separate_charges() {
 
 #[test]
 fn metals_without_templates_report_valences_their_element_does_not_allow() {
-    // Lead is not bundled; the unbonded atom stays neutral, without hydrides.
-    // Tin with three carbons and aluminium with two, bonded by distance, are
-    // tributylstannane and DIBAL-H without their hydrides.
+    // An unbonded lead atom of a component the dictionary does not charge
+    // stays neutral, without hydrides. Tin with three carbons and aluminium
+    // with two, bonded by distance, are tributylstannane and DIBAL-H without
+    // their hydrides.
     let result = interpret(&block(
-        "PB PB PB A 1 0.000 0.000 0.000
+        "PB PB XPB A 1 0.000 0.000 0.000
              SN SN XSN A 2 10.000 0.000 0.000
              C C1 XSN A 2 12.140 0.000 0.000
              C C2 XSN A 2 10.000 2.140 0.000
@@ -232,15 +233,18 @@ fn metals_without_templates_report_valences_their_element_does_not_allow() {
         .collect::<Vec<_>>();
     assert_eq!(
         incomplete,
-        [("PB", "PB", 1, 0), ("XSN", "SN", 2, 3), ("XAL", "AL", 3, 2)].map(
-            |(component, atom, sequence, valence)| {
-                StructureInterpretIssue::MetalValenceIncomplete {
-                    residue: label(sequence),
-                    component_id: component.to_owned(),
-                    atom_name: atom.to_owned(),
-                    valence,
-                }
+        [
+            ("XPB", "PB", 1, 0),
+            ("XSN", "SN", 2, 3),
+            ("XAL", "AL", 3, 2)
+        ]
+        .map(|(component, atom, sequence, valence)| {
+            StructureInterpretIssue::MetalValenceIncomplete {
+                residue: label(sequence),
+                component_id: component.to_owned(),
+                atom_name: atom.to_owned(),
+                valence,
             }
-        )
+        })
     );
 }

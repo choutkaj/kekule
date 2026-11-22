@@ -480,8 +480,19 @@ pub(super) fn report(foreign: bool) -> StructureInterpretationReport {
             atoms: strings(&["N1", "O2"]),
         },
         Issue::TemplateMissing {
-            residue: first,
+            residue: first.clone(),
             component_id: "XYZ".into(),
+        },
+        Issue::ChargesFromDictionary {
+            residue: fourth.clone(),
+            component_id: "TRS".into(),
+            charged_atoms: vec![("N".into(), 1)],
+            unheld: vec![("CL".into(), -1)],
+        },
+        Issue::DictionaryAtomsUnmatched {
+            residue: first,
+            component_id: "TRS".into(),
+            atoms: strings(&["N1", "O4"]),
         },
         Issue::AtomsMissing {
             residue: second,
@@ -917,7 +928,7 @@ fn interpreted_structure_sets_need_one_report_per_geometry() {
 }
 
 /// Every issue kind, in declaration order.
-const ISSUE_KINDS: [&str; 49] = [
+const ISSUE_KINDS: [&str; 51] = [
     "EntityTypeInferred",
     "ElementsInferredFromAtomNames",
     "ElementsFromTemplates",
@@ -962,6 +973,8 @@ const ISSUE_KINDS: [&str; 49] = [
     "SequenceNotPlaced",
     "TemplateChargeUnknown",
     "TemplateMissing",
+    "ChargesFromDictionary",
+    "DictionaryAtomsUnmatched",
     "AtomsMissing",
     "TerminalAtomMissing",
     "ResidueFragmented",
@@ -1020,6 +1033,8 @@ fn issue_kind(issue: &StructureInterpretIssue) -> &'static str {
         Issue::SequenceNotPlaced { .. } => "SequenceNotPlaced",
         Issue::TemplateChargeUnknown { .. } => "TemplateChargeUnknown",
         Issue::TemplateMissing { .. } => "TemplateMissing",
+        Issue::ChargesFromDictionary { .. } => "ChargesFromDictionary",
+        Issue::DictionaryAtomsUnmatched { .. } => "DictionaryAtomsUnmatched",
         Issue::AtomsMissing { .. } => "AtomsMissing",
         Issue::TerminalAtomMissing { .. } => "TerminalAtomMissing",
         Issue::ResidueFragmented { .. } => "ResidueFragmented",

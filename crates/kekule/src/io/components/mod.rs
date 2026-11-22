@@ -7,10 +7,12 @@
 
 mod bundled;
 mod ccd;
+mod charges;
 mod codes;
 mod force_field;
 
 pub(crate) use ccd::parent_ids;
+pub use charges::{DictionaryAtomCharge, DictionaryCharges};
 pub(crate) use codes::dictionary_code;
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -826,6 +826,28 @@ impl<W: Write> Encoder<'_, W> {
                 self.u8(48)?;
                 self.str(chain_id)
             }
+            Issue::ChargesFromDictionary {
+                residue,
+                component_id,
+                charged_atoms,
+                unheld,
+            } => {
+                self.u8(49)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.charged_atoms(charged_atoms)?;
+                self.charged_atoms(unheld)
+            }
+            Issue::DictionaryAtomsUnmatched {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(50)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
                 self.residue(residue)?;

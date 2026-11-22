@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use crate::algorithms::{
     implied_charges, incomplete_metal_valence, is_metal_donor, metal_bond_reading, onium_hydrogens,
-    ImpliedCharges, MetalBondReading,
+    rdkit_valence_violation, ImpliedCharges, MetalBondReading,
 };
 use crate::components::{
     Component, ComponentBond as TemplateBond, ComponentBondOrder as TemplateOrder,
-    ComponentLibrary, ComponentLinking,
+    ComponentLibrary, ComponentLinking, DictionaryCharges,
 };
 use crate::io::localize_source_aromatic_bonds;
 use crate::math::Point3;
@@ -997,6 +997,73 @@ fn is_hydrogen(element: Element) -> bool {
     element.atomic_number() == 1
 }
 
+/// The dictionary charges of one residue, by atom, and the charges its
+/// atoms' bonds cannot hold, by atom name (see
+/// [`Resolver::dictionary_charges`]).
+type DictionaryResidueCharges = (Option<BTreeMap<AtomId, Option<i8>>>, Vec<(String, i8)>);
+
+/// Whether an atom with inferred hydrogens has an allowed valence with
+/// `charge` at its bonds.
+fn holds_charge(graph: &MoleculeEditor, atom_id: AtomId, charge: i8) -> bool {
+    graph.atom(atom_id).is_some_and(|atom| {
+        let mut charged = atom.clone();
+        charged.formal_charge = charge;
+        rdkit_valence_violation(graph, atom_id, &charged).is_none()
+    })
+}
+
+/// Whether a neutral chalcogen with inferred hydrogens is the hydroxyl of a
+/// strong acid, as a template's would be: its one non-metal heavy neighbour,
+/// bonded by a single bond, is a carbon with a double bond to another
+/// chalcogen, or a phosphorus, arsenic, sulfur, or selenium atom.
+fn is_acid_hydroxyl(graph: &MoleculeEditor, atom_id: AtomId) -> bool {
+    let Some(atom) = graph.atom(atom_id) else {
+        return false;
+    };
+    if !matches!(atom.element.atomic_number(), 8 | 16 | 34 | 52)
+        || atom.formal_charge != 0
+        || atom.radical.is_some()
+        || !atom.hydrogens.is_inferred()
+    {
+        return false;
+    }
+    let heavy = |id: AtomId| {
+        graph
+            .atom(id)
+            .is_some_and(|atom| !is_hydrogen(atom.element) && !raw::is_metal(atom.element))
+    };
+    let Some(bonds) = graph.incident_bonds(atom_id) else {
+        return false;
+    };
+    let neighbours = bonds
+        .filter(|(_, bond)| heavy(bond.other_atom(atom_id)))
+        .collect::<Vec<_>>();
+    let [(_, bond)] = neighbours[..] else {
+        return false;
+    };
+    if bond.order != BondOrder::Single {
+        return false;
+    }
+    let neighbour_id = bond.other_atom(atom_id);
+    let Some(neighbour) = graph.atom(neighbour_id) else {
+        return false;
+    };
+    match neighbour.element.atomic_number() {
+        6 => graph.incident_bonds(neighbour_id).is_some_and(|mut bonds| {
+            bonds.any(|(_, bond)| {
+                let other = bond.other_atom(neighbour_id);
+                other != atom_id
+                    && bond.order == BondOrder::Double
+                    && graph
+                        .atom(other)
+                        .is_some_and(|other| matches!(other.element.atomic_number(), 8 | 16 | 34))
+            })
+        }),
+        15 | 33 | 16 | 34 => true,
+        _ => false,
+    }
+}
+
 struct Resolver<'r, 'g> {
     catalog: &'r ConnectivityCatalog,
     graph: &'g mut MoleculeEditor,
@@ -1327,10 +1394,12 @@ impl<'r> Resolver<'r, '_> {
 
     /// Charges the atoms of a residue that no template gives charges. Stated
     /// charges are kept, and the charges of the block's own component atom
-    /// table apply; a `?` there is reported. Otherwise charges follow from
-    /// bonds ([`implied_charges`]). A source can state bond
-    /// orders but no charges, as the component tables of wwPDB entry files
-    /// do. A neutral atom with more bonds than its valence allows, such as
+    /// table apply, else those of the complete Chemical Component Dictionary
+    /// ([`Self::dictionary_charges`]), whose neutral acid hydroxyls then take
+    /// their pH 7 state where the bonds state orders; a `?` in either is
+    /// reported. Otherwise charges follow from bonds ([`implied_charges`]).
+    /// A source can state bond orders but no charges, as the component
+    /// tables of wwPDB entry files do. A neutral atom with more bonds than its valence allows, such as
     /// the methylated N7 of 7-methylguanosine, takes the charge that makes
     /// its valence valid, +1 before -1, and an onium centre, such as a sulfur
     /// bonded to three carbons, takes +1 rather than a hydrogen. A singly
@@ -1346,15 +1415,15 @@ impl<'r> Resolver<'r, '_> {
     /// valence their element does not allow are reported.
     fn assign_implied_charges(&mut self, residue: &ResidueAtoms) -> Result<(), FormatError> {
         let id = residue.key.id(self.model_id);
-        let block = self
-            .catalog
-            .component_charges
-            .get(&normalized(&residue.key.component_id));
+        let component_id = normalized(&residue.key.component_id);
+        let (dictionary, unheld) = self.dictionary_charges(residue, &id)?;
+        let block = self.catalog.component_charges.get(&component_id);
         let stated = residue
             .sites
             .iter()
             .any(|site| site.stated_charge.is_some());
         let template_missing = block.is_none()
+            && dictionary.is_none()
             && !stated
             && (residue.sites.len() == 1
                 || residue.sites.iter().any(|site| raw::is_metal(site.element)));
@@ -1366,26 +1435,38 @@ impl<'r> Resolver<'r, '_> {
                     if *residue == id
             )
         });
+        let from_dictionary = |atom| {
+            dictionary
+                .as_ref()
+                .and_then(|charges: &BTreeMap<AtomId, Option<i8>>| charges.get(&atom))
+                .copied()
+        };
         let may_charge = |atom| {
             residue.site(atom).is_some_and(|site| {
                 site.stated_charge.is_none()
                     && !block.is_some_and(|atoms| atoms.contains_key(&site.name))
+                    && from_dictionary(atom).is_none()
             })
         };
         let mut charged_atoms = Vec::new();
         let mut uncharged = Vec::new();
         let mut unknown = Vec::new();
+        let mut dictionary_charged = Vec::new();
         for site in &residue.sites {
             if site.stated_charge.is_some() {
                 continue;
             }
-            if let Some(charge) = block.and_then(|atoms| atoms.get(&site.name)) {
+            let block_charge = block.and_then(|atoms| atoms.get(&site.name).copied());
+            if let Some(charge) = block_charge.or_else(|| from_dictionary(site.atom)) {
                 match charge {
                     Some(charge) => {
                         self.graph
                             .require_atom_mut(site.atom)
                             .map_err(interpret_error)?
-                            .formal_charge = *charge;
+                            .formal_charge = charge;
+                        if block_charge.is_none() {
+                            dictionary_charged.push((site.name.clone(), charge));
+                        }
                     }
                     None => unknown.push(site.name.clone()),
                 }
@@ -1413,6 +1494,33 @@ impl<'r> Resolver<'r, '_> {
                     .formal_charge = charge;
                 let name = &residue.site(atom).expect("charged atoms are sites").name;
                 charged_atoms.push((name.clone(), charge));
+            }
+        }
+        // The dictionary's state is stated, so only its neutral acid
+        // hydroxyls take their pH 7 state, as in templated residues. Without
+        // stated orders, a hydroxyl and a carbonyl look alike.
+        let has_hydrogens = residue.sites.iter().any(|site| is_hydrogen(site.element));
+        if dictionary.is_some() && !has_hydrogens && unstated_orders.is_none() {
+            let mut deprotonated = false;
+            for site in &residue.sites {
+                if site.stated_charge.is_none()
+                    && !block.is_some_and(|atoms| atoms.contains_key(&site.name))
+                    && from_dictionary(site.atom).is_none()
+                    && is_acid_hydroxyl(self.graph, site.atom)
+                    && holds_charge(self.graph, site.atom, -1)
+                {
+                    self.graph
+                        .require_atom_mut(site.atom)
+                        .map_err(interpret_error)?
+                        .formal_charge = -1;
+                    deprotonated = true;
+                }
+            }
+            if deprotonated {
+                self.report_assumed_protonation(BTreeMap::from([(
+                    residue.key.component_id.clone(),
+                    1,
+                )]));
             }
         }
         let component_id = &residue.key.component_id;
@@ -1455,6 +1563,15 @@ impl<'r> Resolver<'r, '_> {
                     component_id: component_id.clone(),
                 });
         }
+        if !dictionary_charged.is_empty() || !unheld.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::ChargesFromDictionary {
+                    residue: id.clone(),
+                    component_id: component_id.clone(),
+                    charged_atoms: dictionary_charged,
+                    unheld,
+                });
+        }
         if !unknown.is_empty() {
             self.issues
                 .push(raw::StructureInterpretIssue::TemplateChargeUnknown {
@@ -1490,6 +1607,84 @@ impl<'r> Resolver<'r, '_> {
             }
         }
         Ok(())
+    }
+
+    /// The charges the complete Chemical Component Dictionary gives a
+    /// residue of a component without a template ([`DictionaryCharges`]),
+    /// by atom: atoms it charges, with `None` where it states the charge as
+    /// unknown, and the charges, by atom name, that the atom's bonds cannot
+    /// hold, which do not apply. They apply to atoms whose charge neither the
+    /// source, its block's component atom table, nor a bonded hydrogen
+    /// states. `None` when the residue's
+    /// component has a template or no entry, or no atom takes a charge from
+    /// it; also when the entry does not name each of the residue's atoms
+    /// with its element, hydrogens aside, which is reported.
+    fn dictionary_charges(
+        &mut self,
+        residue: &ResidueAtoms,
+        id: &raw::SourceResidueId,
+    ) -> Result<DictionaryResidueCharges, FormatError> {
+        if self.catalog.residue_template(residue).is_some() {
+            return Ok((None, Vec::new()));
+        }
+        let Some(entry) = DictionaryCharges::get(&residue.key.component_id) else {
+            return Ok((None, Vec::new()));
+        };
+        let block = self
+            .catalog
+            .component_charges
+            .get(&normalized(&residue.key.component_id));
+        let mut open = Vec::new();
+        for site in &residue.sites {
+            if site.stated_charge.is_none()
+                && !block.is_some_and(|atoms| atoms.contains_key(&site.name))
+                && self.hydrogen_neighbours(site.atom)? == 0
+            {
+                open.push(site);
+            }
+        }
+        if open.is_empty() {
+            return Ok((None, Vec::new()));
+        }
+        let atoms = entry
+            .atoms()
+            .map(|atom| (atom.name(), atom))
+            .collect::<BTreeMap<_, _>>();
+        let unmatched = residue
+            .sites
+            .iter()
+            .filter(|site| match atoms.get(site.name.as_str()) {
+                Some(atom) => atom.element() != site.element,
+                None => !is_hydrogen(site.element),
+            })
+            .map(|site| site.name.clone())
+            .collect::<Vec<_>>();
+        if !unmatched.is_empty() {
+            self.issues
+                .push(raw::StructureInterpretIssue::DictionaryAtomsUnmatched {
+                    residue: id.clone(),
+                    component_id: residue.key.component_id.clone(),
+                    atoms: unmatched,
+                });
+            return Ok((None, Vec::new()));
+        }
+        let mut charges = BTreeMap::new();
+        let mut unheld = Vec::new();
+        for site in open {
+            match atoms
+                .get(site.name.as_str())
+                .map(|atom| atom.formal_charge())
+            {
+                None | Some(Some(0)) => {}
+                Some(Some(charge)) if !holds_charge(self.graph, site.atom, charge) => {
+                    unheld.push((site.name.clone(), charge));
+                }
+                Some(charge) => {
+                    charges.insert(site.atom, charge);
+                }
+            }
+        }
+        Ok((Some(charges), unheld))
     }
 
     fn add_bond(

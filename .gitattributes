@@ -24,3 +24,4 @@ crates/kekule-openff-ash/data/** binary
 # Bundled Chemical Component Dictionary entries keep their exact bytes.
 crates/kekule/data/components/*.cif -text
 crates/kekule/data/components/codes.tsv -text
+crates/kekule/data/components/charges.tsv -text

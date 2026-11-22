@@ -440,18 +440,19 @@ fn block_component_charges_apply_without_a_template() {
         charged(&[("A", "N", 1), ("A", "O2", -1), ("A", "O3", -1)])
     );
     assert_eq!(hydrogens(&result, "A", "O2"), 0);
-    // With bond orders alone, as wwPDB entry files state them, the
-    // nitrogen's four bonds give it +1 and one single-bonded oxygen -1
-    // beside it. Nothing states the other oxygen's charge, so it is the
-    // hydroxyl of nitric acid, and the charges are reported.
+    // With bond orders alone, as wwPDB entry files state them, the charges
+    // come from the Chemical Component Dictionary, and are reported.
     let bonds_only = &tables[tables.find("loop_\n_chem_comp_bond").unwrap()..];
     let result = read(&nitrate, bonds_only);
-    assert_eq!(charges(&result), charged(&[("A", "N", 1), ("A", "O2", -1)]));
-    assert_eq!(hydrogens(&result, "A", "O3"), 1);
+    assert_eq!(
+        charges(&result),
+        charged(&[("A", "N", 1), ("A", "O2", -1), ("A", "O3", -1)])
+    );
+    assert_eq!(hydrogens(&result, "A", "O3"), 0);
     assert!(
         has_issue(&result, |issue| matches!(
             issue,
-            Issue::ChargesFromBonds { .. }
+            Issue::ChargesFromDictionary { component_id, .. } if component_id == "NO3"
         )),
         "{:?}",
         issues(&result)

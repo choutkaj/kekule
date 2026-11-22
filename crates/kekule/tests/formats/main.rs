@@ -11,6 +11,7 @@ mod bond_sources;
 mod cancellation;
 mod canonical_smiles;
 mod components;
+mod dictionary_charges;
 mod disulfides;
 mod documents;
 mod edited_structures;

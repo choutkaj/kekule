@@ -14,6 +14,9 @@ including the CCD, are available under CC0 1.0.
 | `test_provenance.py` | Offline check that the shipped files, the locks and the Rust bundle list agree |
 | `codes.py` | Generates the one-letter code table from the complete dictionary |
 | `codes.lock.json` | URL, SHA-256 and latest modification date of the dictionary the table comes from, and the table's SHA-256 |
+| `charges.py` | Generates the formal-charge table from the complete dictionary |
+| `charges.lock.json` | URL, SHA-256 and latest modification date of the dictionary the charge table comes from, and the table's SHA-256 |
+| `test_charges.py` | Offline checks of the charge table generator |
 
 ## Selection
 
@@ -48,6 +51,21 @@ does not hold still have codes. `codes.py` generates it from the complete
 dictionary, `components.cif.gz`, and records the source in
 `codes.lock.json`.
 
+## Formal charges
+
+`crates/kekule/data/components/charges.tsv` lists every dictionary
+component with an atom whose `_chem_comp_atom.charge` is nonzero or unknown
+(`?`), with each atom's name and charge. Uncharged hydrogens are left out,
+and an atom's element is written only when it is not the first letter of
+its name. Readers charge residues of components without a template from it
+(`kekule::components::DictionaryCharges`, [protonation](../../docs/protonation.md)).
+The table's header and `charges.lock.json` record the release, the latest
+modification date of the dictionary's entries. The current table comes from
+the dictionary of entries modified up to 2026-11-13: 3,136 components with
+charged atoms and 836 with unknown charges, 728 of those also with charged
+atoms, out of 52,190. `charges.py` reads the dictionary as data and does not
+keep it.
+
 ## Reproduce
 
 Run from the repository root. Upstream entries change over time, so a fresh
@@ -56,5 +74,10 @@ download may differ from the lock; review such changes like any data update.
 ```sh
 python tools/components/fetch.py
 python tools/components/codes.py
+python tools/components/charges.py
 python -m unittest discover -s tools/components -p "test_*.py"
 ```
+
+`codes.py` and `charges.py` each download the 121 MB dictionary unless
+given one with `--source components.cif.gz`. `charges.py` keeps no copy;
+`codes.py` saves its download in `tools/components`. Do not commit it.

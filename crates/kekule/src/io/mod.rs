@@ -26,7 +26,8 @@ pub(crate) mod xyz;
 
 pub(crate) use components::dictionary_code;
 pub use components::{
-    Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary, ComponentLinking,
+    Component, ComponentAtom, ComponentBond, ComponentBondOrder, ComponentLibrary,
+    ComponentLinking, DictionaryAtomCharge, DictionaryCharges,
 };
 pub(crate) use coordinate_source::AtomPositionSource;
 pub(crate) use macromolecular::is_metal;
