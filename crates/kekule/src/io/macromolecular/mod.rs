@@ -8,7 +8,7 @@ mod build;
 mod connections;
 pub(super) mod connectivity;
 mod disulfides;
-pub(crate) use connections::{is_metal, metal_bond_reading, MetalBondReading};
+pub(crate) use connections::is_metal;
 mod mmcif;
 mod pdb;
 mod sequences;

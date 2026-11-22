@@ -181,7 +181,7 @@ pub(super) fn prepare_model(
         .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
         .map(|entity| entity.id.as_str())
         .collect::<BTreeSet<_>>();
-    let component_tables = mark_implied(
+    let (component_tables, missing) = mark_implied(
         &atoms,
         &elements,
         &mut connections,
@@ -189,6 +189,13 @@ pub(super) fn prepare_model(
         options.coordinate_precision,
         |row| polymer_entities.contains(row.entity_id.as_str()),
     );
+    if let Some(&[left, right]) = missing.first() {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::DictionaryBondMissing {
+                atoms: [atoms[left].atom, atoms[right].atom],
+            }));
+        }
+    }
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
@@ -250,6 +257,9 @@ pub(super) fn prepare_model(
             },
             WriteOmission::CoordinationBonds {
                 bonds: coordination_bonds,
+            },
+            WriteOmission::DictionaryBonds {
+                residues: missing.len(),
             },
         ],
     })

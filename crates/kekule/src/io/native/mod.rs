@@ -59,6 +59,16 @@ const SAMPLING_SINCE: u32 = 9;
 /// The first format version with disulfide bond evidence and the
 /// `DisulfideInferred` and `ForceFieldTemplate` interpretation issues.
 const DISULFIDE_SINCE: u32 = 9;
+/// The first format version with the bond-source interpretation issues:
+/// `ResidueBondOrdersUnstated`, `BondNotInTemplate`,
+/// `BondOrderDiffersFromTemplate`, `PolymerLinkSkipped`,
+/// `LinkingAtomMissing`, `ResidueFitsNoTemplate`,
+/// `StatedOrdersDisagreeWithHydrogens`, `MetalValenceIncomplete`, and
+/// `MetalDonors`, and the neutral onium centres of `ResidueBondsInferred`.
+const BOND_SOURCES_SINCE: u32 = 9;
+/// The template order code of an aromatic or delocalized template bond in
+/// a `BondOrderDiffersFromTemplate` issue.
+const AROMATIC_TEMPLATE_ORDER: u8 = 255;
 /// The first format version with the `ElementsFromTemplates`,
 /// `UnsignedCharges`, `HexadecimalNumbers`, and `NumbersRestart`
 /// interpretation issues.

@@ -1,9 +1,10 @@
 # Bundled component template provenance
 
-The 82 `*.cif` files in this directory are unmodified entries of the wwPDB
+The 89 `*.cif` files in this directory are unmodified entries of the wwPDB
 [Chemical Component Dictionary](https://www.wwpdb.org/data/ccd) (CCD), one file
 per component as served by RCSB at
-`https://files.rcsb.org/ligands/view/<ID>.cif`, retrieved on 2026-10-11. They
+`https://files.rcsb.org/ligands/view/<ID>.cif`, retrieved on 2026-10-11 (`LI`,
+`RB`, `CS`, `SR`, `BA`, `AL`, and `F` on 2026-11-22). They
 are compiled into the library as the templates of
 `kekule::components::ComponentLibrary::bundled`.
 

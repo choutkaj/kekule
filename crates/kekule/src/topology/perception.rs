@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::algorithms::{perceive_molecule_with, PerceptionError};
 use crate::parallel::{Progress, Run};
 
+use crate::molecule::perception::PerceptionWarning;
 use crate::molecule::Molecule;
 
 use super::{MoleculeDefinition, MoleculeDefinitionId, Topology};
@@ -129,6 +130,22 @@ impl Topology {
             molecule_class_overrides: self.molecule_class_overrides.clone(),
             properties: Arc::clone(&self.properties),
             layout: self.layout,
+        })
+    }
+
+    /// The warnings of each definition's installed perception
+    /// ([`crate::perception::Perception::warnings`]), in definition order.
+    /// Empty when perception is complete or not installed.
+    pub fn perception_warnings(
+        &self,
+    ) -> impl Iterator<Item = (MoleculeDefinitionId, PerceptionWarning)> + '_ {
+        self.definitions.iter().flat_map(|definition| {
+            definition
+                .molecule
+                .perception()
+                .warnings()
+                .into_iter()
+                .map(move |warning| (definition.id, warning))
         })
     }
 }

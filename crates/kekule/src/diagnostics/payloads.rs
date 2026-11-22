@@ -295,7 +295,8 @@ impl std::error::Error for CapacityExceeded {}
 /// Missing valence perception is not zero hydrogens. Perceive valence, for
 /// example with `Molecule::perceive`, before the operation.
 ///
-/// Writes `The hydrogen count of atom 3 is unknown. Perceive valence first.`
+/// Writes `The hydrogen count of atom 3 is unknown. Perceive valence first,
+/// with permissive validation if strict validation fails.`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UnknownHydrogenCount {
     atom: AtomId,
@@ -317,7 +318,8 @@ impl fmt::Display for UnknownHydrogenCount {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "The hydrogen count of {} is unknown. Perceive valence first.",
+            "The hydrogen count of {} is unknown. Perceive valence first, with permissive \
+             validation if strict validation fails.",
             self.atom
         )
     }

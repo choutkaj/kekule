@@ -6,6 +6,7 @@ use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::SourceStereoBondMarkKind;
 use crate::molecule::{Atom, AtomId, AtomRadical, BondOrder, ImplicitHydrogens, Molecule};
 
+use super::record::stated_inferred_hydrogens;
 use super::MolfileRecord;
 
 /// Coordinates occupy fixed 10-column fields with four decimal places.
@@ -152,7 +153,10 @@ fn v2000_charge_code(charge: i8) -> i8 {
 
 fn v2000_valence_code(mol: &Molecule, atom_id: AtomId, atom: &Atom) -> Result<u8, FormatError> {
     let fixed_hydrogens = match atom.hydrogens {
-        ImplicitHydrogens::Inferred => return Ok(0),
+        ImplicitHydrogens::Inferred => match stated_inferred_hydrogens(mol, atom_id, atom) {
+            Some(hydrogens) => hydrogens,
+            None => return Ok(0),
+        },
         ImplicitHydrogens::Fixed(explicit) => explicit,
     };
     let valence = explicit_valence(mol, atom_id) + usize::from(fixed_hydrogens);

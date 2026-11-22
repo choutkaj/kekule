@@ -24,5 +24,5 @@ pub use crate::io::{
     MolfileInterpretOptions, MolfileInterpretation, MolfileInterpretationReport,
     MolfileParseOptions, MolfileRadical, MolfileSource, MolfileStereoGroup, MolfileStereoGroupKind,
     MolfileUnsupported, MolfileUnsupportedContent, MolfileVersion, MolfileWriteOptions,
-    MolfileWriteVersion,
+    MolfileWriteVersion, UnrepresentableStereoReason,
 };

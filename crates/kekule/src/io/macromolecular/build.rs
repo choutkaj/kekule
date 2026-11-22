@@ -17,7 +17,7 @@ use super::super::staged_coordinates::StagedCoordinates;
 use super::atom_site::AtomRow;
 use super::connections::{DeclaredConnection, InstanceUnion};
 use super::connectivity::{
-    covalent_bonding_radius, record_evidence, BondEvidenceMap, ListedBond,
+    covalent_bonding_radius, record_evidence, BondEvidenceMap, ListedBond, OrderSource,
     COVALENT_BOND_TOLERANCE_ANGSTROM, MIN_COVALENT_BOND_DISTANCE_ANGSTROM,
 };
 use super::types::{
@@ -104,12 +104,9 @@ pub(super) struct BuiltMolecule {
     pub(super) coordinates: StagedCoordinates,
     pub(super) provenance: BuiltMoleculeProvenance,
     evidence: BondEvidenceMap,
-    /// Bonds connectivity-only records list within one residue, for the
-    /// connectivity resolver.
+    /// Bonds connection records state within one residue, which the
+    /// connectivity resolver checks against the residue's template.
     listed: Vec<ListedBond>,
-    /// Single bonds between a metal and a non-metal of one residue that
-    /// other records, such as `LINK`, state without a type.
-    metal_bonds: Vec<[AtomId; 2]>,
 }
 
 pub(super) struct PublishedMolecule {
@@ -244,7 +241,6 @@ impl BuiltMolecule {
             provenance,
             evidence,
             listed,
-            metal_bonds,
             ..
         } = self;
         let atoms = provenance
@@ -271,7 +267,6 @@ impl BuiltMolecule {
             editor,
             atoms,
             listed,
-            metal_bonds,
             &provenance.coordinate_model_id,
             evidence,
             &mut report.issues,
@@ -546,8 +541,8 @@ pub(super) fn build_molecule(
             .map_err(graph_error)?;
     }
     let mut evidence = BondEvidenceMap::new();
-    let mut listed = Vec::new();
-    let mut metal_bonds = Vec::new();
+    let mut listed = Vec::<ListedBond>::new();
+    let mut listed_pairs = BTreeMap::new();
     for (step, connection) in connections.iter().enumerate() {
         poll_every(cancellation, step)?;
         let [Some(left), Some(right)] = connection.rows.map(|row| endpoints[&row]) else {
@@ -555,19 +550,39 @@ pub(super) fn build_molecule(
         };
         let (left, right) = (atoms[left], atoms[right]);
         let source = connection.evidence.clone();
-        if connection.supplements_template {
-            listed.push(ListedBond {
+        if connection.within_residue {
+            let bond = ListedBond {
                 atoms: [left, right],
                 order: connection.order,
+                order_source: connection.order_source,
                 evidence: source,
                 unstated_metal_bond: connection.unstated_metal_bond,
-            });
+            };
+            // One bond per pair: a stated order outranks the others, and two
+            // stated orders must agree.
+            let stated = |bond: &ListedBond| bond.order_source == OrderSource::Stated;
+            match listed_pairs.entry((left.min(right), left.max(right))) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(listed.len());
+                    listed.push(bond);
+                }
+                std::collections::btree_map::Entry::Occupied(entry) => {
+                    let earlier = &mut listed[*entry.get()];
+                    if stated(earlier) && stated(&bond) && earlier.order != bond.order {
+                        return Err(structure_error(
+                            DiagnosticKind::Inconsistent,
+                            None,
+                            "Two connection records give one bond different orders.",
+                        ));
+                    }
+                    if stated(&bond) && !stated(earlier) {
+                        *earlier = bond;
+                    }
+                }
+            }
             continue;
         }
         record_evidence(&mut evidence, left, right, source);
-        if connection.unstated_metal_bond {
-            metal_bonds.push([left, right]);
-        }
         if editor
             .graph()
             .require_bond_between(left, right)
@@ -673,7 +688,6 @@ pub(super) fn build_molecule(
         provenance,
         evidence,
         listed,
-        metal_bonds,
     })
 }
 

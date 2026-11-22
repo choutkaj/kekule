@@ -4,11 +4,12 @@ use std::cell::OnceCell;
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
-use crate::algorithms::allowed_valences;
+pub(crate) use crate::algorithms::is_metal;
 use crate::diagnostics::{Cancellation, FormatError};
-use crate::molecule::{Atom, BondOrder, Element};
+use crate::molecule::BondOrder;
 
 use super::atom_site::AtomRow;
+use super::connectivity::OrderSource;
 use super::types::{
     poll, BondEvidence, ConnectionResolutionReason, StructureInterpretIssue,
     StructureInterpretationReport,
@@ -34,9 +35,8 @@ pub(super) struct DeclaredBond {
     pub(super) line: Option<usize>,
     pub(super) order: DeclaredOrder,
     pub(super) partners: [PartnerSpec; 2],
-    /// Whether the record lists connectivity only, as PDB `CONECT` does. Such
-    /// a bond within one residue supplements the residue's template rather
-    /// than replacing it, and a bond an earlier record declares is skipped.
+    /// Whether the record lists connectivity only, as PDB `CONECT` does: a
+    /// bond an earlier record declares is skipped.
     pub(super) connectivity_only: bool,
     /// The coordinate model whose own records state the bond, as files that
     /// repeat `CONECT` records in every model do; `None` for every model.
@@ -47,11 +47,16 @@ pub(super) struct DeclaredBond {
 pub(super) enum DeclaredOrder {
     /// The order the record states.
     Stated(BondOrder),
-    /// A record without a bond type: a bond between a metal and a non-metal
-    /// of different residues is coordination, and dative; any other bond has
-    /// this order, and connectivity decides whether a single one between a
-    /// metal and a non-metal of one residue is dative.
-    ByElements(BondOrder),
+    /// A record without a bond type, as PDB `LINK` and `CONECT` records are:
+    /// a bond between a metal and a non-metal of different residues is
+    /// coordination, and dative; connectivity decides whether a single one
+    /// within one residue is dative. Any other bond has the order a listing
+    /// convention gives, as `CONECT` records list a double bond twice, or is
+    /// single of unknown order.
+    ByElements(Option<BondOrder>),
+    /// A covalent record that states no order, as an mmCIF `_struct_conn`
+    /// row without `pdbx_value_order`: single, of unknown order.
+    Unstated,
 }
 
 /// The selector of one partner, or why the record cannot identify it.
@@ -65,12 +70,14 @@ pub(super) struct DeclaredConnection {
     /// The instance of the left atom; both atoms end up in one instance.
     pub(super) instance_key: String,
     pub(super) order: BondOrder,
+    /// How the record gives the order.
+    pub(super) order_source: OrderSource,
     /// What states the bond: a connection record, or a disulfide no record
     /// states.
     pub(super) evidence: BondEvidence,
-    /// A connectivity-only bond within one residue; see
-    /// [`DeclaredBond::connectivity_only`].
-    pub(super) supplements_template: bool,
+    /// Whether both atoms lie in one residue, whose template the bond is
+    /// checked against.
+    pub(super) within_residue: bool,
     /// A single bond between a metal and a non-metal of one residue that the
     /// record states without a type, covalent or dative.
     pub(super) unstated_metal_bond: bool,
@@ -174,14 +181,16 @@ pub(super) fn resolve_connections(
         let same_residue = left.asym_id == right.asym_id
             && left.residue_key == right.residue_key
             && left.comp_id == right.comp_id;
-        let order = match bond.order {
-            DeclaredOrder::Stated(order) => order,
-            DeclaredOrder::ByElements(_)
-                if !same_residue && is_metal(left.element) != is_metal(right.element) =>
-            {
-                BondOrder::Dative
+        let metal_bond = is_metal(left.element) != is_metal(right.element);
+        let (order, order_source) = match bond.order {
+            DeclaredOrder::Stated(order) => (order, OrderSource::Stated),
+            DeclaredOrder::ByElements(_) if metal_bond && !same_residue => {
+                (BondOrder::Dative, OrderSource::Convention)
             }
-            DeclaredOrder::ByElements(order) => order,
+            DeclaredOrder::ByElements(Some(order)) => (order, OrderSource::Convention),
+            DeclaredOrder::ByElements(None) | DeclaredOrder::Unstated => {
+                (BondOrder::Single, OrderSource::Unstated)
+            }
         };
         report.applied_connections += 1;
         // Coordination between residues is recorded, not bonded: covalent
@@ -195,82 +204,27 @@ pub(super) fn resolve_connections(
             });
             continue;
         }
-        let supplements_template = bond.connectivity_only && same_residue;
         let unstated_metal_bond = same_residue
             && matches!(bond.order, DeclaredOrder::ByElements(_))
             && order == BondOrder::Single
-            && is_metal(left.element) != is_metal(right.element);
-        if !supplements_template {
+            && metal_bond;
+        if !same_residue {
             union.union(&left.instance_key, &right.instance_key);
         }
         resolved.bonds.push(DeclaredConnection {
             rows: [left.row_index, right.row_index],
             instance_key: left.instance_key.clone(),
             order,
+            order_source,
             evidence: BondEvidence::Connection {
                 connection_id: bond.connection_id.clone(),
                 connection_type: bond.connection_type.clone(),
             },
-            supplements_template,
+            within_residue: same_residue,
             unstated_metal_bond,
         });
     }
     Ok(resolved)
-}
-
-/// Alkali, alkaline-earth, transition, post-transition, lanthanide, and
-/// actinide metals; metalloids are not metals.
-pub(crate) fn is_metal(element: Element) -> bool {
-    matches!(
-        element.atomic_number(),
-        3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=84 | 87..=116
-    )
-}
-
-/// How a reader takes a single bond between a metal and a non-metal of one
-/// residue whose source states no type, as PDB `CONECT` does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MetalBondReading {
-    Covalent,
-    Dative,
-    /// The source cannot tell: the bond is read as covalent and reported.
-    Unstated,
-}
-
-/// The reading of an untyped metal bond from its non-metal `donor`.
-/// `other` is the donor's valence from its other bonds, those of
-/// `undecided` untyped metal bonds of the residue left out, and `hydrogens`
-/// whether the residue has explicit hydrogens.
-///
-/// The bond is covalent when one more bond leaves the donor at an allowed
-/// valence, as for a chloride or a phosphonate phosphorus. It is dative
-/// when the donor's valence is allowed without it, as for an ammine
-/// nitrogen or a phosphine. A residue without hydrogens, a donor of several
-/// untyped metal bonds, such as a bridging chloride, and a donor that
-/// neither reading satisfies, such as a carbene carbon, are unstated.
-pub(crate) fn metal_bond_reading(
-    donor: &Atom,
-    other: usize,
-    undecided: usize,
-    hydrogens: bool,
-) -> MetalBondReading {
-    if !hydrogens || undecided != 1 {
-        return MetalBondReading::Unstated;
-    }
-    let allowed = |valence: usize| {
-        allowed_valences(donor).is_some_and(|valences| {
-            valences
-                .iter()
-                .any(|&allowed| usize::from(allowed) == valence)
-        })
-    };
-    if allowed(other + 1) {
-        MetalBondReading::Covalent
-    } else if allowed(other) {
-        MetalBondReading::Dative
-    } else {
-        MetalBondReading::Unstated
-    }
 }
 
 fn report_connection_partner_resolution<'a>(

@@ -8,6 +8,7 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | Operation | Supported contract |
 | --- | --- |
 | Represented geometry | Tetrahedral centers, single double bonds, and atropisomeric axes on a single bond |
+| Molfile wedge input | Wedge, hash, and wavy marks on single and aromatic bonds; a mark on an aromatic bond means the same whichever Kekulé structure localization picks |
 | CIP assignment | Complete supported assertions using ordered sequence rules and local rooted-digraph auxiliary descriptors; R/S, r/s, E/Z, sequential cis/trans, M/P, and m/p as appropriate |
 | Unknown configuration | Preserved as unknown; no specified CIP descriptor is inferred from it |
 | Enhanced groups | Molecule-local Absolute, OR, AND, Relative, and Racemic membership; relative membership does not become an absolute configuration |
@@ -15,6 +16,9 @@ stereogenic. CIP assignment does not invent an unasserted configuration.
 | SMARTS stereo | Tetrahedral and directional double-bond predicates, Boolean stereo expressions, and enhanced tetrahedral group matching; see the [current dialect](../crates/kekule/src/query/dialect.md) |
 | V2000/V3000 Structure output | Coordinate-consistent tetrahedral, double-bond, and atropisomer stereo; validation uses coordinates rounded to the emitted precision |
 | SMILES and Molfile E/Z input | Directional marks and coordinates, flat or 3D, specify E/Z only at a double bond eligible before symmetry analysis; an aromatic bond, or one whose endpoint bears two identical terminal ligands (`C/C(C)=C/C`), has none, and the SMILES interpretation report names a marked one |
+| Stray source marks | A wedge that marks no stereocenter or axis, and a directional mark without a partner across a double bond that can have E/Z, are dropped and named in the interpretation report, as RDKit ignores them; conflicting wedge marks are reported and give no configuration; conflicting SMILES directional marks fail |
+| Unrepresentable wedge stereo | A wedge at an atom with a zero-order or dative bond or more than four neighbors, or next to several candidate axes, is dropped, and the interpretation report names the lost stereo |
+| Molfile chiral flag | An unset flag leaves a flat drawing's configurations absolute, and the interpretation report names the ungrouped specified elements the flag would make relative; 3D coordinates specify absolute configurations whatever the flag |
 | Specified E/Z Structure output | Supplied coordinates must encode the assertion; conflicting or degenerate drawings fail explicitly |
 | Molfile output of an unasserted alkene | Crossed/either syntax at a bond that can have E/Z prevents a nondegenerate drawing from inventing specified E/Z; rereading may introduce an explicit unknown element |
 | Geometry-free Molfile output | Specified E/Z requires a Structure; the writer does not synthesize a layout |

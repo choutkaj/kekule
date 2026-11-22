@@ -335,9 +335,10 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
         // bonded, and within one residue the dative order keeps it from
         // counting toward the valence of the ligand atom.
         let order = if is_metal_coordination(&kind) {
-            BondOrder::Dative
+            DeclaredOrder::Stated(BondOrder::Dative)
         } else {
             connection_bond_order(table, row)?
+                .map_or(DeclaredOrder::Unstated, DeclaredOrder::Stated)
         };
         let partners = [
             connection_partner(table, row, 1)?,
@@ -347,7 +348,7 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
             connection_id: optional(table, row, "_struct_conn.id").map(str::to_owned),
             connection_type: kind,
             line: table.row_line(row),
-            order: DeclaredOrder::Stated(order),
+            order,
             partners,
             connectivity_only: false,
             model: None,
@@ -364,15 +365,19 @@ fn read_struct_conn(block: &MmcifBlock) -> Result<Vec<ConnectionRecord>, FormatE
     Ok(records)
 }
 
-fn connection_bond_order(table: &MmcifCategory<'_>, row: usize) -> Result<BondOrder, FormatError> {
+/// The order a row states, or `None` when it states none.
+fn connection_bond_order(
+    table: &MmcifCategory<'_>,
+    row: usize,
+) -> Result<Option<BondOrder>, FormatError> {
     let Some(order) = optional(table, row, "_struct_conn.pdbx_value_order") else {
-        return Ok(BondOrder::Single);
+        return Ok(None);
     };
     match order.to_ascii_lowercase().as_str() {
-        "sing" => Ok(BondOrder::Single),
-        "doub" => Ok(BondOrder::Double),
-        "trip" => Ok(BondOrder::Triple),
-        "quad" => Ok(BondOrder::Quadruple),
+        "sing" => Ok(Some(BondOrder::Single)),
+        "doub" => Ok(Some(BondOrder::Double)),
+        "trip" => Ok(Some(BondOrder::Triple)),
+        "quad" => Ok(Some(BondOrder::Quadruple)),
         _ => Err(row_error(
             table,
             row,

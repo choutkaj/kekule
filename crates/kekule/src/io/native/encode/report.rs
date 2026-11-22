@@ -66,6 +66,17 @@ impl<W: Write> Encoder<'_, W> {
         Ok(())
     }
 
+    /// The onium centres an issue about unknown bond orders left neutral:
+    /// each atom name and the hydrogens it took.
+    fn neutral_centres(&mut self, centres: &[(String, u8)]) -> Result {
+        self.count(centres.len())?;
+        for (name, hydrogens) in centres {
+            self.str(name)?;
+            self.u8(*hydrogens)?;
+        }
+        Ok(())
+    }
+
     /// A string column through a table of its distinct values, in order of
     /// first appearance, and each row's index into it.
     fn dictionary<'s>(&mut self, values: impl Iterator<Item = Option<&'s str>>) -> Result {
@@ -515,11 +526,13 @@ impl<W: Write> Encoder<'_, W> {
                 residue,
                 component_id,
                 bonds,
+                neutral_centres,
             } => {
                 self.u8(12)?;
                 self.residue(residue)?;
                 self.str(component_id)?;
-                self.usize(*bonds)
+                self.usize(*bonds)?;
+                self.neutral_centres(neutral_centres)
             }
             Issue::HydrogenAttachedByDistance {
                 residue,
@@ -553,26 +566,115 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.str(force_field)
             }
-            Issue::ElementsFromTemplates { source_lines } => {
+            Issue::ResidueBondOrdersUnstated {
+                residue,
+                component_id,
+                bonds,
+                neutral_centres,
+            } => {
                 self.u8(22)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.usize(*bonds)?;
+                self.neutral_centres(neutral_centres)
+            }
+            Issue::BondNotInTemplate {
+                residue,
+                component_id,
+                atoms: [left, right],
+            } => {
+                self.u8(23)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(left)?;
+                self.str(right)
+            }
+            Issue::BondOrderDiffersFromTemplate {
+                residue,
+                component_id,
+                atoms: [left, right],
+                order,
+                template_order,
+            } => {
+                self.u8(24)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(left)?;
+                self.str(right)?;
+                self.u8(super::bond_order_code(*order))?;
+                self.u8(template_order.map_or(
+                    super::super::AROMATIC_TEMPLATE_ORDER,
+                    super::bond_order_code,
+                ))
+            }
+            Issue::PolymerLinkSkipped { residue, next } => {
+                self.u8(25)?;
+                self.residue(residue)?;
+                self.residue(next)
+            }
+            Issue::LinkingAtomMissing { residue, next } => {
+                self.u8(26)?;
+                self.residue(residue)?;
+                self.residue(next)
+            }
+            Issue::ResidueFitsNoTemplate {
+                residue,
+                component_id,
+            } => {
+                self.u8(27)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
+            Issue::StatedOrdersDisagreeWithHydrogens {
+                residue,
+                component_id,
+            } => {
+                self.u8(28)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
+            Issue::MetalValenceIncomplete {
+                residue,
+                component_id,
+                atom_name,
+                valence,
+            } => {
+                self.u8(29)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.u8(*valence)
+            }
+            Issue::MetalDonors {
+                residue,
+                component_id,
+                atom_names,
+            } => {
+                self.u8(30)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atom_names)
+            }
+            Issue::ElementsFromTemplates { source_lines } => {
+                self.u8(31)?;
                 self.usizes(source_lines)
             }
             Issue::UnsignedCharges { source_lines } => {
-                self.u8(23)?;
+                self.u8(32)?;
                 self.usizes(source_lines)
             }
             Issue::HexadecimalNumbers { field, source_line } => {
-                self.u8(24)?;
+                self.u8(33)?;
                 self.u8(number_field_code(*field))?;
                 self.usize(*source_line)
             }
             Issue::NumbersRestart { field, source_line } => {
-                self.u8(25)?;
+                self.u8(34)?;
                 self.u8(number_field_code(*field))?;
                 self.usize(*source_line)
             }
             Issue::MetalBondsUnstated { residue, bonds } => {
-                self.u8(26)?;
+                self.u8(35)?;
                 self.residue(residue)?;
                 self.usize(*bonds)
             }

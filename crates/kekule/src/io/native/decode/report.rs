@@ -2,8 +2,10 @@
 
 use std::io::Read;
 
-use super::super::{DISULFIDE_SINCE, PDB_NUMBERING_SINCE};
-use super::{Decoder, Result};
+use super::super::{
+    AROMATIC_TEMPLATE_ORDER, BOND_SOURCES_SINCE, DISULFIDE_SINCE, PDB_NUMBERING_SINCE,
+};
+use super::{bond_order, Decoder, Result};
 use crate::diagnostics::{Resource, SourceLocation};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyGenerator, AssemblyOmissionReason,
@@ -90,6 +92,17 @@ impl<R: Read> Decoder<'_, R> {
             .into_iter()
             .map(|value| self.to_usize(value))
             .collect()
+    }
+
+    /// The onium centres an issue about unknown bond orders left neutral:
+    /// each atom name and the hydrogens it took.
+    fn neutral_centres(&mut self) -> Result<Vec<(String, u8)>> {
+        let count = self.items()?;
+        let mut centres = Vec::with_capacity(count.min(super::CHUNK_BYTES));
+        for _ in 0..count {
+            centres.push((self.str()?, self.u8()?));
+        }
+        Ok(centres)
     }
 
     fn str_list(&mut self) -> Result<Vec<String>> {
@@ -653,6 +666,11 @@ impl<R: Read> Decoder<'_, R> {
                 residue: self.residue()?,
                 component_id: self.str()?,
                 bonds: self.usize()?,
+                neutral_centres: if self.version >= BOND_SOURCES_SINCE {
+                    self.neutral_centres()?
+                } else {
+                    Vec::new()
+                },
             },
             13 => Issue::HydrogenAttachedByDistance {
                 residue: self.residue()?,
@@ -733,21 +751,77 @@ impl<R: Read> Decoder<'_, R> {
                 component_id: self.str()?,
                 force_field: self.str()?,
             },
-            22 if self.version >= PDB_NUMBERING_SINCE => Issue::ElementsFromTemplates {
+            22 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueBondOrdersUnstated {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                bonds: self.usize()?,
+                neutral_centres: self.neutral_centres()?,
+            },
+            23 if self.version >= BOND_SOURCES_SINCE => Issue::BondNotInTemplate {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atoms: [self.str()?, self.str()?],
+            },
+            24 if self.version >= BOND_SOURCES_SINCE => {
+                let residue = self.residue()?;
+                let component_id = self.str()?;
+                let atoms = [self.str()?, self.str()?];
+                let code = self.u8()?;
+                let order = self.known_bond_order(code)?;
+                let template_order = match self.u8()? {
+                    AROMATIC_TEMPLATE_ORDER => None,
+                    code => Some(self.known_bond_order(code)?),
+                };
+                Issue::BondOrderDiffersFromTemplate {
+                    residue,
+                    component_id,
+                    atoms,
+                    order,
+                    template_order,
+                }
+            }
+            25 if self.version >= BOND_SOURCES_SINCE => Issue::PolymerLinkSkipped {
+                residue: self.residue()?,
+                next: self.residue()?,
+            },
+            26 if self.version >= BOND_SOURCES_SINCE => Issue::LinkingAtomMissing {
+                residue: self.residue()?,
+                next: self.residue()?,
+            },
+            27 if self.version >= BOND_SOURCES_SINCE => Issue::ResidueFitsNoTemplate {
+                residue: self.residue()?,
+                component_id: self.str()?,
+            },
+            28 if self.version >= BOND_SOURCES_SINCE => Issue::StatedOrdersDisagreeWithHydrogens {
+                residue: self.residue()?,
+                component_id: self.str()?,
+            },
+            29 if self.version >= BOND_SOURCES_SINCE => Issue::MetalValenceIncomplete {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_name: self.str()?,
+                valence: self.u8()?,
+            },
+            30 if self.version >= BOND_SOURCES_SINCE => Issue::MetalDonors {
+                residue: self.residue()?,
+                component_id: self.str()?,
+                atom_names: self.str_list()?,
+            },
+            31 if self.version >= PDB_NUMBERING_SINCE => Issue::ElementsFromTemplates {
                 source_lines: self.usizes()?,
             },
-            23 if self.version >= PDB_NUMBERING_SINCE => Issue::UnsignedCharges {
+            32 if self.version >= PDB_NUMBERING_SINCE => Issue::UnsignedCharges {
                 source_lines: self.usizes()?,
             },
-            24 if self.version >= PDB_NUMBERING_SINCE => Issue::HexadecimalNumbers {
+            33 if self.version >= PDB_NUMBERING_SINCE => Issue::HexadecimalNumbers {
                 field: self.number_field()?,
                 source_line: self.usize()?,
             },
-            25 if self.version >= PDB_NUMBERING_SINCE => Issue::NumbersRestart {
+            34 if self.version >= PDB_NUMBERING_SINCE => Issue::NumbersRestart {
                 field: self.number_field()?,
                 source_line: self.usize()?,
             },
-            26 if self.version >= PDB_NUMBERING_SINCE => Issue::MetalBondsUnstated {
+            35 if self.version >= PDB_NUMBERING_SINCE => Issue::MetalBondsUnstated {
                 residue: self.residue()?,
                 bonds: self.usize()?,
             },
@@ -765,6 +839,11 @@ impl<R: Read> Decoder<'_, R> {
             1 => Ok(NumberField::ResidueNumber),
             other => Err(self.invalid(format!("The number field {other} is unknown."))),
         }
+    }
+
+    fn known_bond_order(&self, code: u8) -> Result<crate::molecule::BondOrder> {
+        bond_order(code)
+            .ok_or_else(|| self.invalid(format!("The bond order code {code} is unknown.")))
     }
 
     fn sequence_source(&mut self) -> Result<SequenceSource> {

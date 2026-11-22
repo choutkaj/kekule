@@ -947,6 +947,7 @@ fn residues_without_templates_infer_bonds_unless_disabled() {
             residue: residue("A", 1),
             component_id: "XYZ".to_owned(),
             bonds: 2,
+            neutral_centres: Vec::new(),
         }]
     );
 
@@ -1052,6 +1053,7 @@ fn untemplated_polymer_residues_link_by_their_neighbours_linkage_or_atom_names()
         residue: residue("A", sequence),
         component_id: component.to_owned(),
         bonds: 3,
+        neutral_centres: Vec::new(),
     };
     // Without _entity_poly, a residue without a template defers to its
     // templated neighbour, and two such residues link by atom names.
@@ -1108,28 +1110,5 @@ fn template_mismatches_fail_and_split_residues_are_reported() {
             residue: residue("A", 1),
             fragments: 2,
         }]
-    );
-}
-
-#[test]
-fn stated_internal_bonds_take_precedence_over_templates() {
-    // Files that enumerate a residue's bonds, as Kekule's writer does,
-    // are taken as stated; the template does not add the others.
-    let text = block(
-            &DIGLYCINE.lines().take(5).collect::<Vec<_>>().join("\n"),
-            "loop_\n_struct_conn.id\n_struct_conn.conn_type_id\n_struct_conn.ptnr1_label_asym_id\n_struct_conn.ptnr1_label_atom_id\n_struct_conn.ptnr1_label_seq_id\n_struct_conn.ptnr2_label_asym_id\n_struct_conn.ptnr2_label_atom_id\n_struct_conn.ptnr2_label_seq_id\nc1 covale A N 1 A CA 1\n",
-        );
-    let stated = interpret(&text);
-    assert_eq!(
-        bonds(&stated),
-        [(
-            "N".to_owned(),
-            "CA".to_owned(),
-            BondOrder::Single,
-            BondEvidence::Connection {
-                connection_id: Some("c1".to_owned()),
-                connection_type: "covale".to_owned(),
-            },
-        )]
     );
 }

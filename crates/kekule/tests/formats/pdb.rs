@@ -1870,9 +1870,34 @@ fn force_field_libraries_interpret_their_residue_names() {
         })
         .collect::<Vec<_>>();
     assert_eq!(attached, [("HT1", "N"), ("HT2", "N"), ("HT3", "N")]);
-    // Without the library, CHARMM chloride meets the dictionary's chlorophyll a.
-    let error = document.interpret(Default::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    // Without the library, each residue fits no dictionary template of its
+    // name, such as chlorophyll a for CHARMM chloride, and reads with the
+    // CHARMM one, which the report names.
+    let untemplated = document.interpret(Default::default()).unwrap();
+    assert_eq!(untemplated.topology().bond_count(), 23);
+    assert_eq!(charges(&untemplated), charges(&templated));
+    let force_field = untemplated
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ForceFieldTemplate {
+                component_id,
+                force_field,
+                ..
+            } => Some((component_id.as_str(), force_field.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        force_field,
+        [
+            ("ILE", "CHARMM"),
+            ("TIP3", "CHARMM"),
+            ("SOD", "CHARMM"),
+            ("CLA", "CHARMM")
+        ]
+    );
 }
 
 #[test]
@@ -2041,7 +2066,18 @@ fn pdb_connectivity_matches_an_independent_reference() {
             .into_iter()
             .map(|(_, charge)| charge)
             .collect::<Vec<_>>();
-        assert_eq!(charges, vec![1; charged], "{name}");
+        // AP5's CONECT bonds state no orders. Each of its five phosphorus
+        // atoms, with four single bonds, takes +1 with a terminal oxygen's -1
+        // instead of a hydrogen.
+        let separated = if name == "1AKE" { 10 } else { 0 };
+        let negative = charges.iter().filter(|charge| **charge == -1).count();
+        assert_eq!(negative, separated, "{name}");
+        assert_eq!(charges.len(), charged + 2 * separated, "{name}");
+        assert_eq!(
+            charges.iter().map(|charge| i64::from(*charge)).sum::<i64>(),
+            charged as i64,
+            "{name}"
+        );
 
         let report = interpreted.report();
         let count = |wanted: fn(&StructureInterpretIssue) -> bool| {
@@ -2224,4 +2260,109 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
             .unwrap_err(),
         StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
+}
+
+#[test]
+fn residues_with_unstated_bond_orders_keep_onium_centres_neutral() {
+    // Bonds from CONECT records or atom distances state no orders. A
+    // phosphate and DMSO still separate charges onto a terminal oxygen, and
+    // trimethylphosphine on palladium is a donor. Trimethylsulfonium, with no
+    // such neighbor, may instead carry a double bond, so its sulfur stays
+    // neutral and takes a hydrogen, as reported.
+    let hetatm = |serial, name, component, position, element| {
+        site(
+            "HETATM", serial, name, component, 'L', "1", position, element,
+        )
+        .line()
+    };
+    let phosphate = vec![
+        hetatm("1", " P  ", "XPO", [0.0, 0.0, 0.0], "P"),
+        hetatm("2", " O1 ", "XPO", [0.87, 0.87, 0.87], "O"),
+        hetatm("3", " O2 ", "XPO", [-0.87, -0.87, 0.87], "O"),
+        hetatm("4", " O3 ", "XPO", [-0.87, 0.87, -0.87], "O"),
+        hetatm("5", " O4 ", "XPO", [0.87, -0.87, -0.87], "O"),
+        "CONECT    1    2    3    4    5".to_owned(),
+        "CONECT    2    1".to_owned(),
+        "CONECT    3    1".to_owned(),
+        "CONECT    4    1".to_owned(),
+        "CONECT    5    1".to_owned(),
+    ];
+    let dmso = vec![
+        hetatm("1", " S  ", "XSO", [0.0, 0.0, 0.0], "S"),
+        hetatm("2", " C1 ", "XSO", [1.8, 0.0, 0.0], "C"),
+        hetatm("3", " C2 ", "XSO", [-0.6, 1.7, 0.0], "C"),
+        hetatm("4", " O  ", "XSO", [-0.5, -0.6, 1.3], "O"),
+    ];
+    let sulfonium = vec![
+        hetatm("1", " S  ", "XSM", [0.0, 0.0, 0.0], "S"),
+        hetatm("2", " C1 ", "XSM", [1.8, 0.0, 0.0], "C"),
+        hetatm("3", " C2 ", "XSM", [-0.6, 1.7, 0.0], "C"),
+        hetatm("4", " C3 ", "XSM", [-0.6, -0.85, 1.47], "C"),
+    ];
+    let phosphine = vec![
+        hetatm("1", " P  ", "XPD", [0.0, 0.0, 0.0], "P"),
+        hetatm("2", " C1 ", "XPD", [1.062, 1.062, 1.062], "C"),
+        hetatm("3", " C2 ", "XPD", [1.062, -1.062, -1.062], "C"),
+        hetatm("4", " C3 ", "XPD", [-1.062, 1.062, -1.062], "C"),
+        hetatm("5", " PD ", "XPD", [-1.328, -1.328, 1.328], "Pd"),
+    ];
+    let charged = |atoms: &[(&str, i8)]| {
+        atoms
+            .iter()
+            .map(|(name, charge)| ((*name).to_owned(), *charge))
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        (
+            phosphate,
+            charged(&[("P", 1), ("O1", -1)]),
+            vec![],
+            vec![],
+            3,
+        ),
+        (dmso, charged(&[("S", 1), ("O", -1)]), vec![], vec![], 6),
+        (sulfonium, vec![], vec![("S".to_owned(), 1)], vec![], 10),
+        (phosphine, vec![], vec![], vec!["P".to_owned()], 9),
+    ];
+    for (lines, expected_charges, expected_hydrogens, expected_donors, total_hydrogens) in cases {
+        let text = format!("{}\nEND\n", lines.join("\n"));
+        let interpretation = pdb::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap();
+        let (mut charges, mut hydrogens, mut donors) = (Vec::new(), Vec::new(), Vec::new());
+        for issue in interpretation.report().issues() {
+            match issue {
+                StructureInterpretIssue::ChargesFromBonds { charged_atoms, .. } => {
+                    charges.extend(charged_atoms.iter().cloned());
+                }
+                StructureInterpretIssue::ResidueBondsInferred {
+                    neutral_centres, ..
+                } if !neutral_centres.is_empty() => {
+                    hydrogens.extend(neutral_centres.iter().cloned());
+                    assert!(
+                        issue.to_string().ends_with(
+                            "Its onium centres took no charge. Atom \"S\" took 1 hydrogen."
+                        ),
+                        "{issue}"
+                    );
+                }
+                StructureInterpretIssue::MetalDonors { atom_names, .. } => {
+                    donors.extend(atom_names.iter().cloned());
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(charges, expected_charges, "{text}");
+        assert_eq!(hydrogens, expected_hydrogens, "{text}");
+        assert_eq!(donors, expected_donors, "{text}");
+        let mut structure = interpretation.into_structure();
+        structure.perceive().unwrap();
+        let total = structure
+            .topology()
+            .atoms()
+            .map(|atom| atom.total_hydrogens().unwrap())
+            .sum::<usize>();
+        assert_eq!(total, total_hydrogens, "{text}");
+    }
 }

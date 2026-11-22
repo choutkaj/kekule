@@ -127,6 +127,7 @@ fn issues_read_as_sentences() {
                 residue: residue(401),
                 component_id: "LIG".into(),
                 bonds: 24,
+                neutral_centres: Vec::new(),
             },
             r#"Residue 401 of chain "A" in model "1" (component "LIG") has no template or bond table. Its bonds come from atom distances: 24 single bonds."#,
         ),
@@ -192,7 +193,62 @@ fn issues_read_as_sentences() {
                 component_id: "CYX".into(),
                 force_field: "AMBER".into(),
             },
-            r#"Residue 22 of chain "A" in model "1" (component "CYX") has no dictionary template. It is read with the AMBER template of that name."#,
+            r#"Residue 22 of chain "A" in model "1" (component "CYX") fits no dictionary template. It is read with the AMBER template of that name."#,
+        ),
+        (
+            Issue::ResidueBondOrdersUnstated {
+                residue: residue(401),
+                component_id: "LIG".into(),
+                bonds: 1,
+                neutral_centres: Vec::new(),
+            },
+            r#"Residue 401 of chain "A" in model "1" (component "LIG") is bonded by records that state no orders, and no template gives them. Its 1 bond between heavy atoms is read as single."#,
+        ),
+        (
+            Issue::ResidueFitsNoTemplate {
+                residue: residue(1),
+                component_id: "GLY".into(),
+            },
+            r#"Residue 1 of chain "A" in model "1" (component "GLY") fits no template of its name. Its bonds are read from its connection records."#,
+        ),
+        (
+            Issue::StatedOrdersDisagreeWithHydrogens {
+                residue: residue(4),
+                component_id: "HIS".into(),
+            },
+            r#"Residue 4 of chain "A" in model "1" (component "HIS") has stated bond orders that disagree with its hydrogens. Its charges are derived from the stated orders and the hydrogens."#,
+        ),
+        (
+            Issue::BondNotInTemplate {
+                residue: residue(301),
+                component_id: "SO4".into(),
+                atoms: ["O1".into(), "O2".into()],
+            },
+            r#"A connection record bonds atoms "O1" and "O2" of residue 301 of chain "A" in model "1" (component "SO4"). Its template does not bond them."#,
+        ),
+        (
+            Issue::BondOrderDiffersFromTemplate {
+                residue: residue(2),
+                component_id: "PHX".into(),
+                atoms: ["C1".into(), "C2".into()],
+                order: crate::molecule::BondOrder::Triple,
+                template_order: None,
+            },
+            r#"A connection record states a triple bond between atoms "C1" and "C2" of residue 2 of chain "A" in model "1" (component "PHX"). Its template has an aromatic bond."#,
+        ),
+        (
+            Issue::PolymerLinkSkipped {
+                residue: residue(1),
+                next: residue(2),
+            },
+            r#"Residue 1 of chain "A" in model "1" and residue 2 of chain "A" in model "1" have no standard polymer link. A connection record bonds one of their linking atoms to another atom."#,
+        ),
+        (
+            Issue::LinkingAtomMissing {
+                residue: residue(12),
+                next: residue(13),
+            },
+            r#"Residue 12 of chain "A" in model "1" and residue 13 of chain "A" in model "1" are not bonded. One of their linking atoms is missing."#,
         ),
         (
             Issue::DisulfideInferred {

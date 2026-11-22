@@ -4,7 +4,8 @@ use std::num::NonZeroU32;
 use kekule::{
     molecule::{Molecule, MoleculeEditor, MoleculeError},
     stereo::{
-        DoubleBondOrientation, StereoCarrier, StereoDescriptor, StereoElement, StereoElementKind,
+        cleanup::StereoCandidate, DoubleBondOrientation, StereoCarrier, StereoDescriptor,
+        StereoElement, StereoElementKind,
     },
 };
 use kekule::{smiles, stereo};
@@ -269,4 +270,86 @@ fn canonical_smiles_keeps_aromaticity_when_explicit_hydrogens_precede_ring_atoms
             smiles::write(&implicit, smiles::SmilesWriteOptions::canonical()).unwrap()
         );
     }
+}
+
+#[test]
+fn directional_marks_without_a_partner_are_dropped_and_reported() {
+    // Each source pairs with the bonds, in source order, whose marks stay
+    // unpaired: no double bond, no mark on the other side, a ring too small
+    // for E/Z.
+    for (source, unpaired) in [
+        ("C/C", vec![0]),
+        ("C/C=CC", vec![0]),
+        ("F/C=C", vec![0]),
+        (r"C1/C=C\CCC1", vec![0, 2]),
+    ] {
+        let document = smiles::parse_str(source, Default::default()).unwrap();
+        let interpretation = document
+            .interpret(Default::default())
+            .unwrap_or_else(|error| panic!("{source}: {error}"));
+        let component = &interpretation.components()[0];
+        assert_eq!(
+            component.molecule().stereo_elements().count(),
+            0,
+            "{source}"
+        );
+        let mappings = component.report().bond_mappings();
+        let expected = unpaired
+            .iter()
+            .map(|&index| mappings[index].bond())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            component.report().unpaired_directional_bonds(),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
+    for (input, expected) in [
+        ("C1=NCCCCC1", 0),
+        ("C1=NCCCCCC1", 1),
+        ("C1=NNCCCCC1", 1),
+        ("N1=NCCCCCC1", 1),
+        ("C1=CCCCCCC1", 1),
+    ] {
+        let mut molecule = molecule(input);
+        molecule.perceive().unwrap();
+        let doubles = stereo::cleanup::detect_stereo_candidates(&molecule, Default::default())
+            .unwrap()
+            .into_iter()
+            .filter(|candidate| matches!(candidate, StereoCandidate::DoubleBond { .. }))
+            .count();
+        assert_eq!(doubles, expected, "{input}");
+    }
+    assert_eq!(molecule(r"C1/N=C\CCCCC1").stereo_elements().count(), 1);
+    // A seven-membered ring's double bond has no E/Z, so its marks are
+    // dropped.
+    assert_eq!(molecule(r"C1/N=C\CCCC1").stereo_elements().count(), 0);
+}
+
+#[test]
+fn small_ring_directional_marks_have_no_partner() {
+    let (cyclohexene, report) = smiles::parse_str(r"C1/C=C\CCC1", Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_parts()
+        .unwrap();
+    assert_eq!(cyclohexene.stereo_elements().count(), 0);
+    assert_eq!(report.unpaired_directional_bonds().len(), 2);
+
+    let (cyclooctene, report) = smiles::parse_str(r"C1/C=C\CCCCC1", Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap()
+        .into_parts()
+        .unwrap();
+    assert_eq!(report.created_stereo_elements().len(), 1);
+    let element = cyclooctene
+        .stereo_element(report.created_stereo_elements()[0])
+        .expect("created stereo element");
+    assert!(matches!(element.kind, StereoElementKind::DoubleBond(_)));
 }
