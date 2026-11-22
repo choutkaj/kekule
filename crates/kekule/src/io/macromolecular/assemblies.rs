@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
+use crate::algorithms::is_metal;
 use crate::diagnostics::{Cancellation, Cancelled, FormatError};
 use crate::math::{Matrix3, Point3, Vector3};
 use crate::molecule::{AtomId, BondOrder, Element, Molecule};
@@ -630,7 +631,7 @@ fn bond_disulfides(
 /// Whether `element` is a metal other than an alkali or alkaline-earth
 /// metal, as zinc, iron, copper, or mercury, which cysteine coordinates.
 fn binds_thiolates(element: Element) -> bool {
-    element.is_metal()
+    is_metal(element)
         && !matches!(
             element.atomic_number(),
             3 | 4 | 11 | 12 | 19 | 20 | 37 | 38 | 55 | 56 | 87 | 88

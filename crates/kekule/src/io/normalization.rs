@@ -50,6 +50,51 @@ pub(crate) enum NormalizationWarning {
     /// Axis wedge marks assert incompatible configurations. Connectivity and
     /// unrelated stereo are retained, but no axis configuration is invented.
     ConflictingAtropisomericWedgeMarks { axis: BondId, mark_count: usize },
+    /// A wedge, hash, or wavy mark on this bond marks no stereo center or
+    /// axis, as one drawn from a methyl, methylene, or trigonal atom does.
+    /// The mark is dropped.
+    StrayWedge { bond: BondId },
+    /// The wedge, hash, or wavy mark on `bond` marks stereo at `atom` that
+    /// kekule cannot represent. The mark is dropped, and the stereo is lost.
+    UnrepresentableWedgeStereo {
+        atom: AtomId,
+        bond: BondId,
+        reason: UnrepresentableStereoReason,
+    },
+    /// The directional mark on this bond has no partner across a double bond
+    /// that can have E/Z. The mark is dropped.
+    UnpairedDirectionalBondMark { bond: BondId },
+}
+
+/// Why kekule cannot represent the stereo a wedge marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum UnrepresentableStereoReason {
+    /// The atom has a zero-order or dative bond, as a phosphine bound to a
+    /// metal by a coordination bond does. A stereocenter's carriers are
+    /// joined by covalent bonds.
+    ZeroOrDativeBond,
+    /// The atom has more than four neighbors, as an octahedral or
+    /// trigonal-bipyramidal center does. Kekule represents tetrahedral
+    /// centers only.
+    MoreThanFourNeighbors,
+    /// The marked atom is the endpoint of more than one bond that could be
+    /// the atropisomeric axis the wedge marks.
+    SeveralCandidateAxes,
+}
+
+/// Writes the reason as a sentence, such as `The marked atom has more than
+/// four neighbors.`
+impl fmt::Display for UnrepresentableStereoReason {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::ZeroOrDativeBond => "The marked atom has a zero-order or dative bond.",
+            Self::MoreThanFourNeighbors => "The marked atom has more than four neighbors.",
+            Self::SeveralCandidateAxes => {
+                "The marked atom has several bonds that could be the marked axis."
+            }
+        })
+    }
 }
 
 /// One concrete source-stereo normalization issue.
@@ -62,17 +107,10 @@ pub(crate) enum SourceStereoNormalizationIssue {
         bond: BondId,
         from: AtomId,
     },
-    UnassembledTetrahedralBondMark {
-        bond: BondId,
-        kind: SourceStereoBondMarkKind,
-    },
     AmbiguousDirectionalBondMarks {
         double_bond: BondId,
         endpoint: AtomId,
         mark_count: usize,
-    },
-    UnpairedDirectionalBondMark {
-        bond: BondId,
     },
     UnsupportedSourceBondMark {
         bond: BondId,
@@ -108,11 +146,6 @@ impl fmt::Display for SourceStereoNormalizationIssue {
                 f,
                 "The stereo mark on {bond} starts at {from}, not at an endpoint of the bond."
             ),
-            Self::UnassembledTetrahedralBondMark { bond, kind } => write!(
-                f,
-                "The {} on {bond} marks no stereo center.",
-                mark_name(*kind)
-            ),
             Self::AmbiguousDirectionalBondMarks {
                 double_bond,
                 endpoint,
@@ -121,10 +154,6 @@ impl fmt::Display for SourceStereoNormalizationIssue {
                 f,
                 "{} has {mark_count} conflicting directional marks next to the double {double_bond}.",
                 crate::diagnostics::Capitalized(endpoint)
-            ),
-            Self::UnpairedDirectionalBondMark { bond } => write!(
-                f,
-                "The directional mark on {bond} has no partner across a double bond."
             ),
             Self::UnsupportedSourceBondMark { bond, kind } => {
                 write!(f, "The {} on {bond} is not supported.", mark_name(*kind))
@@ -227,8 +256,6 @@ impl SourceStereoNormalizationError {
         self.issues.iter().find_map(|issue| match issue {
             SourceStereoNormalizationIssue::MissingSourceBondMark { bond }
             | SourceStereoNormalizationIssue::InvalidSourceBondMarkEndpoint { bond, .. }
-            | SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark { bond, .. }
-            | SourceStereoNormalizationIssue::UnpairedDirectionalBondMark { bond }
             | SourceStereoNormalizationIssue::UnsupportedSourceBondMark { bond, .. } => Some(*bond),
             SourceStereoNormalizationIssue::AmbiguousDirectionalBondMarks {
                 double_bond, ..
@@ -314,12 +341,13 @@ fn try_localize_aromatic_component_with_limit(
         let Some(atom) = molecule.atom(*atom_id) else {
             return Ok(false);
         };
-        let baseline_bond_valence = molecule
-            .incident_bonds(*atom_id)
-            .into_iter()
-            .flatten()
-            .map(|(_, bond)| represented_bond_valence(bond.order))
-            .sum::<usize>();
+        let mut baseline_bond_valence = 0usize;
+        let mut stated_multiple_bond = false;
+        for (bond_id, bond) in molecule.incident_bonds(*atom_id).into_iter().flatten() {
+            baseline_bond_valence += represented_bond_valence(bond.order);
+            stated_multiple_bond |= !aromatic_bonds.contains(&bond_id)
+                && matches!(bond.order, BondOrder::Double | BondOrder::Triple);
+        }
         let Some(target_valence) =
             aromatic_localization_target_valence(atom, baseline_bond_valence)
         else {
@@ -327,7 +355,12 @@ fn try_localize_aromatic_component_with_limit(
         };
         let explicit_valence =
             baseline_bond_valence.saturating_add(usize::from(atom.hydrogens.represented_count()));
-        let inferred_hydrogens = source_aromatic_inferred_hydrogens(atom, explicit_valence);
+        let inferred_hydrogens = source_aromatic_inferred_hydrogens(
+            atom,
+            explicit_valence,
+            stated_multiple_bond,
+            target_valence,
+        );
         let occupied_valence = explicit_valence
             .saturating_add(inferred_hydrogens)
             .saturating_add(usize::from(
@@ -490,23 +523,31 @@ fn represented_bond_valence(order: BondOrder) -> usize {
     }
 }
 
-fn source_aromatic_inferred_hydrogens(atom: &Atom, explicit_valence: usize) -> usize {
+/// The hydrogens of a source-aromatic atom without a hydrogen declaration:
+/// those that complete its aromatic valence, which counts each aromatic bond
+/// once. Where the atom's localization `target_valence` keeps one unit more
+/// for a pi bond, a double or triple bond the source states is that pi bond,
+/// so `c1=cc=cc=c1` is benzene. Otherwise the stated bond already fills the
+/// atom, as at the charged carbon of a phenyl cation or anion. A positive
+/// nitrogen with two ring bonds takes a hydrogen, as pyridinium does; a
+/// positive chalcogen takes none, as pyrylium's oxygen does.
+fn source_aromatic_inferred_hydrogens(
+    atom: &Atom,
+    explicit_valence: usize,
+    stated_multiple_bond: bool,
+    target_valence: usize,
+) -> usize {
     if !atom.hydrogens.is_inferred() {
         return 0;
     }
     let target = match atom.element.symbol() {
         "B" | "C" => 3,
-        "N" | "O" | "S" | "Se" | "Te" => {
-            if atom.formal_charge > 0 {
-                3
-            } else {
-                2
-            }
-        }
-        "P" | "As" => explicit_valence,
+        "N" if atom.formal_charge > 0 => 3,
+        "N" | "O" | "S" | "Se" | "Te" => 2,
         _ => return 0,
     };
-    target.saturating_sub(explicit_valence)
+    let stated_pi_bond = stated_multiple_bond && target_valence == target + 1;
+    (target + usize::from(stated_pi_bond)).saturating_sub(explicit_valence)
 }
 
 fn aromatic_localization_target_valence(

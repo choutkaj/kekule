@@ -37,10 +37,10 @@ pub use macromolecular::{
     AssemblyStructure, AtomProvenance, BondEvidence, BondProvenance, CellOmissionReason,
     ConflictingSelector, ConnectionResolutionReason, ConnectivityOptions, CoordinationProvenance,
     EntityKind, EntityMetadataPolicy, EntityMonomer, InstanceProvenance, ModelSelection,
-    PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition, SequenceSource,
-    SourceResidueId, SourceResiduePosition, StructureInterpretIssue, StructureInterpretOptions,
-    StructureInterpretation, StructureInterpretationReport, StructureSetInterpretOptions,
-    StructureSetInterpretation,
+    NumberField, PolymerEntity, PolymerEntityInstance, PolymerType, SequencePosition,
+    SequenceSource, SourceResidueId, SourceResiduePosition, StructureInterpretIssue,
+    StructureInterpretOptions, StructureInterpretation, StructureInterpretationReport,
+    StructureSetInterpretOptions, StructureSetInterpretation,
 };
 pub(crate) use mmcif::{parse_mmcif_reader, parse_mmcif_str, write_mmcif, write_mmcif_to};
 pub use mmcif::{
@@ -66,6 +66,7 @@ pub use native::{
     DEFAULT_NATIVE_MAX_BONDS, DEFAULT_NATIVE_MAX_INPUT_BYTES, DEFAULT_NATIVE_MAX_ITEMS,
     DEFAULT_NATIVE_MAX_STRING_BYTES, NATIVE_FORMAT_OLDEST, NATIVE_FORMAT_VERSION, NATIVE_MAGIC,
 };
+pub use normalization::UnrepresentableStereoReason;
 pub(crate) use normalization::{
     canonicalize_molecule_for_publication, localize_source_aromatic_bonds, NormalizationError,
     NormalizationWarning,

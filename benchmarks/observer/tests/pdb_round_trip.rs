@@ -14,10 +14,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use kekule::diagnostics::{DiagnosticKind, FormatErrorDetail};
-use kekule::macromolecular::{ModelSelection, StructureInterpretOptions};
+use kekule::macromolecular::{
+    ModelSelection, StructureInterpretOptions, StructureInterpretation, StructureSetInterpretation,
+};
 use kekule::mmcif;
 use kekule::pdb::{self, PdbWriteErrorKind};
-use kekule::structure::{Structure, StructureSet, StructureView};
+use kekule::structure::{Structure, StructureView};
 use kekule::topology::{Topology, TopologyAtomIndex};
 use kekule::units::{ANGSTROM, SQUARE_ANGSTROM};
 
@@ -170,10 +172,10 @@ fn assert_same_structure(reread: StructureView<'_>, source: StructureView<'_>, l
 fn is_representability_limit(issue: &PdbWriteErrorKind) -> bool {
     matches!(
         issue,
-        PdbWriteErrorKind::ChainIdTooLong { .. }
-            | PdbWriteErrorKind::ResidueNameTooLong { .. }
+        PdbWriteErrorKind::InvalidChainId { .. }
+            | PdbWriteErrorKind::InvalidResidueName { .. }
             | PdbWriteErrorKind::InvalidAtomName { .. }
-            | PdbWriteErrorKind::InsertionCodeTooLong { .. }
+            | PdbWriteErrorKind::InvalidInsertionCode { .. }
             | PdbWriteErrorKind::InvalidResidueNumber { .. }
             | PdbWriteErrorKind::TooManyAtoms { .. }
             | PdbWriteErrorKind::CoordinateOutOfRange { .. }
@@ -181,10 +183,15 @@ fn is_representability_limit(issue: &PdbWriteErrorKind) -> bool {
     )
 }
 
-/// Writes, rereads, and rewrites one structure; `None` when PDB cannot represent
-/// it.
-fn round_trip_structure(structure: &Structure, label: &str) -> Result<Structure, String> {
-    let written = match pdb::write(structure, Default::default()).map(|(text, _)| text) {
+/// Writes, rereads, and rewrites one interpreted structure with its report,
+/// whose metal coordination becomes `LINK` records; `Err` when PDB cannot
+/// represent it.
+fn round_trip_structure(
+    interpretation: &StructureInterpretation,
+    label: &str,
+) -> Result<Structure, String> {
+    let structure = interpretation.structure();
+    let written = match pdb::write(interpretation, Default::default()).map(|(text, _)| text) {
         Ok(written) => written,
         Err(error) => {
             let Some(FormatErrorDetail::PdbWrite(issue)) = error.detail() else {
@@ -201,10 +208,9 @@ fn round_trip_structure(structure: &Structure, label: &str) -> Result<Structure,
     };
     let reread = pdb::parse_str(&written, Default::default())
         .and_then(|document| document.interpret(Default::default()))
-        .unwrap_or_else(|error| panic!("{label}: written PDB does not read back: {error}"))
-        .into_structure();
+        .unwrap_or_else(|error| panic!("{label}: written PDB does not read back: {error}"));
     assert_same_structure(
-        reread.as_structure_view(),
+        reread.structure().as_structure_view(),
         structure.as_structure_view(),
         label,
     );
@@ -215,19 +221,20 @@ fn round_trip_structure(structure: &Structure, label: &str) -> Result<Structure,
         again == written,
         "{label}: PDB -> structure -> PDB changed the text"
     );
-    Ok(reread)
+    Ok(reread.into_structure())
 }
 
-fn round_trip_structure_set(structures: &StructureSet, label: &str) {
-    let written = pdb::write(structures, Default::default())
+fn round_trip_structure_set(interpretation: &StructureSetInterpretation, label: &str) {
+    let structures = interpretation.structure_set();
+    let written = pdb::write(interpretation, Default::default())
         .map(|(text, _)| text)
         .unwrap_or_else(|error| panic!("{label}: structures do not write: {error}"));
     let reread = pdb::parse_str(&written, Default::default())
         .and_then(|document| document.interpret_structure_set(Default::default()))
-        .unwrap_or_else(|error| panic!("{label}: written structures do not read back: {error}"))
-        .into_structure_set();
-    assert_eq!(reread.len(), structures.len(), "{label}: structures");
-    for (index, (left, right)) in reread.iter().zip(structures.iter()).enumerate() {
+        .unwrap_or_else(|error| panic!("{label}: written structures do not read back: {error}"));
+    let reread_set = reread.structure_set();
+    assert_eq!(reread_set.len(), structures.len(), "{label}: structures");
+    for (index, (left, right)) in reread_set.iter().zip(structures.iter()).enumerate() {
         assert_same_structure(
             left.as_structure_view(),
             right.as_structure_view(),
@@ -258,7 +265,7 @@ fn curated_biomolecules_round_trip_through_pdb() {
         let Ok(interpretation) = document.interpret(first) else {
             continue;
         };
-        match round_trip_structure(interpretation.structure(), &label) {
+        match round_trip_structure(&interpretation, &label) {
             Ok(_) => written += 1,
             Err(reason) => {
                 unrepresentable.push(format!("{label}: {reason}"));
@@ -267,7 +274,7 @@ fn curated_biomolecules_round_trip_through_pdb() {
         }
         if let Ok(interpretation) = document.interpret_structure_set(Default::default()) {
             if interpretation.structure_set().len() > 1 {
-                round_trip_structure_set(interpretation.structure_set(), &label);
+                round_trip_structure_set(&interpretation, &label);
                 multi_model += 1;
             }
         }

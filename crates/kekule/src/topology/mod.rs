@@ -51,6 +51,7 @@
 
 mod builder;
 mod classification;
+pub(crate) use classification::{is_ion, is_water};
 mod components;
 mod dense_map;
 mod dense_order;

@@ -172,25 +172,25 @@ fn failed_source_stereo_normalization_is_transactional() {
     let mut mol = crate::molecule::MoleculeEditor::new();
     let a = mol.add_atom(carbon()).expect("atom identifier capacity");
     let b = mol.add_atom(carbon()).expect("atom identifier capacity");
-    let bond = mol.add_bond(a, b, BondOrder::Single).expect("bond");
+    let bond = mol.add_bond(a, b, BondOrder::Double).expect("bond");
     let source_stereo = [SourceStereoBondMark {
         bond,
         from: a,
-        kind: SourceStereoBondMarkKind::WedgeEither,
+        kind: SourceStereoBondMarkKind::DoubleBondEither,
     }];
     let mut molecule = mol;
     let before = molecule.clone();
 
     let error = molecule
         .canonicalize_fixture_with_source_stereo(&source_stereo)
-        .expect_err("unassembled stereo mark should fail normalization");
+        .expect_err("unsupported stereo mark should fail normalization");
 
     assert!(matches!(
         error,
         NormalizationError::SourceStereo(SourceStereoNormalizationError { issues })
-            if issues.contains(&SourceStereoNormalizationIssue::UnassembledTetrahedralBondMark {
+            if issues.contains(&SourceStereoNormalizationIssue::UnsupportedSourceBondMark {
             bond,
-            kind: SourceStereoBondMarkKind::WedgeEither,
+            kind: SourceStereoBondMarkKind::DoubleBondEither,
         })
     ));
     assert_eq!(molecule, before);
@@ -501,42 +501,6 @@ fn valence_counts_high_degree_atoms_without_narrowing_or_panicking() {
             .and_then(|valence| valence.inferred_hydrogen_count(carbon)),
         None
     );
-}
-
-#[test]
-fn valence_uses_rdkit_periodic_table_rules_for_electropositive_atoms() {
-    for (symbol, expected_inferred_hydrogens) in [
-        ("Li", 1),
-        ("Be", 2),
-        ("Na", 1),
-        ("Mg", 2),
-        ("K", 1),
-        ("Ca", 2),
-        ("Rb", 1),
-        ("Sr", 2),
-        ("Cs", 1),
-        ("Ba", 2),
-        ("Fr", 1),
-        ("Ra", 2),
-    ] {
-        let mut mol = crate::molecule::MoleculeEditor::new();
-        let atom_id = mol
-            .add_atom(element_atom(symbol))
-            .expect("atom identifier capacity");
-
-        let mut mol = mol.into_unchecked();
-        let report =
-            valence_api::perceive_valence(&mut mol, ValenceModel::RdkitLike, Default::default());
-
-        assert!(report.is_ok(), "neutral {symbol} should be supported");
-        assert_eq!(
-            mol.perception()
-                .valence()
-                .and_then(|valence| valence.inferred_hydrogen_count(atom_id)),
-            Some(expected_inferred_hydrogens),
-            "neutral {symbol} implicit hydrogens"
-        );
-    }
 }
 
 #[test]

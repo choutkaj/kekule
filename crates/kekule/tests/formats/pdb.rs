@@ -260,6 +260,27 @@ fn coordination(result: &StructureInterpretation) -> Vec<(&str, &str, &str)> {
 }
 
 /// Charged atoms by name, in instance order.
+/// The report's issues other than those of protonation and missing atoms,
+/// which `protonation.rs` tests: tests of records leave them out.
+fn record_issues(result: &StructureInterpretation) -> Vec<StructureInterpretIssue> {
+    result
+        .report()
+        .issues()
+        .iter()
+        .filter(|issue| {
+            !matches!(
+                issue,
+                StructureInterpretIssue::ProtonationAssumed { .. }
+                    | StructureInterpretIssue::HydrogenReplacedByCoordination { .. }
+                    | StructureInterpretIssue::AtomsMissing { .. }
+                    | StructureInterpretIssue::TerminalAtomMissing { .. }
+                    | StructureInterpretIssue::PolymerLinkMissing { .. }
+            )
+        })
+        .cloned()
+        .collect()
+}
+
 fn charges(result: &StructureInterpretation) -> Vec<(String, i8)> {
     result
         .report()
@@ -644,8 +665,12 @@ fn ter_records_end_the_polymer_of_their_chain() {
                 BondEvidence::PolymerLink
             )]
         );
-        assert_eq!(charges(&interpreted), [("ZN".to_owned(), 2)]);
-        assert_eq!(report.issues(), &[]);
+        // The peptide has no hydrogens: its N terminus takes its pH 7 state.
+        assert_eq!(
+            charges(&interpreted),
+            [("N".to_owned(), 1), ("ZN".to_owned(), 2)]
+        );
+        assert_eq!(record_issues(&interpreted), []);
     }
 }
 
@@ -757,7 +782,9 @@ fn conect_records_list_bonds_that_templates_outrank() {
                 bond("C", "OXT", BondOrder::Single, template("ACT")),
             ],
             vec![("OXT".to_owned(), -1)],
-            vec![],
+            vec![StructureInterpretIssue::ProtonationAssumed {
+                components: vec![("ACT".to_owned(), 1)],
+            }],
             3,
         ),
     ];
@@ -882,7 +909,7 @@ fn link_and_ssbond_records_bond_their_partners() {
             interpreted.report().applied_connections(),
             usize::from(linked.is_some() || coordinated.is_some())
         );
-        assert_eq!(interpreted.report().issues(), issues);
+        assert_eq!(record_issues(&interpreted), issues);
     }
 }
 
@@ -1198,7 +1225,7 @@ fn a_ter_record_ends_the_residue_it_follows() {
             bonds_with_evidence(&interpreted, &BondEvidence::PolymerLink),
             peptide_bonds
         );
-        assert_eq!(interpreted.report().issues(), &[]);
+        assert_eq!(record_issues(&interpreted), []);
     }
 
     // Every coordinate model numbers its repeats afresh.
@@ -1290,11 +1317,20 @@ fn atom_names_imply_elements_without_element_columns() {
         })
         .collect::<Vec<_>>();
     assert_eq!(elements, ["C", "Ca", "Zn"]);
+    // Glycine's and the calcium ion's templates name both atoms, and the
+    // glycine is a lone CA.
     assert_eq!(
         interpreted.report().issues(),
-        &[StructureInterpretIssue::ElementsInferredFromAtomNames {
-            source_lines: vec![1, 2],
-        }]
+        &[
+            StructureInterpretIssue::ElementsFromTemplates {
+                source_lines: vec![1, 2],
+            },
+            StructureInterpretIssue::AtomsMissing {
+                residue: residue("A", SourceResiduePosition::Author("1".to_owned())),
+                component_id: "GLY".to_owned(),
+                atoms: vec!["N".to_owned(), "C".to_owned(), "O".to_owned()],
+            },
+        ]
     );
 }
 
@@ -1784,7 +1820,8 @@ fn force_field_libraries_interpret_their_residue_names() {
     assert_eq!(templated.report().issues(), &[]);
     // The dictionary names neither HIE nor WAT, so without the library they
     // take the AMBER templates of their names; the dictionary's aspartic
-    // acid and sodium are neutral, and Na+ is not a dictionary name.
+    // acid, without hydrogens and alone in its chain, is the zwitterion of
+    // a free amino acid, and Na+ is not a dictionary name.
     let untemplated = document.interpret(Default::default()).unwrap();
     assert_eq!(inferred_components(&untemplated), Vec::<String>::new());
     let force_field = untemplated
@@ -1805,10 +1842,18 @@ fn force_field_libraries_interpret_their_residue_names() {
         [("HIE", "AMBER"), ("WAT", "AMBER"), ("Na+", "AMBER")]
     );
     assert_eq!(untemplated.topology().bond_count(), 30);
-    assert_eq!(charges(&untemplated), [("Na+".to_owned(), 1)]);
+    assert_eq!(
+        charges(&untemplated),
+        [
+            ("N".to_owned(), 1),
+            ("OD2".to_owned(), -1),
+            ("OXT".to_owned(), -1),
+            ("Na+".to_owned(), 1)
+        ]
+    );
 
     // CHARMM: the isoleucine, water, and sodium and chloride ions. Terminal
-    // hydrogens HT1-HT3 attach by distance.
+    // hydrogens HT1-HT3 bond to N by name.
     let charmm = entry(
         &[
             residue_records("ATOM", "ILE", 'A', ISOLEUCINE, 0.0),
@@ -1868,10 +1913,39 @@ fn force_field_libraries_interpret_their_residue_names() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(attached, [("HT1", "N"), ("HT2", "N"), ("HT3", "N")]);
-    // Without the library, CHARMM chloride meets the dictionary's chlorophyll a.
-    let error = document.interpret(Default::default()).unwrap_err();
-    assert_eq!(error.kind(), DiagnosticKind::Inconsistent);
+    assert_eq!(attached, []);
+    assert_eq!(
+        bonds_with_evidence(&templated, &BondEvidence::HydrogenName),
+        3
+    );
+    // Without the library, each residue fits no dictionary template of its
+    // name, such as chlorophyll a for CHARMM chloride, and reads with the
+    // CHARMM one, which the report names.
+    let untemplated = document.interpret(Default::default()).unwrap();
+    assert_eq!(untemplated.topology().bond_count(), 23);
+    assert_eq!(charges(&untemplated), charges(&templated));
+    let force_field = untemplated
+        .report()
+        .issues()
+        .iter()
+        .filter_map(|issue| match issue {
+            StructureInterpretIssue::ForceFieldTemplate {
+                component_id,
+                force_field,
+                ..
+            } => Some((component_id.as_str(), force_field.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        force_field,
+        [
+            ("ILE", "CHARMM"),
+            ("TIP3", "CHARMM"),
+            ("SOD", "CHARMM"),
+            ("CLA", "CHARMM")
+        ]
+    );
 }
 
 #[test]
@@ -1959,13 +2033,13 @@ fn force_field_termini_carry_their_charges() {
             vec![("N".to_owned(), 1)],
             vec![],
         ),
-        // CHARMM's N-terminal proline patch names its hydrogens HN1 and HN2;
-        // the C-terminal patch makes a carboxylate.
+        // CHARMM's N-terminal proline patch names its hydrogens HN1 and HN2,
+        // which bond to N by name; the C-terminal patch makes a carboxylate.
         (
             ComponentLibrary::charmm(),
             residue_records("ATOM", "PRO", 'P', &charmm_proline, 0.0),
             vec![("N".to_owned(), 1), ("OT2".to_owned(), -1)],
-            vec![("HN2".to_owned(), "N".to_owned())],
+            vec![],
         ),
     ];
     for (library, lines, expected_charges, expected_attached) in cases {
@@ -2006,12 +2080,12 @@ fn pdb_connectivity_matches_an_independent_reference() {
     // asserts. Biotite's PDB reader gives the same counts for 1CRN; for 1AKE it
     // maps `CONECT` serials of the dropped alternate locations of AP5 to the
     // first atom of chain A, adding a MET 1 N self-bond and two bonds 23 A long.
-    // Charged atoms count the LYS NZ, ARG NH2, and HIS ND1 sites the dictionary
-    // charges (+1), counted from the files. The bundled templates do not cover
+    // Charged atoms count the pH 7 states of the residues, which have no
+    // hydrogens, as that test does. The bundled templates do not cover
     // AP5: its 62 bonds per chain come from CONECT records, none inferred, and
     // the 12 CONECT partners in the omitted alternate location B are reported.
     for (name, text, atoms, bonds, largest, molecules, charged, listed, disulfides, omitted) in [
-        ("1CRN", CRAMBIN, 327, 337, vec![327], 1, 2, 0, 3, 0),
+        ("1CRN", CRAMBIN, 327, 337, vec![327], 1, (3, 3), 0, 3, 0),
         (
             "1AKE",
             ADENYLATE_KINASE,
@@ -2019,7 +2093,7 @@ fn pdb_connectivity_matches_an_independent_reference() {
             3484,
             vec![1656, 1656, 57, 57],
             382,
-            68,
+            (64, 72),
             124,
             0,
             12,
@@ -2040,7 +2114,20 @@ fn pdb_connectivity_matches_an_independent_reference() {
             .into_iter()
             .map(|(_, charge)| charge)
             .collect::<Vec<_>>();
-        assert_eq!(charges, vec![1; charged], "{name}");
+        // AP5's CONECT bonds state no orders. The five phosphorus atoms of
+        // each of its two copies, with four single bonds, take +1 with a
+        // terminal oxygen's -1 instead of a hydrogen.
+        let separated = if name == "1AKE" { 10 } else { 0 };
+        let signs = (
+            charges.iter().filter(|&&charge| charge == 1).count(),
+            charges.iter().filter(|&&charge| charge == -1).count(),
+        );
+        assert_eq!(
+            signs,
+            (charged.0 + separated, charged.1 + separated),
+            "{name}"
+        );
+        assert_eq!(signs.0 + signs.1, charges.len(), "{name}");
 
         let report = interpreted.report();
         let count = |wanted: fn(&StructureInterpretIssue) -> bool| {
@@ -2223,4 +2310,109 @@ fn separately_read_structures_become_geometries_with_their_own_state() {
             .unwrap_err(),
         StructureSetError::TopologyMismatch(TopologyMismatch::Structure)
     );
+}
+
+#[test]
+fn residues_with_unstated_bond_orders_keep_onium_centres_neutral() {
+    // Bonds from CONECT records or atom distances state no orders. A
+    // phosphate and DMSO still separate charges onto a terminal oxygen, and
+    // trimethylphosphine on palladium is a donor. Trimethylsulfonium, with no
+    // such neighbor, may instead carry a double bond, so its sulfur stays
+    // neutral and takes a hydrogen, as reported.
+    let hetatm = |serial, name, component, position, element| {
+        site(
+            "HETATM", serial, name, component, 'L', "1", position, element,
+        )
+        .line()
+    };
+    let phosphate = vec![
+        hetatm("1", " P  ", "XPO", [0.0, 0.0, 0.0], "P"),
+        hetatm("2", " O1 ", "XPO", [0.87, 0.87, 0.87], "O"),
+        hetatm("3", " O2 ", "XPO", [-0.87, -0.87, 0.87], "O"),
+        hetatm("4", " O3 ", "XPO", [-0.87, 0.87, -0.87], "O"),
+        hetatm("5", " O4 ", "XPO", [0.87, -0.87, -0.87], "O"),
+        "CONECT    1    2    3    4    5".to_owned(),
+        "CONECT    2    1".to_owned(),
+        "CONECT    3    1".to_owned(),
+        "CONECT    4    1".to_owned(),
+        "CONECT    5    1".to_owned(),
+    ];
+    let dmso = vec![
+        hetatm("1", " S  ", "XSO", [0.0, 0.0, 0.0], "S"),
+        hetatm("2", " C1 ", "XSO", [1.8, 0.0, 0.0], "C"),
+        hetatm("3", " C2 ", "XSO", [-0.6, 1.7, 0.0], "C"),
+        hetatm("4", " O  ", "XSO", [-0.5, -0.6, 1.3], "O"),
+    ];
+    let sulfonium = vec![
+        hetatm("1", " S  ", "XSM", [0.0, 0.0, 0.0], "S"),
+        hetatm("2", " C1 ", "XSM", [1.8, 0.0, 0.0], "C"),
+        hetatm("3", " C2 ", "XSM", [-0.6, 1.7, 0.0], "C"),
+        hetatm("4", " C3 ", "XSM", [-0.6, -0.85, 1.47], "C"),
+    ];
+    let phosphine = vec![
+        hetatm("1", " P  ", "XPD", [0.0, 0.0, 0.0], "P"),
+        hetatm("2", " C1 ", "XPD", [1.062, 1.062, 1.062], "C"),
+        hetatm("3", " C2 ", "XPD", [1.062, -1.062, -1.062], "C"),
+        hetatm("4", " C3 ", "XPD", [-1.062, 1.062, -1.062], "C"),
+        hetatm("5", " PD ", "XPD", [-1.328, -1.328, 1.328], "Pd"),
+    ];
+    let charged = |atoms: &[(&str, i8)]| {
+        atoms
+            .iter()
+            .map(|(name, charge)| ((*name).to_owned(), *charge))
+            .collect::<Vec<_>>()
+    };
+    let cases = [
+        (
+            phosphate,
+            charged(&[("P", 1), ("O1", -1)]),
+            vec![],
+            vec![],
+            3,
+        ),
+        (dmso, charged(&[("S", 1), ("O", -1)]), vec![], vec![], 6),
+        (sulfonium, vec![], vec![("S".to_owned(), 1)], vec![], 10),
+        (phosphine, vec![], vec![], vec!["P".to_owned()], 9),
+    ];
+    for (lines, expected_charges, expected_hydrogens, expected_donors, total_hydrogens) in cases {
+        let text = format!("{}\nEND\n", lines.join("\n"));
+        let interpretation = pdb::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap();
+        let (mut charges, mut hydrogens, mut donors) = (Vec::new(), Vec::new(), Vec::new());
+        for issue in interpretation.report().issues() {
+            match issue {
+                StructureInterpretIssue::ChargesFromBonds { charged_atoms, .. } => {
+                    charges.extend(charged_atoms.iter().cloned());
+                }
+                StructureInterpretIssue::ResidueBondsInferred {
+                    neutral_centres, ..
+                } if !neutral_centres.is_empty() => {
+                    hydrogens.extend(neutral_centres.iter().cloned());
+                    assert!(
+                        issue.to_string().ends_with(
+                            "Its onium centres took no charge. Atom \"S\" took 1 hydrogen."
+                        ),
+                        "{issue}"
+                    );
+                }
+                StructureInterpretIssue::MetalDonors { atom_names, .. } => {
+                    donors.extend(atom_names.iter().cloned());
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(charges, expected_charges, "{text}");
+        assert_eq!(hydrogens, expected_hydrogens, "{text}");
+        assert_eq!(donors, expected_donors, "{text}");
+        let mut structure = interpretation.into_structure();
+        structure.perceive().unwrap();
+        let total = structure
+            .topology()
+            .atoms()
+            .map(|atom| atom.total_hydrogens().unwrap())
+            .sum::<usize>();
+        assert_eq!(total, total_hydrogens, "{text}");
+    }
 }

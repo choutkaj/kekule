@@ -23,7 +23,8 @@ impl StructureInterpretationReport {
     /// atoms lose their provenance, and added atoms have none. Bond provenance
     /// stays for bonds the edited structure keeps, and a coordination record
     /// while both partners survive. The instance counts follow the edited
-    /// instances; the rest of the report describes the source.
+    /// instances; the rest of the report, issues included, describes the
+    /// source.
     #[must_use]
     pub fn follow_edit(
         &self,

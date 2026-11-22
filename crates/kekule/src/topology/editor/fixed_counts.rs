@@ -12,7 +12,7 @@
 //! valence it is owed, later losses pay it back first, and publication
 //! fails while it is owed.
 use super::{EditAtomId, TopologyEditError, TopologyEditor};
-use crate::algorithms::allowed_valences;
+use crate::algorithms::{allowed_valences, donates_to_metals, is_metal};
 use crate::molecule::{Atom, AtomRadical, BondOrder, ImplicitHydrogens};
 use std::collections::BTreeMap;
 
@@ -43,20 +43,6 @@ pub(crate) struct Settled {
     pub(crate) count: u8,
     pub(crate) radical: Option<AtomRadical>,
     pub(crate) owed: usize,
-}
-
-/// Whether a non-metal donates to metals when its other bonds and
-/// hydrogens give it the valence `other` and its bonds to metals add
-/// `metal`: `other + metal` is not a valence its element and charge allow,
-/// but some allowed valence lies from `other` up to, and not including,
-/// `other + metal`.
-fn donates_to_metals(atom: &Atom, other: usize, metal: usize) -> bool {
-    let Some(allowed) = allowed_valences(atom) else {
-        return false;
-    };
-    let allowed = || allowed.iter().map(|value| usize::from(*value));
-    !allowed().any(|value| value == other + metal)
-        && allowed().any(|value| (other..other + metal).contains(&value))
 }
 
 /// The valence of `atom`'s bonds that hydrogens trade against: its bonds to
@@ -96,7 +82,7 @@ pub(crate) fn settle(
     let ImplicitHydrogens::Fixed(count) = atom.hydrogens else {
         return Ok(None);
     };
-    if atom.element.is_metal() {
+    if is_metal(atom.element) {
         return Ok(None);
     }
     let count = usize::from(count);
@@ -176,11 +162,7 @@ impl ValenceChanges {
         from: Option<BondOrder>,
         to: Option<BondOrder>,
     ) -> Result<(), TopologyEditError> {
-        let metal = |atom| {
-            editor
-                .require_atom(atom)
-                .map(|atom| atom.element.is_metal())
-        };
+        let metal = |atom| editor.require_atom(atom).map(|atom| is_metal(atom.element));
         let (a_metal, b_metal) = (metal(a)?, metal(b)?);
         self.change(a, b_metal, from, to);
         self.change(b, a_metal, from, to);
@@ -225,7 +207,7 @@ impl TopologyEditor {
         for bond in self.incident_bonds(atom)?.collect::<Vec<_>>() {
             let bond = self.require_bond(bond)?;
             let other = if bond.a == atom { bond.b } else { bond.a };
-            valence.add(self.require_atom(other)?.element.is_metal(), bond.order);
+            valence.add(is_metal(self.require_atom(other)?.element), bond.order);
         }
         Ok(valence)
     }

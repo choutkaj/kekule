@@ -301,6 +301,18 @@ the main branch migrates by the table under "From the SampleSet API".
   `lowest_cell` is the cell with the lowest value, and `cell_at` and `center`
   convert between cells and axis values. Failures are a `LandscapeError`;
   `diagnostics::Resource::Cells` bounds the grid.
+- `Perception::warnings` and `Topology::perception_warnings` report
+  perception that succeeded incompletely: `PerceptionWarning::RingBasisFallback`
+  when the smallest-ring search stopped and depth-first cycles became the ring
+  set, which aromaticity then reads.
+- The bundled components include the ions `LI`, `RB`, `CS`, `SR`, `BA`,
+  `AL`, and `F`, so PDB and mmCIF ions without a charge column read as
+  Li+, Rb+, Cs+, Sr2+, Ba2+, Al3+, and F-.
+- `MolfileInterpretIssue`, `XyzInterpretIssue`, and
+  `UnrepresentableStereoReason` implement `Display` with sentences for
+  users. Molfile issues name atoms and bonds by source line, and XYZ
+  issues number atoms from 1 in file order. `ChargesSeparated` gains the
+  acceptor's line, `acceptor_location`.
 
 ### Changed
 
@@ -609,9 +621,64 @@ the main branch migrates by the table under "From the SampleSet API".
 - Edited drafts publish an added atom placed in a residue that holds earlier
   atoms after the last of them, so residues stay contiguous for the PDB
   writer. The editor's per-atom APIs keep handle order.
+- **Breaking:** `PdbWriteErrorKind::ChainIdTooLong`, `ResidueNameTooLong`,
+  and `InsertionCodeTooLong` are `InvalidChainId`, `InvalidResidueName`, and
+  `InvalidInsertionCode`; the PDB writer refuses identifiers that are not
+  printable ASCII.
+- **Breaking:** The PDB writer states every formal charge, `0` for a neutral
+  atom. In a residue with hydrogens, readers take the `0` as evidence
+  against a charged template.
+- **Breaking:** The PDB and mmCIF writers compare each charge with the one
+  their reader derives. A charge a reader would change, such as that of a
+  neutral lysine `NZ` without hydrogens, fails under strict chemistry
+  (`ChargeNotReadBack`) and is otherwise reported as
+  `WriteOmission::FormalCharges`, which names the first such atom.
+- **Breaking:** A PDB atom name starting in column 14 reads a one-letter
+  element only in an entry that follows the alignment convention, where some
+  short name starts in column 13 with a two-letter element. In an entry that
+  pads every name, as GROMACS writes, ` CL1` without an element column is
+  ambiguous and fails rather than reading as carbon. A name led by `H`, such
+  as ` HG1`, reads as hydrogen. Only atoms without element columns count as
+  evidence of the convention.
+- **Breaking:** `CONECT` records repeated in every model state each model's
+  bonds: the interpreted model takes its own, and other models' records no
+  longer conflict with them.
+- **Breaking:** A `CONECT`, `LINK`, or `_chem_comp_bond` single bond between
+  a metal and a non-metal of one residue is dative only when the source or
+  the residue's template flags coordination, or, in a residue with explicit
+  hydrogens, when the non-metal's valence is allowed without it and not with
+  it. Cisplatin reads with covalent chlorides and dative ammines, and a
+  phosphonate phosphorus bonds covalently. A non-metal in a ring given as
+  aromatic bonds takes the reading under which the ring localizes. Bonds no
+  reading decides, such as a carbene's, and those of a residue without
+  hydrogens stay covalent and are reported
+  (`StructureInterpretIssue::MetalBondsUnstated`). A stated `_struct_conn`
+  bond keeps its type. Between residues such a bond stays coordination. The
+  PDB writer lists a metal bond within one residue only when a reader gives
+  its order back, and otherwise fails or omits it.
+- The mmCIF writer states the bonds of components no template covers as
+  `_chem_comp` and `_chem_comp_bond` rows, with aromatic and
+  metal-coordination flags, in place of `_struct_conn` rows. Components are
+  grouped by upper-case identifier, as readers key them, and a dative bond
+  without a metal stays a `_struct_conn` `metalc` row.
+- PDB interpretation reports atoms whose element came from a template
+  (`StructureInterpretIssue::ElementsFromTemplates`), unsigned charges
+  (`UnsignedCharges`), VMD hexadecimal numbering (`HexadecimalNumbers`),
+  and numbers that go back (`NumbersRestart`), each field named by a
+  `NumberField`. `PdbAtom::charge_is_unsigned`, `PdbConect::model`, and
+  `PdbDocument::hexadecimal_numbers` expose them.
+- **Breaking:** `MolfileInterpretIssue::CoordinateStereoValenceUnsupported`
+  names the first atom outside the valence model and its source line
+  (`atom`, `location`). Its `ValenceError` names atoms of the published
+  molecule.
 
 ### Removed
 
+- **Breaking:** `descriptors::HydrogenCountPolicy`. `molecular_formula`,
+  `average_mass`, and `monoisotopic_mass` take only the molecule and count
+  every hydrogen; an inferred count without valence perception fails with
+  `MolecularDescriptorError::UnknownHydrogenCount` instead of being omitted.
+  Perceive first, or use a perceived topology.
 - **Breaking:** `TopologyEditor::new` and its `Default`; build a topology
   from scratch with `TopologyBuilder`, or start an empty `StructureEditor`.
 - **Breaking:** `EnsembleMember`, its views, `EnsembleIter`, `EnsembleError`,
@@ -638,6 +705,192 @@ the main branch migrates by the table under "From the SampleSet API".
 
 ### Fixed
 
+- PDB and mmCIF interpretation no longer changes a residue's chemistry
+  silently; every case is reported ([protonation](docs/protonation.md)):
+  - Residues without hydrogens take an assumed state (`ProtonationAssumed`,
+    once per structure, by component). Acid groups take their pH 7 state in
+    every residue, ligands included: carboxylates, phosphates, phosphonates,
+    sulfonates and sulfates. Polymer residues also take the ammonium of a
+    true N terminus and neutral NE2-protonated histidine. Ligand amines and
+    bases keep the template. **Breaking:** an X-ray protein's net charge
+    changes.
+  - An N terminus is an ammonium only at a chain's true start. A linking
+    `N`, `C`, `P` or `O3'` whose neighbour the sequence has but the model
+    lacks, by `_entity_poly_seq` or `SEQRES`, keeps its bonded hydrogen
+    count (`PolymerLinkMissing`): an `N` after a gap is an amide. Only a
+    sequence makes a gap, and the model's terminal atoms (`H1`-`H3`, `OXT`,
+    `HXT`, `H5T`, `H3T`, `HO5'`) end a chain whatever it says.
+  - The mmCIF writer writes `_entity_poly_seq`, and each polymer molecule
+    of a chain without a source asym is an asym of its own. The PDB writer
+    writes `SEQRES` for a chain whose sequence has residues the model
+    lacks or that a chain break opens inside, with the residues' names
+    where known and `UNK` elsewhere. PDB
+    `SEQRES` chains are polymer entities of the report
+    (`StructureInterpretationReport::polymer_entities`).
+  - The PDB writer writes `TER` after the last polymer residue of each
+    hierarchy chain holding amino acids or nucleotides, so polymer chains
+    that share a letter stay apart. A ligand bonded to the polymer, such as
+    retinal, follows the `TER` and reads as no polymer residue, as does a
+    sequenced `HETATM` residue without a polymer template or linking atom,
+    which readers cannot place. Another
+    chain with the letter continues the chain before it. Sequenced residues
+    are `ATOM` records, also one a chain break leaves a molecule of its own.
+  - PDB polymer residues take label sequence numbers, their places in the
+    `SEQRES` sequence or else their record order.
+  - A hydrogen the model lacks deprotonates only a strong acid. On a
+    nitrogen, an alcohol, a phenol or a thiol it is missing
+    (`HydrogensMissing`), not a negative charge. A stated charge or metal
+    coordination deprotonates a phenol or a thiol.
+  - A cationic nitrogen with its neutral count of hydrogens is the neutral
+    base, as lysine `NZ` with two hydrogens, or one with none where that
+    count is zero (`ProtonationFromHydrogens`).
+  - A hydrogen that fills an absent template atom's place, as `HO5'` at a
+    5' end without phosphate, is no positive charge.
+  - A hydrogen and a deuterium within 0.6 Å of each other are alternates
+    of one site when their alternate locations differ or their occupancies
+    sum to at most one. The selected location holds the site; otherwise
+    the larger occupancy stays, the deuterium on a tie. The other is
+    reported (`AlternateLocationOmitted`).
+  - An acid oxygen the template already charges keeps that charge without
+    its hydrogen, as heme's carboxylates. With it, the charge follows the
+    hydrogen: a template charge the atom's bonds and hydrogens cannot hold
+    takes the nearest allowed charge towards zero
+    (`ProtonationFromHydrogens`). Without hydrogens a residue of a
+    polymer template, in a chain or alone, takes the variant that charges
+    the fewest atoms, so a C-terminal histidine stays neutral, and the one
+    that gives the stated charges comes first: histidine with `NE2` +1 is
+    the imidazolium. A free amino acid is the zwitterion.
+  - Without a sequence, a break between residues next to each other, by
+    mmCIF label sequence numbers or in one PDB run between `TER` records
+    and chain or segment changes, is a gap unless either side shows a true
+    end. In PDB, a polymer residue numbered lower than the one before it,
+    or of another linkage, also ends a run unless a link joins the two.
+  - PDB `SEQRES` places a chain with substituted residues, at most a tenth,
+    and caps it does not list. A sequence that places nothing is reported
+    (`StructureInterpretIssue::SequenceNotPlaced`). The PDB writer writes
+    no `SEQRES` for a chain letter several chains share.
+  - The mmCIF writer names chains without a label, as blank PDB chains,
+    `A`, `B`, and so on.
+  - Terminal hydrogens `H1`-`H3`, `HT1`-`HT3`, `HN1`-`HN3`, `HO5'`, `H5T`,
+    `H3T` and `HO3*` bond by name (`BondEvidence::HydrogenName`).
+  - A stated charge holds where the atom holds it at an allowed valence.
+    One that another resonance form gives, as `OD1` -1 of an aspartate or
+    `NE2` +1 of a histidine, moves the double bond, and a double bond
+    between a stated cation and anion becomes single
+    (`StatedChargeResonance`). In a residue without hydrogens a stated
+    charge sets the hydrogen count (`StatedChargeKept`); in one with
+    hydrogens no hydrogen is added for it. Other stated charges are
+    replaced (`StatedChargeRejected`). A stated 0 in a residue without
+    hydrogens is no evidence.
+  - Unknown template charges, such as heme iron, are reported
+    (`TemplateChargeUnknown`).
+  - Metal coordination to another residue replaces a hydrogen on acids,
+    thiols, aromatic ring nitrogens and cationic nitrogens
+    (`HydrogenReplacedByCoordination`): zinc-bound cysteine is a thiolate.
+    A carboxylate bound through either oxygen keeps its template, and an
+    amine with a neutral template keeps its hydrogens.
+  - Hydrogens with zero occupancy in observed residues are not read
+    (`ZeroOccupancyHydrogens`).
+  - Aspartic and glutamic acids protonated on `OD1` or `OE1` read as the
+    bundled variants `OD1-protonated` and `OE1-protonated`.
+  - Missing template atoms are reported (`AtomsMissing`); a terminal `OXT`
+    or `OP3` that nothing replaces leaves its atom without a hydrogen in its
+    place (`TerminalAtomMissing`), so a C terminus is no aldehyde. The
+    mmCIF and PDB writers write such fixed hydrogen counts, which readers
+    fix again, and take the readers' component library
+    (`MmcifWriteOptions::components`, `PdbWriteOptions::components`).
+    **Breaking:** `PdbWriteOptions` is no longer `Copy`.
+  - Residues without a template take the block's `_chem_comp_atom`
+    charges; nitro, nitrate, N-oxide and azide oxygens or nitrogens take
+    -1 rather than a hydrogen; single atoms and metal residues that nothing
+    charges are reported (`TemplateMissing`).
+  - Force-field templates name their force field (`Component::force_field`)
+    and keep the protonation their residue names state.
+- A double or triple bond the source states between aromatic atoms is their
+  pi bond: `c1=cc=cc=c1`, `c1=ccccc1`, and a Molfile ring of bond types 2
+  and 4 read as benzene, not as a ring of six double bonds or a cumulene.
+  At an atom with no valence for a further pi bond, such as the charged
+  carbon of a phenyl cation or anion or a neutral boron, the stated bond is
+  that pi bond and the atom takes no hydrogen.
+- An aromatic O, S, Se, or Te with a +1 charge and no hydrogen count takes
+  no hydrogen, as pyridine nitrogen does, so V2000 pyrylium,
+  thiopyrylium, and 1,3-dithiolium interpret.
+- Every SMILES writer brackets an aromatic atom whose hydrogens a reader
+  would not infer, as the `[pH]` of 1H-phosphole, instead of only aromatic
+  nitrogen.
+- A wedge that marks no stereocenter or axis is dropped and reported
+  (`MolfileInterpretIssue::StrayWedge`), and so is a directional mark
+  without a partner across a double bond that can have E/Z
+  (`SmilesInterpretationReport::unpaired_directional_bonds`), instead of
+  failing interpretation.
+- A wedge that marks stereo kekule cannot represent is dropped and reported
+  with the reason (`MolfileInterpretIssue::UnrepresentableStereo`,
+  `UnrepresentableStereoReason`): its atom has a zero-order or dative bond
+  or more than four neighbors, or ends several candidate axes.
+- Molfile wedges, hashes, and wavy marks on aromatic (type 4) bonds are
+  read, and an atropisomer wedge on a ring bond means the same whichever
+  Kekulé structure localization picks.
+- A Molfile flat drawing whose chiral flag is unset keeps its drawn
+  configurations absolute and reports them
+  (`MolfileInterpretIssue::AbsoluteStereoWithoutChiralFlag`). 3D records,
+  whose coordinates specify configurations, never have this issue.
+- XYZ interpretation states that bond orders and charges are unknown
+  (`XyzInterpretIssue::BondOrdersAndChargesUnknown`) and reports atoms with
+  more single bonds than their largest valence
+  (`XyzInterpretIssue::ValenceExceeded`). Two non-metal atoms beyond the
+  radii sum plus 0.3 Å bond only within their valences
+  (`XyzInterpretIssue::LongContactNotBonded`), so the bridgeheads of
+  bicyclo[1.1.1]pentane stay unbonded, and a metal and a carbon bond only
+  within the sum plus 0.2 Å, so a chelating carboxylate's carbon stays
+  unbonded to its sodium or potassium. A metal and a carbon up to 0.45 Å
+  beyond the sum, as Li and C in methyllithium's tetramer, are reported
+  unbonded (`XyzInterpretIssue::LongContactNotBonded`).
+- A neutral atom whose bonds imply a charge, in a Molfile or a residue
+  without template charges, takes it instead of hydrogens
+  (`MolfileInterpretIssue::ChargeFromBonds`,
+  `StructureInterpretIssue::ChargesFromBonds`). An onium centre, with more
+  bonded neighbors than its default valence such as the sulfur of
+  trimethylsulfonium, takes +1. An atom with more bonds than any neutral
+  valence allows, such as a quaternary nitrogen, takes +1 or -1, now in
+  Molfiles too. SMILES keeps the OpenSMILES hydrogen of `CS(C)C`.
+- A singly bonded chalcogen with no other non-metal neighbor, or a boron or
+  aluminium neighbor, of such an atom takes -1 with its +1, so DMSO, a
+  phosphine oxide, trimethylamine N-oxide, or a nitro group drawn with a
+  single bond, and a phosphine-, amine-, or THF-borane, keep their formula
+  and net charge (`MolfileInterpretIssue::ChargesSeparated`, and both atoms
+  in `ChargesFromBonds`).
+- A non-metal atom bonded to metals whose bond valence its element does not
+  allow, but would with some of those bonds not counted, takes no hydrogens
+  and keeps its charge: a phosphine on palladium, a sulfide bridging three
+  iron atoms, or DMSO on ruthenium through sulfur or oxygen
+  (`MolfileInterpretIssue::MetalDonor`, `StructureInterpretIssue::MetalDonors`,
+  native issue kind 30).
+- PDB and mmCIF interpretation leaves an onium centre without such a
+  neighbor neutral in a residue whose bonds have no stated order, from atom
+  distances or from records without orders, and reports the hydrogens it
+  took (`neutral_centres` of `StructureInterpretIssue::ResidueBondsInferred`
+  and `ResidueBondOrdersUnstated`).
+- Valence perception infers no hydrogens on alkali, alkaline-earth, and
+  p-block metals, polonium included, so a lone Na, Mg, or Al is no longer
+  NaH, MgH2, or AlH3 and `StructureEditor::add_hydrogens` adds none. Molfile
+  and PDB or mmCIF interpretation report one whose valence its element does
+  not allow, unbonded or under-bonded, as tin with three carbons
+  (`MolfileInterpretIssue::MetalValenceIncomplete`,
+  `StructureInterpretIssue::MetalValenceIncomplete`, native issue kind 29).
+- A hydrogen atom joined only by zero-order or dative bonds, as a hydride on
+  iron, infers no hydrogen of its own, so it is FeH, not FeH2.
+- Molfile writers state the valence of every atom whose inferred count a
+  reader would read otherwise: an onium centre's hydrogens, and the none of a
+  metal or of a hydride joined by a dative bond. They write a dative bond
+  toward its metal end, which readers take as its acceptor, and reject a
+  dative bond whose non-metal acceptor has hydrogens, which readers that
+  count the bond there would lose.
+- The unknown hydrogen count error names permissive validation as the way to
+  perceive valence when strict validation fails.
+- Placement counts two radical electrons as one domain, so carbenes and
+  nitrenes, singlet or triplet, are bent instead of linear.
+- `explicit_hydrogens` and `total_hydrogens` no longer count hydrogens joined
+  by zero-order or dative bonds, which valence does not count.
 - PDB and mmCIF interpretation reads disulfide-bonded cysteines with explicit
   hydrogens as neutral: a covalent link to another residue takes the place of
   as many hydrogens as its order, as a disulfide replaces `HG`, instead of
@@ -651,6 +904,44 @@ the main branch migrates by the table under "From the SampleSet API".
   names all its heavy atoms, so AMBER `CYX` reads without
   `ComponentLibrary::amber` (`StructureInterpretIssue::ForceFieldTemplate`).
   The PDB and mmCIF writers leave out the bonds such a template gives.
+- A dictionary residue under CHARMM atom names, such as an isoleucine with
+  `CD` or a C-terminal residue with `OT1` and `OT2`, reads without
+  `ComponentLibrary::charmm`, with the dictionary template under those
+  names and so its hydrogens and charges. `ForceFieldTemplate` reports it.
+- PDB `CONECT` records state bond orders only in a bonded group of atoms
+  that lists some bond more than once. A residue without a template that
+  takes its bonds from records without orders, such as a ligand in a wwPDB
+  file, is reported (`StructureInterpretIssue::ResidueBondOrdersUnstated`)
+  instead of reading as silently saturated. mmCIF `_struct_conn` rows
+  without `pdbx_value_order` state no order either.
+- A connection record within a residue no longer turns its template off: a
+  `LINK` within a sulfate no longer reads it as neutral S(OH)4. Records are
+  checked against the template; a bond it lacks is kept
+  (`BondNotInTemplate`) and so is a stated order it does not give
+  (`BondOrderDiffersFromTemplate`). Records without an order take the
+  template's. Stated orders outrank hydrogens: a residue takes only a
+  protonation variant that gives every stated order. When none gives them
+  with the residue's hydrogens, its charges follow from both
+  (`StatedOrdersDisagreeWithHydrogens`). A residue whose atoms fit no
+  template takes
+  the bonds records state when they bond each of its heavy atoms
+  (`ResidueFitsNoTemplate`).
+- Polymer links follow one rule whatever `_entity_poly.nstd_linkage` says:
+  a standard link is made unless a connection record bonds one of its atoms
+  to another residue (`PolymerLinkSkipped`), so a cyclic peptide keeps its
+  peptide bonds. Adjacent residues with linking atoms but without the pair
+  a link joins, and no other bond, are reported (`LinkingAtomMissing`)
+  instead of silently unlinked. The mmCIF and PDB writers leave out a link
+  only when a reader rebuilds it by this same rule, so an N-methylated
+  backbone keeps its peptide bonds when written. The PDB writer also lists
+  other bonds between adjacent residues, which it used to leave out.
+- A PDB `HETATM` residue in a chain without `TER` records takes a polymer
+  position only when its template is a polymer one or one of its linking
+  atoms (`N`, `C`, `P`, `O3'`) lies within bonding distance of a
+  neighbour's. A ligand listed inside such a chain no longer breaks the
+  peptide bond around it, and capping groups and 5'-terminal nucleotide
+  triphosphates before the `ATOM` records join the chain. In a chain a
+  `TER` record ends, a `HETATM` residue with a linking atom stays polymer.
 - Solvation moves each placed water by a fixed shift of at most 0.0005 nm
   per axis. Copies of one seed water no longer sit at one distance, such as
   exactly 0.9 nm in a 3.9 nm cube, where hundreds of pairs fell on a common
@@ -688,6 +979,24 @@ the main branch migrates by the table under "From the SampleSet API".
   re-keys a report through an edit, and `follow_append` through an append.
 - Assembly disulfides skip sulfurs within bonding distance of a transition or
   post-transition metal.
+- A PDB atom without an element symbol takes its element from the template
+  of its residue and name, bundled or force-field, before its name, so
+  CHARMM `SOD` is sodium and a heme's `NB` is nitrogen. A left-aligned name
+  that reads as two elements, such as `CL1` beside `C1`, fails instead of
+  guessing.
+- `CONECT` records repeated in every `MODEL` block state each bond once, and
+  models that list a bond a different number of times fail.
+- PDB charge columns `0`, ` 0`, `0+`, and `0-` are an explicit zero, and an
+  unsigned digit is a positive charge.
+- VMD's lowercase hexadecimal serial and residue numbers past 99,999 and
+  9,999 read in sequence when the numbering proves them.
+- `SOL`, `TIP3`, `TIP4`, `TIP5`, `T3P`, `T4P`, `SPC`, `H2O`, and similar water
+  names are water, and ion names such as `NA`, `CL`, `SOD`, `POT`, and `CLA`
+  are never polymer, even on `ATOM` records.
+- mmCIF charges such as `1+` and numbers with standard uncertainties such as
+  `12.345(3)` parse.
+- The PDB writer lists a polymer link stretched beyond bonding distance in
+  any geometry as `CONECT`.
 
 ### From the SampleSet API
 

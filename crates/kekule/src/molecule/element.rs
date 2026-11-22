@@ -288,16 +288,6 @@ impl Element {
         self.atomic_number
     }
 
-    /// Whether the element is an alkali, alkaline-earth, transition,
-    /// post-transition, lanthanide, or actinide metal; metalloids are not
-    /// metals.
-    pub(crate) const fn is_metal(self) -> bool {
-        matches!(
-            self.atomic_number,
-            3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=84 | 87..=116
-        )
-    }
-
     /// Returns the single-bond covalent radius when a reference value is
     /// available, in ångström as tabulated.
     ///

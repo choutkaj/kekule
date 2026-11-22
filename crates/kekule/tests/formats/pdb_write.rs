@@ -149,11 +149,11 @@ fn chains_named_by_segment_round_trip_under_the_segment_policy() {
     let error = pdb::write(&reread, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "PROA"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "PROA"
     ));
     assert!(error.message().contains("does not fit PDB's chain columns"));
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
-    let (written, report) = pdb::write(&reread, options).unwrap();
+    let (written, report) = pdb::write(&reread, options.clone()).unwrap();
     assert_eq!(written, segmented);
     assert_eq!(report.omissions(), [WriteOmission::ChainIds { chains: 2 }]);
     // Each chain's polymer still ends in its own TER record.
@@ -209,12 +209,12 @@ fn solvated_systems_export_their_solvent_chains_through_every_writer() {
     let error = pdb::write(&structure, Default::default()).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "SOL1"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "SOL1"
     ));
 
     // PDB writes the solvent chains as segments, which read back as chains.
     let options = PdbWriteOptions::default().with_chain_ids(PdbChainIdPolicy::SegmentId);
-    let (text, report) = pdb::write(&structure, options).unwrap();
+    let (text, report) = pdb::write(&structure, options.clone()).unwrap();
     assert!(report.omissions().contains(&WriteOmission::ChainIds {
         chains: solvent.len()
     }));
@@ -277,7 +277,7 @@ fn chain_ids_longer_than_a_segment_fail_under_the_segment_policy() {
     let error = pdb::write(&renamed, options).unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "SOLVENT"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "SOLVENT"
     ));
 }
 
@@ -304,7 +304,7 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
     let lines = written.lines().collect::<Vec<_>>();
     assert_eq!(
         lines[0],
-        "HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C"
+        "HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C0"
     );
     assert_eq!(
         lines[3],
@@ -324,8 +324,8 @@ fn bonds_without_a_template_are_conect_listings_by_order() {
 #[test]
 fn large_residue_numbers_use_hybrid_36() {
     let text = "\
-HETATM    1  O   HOH A9999       0.000   0.000   0.000  1.00  0.00           O
-HETATM    2  O   HOH AA000       3.000   0.000   0.000  1.00  0.00           O
+HETATM    1  O   HOH A9999       0.000   0.000   0.000  1.00  0.00           O0
+HETATM    2  O   HOH AA000       3.000   0.000   0.000  1.00  0.00           O0
 END
 ";
     let structure = interpret(text);
@@ -378,14 +378,14 @@ HETATM 1 O O {component} {chain} 1 . 0.000 0.000 0.000 1 {chain} 1
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ChainIdTooLong { chain_id, .. } if chain_id == "AB"
+        PdbWriteErrorKind::InvalidChainId { chain_id, .. } if chain_id == "AB"
     ));
     let error = pdb::write(&structure(&cif("A", "LONG")), Default::default())
         .map(|(text, _)| text)
         .unwrap_err();
     assert!(matches!(
         issue(&error),
-        PdbWriteErrorKind::ResidueNameTooLong { name, .. } if name == "LONG"
+        PdbWriteErrorKind::InvalidResidueName { name, .. } if name == "LONG"
     ));
     // Omitting chemistry does not relax identifiers.
     let options = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
@@ -411,9 +411,9 @@ fn chemistry_pdb_cannot_carry_fails_unless_omitted() {
     ));
     // The chemistry policy no longer covers implicit hydrogens.
     let chemistry = PdbWriteOptions::default().with_chemistry(UnrepresentablePolicy::Omit);
-    assert!(pdb::write(&structure, chemistry).is_err());
+    assert!(pdb::write(&structure, chemistry.clone()).is_err());
     let hydrogens = PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let (_, report) = pdb::write(&structure, hydrogens).unwrap();
+    let (_, report) = pdb::write(&structure, hydrogens.clone()).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::ImplicitHydrogens { atoms: 1 }]
@@ -490,10 +490,10 @@ fn structure_sets_write_one_model_per_geometry() {
     assert_eq!(
         written,
         "MODEL        1\n\
-         HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C\n\
+         HETATM    1  C1  MOL     1       0.000   0.000   0.000                       C0\n\
          ENDMDL\n\
          MODEL        2\n\
-         HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C\n\
+         HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C0\n\
          ENDMDL\n\
          END\n"
     );
@@ -543,7 +543,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
         "Cannot write the PDB output. The order coordinate of geometry 1 has no PDB representation."
     );
     let options = PdbWriteOptions::default().with_geometry_metadata(UnrepresentablePolicy::Omit);
-    let (written, report) = pdb::write(&scan, options).unwrap();
+    let (written, report) = pdb::write(&scan, options.clone()).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::GeometryState {
@@ -559,7 +559,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
             .filter(|line| line.starts_with("HETATM"))
             .collect::<Vec<_>>(),
         [0.0, 1.0, 2.0].map(|x| format!(
-            "HETATM    1  C1  MOL     1    {x:>8.3}   0.000   0.000                       C"
+            "HETATM    1  C1  MOL     1    {x:>8.3}   0.000   0.000                       C0"
         ))
     );
     // The models read back as an unordered set of the geometries' positions.
@@ -599,7 +599,7 @@ fn ordered_structure_sets_write_models_and_their_places_fail_unless_omitted() {
         error.to_string(),
         "Cannot write the PDB output. The order step of the geometry has no PDB representation."
     );
-    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options).unwrap();
+    let (_, report) = pdb::write(pdb::PdbSource::structure(&lone), options.clone()).unwrap();
     assert_eq!(
         report.omissions(),
         [WriteOmission::GeometryState {
@@ -781,14 +781,23 @@ fn metal_coordination_round_trips_as_link_records() {
         .map(str::trim_end)
         .collect::<Vec<_>>();
     assert_eq!(records(&written, "LINK"), deposited);
-    // They come before the coordinates.
-    assert!(written.starts_with("LINK"));
+    // They follow the `SEQRES` records, which state the residue 54 the
+    // model lacks, and come before the coordinates.
+    assert_eq!(
+        records(&written, "SEQRES"),
+        records(RUBREDOXIN, "SEQRES")
+            .into_iter()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+    );
+    assert!(written.find("LINK") < written.find("ATOM"));
+    assert!(written.find("SEQRES") < written.find("LINK"));
     let reread = interpretation(&written);
     assert_eq!(coordination(reread.report()), iron);
     // PDB -> interpretation -> PDB is a fixed point.
     assert_eq!(pdb::write(&reread, Default::default()).unwrap().0, written);
 
-    // Without reports the entry states no coordination, as before.
+    // Without reports the entry states no coordination and no sequence.
     let (bare, report) = pdb::write(source.structure(), Default::default()).unwrap();
     assert!(report.omissions().is_empty());
     assert!(records(&bare, "LINK").is_empty());
@@ -796,7 +805,7 @@ fn metal_coordination_round_trips_as_link_records() {
     assert_eq!(
         written
             .lines()
-            .filter(|line| !line.starts_with("LINK"))
+            .filter(|line| !line.starts_with("LINK") && !line.starts_with("SEQRES"))
             .collect::<Vec<_>>(),
         bare.lines().collect::<Vec<_>>()
     );
@@ -1080,7 +1089,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     let agreeing = [full.report().clone(), full.report().clone()];
     let (written, report) = pdb::write(
         PdbSource::structure_set(&set).with_reports(&agreeing),
-        options,
+        options.clone(),
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 4);
@@ -1092,7 +1101,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
         .collect::<Vec<_>>();
     assert_eq!(records(&written, "LINK"), source_links);
     assert_eq!(records(&written, "MODEL").len(), 2);
-    assert!(written.starts_with("LINK"));
+    assert!(written.find("LINK") < written.find("MODEL"));
     assert!(!report
         .omissions()
         .iter()
@@ -1102,7 +1111,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     let differing = [full.report().clone(), partial.report().clone()];
     let (written, report) = pdb::write(
         PdbSource::structure_set(&set).with_reports(&differing),
-        options,
+        options.clone(),
     )
     .unwrap();
     assert_eq!(records(&written, "LINK").len(), 3);
@@ -1126,7 +1135,7 @@ fn structure_sets_state_the_coordination_every_geometry_states() {
     let reversed = [partial.report().clone(), full.report().clone()];
     let written = pdb::write(
         PdbSource::structure_set(&set).with_reports(&reversed),
-        options,
+        options.clone(),
     )
     .unwrap()
     .0;

@@ -148,7 +148,7 @@ fn infer_residue_class(
     if CARBOHYDRATES.contains(&component.as_str()) {
         return ResidueClass::Carbohydrate;
     }
-    if WATER_COMPONENTS.contains(&component.as_str()) {
+    if is_water(&component) {
         return ResidueClass::Water;
     }
 
@@ -157,9 +157,7 @@ fn infer_residue_class(
         .iter()
         .filter_map(|&site| topology_atom(hierarchy.site_atom(site), definitions, instances))
         .collect::<Vec<_>>();
-    if atoms.len() == 1
-        && (atoms[0].formal_charge != 0 || ION_COMPONENTS.contains(&component.as_str()))
-    {
+    if atoms.len() == 1 && (atoms[0].formal_charge != 0 || is_ion(&component)) {
         return ResidueClass::Ion;
     }
     if is_explicit_water_atoms(&atoms) {
@@ -391,10 +389,30 @@ const AMINO_ACIDS: &[&str] = &[
 ];
 const DNA_NUCLEOTIDES: &[&str] = &["DA", "DC", "DG", "DT"];
 const RNA_NUCLEOTIDES: &[&str] = &["A", "C", "G", "U"];
-const WATER_COMPONENTS: &[&str] = &["HOH", "WAT", "H2O", "DOD"];
+/// Water residue names of the PDB and of molecular dynamics force fields and
+/// programs.
+pub(crate) fn is_water(comp_id: &str) -> bool {
+    [
+        "HOH", "WAT", "DOD", "SOL", "TIP", "TIP3", "TIP4", "TIP5", "T3P", "T4P", "T5P", "SPC",
+        "H2O", "HHO", "OHH",
+    ]
+    .iter()
+    .any(|water| comp_id.eq_ignore_ascii_case(water))
+}
+
+/// Monatomic ion residue names of the PDB and of molecular dynamics force
+/// fields, which `ATOM` records may carry but which are never polymer.
+pub(crate) fn is_ion(comp_id: &str) -> bool {
+    [
+        "LI", "NA", "K", "RB", "CS", "MG", "CA", "SR", "BA", "MN", "FE", "FE2", "CO", "NI", "CU",
+        "CU1", "ZN", "CD", "HG", "F", "CL", "BR", "IOD", "Li+", "Na+", "K+", "Rb+", "Cs+", "F-",
+        "Cl-", "Br-", "I-", "MG2", "CA2", "ZN2", "LIT", "SOD", "POT", "RUB", "CES", "CAL", "CLA",
+        "BAR", "CAD",
+    ]
+    .iter()
+    .any(|ion| comp_id.eq_ignore_ascii_case(ion))
+}
+
 const CARBOHYDRATES: &[&str] = &[
     "GLC", "BGC", "GAL", "GLA", "MAN", "BMA", "FUC", "NAG", "NDG", "SIA",
-];
-const ION_COMPONENTS: &[&str] = &[
-    "NA", "K", "CL", "CA", "MG", "ZN", "FE", "MN", "CU", "CO", "NI", "CD", "HG", "BR", "IOD",
 ];

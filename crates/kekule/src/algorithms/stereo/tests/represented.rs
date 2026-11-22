@@ -302,32 +302,6 @@ fn terminal_ligand_equivalence_is_hydrogen_representation_invariant() {
 }
 
 #[test]
-fn ring_double_bond_eligibility_depends_on_size_not_carbon_endpoints() {
-    for (input, expected) in [
-        ("C1=NCCCCC1", 0),
-        ("C1=NCCCCCC1", 1),
-        ("C1=NNCCCCC1", 1),
-        ("N1=NCCCCCC1", 1),
-        ("C1=CCCCCCC1", 1),
-    ] {
-        let mut molecule = read_smiles(input).unwrap();
-        perceive(&mut molecule).unwrap();
-        let doubles = stereo_api::cleanup::detect_stereo_candidates(&molecule, Default::default())
-            .unwrap()
-            .into_iter()
-            .filter(|candidate| matches!(candidate, StereoCandidate::DoubleBond { .. }))
-            .count();
-        assert_eq!(doubles, expected, "{input}");
-    }
-    let source = read_smiles(r"C1/N=C\CCCCC1").expect("eight-membered imine source geometry");
-    assert_eq!(source.stereo_elements().count(), 1);
-    assert!(
-        read_smiles(r"C1/N=C\CCCC1").is_err(),
-        "seven-membered ring remains excluded"
-    );
-}
-
-#[test]
 fn perception_installation_rejects_a_descriptor_for_the_wrong_stereo_geometry() {
     let (axis, positions, _) = coordinate_axis_graph(true);
     let mut editor = axis.into_editor();

@@ -44,13 +44,17 @@ const GEOMETRY_CARRIES: Carries = Carries {
 pub(crate) fn topology_omissions(topology: &Topology) -> WriteReport {
     let (mut hydrogens, mut charges, mut isotopes, mut radicals, mut maps, mut sites) =
         (0, 0, 0, 0, 0, 0);
+    let mut first_charged = None;
     for &atom_id in topology.atom_ids() {
         let view = topology
             .atom(atom_id)
             .expect("dense topology atom IDs name topology atoms");
         let atom = view.atom();
         hydrogens += usize::from(view.implicit_hydrogens() != Some(0));
-        charges += usize::from(atom.formal_charge() != 0);
+        if atom.formal_charge() != 0 {
+            charges += 1;
+            first_charged.get_or_insert(atom_id);
+        }
         isotopes += usize::from(atom.isotope().is_some());
         radicals += usize::from(atom.radical().is_some());
         maps += usize::from(atom.atom_map().is_some());
@@ -71,7 +75,10 @@ pub(crate) fn topology_omissions(topology: &Topology) -> WriteReport {
             bonds: topology.bond_count(),
         },
         WriteOmission::ImplicitHydrogens { atoms: hydrogens },
-        WriteOmission::FormalCharges { atoms: charges },
+        WriteOmission::FormalCharges {
+            atoms: charges,
+            first: first_charged,
+        },
         WriteOmission::Isotopes { atoms: isotopes },
         WriteOmission::Radicals { atoms: radicals },
         WriteOmission::AtomMaps { atoms: maps },

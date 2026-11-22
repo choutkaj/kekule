@@ -7,13 +7,16 @@ are attached hydrogens represented without separate atoms.
 
 | Method | Counts | Return value |
 | --- | --- | --- |
-| `explicit_hydrogens(atom)` | Hydrogen neighbors in the graph, including isotopic H | `Result<usize>` |
+| `explicit_hydrogens(atom)` | Hydrogen neighbors in the graph joined by bonds of order one or more, including isotopic H | `Result<usize>` |
 | `implicit_hydrogens(atom)` | Non-graph hydrogens | `Result<Option<usize>>` |
 | `total_hydrogens(atom)` | Explicit plus implicit hydrogens | `Result<Option<usize>>` |
 
 The error type depends on the owner. Invalid atom IDs return an error. `None`
 means an inferred count is unresolved; it never means zero. These getters
-neither mutate the graph nor run perception.
+neither mutate the graph nor run perception. A hydrogen joined only by a
+zero-order or dative bond is not counted, as valence does not count it.
+`descriptors::molecular_formula` and the masses count every hydrogen and fail
+on an unresolved count.
 
 ## Fixed and inferred counts
 
@@ -28,11 +31,31 @@ either wholly fixed or wholly inferred:
 For example, `C` infers its count, `[CH4]` fixes four implicit hydrogens, and
 `[C]` fixes zero. `[H][CH3]` has one explicit hydrogen and three fixed implicit
 ones. SMILES bracket notation fixes a count; it does not create hydrogen atoms.
+
+The valence model infers no hydrogens on alkali, alkaline-earth, and p-block
+metals: an unbonded neutral sodium is Na, not NaH, and a tin atom with three
+carbons is not a stannane. Nor does a hydrogen atom joined only by zero-order
+or dative bonds take a hydrogen of its own. Molfile and PDB or mmCIF
+interpretation report a metal whose valence its element does not allow.
+
 Molfile atoms fix their count only when they declare a valence (the V2000
 valence field or V3000 `VAL`). The V2000 hydrogen-count field and V3000
 `HCOUNT` are query constraints ("at least n hydrogens"), not hydrogen
 declarations: a nonzero value is unsupported content, rejected by default or
 reported and omitted on request.
+
+A Molfile atom without a declared valence whose bonds imply a charge takes
+the charge, not hydrogens. An onium centre, a neutral atom with more bonded
+neighbors than its default valence such as the sulfur of trimethylsulfonium,
+takes +1. A neutral atom with more bonds than any neutral valence allows, such
+as a quaternary nitrogen, takes +1 or -1. A singly bonded chalcogen with no
+other non-metal neighbor, or a boron or aluminium neighbor, takes -1 with its
++1, so DMSO drawn with a single S-O bond is S+ with O-. A non-metal atom
+bonded to metals whose bond valence its element allows only with some of those
+bonds not counted, such as the phosphorus of a phosphine on palladium, is a
+donor: it keeps its charge and takes no hydrogens. The Molfile writers declare
+a valence wherever this reader or the default-valence rule of other readers
+would infer a different count, and write dative bonds toward their metal end.
 
 Chemical edits invalidate inferred counts. After reperception, an inferred
 count can change with bond order or charge. Topology and structure edits keep a
@@ -109,4 +132,5 @@ Kekule 0.3.0 changes this API and its behavior from 0.2.1:
 | Adjustment `explicit_hydrogens` / `implicit_hydrogens` (`u8`) | `usize` counts, plus `hydrogens` (the resulting declaration) |
 | `HydrogenTransformError::HydrogenCountNotPreserved` | Removed; collapse preserves counts by construction |
 
-`HydrogenCountPolicy::StoredOnly` now counts graph hydrogens and fixed counts.
+`HydrogenCountPolicy` is removed: formula and masses take no policy and count
+every hydrogen.

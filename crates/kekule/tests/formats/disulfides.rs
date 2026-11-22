@@ -276,7 +276,9 @@ fn heavy_atom_cysteines_within_bonding_distance_are_bonded() {
 }
 
 #[test]
-fn cysteines_without_a_disulfide_keep_their_thiolates() {
+fn cysteines_without_a_disulfide_or_their_hg_stay_neutral() {
+    // A thiol without its hydrogen is deprotonated only on evidence: a
+    // stated charge or metal coordination.
     let apart = read_pdb(&cystine_pdb("CYS", true, 20.0, &[]), Default::default());
     let no_inference = read_pdb(
         &cystine_pdb("CYS", true, 0.0, &[]),
@@ -289,7 +291,17 @@ fn cysteines_without_a_disulfide_keep_their_thiolates() {
         assert_eq!(inferred(&result), 0);
         let (structure, charges) = perceived(&result);
         assert_eq!(structure.topology().instance_count(), 2);
-        assert_eq!(charges, [-1, -1]);
+        assert_eq!(charges, Vec::<i8>::new());
+        let missing = result
+            .report()
+            .issues()
+            .iter()
+            .filter_map(|issue| match issue {
+                StructureInterpretIssue::HydrogensMissing { atoms, .. } => Some(atoms.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(missing, [["SG"], ["SG"]]);
     }
 }
 

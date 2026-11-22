@@ -2,9 +2,12 @@
 //! projected against them.
 use std::collections::BTreeMap;
 
+use crate::algorithms::{
+    is_metal, onium_hydrogens, rdkit_inferred_hydrogen_count, rdkit_reader_hydrogens,
+};
 use crate::io::{project_molfile_stereo_bond_marks, AtomPositionSource, SourceStereoBondMarkKind};
 use crate::math::Point3;
-use crate::molecule::{Atom, AtomId, BondId, BondOrder, Molecule};
+use crate::molecule::{Atom, AtomId, BondId, BondOrder, ImplicitHydrogens, Molecule};
 use crate::stereo::{StereoElementKind, StereoGroupKind};
 use crate::structure::StructureView;
 use crate::topology::{InstanceAtomId, MoleculeInstanceId};
@@ -14,12 +17,27 @@ use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::molfile::interpret::{
     materialize_molfile_stereo_hydrogens, molfile_coordinate_double_bonds,
     molfile_coordinate_tetrahedra, molfile_coordinates_are_flat,
-    molfile_stereo_group_members_at_atom, MolfileInterpretIssue,
+    molfile_stereo_group_members_at_atom,
 };
 use crate::io::write_policy::MOLFILE_WRITE;
 use crate::io::MolfileVersion;
 
 const PROGRAM: &str = "kekule";
+
+/// The hydrogens a writer states, as a valence, for an atom with inferred
+/// hydrogens that a reader would read otherwise: those of an onium centre,
+/// which this crate's reader charges instead, and a count that differs from
+/// RDKit's rule, which Molfile readers share, as the none of a metal atom.
+pub(super) fn stated_inferred_hydrogens(
+    molecule: &Molecule,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<u8> {
+    onium_hydrogens(molecule, atom_id, atom).or_else(|| {
+        let hydrogens = rdkit_inferred_hydrogen_count(molecule, atom_id, atom);
+        (hydrogens != rdkit_reader_hydrogens(molecule, atom_id, atom)).then_some(hydrogens)
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ComponentKey {
@@ -103,9 +121,11 @@ impl<'a> MolfileRecord<'a> {
                     bond.endpoints(),
                     &projected,
                     &indexes,
+                    &|atom| is_metal_atom(molecule, atom),
                 )
             })
             .collect::<Vec<_>>();
+        check_dative_acceptors(&atoms, &bonds)?;
         let stereo_groups =
             project_stereo_groups(molecule, |atom| indexes[&(ComponentKey::Molecule, atom)])?;
         Ok(Self {
@@ -192,8 +212,10 @@ impl<'a> MolfileRecord<'a> {
                 bond.endpoints(),
                 projected,
                 &indexes,
+                &|atom| is_metal_atom(view.instance().molecule(), atom),
             ));
         }
+        check_dative_acceptors(&atoms, &bonds)?;
         // Readers such as RDKit take any nonzero z as 3D, then derive stereo
         // from coordinates and ignore bond marks. A flat drawing whose marks
         // carry stereo is emitted on z = 0, which moves no mark because XY is
@@ -242,6 +264,43 @@ fn asserts_absolute_stereo(molecule: &Molecule) -> bool {
     })
 }
 
+fn is_metal_atom(molecule: &Molecule, atom: AtomId) -> bool {
+    molecule
+        .atom(atom)
+        .is_some_and(|atom| is_metal(atom.element))
+}
+
+/// Readers such as RDKit count a dative bond toward the valence of its
+/// second atom, the acceptor, and none of them gives that atom back the
+/// hydrogens this crate's model infers with the bond not counted. A metal
+/// takes no hydrogens, so a metal acceptor reads back unchanged.
+fn check_dative_acceptors(
+    atoms: &[MolfileAtom<'_>],
+    bonds: &[MolfileBond],
+) -> Result<(), FormatError> {
+    for bond in bonds.iter().filter(|bond| bond.order == BondOrder::Dative) {
+        let acceptor = &atoms[usize::try_from(bond.to - 1).expect("serials index atoms")];
+        if is_metal(acceptor.atom.element) {
+            continue;
+        }
+        let hydrogens = match acceptor.atom.hydrogens {
+            ImplicitHydrogens::Fixed(count) => count,
+            ImplicitHydrogens::Inferred => {
+                rdkit_inferred_hydrogen_count(acceptor.molecule, acceptor.id, acceptor.atom)
+            }
+        };
+        if hydrogens > 0 {
+            return Err(MOLFILE_WRITE.unsupported(format!(
+                "Molfile readers count a dative bond toward its acceptor, {}, so they would read \
+                 fewer hydrogens on it. Add its hydrogens as atoms, or bond it another way.",
+                acceptor.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prepare_bond(
     component: ComponentKey,
     id: BondId,
@@ -249,8 +308,17 @@ fn prepare_bond(
     endpoints: (AtomId, AtomId),
     projected: &BTreeMap<BondId, (AtomId, SourceStereoBondMarkKind)>,
     indexes: &BTreeMap<(ComponentKey, AtomId), u64>,
+    is_metal: &dyn Fn(AtomId) -> bool,
 ) -> MolfileBond {
     let projection = projected.get(&id).copied();
+    // A dative bond is written toward its metal end, which readers take as
+    // the acceptor.
+    let endpoints = if order == BondOrder::Dative && is_metal(endpoints.0) && !is_metal(endpoints.1)
+    {
+        (endpoints.1, endpoints.0)
+    } else {
+        endpoints
+    };
     let (from, to) = projection
         .map(|(from, _)| {
             let other = if endpoints.0 == from {
@@ -279,26 +347,19 @@ fn stereo_projections(
     // makes no assertion, so writing a conformation cannot invent chemistry.
     let staged;
     let molecule = if let Some(geometry) = geometry {
-        let mut warnings = Vec::new();
-        let inferred =
-            molfile_coordinate_tetrahedra(molecule, geometry, &mut warnings).map_err(|error| {
+        let inferred = molfile_coordinate_tetrahedra(molecule, geometry)
+            .map_err(|error| {
                 MOLFILE_WRITE
                     .invalid_structure("Cannot perceive stereo from the 3D coordinates.")
                     .with_source(error)
+            })?
+            .map_err(|valence| {
+                MOLFILE_WRITE
+                    .unsupported(
+                        "Cannot check that the 3D coordinates keep the stereo of the molecule.",
+                    )
+                    .with_source(valence)
             })?;
-        if !warnings.is_empty() {
-            let error = MOLFILE_WRITE.unsupported(
-                "Cannot check that the 3D coordinates keep the stereo of the molecule.",
-            );
-            let valence = warnings.into_iter().find_map(|warning| match warning {
-                MolfileInterpretIssue::CoordinateStereoValenceUnsupported { error } => Some(error),
-                _ => None,
-            });
-            return Err(match valence {
-                Some(cause) => error.with_source(cause),
-                None => error,
-            });
-        }
         if inferred.is_empty() {
             molecule
         } else {

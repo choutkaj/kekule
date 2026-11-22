@@ -163,6 +163,7 @@ pub(super) fn component_from_block(block: &MmcifBlock) -> Result<Component, Form
             .unwrap_or_default(),
         id,
         variant: None,
+        force_field: None,
         atoms,
         bonds,
     })

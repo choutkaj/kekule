@@ -1,11 +1,13 @@
 //! Public writer API and orchestration of planning, preparation, and emission.
+use crate::components::ComponentLibrary;
 use crate::diagnostics::{
     AtomField, Capitalized, CellReason, DiagnosticKind, Format, FormatError, FormatErrorDetail,
     GeometryField,
 };
 use crate::diagnostics::{Countable, LengthMismatch};
 use crate::io::macromolecular::{
-    EntityKind, StructureInterpretation, StructureInterpretationReport, StructureSetInterpretation,
+    EntityKind, Signed, StructureInterpretation, StructureInterpretationReport,
+    StructureSetInterpretation,
 };
 use crate::io::write_policy::{
     check_geometry_state, record_multi_model_structure_set, record_structure_set_properties,
@@ -19,6 +21,7 @@ use crate::topology::{InstanceAtomId, InstanceBondId, MoleculeClass, MoleculeIns
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::io::Write;
+use std::sync::Arc;
 
 mod emit;
 mod entities;
@@ -55,6 +58,7 @@ pub struct MmcifWriteOptions {
     cell: UnrepresentablePolicy,
     implicit_hydrogens: UnrepresentablePolicy,
     chemistry: UnrepresentablePolicy,
+    components: Option<Arc<ComponentLibrary>>,
 }
 
 impl MmcifWriteOptions {
@@ -167,11 +171,16 @@ impl MmcifWriteOptions {
     }
 
     /// Fixed implicit-hydrogen counts, which mmCIF cannot carry: readers
-    /// infer implicit hydrogens from valence. By default an atom with one
-    /// fails to write; [`UnrepresentablePolicy::Omit`] writes it without the
-    /// count and reports [`WriteOmission::ImplicitHydrogens`]. Structures
-    /// whose files list every atom, such as XYZ interpretations, fix their
-    /// counts at zero.
+    /// infer implicit hydrogens from valence. A count readers fix again is
+    /// written as it is: that of an atom whose residue lacks a leaving atom
+    /// bonded to it, such as the carbonyl carbon of a residue without `OXT`,
+    /// or of a polymer linking atom whose neighbour the chain lacks, such as
+    /// the `N` after a gap.
+    /// By default another atom with one fails to write;
+    /// [`UnrepresentablePolicy::Omit`] writes it without the count and
+    /// reports [`WriteOmission::ImplicitHydrogens`]. Structures whose files
+    /// list every atom, such as XYZ interpretations, fix their counts at
+    /// zero.
     pub const fn implicit_hydrogens(&self) -> UnrepresentablePolicy {
         self.implicit_hydrogens
     }
@@ -185,12 +194,16 @@ impl MmcifWriteOptions {
 
     /// Other represented chemistry mmCIF cannot carry: isotopes other than
     /// deuterium and tritium, radicals, atom maps, represented stereo, and
-    /// zero-order bonds, which `_struct_conn` cannot state. By default it
-    /// fails to write; [`UnrepresentablePolicy::Omit`] writes the rows
-    /// without it and reports each kind left out
+    /// zero-order bonds, which `_struct_conn` cannot state, and bonds a
+    /// dictionary residue lacks, which a reader adds back
+    /// ([`MmcifWriteErrorKind::DictionaryBondMissing`]), and charges readers
+    /// derive differently ([`MmcifWriteErrorKind::ChargeNotReadBack`]). By
+    /// default it fails to write; [`UnrepresentablePolicy::Omit`] writes the
+    /// rows without it and reports each kind left out
     /// ([`WriteOmission::Isotopes`], [`WriteOmission::Radicals`],
-    /// [`WriteOmission::AtomMaps`], [`WriteOmission::Stereo`], and
-    /// [`WriteOmission::Bonds`]). An omitted isotope is written as its
+    /// [`WriteOmission::AtomMaps`], [`WriteOmission::Stereo`],
+    /// [`WriteOmission::Bonds`], [`WriteOmission::DictionaryBonds`], and
+    /// [`WriteOmission::FormalCharges`]). An omitted isotope is written as its
     /// element. mmCIF readers read no stereo, but the coordinates still
     /// define it, and [`crate::stereo::coordinates`] infers it from them.
     /// Fixed implicit-hydrogen counts have their own policy,
@@ -205,6 +218,22 @@ impl MmcifWriteOptions {
         self.chemistry = chemistry;
         self
     }
+
+    /// The templates readers of the block consult before the bundled ones,
+    /// as [`ConnectivityOptions::components`](crate::macromolecular::ConnectivityOptions::components)
+    /// gives them. The writer leaves out the bonds and fixed hydrogen
+    /// counts that reading with them gives back. `None` by default: readers
+    /// use the bundled templates.
+    pub fn components(&self) -> Option<&Arc<ComponentLibrary>> {
+        self.components.as_ref()
+    }
+
+    /// Sets [`Self::components`].
+    #[must_use]
+    pub fn with_components(mut self, components: Option<Arc<ComponentLibrary>>) -> Self {
+        self.components = components;
+        self
+    }
 }
 
 impl Default for MmcifWriteOptions {
@@ -217,6 +246,7 @@ impl Default for MmcifWriteOptions {
             cell: UnrepresentablePolicy::Fail,
             implicit_hydrogens: UnrepresentablePolicy::Fail,
             chemistry: UnrepresentablePolicy::Fail,
+            components: None,
         }
     }
 }
@@ -337,6 +367,27 @@ pub enum MmcifWriteErrorKind {
         /// Its order.
         order: BondOrder,
     },
+    /// A residue the component dictionary covers lacks a bond its template
+    /// has between these two heavy atoms, which a reader adds to the
+    /// residue whatever `_struct_conn` states, with
+    /// [`MmcifWriteOptions::chemistry`] set to fail.
+    DictionaryBondMissing {
+        /// The two atoms.
+        atoms: [InstanceAtomId; 2],
+    },
+    /// A reader gives the atom another charge than the structure's, with
+    /// [`MmcifWriteOptions::chemistry`] set to fail. Readers derive the
+    /// charges of residues the dictionary covers, and ignore a stated 0 in
+    /// a residue without hydrogens: a neutral lysine `NZ` without
+    /// hydrogens reads as +1.
+    ChargeNotReadBack {
+        /// The atom.
+        atom: InstanceAtomId,
+        /// The structure's charge, in e.
+        charge: i8,
+        /// The charge a reader gives it, in e.
+        read: i8,
+    },
     /// A `_struct_conn` partner cannot select this atom unambiguously.
     AmbiguousConnectionSelector(InstanceAtomId),
     /// A text value cannot be written as a single mmCIF token, for example
@@ -418,6 +469,8 @@ impl MmcifWriteErrorKind {
             | Self::FormalChargeOutOfRange { .. }
             | Self::UnsupportedStereo(_)
             | Self::UnsupportedBondOrder { .. }
+            | Self::DictionaryBondMissing { .. }
+            | Self::ChargeNotReadBack { .. }
             | Self::AmbiguousConnectionSelector(_)
             | Self::UnsupportedTextValue { .. }
             | Self::UnrepresentableGeometry { .. }
@@ -562,6 +615,20 @@ impl fmt::Display for MmcifWriteErrorKind {
                 f,
                 "The {} order of {bond} has no mmCIF representation.",
                 bond_order_name(*order)
+            ),
+            Self::ChargeNotReadBack { atom, charge, read } => write!(
+                f,
+                "{} has charge {}. An mmCIF reader gives it {}.",
+                Capitalized(atom),
+                Signed(*charge),
+                Signed(*read)
+            ),
+            Self::DictionaryBondMissing {
+                atoms: [left, right],
+            } => write!(
+                f,
+                "{} and {right} are not bonded, but the component dictionary bonds them.",
+                Capitalized(left)
             ),
             Self::AmbiguousConnectionSelector(atom) => write!(
                 f,
@@ -750,17 +817,21 @@ impl MmcifEntityClassifications {
 ///
 /// Entity kinds follow canonical classification; hierarchy alone does not
 /// establish polymer status. The writer states only the bonds its reader
-/// cannot derive, and states a residue's bonds whole or not at all, since one
-/// stated internal bond makes the reader take all of that residue's bonds
-/// from the source.
+/// cannot derive, and states a residue's bonds whole or not at all. A reader
+/// applies a residue's template whatever `_struct_conn` states, keeping
+/// stated bonds and orders the template does not give, so a residue that
+/// lacks a template bond cannot be written as it is (see
+/// [`MmcifWriteErrorKind::DictionaryBondMissing`]).
 ///
 /// Every hierarchy chain is a structural instance of its own, even when
 /// chains share a label, as the copies
 /// [`StructureEditor::append_structure`](crate::structure::StructureEditor::append_structure)
 /// appends do. The first chain with a label keeps it as `label_asym_id`; each
 /// later one is written as the label with a copy serial, `A-2`, `A-3`, and so
-/// on, skipping IDs another chain or asym uses, while `auth_asym_id` keeps
-/// the author chain name, which falls back to the label. Reading the block
+/// on, skipping IDs another chain or asym uses. A chain without a label
+/// takes the first of `A`, `B`, and so on that no chain or asym uses.
+/// `auth_asym_id` keeps the author chain name, which falls back to the
+/// written asym ID. Reading the block
 /// back gives the same chains, residues, atoms, and bonds, in the same order
 /// and under the same author names, with the written asym IDs as their
 /// labels. The hierarchy itself keeps labels as appended, since a label
@@ -912,8 +983,8 @@ pub(crate) fn write_mmcif<'a, B: Into<MmcifBlockSource<'a>>>(
 /// A block with its own [`MmcifBlockSource::block_name`] takes it. Otherwise a
 /// single block is named [`MmcifWriteOptions::block_name`], and among several
 /// blocks the one at 1-based position `n` is named `{block_name}_n`. Rows
-/// follow dense atom order, and `_struct_conn` states the bonds the reader
-/// does not derive (see the `implied` module).
+/// follow dense atom order, and `_chem_comp_bond` and `_struct_conn` state
+/// the bonds the reader does not derive (see the `implied` module).
 pub(crate) fn write_mmcif_to<'a, B: Into<MmcifBlockSource<'a>>>(
     writer: &mut impl Write,
     blocks: impl IntoIterator<Item = B>,

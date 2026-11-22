@@ -1,16 +1,18 @@
 //! Validate represented chemistry and prepare ordered atom/connection rows.
 use super::entities::{AssignedEntityKind, AsymRow, AtomEntityAssignment, EntityPlan, EntityRow};
-use super::implied::{mark_implied, residue_key};
+use super::implied::{mark_implied, residue_key, ComponentTable, ReadBlock};
 use super::one_based_serial;
 use super::{fail, invalid_structure, MmcifSharedCategory, MmcifWriteErrorKind, MmcifWriteOptions};
+use crate::components::ComponentLibrary;
 use crate::diagnostics::AtomField;
 use crate::diagnostics::{Capitalized, FormatError};
 use crate::io::element_symbol::structure_element_symbol;
+use crate::io::macromolecular::connectivity::{dictionary_template, link_sides};
 use crate::io::{UnrepresentablePolicy, WriteOmission};
 use crate::math::Point3;
 use crate::molecule::{Atom, AtomId, BondOrder, ImplicitHydrogens};
 use crate::structure::StructureView;
-use crate::topology::{Hierarchy, InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId};
+use crate::topology::{InstanceAtomId, MoleculeDefinition, MoleculeInstance, ResidueId};
 use crate::units::ANGSTROM;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,6 +46,9 @@ pub(super) struct ConnectionRow {
     pub(super) left: InstanceAtomId,
     pub(super) right: InstanceAtomId,
     pub(super) order: BondOrder,
+    /// Perceived aromaticity, `None` before perception and for
+    /// coordination between residues.
+    pub(super) aromatic: Option<bool>,
     /// How the reader derives the bond, or `None` when the block states it.
     pub(super) implied: Option<Implied>,
 }
@@ -57,14 +62,21 @@ pub(super) enum Implied {
     /// Polymer linkage between residues adjacent in sequence, within bonding
     /// distance in the written coordinates.
     PolymerLink,
+    /// The block's own `_chem_comp_bond` table of a component no template
+    /// covers.
+    ComponentTable,
 }
 
 #[derive(Debug)]
 pub(super) struct PreparedModel {
     pub(super) entities: Vec<EntityRow>,
     pub(super) asyms: Vec<AsymRow>,
+    /// Each polymer entity's monomers, `_entity_poly_seq`, numbered from 1.
+    pub(super) sequences: Vec<(String, Vec<String>)>,
     pub(super) atoms: Vec<AtomRow>,
     pub(super) connections: Vec<ConnectionRow>,
+    /// The `_chem_comp_bond` tables of components no template covers.
+    pub(super) component_tables: Vec<ComponentTable>,
     /// What the rows leave out, in report order: fixed implicit-hydrogen
     /// counts; the chemistry [`MmcifWriteOptions::chemistry`] omits;
     /// interpretation-report coordination records that no longer match the
@@ -97,11 +109,11 @@ pub(super) fn prepare_model(
         atoms: assignments,
         coordination,
         omitted_coordination,
+        sequences: known,
     } = plan;
 
     let mut atoms = Vec::new();
     let mut omitted = OmittedChemistry::default();
-    let hierarchy = structure.topology().hierarchy();
     for (id, molecule) in structure.topology().instance_records() {
         let definition = structure
             .topology()
@@ -129,7 +141,8 @@ pub(super) fn prepare_model(
             .atom_index(row.atom)
             .expect("prepared atom-site row references a topology atom")
     });
-    number_unsequenced_polymers(&mut atoms, &entities, &asyms, hierarchy);
+    let library = options.components().map(|library| &**library);
+    number_unsequenced_polymers(&mut atoms, &entities, &asyms, structure, library);
 
     let atom_indexes = atoms
         .iter()
@@ -154,6 +167,7 @@ pub(super) fn prepare_model(
             left,
             right,
             order: bond.order,
+            aromatic: bond.is_aromatic(),
             implied: None,
         });
     }
@@ -167,13 +181,100 @@ pub(super) fn prepare_model(
                 .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    mark_implied(
+    // A sequence continues past the last modelled residue where the report
+    // says so, or where its linking atom has a gap's fixed hydrogens.
+    let mut lengths = sequence_lengths(&atoms, &entities, &known);
+    let read_block = |lengths: &BTreeMap<String, i32>| {
+        ReadBlock::new(
+            library,
+            &atoms,
+            &elements,
+            &connections,
+            &coordination,
+            &atom_indexes,
+            options.coordinate_precision,
+            lengths,
+        )
+    };
+    let mut block = read_block(&lengths);
+    let open = open_after(
+        &atoms,
+        &block.fixed_hydrogens(&elements),
+        structure,
+        library,
+        &lengths,
+    );
+    if !open.is_empty() {
+        for entity in &open {
+            if let Some(length) = lengths.get_mut(entity) {
+                *length += 1;
+            }
+        }
+        block = read_block(&lengths);
+    }
+    let sequences = entity_sequences(&atoms, &lengths, &known);
+    let polymer_entities = entities
+        .iter()
+        .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
+        .map(|entity| entity.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let (component_tables, missing) = mark_implied(
+        &block,
         &atoms,
         &elements,
         &mut connections,
         &atom_indexes,
         options.coordinate_precision,
+        |row| polymer_entities.contains(row.entity_id.as_str()),
     );
+    if let Some(&[left, right]) = missing.first() {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::DictionaryBondMissing {
+                atoms: [atoms[left].atom, atoms[right].atom],
+            }));
+        }
+    }
+    // Fixed hydrogen counts have no mmCIF item; those a reader fixes again
+    // are written as they are.
+    let fixed = block.fixed_hydrogens(&elements);
+    for (index, row) in atoms.iter().enumerate() {
+        let hydrogens = structure
+            .topology()
+            .atom(row.atom)
+            .map(|atom| atom.atom().hydrogens)
+            .ok_or_else(|| invalid_structure(format!("The topology has no {}.", row.atom)))?;
+        if hydrogens == ImplicitHydrogens::default()
+            || fixed
+                .get(&index)
+                .map(|&count| ImplicitHydrogens::Fixed(count))
+                == Some(hydrogens)
+        {
+            continue;
+        }
+        if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
+                atom: row.atom,
+                field: AtomField::Hydrogens,
+            }));
+        }
+        omitted.hydrogens += 1;
+    }
+    // Readers derive the charges of templated residues. One they derive
+    // differently, such as a stated 0 a residue without hydrogens ignores,
+    // has no row that states it.
+    let unread = block.unread_charges(&atoms, &connections);
+    let first_unread = unread
+        .first_key_value()
+        .map(|(&row, &read)| (atoms[row].atom, atoms[row].formal_charge, read));
+    if let Some((atom, charge, read)) = first_unread {
+        if options.chemistry == UnrepresentablePolicy::Fail {
+            return Err(fail(MmcifWriteErrorKind::ChargeNotReadBack {
+                atom,
+                charge,
+                read,
+            }));
+        }
+    }
     // Readers record coordination between residues rather than bond it, so
     // a structure's dative bond between residues does not read back as a bond.
     let coordination_bonds = connections
@@ -190,23 +291,28 @@ pub(super) fn prepare_model(
         left,
         right,
         order: BondOrder::Dative,
+        aromatic: None,
         implied: None,
     }));
     // A polymer link another geometry stretches beyond bonding
     // distance is stated after all, so its partners are checked too.
     let selectors = ConnectionSelectors::new(&atoms);
-    for connection in connections
-        .iter()
-        .filter(|connection| connection.implied != Some(Implied::Template))
-    {
+    for connection in connections.iter().filter(|connection| {
+        !matches!(
+            connection.implied,
+            Some(Implied::Template | Implied::ComponentTable)
+        )
+    }) {
         selectors.validate(connection.left, &atoms, &atom_indexes)?;
         selectors.validate(connection.right, &atoms, &atom_indexes)?;
     }
     Ok(PreparedModel {
         entities,
         asyms,
+        sequences,
         atoms,
         connections,
+        component_tables,
         omissions: vec![
             WriteOmission::ImplicitHydrogens {
                 atoms: omitted.hydrogens,
@@ -231,6 +337,13 @@ pub(super) fn prepare_model(
             },
             WriteOmission::CoordinationBonds {
                 bonds: coordination_bonds,
+            },
+            WriteOmission::DictionaryBonds {
+                residues: missing.len(),
+            },
+            WriteOmission::FormalCharges {
+                atoms: unread.len(),
+                first: first_unread.map(|(atom, _, _)| atom),
             },
         ],
     })
@@ -280,15 +393,6 @@ fn validate_graph_chemistry(
                 AtomField::Radical => omitted.radicals += 1,
                 _ => omitted.atom_maps += 1,
             }
-        }
-        if atom.hydrogens != ImplicitHydrogens::default() {
-            if options.implicit_hydrogens == UnrepresentablePolicy::Fail {
-                return Err(fail(MmcifWriteErrorKind::UnsupportedAtomField {
-                    atom: atom_id,
-                    field: AtomField::Hydrogens,
-                }));
-            }
-            omitted.hydrogens += 1;
         }
         if !(-8..=8).contains(&atom.formal_charge) {
             return Err(fail(MmcifWriteErrorKind::FormalChargeOutOfRange {
@@ -381,12 +485,15 @@ fn collect_macro_rows(
                 .author_comp_id()
                 .map(str::to_owned)
                 .unwrap_or(label_comp_id),
+            // A blank author chain, as a PDB chain column states, takes the
+            // written asym ID.
             auth_asym_id: site
                 .metadata()
                 .auth_asym_id
                 .clone()
                 .or_else(|| chain.author_id().map(str::to_owned))
-                .unwrap_or_else(|| chain.label_id().to_owned()),
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| assignment.asym_id.clone()),
             auth_atom_id: site
                 .metadata()
                 .auth_atom_id
@@ -532,14 +639,18 @@ impl<'a> ConnectionSelectors<'a> {
 
 /// mmCIF sequences every polymer residue by `label_seq_id`. Sources that
 /// number residues by author alone, as PDB does, leave a polymer asym without
-/// one; its residues are numbered from 1 in chain order. Unobserved residues
-/// are unknown, so the numbers count observed residues only.
+/// one; its residues are numbered in chain order. Unobserved residues are
+/// unknown, so the numbers count observed residues only. They start at 2
+/// when the first residue's linking atom has a fixed hydrogen count, as an
+/// `N` after a gap does, so readers keep the chain open there.
 fn number_unsequenced_polymers(
     rows: &mut [AtomRow],
     entities: &[EntityRow],
     asyms: &[AsymRow],
-    hierarchy: &Hierarchy,
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
 ) {
+    let hierarchy = structure.topology().hierarchy();
     let polymers = entities
         .iter()
         .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
@@ -572,11 +683,155 @@ fn number_unsequenced_polymers(
             .into_iter()
             .collect::<Vec<_>>();
         residues.sort_by_key(|residue| chain_position(*residue));
-        let numbers = residues.into_iter().zip(1..).collect::<BTreeMap<_, i32>>();
+        let open = residues
+            .first()
+            .is_some_and(|&first| opens_before(rows, first, structure, library));
+        let numbers = residues
+            .into_iter()
+            .zip(if open { 2 } else { 1 }..)
+            .collect::<BTreeMap<_, i32>>();
         for row in rows.iter_mut().filter(in_asym) {
             row.label_seq_id = row.residue.map(|residue| numbers[&residue]);
         }
     }
+}
+
+/// Whether the leading linking atom of `residue`, a peptide's `N` or a
+/// nucleotide's `P`, has a fixed hydrogen count and no bond to another
+/// residue: the chain continues before it.
+fn opens_before(
+    rows: &[AtomRow],
+    residue: ResidueId,
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
+) -> bool {
+    let topology = structure.topology();
+    rows.iter()
+        .filter(|row| row.residue == Some(residue))
+        .any(|row| {
+            let Some((component, _)) = dictionary_template(library, &row.label_comp_id) else {
+                return false;
+            };
+            if !link_sides(component.linking())[0].contains(&row.label_atom_id.as_str()) {
+                return false;
+            }
+            let Some(atom) = topology.atom(row.atom) else {
+                return false;
+            };
+            matches!(atom.atom().hydrogens, ImplicitHydrogens::Fixed(_))
+                && !topology.bonds().any(|bond| {
+                    let [a, b] = bond.atoms().map(|atom| atom.id());
+                    let other = match (a == row.atom, b == row.atom) {
+                        (true, _) => b,
+                        (_, true) => a,
+                        _ => return false,
+                    };
+                    rows.iter()
+                        .find(|candidate| candidate.atom == other)
+                        .is_none_or(|candidate| candidate.residue != Some(residue))
+                })
+        })
+}
+
+/// The number of monomers of each polymer entity's sequence, by entity ID:
+/// its last numbered residue's, or the report's last monomer's.
+fn sequence_lengths(
+    rows: &[AtomRow],
+    entities: &[EntityRow],
+    known: &BTreeMap<String, BTreeMap<i32, String>>,
+) -> BTreeMap<String, i32> {
+    let mut lengths = BTreeMap::new();
+    for entity in entities
+        .iter()
+        .filter(|entity| entity.kind == AssignedEntityKind::Polymer)
+    {
+        let modelled = rows
+            .iter()
+            .filter(|row| row.entity_id == entity.id)
+            .filter_map(|row| row.label_seq_id)
+            .max();
+        let stated = known
+            .get(&entity.id)
+            .and_then(|monomers| monomers.keys().copied().max());
+        if let Some(length) = modelled.max(stated) {
+            lengths.insert(entity.id.clone(), length);
+        }
+    }
+    lengths
+}
+
+/// The polymer entities whose last monomer is modelled, and whose linking
+/// atom to the next, a peptide's `C` or a nucleotide's `O3'`, has fixed
+/// hydrogens that readers do not fix again (`fixed`, by row): their
+/// sequence continues past it.
+fn open_after(
+    rows: &[AtomRow],
+    fixed: &BTreeMap<usize, u8>,
+    structure: StructureView<'_>,
+    library: Option<&ComponentLibrary>,
+    lengths: &BTreeMap<String, i32>,
+) -> BTreeSet<String> {
+    let topology = structure.topology();
+    rows.iter()
+        .enumerate()
+        .filter(|(index, row)| {
+            if row.label_seq_id.is_none()
+                || row.label_seq_id != lengths.get(&row.entity_id).copied()
+            {
+                return false;
+            }
+            let Some((component, _)) = dictionary_template(library, &row.label_comp_id) else {
+                return false;
+            };
+            if !link_sides(component.linking())[1].contains(&row.label_atom_id.as_str()) {
+                return false;
+            }
+            topology.atom(row.atom).is_some_and(|atom| {
+                matches!(atom.atom().hydrogens, ImplicitHydrogens::Fixed(count)
+                    if fixed.get(index) != Some(&count))
+            })
+        })
+        .map(|(_, row)| row.entity_id.clone())
+        .collect()
+}
+
+/// Each polymer entity's monomers: the modelled residue at each number, the
+/// report's monomer where none is modelled, and `UNK` where neither is
+/// known.
+fn entity_sequences(
+    rows: &[AtomRow],
+    lengths: &BTreeMap<String, i32>,
+    known: &BTreeMap<String, BTreeMap<i32, String>>,
+) -> Vec<(String, Vec<String>)> {
+    let mut modelled = BTreeMap::<(&str, i32), &str>::new();
+    for row in rows {
+        if let Some(position) = row.label_seq_id {
+            modelled
+                .entry((&row.entity_id, position))
+                .or_insert(&row.label_comp_id);
+        }
+    }
+    lengths
+        .iter()
+        .map(|(entity, &length)| {
+            let monomers = (1..=length)
+                .map(|number| {
+                    modelled
+                        .get(&(entity.as_str(), number))
+                        .copied()
+                        .or_else(|| {
+                            known
+                                .get(entity)
+                                .and_then(|monomers| monomers.get(&number))
+                                .map(String::as_str)
+                        })
+                        .unwrap_or("UNK")
+                        .to_owned()
+                })
+                .collect();
+            (entity.clone(), monomers)
+        })
+        .collect()
 }
 
 fn validate_atom_identities(rows: &[AtomRow]) -> Result<(), FormatError> {

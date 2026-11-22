@@ -462,10 +462,12 @@ fn mmcif_connectivity_matches_an_independent_reference() {
     // (`pdbx.get_structure(include_bonds=True, altloc="occupancy")`), which
     // resolves residue bonds from `_chem_comp_bond` or its own copy of the
     // Chemical Component Dictionary; it gives the same counts with and without
-    // the files' bond tables. Charged atoms count the LYS NZ, ARG NH2, and
-    // HIS ND1 sites the dictionary charges (+1), counted from the files.
+    // the files' bond tables. The files have no hydrogens, so residues take
+    // their pH 7 states: charged atoms count the LYS NZ, ARG NH2, and
+    // N-terminal N sites (+1) and the ASP, GLU, and C-terminal carboxylates
+    // (-1), counted from the files.
     for (name, text, atoms, bonds, largest, molecules, charged) in [
-        ("1CRN", CRAMBIN, 327, 337, vec![327], 1, 2),
+        ("1CRN", CRAMBIN, 327, 337, vec![327], 1, (3, 3)),
         (
             "1AKE",
             ADENYLATE_KINASE,
@@ -473,7 +475,7 @@ fn mmcif_connectivity_matches_an_independent_reference() {
             3484,
             vec![1656, 1656, 57, 57],
             382,
-            68,
+            (64, 72),
         ),
     ] {
         for stripped in [false, true] {
@@ -502,7 +504,21 @@ fn mmcif_connectivity_matches_an_independent_reference() {
             assert_eq!(topology.bond_count(), bonds, "{case}");
             assert_eq!(sizes.len(), molecules, "{case}");
             assert_eq!(&sizes[..largest.len()], largest.as_slice(), "{case}");
-            assert_eq!(charges, vec![1; charged], "{case}");
+            // Without bond tables, AP5's bonds come from atom distances, so
+            // the five phosphorus atoms of each of its two copies, with four
+            // single bonds, take +1 with a terminal oxygen's -1 instead of a
+            // hydrogen.
+            let separated = if stripped && name == "1AKE" { 10 } else { 0 };
+            let signs = (
+                charges.iter().filter(|&&charge| charge == 1).count(),
+                charges.iter().filter(|&&charge| charge == -1).count(),
+            );
+            assert_eq!(
+                signs,
+                (charged.0 + separated, charged.1 + separated),
+                "{case}"
+            );
+            assert_eq!(signs.0 + signs.1, charges.len(), "{case}");
             assert!(interpreted.report().instances().iter().all(|instance| {
                 instance.bonds().len()
                     == topology
@@ -523,6 +539,7 @@ fn mmcif_connectivity_matches_an_independent_reference() {
                         residue,
                         component_id,
                         bonds,
+                        ..
                     } => Some((residue.clone(), component_id.clone(), *bonds)),
                     _ => None,
                 })
@@ -580,7 +597,7 @@ fn coordination_labels(
 
 #[test]
 fn metal_coordination_between_residues_is_recorded_not_bonded() {
-    use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+    use kekule::descriptors::molecular_formula;
     use kekule::topology::MoleculeClass;
 
     // KRas G12C with GDP, Mg2+, and the non-covalent inhibitor ASP2453
@@ -633,19 +650,18 @@ fn metal_coordination_between_residues_is_recorded_not_bonded() {
         structure.topology().instance(instance).unwrap()
     };
     let formula = |component: &str| {
-        molecular_formula(
-            molecule_of(component).molecule(),
-            HydrogenCountPolicy::IncludePerceived,
-        )
-        .unwrap()
-        .to_string()
+        molecular_formula(molecule_of(component).molecule())
+            .unwrap()
+            .to_string()
     };
     let protein = molecule_of("SER");
     assert_eq!(protein.class(), MoleculeClass::Protein);
     assert_ne!(protein.id(), molecule_of("GDP").id());
     assert_ne!(protein.id(), molecule_of("MG").id());
     assert_eq!(molecule_of("GDP").class(), MoleculeClass::SmallMolecule);
-    assert_eq!(formula("GDP"), "C10H15N5O11P2");
+    // GDP is a nucleotide without model hydrogens: its three phosphate
+    // hydroxyls take their pH 7 state, and O2B binds the magnesium.
+    assert_eq!(formula("GDP"), "C10H12N5O11P2-3");
     assert_eq!(molecule_of("MG").class(), MoleculeClass::Ion);
     assert_eq!(formula("MG"), "Mg+2");
     assert_eq!(molecule_of("A1L9E").class(), MoleculeClass::SmallMolecule);

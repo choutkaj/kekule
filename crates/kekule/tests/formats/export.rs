@@ -1,4 +1,4 @@
-use kekule::descriptors::{molecular_formula, HydrogenCountPolicy};
+use kekule::descriptors::molecular_formula;
 use kekule::molecule::{Atom, Element, ImplicitHydrogens, Molecule, MoleculeEditor};
 use kekule::molfile::{self, MolfileWriteOptions, MolfileWriteVersion};
 use kekule::sdf::{self, SdfRecordInterpretation, SdfWriteOptions};
@@ -35,8 +35,8 @@ fn isomeric_export_preserves_aromatic_carbon_and_nitrogen_isotopes() {
             original.perceive().unwrap();
             restored.perceive().unwrap();
             assert_eq!(
-                molecular_formula(&original, HydrogenCountPolicy::IncludePerceived).unwrap(),
-                molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
+                molecular_formula(&original).unwrap(),
+                molecular_formula(&restored).unwrap(),
                 "{source} -> {written}"
             );
         }
@@ -85,8 +85,8 @@ fn bracket_metadata_export_preserves_the_perceived_hydrogen_count() {
             let mut restored = molecule(&written);
             restored.perceive().unwrap();
             assert_eq!(
-                molecular_formula(&original, HydrogenCountPolicy::IncludePerceived).unwrap(),
-                molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
+                molecular_formula(&original).unwrap(),
+                molecular_formula(&restored).unwrap(),
                 "{symbol} -> {written}"
             );
             assert_eq!(
@@ -128,8 +128,8 @@ fn canonical_hydrogen_collapse_requires_a_known_parent_count() {
         let mut restored = molecule(&written);
         restored.perceive().unwrap();
         assert_eq!(
-            molecular_formula(&original, HydrogenCountPolicy::IncludePerceived).unwrap(),
-            molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap()
+            molecular_formula(&original).unwrap(),
+            molecular_formula(&restored).unwrap()
         );
     }
 }
@@ -147,8 +147,8 @@ fn canonical_bracket_hydrogens_are_materialized_after_explicit_perception() {
     let mut restored = molecule(&written);
     restored.perceive().unwrap();
     assert_eq!(
-        molecular_formula(&methane, HydrogenCountPolicy::IncludePerceived).unwrap(),
-        molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap()
+        molecular_formula(&methane).unwrap(),
+        molecular_formula(&restored).unwrap()
     );
 }
 
@@ -296,8 +296,8 @@ fn v3000_preserves_fixed_zero_hydrogens_without_changing_inferred_or_nonzero_cou
         original.perceive().unwrap();
         restored.perceive().unwrap();
         assert_eq!(
-            molecular_formula(&original, HydrogenCountPolicy::IncludePerceived).unwrap(),
-            molecular_formula(&restored, HydrogenCountPolicy::IncludePerceived).unwrap(),
+            molecular_formula(&original).unwrap(),
+            molecular_formula(&restored).unwrap(),
             "{source} -> {written}"
         );
     }

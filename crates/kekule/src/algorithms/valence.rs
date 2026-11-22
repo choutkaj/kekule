@@ -74,39 +74,64 @@ pub struct ValenceError {
     pub violations: Vec<ValenceViolation>,
 }
 
-impl fmt::Display for ValenceViolation {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl ValenceViolation {
+    /// The offending atom.
+    pub(crate) const fn atom(&self) -> AtomId {
         match self {
-            Self::InvalidFormalCharge {
-                atom,
-                formal_charge,
-            } => write!(
+            Self::InvalidFormalCharge { atom, .. }
+            | Self::ValenceExceeded { atom, .. }
+            | Self::ValenceOccupancyExceeded { atom, .. } => *atom,
+        }
+    }
+
+    /// The same violation of `atom`, as when publication renumbers atoms.
+    pub(crate) fn with_atom(mut self, atom: AtomId) -> Self {
+        match &mut self {
+            Self::InvalidFormalCharge { atom: old, .. }
+            | Self::ValenceExceeded { atom: old, .. }
+            | Self::ValenceOccupancyExceeded { atom: old, .. } => *old = atom,
+        }
+        self
+    }
+
+    /// Writes the violation as a sentence about `subject`, a capitalized
+    /// noun phrase for the atom, such as `The atom at line 5`.
+    pub(crate) fn write_about(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+        subject: impl fmt::Display,
+    ) -> fmt::Result {
+        match self {
+            Self::InvalidFormalCharge { formal_charge, .. } => write!(
                 formatter,
-                "{} is an unbonded hydrogen with formal charge {formal_charge:+}.",
-                Capitalized(atom)
+                "{subject} is an unbonded hydrogen with formal charge {formal_charge:+}."
             ),
             Self::ValenceExceeded {
-                atom,
                 explicit_valence,
                 max_allowed,
+                ..
             } => write!(
                 formatter,
-                "{} has valence {explicit_valence}, more than the allowed {max_allowed}.",
-                Capitalized(atom)
+                "{subject} has valence {explicit_valence}, more than the allowed {max_allowed}."
             ),
             Self::ValenceOccupancyExceeded {
-                atom,
                 explicit_valence,
                 radical_electrons,
                 charge_offset,
                 max_allowed,
+                ..
             } => write!(
                 formatter,
-                "{} has valence {explicit_valence} plus {} for its radical electrons and charge, more than the allowed {max_allowed}.",
-                Capitalized(atom),
+                "{subject} has valence {explicit_valence} plus {} for its radical electrons and charge, more than the allowed {max_allowed}.",
                 radical_electrons + charge_offset
             ),
         }
+    }
+}
+
+impl fmt::Display for ValenceViolation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_about(formatter, Capitalized(self.atom()))
     }
 }
 
@@ -265,6 +290,32 @@ fn rdkit_atom_inferred_hydrogen_count<L: SlotLiveness>(
     strict: bool,
 ) -> Result<u8, ValenceViolation> {
     let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.represented_count());
+    let bonded = mol
+        .incident_bonds(atom_id)
+        .is_some_and(|mut bonds| bonds.next().is_some());
+    hydrogens_at_valence(atom_id, atom, explicit, bonded, strict, Hydrides::Model)
+}
+
+/// Where hydrogens are inferred: this model's rule or RDKit's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hydrides {
+    /// No hydrides on main-group metals and no hydrogen on a bonded hydrogen
+    /// atom.
+    Model,
+    /// RDKit's rule, which a Molfile reader also applies.
+    Rdkit,
+}
+
+/// The hydrogens of `atom` at represented valence `explicit`. `bonded` says
+/// whether it has bonds of any order.
+fn hydrogens_at_valence(
+    atom_id: AtomId,
+    atom: &Atom,
+    explicit: usize,
+    bonded: bool,
+    strict: bool,
+    hydrides: Hydrides,
+) -> Result<u8, ValenceViolation> {
     let radical_electrons = atom
         .radical
         .map_or(0, |radical| usize::from(radical.electron_count()));
@@ -331,8 +382,17 @@ fn rdkit_atom_inferred_hydrogen_count<L: SlotLiveness>(
     if !atom.hydrogens.is_inferred() {
         return Ok(0);
     }
+    // Unlike RDKit, no hydride is inferred on these metals. An unbonded or
+    // under-bonded one more likely lacks its charge or its bonds than carries
+    // hydrogens; its valence list stays a limit.
+    if hydrides == Hydrides::Model && is_main_group_metal(atom.element.atomic_number()) {
+        return Ok(0);
+    }
     if atom.element.atomic_number() == 1 && explicit == 0 && radical_electrons == 0 {
         return match atom.formal_charge {
+            // A hydrogen atom joined only by zero-order or dative bonds, as
+            // a hydride on a metal, takes no hydrogen of its own.
+            0 if bonded && hydrides == Hydrides::Model => Ok(0),
             0 => Ok(1),
             -1 | 1 => Ok(0),
             _ if strict => Err(ValenceViolation::InvalidFormalCharge {
@@ -381,6 +441,303 @@ fn rdkit_atom_inferred_hydrogen_count<L: SlotLiveness>(
         });
     }
     Ok(0)
+}
+
+/// Whether atoms of this element are metals: alkali, alkaline-earth,
+/// transition, post-transition, lanthanide, and actinide metals. Metalloids
+/// are not metals.
+pub(crate) fn is_metal(element: Element) -> bool {
+    matches!(
+        element.atomic_number(),
+        3 | 4 | 11..=13 | 19..=31 | 37..=50 | 55..=84 | 87..=116
+    )
+}
+
+/// Whether atoms of this element are alkali, alkaline-earth, or p-block
+/// metals, on which [`ValenceModel::RdkitLike`] infers no hydrogens.
+pub(crate) const fn is_main_group_metal(atomic_number: u8) -> bool {
+    matches!(
+        atomic_number,
+        3 | 4 | 11..=13 | 19 | 20 | 31 | 37 | 38 | 49 | 50 | 55 | 56 | 81..=84 | 87 | 88
+    )
+}
+
+/// The hydrogens RDKit's rule, which Molfile readers share, infers on an
+/// atom with inferred hydrogens. It differs from this model on main-group
+/// metals and on hydrogen atoms joined only by zero-order or dative bonds.
+pub(crate) fn rdkit_reader_hydrogens<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> u8 {
+    let explicit = explicit_valence(mol, atom_id) + usize::from(atom.hydrogens.represented_count());
+    hydrogens_at_valence(atom_id, atom, explicit, true, false, Hydrides::Rdkit).unwrap_or(0)
+}
+
+/// The hydrogens the model infers on a neutral onium centre: an atom with
+/// more bonded neighbors than its default valence, which takes hydrogens only
+/// at a higher allowed valence, as the sulfur of `CS(C)C` takes one at
+/// valence four. `None` for every other atom.
+///
+/// OpenSMILES specifies these hydrogens for its organic subset. Formats that
+/// state charges, such as Molfile and mmCIF component tables, more likely
+/// omit charges than draw such a hydride ([`implied_charges`]).
+pub(crate) fn onium_hydrogens<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<u8> {
+    if atom.formal_charge != 0 || atom.radical.is_some() || !atom.hydrogens.is_inferred() {
+        return None;
+    }
+    let default = usize::from(rdkit_default_valence(atom)?);
+    let neighbors = mol
+        .incident_bonds(atom_id)?
+        .filter(|(_, bond)| bond_order_valence(bond.order) > 0)
+        .count();
+    if neighbors <= default {
+        return None;
+    }
+    rdkit_atom_inferred_hydrogen_count(mol, atom_id, atom, true)
+        .ok()
+        .filter(|hydrogens| *hydrogens > 0)
+}
+
+/// The charges a neutral atom's bonds imply when its source states charges
+/// but none for it ([`implied_charges`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ImpliedCharges {
+    /// An onium centre ([`onium_hydrogens`]) takes +1, as the sulfur of
+    /// trimethylsulfonium.
+    Onium,
+    /// An atom with more bonds than any neutral valence allows takes the
+    /// first of +1 and -1 that makes its valence valid, as a quaternary
+    /// nitrogen takes +1 and a tetrahedral boron -1.
+    OverBonded(i8),
+    /// The atom takes +1 and its singly bonded neighbor -1. The neighbor is
+    /// a chalcogen with no other non-metal neighbor, as the oxygen of DMSO
+    /// or trimethylamine N-oxide drawn with a single bond, or a boron or
+    /// aluminium acceptor, as the boron of a phosphine-borane.
+    Separated(AtomId),
+}
+
+/// The charges a neutral atom with inferred hydrogens takes when its source
+/// states charges but none for it: an onium centre ([`onium_hydrogens`]) or
+/// an atom with more bonds than any neutral valence allows. `None` for every
+/// other atom, and for a metal donor ([`is_metal_donor`]). `may_charge` says
+/// which neighbors may take -1.
+pub(crate) fn implied_charges<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+    may_charge: impl Fn(AtomId) -> bool,
+) -> Option<ImpliedCharges> {
+    if atom.formal_charge != 0
+        || atom.radical.is_some()
+        || !atom.hydrogens.is_inferred()
+        || is_metal_donor(mol, atom_id, atom)
+    {
+        return None;
+    }
+    let over_bonded = matches!(
+        rdkit_valence_violation(mol, atom_id, atom),
+        Some(ValenceViolation::ValenceExceeded { .. })
+    );
+    if !over_bonded && onium_hydrogens(mol, atom_id, atom).is_none() {
+        return None;
+    }
+    if valid_charge(mol, atom_id, atom, 1).is_some() {
+        if let Some(partner) = charge_partner(mol, atom_id, may_charge) {
+            return Some(ImpliedCharges::Separated(partner));
+        }
+    }
+    if over_bonded {
+        return [1, -1]
+            .into_iter()
+            .find_map(|charge| valid_charge(mol, atom_id, atom, charge))
+            .map(ImpliedCharges::OverBonded);
+    }
+    valid_charge(mol, atom_id, atom, 1).map(|_| ImpliedCharges::Onium)
+}
+
+/// The singly bonded neighbor of `atom_id` that takes -1 with its +1
+/// ([`ImpliedCharges::Separated`]): a neutral chalcogen whose only non-metal
+/// neighbor is `atom_id`, or else a neutral boron or aluminium atom. Its bonds
+/// to metals may be donor bonds ([`is_metal_donor`]).
+fn charge_partner<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    may_charge: impl Fn(AtomId) -> bool,
+) -> Option<AtomId> {
+    let (mut chalcogen, mut acceptor) = (None, None);
+    for (_, bond) in mol.incident_bonds(atom_id)? {
+        let neighbor_id = bond.other_atom(atom_id);
+        let neighbor = mol.atom(neighbor_id)?;
+        if bond.order != BondOrder::Single
+            || neighbor.formal_charge != 0
+            || neighbor.radical.is_some()
+            || !neighbor.hydrogens.is_inferred()
+            || !may_charge(neighbor_id)
+        {
+            continue;
+        }
+        let mut anion = neighbor.clone();
+        anion.formal_charge = -1;
+        if rdkit_valence_violation(mol, neighbor_id, &anion).is_some()
+            && !is_metal_donor(mol, neighbor_id, &anion)
+        {
+            continue;
+        }
+        match neighbor.element.atomic_number() {
+            8 | 16 | 34 | 52 if non_metal_neighbors(mol, neighbor_id)? == 1 => {
+                chalcogen = chalcogen.or(Some(neighbor_id));
+            }
+            5 | 13 => acceptor = acceptor.or(Some(neighbor_id)),
+            _ => {}
+        }
+    }
+    chalcogen.or(acceptor)
+}
+
+fn non_metal_neighbors<L: SlotLiveness>(mol: &Graph<L>, atom_id: AtomId) -> Option<usize> {
+    let mut count = 0;
+    for neighbor in mol.neighbors(atom_id)? {
+        if !is_metal(mol.atom(neighbor)?.element) {
+            count += 1;
+        }
+    }
+    Some(count)
+}
+
+/// Whether a non-metal atom with inferred hydrogens donates to metals: its
+/// bond valence is not one its element and charge allow, but some allowed
+/// valence lies between it less its bond valence to metals and it, as for
+/// the phosphorus of a phosphine on palladium, a sulfide bridging three iron
+/// atoms, or the sulfur of a sulfoxide on ruthenium. Its bonds to metals are
+/// then donor bonds drawn as covalent ones, and it takes no hydrogens.
+pub(crate) fn is_metal_donor<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> bool {
+    if is_metal(atom.element) || atom.radical.is_some() || !atom.hydrogens.is_inferred() {
+        return false;
+    }
+    let Some(bonds) = mol.incident_bonds(atom_id) else {
+        return false;
+    };
+    let mut metal_valence = 0;
+    for (_, bond) in bonds {
+        if mol
+            .atom(bond.other_atom(atom_id))
+            .is_some_and(|neighbor| is_metal(neighbor.element))
+        {
+            metal_valence += bond_order_valence(bond.order);
+        }
+    }
+    let valence = explicit_valence(mol, atom_id);
+    metal_valence > 0 && donates_to_metals(atom, valence - metal_valence, metal_valence)
+}
+
+/// Whether a non-metal donates to metals when its other bonds give it the
+/// valence `other` and its bonds to metals add `metal`: `other + metal` is
+/// not a valence its element and charge allow, but some allowed valence lies
+/// from `other` up to, and not including, `other + metal`. This one rule
+/// decides metal donors ([`is_metal_donor`]) and untyped metal bonds
+/// ([`metal_bond_reading`]).
+pub(crate) fn donates_to_metals(atom: &Atom, other: usize, metal: usize) -> bool {
+    let Some(allowed) = allowed_valences(atom) else {
+        return false;
+    };
+    let allowed = || allowed.iter().map(|value| usize::from(*value));
+    !allowed().any(|value| value == other + metal)
+        && allowed().any(|value| (other..other + metal).contains(&value))
+}
+
+/// How a reader takes a single bond between a metal and a non-metal of one
+/// residue whose source states no type, as PDB `CONECT` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetalBondReading {
+    Covalent,
+    Dative,
+    /// The source cannot tell: the bond is read as covalent and reported.
+    Unstated,
+}
+
+/// The reading of an untyped metal bond from its non-metal `donor`.
+/// `other` is the donor's valence from its other bonds, those of
+/// `undecided` untyped metal bonds of the residue left out, and `hydrogens`
+/// whether the residue has explicit hydrogens.
+///
+/// The bond is dative when the donor donates to the metal
+/// ([`donates_to_metals`]), as an ammine nitrogen or a phosphine does. It is
+/// covalent when the bond leaves the donor at an allowed valence, as for a
+/// chloride or a phosphonate phosphorus. A residue without hydrogens, a
+/// donor of several untyped metal bonds, such as a bridging chloride, and a
+/// donor that neither reading satisfies, such as a carbene carbon, are
+/// unstated.
+pub(crate) fn metal_bond_reading(
+    donor: &Atom,
+    other: usize,
+    undecided: usize,
+    hydrogens: bool,
+) -> MetalBondReading {
+    if !hydrogens || undecided != 1 {
+        return MetalBondReading::Unstated;
+    }
+    if donates_to_metals(donor, other, 1) {
+        return MetalBondReading::Dative;
+    }
+    let covalent = allowed_valences(donor).is_some_and(|valences| {
+        valences
+            .iter()
+            .any(|&allowed| usize::from(allowed) == other + 1)
+    });
+    if covalent {
+        MetalBondReading::Covalent
+    } else {
+        MetalBondReading::Unstated
+    }
+}
+
+fn valid_charge<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+    charge: i8,
+) -> Option<i8> {
+    let mut charged = atom.clone();
+    charged.formal_charge = charge;
+    rdkit_valence_violation(mol, atom_id, &charged)
+        .is_none()
+        .then_some(charge)
+}
+
+/// The valence of a metal of [`is_main_group_metal`] with inferred
+/// hydrogens, when its element and charge allow no such valence, as of a tin
+/// atom with three bonds or an unbonded neutral sodium atom. The model infers
+/// no hydrides to complete it, so the source likely omits a charge, a bond,
+/// or a hydrogen. Radical electrons count toward the valence. A valence above
+/// the allowed ones is a [`ValenceViolation`] instead, unless the element
+/// allows any higher valence.
+pub(crate) fn incomplete_metal_valence<L: SlotLiveness>(
+    mol: &Graph<L>,
+    atom_id: AtomId,
+    atom: &Atom,
+) -> Option<u8> {
+    if !atom.hydrogens.is_inferred() || !is_main_group_metal(atom.element.atomic_number()) {
+        return None;
+    }
+    let radical_electrons = atom
+        .radical
+        .map_or(0, |radical| usize::from(radical.electron_count()));
+    let valence = explicit_valence(mol, atom_id) + radical_electrons;
+    let allowed = allowed_valences(atom)?;
+    let below_maximum = allowed
+        .last()
+        .is_some_and(|max| valence < usize::from(*max));
+    let listed = allowed.iter().any(|value| usize::from(*value) == valence);
+    (below_maximum && !listed).then(|| u8::try_from(valence).expect("below an allowed valence"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

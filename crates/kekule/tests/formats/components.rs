@@ -72,7 +72,7 @@ fn bundled_templates_match_their_dictionary_entries() {
     let none = ComponentLinking::None;
     let peptide = "L-PEPTIDE LINKING";
     let library = ComponentLibrary::bundled();
-    assert_eq!(library.len(), 82);
+    assert_eq!(library.len(), 89);
 
     // Counted directly from the CCD entry files by an independent CIF reader;
     // tools/components records the files and their checksums.
@@ -205,6 +205,47 @@ fn bundled_templates_match_their_dictionary_entries() {
 }
 
 #[test]
+fn common_ions_take_their_bundled_charges_without_a_charge_column() {
+    // PDB ions with no charge column take the template charge; none becomes
+    // a hydride or hydrogen fluoride.
+    for (name, symbol, charge) in [
+        ("LI", "LI", 1),
+        ("NA", "NA", 1),
+        ("RB", "RB", 1),
+        ("CS", "CS", 1),
+        ("MG", "MG", 2),
+        ("SR", "SR", 2),
+        ("BA", "BA", 2),
+        ("AL", "AL", 3),
+        ("F", "F", -1),
+    ] {
+        let text = format!(
+            "HETATM    1 {name:<4} {name:>3} A   1       0.000   0.000   0.000  1.00  0.00          {symbol:>2}\nEND\n"
+        );
+        let interpretation = kekule::pdb::parse_str(&text, Default::default())
+            .unwrap()
+            .interpret(Default::default())
+            .unwrap();
+        assert!(interpretation
+            .report()
+            .issues()
+            .iter()
+            .all(|issue| !matches!(
+                issue,
+                kekule::macromolecular::StructureInterpretIssue::MetalValenceIncomplete { .. }
+            )));
+        let mut structure = interpretation.into_structure();
+        structure.perceive().unwrap();
+        let atom = structure.topology().atoms().next().unwrap();
+        assert_eq!(
+            (atom.formal_charge(), atom.total_hydrogens()),
+            (charge, Some(0)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn bundled_histidine_tautomers_are_neutral_and_localized() {
     use ComponentBondOrder::{Double, Single};
     let ring = |component: &Component| {
@@ -311,7 +352,7 @@ fn component_libraries_read_dictionary_blocks_and_replace_by_identifier() {
     // the variants derived from its previous definition.
     let mut combined = ComponentLibrary::bundled().clone();
     combined.extend(&library);
-    assert_eq!(combined.len(), 83);
+    assert_eq!(combined.len(), 90);
     assert_eq!(combined.variants("HIS").len(), 2);
     let histidine = combined.get("HIS").unwrap().clone();
     assert!(combined.insert(histidine).is_some());

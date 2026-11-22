@@ -1,6 +1,7 @@
 //! Shared connected-component publication for subsets and structural editors.
 use super::editor::fixed_counts::{settle, BondValence};
 use super::TopologyBuilder;
+use crate::algorithms::is_metal;
 use crate::molecule::{
     AtomId, BondId, Graph, ImplicitHydrogens, MoleculeEditor, MoleculeError,
     MoleculePublicationError, SlotLiveness,
@@ -200,7 +201,7 @@ fn cut_valence<L: SlotLiveness>(
         let other = bond.other_atom(atom);
         let metal = molecule
             .atom(other)
-            .is_some_and(|atom| atom.element.is_metal());
+            .is_some_and(|atom| is_metal(atom.element));
         before.add(metal, bond.order);
         if selected.contains(&other) {
             after.add(metal, bond.order);

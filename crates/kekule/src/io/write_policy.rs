@@ -3,6 +3,7 @@ use crate::diagnostics::{
     DiagnosticKind, Format, FormatError, FormatErrorDetail, GeometryField, LimitExceeded,
 };
 use crate::structure::{Order, Place, SetContext, StructureKind, StructureSet, StructureView};
+use crate::topology::InstanceAtomId;
 
 /// Constructors of write-stage [`FormatError`]s for one format, following the
 /// writer failure taxonomy: cannot encode, missing perception, limit,
@@ -117,10 +118,15 @@ pub enum WriteOmission {
         /// The atoms whose counts were left out.
         atoms: usize,
     },
-    /// Nonzero formal charges of this many atoms.
+    /// Formal charges of this many atoms that readers do not give back. XYZ
+    /// has no charges. PDB and mmCIF readers derive the charges of residues
+    /// their templates cover and ignore a stated 0 in a residue without
+    /// hydrogens, so a neutral lysine `NZ` without hydrogens reads as +1.
     FormalCharges {
-        /// The atoms written without their charges.
+        /// The atoms whose charges readers do not give back.
         atoms: usize,
+        /// The first such atom in written order.
+        first: Option<InstanceAtomId>,
     },
     /// Isotopes the format cannot name, of this many atoms.
     Isotopes {
@@ -433,7 +439,7 @@ impl Omissions {
         use WriteOmission as O;
         let count = |omission: &WriteOmission| match *omission {
             O::ImplicitHydrogens { atoms }
-            | O::FormalCharges { atoms }
+            | O::FormalCharges { atoms, .. }
             | O::Isotopes { atoms }
             | O::Radicals { atoms }
             | O::AtomMaps { atoms }
@@ -465,8 +471,13 @@ impl Omissions {
             return;
         };
         match existing {
+            O::FormalCharges { atoms, first } => {
+                *atoms += added;
+                if let O::FormalCharges { first: other, .. } = omission {
+                    *first = first.or(other);
+                }
+            }
             O::ImplicitHydrogens { atoms }
-            | O::FormalCharges { atoms }
             | O::Isotopes { atoms }
             | O::Radicals { atoms }
             | O::AtomMaps { atoms }

@@ -24,16 +24,19 @@ The selection was fixed before use, by role rather than by observed frequency:
 - Nucleotides: `A`, `C`, `G`, `U`, `DA`, `DC`, `DG`, `DT`.
 - Water: `HOH` and heavy water `DOD`.
 - Ions: `ZN`, `MG`, `CA`, `NA`, `K`, `CL`, `MN`, `FE`, `FE2`, `CU`, `CU1`,
-  `NI`, `CO`, `CD`, `HG`, `IOD`, `BR`.
+  `NI`, `CO`, `CD`, `HG`, `IOD`, `BR`, `LI`, `RB`, `CS`, `SR`, `BA`, `AL`,
+  `F`.
 - Cofactors: `HEM`, `HEC`, `FAD`, `FMN`, `NAD`, `NAI`, `NAP`, `NDP`, `ATP`,
   `ADP`, `AMP`, `GTP`, `GDP`, `SAM`, `SAH`, `COA`, `ACO`, `PLP`, `TPP`, `BTN`,
   `SF4`, `FES`, `F3S`, `CLA`.
 - Crystallization additives: `SO4`, `PO4`, `GOL`, `EDO`, `ACT`, `PEG`, `DMS`,
   `MPD`.
 
-The dictionary defines histidine only as the imidazolium cation. Kekule derives
-its two neutral tautomers in code (`crates/kekule/src/io/components/bundled.rs`);
-they are not dictionary entries.
+The dictionary defines histidine only as the imidazolium cation, and aspartic
+and glutamic acids protonated on `OD2` and `OE2`. Kekule derives the two
+neutral histidine tautomers and the acids protonated on `OD1` and `OE1` in code
+(`crates/kekule/src/io/components/bundled.rs`); they are not dictionary
+entries.
 
 ## One-letter codes
 

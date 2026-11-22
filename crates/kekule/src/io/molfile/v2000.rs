@@ -478,6 +478,11 @@ fn parse_v2000_bond(
     };
     let stereo = match (order, stereo_code) {
         (_, 0) => None,
+        (MolfileBondOrder::Single | MolfileBondOrder::Aromatic, 1) => Some(MolfileBondStereo::Up),
+        (MolfileBondOrder::Single | MolfileBondOrder::Aromatic, 4) => {
+            Some(MolfileBondStereo::Either)
+        }
+        (MolfileBondOrder::Single | MolfileBondOrder::Aromatic, 6) => Some(MolfileBondStereo::Down),
         (MolfileBondOrder::Aromatic, _) => {
             return Err(lines.error(
                 index,
@@ -488,9 +493,6 @@ fn parse_v2000_bond(
                 ),
             ))
         }
-        (MolfileBondOrder::Single, 1) => Some(MolfileBondStereo::Up),
-        (MolfileBondOrder::Single, 4) => Some(MolfileBondStereo::Either),
-        (MolfileBondOrder::Single, 6) => Some(MolfileBondStereo::Down),
         (MolfileBondOrder::Double, 3) => Some(MolfileBondStereo::Either),
         _ => {
             return Err(lines.error(

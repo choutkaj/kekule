@@ -128,10 +128,23 @@ fn struct_conn_rows(text: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The rows of the loop that `tag` ends the header of, one value list per
+/// row.
+fn loop_rows(text: &str, tag: &str) -> Vec<Vec<String>> {
+    text.lines()
+        .skip_while(|line| *line != tag)
+        .skip(1)
+        .take_while(|line| *line != "#")
+        .map(|line| line.split_whitespace().map(str::to_owned).collect())
+        .collect()
+}
+
 /// Like the PDB's own files, a written block states only the bonds that
 /// templates and polymer linkage do not imply: links between residues other
 /// than the standard peptide and phosphodiester links, metal coordination,
-/// and the bonds of residues without a bundled template.
+/// the bonds of components without a template, in their `_chem_comp_bond`
+/// tables, and the bonds of templated residues their template does not
+/// rebuild.
 #[test]
 fn mmcif_states_only_the_bonds_templates_and_polymer_linkage_do_not_imply() {
     let link = |kind, left: [&str; 4], right: [&str; 4]| {
@@ -196,9 +209,11 @@ fn mmcif_states_only_the_bonds_templates_and_polymer_linkage_do_not_imply() {
             .map(|row| row[1..10].join(" "))
             .collect::<Vec<_>>();
         assert_eq!(between, links, "{entry}");
+        let tables = loop_rows(&written, "_chem_comp.type");
         let components = within
             .iter()
             .map(|row| row[3].as_str())
+            .chain(tables.iter().map(|row| row[0].as_str()))
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(
             components.into_iter().collect::<Vec<_>>(),
@@ -290,8 +305,8 @@ fn tiled_round_trip(copies: u32) {
     assert_eq!(bonds(&reread), bonds(&tiled));
 }
 
-/// A large structure without templates, as XYZ gives, carries every bond as
-/// a `_struct_conn` row and reads back with them.
+/// A large structure without templates, as XYZ gives, carries its bonds in
+/// its component's table and reads back with them.
 #[test]
 fn large_untemplated_structure_round_trips_through_mmcif() {
     use kekule::diagnostics::UnrepresentablePolicy;
@@ -324,7 +339,11 @@ fn large_untemplated_structure_round_trips_through_mmcif() {
     assert_eq!(structure.topology().bond_count(), 32_000);
     let options = MmcifWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
     let written = mmcif::write([&structure], options).unwrap().0;
-    assert_eq!(struct_conn_rows(&written).len(), 32_000);
+    assert!(struct_conn_rows(&written).is_empty());
+    assert_eq!(
+        loop_rows(&written, "_chem_comp_bond.pdbx_metal_coordination_flag").len(),
+        4
+    );
     let reread = mmcif::parse_str(&written, Default::default())
         .unwrap()
         .interpret(Default::default())

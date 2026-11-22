@@ -1678,7 +1678,7 @@ fn mmcif_distinguishes_independent_structures_from_a_structure_set() {
     .map(|(text, _)| text)
     .unwrap();
     // One block: both geometries' atoms under their model numbers, and the
-    // shared C-O bond once.
+    // shared C-O bond once, in the component's table.
     assert_eq!(set_text.matches("data_").count(), 1, "{set_text}");
     assert_eq!(
         set_text
@@ -1695,10 +1695,11 @@ fn mmcif_distinguishes_independent_structures_from_a_structure_set() {
     assert_eq!(
         set_text
             .lines()
-            .filter(|line| line.starts_with("conn"))
+            .filter(|line| line.starts_with("MOL "))
             .collect::<Vec<_>>(),
-        ["conn1 covale M1 MOL . C1 M1 MOL . O2 . . . . sing"]
+        ["MOL non-polymer", "MOL C1 O2 sing ? N"]
     );
+    assert!(!set_text.contains("_struct_conn."), "{set_text}");
     let set_document = mmcif::parse_str(&set_text, Default::default()).unwrap();
     assert_eq!(set_document.blocks().len(), 1);
     let parsed = set_document
@@ -2589,14 +2590,14 @@ fn structure_sets_write_their_order_or_fail_on_it() {
 
         // An unordered set writes a model, a block's model number, or a
         // record per geometry, with nothing to omit.
-        let (text, omissions) = written(pdb::write(&plain, pdb_options)).unwrap();
+        let (text, omissions) = written(pdb::write(&plain, pdb_options.clone())).unwrap();
         assert_eq!(
             text,
             "MODEL        1\n\
-             HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C\n\
+             HETATM    1  C1  MOL     1       1.000   0.000   0.000                       C0\n\
              ENDMDL\n\
              MODEL        2\n\
-             HETATM    1  C1  MOL     1       2.000   0.000   0.000                       C\n\
+             HETATM    1  C1  MOL     1       2.000   0.000   0.000                       C0\n\
              ENDMDL\n\
              END\n"
         );
@@ -2645,7 +2646,7 @@ fn structure_sets_write_their_order_or_fail_on_it() {
                     .to_vec(),
             ),
         ] {
-            let outcome = written(pdb::write(set, pdb_options));
+            let outcome = written(pdb::write(set, pdb_options.clone()));
             if policy == UnrepresentablePolicy::Fail {
                 let error = outcome.unwrap_err();
                 assert_eq!(error.kind(), DiagnosticKind::Unsupported);
@@ -2664,7 +2665,10 @@ fn structure_sets_write_their_order_or_fail_on_it() {
                 );
             } else {
                 let (text, omissions) = outcome.unwrap();
-                assert_eq!(text, pdb::write(&unordered(set), pdb_options).unwrap().0);
+                assert_eq!(
+                    text,
+                    pdb::write(&unordered(set), pdb_options.clone()).unwrap().0
+                );
                 assert_eq!(
                     omissions,
                     [WriteOmission::GeometryState {
@@ -2728,7 +2732,7 @@ fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
     let set = timed_set();
     let pdb_options =
         PdbWriteOptions::default().with_implicit_hydrogens(UnrepresentablePolicy::Omit);
-    let error = pdb::write(&set, pdb_options).unwrap_err();
+    let error = pdb::write(&set, pdb_options.clone()).unwrap_err();
     assert_eq!(error.kind(), DiagnosticKind::Unsupported);
     assert_eq!(
         error.to_string(),
@@ -2736,7 +2740,9 @@ fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
     );
     let (text, report) = pdb::write(
         &set,
-        pdb_options.with_geometry_metadata(UnrepresentablePolicy::Omit),
+        pdb_options
+            .clone()
+            .with_geometry_metadata(UnrepresentablePolicy::Omit),
     )
     .unwrap();
     let state = |field, geometries| WriteOmission::GeometryState { field, geometries };
@@ -2751,7 +2757,7 @@ fn structure_sets_report_or_refuse_the_state_pdb_and_mmcif_cannot_hold() {
         .map(|geometry| bare_structure(geometry.as_structure_view()))
         .collect::<Vec<_>>();
     let bare = StructureSet::from_structures(structures).unwrap();
-    assert_eq!(text, pdb::write(&bare, pdb_options).unwrap().0);
+    assert_eq!(text, pdb::write(&bare, pdb_options.clone()).unwrap().0);
 
     // A structure set without geometries writes nothing.
     let empty = StructureSet::new(bare.shared_topology());
@@ -2813,7 +2819,7 @@ fn structure_sets_report_or_refuse_the_order_pdb_and_mmcif_lose() {
     let plain = StructureSet::from_structures(plain_structures()).unwrap();
     let omit = UnrepresentablePolicy::Omit;
     let pdb_options = PdbWriteOptions::default().with_implicit_hydrogens(omit);
-    let (pdb_text, pdb_report) = pdb::write(&plain, pdb_options).unwrap();
+    let (pdb_text, pdb_report) = pdb::write(&plain, pdb_options.clone()).unwrap();
     let (mmcif_text, mmcif_report) = mmcif::write([&plain], MmcifWriteOptions::default()).unwrap();
     let state = |field, geometries| WriteOmission::GeometryState { field, geometries };
 
@@ -2826,7 +2832,7 @@ fn structure_sets_report_or_refuse_the_order_pdb_and_mmcif_lose() {
     for (set, field, geometry, structures) in cases {
         // The order belongs to the whole set.
         let lost = |format| format!("The geometry order has no {format} representation.");
-        let error = pdb::write(set, pdb_options).unwrap_err();
+        let error = pdb::write(set, pdb_options.clone()).unwrap_err();
         assert_eq!(error.kind(), DiagnosticKind::Unsupported, "{error}");
         assert_eq!(
             error.to_string(),
@@ -2845,7 +2851,8 @@ fn structure_sets_report_or_refuse_the_order_pdb_and_mmcif_lose() {
             "{error}"
         );
 
-        let (text, report) = pdb::write(set, pdb_options.with_geometry_metadata(omit)).unwrap();
+        let (text, report) =
+            pdb::write(set, pdb_options.clone().with_geometry_metadata(omit)).unwrap();
         assert_eq!(text, pdb_text, "{field}");
         let lost = state(field, structures);
         assert_eq!(
@@ -3596,4 +3603,69 @@ fn pdb_and_mmcif_refuse_or_report_structure_and_set_properties() {
     // Occupancies are written, as PDB and mmCIF carry them.
     let (occupied, _, _) = structures_with_unwritable_state().remove(0);
     assert!(pdb::write(&occupied, PdbWriteOptions::default()).is_ok());
+}
+
+#[test]
+fn smiles_writers_round_trip_aromatic_heteroatom_hydrogens() {
+    // A reader infers no hydrogen on an aromatic p, n, o, or s, so every
+    // writer brackets one that carries hydrogen. The Kekule sources leave
+    // their hydrogens to inference.
+    let profile = |molecule: &kekule::molecule::Molecule| {
+        let mut atoms = molecule
+            .atoms()
+            .map(|(id, atom)| {
+                (
+                    atom.element().symbol(),
+                    atom.formal_charge(),
+                    molecule.total_hydrogens(id),
+                )
+            })
+            .collect::<Vec<_>>();
+        atoms.sort_unstable();
+        atoms
+    };
+    for source in [
+        "P1C=CC=C1",
+        "N1C=CC=C1",
+        "C1=CC=C2PC=CC2=C1",
+        "N1C=NC=C1",
+        "O=C1C=CC=CN1",
+        "O=C1C=CC=CP1",
+        "[pH]1cccc1",
+        "[nH]1cccc1",
+        "[asH]1cccc1",
+        "c1ccc2[pH]ccc2c1",
+        "c1ccc2[nH]ccc2c1",
+        "p1ccccc1",
+        "n1ccccc1",
+        "[as]1ccccc1",
+        "o1cccc1",
+        "s1cccc1",
+        "[se]1cccc1",
+        "[te]1cccc1",
+        "c1cc[nH]n1",
+        "c1c[nH]cn1",
+        "[nH+]1ccccc1",
+        "[o+]1ccccc1",
+    ] {
+        let mut original = molecule(source);
+        original.perceive().unwrap();
+        for options in [
+            SmilesWriteOptions::ordinary(),
+            SmilesWriteOptions::isomeric(),
+            SmilesWriteOptions::canonical(),
+        ] {
+            let written = smiles::write(&original, options).unwrap();
+            let mut restored = smiles::to_molecules(&written)
+                .unwrap_or_else(|error| panic!("{source} -> {written}: {error}"))
+                .pop()
+                .unwrap();
+            restored.perceive().unwrap();
+            assert_eq!(
+                profile(&restored),
+                profile(&original),
+                "{source} -> {written}"
+            );
+        }
+    }
 }

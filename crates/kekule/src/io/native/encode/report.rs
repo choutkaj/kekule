@@ -8,8 +8,8 @@ use super::{Encoder, Result};
 use crate::io::{
     AltLocDecision, AltLocSelectionReason, Assembly, AssemblyOmissionReason, AtomProvenance,
     BondEvidence, CellOmissionReason, ConflictingSelector, ConnectionResolutionReason, EntityKind,
-    PolymerEntity, PolymerType, SequenceSource, SourceResidueId, SourceResiduePosition,
-    StructureInterpretIssue, StructureInterpretationReport,
+    NumberField, PolymerEntity, PolymerType, SequenceSource, SourceResidueId,
+    SourceResiduePosition, StructureInterpretIssue, StructureInterpretationReport,
 };
 use crate::math::Vector3;
 use crate::sequence::CodeOrigin;
@@ -62,6 +62,17 @@ impl<W: Write> Encoder<'_, W> {
         self.count(values.len())?;
         for value in values {
             self.str(value)?;
+        }
+        Ok(())
+    }
+
+    /// The onium centres an issue about unknown bond orders left neutral:
+    /// each atom name and the hydrogens it took.
+    fn neutral_centres(&mut self, centres: &[(String, u8)]) -> Result {
+        self.count(centres.len())?;
+        for (name, hydrogens) in centres {
+            self.str(name)?;
+            self.u8(*hydrogens)?;
         }
         Ok(())
     }
@@ -515,11 +526,13 @@ impl<W: Write> Encoder<'_, W> {
                 residue,
                 component_id,
                 bonds,
+                neutral_centres,
             } => {
                 self.u8(12)?;
                 self.residue(residue)?;
                 self.str(component_id)?;
-                self.usize(*bonds)
+                self.usize(*bonds)?;
+                self.neutral_centres(neutral_centres)
             }
             Issue::HydrogenAttachedByDistance {
                 residue,
@@ -553,6 +566,118 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.str(force_field)
             }
+            Issue::ResidueBondOrdersUnstated {
+                residue,
+                component_id,
+                bonds,
+                neutral_centres,
+            } => {
+                self.u8(22)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.usize(*bonds)?;
+                self.neutral_centres(neutral_centres)
+            }
+            Issue::BondNotInTemplate {
+                residue,
+                component_id,
+                atoms: [left, right],
+            } => {
+                self.u8(23)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(left)?;
+                self.str(right)
+            }
+            Issue::BondOrderDiffersFromTemplate {
+                residue,
+                component_id,
+                atoms: [left, right],
+                order,
+                template_order,
+            } => {
+                self.u8(24)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(left)?;
+                self.str(right)?;
+                self.u8(super::bond_order_code(*order))?;
+                self.u8(template_order.map_or(
+                    super::super::AROMATIC_TEMPLATE_ORDER,
+                    super::bond_order_code,
+                ))
+            }
+            Issue::PolymerLinkSkipped { residue, next } => {
+                self.u8(25)?;
+                self.residue(residue)?;
+                self.residue(next)
+            }
+            Issue::LinkingAtomMissing { residue, next } => {
+                self.u8(26)?;
+                self.residue(residue)?;
+                self.residue(next)
+            }
+            Issue::ResidueFitsNoTemplate {
+                residue,
+                component_id,
+            } => {
+                self.u8(27)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
+            Issue::StatedOrdersDisagreeWithHydrogens {
+                residue,
+                component_id,
+            } => {
+                self.u8(28)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
+            Issue::MetalValenceIncomplete {
+                residue,
+                component_id,
+                atom_name,
+                valence,
+            } => {
+                self.u8(29)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.u8(*valence)
+            }
+            Issue::MetalDonors {
+                residue,
+                component_id,
+                atom_names,
+            } => {
+                self.u8(30)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atom_names)
+            }
+            Issue::ElementsFromTemplates { source_lines } => {
+                self.u8(31)?;
+                self.usizes(source_lines)
+            }
+            Issue::UnsignedCharges { source_lines } => {
+                self.u8(32)?;
+                self.usizes(source_lines)
+            }
+            Issue::HexadecimalNumbers { field, source_line } => {
+                self.u8(33)?;
+                self.u8(number_field_code(*field))?;
+                self.usize(*source_line)
+            }
+            Issue::NumbersRestart { field, source_line } => {
+                self.u8(34)?;
+                self.u8(number_field_code(*field))?;
+                self.usize(*source_line)
+            }
+            Issue::MetalBondsUnstated { residue, bonds } => {
+                self.u8(35)?;
+                self.residue(residue)?;
+                self.usize(*bonds)
+            }
             Issue::ChargesFromBonds {
                 residue,
                 component_id,
@@ -574,6 +699,132 @@ impl<W: Write> Encoder<'_, W> {
                 self.str(component_id)?;
                 self.opt_str(variant.as_deref())?;
                 self.charged_atoms(charged_atoms)
+            }
+            Issue::ProtonationAssumed { components } => {
+                self.u8(36)?;
+                self.count(components.len())?;
+                for (component, residues) in components {
+                    self.str(component)?;
+                    self.usize(*residues)?;
+                }
+                Ok(())
+            }
+            Issue::HydrogensMissing {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(37)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::ZeroOccupancyHydrogens { residue, atoms } => {
+                self.u8(38)?;
+                self.residue(residue)?;
+                self.str_list(atoms)
+            }
+            Issue::HydrogenReplacedByCoordination {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(39)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::StatedChargeKept {
+                residue,
+                component_id,
+                atom_name,
+                stated,
+                derived,
+            } => {
+                self.u8(40)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.bytes(&stated.to_le_bytes())?;
+                self.bytes(&derived.to_le_bytes())
+            }
+            Issue::StatedChargeRejected {
+                residue,
+                component_id,
+                atom_name,
+                stated,
+                kept,
+            } => {
+                self.u8(41)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.bytes(&stated.to_le_bytes())?;
+                self.bytes(&kept.to_le_bytes())
+            }
+            Issue::TemplateChargeUnknown {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(42)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::TemplateMissing {
+                residue,
+                component_id,
+            } => {
+                self.u8(43)?;
+                self.residue(residue)?;
+                self.str(component_id)
+            }
+            Issue::AtomsMissing {
+                residue,
+                component_id,
+                atoms,
+            } => {
+                self.u8(44)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str_list(atoms)
+            }
+            Issue::TerminalAtomMissing {
+                residue,
+                component_id,
+                atom_name,
+                anchor,
+            } => {
+                self.u8(45)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)?;
+                self.str(anchor)
+            }
+            Issue::PolymerLinkMissing {
+                residue,
+                component_id,
+                atom_name,
+            } => {
+                self.u8(46)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.str(atom_name)
+            }
+            Issue::StatedChargeResonance {
+                residue,
+                component_id,
+                charged_atoms,
+            } => {
+                self.u8(47)?;
+                self.residue(residue)?;
+                self.str(component_id)?;
+                self.charged_atoms(charged_atoms)
+            }
+            Issue::SequenceNotPlaced { chain_id } => {
+                self.u8(48)?;
+                self.str(chain_id)
             }
             Issue::ResidueFragmented { residue, fragments } => {
                 self.u8(17)?;
@@ -790,6 +1041,7 @@ fn evidence_code(evidence: &BondEvidence) -> u8 {
         BondEvidence::Distance => 5,
         BondEvidence::HydrogenDistance => 6,
         BondEvidence::Disulfide => 7,
+        BondEvidence::HydrogenName => 8,
     }
 }
 
@@ -812,5 +1064,12 @@ const fn sequence_source_code(source: SequenceSource) -> u8 {
     match source {
         SequenceSource::Stated => 0,
         SequenceSource::Derived => 1,
+    }
+}
+
+fn number_field_code(field: NumberField) -> u8 {
+    match field {
+        NumberField::AtomSerial => 0,
+        NumberField::ResidueNumber => 1,
     }
 }
