@@ -77,3 +77,19 @@ fn new_atoms_never_take_a_name_the_template_places_elsewhere() {
     assert_eq!(allocate("CB"), "H4");
     assert_eq!(allocate("N"), "H3");
 }
+
+#[test]
+fn a_template_atom_taken_by_its_alternate_name_is_taken() {
+    use super::ResidueNames;
+    use crate::components::ComponentLibrary;
+    use crate::molecule::Element;
+    let library = ComponentLibrary::bundled();
+    let templates = Some((
+        library.get("LEU").unwrap(),
+        library.variants("LEU").collect(),
+    ));
+    // `1HB` is the older name of `HB2`.
+    let mut names = ResidueNames::new(templates, ["CA", "CB", "1HB"].map(str::to_owned));
+    let hydrogen = Element::from_atomic_number(1).unwrap();
+    assert_eq!(names.allocate(hydrogen, Some("CB")), "HB3");
+}

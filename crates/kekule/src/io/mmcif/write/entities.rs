@@ -581,7 +581,14 @@ fn report_entity_plan(
                 id: asym_id.clone(),
                 entity_id: entity_id.clone(),
             });
-            if let (AssignedEntityKind::Polymer, Some(sequence)) = (segment.kind, &sequence) {
+            // The sequence is the source polymer's. A polymer an edit added
+            // to the chain has no provenance, and its own residues number it.
+            let source_polymer = segment.kind == AssignedEntityKind::Polymer
+                && segment
+                    .sites
+                    .iter()
+                    .any(|atom| provenance.contains_key(atom));
+            if let (true, Some(sequence)) = (source_polymer, &sequence) {
                 sequences
                     .entry(entity_id.clone())
                     .or_insert_with(|| sequence.clone());

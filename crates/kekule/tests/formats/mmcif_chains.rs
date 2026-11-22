@@ -7,7 +7,7 @@ use kekule::mmcif::{self, MmcifWriteOptions};
 use kekule::molecule::{Atom, AtomId, BondOrder, Element, MoleculeEditor};
 use kekule::pdb;
 use kekule::structure::{Positions, Structure, StructureBuilder, StructureEditor};
-use kekule::topology::{AtomSiteMetadata, InstanceAtomId};
+use kekule::topology::{AtomSiteMetadata, InstanceAtomId, MoleculeClass};
 use kekule::units::{Quantity, ANGSTROM};
 
 /// A coordinate record of atom `name` of residue `residue` `sequence`, with
@@ -663,5 +663,239 @@ fn waters_whose_numbers_wrap_are_written_as_two_asyms() {
             author_chains(&read_back(&text)),
             [("W".to_owned(), residues(&["1", "2", "1"]))]
         );
+    }
+}
+
+/// Adds a glycine dipeptide, residues 1001 and 1002, to the chain labelled
+/// `chain`, a new one of author chain `A` where none is.
+fn add_dipeptide(editor: &mut StructureEditor, chain: &str) {
+    let element = |symbol| Atom::new(Element::from_symbol(symbol).unwrap());
+    let mut peptide = MoleculeEditor::new();
+    // The N terminus is charged, as readers give it.
+    let atoms = ["N", "C", "C", "O", "N", "C", "C", "O"]
+        .map(element)
+        .map(|atom| {
+            let charge = i8::from(peptide.atom_count() == 0);
+            peptide.add_atom(atom.with_formal_charge(charge)).unwrap()
+        });
+    for (left, right, order) in [
+        (0, 1, BondOrder::Single),
+        (1, 2, BondOrder::Single),
+        (2, 3, BondOrder::Double),
+        (2, 4, BondOrder::Single),
+        (4, 5, BondOrder::Single),
+        (5, 6, BondOrder::Single),
+        (6, 7, BondOrder::Double),
+    ] {
+        peptide.add_bond(atoms[left], atoms[right], order).unwrap();
+    }
+    let points = [
+        [0.000, 0.000],
+        [1.458, 0.000],
+        [2.009, 1.420],
+        [1.251, 2.390],
+        [3.332, 1.536],
+        [3.988, 2.836],
+        [5.488, 2.736],
+        [6.100, 1.680],
+    ]
+    .map(|[x, y]| Point3::new(x + 60.0, y, 0.0));
+    let positions = Positions::new(Quantity::new(points.to_vec(), ANGSTROM)).unwrap();
+    let molecule = editor
+        .add_molecule(peptide.finish().unwrap(), &positions)
+        .unwrap();
+    let found = editor
+        .topology()
+        .chains()
+        .find(|(_, candidate)| candidate.label_id() == chain)
+        .map(|(id, _)| id);
+    let chain = found.unwrap_or_else(|| editor.add_chain(chain, Some("A".to_owned())).unwrap());
+    let names = ["N", "CA", "C", "O"];
+    for (residue, sequence) in [(0u32, "1001"), (1, "1002")] {
+        let residue_id = editor
+            .add_residue(chain, "GLY", None, Some(sequence.to_owned()), None)
+            .unwrap();
+        for (offset, name) in (0u32..).zip(names) {
+            let atom = molecule.atoms()[&AtomId::new(4 * residue + offset)];
+            editor
+                .add_atom_site(
+                    residue_id,
+                    atom,
+                    AtomSiteMetadata::default().with_label_atom_id(Some(name.to_owned())),
+                )
+                .unwrap();
+        }
+    }
+}
+
+/// Each polymer entity's `_entity_poly_seq` monomers, in entity order.
+fn polymer_sequences(text: &str) -> Vec<Vec<String>> {
+    let document = mmcif::parse_str(text, Default::default()).unwrap();
+    let table = document.blocks()[0]
+        .loop_with_tag("_entity_poly_seq.entity_id")
+        .unwrap();
+    let mut sequences = Vec::<(String, Vec<String>)>::new();
+    for row in 0..table.row_count() {
+        let [entity, monomer] = ["_entity_poly_seq.entity_id", "_entity_poly_seq.mon_id"]
+            .map(|tag| table.value(row, tag).unwrap().text().to_owned());
+        match sequences.iter_mut().find(|(known, _)| *known == entity) {
+            Some((_, monomers)) => monomers.push(monomer),
+            None => sequences.push((entity, vec![monomer])),
+        }
+    }
+    sequences
+        .into_iter()
+        .map(|(_, monomers)| monomers)
+        .collect()
+}
+
+/// The formal charge and hydrogens of each atom of residues 1001 and 1002,
+/// by residue and atom name.
+fn dipeptide_chemistry(structure: &Structure) -> Vec<(String, String, i8, Option<usize>)> {
+    let mut atoms = structure
+        .topology()
+        .atom_sites()
+        .filter(|site| matches!(site.residue().author_seq_id(), Some("1001" | "1002")))
+        .map(|site| {
+            (
+                site.residue().author_seq_id().unwrap().to_owned(),
+                site.metadata().label_atom_id().unwrap().to_owned(),
+                site.atom().atom().formal_charge(),
+                site.atom().total_hydrogens(),
+            )
+        })
+        .collect::<Vec<_>>();
+    atoms.sort();
+    atoms
+}
+
+#[test]
+fn a_peptide_added_to_a_polymer_chain_takes_its_own_sequence() {
+    // Rubredoxin's 54 monomers are the source sequence of chain A. A
+    // dipeptide added to chain A reads back as the same one added to a
+    // chain of its own.
+    let source = mmcif_fixture("1IRO.cif");
+    let written = |chain| {
+        let mut editor = source.structure().to_editor();
+        add_dipeptide(&mut editor, chain);
+        write_edit(&source, editor, true)
+    };
+    let (in_chain, alone) = (written("A"), written("P"));
+    let sequences = polymer_sequences(&in_chain);
+    assert_eq!(sequences.len(), 2, "{in_chain}");
+    assert_eq!(sequences[0].len(), 54);
+    assert_eq!(sequences[1], ["GLY", "GLY"]);
+    assert_eq!(
+        dipeptide_chemistry(&read_back(&in_chain)),
+        dipeptide_chemistry(&read_back(&alone))
+    );
+}
+
+/// One carbon atom per component, as a residue of chain A, bonded as
+/// `bonds` says.
+fn carbohydrate_structure(components: &[&str], bonds: &[(usize, usize)]) -> Structure {
+    let mut graph = MoleculeEditor::new();
+    let atoms = components
+        .iter()
+        .map(|_| {
+            graph
+                .add_atom(Atom::new(Element::from_symbol("C").unwrap()))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for &(left, right) in bonds {
+        graph
+            .add_bond(atoms[left], atoms[right], BondOrder::Single)
+            .unwrap();
+    }
+    let mut builder = StructureBuilder::new();
+    let instance = builder
+        .add_molecule(graph.finish().unwrap(), &Positions::zeros(atoms.len()))
+        .unwrap();
+    let hierarchy = builder.topology_mut().hierarchy_mut();
+    let chain = hierarchy.add_chain("A", None).unwrap();
+    for (index, (&component, atom)) in components.iter().zip(atoms).enumerate() {
+        let sequence = i32::try_from(index).unwrap() + 1;
+        let residue = hierarchy
+            .add_residue(chain, component, Some(sequence), None, None)
+            .unwrap();
+        hierarchy
+            .add_atom_site(
+                residue,
+                InstanceAtomId::new(instance, atom),
+                AtomSiteMetadata::default().with_label_atom_id(Some("C1".to_owned())),
+            )
+            .unwrap();
+    }
+    builder.build().unwrap()
+}
+
+#[test]
+fn saccharides_of_several_residues_are_branched_entities() {
+    // PDBx writes every oligosaccharide as a branched entity, linear or not.
+    let linear = carbohydrate_structure(&["GLC", "GAL", "GLC"], &[(0, 1), (1, 2)]);
+    let graph_branched =
+        carbohydrate_structure(&["GLC", "GAL", "GLC", "MAN"], &[(0, 1), (0, 2), (0, 3)]);
+    for structure in [&linear, &graph_branched] {
+        let (written, _) = mmcif::write([structure], MmcifWriteOptions::default()).unwrap();
+        assert_eq!(entity_types(&written), ["branched"]);
+    }
+}
+
+/// A trisaccharide whose block states it as a branched entity.
+const BRANCHED_CARBOHYDRATE: &str = r#"
+data_branched_carbohydrate
+loop_
+_entity.id
+_entity.type
+1 branched
+loop_
+_struct_asym.id
+_struct_asym.entity_id
+A 1
+loop_
+_atom_site.group_PDB
+_atom_site.id
+_atom_site.type_symbol
+_atom_site.label_atom_id
+_atom_site.label_comp_id
+_atom_site.label_asym_id
+_atom_site.label_entity_id
+_atom_site.label_seq_id
+_atom_site.Cartn_x
+_atom_site.Cartn_y
+_atom_site.Cartn_z
+HETATM 1 C C1 GLC A 1 1 0.0 0.0 0.0
+HETATM 2 C C1 GAL A 1 2 3.0 0.0 0.0
+HETATM 3 C C1 GLC A 1 3 6.0 0.0 0.0
+loop_
+_struct_conn.id
+_struct_conn.conn_type_id
+_struct_conn.ptnr1_label_asym_id
+_struct_conn.ptnr1_label_atom_id
+_struct_conn.ptnr1_label_seq_id
+_struct_conn.ptnr2_label_asym_id
+_struct_conn.ptnr2_label_atom_id
+_struct_conn.ptnr2_label_seq_id
+link-1 covale A C1 1 A C1 2
+link-2 covale A C1 2 A C1 3
+"#;
+
+#[test]
+fn a_source_branched_saccharide_stays_branched() {
+    let interpreted = mmcif::parse_str(BRANCHED_CARBOHYDRATE, Default::default())
+        .unwrap()
+        .interpret(Default::default())
+        .unwrap();
+    let structure = interpreted.structure();
+    let molecule = structure.topology().instances().next().unwrap();
+    assert_eq!(molecule.class(), MoleculeClass::Carbohydrate);
+    assert_eq!(molecule.residues().count(), 3);
+    for written in [
+        mmcif::write([structure], MmcifWriteOptions::default()),
+        mmcif::write([&interpreted], MmcifWriteOptions::default()),
+    ] {
+        let (text, _) = written.unwrap();
+        assert_eq!(entity_types(&text), ["branched"]);
     }
 }

@@ -549,3 +549,52 @@ fn added_hydrogens_on_a_residue_after_a_gap_write_without_a_report() {
         &changes[..changes.len().min(4)]
     );
 }
+
+#[test]
+fn a_hydrogen_added_beside_one_under_an_older_name_takes_the_other_name() {
+    // A leucine's CB carries `1HB`, the older name of `HB2`; the hydrogen
+    // added beside it is `HB3`, so the two read back as two template atoms.
+    let (edited, _) = with_hydrogens(&pdb_fixture(include_str!("../fixtures/pdb/1AKE.pdb")));
+    let mut editor = edited.to_editor();
+    let leucine = |editor: &StructureEditor, name: &str| {
+        let residue = editor
+            .topology()
+            .atom_sites()
+            .find(|(_, site)| editor.topology().residue(site.residue()).unwrap().name() == "LEU")
+            .map(|(_, site)| site.residue())
+            .unwrap();
+        editor
+            .topology()
+            .atom_sites()
+            .find(|(_, site)| {
+                site.residue() == residue && site.metadata().auth_atom_id() == Some(name)
+            })
+            .map(|(id, site)| (id, site.atom(), site.metadata().clone()))
+            .unwrap()
+    };
+    let (site, _, metadata) = leucine(&editor, "HB2");
+    editor
+        .set_atom_site_metadata(
+            site,
+            metadata
+                .with_label_atom_id(Some("1HB".to_owned()))
+                .with_auth_atom_id(Some("1HB".to_owned())),
+        )
+        .unwrap();
+    let (_, hydrogen, _) = leucine(&editor, "HB3");
+    editor.delete_atoms([hydrogen]).unwrap();
+    let (_, carbon, _) = leucine(&editor, "CB");
+    editor
+        .add_hydrogens([carbon], AddHydrogensOptions::default())
+        .unwrap();
+    // The new hydrogen is `HB3`.
+    leucine(&editor, "HB3");
+    let renamed = editor.finish().unwrap();
+    let (written, _) = mmcif::write([&renamed], Default::default()).unwrap();
+    let changes = chemistry_changes(&renamed, reread(&written).structure());
+    assert!(
+        changes.is_empty(),
+        "{:#?}",
+        &changes[..changes.len().min(4)]
+    );
+}

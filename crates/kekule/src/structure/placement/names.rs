@@ -64,7 +64,7 @@ impl<'c> ResidueNames<'c> {
     /// Takes `name` for a new atom when no atom takes it and no template
     /// places it, and returns whether it did.
     pub(crate) fn claim(&mut self, name: &str) -> bool {
-        let free = !self.taken.contains(name) && !self.placed(name);
+        let free = !self.is_taken(name) && !self.placed(name);
         if free {
             self.taken.insert(name.to_owned());
         }
@@ -85,8 +85,23 @@ impl<'c> ResidueNames<'c> {
             .map_or(1, |largest| largest.saturating_add(1));
         (start..)
             .map(|number| format!("{prefix}{number}"))
-            .find(|name| !self.taken.contains(name) && !self.placed(name))
+            .find(|name| !self.is_taken(name) && !self.placed(name))
             .expect("numbers are unbounded")
+    }
+
+    /// Whether an atom takes `name`, or another name of the template atom it
+    /// names, as `1HB` takes `HB2`: readers match both to one atom.
+    fn is_taken(&self, name: &str) -> bool {
+        self.taken.contains(name)
+            || self.templates.iter().any(|template| {
+                template.atom(name).is_some_and(|(index, _)| {
+                    self.taken.iter().any(|taken| {
+                        template
+                            .atom(taken)
+                            .is_some_and(|(other, _)| other == index)
+                    })
+                })
+            })
     }
 
     /// Whether readers place an atom named `name` by the templates: an atom
@@ -106,7 +121,7 @@ impl<'c> ResidueNames<'c> {
     /// `parent`: one that every template naming it bonds to `parent`, else
     /// a terminal hydrogen's that no template names.
     fn hydrogen_on(&self, parent: &str) -> Option<&'c str> {
-        let free = |name: &str| !self.taken.contains(name);
+        let free = |name: &str| !self.is_taken(name);
         let unnamed = |name: &str| {
             self.templates
                 .iter()

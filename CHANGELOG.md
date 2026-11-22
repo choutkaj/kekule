@@ -846,6 +846,8 @@ the main branch migrates by the table under "From the SampleSet API".
   peptide `N`, so the written hydrogen read back with two bonds and the `N`
   charged. Hydrogens added to rubredoxin, adenylate kinase, and KRas now
   read back from mmCIF with their bonds, charges, and hydrogen counts.
+  A name is taken when an atom holds it under an older name, so a
+  hydrogen added beside a `1HB` is `HB3`, not a second `HB2`.
   `next_atom_name` and the mmCIF writer's names for unnamed sites skip
   template names too.
 - The mmCIF writer gives a residue an edit added to a chain an asym of its
@@ -854,6 +856,8 @@ the main branch migrates by the table under "From the SampleSet API".
   added to a protein chain read from mmCIF no longer fails. With the source
   report, an added residue or water of a source entity's component and
   chemistry is an instance of that entity, also outside the hierarchy.
+  Only the source's polymer takes the report's sequence; a peptide added to
+  its chain is numbered by its own residues, not extended by the source's.
 - The mmCIF writer writes structures it failed on without their reports:
   a residue of an amino acid that a chain break leaves alone stays in its
   polymer asym (7LPM), a saccharide of several residues is a branched
