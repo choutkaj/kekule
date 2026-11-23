@@ -49,8 +49,9 @@ use super::{
 ///   finds that the indexed bytes changed and fails.
 /// - A file replaced at its path keeps reading through the open file. A
 ///   refresh opens the path again. When the new file begins with the
-///   indexed bytes, the refresh takes it, and every reader reads it from
-///   then on, the clones' included. Otherwise the refresh fails.
+///   indexed bytes, and with those of any clone that indexed further, the
+///   refresh takes it, and every reader reads it from then on, the
+///   clones' included. Otherwise the refresh fails.
 ///
 /// After a failed refresh, opening the file again is the way back. A host
 /// that must know of changes between refreshes compares
@@ -135,8 +136,9 @@ impl IndexedFile {
     }
 
     /// Closes the file for the set, its clones, and all their readers. Reads
-    /// already running finish first, and this returns after them. Until
-    /// [`Self::reopen`], reads and refreshes fail with
+    /// and refreshes already running finish first, and this returns after
+    /// them; reads that start meanwhile wait for it, so a long refresh delays
+    /// them. Until [`Self::reopen`], reads and refreshes fail with
     /// [`TrajectoryIoErrorKind::Released`]. Releasing again does nothing.
     ///
     /// [`TrajectoryIoErrorKind::Released`]: crate::traj::TrajectoryIoErrorKind::Released
@@ -147,8 +149,9 @@ impl IndexedFile {
     /// Opens the file at `path` for the set, its clones, and all their
     /// readers, once the reads running finish, and makes `path` their
     /// [`Self::path`]. The file must begin with the bytes the frame index
-    /// covers, as [`TrajectoryFileFingerprint::is_prefix_of_path`] checks:
-    /// nothing is scanned again. A refresh then reads the file at `path`.
+    /// covers, as [`TrajectoryFileFingerprint::is_prefix_of_path`] checks,
+    /// and with those of any clone that indexed further: nothing is scanned
+    /// again. A refresh then reads the file at `path`.
     ///
     /// It reopens a released file, at its old path too, and moves an open
     /// one. Errors keep naming the file as it was opened.

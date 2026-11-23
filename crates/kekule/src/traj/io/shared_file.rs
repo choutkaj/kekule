@@ -4,7 +4,9 @@
 use std::fs::{File, Metadata};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use super::TrajectoryFileFingerprint;
 
 /// The one handle of a file that readers share, and the path it was opened
 /// from. A host can release the handle and reopen the file, at the same
@@ -16,10 +18,19 @@ use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 /// file close halfway. The handle has a lock of its own, taken shared by
 /// each positional read, so that a refresh can hand a new handle to the
 /// readers while they read.
+///
+/// The readers of a slot index prefixes of one file, some longer than
+/// others once their sets refresh apart. The slot keeps the fingerprint of
+/// the longest, and a handle enters the slot only once its file begins with
+/// those bytes, so every reader reads the bytes it indexed.
 #[derive(Debug)]
 pub(crate) struct FileSlot {
     path: RwLock<PathBuf>,
     file: RwLock<Option<File>>,
+    /// The fingerprint of the most bytes any reader of the slot indexed;
+    /// none before the first reader finished opening. A refresh holds it
+    /// from its check to its install, so refreshes take turns.
+    indexed: Mutex<Option<TrajectoryFileFingerprint>>,
 }
 
 fn shared<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
@@ -64,6 +75,11 @@ impl FileSlot {
         *exclusive(&self.file) = Some(file);
         path.clone_into(&mut place);
         Ok(())
+    }
+
+    /// The fingerprint of the most bytes any reader of the slot indexed.
+    pub(crate) fn indexed(&self) -> MutexGuard<'_, Option<TrajectoryFileFingerprint>> {
+        self.indexed.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Takes `file` as the handle; for a refresh that entered the slot.
@@ -115,6 +131,7 @@ impl SharedFile {
             slot: Arc::new(FileSlot {
                 path: RwLock::new(path),
                 file: RwLock::new(Some(file)),
+                indexed: Mutex::new(None),
             }),
             position: 0,
         }

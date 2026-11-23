@@ -1775,3 +1775,83 @@ fn a_release_and_a_reopen_through_a_clone_reach_every_clone() {
     }
     assert_eq!(second.refresh().unwrap(), 0);
 }
+
+/// A clone that indexed further than its set keeps reading the bytes it
+/// indexed: a reopen or a refresh of the set at a file that begins with the
+/// set's frames but not the clone's is refused, and the clone reads on.
+#[test]
+fn a_reopen_or_refresh_refuses_a_file_without_the_frames_a_clone_indexed() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let frames = frames_of(&all);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let first = |set: &StructureSet, count: usize| {
+        time_ordered(
+            Arc::clone(&topology),
+            frames_of(set).into_iter().take(count),
+        )
+    };
+    write_structure_set(&path, &first(&all, 3), options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut copy = set.clone();
+    let (mut writer, _) = append_trajectory(
+        &path,
+        Arc::clone(&topology),
+        KeepFrames::First(3),
+        options.clone(),
+    )
+    .unwrap();
+    for frame in all.iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_geometry(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(copy.refresh().unwrap(), 3);
+    let expected = read_every(&copy);
+    assert_eq!(expected.len(), frames.len());
+
+    // The set's three frames, then three other ones; and the set's three
+    // frames alone.
+    let rewritten = directory.0.join("rewritten.xtc");
+    write_structure_set(&rewritten, &first(&all, 3), options.clone()).unwrap();
+    let (mut writer, _) = append_trajectory(
+        &rewritten,
+        Arc::clone(&topology),
+        KeepFrames::First(3),
+        options.clone(),
+    )
+    .unwrap();
+    for frame in shifted(&all, 0.4).iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_geometry(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    let shorter = directory.0.join("shorter.xtc");
+    write_structure_set(&shorter, &first(&all, 3), options).unwrap();
+
+    let moved = directory.0.join("moved.xtc");
+    fs::rename(&path, &moved).unwrap();
+    for other in [&rewritten, &shorter] {
+        let refused = set.storage().reopen(other).unwrap_err();
+        assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+        assert_eq!(set.storage().path(), path);
+
+        fs::copy(other, &path).unwrap();
+        let refused = set.refresh().unwrap_err();
+        assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+        assert_eq!(set.len(), 3);
+        assert_eq!(read_every(&copy), expected);
+        fs::remove_file(&path).unwrap();
+    }
+
+    // The file the clone indexed is taken.
+    set.storage().reopen(&moved).unwrap();
+    assert_eq!(read_every(&copy), expected);
+    assert_eq!(set.refresh().unwrap(), 3);
+    assert_eq!(read_every(&set), expected);
+}

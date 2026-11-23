@@ -307,15 +307,18 @@ impl IndexedFileTrajectoryReader {
     }
 
     /// Opens the file at `path` as the handle of every reader of the slot,
-    /// once it begins with the indexed bytes.
+    /// once it begins with the bytes every one of them indexed.
     pub(crate) fn reopen(&self, path: &Path) -> Result<(), TrajectoryIoError> {
         let format = self.metadata.format();
         let label = self.label.as_str();
-        self.slot().reopen(path, |path| {
+        let slot = self.slot();
+        slot.reopen(path, |path| {
             let mut file = File::open(path).map_err(|error| {
                 io_context(TrajectoryIoOperation::Open, Some(format), label, error)
             })?;
-            if self.fingerprint.is_prefix_of_file(&mut file, label)? {
+            let indexed = slot.indexed();
+            let longest = indexed.as_ref().unwrap_or(&self.fingerprint);
+            if longest.is_prefix_of_file(&mut file, label)? {
                 Ok(file)
             } else {
                 Err(index_mismatch(
@@ -490,6 +493,14 @@ impl IndexedFileTrajectoryReader {
         if !self.fingerprint.is_prefix_of_file(&mut file, &label)? {
             return Err(changed());
         }
+        // Held to the install, so another reader of the slot cannot index
+        // further meanwhile.
+        let mut longest = slot.indexed();
+        // Bytes another reader of the slot indexed beyond this one's.
+        let further = longest
+            .as_ref()
+            .filter(|longest| !longest.same_content(&self.fingerprint))
+            .cloned();
         // The scan, the checks, and the fingerprint all read the file
         // checked here, which may not be the one read so far.
         let previous = self.inner.rebind(file, &path, format, &label)?;
@@ -503,11 +514,13 @@ impl IndexedFileTrajectoryReader {
             .and_then(|_| {
                 let end = self.inner.source().offsets().end();
                 self.inner.check_file(format, &label, |file| {
-                    if indexed.is_prefix_of_file(file, &label)? {
-                        TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
-                    } else {
-                        Err(changed())
+                    let every = std::iter::once(indexed).chain(further.as_ref());
+                    for indexed in every {
+                        if !indexed.is_prefix_of_file(file, &label)? {
+                            return Err(changed());
+                        }
                     }
+                    TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
                 })
             });
         match checked {
@@ -518,6 +531,12 @@ impl IndexedFileTrajectoryReader {
                     .stream_mut()
                     .get_mut()
                     .hand_over(&slot);
+                if longest
+                    .as_ref()
+                    .is_none_or(|longest| longest.byte_count() <= fingerprint.byte_count())
+                {
+                    *longest = Some(fingerprint.clone());
+                }
                 self.fingerprint = fingerprint;
                 self.record_counts();
                 Ok(self.inner.source().offsets().len() - before)
@@ -1220,6 +1239,7 @@ fn open_indexed(
             }
         })?
     };
+    *inner.file().slot().indexed() = Some(fingerprint.clone());
     let note = match imported_count {
         Some(imported) => TrajectoryOpenNote::IndexImported {
             format,
