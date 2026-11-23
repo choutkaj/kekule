@@ -2,7 +2,7 @@
 
 use crate::diagnostics::{Countable, IndexOutOfRange};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::properties::{OwnerProperties, PropertyTable};
@@ -11,7 +11,9 @@ use crate::structure::{
     Sampling, StructureSet, StructureSetRead, StructureSetReadError, TimeAxis,
 };
 use crate::topology::Topology;
-use crate::traj::{SeekableTrajectoryReader, TrajectoryIoError, TrajectoryReader};
+use crate::traj::{
+    SeekableTrajectoryReader, TrajectoryIoError, TrajectoryIoOperation, TrajectoryReader,
+};
 
 use super::{
     open_indexed_trajectory, open_indexed_trajectory_from_index, IndexedFileTrajectoryReader,
@@ -47,8 +49,9 @@ use super::{
 ///   finds that the indexed bytes changed and fails.
 /// - A file replaced at its path keeps reading through the open file. A
 ///   refresh opens the path again. When the new file begins with the
-///   indexed bytes, the refresh takes it, and every reader reads it from
-///   then on. Otherwise the refresh fails.
+///   indexed bytes, and with those of any clone that indexed further, the
+///   refresh takes it, and every reader reads it from then on, the
+///   clones' included. Otherwise the refresh fails.
 ///
 /// After a failed refresh, opening the file again is the way back. A host
 /// that must know of changes between refreshes compares
@@ -64,7 +67,30 @@ use super::{
 /// with [`StructureSet::refresh`], and load geometries into memory with
 /// [`StructureSet::from_reader`].
 ///
-/// Cloning a set reads nothing: the clone shares the file object, the frame
+/// A host closes the file with [`Self::release`] and opens it again, at the
+/// same path or another, with [`Self::reopen`], such as to move the folder
+/// that holds it: on Windows, a folder that holds an open file cannot be
+/// renamed. Both act on the set, its clones, and all their readers at once,
+/// from any of them and any thread, and keep the frame index, the pool, the
+/// fingerprint, and the set properties. In between, reads and refreshes fail
+/// with [`TrajectoryIoErrorKind::Released`].
+///
+/// ```no_run
+/// use kekule::structure::StructureSetRead;
+/// use kekule::traj::io::open_indexed_structure_set;
+///
+/// let topology = kekule::smiles::to_topology("CC")?;
+/// let set = open_indexed_structure_set("Kinase/data/run.xtc", topology, Default::default())?;
+/// let copy = set.clone();
+/// set.storage().release();
+/// std::fs::rename("Kinase", "Kinase 2")?;
+/// copy.storage().reopen("Kinase 2/data/run.xtc")?;
+/// let geometry = set.read(0)?;
+/// assert_eq!(set.storage().path(), copy.storage().path());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Cloning a set reads nothing: the clone shares the file, the frame
 /// index, the set properties, and the order, with an empty pool, so a host
 /// that changes only the properties, or pairs the set with a distribution in
 /// an [`Ensemble`], copies it as cheaply as one in memory. Refreshing either
@@ -74,6 +100,7 @@ use super::{
 /// and the first refresh of either reads the start of the file once more.
 ///
 /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
+/// [`TrajectoryIoErrorKind::Released`]: crate::traj::TrajectoryIoErrorKind::Released
 pub struct IndexedFile {
     /// The reader the set opened: the pool's readers are forked from it,
     /// and it alone refreshes. It serves no read, and clones of the set
@@ -102,9 +129,44 @@ impl fmt::Debug for IndexedFile {
 }
 
 impl IndexedFile {
-    /// The trajectory file.
-    pub fn path(&self) -> &Path {
+    /// The trajectory file: the path the set was opened from, or the one it
+    /// was last [reopened](Self::reopen) at.
+    pub fn path(&self) -> PathBuf {
         self.reader.path()
+    }
+
+    /// Closes the file for the set, its clones, and all their readers. Reads
+    /// and refreshes already running finish first, and this returns after
+    /// them; reads that start meanwhile wait for it, so a long refresh delays
+    /// them. Until [`Self::reopen`], reads and refreshes fail with
+    /// [`TrajectoryIoErrorKind::Released`]. Releasing again does nothing.
+    ///
+    /// [`TrajectoryIoErrorKind::Released`]: crate::traj::TrajectoryIoErrorKind::Released
+    pub fn release(&self) {
+        self.reader.slot().release();
+    }
+
+    /// Opens the file at `path` for the set, its clones, and all their
+    /// readers, once the reads running finish, and makes `path` their
+    /// [`Self::path`]. The file must begin with the bytes the frame index
+    /// covers, as [`TrajectoryFileFingerprint::is_prefix_of_path`] checks,
+    /// and with those of any clone that indexed further: nothing is scanned
+    /// again. A refresh then reads the file at `path`.
+    ///
+    /// It reopens a released file, at its old path too, and moves an open
+    /// one. Errors keep naming the file as it was opened.
+    ///
+    /// # Errors
+    ///
+    /// [`TrajectoryIoErrorKind::Io`] when the file cannot be opened or read,
+    /// and [`TrajectoryIoErrorKind::IndexMismatch`] when it does not begin
+    /// with the indexed bytes. Failure changes nothing: a released file stays
+    /// released.
+    ///
+    /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
+    /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
+    pub fn reopen(&self, path: impl AsRef<Path>) -> Result<(), TrajectoryIoError> {
+        self.reader.reopen(path.as_ref())
     }
 
     /// The frame index of the geometries: one frame per geometry, sharing the
@@ -141,6 +203,13 @@ impl IndexedFile {
 
     /// Reads geometry `index`, which the index holds.
     fn read(&self, index: usize) -> Result<Geometry, TrajectoryIoError> {
+        // Held to the end, so a release waits for the read.
+        let Some(_path) = self.reader.slot().enter() else {
+            return Err(self
+                .reader
+                .released(TrajectoryIoOperation::ReadFrame)
+                .with_frame(index));
+        };
         let lost = |error| self.reader.lost_frame(index, error);
         let mut reader = self.take().map_err(lost)?;
         let read = reader.read_geometry(index);
@@ -258,7 +327,8 @@ impl StructureSet<IndexedFile> {
     /// re-expresses a distribution over them.
     /// The pool's readers are kept and read by the new index, which they
     /// share. A set whose clone shares its reader first opens a reader of
-    /// its own, as the pool does. Failure changes nothing.
+    /// its own, as the pool does; it reads the file the clones read, and
+    /// follows its release and reopening. Failure changes nothing.
     ///
     /// ```no_run
     /// use kekule::structure::StructureSetRead;
@@ -284,14 +354,20 @@ impl StructureSet<IndexedFile> {
     ///
     /// The errors of [`IndexedFileTrajectoryReader::refresh`]. A truncated
     /// or rewritten file fails with
-    /// [`TrajectoryIoErrorKind::IndexMismatch`]: open it again.
+    /// [`TrajectoryIoErrorKind::IndexMismatch`]: open it again. A released
+    /// file fails with [`TrajectoryIoErrorKind::Released`].
     ///
     /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
+    /// [`TrajectoryIoErrorKind::Released`]: crate::traj::TrajectoryIoErrorKind::Released
     pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
         let previous = self.len();
         let storage = self.storage_mut();
         if Arc::get_mut(&mut storage.reader).is_none() {
             // A clone shares the reader, so this set refreshes one of its own.
+            let slot = Arc::clone(storage.reader.slot());
+            let Some(_path) = slot.enter() else {
+                return Err(storage.reader.released(TrajectoryIoOperation::Index));
+            };
             storage.reader = Arc::new(storage.reader.fork()?);
         }
         let reader = Arc::get_mut(&mut storage.reader).expect("the set alone holds its reader");

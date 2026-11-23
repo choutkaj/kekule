@@ -19,7 +19,7 @@ use super::indexed_reader::{IndexFacts, IndexedSource};
 use super::limits::index_hard_capacity;
 use super::options::ReadSource;
 use super::{
-    dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileTrajectoryMetadata,
+    dcd, detect, index_mismatch, io_context, trr, xtc, xyz, FileSlot, FileTrajectoryMetadata,
     IndexBuildControl, SharedFile, TrajectoryFileFingerprint, TrajectoryFrameIndex,
     TrajectoryOpenNote, TrajectoryOpenOptions, TrajectoryOpenReport, TrajectoryWriteOptions,
 };
@@ -208,18 +208,21 @@ impl IndexedReaderInner {
         Ok(value)
     }
 
-    /// Reads on from `file`, which must begin with the indexed bytes, where
-    /// the reader left its stream, and returns the stream it replaces.
+    /// Reads on from `file`, opened from `path`, which must begin with the
+    /// indexed bytes, where the reader left its stream, and returns the
+    /// stream it replaces. The reader reads `file` alone until its stream
+    /// hands it over ([`SharedFile::hand_over`]).
     fn rebind(
         &mut self,
         file: File,
+        path: &Path,
         format: TrajectoryFormat,
         label: &str,
     ) -> Result<BufReader<SharedFile>, TrajectoryIoError> {
         let io = |error| io_context(TrajectoryIoOperation::Index, Some(format), label, error);
         let stream = self.source_mut().stream_mut();
         let position = stream.stream_position().map_err(io)?;
-        let mut replacement = BufReader::new(SharedFile::new(file));
+        let mut replacement = BufReader::new(SharedFile::new(file, path.to_path_buf()));
         replacement.seek(SeekFrom::Start(position)).map_err(io)?;
         Ok(std::mem::replace(stream, replacement))
     }
@@ -241,8 +244,8 @@ pub struct IndexedFileTrajectoryReader {
     /// The fingerprint of the indexed bytes: the file up to the end of its
     /// last indexed frame.
     fingerprint: TrajectoryFileFingerprint,
-    path: PathBuf,
-    /// The name of the file in errors: the caller's label, or the path.
+    /// The name of the file in errors: the caller's label, or the path it
+    /// was opened from.
     label: String,
     growing: bool,
 }
@@ -282,9 +285,50 @@ impl IndexedFileTrajectoryReader {
         )
     }
 
-    /// The path the reader opened.
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
+    /// The path of the file: the one the reader opened, or the one its slot
+    /// was last reopened at.
+    pub(crate) fn path(&self) -> PathBuf {
+        self.slot().path()
+    }
+
+    /// The slot of the file every reader forked from this one reads.
+    pub(crate) fn slot(&self) -> &Arc<FileSlot> {
+        self.inner.file().slot()
+    }
+
+    /// The failure of `operation` on a released file.
+    pub(crate) fn released(&self, operation: TrajectoryIoOperation) -> TrajectoryIoError {
+        TrajectoryIoError::codec(
+            TrajectoryIoErrorKind::Released,
+            operation,
+            Some(self.metadata.format()),
+        )
+        .with_source_label(self.label.clone())
+    }
+
+    /// Opens the file at `path` as the handle of every reader of the slot,
+    /// once it begins with the bytes every one of them indexed.
+    pub(crate) fn reopen(&self, path: &Path) -> Result<(), TrajectoryIoError> {
+        let format = self.metadata.format();
+        let label = self.label.as_str();
+        let slot = self.slot();
+        slot.reopen(path, |path| {
+            let mut file = File::open(path).map_err(|error| {
+                io_context(TrajectoryIoOperation::Open, Some(format), label, error)
+            })?;
+            let indexed = slot.indexed();
+            let longest = indexed.as_ref().unwrap_or(&self.fingerprint);
+            if longest.is_prefix_of_file(&mut file, label)? {
+                Ok(file)
+            } else {
+                Err(index_mismatch(
+                    TrajectoryIoOperation::Open,
+                    format,
+                    label,
+                    Reason::PrefixMismatch,
+                ))
+            }
+        })
     }
 
     /// The fingerprint of the indexed bytes.
@@ -301,7 +345,6 @@ impl IndexedFileTrajectoryReader {
             metadata: self.metadata.clone(),
             open_report: self.open_report.clone(),
             fingerprint: self.fingerprint.clone(),
-            path: self.path.clone(),
             label: self.label.clone(),
             growing: self.growing,
         })
@@ -384,6 +427,8 @@ impl IndexedFileTrajectoryReader {
     /// when it begins with the indexed bytes, as a copy of the file grown
     /// further does. The refresh checks, scans, and fingerprints that one
     /// file, so the index and its fingerprint always describe the same bytes.
+    /// Every reader that shares the reader's file reads it from then on,
+    /// those of a [`StructureSet`] and its clones included.
     ///
     /// # Errors
     ///
@@ -391,9 +436,10 @@ impl IndexedFileTrajectoryReader {
     /// changed, including while the new frames were read, the decoding error
     /// of the first invalid new frame,
     /// [`TrajectoryIoErrorKind::LimitExceeded`] when the index outgrows the
-    /// limits, and [`TrajectoryIoErrorKind::Io`] when the file cannot be
-    /// read. Failure changes nothing: the reader keeps its frames and the
-    /// file it read them from, and can be refreshed again. A file whose
+    /// limits, [`TrajectoryIoErrorKind::Io`] when the file cannot be read,
+    /// and [`TrajectoryIoErrorKind::Released`] while a set over the file has
+    /// released it. Failure changes nothing: the reader keeps its frames and
+    /// the file it read them from, and can be refreshed again. A file whose
     /// indexed bytes changed, such as a truncated or rewritten one, never
     /// refreshes; opening it again is the way back.
     ///
@@ -424,10 +470,16 @@ impl IndexedFileTrajectoryReader {
     /// [`TrajectoryIoErrorKind::IndexMismatch`]: crate::traj::TrajectoryIoErrorKind::IndexMismatch
     /// [`TrajectoryIoErrorKind::LimitExceeded`]: crate::traj::TrajectoryIoErrorKind::LimitExceeded
     /// [`TrajectoryIoErrorKind::Io`]: crate::traj::TrajectoryIoErrorKind::Io
+    /// [`TrajectoryIoErrorKind::Released`]: crate::traj::TrajectoryIoErrorKind::Released
     pub fn refresh(&mut self) -> Result<usize, TrajectoryIoError> {
+        let slot = Arc::clone(self.slot());
+        // Held to the end, so a release waits for the refresh.
+        let Some(path) = slot.enter() else {
+            return Err(self.released(TrajectoryIoOperation::Index));
+        };
         let label = self.label.clone();
         let format = self.metadata.format();
-        let mut file = File::open(&self.path).map_err(|error| {
+        let mut file = File::open(&*path).map_err(|error| {
             io_context(TrajectoryIoOperation::Index, Some(format), &label, error)
         })?;
         let changed = || {
@@ -441,9 +493,17 @@ impl IndexedFileTrajectoryReader {
         if !self.fingerprint.is_prefix_of_file(&mut file, &label)? {
             return Err(changed());
         }
+        // Held to the install, so another reader of the slot cannot index
+        // further meanwhile.
+        let mut longest = slot.indexed();
+        // Bytes another reader of the slot indexed beyond this one's.
+        let further = longest
+            .as_ref()
+            .filter(|longest| !longest.same_content(&self.fingerprint))
+            .cloned();
         // The scan, the checks, and the fingerprint all read the file
         // checked here, which may not be the one read so far.
-        let previous = self.inner.rebind(file, format, &label)?;
+        let previous = self.inner.rebind(file, &path, format, &label)?;
         let before = self.inner.source().offsets().len();
         let snapshot = self.inner.snapshot();
         let indexed = &self.fingerprint;
@@ -454,15 +514,29 @@ impl IndexedFileTrajectoryReader {
             .and_then(|_| {
                 let end = self.inner.source().offsets().end();
                 self.inner.check_file(format, &label, |file| {
-                    if indexed.is_prefix_of_file(file, &label)? {
-                        TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
-                    } else {
-                        Err(changed())
+                    let every = std::iter::once(indexed).chain(further.as_ref());
+                    for indexed in every {
+                        if !indexed.is_prefix_of_file(file, &label)? {
+                            return Err(changed());
+                        }
                     }
+                    TrajectoryFileFingerprint::of_file_prefix(file, end, &label)
                 })
             });
         match checked {
             Ok(fingerprint) => {
+                // Every reader of the slot reads the checked file from now on.
+                self.inner
+                    .source_mut()
+                    .stream_mut()
+                    .get_mut()
+                    .hand_over(&slot);
+                if longest
+                    .as_ref()
+                    .is_none_or(|longest| longest.byte_count() <= fingerprint.byte_count())
+                {
+                    *longest = Some(fingerprint.clone());
+                }
                 self.fingerprint = fingerprint;
                 self.record_counts();
                 Ok(self.inner.source().offsets().len() - before)
@@ -924,7 +998,7 @@ fn open_indexed(
         Some(_) => None,
         None => Some(TrajectoryFileFingerprint::of_file(&mut file, &label)?),
     };
-    let mut reader = BufReader::new(SharedFile::new(file));
+    let mut reader = BufReader::new(SharedFile::new(file, path.to_path_buf()));
     let detection = detect::select_format(
         &mut reader,
         path,
@@ -1165,6 +1239,7 @@ fn open_indexed(
             }
         })?
     };
+    *inner.file().slot().indexed() = Some(fingerprint.clone());
     let note = match imported_count {
         Some(imported) => TrajectoryOpenNote::IndexImported {
             format,
@@ -1182,7 +1257,6 @@ fn open_indexed(
         metadata,
         open_report: report,
         fingerprint,
-        path: path.to_path_buf(),
         label,
         growing,
     })

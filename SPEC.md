@@ -709,8 +709,13 @@ which it reports.
 from any number of threads at once, and reads whatever bytes the file holds at
 the indexed offsets; `refresh` takes appended frames and fails without change
 when the indexed bytes changed. A clone shares the set's reader and index and
-refreshes independently. An `Ensemble` over the set refreshes through
-`Ensemble::refresh`, and appended frames are not samples.
+refreshes independently. The set, its clones, and all their readers read one
+file handle: `IndexedFile::release` closes it for all of them once the reads
+running finish, and `IndexedFile::reopen` opens the file at a path again for
+all of them when it begins with the bytes any of them indexed, keeping the
+index. A refresh takes a replaced file under the same check. In between,
+reads and refreshes fail as released. An `Ensemble` over the set refreshes
+through `Ensemble::refresh`, and appended frames are not samples.
 `StructureSet::from_reader` reads listed geometries into a set in memory; an
 ensemble's `load` also restricts the distribution. See
 [structure sets read from files](crates/kekule/src/traj/io/indexed_file.rs).

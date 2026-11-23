@@ -1,6 +1,7 @@
 //! Structure sets read from indexed trajectory files: every read is the indexed
 //! reader's frame, reads run from many threads at once, a refresh takes the
-//! frames a writer appended, and loading gives the set in memory.
+//! frames a writer appended, loading gives the set in memory, and a released
+//! file reopens elsewhere.
 
 use kekule::diagnostics::Countable;
 use kekule::diagnostics::IndexOutOfRange;
@@ -1535,4 +1536,322 @@ fn the_fingerprint_of_the_first_frames_ignores_what_follows_them() {
     let short = five.prefix_fingerprint(&path, 2).unwrap_err();
     assert_eq!(short.kind(), TrajectoryIoErrorKind::IndexMismatch);
     assert!(five.prefix_fingerprint(&path, 1).is_ok());
+}
+
+/// Every geometry of `set`, read in order.
+fn read_every(set: &impl StructureSetRead) -> Vec<Geometry> {
+    (0..set.len())
+        .map(|index| set.read(index).unwrap())
+        .collect()
+}
+
+/// Checks that a read and a refresh of `set` fail because its file is
+/// released.
+fn assert_released(set: &mut StructureSet<IndexedFile>) {
+    let failed = set.read(1).unwrap_err();
+    let (geometry, error) = trajectory_failure(&failed);
+    assert_eq!(geometry, 1);
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Released);
+    assert_eq!(error.frame(), Some(1));
+    assert!(
+        error.to_string().ends_with("\". The file is closed."),
+        "{error}"
+    );
+    let refused = set.refresh().unwrap_err();
+    assert_eq!(refused.kind(), TrajectoryIoErrorKind::Released);
+}
+
+/// On Windows a folder that holds an open file cannot be renamed. A
+/// released set lets it move, and reopened at the new place, the set, its
+/// clone, and a clone on another thread read the same frames there.
+#[cfg(windows)]
+#[test]
+fn a_released_set_lets_its_folder_move_and_reads_from_the_new_place() {
+    let [.., (fixture, topology)] = fixtures();
+    let directory = Directory::new();
+    let folder = directory.0.join("Kinase");
+    fs::create_dir_all(folder.join("data")).unwrap();
+    let path = folder.join("data").join("md.xtc");
+    fs::copy(&fixture, &path).unwrap();
+    let set = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
+    let expected = read_every(&set);
+    let copy = set.clone();
+
+    let (ready, read) = std::sync::mpsc::channel();
+    let (reopened, wait) = std::sync::mpsc::channel::<()>();
+    let analysis = set.clone();
+    let background = thread::spawn(move || {
+        ready.send(read_every(&analysis)).unwrap();
+        wait.recv().unwrap();
+        (read_every(&analysis), analysis.storage().path())
+    });
+    assert_eq!(read.recv().unwrap(), expected);
+
+    let moved = directory.0.join("Kinase 2");
+    assert!(fs::rename(&folder, &moved).is_err());
+    copy.storage().release();
+    fs::rename(&folder, &moved).unwrap();
+    let new_path = moved.join("data").join("md.xtc");
+    set.storage().reopen(&new_path).unwrap();
+    reopened.send(()).unwrap();
+
+    let (background_reads, background_path) = background.join().unwrap();
+    assert_eq!(background_reads, expected);
+    assert_eq!(background_path, new_path);
+    for reader in [&set, &copy] {
+        assert_eq!(read_every(reader), expected);
+        for reads in read_at_once(reader, 4) {
+            for (index, read) in reads.into_iter().enumerate() {
+                assert_eq!(read.unwrap(), expected[index], "geometry {index}");
+            }
+        }
+        assert_eq!(reader.storage().path(), new_path);
+    }
+}
+
+/// A released set fails every read and refresh with one typed error until it
+/// is reopened, and reopened, it reads by the index it kept.
+#[test]
+fn a_released_set_fails_its_reads_until_it_is_reopened() {
+    let [.., (fixture, topology)] = fixtures();
+    let directory = Directory::new();
+    let path = directory.0.join("md.xtc");
+    fs::copy(&fixture, &path).unwrap();
+    let mut set = open_indexed_structure_set(&path, topology, Default::default()).unwrap();
+    let expected = read_every(&set);
+    read_at_once(&set, 4);
+    let offsets = set.storage().frame_index().frame_offsets().as_ptr();
+    let fingerprint = set.storage().fingerprint().clone();
+
+    set.storage().release();
+    set.storage().release();
+    assert_released(&mut set);
+    assert_eq!(set.len(), expected.len());
+    for reads in read_at_once(&set, 4) {
+        for read in reads {
+            let failed = read.unwrap_err();
+            assert_eq!(
+                trajectory_failure(&failed).1.kind(),
+                TrajectoryIoErrorKind::Released
+            );
+        }
+    }
+
+    set.storage().reopen(&path).unwrap();
+    assert_eq!(read_every(&set), expected);
+    assert_eq!(
+        set.storage().frame_index().frame_offsets().as_ptr(),
+        offsets
+    );
+    assert_eq!(set.storage().fingerprint(), &fingerprint);
+    assert_eq!(set.refresh().unwrap(), 0);
+    // Reopening an open set takes the file again.
+    set.storage().reopen(&path).unwrap();
+    assert_eq!(read_every(&set), expected);
+}
+
+/// A reopen at a file of other bytes, or at no file, is refused, and the set
+/// stays released at its path.
+#[test]
+fn a_reopen_at_other_bytes_is_refused_and_the_set_stays_released() {
+    let topology = linear_carbon_topology(12);
+    let directory = Directory::new();
+    let path = chain_trr(&directory, &topology, 6);
+    let mut set =
+        open_indexed_structure_set(&path, Arc::clone(&topology), Default::default()).unwrap();
+    let expected = read_every(&set);
+    let other = directory.0.join("other.trr");
+    write_structure_set(&other, &shifted(&chain(&topology, 6), 0.05), trr_options()).unwrap();
+    let shorter = directory.0.join("shorter.trr");
+    write_structure_set(&shorter, &chain(&topology, 3), trr_options()).unwrap();
+
+    set.storage().release();
+    for refused in [&other, &shorter] {
+        let error = set.storage().reopen(refused).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            TrajectoryIoErrorKind::IndexMismatch,
+            "{error}"
+        );
+        assert!(
+            error
+                .to_string()
+                .ends_with("The file does not begin with the bytes the index covers."),
+            "{error}"
+        );
+        assert_eq!(set.storage().path(), path);
+        assert_released(&mut set);
+    }
+    let missing = set
+        .storage()
+        .reopen(directory.0.join("missing.trr"))
+        .unwrap_err();
+    assert_eq!(missing.kind(), TrajectoryIoErrorKind::Io);
+    assert_released(&mut set);
+
+    // Moved there, the file is taken.
+    fs::rename(&path, &other).unwrap();
+    set.storage().reopen(&other).unwrap();
+    assert_eq!(set.storage().path(), other);
+    assert_eq!(read_every(&set), expected);
+}
+
+/// A refresh after a reopen follows the file to its new place, and takes
+/// the frames appended there.
+#[test]
+fn refresh_after_a_reopen_takes_the_frames_appended_at_the_new_place() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let frames = frames_of(&all);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let head = time_ordered(Arc::clone(&topology), frames[..3].iter().cloned());
+    write_structure_set(&path, &head, options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut copy = set.clone();
+    read_at_once(&set, 4);
+
+    set.storage().release();
+    let moved = directory.0.join("moved.xtc");
+    fs::rename(&path, &moved).unwrap();
+    set.storage().reopen(&moved).unwrap();
+    let (mut writer, _) =
+        append_trajectory(&moved, Arc::clone(&topology), KeepFrames::First(3), options).unwrap();
+    for frame in all.iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_geometry(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+
+    assert_eq!(set.refresh().unwrap(), 3);
+    assert_eq!(copy.refresh().unwrap(), 3);
+    let written = indexed_frames(&moved, &topology);
+    for reader in [&set, &copy] {
+        assert_eq!(reader.storage().path(), moved);
+        for reads in read_at_once(reader, 4) {
+            for (index, read) in reads.into_iter().enumerate() {
+                assert_frame(reader, index, &read.unwrap(), &written[index]);
+            }
+        }
+    }
+}
+
+/// A release and a reopen through one clone reach the set and every other
+/// clone, those that opened a reader of their own on refresh included.
+#[test]
+fn a_release_and_a_reopen_through_a_clone_reach_every_clone() {
+    let topology = linear_carbon_topology(12);
+    let directory = Directory::new();
+    let path = chain_trr(&directory, &topology, 6);
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut first = set.clone();
+    let mut second = first.clone();
+    // Each refresh opens a reader of its own, since clones share it.
+    assert_eq!(set.refresh().unwrap(), 0);
+    assert_eq!(first.refresh().unwrap(), 0);
+    let expected = read_every(&set);
+    for reader in [&set, &first, &second] {
+        read_at_once(reader, 3);
+    }
+
+    first.storage().release();
+    for reader in [&mut set, &mut first, &mut second] {
+        assert_released(reader);
+    }
+    let moved = directory.0.join("moved.trr");
+    fs::rename(&path, &moved).unwrap();
+    second.storage().reopen(&moved).unwrap();
+    for reader in [&set, &first, &second] {
+        assert_eq!(reader.storage().path(), moved);
+        for reads in read_at_once(reader, 3) {
+            for (index, read) in reads.into_iter().enumerate() {
+                assert_eq!(read.unwrap(), expected[index], "geometry {index}");
+            }
+        }
+    }
+    assert_eq!(second.refresh().unwrap(), 0);
+}
+
+/// A clone that indexed further than its set keeps reading the bytes it
+/// indexed: a reopen or a refresh of the set at a file that begins with the
+/// set's frames but not the clone's is refused, and the clone reads on.
+#[test]
+fn a_reopen_or_refresh_refuses_a_file_without_the_frames_a_clone_indexed() {
+    let topology = linear_carbon_topology(12);
+    let all = chain(&topology, 6);
+    let frames = frames_of(&all);
+    let directory = Directory::new();
+    let path = directory.0.join("run.xtc");
+    let options = TrajectoryWriteOptions::new(TrajectoryFormat::Xtc);
+    let first = |set: &StructureSet, count: usize| {
+        time_ordered(
+            Arc::clone(&topology),
+            frames_of(set).into_iter().take(count),
+        )
+    };
+    write_structure_set(&path, &first(&all, 3), options.clone()).unwrap();
+    let growing = TrajectoryOpenOptions::default().with_growing(true);
+    let mut set = open_indexed_structure_set(&path, Arc::clone(&topology), growing).unwrap();
+    let mut copy = set.clone();
+    let (mut writer, _) = append_trajectory(
+        &path,
+        Arc::clone(&topology),
+        KeepFrames::First(3),
+        options.clone(),
+    )
+    .unwrap();
+    for frame in all.iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_geometry(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    assert_eq!(copy.refresh().unwrap(), 3);
+    let expected = read_every(&copy);
+    assert_eq!(expected.len(), frames.len());
+
+    // The set's three frames, then three other ones; and the set's three
+    // frames alone.
+    let rewritten = directory.0.join("rewritten.xtc");
+    write_structure_set(&rewritten, &first(&all, 3), options.clone()).unwrap();
+    let (mut writer, _) = append_trajectory(
+        &rewritten,
+        Arc::clone(&topology),
+        KeepFrames::First(3),
+        options.clone(),
+    )
+    .unwrap();
+    for frame in shifted(&all, 0.4).iter().skip(3) {
+        writer
+            .write_frame(FrameView::from_geometry(frame).unwrap())
+            .unwrap();
+    }
+    writer.finish().unwrap();
+    let shorter = directory.0.join("shorter.xtc");
+    write_structure_set(&shorter, &first(&all, 3), options).unwrap();
+
+    let moved = directory.0.join("moved.xtc");
+    fs::rename(&path, &moved).unwrap();
+    for other in [&rewritten, &shorter] {
+        let refused = set.storage().reopen(other).unwrap_err();
+        assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+        assert_eq!(set.storage().path(), path);
+
+        fs::copy(other, &path).unwrap();
+        let refused = set.refresh().unwrap_err();
+        assert_eq!(refused.kind(), TrajectoryIoErrorKind::IndexMismatch);
+        assert_eq!(set.len(), 3);
+        assert_eq!(read_every(&copy), expected);
+        fs::remove_file(&path).unwrap();
+    }
+
+    // The file the clone indexed is taken.
+    set.storage().reopen(&moved).unwrap();
+    assert_eq!(read_every(&copy), expected);
+    assert_eq!(set.refresh().unwrap(), 3);
+    assert_eq!(read_every(&set), expected);
 }
