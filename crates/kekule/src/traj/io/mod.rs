@@ -218,7 +218,7 @@ pub use options::TrajectoryOpenOptions;
 pub(crate) use decoded::DecodedGeometry;
 pub(crate) use frame_index::{index_mismatch, FrameOffsets, FrameStamp, IndexBuildControl};
 pub(crate) use limits::{projected_index_limit, reserve_index_for_push};
-pub(crate) use shared_file::SharedFile;
+pub(crate) use shared_file::{FileSlot, SharedFile};
 pub(crate) use util::{
     codec_context, frame_offset_context, io_context, probe_seekable_eof, require_no_partial_frame,
     require_nonempty_writer, validation_cause,

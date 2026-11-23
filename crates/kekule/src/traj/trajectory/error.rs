@@ -102,6 +102,12 @@ pub enum TrajectoryIoErrorKind {
     /// [`crate::traj::io::TrajectoryOpenOptions::with_growing`]). Open it again
     /// once its writer has written more.
     Incomplete,
+    /// A structure set over the file released it
+    /// ([`IndexedFile::release`](crate::traj::io::IndexedFile::release)), so
+    /// nothing reads the file until
+    /// [`IndexedFile::reopen`](crate::traj::io::IndexedFile::reopen) opens it
+    /// again.
+    Released,
 }
 
 impl fmt::Display for TrajectoryIoErrorKind {
@@ -130,6 +136,7 @@ impl fmt::Display for TrajectoryIoErrorKind {
             Self::InvalidIndex => "invalid trajectory frame index",
             Self::IndexMismatch => "trajectory frame index does not match the file",
             Self::Incomplete => "trajectory file holds no complete frame yet",
+            Self::Released => "trajectory file is released",
         };
         formatter.write_str(description)
     }
@@ -500,6 +507,7 @@ impl fmt::Display for TrajectoryIoError {
                 }
                 Kind::IndexMismatch => "The frame index does not match the file.".to_owned(),
                 Kind::Incomplete => "The file holds no complete frame yet.".to_owned(),
+                Kind::Released => "The file is closed.".to_owned(),
             },
         };
         write!(formatter, "{separator}{body}")?;

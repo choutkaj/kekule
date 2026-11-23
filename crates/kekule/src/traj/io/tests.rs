@@ -86,3 +86,81 @@ fn a_clone_of_a_set_over_a_file_reads_nothing() {
     drop((copy, opened));
     std::fs::remove_file(&path).unwrap();
 }
+
+/// A read running when the file is released finishes, and the release
+/// returns after it; reads after it fail.
+#[test]
+fn a_release_waits_for_the_reads_running() {
+    use crate::math::Point3;
+    use crate::structure::{
+        Geometry, Positions, StructureSet, StructureSetRead, StructureSetReadError,
+    };
+    use crate::traj::TrajectoryIoErrorKind;
+    use crate::units::{Quantity, NANOMETER};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    let topology = crate::smiles::to_topology("CC").unwrap();
+    let mut set = StructureSet::new(Arc::clone(&topology));
+    for shift in [0.0, 0.1, 0.2] {
+        let points = vec![Point3::new(shift, 0.0, 0.0), Point3::new(0.15, shift, 0.0)];
+        let positions = Positions::new(Quantity::new(points, NANOMETER)).unwrap();
+        set.push(Geometry::new(positions), None).unwrap();
+    }
+    let path =
+        std::env::temp_dir().join(format!("kekule-release-waits-{}.xyz", std::process::id()));
+    write_structure_set(
+        &path,
+        &set,
+        TrajectoryWriteOptions::new(TrajectoryFormat::Xyz),
+    )
+    .unwrap();
+    let opened =
+        open_indexed_structure_set(&path, topology, TrajectoryOpenOptions::default()).unwrap();
+    let expected = opened.read(1).unwrap();
+
+    let (started, paused) = mpsc::channel();
+    let (resume, resumed_signal) = mpsc::channel::<()>();
+    let resumed = Arc::new(AtomicBool::new(false));
+    std::thread::scope(|scope| {
+        let reading = {
+            let (opened, resumed) = (&opened, Arc::clone(&resumed));
+            scope.spawn(move || {
+                let mut pause = Some((started, resumed_signal));
+                super::shared_file::BEFORE_READ.with(|hook| {
+                    *hook.borrow_mut() = Some(Box::new(move || {
+                        if let Some((started, resumed_signal)) = pause.take() {
+                            started.send(()).unwrap();
+                            resumed_signal.recv().unwrap();
+                            resumed.store(true, Ordering::SeqCst);
+                        }
+                    }));
+                });
+                opened.read(1)
+            })
+        };
+        paused.recv_timeout(Duration::from_secs(60)).unwrap();
+        let releasing = scope.spawn(|| {
+            opened.storage().release();
+            resumed.load(Ordering::SeqCst)
+        });
+        // The release has time to return, if it does not wait.
+        std::thread::sleep(Duration::from_millis(200));
+        resume.send(()).unwrap();
+        assert_eq!(reading.join().unwrap().unwrap(), expected);
+        assert!(
+            releasing.join().unwrap(),
+            "the release returned during the read"
+        );
+    });
+    let Err(StructureSetReadError::Reader { source, .. }) = opened.read(0) else {
+        panic!("a read after the release fails");
+    };
+    let error = source
+        .downcast_ref::<crate::traj::TrajectoryIoError>()
+        .unwrap();
+    assert_eq!(error.kind(), TrajectoryIoErrorKind::Released);
+    drop(opened);
+    std::fs::remove_file(&path).unwrap();
+}

@@ -39,6 +39,10 @@ the main branch migrates by the table under "From the SampleSet API".
   appended frames with `refresh`, and `Ensemble::load` reads geometries into
   memory; for a growing file, `Distribution` and the native descriptions gain
   `extended_to`.
+- `IndexedFile::release` closes the file of a set, its clones, and all their
+  readers, so a host can move the folder that holds it, and
+  `IndexedFile::reopen` opens it again at a path without scanning; reads in
+  between fail with `TrajectoryIoErrorKind::Released`.
 - `traj::Processed` applies `ProcessingSteps` (make whole or wrap, center, fit
   to a `FitReference`, smooth, atom subset) to each geometry as it is read;
   `skipped_periodic_steps` and `ProcessingError` report what it skipped, and
