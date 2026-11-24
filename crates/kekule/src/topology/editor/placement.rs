@@ -67,6 +67,42 @@ pub(crate) struct AttachedInInstance {
     pub(crate) dead: Option<(usize, Vec<usize>)>,
 }
 
+/// One atom of the bond a ring fuses onto, in a [`FusionPlan`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FusionEndPlan {
+    pub(crate) atom: EditAtomId,
+    /// The explicit hydrogen whose stereo place the atom's new ring bond
+    /// takes and which is deleted; `None` takes an implicit hydrogen's.
+    pub(crate) replaced: Option<EditAtomId>,
+    /// Further explicit hydrogens the atom gives up.
+    pub(crate) removed: Vec<EditAtomId>,
+}
+
+/// The edit [`TopologyEditor::fuse_in_instance`] applies.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FusionPlan {
+    /// The atoms of the shared bond.
+    pub(crate) ends: [FusionEndPlan; 2],
+    /// The shared bond and its order afterwards.
+    pub(crate) shared: EditBondId,
+    pub(crate) shared_order: BondOrder,
+    /// The new atoms.
+    pub(crate) atoms: Vec<Atom>,
+    /// The new bonds, between indices into `atoms`; `atoms.len() + i` names
+    /// end `i`, which has exactly one new bond.
+    pub(crate) bonds: Vec<(usize, usize, BondOrder)>,
+}
+
+/// What [`TopologyEditor::fuse_in_instance`] added and deleted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FusedInInstance {
+    /// The new atoms, in plan order.
+    pub(crate) atoms: Vec<EditAtomId>,
+    /// The deleted hydrogens' atom slots and bond slots.
+    pub(crate) dead_atom_slots: Vec<usize>,
+    pub(crate) dead_bond_slots: Vec<usize>,
+}
+
 /// Why a hydrogen operation inside a topology draft failed.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum DraftHydrogenError {
@@ -232,48 +268,14 @@ impl TopologyEditor {
             changes.change(parent, Some(bond), None);
         }
         let counts = self.fixed_counts_after(&changes)?;
-        let draft = self.draft_mut(loc.group);
-        let local = draft.add_atom(atom)?;
-        let bond = if order == BondOrder::Single {
-            // The new atom takes over a hydrogen's stereo role below, so
-            // insert without pruning.
-            let bond = draft.add_bond_unpruned(loc.local, local, order)?;
-            let from = replaced_local.map_or(StereoCarrier::ImplicitHydrogen, StereoCarrier::Atom);
-            let replacements = draft
-                .stereo_elements()
-                .filter_map(|(id, element)| {
-                    let mut element = element.clone();
-                    let mut changed = false;
-                    let mut swap = |owner: AtomId, carrier: &mut StereoCarrier| {
-                        if owner == loc.local && *carrier == from && !changed {
-                            *carrier = StereoCarrier::Atom(local);
-                            changed = true;
-                        }
-                    };
-                    match &mut element.kind {
-                        StereoElementKind::Tetrahedral(stereo) => {
-                            let center = stereo.center;
-                            stereo.carriers.iter_mut().for_each(|c| swap(center, c));
-                        }
-                        StereoElementKind::DoubleBond(stereo) => {
-                            swap(stereo.left, &mut stereo.left_carrier);
-                            swap(stereo.right, &mut stereo.right_carrier);
-                        }
-                        StereoElementKind::Axis(_) => {}
-                    }
-                    changed.then_some((id, element))
-                })
-                .collect::<Vec<_>>();
-            // The replaced hydrogen is still bonded until it is deleted below,
-            // so the new carrier is written without validation, as hydrogen
-            // collapse does; publication validates the result.
-            for (id, element) in replacements {
-                draft.set_stereo_element_unchecked(id, element);
-            }
-            bond
-        } else {
-            draft.add_bond(loc.local, local, order)?
-        };
+        let local = self.draft_mut(loc.group).add_atom(atom)?;
+        let bond = bond_in_place_of_hydrogen(
+            self.draft_mut(loc.group),
+            loc.local,
+            local,
+            order,
+            replaced_local,
+        )?;
         let (atom, bond) = self.register_bonded_atom(loc.group, local, bond, parent);
         self.record_pruned(loc.group);
         let mut dead = None;
@@ -288,6 +290,100 @@ impl TopologyEditor {
         }
         self.set_fixed_counts(counts)?;
         Ok(AttachedInInstance { atom, bond, dead })
+    }
+
+    /// Fuses new ring atoms onto the bond `plan.shared` inside its instance's
+    /// draft: adds `plan.atoms`, bonds them as `plan.bonds` lists, gives the
+    /// shared bond `plan.shared_order`, and deletes each end's replaced and
+    /// removed explicit hydrogens. An end's one new bond takes the replaced
+    /// hydrogen's place in represented stereo, or an implicit hydrogen's
+    /// without one; fixed counts follow the whole edit, as edits make them
+    /// follow. The caller has checked the plan.
+    pub(crate) fn fuse_in_instance(
+        &mut self,
+        plan: &FusionPlan,
+    ) -> Result<FusedInInstance, TopologyEditError> {
+        let shared = self.require_bond(plan.shared)?;
+        let group = self.atom_location(plan.ends[0].atom)?.group;
+        let count = plan.atoms.len();
+        let end_of = |index: usize| index.checked_sub(count);
+        let mut changes = super::ValenceChanges::default();
+        for &(a, b, order) in &plan.bonds {
+            for end in [a, b].into_iter().filter_map(end_of) {
+                changes.change(plan.ends[end].atom, None, Some(order));
+            }
+        }
+        if shared.order != plan.shared_order {
+            changes.bond(
+                [shared.a, shared.b],
+                Some(shared.order),
+                Some(plan.shared_order),
+            );
+        }
+        let mut doomed = Vec::new();
+        for end in &plan.ends {
+            for &hydrogen in end.replaced.iter().chain(&end.removed) {
+                let bond = self
+                    .bond_between(end.atom, hydrogen)?
+                    .ok_or(TopologyEditError::InvalidAtom(hydrogen))?;
+                changes.change(end.atom, Some(self.require_bond(bond)?.order), None);
+                doomed.push(hydrogen);
+            }
+        }
+        let counts = self.fixed_counts_after(&changes)?;
+        let mut atoms = Vec::with_capacity(count);
+        for atom in &plan.atoms {
+            let local = self.draft_mut(group).add_atom(atom.clone())?;
+            atoms.push(self.register_atom(group, local));
+        }
+        self.mark_group_changed(group);
+        self.changed();
+        for &(a, b, order) in &plan.bonds {
+            match (end_of(a), end_of(b)) {
+                (None, None) => {
+                    // The fragment's counts already describe its own bonds.
+                    self.connect(atoms[a], atoms[b], order)?;
+                }
+                (Some(end), None) | (None, Some(end)) => {
+                    let new = atoms[a.min(b)];
+                    let parent = plan.ends[end].atom;
+                    let parent_local = self.atom_location(parent)?.local;
+                    let new_local = self.atom_location(new)?.local;
+                    let replaced = plan.ends[end]
+                        .replaced
+                        .map(|hydrogen| self.atom_location(hydrogen).map(|loc| loc.local))
+                        .transpose()?;
+                    let bond = bond_in_place_of_hydrogen(
+                        self.draft_mut(group),
+                        parent_local,
+                        new_local,
+                        order,
+                        replaced,
+                    )?;
+                    self.register_bond(group, bond, parent, new);
+                    self.record_pruned(group);
+                }
+                (Some(_), Some(_)) => unreachable!("the ends are bonded already"),
+            }
+        }
+        if shared.order != plan.shared_order {
+            self.reorder_bond(plan.shared, plan.shared_order)?;
+        }
+        let mut dead_atom_slots = Vec::with_capacity(doomed.len());
+        let mut dead_bond_slots = Vec::with_capacity(doomed.len());
+        for hydrogen in doomed {
+            dead_atom_slots.push(self.atom_location(hydrogen)?.slot);
+            for bond in self.incident_bonds(hydrogen)?.collect::<Vec<_>>() {
+                dead_bond_slots.push(self.bond_location(bond)?.slot);
+            }
+            self.remove_atom(hydrogen)?;
+        }
+        self.set_fixed_counts(counts)?;
+        Ok(FusedInInstance {
+            atoms,
+            dead_atom_slots,
+            dead_bond_slots,
+        })
     }
 
     /// Whether `atom`'s represented valence breaks the valence model's
@@ -551,4 +647,56 @@ impl TopologyEditor {
             .contains_key(&residue)
             .then(|| self.residue_atom_list(residue).into_iter())
     }
+}
+
+/// Bonds `parent` to `atom` in `draft`. A single bond takes the place of
+/// `replaced`, an explicit hydrogen of the parent about to be deleted, or
+/// else of an implicit hydrogen in the parent's represented stereo; another
+/// order prunes the stereo it invalidates.
+fn bond_in_place_of_hydrogen(
+    draft: &mut crate::molecule::MoleculeEditor,
+    parent: AtomId,
+    atom: AtomId,
+    order: BondOrder,
+    replaced: Option<AtomId>,
+) -> Result<crate::molecule::BondId, crate::molecule::MoleculeError> {
+    if order != BondOrder::Single {
+        return draft.add_bond(parent, atom, order);
+    }
+    // The new atom takes over a hydrogen's stereo role below, so insert
+    // without pruning.
+    let bond = draft.add_bond_unpruned(parent, atom, order)?;
+    let from = replaced.map_or(StereoCarrier::ImplicitHydrogen, StereoCarrier::Atom);
+    let replacements = draft
+        .stereo_elements()
+        .filter_map(|(id, element)| {
+            let mut element = element.clone();
+            let mut changed = false;
+            let mut swap = |owner: AtomId, carrier: &mut StereoCarrier| {
+                if owner == parent && *carrier == from && !changed {
+                    *carrier = StereoCarrier::Atom(atom);
+                    changed = true;
+                }
+            };
+            match &mut element.kind {
+                StereoElementKind::Tetrahedral(stereo) => {
+                    let center = stereo.center;
+                    stereo.carriers.iter_mut().for_each(|c| swap(center, c));
+                }
+                StereoElementKind::DoubleBond(stereo) => {
+                    swap(stereo.left, &mut stereo.left_carrier);
+                    swap(stereo.right, &mut stereo.right_carrier);
+                }
+                StereoElementKind::Axis(_) => {}
+            }
+            changed.then_some((id, element))
+        })
+        .collect::<Vec<_>>();
+    // The replaced hydrogen is still bonded until it is deleted, so the new
+    // carrier is written without validation, as hydrogen collapse does;
+    // publication validates the result.
+    for (id, element) in replacements {
+        draft.set_stereo_element_unchecked(id, element);
+    }
+    Ok(bond)
 }

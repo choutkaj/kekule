@@ -78,6 +78,38 @@ impl AttachedFragment {
     }
 }
 
+/// The atoms [`StructureEditor::fuse_fragment`] added and removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FusedFragment {
+    pub(crate) atoms: Vec<(crate::molecule::AtomId, EditAtomId)>,
+    pub(crate) fused: [(crate::molecule::AtomId, EditAtomId); 2],
+    pub(crate) bond: EditBondId,
+    pub(crate) removed: Vec<EditAtomId>,
+}
+
+impl FusedFragment {
+    /// The new atoms with the fragment molecule's atoms they copy, in
+    /// molecule order; the fragment's two fused atoms and their hydrogens
+    /// are absent.
+    pub fn atoms(&self) -> &[(crate::molecule::AtomId, EditAtomId)] {
+        &self.atoms
+    }
+    /// The fragment's fusion-bond atoms with the target atoms they merged
+    /// into.
+    pub const fn fused_atoms(&self) -> [(crate::molecule::AtomId, EditAtomId); 2] {
+        self.fused
+    }
+    /// The target bond, now shared by the two rings.
+    pub const fn bond(&self) -> EditBondId {
+        self.bond
+    }
+    /// The explicit hydrogens of the target atoms that were deleted, which
+    /// no longer name draft atoms.
+    pub fn removed_hydrogens(&self) -> &[EditAtomId] {
+        &self.removed
+    }
+}
+
 /// The atoms [`StructureEditor::place_fragment`] added.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacedFragment {
@@ -229,6 +261,37 @@ pub enum PlacementError {
         /// The atom of its molecule.
         atom: crate::molecule::AtomId,
     },
+    /// The fragment asked to fuse is a group; only rings fuse onto a bond.
+    NotRingFragment {
+        /// The fragment.
+        fragment: &'static str,
+    },
+    /// An atom of the target bond is a hydrogen.
+    FusionAtHydrogen {
+        /// The bond.
+        bond: EditBondId,
+    },
+    /// The target bond is neither single nor double.
+    FusionBondOrder {
+        /// The bond.
+        bond: EditBondId,
+        /// Its order.
+        order: crate::molecule::BondOrder,
+    },
+    /// The target bond already belongs to two rings of up to eight atoms,
+    /// as the shared bond of naphthalene does.
+    SharedFusionBond {
+        /// The bond.
+        bond: EditBondId,
+    },
+    /// An atom of the target bond carries no hydrogen, explicit or
+    /// implicit, for the fused ring's bond to replace.
+    FusionAtomWithoutHydrogen {
+        /// The bond.
+        bond: EditBondId,
+        /// The atom.
+        atom: EditAtomId,
+    },
 }
 
 impl fmt::Display for PlacementError {
@@ -278,6 +341,33 @@ impl fmt::Display for PlacementError {
             Self::FragmentAtomWithoutHydrogen { fragment, atom } => write!(
                 f,
                 "{} of fragment {fragment:?} carries no hydrogen.",
+                Capitalized(atom)
+            ),
+            Self::NotRingFragment { fragment } => {
+                write!(f, "Fragment {fragment:?} is a group, not a ring.")
+            }
+            Self::FusionAtHydrogen { bond } => {
+                write!(f, "Cannot fuse a ring onto {bond}. It ends at a hydrogen.")
+            }
+            Self::FusionBondOrder { bond, order } => {
+                use crate::molecule::BondOrder;
+                let order = match order {
+                    BondOrder::Zero => "a zero-order",
+                    BondOrder::Single => "a single",
+                    BondOrder::Double => "a double",
+                    BondOrder::Triple => "a triple",
+                    BondOrder::Quadruple => "a quadruple",
+                    BondOrder::Dative => "a dative",
+                };
+                write!(f, "Cannot fuse a ring onto {bond}. It is {order} bond.")
+            }
+            Self::SharedFusionBond { bond } => write!(
+                f,
+                "Cannot fuse a ring onto {bond}. It is already shared by two rings."
+            ),
+            Self::FusionAtomWithoutHydrogen { bond, atom } => write!(
+                f,
+                "Cannot fuse a ring onto {bond}. {} carries no hydrogen.",
                 Capitalized(atom)
             ),
         }

@@ -19,6 +19,8 @@ use crate::topology::DraftHydrogenError;
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod fusion;
+
 /// The residue a new molecule's atoms join.
 const NEW_RESIDUE: &str = "UNL";
 

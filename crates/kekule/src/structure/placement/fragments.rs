@@ -2,7 +2,7 @@
 use super::PlacementError;
 use crate::fixed_u32_id::FixedId;
 use crate::math::Point3;
-use crate::molecule::{AtomId, BondOrder, Molecule};
+use crate::molecule::{AtomId, BondId, BondOrder, Molecule};
 use crate::units::{Quantity, CANONICAL_LENGTH_UNIT};
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
@@ -55,6 +55,8 @@ pub struct Fragment {
     leaving: AtomId,
     /// The locant of each ring atom of a ring, in molecule atom order.
     locants: Vec<Option<Box<str>>>,
+    /// The bond of a ring that fuses onto a target bond.
+    fusion: Option<BondId>,
 }
 
 impl Fragment {
@@ -105,6 +107,23 @@ impl Fragment {
             .bond_between(self.attachment, self.leaving)
             .expect("the leaving atom is bonded to the attachment atom");
         self.molecule.bond(bond).expect("live bond").order
+    }
+    /// The bond of a ring that
+    /// [`StructureEditor::fuse_fragment`](crate::structure::StructureEditor::fuse_fragment)
+    /// lays onto the target bond, or `None` for a group.
+    ///
+    /// It is the first bond, in atom order, between two ring carbons that
+    /// each carry a hydrogen and one other heavy neighbor, and without which
+    /// the ring's other double bonds still pair its π atoms, so the fused
+    /// ring keeps them whatever the target bond's order. Heteroatoms stay off
+    /// the shared bond. On a benzene bond, pyridine gives quinoline,
+    /// pyrimidine quinazoline, pyrazine quinoxaline, pyrrole indole, furan
+    /// benzofuran, thiophene benzothiophene, imidazole benzimidazole,
+    /// pyrazole 1H-indazole, oxazole benzoxazole, thiazole benzothiazole,
+    /// naphthalene phenanthrene, indole carbazole, quinoline acridine, and
+    /// benzimidazole a naphthimidazole.
+    pub const fn fusion_bond(&self) -> Option<BondId> {
+        self.fusion
     }
     /// The same fragment attached through `atom` instead, which must carry an
     /// explicit hydrogen; that hydrogen leaves (for example pyridine through
@@ -262,18 +281,30 @@ fn load() -> Vec<Fragment> {
                     .expect("ring atoms are atoms");
                 locants[order] = Some(locant);
             }
+            let kind = match field("kind").as_str() {
+                "ring" => FragmentKind::Ring,
+                _ => FragmentKind::Group,
+            };
+            let ring = molecule
+                .atom_ids()
+                .zip(&locants)
+                .filter(|(_, locant)| locant.is_some())
+                .map(|(atom, _)| atom)
+                .collect::<BTreeSet<_>>();
+            let fusion = (kind == FragmentKind::Ring).then(|| {
+                super::fusion::default_fusion_bond(&molecule, &ring)
+                    .expect("every bundled ring has a fusion bond")
+            });
             Fragment {
                 name: name_of(record.title()),
-                kind: match field("kind").as_str() {
-                    "ring" => FragmentKind::Ring,
-                    _ => FragmentKind::Group,
-                },
+                kind,
                 pubchem_cid: field("PUBCHEM_COMPOUND_CID").parse().expect("a CID"),
                 molecule,
                 positions,
                 attachment,
                 leaving,
                 locants,
+                fusion,
             }
         })
         .collect()
