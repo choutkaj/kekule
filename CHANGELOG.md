@@ -227,7 +227,7 @@ the main branch migrates by the table under "From the SampleSet API".
 - Builder geometry on `StructureEditor` (`structure::placement`):
   `add_hydrogens`, `remove_hydrogens`, `atom_domains`, `free_directions`,
   `attach_atom`, `place_atom`, `rename_atom`, and `ideal_bond_length`.
-- `structure::placement::fragments` has 48 ring and group fragments that
+- `structure::placement::fragments` has 49 ring and group fragments that
   `StructureEditor::attach_fragment` and `place_fragment` add, naming ring
   atoms by IUPAC locant (`Fragment::locant`).
 - `StructureEditor::fuse_fragment` fuses a ring fragment onto a bond through

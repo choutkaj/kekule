@@ -360,6 +360,54 @@ fn benzene_fused_on_any_benzene_bond_gives_naphthalene() {
 }
 
 #[test]
+fn cyclopentadiene_fused_on_any_benzene_bond_gives_indene() {
+    let cyclopentadiene = fragment("cyclopentadiene").unwrap();
+    // The fusion bond is the C1=C2 double bond, next to the CH2.
+    let fusion = cyclopentadiene
+        .molecule()
+        .bond(cyclopentadiene.fusion_bond().unwrap())
+        .unwrap();
+    assert_eq!(fusion.order(), BondOrder::Double);
+    let source = placed("benzene");
+    for bond in heavy_bonds(&source) {
+        let mut editor = source.clone();
+        let fused = editor.fuse_fragment(bond, cyclopentadiene).unwrap();
+        // Three carbons and their four hydrogens are new; each target carbon
+        // gives up its hydrogen.
+        assert_eq!(fused.atoms().len(), 7);
+        assert_eq!(fused.removed_hydrogens().len(), 2);
+        let structure = editor.finish().unwrap();
+        assert_eq!(structure.atom_count(), 17);
+        assert_eq!(canonical(&structure), canonical_of("C1C=Cc2ccccc21"));
+        assert_eq!(rings_and_aromatic_atoms(&structure), (vec![5, 6], 6));
+        // C9H8: one saturated CH2, six CH, and the two fused carbons bare.
+        let molecule = perceived_molecule(&structure);
+        let hydrogens = |atom| {
+            molecule
+                .neighbors(atom)
+                .unwrap()
+                .filter(|n| molecule.atom(*n).unwrap().element().atomic_number() == 1)
+                .count()
+        };
+        let carbons = molecule
+            .atoms()
+            .filter(|(_, atom)| atom.element().atomic_number() == 6)
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        let mut counts = carbons.iter().map(|c| hydrogens(*c)).collect::<Vec<_>>();
+        counts.sort_unstable();
+        assert_eq!(counts, [0, 0, 1, 1, 1, 1, 1, 1, 2]);
+        let methylene = carbons.iter().find(|c| hydrogens(**c) == 2).unwrap();
+        assert!(molecule
+            .incident_bonds(*methylene)
+            .unwrap()
+            .all(|(_, bond)| bond.order() == BondOrder::Single));
+        assert_sensible_geometry(&structure, "indene");
+        assert!(heavy_atoms_off_plane(&structure) < 0.05);
+    }
+}
+
+#[test]
 fn cyclohexane_fused_on_cyclohexane_gives_trans_decalin() {
     let mut editor = placed("cyclohexane");
     let bond = heavy_bond(&editor);
@@ -395,6 +443,7 @@ fn cyclohexane_fused_on_cyclohexane_gives_trans_decalin() {
 fn five_membered_rings_fuse_on_benzene() {
     let cases = [
         ("cyclopentane", "C1Cc2ccccc2C1", vec![5, 6], 6),
+        ("cyclopentadiene", "C1C=Cc2ccccc21", vec![5, 6], 6),
         ("pyrrole", "c1ccc2[nH]ccc2c1", vec![5, 6], 9),
         ("thiophene", "c1ccc2sccc2c1", vec![5, 6], 9),
     ];
@@ -431,6 +480,7 @@ fn every_ring_fragment_fuses_on_benzene() {
         ("cyclobutane", "C1Cc2ccccc21"),
         ("cyclopentane", "C1Cc2ccccc2C1"),
         ("cyclohexane", "C1CCc2ccccc2C1"),
+        ("cyclopentadiene", "C1C=Cc2ccccc21"),
         ("piperidine", "C1CNc2ccccc2C1"),
         ("piperazine", "C1CNc2ccccc2N1"),
         ("morpholine", "C1COc2ccccc2N1"),

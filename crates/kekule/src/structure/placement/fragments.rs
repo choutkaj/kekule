@@ -120,8 +120,8 @@ impl Fragment {
     /// pyrimidine quinazoline, pyrazine quinoxaline, pyrrole indole, furan
     /// benzofuran, thiophene benzothiophene, imidazole benzimidazole,
     /// pyrazole 1H-indazole, oxazole benzoxazole, thiazole benzothiazole,
-    /// naphthalene phenanthrene, indole carbazole, quinoline acridine, and
-    /// benzimidazole a naphthimidazole.
+    /// cyclopentadiene 1H-indene, naphthalene phenanthrene, indole carbazole,
+    /// quinoline acridine, and benzimidazole a naphthimidazole.
     pub const fn fusion_bond(&self) -> Option<BondId> {
         self.fusion
     }
@@ -184,9 +184,9 @@ impl Fragment {
 /// - rings: benzene, pyridine (attached at C4), pyrimidine (C2), pyrazine,
 ///   pyrrole (N1), furan (C2), thiophene (C2), imidazole (N1), pyrazole
 ///   (N1), oxazole (C2), thiazole (C2), cyclopropane, cyclobutane,
-///   cyclopentane, cyclohexane (chair), piperidine (N1), piperazine (N1),
-///   morpholine (N4), tetrahydrofuran (C2), naphthalene (C2), indole (C3),
-///   quinoline (C4), benzimidazole (C2);
+///   cyclopentane, cyclohexane (chair), cyclopentadiene (C5), piperidine
+///   (N1), piperazine (N1), morpholine (N4), tetrahydrofuran (C2),
+///   naphthalene (C2), indole (C3), quinoline (C4), benzimidazole (C2);
 /// - groups: methyl, ethyl, isopropyl, tert-butyl, vinyl, ethynyl, phenyl,
 ///   benzyl, hydroxyl, methoxy, amino, methylamino, dimethylamino, formyl,
 ///   acetyl, carboxyl, methoxycarbonyl, carbamoyl, acetamido (through N),
@@ -312,7 +312,7 @@ fn load() -> Vec<Fragment> {
 
 /// The library's static name for a record title.
 fn name_of(title: &str) -> &'static str {
-    const NAMES: [&str; 48] = [
+    const NAMES: [&str; 49] = [
         "benzene",
         "pyridine",
         "pyrimidine",
@@ -328,6 +328,7 @@ fn name_of(title: &str) -> &'static str {
         "cyclobutane",
         "cyclopentane",
         "cyclohexane",
+        "cyclopentadiene",
         "piperidine",
         "piperazine",
         "morpholine",

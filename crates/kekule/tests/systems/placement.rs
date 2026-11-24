@@ -872,7 +872,7 @@ fn bond_distances(
 
 #[test]
 fn every_fragment_places_alone_with_its_ideal_geometry() {
-    assert_eq!(fragments().len(), 48);
+    assert_eq!(fragments().len(), 49);
     for fragment in fragments() {
         let mut editor = StructureEditor::new();
         let target = Point3::new(1.0, 2.0, 3.0);
@@ -1067,6 +1067,57 @@ fn fragments_attach_toward_directions_and_through_other_atoms() {
 }
 
 #[test]
+fn cyclopentadiene_attaches_through_its_sp3_carbon() {
+    let cyclopentadiene = fragment("cyclopentadiene").unwrap();
+    assert_eq!(cyclopentadiene.kind(), FragmentKind::Ring);
+    assert_eq!(cyclopentadiene.pubchem_cid(), 7612);
+    assert_eq!(
+        cyclopentadiene.locant(cyclopentadiene.attachment_atom()),
+        Some("5")
+    );
+    assert_eq!(cyclopentadiene.attachment_order(), BondOrder::Single);
+    let benzene = fragment("benzene").unwrap();
+    let mut editor = StructureEditor::new();
+    let placed = editor
+        .place_fragment(benzene, Quantity::new(Point3::origin(), NANOMETER))
+        .unwrap();
+    let handles = placed.atoms().iter().copied().collect::<BTreeMap<_, _>>();
+    let parent = handles[&benzene.attachment_atom()];
+    let hydrogen = handles[&benzene.leaving_atom()];
+    let attached = editor
+        .attach_fragment(parent, cyclopentadiene, AttachmentSite::Hydrogen(hydrogen))
+        .unwrap();
+    // Five carbons and five hydrogens: the CH2 gives up one hydrogen.
+    assert_eq!(attached.atoms().len(), 10);
+    let carbon = attached.attachment();
+    assert_eq!(element_of(&editor, carbon).atomic_number(), 6);
+    assert_eq!(hydrogen_count(&editor, carbon), 1);
+    assert_eq!(neighbors(&editor, carbon).len(), 4);
+    let length = ideal(element("C"), element("C"), BondOrder::Single);
+    assert!((distance(&editor, parent, carbon) - length).abs() < 1e-9);
+    // The attachment carbon stays saturated; the ring keeps its two double
+    // bonds.
+    let new = attached
+        .atoms()
+        .iter()
+        .map(|(_, atom)| *atom)
+        .collect::<BTreeSet<_>>();
+    let doubles = editor
+        .topology()
+        .bonds()
+        .filter(|(_, bond)| new.contains(&bond.a()) && new.contains(&bond.b()))
+        .filter(|(_, bond)| bond.order == BondOrder::Double)
+        .map(|(_, bond)| [bond.a(), bond.b()])
+        .collect::<Vec<_>>();
+    assert_eq!(doubles.len(), 2);
+    assert!(doubles.iter().all(|pair| !pair.contains(&carbon)));
+    let mut structure = editor.finish().unwrap();
+    structure.perceive().unwrap();
+    // 5-Phenylcyclopenta-1,3-diene, C11H10.
+    assert_eq!(structure.atom_count(), 21);
+}
+
+#[test]
 fn attaching_a_fragment_to_a_ligand_scales_with_the_ligand() {
     let single = adenylate_kinase();
     let large = large_structure(&single);
@@ -1211,6 +1262,7 @@ fn ring_fragments_follow_their_numbering() {
         ("pyrazole", 0),
         ("oxazole", 1),
         ("thiazole", 1),
+        ("cyclopentadiene", 4),
         ("piperidine", 0),
         ("piperazine", 0),
         ("morpholine", 3),

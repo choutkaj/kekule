@@ -49,6 +49,7 @@ and adds:
 | oxazole | oxazole (9255) | C2 |
 | thiazole | thiazole (9256) | C2 |
 | cyclopropane … cyclohexane | the cycloalkanes (6351, 9250, 9253, 8078) | C |
+| cyclopentadiene | cyclopenta-1,3-diene (7612) | C5 |
 | piperidine | piperidine (8082) | N1 |
 | piperazine | piperazine (4837) | N1 |
 | morpholine | morpholine (8083) | N4 |
