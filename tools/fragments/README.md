@@ -8,7 +8,7 @@ PubChem data are in the public domain.
 
 `build_fragments.py` writes the file from the records as served by
 `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/<name>/SDF?record_type=3d`
-(retrieved 2026-10-26):
+(retrieved 2026-10-26; cyclopentadiene 2026-11-24):
 
 ```
 python -I tools/fragments/build_fragments.py <directory of downloaded records> crates/kekule/src/structure/placement/fragments.sdf
@@ -49,6 +49,7 @@ and adds:
 | oxazole | oxazole (9255) | C2 |
 | thiazole | thiazole (9256) | C2 |
 | cyclopropane … cyclohexane | the cycloalkanes (6351, 9250, 9253, 8078) | C |
+| cyclopentadiene | cyclopenta-1,3-diene (7612) | C5 |
 | piperidine | piperidine (8082) | N1 |
 | piperazine | piperazine (4837) | N1 |
 | morpholine | morpholine (8083) | N4 |

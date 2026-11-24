@@ -38,6 +38,7 @@ fn the_fusion_bond_joins_two_ring_carbons_away_from_heteroatoms() {
     for (name, locants) in [
         ("benzene", ["1", "2"]),
         ("cyclohexane", ["1", "2"]),
+        ("cyclopentadiene", ["1", "2"]),
         ("pyridine", ["2", "3"]),
         ("pyrimidine", ["4", "5"]),
         ("pyrrole", ["2", "3"]),
